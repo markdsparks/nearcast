@@ -1,4 +1,4 @@
-const VERSION = "1.0.9";
+const VERSION = "1.1.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -317,6 +317,26 @@ function bindEvents() {
   els.playRadar.addEventListener("click", toggleRadarPlayback);
   els.frameSlider.addEventListener("input", () => showFrame(Number(els.frameSlider.value)));
   document.getElementById("expandMap").addEventListener("click", enterImmersiveMap);
+
+  // Day-detail drill-down: tap a 10-day row or the hourly strip
+  els.daily.addEventListener("click", (event) => {
+    const row = event.target.closest(".day-row");
+    if (row && row.dataset.index !== undefined) openDayFromIndex(Number(row.dataset.index));
+  });
+  els.daily.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest(".day-row");
+    if (row && row.dataset.index !== undefined) {
+      event.preventDefault();
+      openDayFromIndex(Number(row.dataset.index));
+    }
+  });
+  els.hourly.addEventListener("click", openNext24Detail);
+  document.getElementById("dayDetailClose").addEventListener("click", closeDayDetail);
+  document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !document.getElementById("dayDetail").hidden) closeDayDetail();
+  });
 }
 
 function applyTheme() {
@@ -597,6 +617,7 @@ async function fetchForecast(place) {
 }
 
 function renderForecast(data, place) {
+  state.forecast = data; // retained for the day-detail sheet
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
@@ -874,7 +895,7 @@ function renderDaily(data, tempUnit, precipUnit) {
     const wcode = data.daily.weather_code[index];
     const code = weatherCodes[wcode] || "Weather";
     return `
-      <article class="day-row">
+      <article class="day-row" data-index="${index}" role="button" tabindex="0" aria-label="${formatDay(time, index)} detail">
         <div class="day-label">
           <div class="day-icon" aria-hidden="true">${weatherIcon(wcode, true)}</div>
           <div>
@@ -1998,6 +2019,268 @@ window.addEventListener("resize", () => {
     if (el) renderSkyScene(el, skyCondition(state.skyCode), state.skyIsDay);
   }
 });
+
+/* ---------- Day-detail bottom sheet ---------- */
+
+// Collect a single day's hours from the retained forecast and open the sheet.
+function openDayFromIndex(i) {
+  const data = state.forecast;
+  if (!data) return;
+  const dayStr = data.daily.time[i];
+  const indices = [];
+  data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
+  openDayDetail({
+    indices,
+    title: formatDay(data.daily.time[i], i),
+    code: data.daily.weather_code[i],
+    isDay: true,
+    sunriseISO: data.daily.sunrise[i],
+    sunsetISO: data.daily.sunset[i]
+  });
+}
+
+// Rolling next-24-hours window from "now".
+function openNext24Detail() {
+  const data = state.forecast;
+  if (!data) return;
+  const now = Date.now();
+  const indices = [];
+  data.hourly.time.forEach((t, h) => {
+    if (new Date(t).getTime() >= now - 3600000 && indices.length < 24) indices.push(h);
+  });
+  openDayDetail({
+    indices,
+    title: "Next 24 Hours",
+    code: data.current.weather_code,
+    isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
+    sunriseISO: data.daily.sunrise[0],
+    sunsetISO: data.daily.sunset[0]
+  });
+}
+
+function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO }) {
+  const data = state.forecast;
+  if (!data || !indices.length) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+
+  const hrs = indices.map((h) => ({
+    time: data.hourly.time[h],
+    temp: data.hourly.temperature_2m[h],
+    feels: data.hourly.apparent_temperature[h],
+    pop: data.hourly.precipitation_probability[h] || 0,
+    precip: data.hourly.precipitation[h] || 0,
+    wind: data.hourly.wind_speed_10m[h],
+    gust: data.hourly.wind_gusts_10m[h],
+    uv: data.hourly.uv_index[h] || 0
+  }));
+
+  const temps = hrs.map((h) => h.temp);
+  const high = Math.round(Math.max(...temps));
+  const low = Math.round(Math.min(...temps));
+
+  document.getElementById("sheetTitle").textContent = title;
+  document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay);
+  document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
+  document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
+  document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
+
+  buildHourlyGraph(hrs, tempUnit, windUnit);
+  renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
+
+  const backdrop = document.getElementById("dayDetailBackdrop");
+  const sheet = document.getElementById("dayDetail");
+  backdrop.hidden = false;
+  sheet.hidden = false;
+  requestAnimationFrame(() => {
+    backdrop.classList.add("show");
+    sheet.classList.add("show");
+  });
+  document.body.style.overflow = "hidden";
+}
+
+function closeDayDetail() {
+  const backdrop = document.getElementById("dayDetailBackdrop");
+  const sheet = document.getElementById("dayDetail");
+  backdrop.classList.remove("show");
+  sheet.classList.remove("show");
+  document.body.style.overflow = "";
+  setTimeout(() => {
+    backdrop.hidden = true;
+    sheet.hidden = true;
+  }, 260);
+}
+
+function buildDaySummary(hrs, windUnit) {
+  const maxPop = Math.max(...hrs.map((h) => h.pop));
+  const totalPrecip = hrs.reduce((sum, h) => sum + h.precip, 0);
+  const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
+  const parts = [];
+  if (maxPop >= 50) parts.push(`Rain likely, up to ${maxPop}% chance`);
+  else if (maxPop >= 20) parts.push(`Slight chance of rain (${maxPop}%)`);
+  else parts.push("Mostly dry");
+  if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
+  return parts.join(", ") + ".";
+}
+
+// Build a smooth cardinal-spline path through the points.
+function smoothPath(points) {
+  if (points.length < 2) return "";
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+function shortHour(t) {
+  const h = new Date(t).getHours();
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${h < 12 ? "a" : "p"}`;
+}
+
+let graphPts = [];
+
+function buildHourlyGraph(hrs, tempUnit, windUnit) {
+  const VW = 340;
+  const padL = 18, padR = 18;
+  const plotW = VW - padL - padR;
+  const tempTop = 18, tempBottom = 104;
+  const precipTop = 116, precipBottom = 136;
+  const precipH = precipBottom - precipTop;
+  const labelY = 152;
+  const n = hrs.length;
+
+  const temps = hrs.map((h) => h.temp);
+  const tMin = Math.min(...temps), tMax = Math.max(...temps);
+  const range = Math.max(tMax - tMin, 1);
+  const dMin = tMin - range * 0.18, dMax = tMax + range * 0.18;
+  const dRange = dMax - dMin;
+
+  const x = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const y = (temp) => tempBottom - ((temp - dMin) / dRange) * (tempBottom - tempTop);
+
+  const pts = hrs.map((h, i) => ({ ...h, x: x(i), y: y(h.temp) }));
+  graphPts = pts;
+
+  const deg = degree(tempUnit);
+  const gradStops = pts.map((p, i) =>
+    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp, tMin, tMax)}"/>`
+  ).join("");
+
+  const linePath = smoothPath(pts);
+  const areaPath = `${linePath} L ${pts[n - 1].x.toFixed(1)} ${tempBottom} L ${pts[0].x.toFixed(1)} ${tempBottom} Z`;
+
+  // Precip bars
+  const barW = Math.max((plotW / n) * 0.5, 2);
+  const precipBars = pts.map((p) => {
+    if (p.pop <= 0) return "";
+    const h = (p.pop / 100) * precipH;
+    return `<rect x="${(p.x - barW / 2).toFixed(1)}" y="${(precipBottom - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#4a90d9" opacity="0.5"/>`;
+  }).join("");
+
+  // High / low markers
+  const hiIdx = temps.indexOf(tMax), loIdx = temps.indexOf(tMin);
+  const markers = `
+    <circle cx="${pts[hiIdx].x.toFixed(1)}" cy="${pts[hiIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMax, tMin, tMax)}"/>
+    <text x="${pts[hiIdx].x.toFixed(1)}" y="${(pts[hiIdx].y - 7).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMax)}${deg}</text>
+    <circle cx="${pts[loIdx].x.toFixed(1)}" cy="${pts[loIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMin, tMin, tMax)}"/>
+    <text x="${pts[loIdx].x.toFixed(1)}" y="${(pts[loIdx].y + 13).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMin)}${deg}</text>
+  `;
+
+  // X-axis time labels
+  const steps = 4;
+  const labelIdx = [...new Set(Array.from({ length: steps + 1 }, (_, s) => Math.round((s * (n - 1)) / steps)))];
+  const axisLabels = labelIdx.map((i) =>
+    `<text x="${x(i).toFixed(1)}" y="${labelY}" text-anchor="middle" class="graph-axis">${shortHour(hrs[i].time)}</text>`
+  ).join("");
+
+  document.getElementById("sheetGraph").innerHTML = `
+    <svg viewBox="0 0 ${VW} 162" class="hourly-graph">
+      <defs>
+        <linearGradient id="tempGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
+      </defs>
+      <path d="${areaPath}" fill="url(#tempGrad)" fill-opacity="0.13"/>
+      <path d="${linePath}" fill="none" stroke="url(#tempGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      ${precipBars}
+      ${markers}
+      ${axisLabels}
+      <line id="graphGuide" x1="0" y1="${tempTop}" x2="0" y2="${precipBottom}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
+      <circle id="graphDot" r="4" fill="var(--ink)" style="display:none"/>
+      <rect id="graphHit" x="0" y="0" width="${VW}" height="${precipBottom}" fill="transparent" style="cursor:crosshair"/>
+    </svg>
+  `;
+
+  const svg = document.querySelector("#sheetGraph svg");
+  const guide = svg.querySelector("#graphGuide");
+  const dot = svg.querySelector("#graphDot");
+  const readout = document.getElementById("sheetReadout");
+
+  function update(i) {
+    const p = graphPts[i];
+    if (!p) return;
+    guide.setAttribute("x1", p.x);
+    guide.setAttribute("x2", p.x);
+    guide.style.display = "";
+    dot.setAttribute("cx", p.x);
+    dot.setAttribute("cy", p.y);
+    dot.style.display = "";
+    const long = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(p.time));
+    readout.innerHTML = `<strong>${long}</strong> · ${Math.round(p.temp)}${deg} · feels ${Math.round(p.feels)}${deg} · ${p.pop}% rain · ${Math.round(p.wind)} ${windUnit}`;
+  }
+
+  function nearest(clientX) {
+    const rect = svg.getBoundingClientRect();
+    const vbX = ((clientX - rect.left) / rect.width) * VW;
+    let best = 0, bd = Infinity;
+    graphPts.forEach((p, idx) => {
+      const d = Math.abs(p.x - vbX);
+      if (d < bd) { bd = d; best = idx; }
+    });
+    return best;
+  }
+
+  svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
+  svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
+
+  // Default readout: the hour nearest "now" if present, else the day's peak.
+  const now = Date.now();
+  let def = hrs.findIndex((h) => Math.abs(new Date(h.time).getTime() - now) < 1800000);
+  if (def < 0) def = hiIdx;
+  update(def);
+}
+
+function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) {
+  const maxWind = Math.round(Math.max(...hrs.map((h) => h.wind)));
+  const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
+  const maxUv = Math.round(Math.max(...hrs.map((h) => h.uv)));
+  const totalPrecip = hrs.reduce((sum, h) => sum + h.precip, 0);
+
+  const tiles = [
+    { label: "Sunrise", value: sunriseISO ? formatTime(sunriseISO) : "--" },
+    { label: "Sunset", value: sunsetISO ? formatTime(sunsetISO) : "--" },
+    { label: "UV Peak", value: maxUv },
+    { label: "Wind", value: `${maxWind} ${windUnit}` },
+    { label: "Gusts", value: `${maxGust} ${windUnit}` },
+    { label: "Precip", value: `${formatAmount(totalPrecip)} ${precipUnit}` }
+  ];
+
+  document.getElementById("sheetStats").innerHTML = tiles.map((t) => `
+    <div class="sheet-stat">
+      <span>${t.label}</span>
+      <strong>${t.value}</strong>
+    </div>
+  `).join("");
+}
 
 // Register service worker for PWA / offline support
 if ('serviceWorker' in navigator) {

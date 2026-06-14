@@ -202,6 +202,24 @@
     </main>
 
     <div class="metric-tip" id="metricTip" hidden></div>
+
+    <div class="sheet-backdrop" id="dayDetailBackdrop" hidden></div>
+    <aside class="day-sheet" id="dayDetail" hidden aria-label="Day detail" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="dayDetailClose" type="button" aria-label="Close detail">✕</button>
+      <header class="sheet-head">
+        <div class="sheet-icon" id="sheetIcon" aria-hidden="true"></div>
+        <div class="sheet-head-text">
+          <h2 id="sheetTitle">Day</h2>
+          <p class="sheet-range"><span id="sheetHigh">—</span><span class="sheet-range-sep">/</span><span id="sheetLow">—</span></p>
+        </div>
+      </header>
+      <p class="sheet-summary" id="sheetSummary"></p>
+      <div class="sheet-graph" id="sheetGraph"></div>
+      <div class="sheet-readout" id="sheetReadout" aria-live="polite"></div>
+      <div class="sheet-stats" id="sheetStats"></div>
+    </aside>
+
     <script src="app.js"></script>
   </body>
 </html>
