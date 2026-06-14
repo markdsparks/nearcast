@@ -1,4 +1,4 @@
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1426,8 +1426,11 @@ function showMetricTip(card) {
 
   const rect = card.getBoundingClientRect();
   const tipRect = els.metricTip.getBoundingClientRect();
-  const top = rect.bottom + 10 + window.scrollY;
-  let left = rect.left + rect.width / 2 - tipRect.width / 2 + window.scrollX;
+  // Tooltip is position:fixed so coordinates are viewport-relative — no scroll offset needed
+  let top = rect.bottom + 10;
+  // If the tip would be clipped at the bottom, flip it above the card instead
+  if (top + tipRect.height > window.innerHeight - 8) top = rect.top - tipRect.height - 10;
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
   left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
   els.metricTip.style.top = `${top}px`;
   els.metricTip.style.left = `${left}px`;
