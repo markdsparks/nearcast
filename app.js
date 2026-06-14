@@ -1439,17 +1439,22 @@ function hideMetricTip() {
 function initMetricTipListeners() {
   const metricsEl = document.querySelector(".hero-metrics");
 
-  metricsEl.addEventListener("mouseover", (event) => {
+  // Hover: mouse only — touch devices use tap instead
+  metricsEl.addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "mouse") return;
     const card = event.target.closest(".has-tip");
     if (card && card !== activeTipCard) showMetricTip(card);
-  });
+  }, true);
 
-  metricsEl.addEventListener("mouseout", (event) => {
+  metricsEl.addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "mouse") return;
     const card = event.target.closest(".has-tip");
-    if (card && !card.contains(event.relatedTarget)) hideMetricTip();
-  });
+    if (card) hideMetricTip();
+  }, true);
 
+  // Tap / click: toggle for touch; noop on mouse (hover already handles it)
   metricsEl.addEventListener("click", (event) => {
+    if (event.pointerType === "mouse") return;
     const card = event.target.closest(".has-tip");
     if (!card) return;
     if (activeTipCard === card) {
