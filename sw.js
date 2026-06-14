@@ -1,14 +1,14 @@
-const CACHE = "nearcast-v4";
+const CACHE = "nearcast-v5";
 
 // App shell — everything needed to render offline
 const SHELL = [
-  "/",
-  "/index.html",
-  "/styles.css",
-  "/app.js",
-  "/manifest.json",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png"
+  "/nearcast/",
+  "/nearcast/index.html",
+  "/nearcast/styles.css",
+  "/nearcast/app.js",
+  "/nearcast/manifest.json",
+  "/nearcast/icons/icon-192.png",
+  "/nearcast/icons/icon-512.png"
 ];
 
 // Install: cache the shell
