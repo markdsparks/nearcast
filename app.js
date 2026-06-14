@@ -1,4 +1,4 @@
-const VERSION = "1.2.1";
+const VERSION = "1.2.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -260,7 +260,12 @@ function init() {
   bindEvents();
   initMetricTipListeners();
 
-  if (state.savedPlaces.length) {
+  // Open to a real place, never the empty state:
+  // last place you viewed → first saved place → sensible default.
+  const lastPlace = JSON.parse(localStorage.getItem("weather-last-place") || "null");
+  if (lastPlace && lastPlace.latitude != null) {
+    loadPlace(lastPlace);
+  } else if (state.savedPlaces.length) {
     loadPlace(state.savedPlaces[0]);
   } else {
     loadPlace({
@@ -529,6 +534,7 @@ function updateChipGlance(placeId) {
 
 async function loadPlace(place) {
   state.activePlace = normalizePlace(place);
+  localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   mapState.panX = 0;
   mapState.panY = 0;
   renderSavedPlaces();
@@ -1821,8 +1827,6 @@ function bindImmersiveDrag() {
   window.addEventListener("touchend", () => { dragState.active = false; }, { signal: sig });
 }
 
-init();
-
 // ── Sky Canvas ────────────────────────────────────────────────────────────────
 
 const SKY_CFG = {
@@ -2431,3 +2435,7 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
+
+// Start the app last, after every module-level declaration is initialized,
+// so the synchronous startup path can't hit a temporal-dead-zone reference.
+init();
