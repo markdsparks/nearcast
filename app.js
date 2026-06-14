@@ -1,4 +1,4 @@
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -867,13 +867,40 @@ function renderHourly(data, tempUnit) {
   }).join("");
 }
 
-// Map a temperature to a color on the week's cool→warm scale.
-// Hue runs blue (cold) → red (hot); both bar position and color are
-// normalized to this week's range so a colder day reads genuinely bluer.
-function tempColor(value, minTemp, maxTemp) {
-  const t = Math.min(Math.max((value - minTemp) / Math.max(maxTemp - minTemp, 1), 0), 1);
-  const hue = 210 - t * 210;
-  return `hsl(${Math.round(hue)}, 72%, 52%)`;
+// Absolute temperature → color, anchored to real-world warm/cold norms (°F).
+// Color carries honest temperature semantics; bar POSITION stays week-relative
+// (in renderDaily) so day-to-day differentiation is preserved even in extreme weeks.
+const TEMP_SCALE = [
+  [10, 270, 62, 56],   // frigid — violet
+  [25, 222, 74, 55],   // freezing — blue
+  [40, 196, 70, 50],   // cold — cyan
+  [55, 152, 56, 47],   // cool — teal
+  [68, 120, 50, 46],   // comfortable — green
+  [78, 55, 76, 50],    // warm — yellow
+  [88, 32, 84, 52],    // hot — orange
+  [100, 8, 80, 52],    // very hot — red
+  [112, -14, 70, 50]   // extreme — deep red
+];
+
+function tempColor(value, unit = state.unit) {
+  const f = unit === "celsius" ? value * 9 / 5 + 32 : value;
+  const s = TEMP_SCALE;
+  if (f <= s[0][0]) return hslStop(s[0]);
+  if (f >= s[s.length - 1][0]) return hslStop(s[s.length - 1]);
+  for (let i = 0; i < s.length - 1; i++) {
+    if (f >= s[i][0] && f <= s[i + 1][0]) {
+      const k = (f - s[i][0]) / (s[i + 1][0] - s[i][0]);
+      const h = s[i][1] + (s[i + 1][1] - s[i][1]) * k;
+      const sa = s[i][2] + (s[i + 1][2] - s[i][2]) * k;
+      const l = s[i][3] + (s[i + 1][3] - s[i][3]) * k;
+      return `hsl(${(((h % 360) + 360) % 360).toFixed(0)}, ${sa.toFixed(0)}%, ${l.toFixed(0)}%)`;
+    }
+  }
+  return hslStop(s[s.length - 1]);
+}
+
+function hslStop([, h, s, l]) {
+  return `hsl(${(((h % 360) + 360) % 360)}, ${s}%, ${l}%)`;
 }
 
 function renderDaily(data, tempUnit, precipUnit) {
@@ -888,8 +915,8 @@ function renderDaily(data, tempUnit, precipUnit) {
     const high = Math.round(highs[index]);
     const start = ((low - minTemp) / spread) * 100;
     const width = Math.max(((high - low) / spread) * 100, 6);
-    const lowColor = tempColor(low, minTemp, maxTemp);
-    const highColor = tempColor(high, minTemp, maxTemp);
+    const lowColor = tempColor(low);
+    const highColor = tempColor(high);
     const rain = data.daily.precipitation_probability_max[index] || 0;
     const precip = data.daily.precipitation_sum[index] || 0;
     const wcode = data.daily.weather_code[index];
@@ -2174,7 +2201,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
 
   const deg = degree(tempUnit);
   const gradStops = pts.map((p, i) =>
-    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp, tMin, tMax)}"/>`
+    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp)}"/>`
   ).join("");
 
   const linePath = smoothPath(pts);
@@ -2191,9 +2218,9 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
   // High / low markers
   const hiIdx = temps.indexOf(tMax), loIdx = temps.indexOf(tMin);
   const markers = `
-    <circle cx="${pts[hiIdx].x.toFixed(1)}" cy="${pts[hiIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMax, tMin, tMax)}"/>
+    <circle cx="${pts[hiIdx].x.toFixed(1)}" cy="${pts[hiIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMax)}"/>
     <text x="${pts[hiIdx].x.toFixed(1)}" y="${(pts[hiIdx].y - 7).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMax)}${deg}</text>
-    <circle cx="${pts[loIdx].x.toFixed(1)}" cy="${pts[loIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMin, tMin, tMax)}"/>
+    <circle cx="${pts[loIdx].x.toFixed(1)}" cy="${pts[loIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMin)}"/>
     <text x="${pts[loIdx].x.toFixed(1)}" y="${(pts[loIdx].y + 13).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMin)}${deg}</text>
   `;
 
