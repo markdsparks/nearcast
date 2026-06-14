@@ -229,6 +229,15 @@ h1 {
   line-height: 0.95;
 }
 
+.app-version {
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  vertical-align: middle;
+  opacity: 0.5;
+}
+
 h2 {
   font-size: 1rem;
 }

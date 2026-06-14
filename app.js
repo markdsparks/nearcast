@@ -1,3 +1,5 @@
+const VERSION = "1.0.0";
+
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
   theme: localStorage.getItem("weather-theme") || "auto",
@@ -251,6 +253,7 @@ function weatherIcon(code, isDay = true) {
 }
 
 function init() {
+  document.getElementById("appVersion").textContent = `v${VERSION}`;
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
