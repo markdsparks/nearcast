@@ -1,4 +1,4 @@
-const VERSION = "1.0.8";
+const VERSION = "1.0.9";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -846,6 +846,15 @@ function renderHourly(data, tempUnit) {
   }).join("");
 }
 
+// Map a temperature to a color on the week's cool→warm scale.
+// Hue runs blue (cold) → red (hot); both bar position and color are
+// normalized to this week's range so a colder day reads genuinely bluer.
+function tempColor(value, minTemp, maxTemp) {
+  const t = Math.min(Math.max((value - minTemp) / Math.max(maxTemp - minTemp, 1), 0), 1);
+  const hue = 210 - t * 210;
+  return `hsl(${Math.round(hue)}, 72%, 52%)`;
+}
+
 function renderDaily(data, tempUnit, precipUnit) {
   const highs = data.daily.temperature_2m_max;
   const lows = data.daily.temperature_2m_min;
@@ -857,7 +866,9 @@ function renderDaily(data, tempUnit, precipUnit) {
     const low = Math.round(lows[index]);
     const high = Math.round(highs[index]);
     const start = ((low - minTemp) / spread) * 100;
-    const width = Math.max(((high - low) / spread) * 100, 8);
+    const width = Math.max(((high - low) / spread) * 100, 6);
+    const lowColor = tempColor(low, minTemp, maxTemp);
+    const highColor = tempColor(high, minTemp, maxTemp);
     const rain = data.daily.precipitation_probability_max[index] || 0;
     const precip = data.daily.precipitation_sum[index] || 0;
     const wcode = data.daily.weather_code[index];
@@ -871,11 +882,14 @@ function renderDaily(data, tempUnit, precipUnit) {
             <div class="day-meta">${escapeHtml(code)}</div>
           </div>
         </div>
-        <div class="day-range">${low}${degree(tempUnit)} / ${high}${degree(tempUnit)}</div>
-        <div class="temp-track" aria-hidden="true">
-          <i style="margin-left: ${start}%; width: ${width}%"></i>
+        <div class="day-temps">
+          <span class="day-low">${low}°</span>
+          <div class="temp-track" aria-hidden="true">
+            <i style="margin-left: ${start}%; width: ${width}%; background: linear-gradient(90deg, ${lowColor}, ${highColor})"></i>
+          </div>
+          <span class="day-high">${high}°</span>
         </div>
-        <div class="day-meta">${rain}% rain<br>${formatAmount(precip)} ${precipUnit}</div>
+        <div class="day-meta day-rain">${rain}% rain<br>${formatAmount(precip)} ${precipUnit}</div>
       </article>
     `;
   }).join("");

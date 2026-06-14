@@ -691,25 +691,48 @@ h2 {
 
 .day-row {
   display: grid;
-  grid-template-columns: 160px minmax(140px, 1fr) minmax(160px, 1.3fr) 84px;
-  gap: 12px;
+  grid-template-columns: 160px minmax(180px, 1fr) 84px;
+  gap: 14px;
   align-items: center;
-  min-height: 72px;
-  padding: 12px;
+  min-height: 60px;
+  padding: 10px 12px;
   border-radius: 8px;
   background: var(--panel-soft);
   border: 1px solid var(--line);
 }
 
-.day-name,
-.day-range {
+.day-name {
   font-weight: 850;
 }
 
+.day-temps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.day-low,
+.day-high {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 2.4ch;
+}
+
+.day-low {
+  text-align: right;
+  opacity: 0.55;
+}
+
+.day-high {
+  text-align: left;
+}
+
 .temp-track {
-  height: 10px;
+  flex: 1;
+  height: 8px;
   border-radius: 999px;
-  background: #d7e3e8;
+  background: var(--line);
   overflow: hidden;
 }
 
@@ -717,7 +740,6 @@ h2 {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--blue), var(--green), var(--gold));
 }
 
 .save-button {
@@ -1176,12 +1198,12 @@ h2 {
 
   .day-row {
     grid-template-columns: 1fr auto;
+    row-gap: 10px;
   }
 
-  .day-row .temp-track,
-  .day-row .day-meta {
-    grid-column: 1 / -1;
-  }
+  .day-row .day-label { grid-column: 1; grid-row: 1; }
+  .day-row .day-rain { grid-column: 2; grid-row: 1; text-align: right; }
+  .day-row .day-temps { grid-column: 1 / -1; grid-row: 2; }
 }
 
 @media (max-width: 480px) {
