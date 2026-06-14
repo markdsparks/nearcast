@@ -22,10 +22,18 @@
           <h1>Nearcast <span id="appVersion" class="app-version"></span></h1>
         </div>
         <div class="actions">
+          <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Search places" title="Search">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"/><line x1="13.5" y1="13.5" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
           <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☀︎</button>
           <button class="icon-button" id="unitToggle" type="button" aria-label="Switch units" title="Switch units">F</button>
           <button class="icon-button" id="locateButton" type="button" aria-label="Use current location" title="Use current location">GPS</button>
         </div>
+      </section>
+
+      <section class="welcome" id="welcome">
+        <h2 class="welcome-title">Where do you want weather?</h2>
+        <p class="welcome-sub">Search for a city or ZIP, or use your current location to get started.</p>
       </section>
 
       <form class="search" id="searchForm">
@@ -34,6 +42,11 @@
         <button type="submit">Search</button>
       </form>
       <div class="search-results" id="searchResults" hidden></div>
+
+      <button class="welcome-locate" id="welcomeLocate" type="button">
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Use my location
+      </button>
 
       <section class="saved-row" aria-label="Saved places">
         <div class="saved-places" id="savedPlaces"></div>

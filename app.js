@@ -1,4 +1,4 @@
-const VERSION = "1.2.3";
+const VERSION = "1.3.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -36,6 +36,10 @@ const dragState = {
 };
 
 const els = {
+  shell: document.querySelector(".shell"),
+  searchToggle: document.querySelector("#searchToggle"),
+  welcome: document.querySelector("#welcome"),
+  welcomeLocate: document.querySelector("#welcomeLocate"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
   locateButton: document.querySelector("#locateButton"),
@@ -260,22 +264,15 @@ function init() {
   bindEvents();
   initMetricTipListeners();
 
-  // Open to a real place, never the empty state:
-  // last place you viewed → first saved place → sensible default.
+  // Returning users open straight to their weather (last viewed → first saved).
+  // First-timers get the welcome state to find a place — no arbitrary default.
   const lastPlace = JSON.parse(localStorage.getItem("weather-last-place") || "null");
   if (lastPlace && lastPlace.latitude != null) {
     loadPlace(lastPlace);
   } else if (state.savedPlaces.length) {
     loadPlace(state.savedPlaces[0]);
   } else {
-    loadPlace({
-      id: "springfield-mo",
-      name: "Springfield",
-      admin1: "Missouri",
-      country: "United States",
-      latitude: 37.2089,
-      longitude: -93.2923
-    });
+    updateMode(); // welcome mode
   }
 }
 
@@ -308,6 +305,8 @@ function bindEvents() {
 
   els.themeToggle.addEventListener("click", toggleTheme);
   els.locateButton.addEventListener("click", useCurrentLocation);
+  els.searchToggle.addEventListener("click", () => toggleSearch());
+  els.welcomeLocate.addEventListener("click", useCurrentLocation);
   els.savePlace.addEventListener("click", () => {
     if (!state.activePlace) return;
     savePlace(state.activePlace);
@@ -421,6 +420,24 @@ function clearSearchResults() {
   els.placeSearch.value = "";
 }
 
+// Two modes: "welcome" (no place yet — search/location is the hero) and
+// "browse" (a place is loaded — weather is the hero, search collapses to an icon).
+function updateMode() {
+  const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
+  els.shell.classList.toggle("mode-welcome", !hasContext);
+  if (!hasContext) els.shell.classList.remove("search-open");
+}
+
+function toggleSearch(open) {
+  const next = open === undefined ? !els.shell.classList.contains("search-open") : open;
+  els.shell.classList.toggle("search-open", next);
+  if (next) {
+    els.placeSearch.focus();
+  } else {
+    clearSearchResults();
+  }
+}
+
 function renderSearchResults() {
   els.searchResults.innerHTML = "";
   els.searchResults.hidden = !state.searchResults.length;
@@ -434,7 +451,7 @@ function renderSearchResults() {
       <small>${escapeHtml(place.admin1 || place.country || "")}</small>
     `;
     button.addEventListener("click", () => {
-      clearSearchResults();
+      toggleSearch(false);
       loadPlace(normalizePlace(place));
     });
     els.searchResults.appendChild(button);
@@ -535,6 +552,7 @@ function updateChipGlance(placeId) {
 async function loadPlace(place) {
   state.activePlace = normalizePlace(place);
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
+  updateMode();
   mapState.panX = 0;
   mapState.panY = 0;
   renderSavedPlaces();
@@ -1480,6 +1498,7 @@ function savePlace(place) {
     state.savedPlaces = [normalized, ...state.savedPlaces].slice(0, 8);
     localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
     renderSavedPlaces();
+    updateMode();
   }
 }
 
@@ -1487,6 +1506,7 @@ function removeSavedPlace(id) {
   state.savedPlaces = state.savedPlaces.filter((place) => place.id !== id);
   localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
   renderSavedPlaces();
+  updateMode();
 }
 
 function bindMetricTips(data, tempUnit, windUnit) {
