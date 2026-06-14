@@ -1,4 +1,4 @@
-const VERSION = "1.0.1";
+const VERSION = "1.0.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1474,6 +1474,9 @@ function initMetricTipListeners() {
       hideMetricTip();
     }
   });
+
+  // Dismiss tooltip immediately when the page scrolls
+  window.addEventListener("scroll", hideMetricTip, { passive: true });
 }
 
 function setStatus(message, isError = false) {

@@ -98,6 +98,9 @@ html[data-sky] body {
   pointer-events: none;
   overflow: hidden;
   transition: background 1.5s;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: transform;
 }
 
 #skyCanvas svg {
