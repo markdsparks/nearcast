@@ -1439,30 +1439,29 @@ function hideMetricTip() {
 function initMetricTipListeners() {
   const metricsEl = document.querySelector(".hero-metrics");
 
-  // Hover: mouse only — touch devices use tap instead
-  metricsEl.addEventListener("pointerenter", (event) => {
-    if (event.pointerType !== "mouse") return;
+  // Hover: mouse only
+  metricsEl.addEventListener("mouseenter", (event) => {
     const card = event.target.closest(".has-tip");
     if (card && card !== activeTipCard) showMetricTip(card);
   }, true);
 
-  metricsEl.addEventListener("pointerleave", (event) => {
-    if (event.pointerType !== "mouse") return;
+  metricsEl.addEventListener("mouseleave", (event) => {
     const card = event.target.closest(".has-tip");
     if (card) hideMetricTip();
   }, true);
 
-  // Tap / click: toggle for touch; noop on mouse (hover already handles it)
-  metricsEl.addEventListener("click", (event) => {
-    if (event.pointerType === "mouse") return;
+  // Tap: toggle tip. touchstart fires before any synthetic mouse events,
+  // so we handle it here and stopPropagation to prevent the click handler below.
+  metricsEl.addEventListener("touchstart", (event) => {
     const card = event.target.closest(".has-tip");
     if (!card) return;
+    event.preventDefault(); // block the subsequent synthetic click
     if (activeTipCard === card) {
       hideMetricTip();
     } else {
       showMetricTip(card);
     }
-  });
+  }, { passive: false });
 
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".hero-metrics") && !event.target.closest("#metricTip")) {

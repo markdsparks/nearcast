@@ -733,6 +733,7 @@ h2 {
   height: 100%;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .immersive-map .tile-map:active { cursor: grabbing; }
@@ -903,6 +904,7 @@ h2 {
   width: 100%;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .tile-map {
@@ -1153,5 +1155,19 @@ h2 {
   .section-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* On narrow phones, stack legend above the weather card so they don't collide */
+@media (max-width: 600px) {
+  .immersive-map .map-legend {
+    right: auto;
+    left: 18px;
+    bottom: calc(72px + 110px); /* sit above the weather card */
+  }
+
+  .imm-weather-card {
+    min-width: 0;
+    width: calc(100vw - 36px);
   }
 }
