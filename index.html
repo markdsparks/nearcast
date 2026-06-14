@@ -41,6 +41,16 @@
 
       <section class="status" id="status" hidden></section>
 
+      <button class="alert-bar" id="alertBar" type="button" hidden>
+        <span class="alert-bar-icon" aria-hidden="true">⚠</span>
+        <span class="alert-bar-text">
+          <strong id="alertBarEvent">—</strong>
+          <span id="alertBarTiming"></span>
+        </span>
+        <span class="alert-bar-more" id="alertBarMore"></span>
+        <span class="alert-bar-chevron" aria-hidden="true">›</span>
+      </button>
+
       <nav class="view-tabs" aria-label="Weather views">
         <button class="view-tab active" id="forecastTab" type="button" aria-controls="forecastView">Forecast</button>
         <button class="view-tab" id="mapTab" type="button" aria-controls="mapView">Map</button>
@@ -218,6 +228,14 @@
       <div class="sheet-graph" id="sheetGraph"></div>
       <div class="sheet-readout" id="sheetReadout" aria-live="polite"></div>
       <div class="sheet-stats" id="sheetStats"></div>
+    </aside>
+
+    <div class="sheet-backdrop" id="alertBackdrop" hidden></div>
+    <aside class="day-sheet alert-sheet" id="alertSheet" hidden aria-label="Weather alerts" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="alertSheetClose" type="button" aria-label="Close alerts">✕</button>
+      <h2 class="alert-sheet-title">Active Alerts</h2>
+      <div class="alert-list" id="alertList"></div>
     </aside>
 
     <script src="app.js"></script>

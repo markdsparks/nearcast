@@ -1405,3 +1405,160 @@ h2 {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Severe weather alerts ---------- */
+.alert-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 0;
+  text-align: left;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+.alert-bar.alert-severe {
+  background: linear-gradient(135deg, #c0392b, #a52a1f);
+}
+.alert-bar.alert-moderate {
+  background: linear-gradient(135deg, #d98324, #c06f15);
+}
+.alert-bar.alert-minor {
+  background: linear-gradient(135deg, #c9a227, #a8851a);
+}
+.alert-bar-icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+.alert-bar-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+  flex: 1;
+}
+.alert-bar-text strong {
+  font-weight: 800;
+  font-size: 0.98rem;
+}
+.alert-bar-text span {
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+.alert-bar-more {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+.alert-bar-more:empty {
+  display: none;
+}
+.alert-bar-chevron {
+  font-size: 1.3rem;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+/* Pulse the most urgent alerts to draw the eye */
+.alert-bar.alert-severe {
+  animation: alert-pulse 2.4s ease-in-out infinite;
+}
+@keyframes alert-pulse {
+  0%, 100% { box-shadow: 0 8px 22px rgba(192, 57, 43, 0.25); }
+  50% { box-shadow: 0 8px 30px rgba(192, 57, 43, 0.55); }
+}
+
+.alert-sheet-title {
+  font-size: 1.25rem;
+  margin: 2px 0 14px;
+}
+.alert-list {
+  display: grid;
+  gap: 14px;
+}
+.alert-item {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+}
+.alert-item.alert-severe { border-left-color: #c0392b; }
+.alert-item.alert-moderate { border-left-color: #d98324; }
+.alert-item.alert-minor { border-left-color: #c9a227; }
+.alert-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.alert-item-event {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+.alert-item-sev {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.alert-item-when {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.alert-item-area {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.alert-item-instruction {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(192, 57, 43, 0.1);
+}
+.alert-item-instruction strong {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.alert-item-instruction p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+.alert-item-details {
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+.alert-item-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.alert-item-details p {
+  margin: 8px 0 0;
+  line-height: 1.5;
+  white-space: pre-line;
+  color: var(--muted);
+}
+.alert-item-sender {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  opacity: 0.5;
+}

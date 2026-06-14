@@ -1,4 +1,4 @@
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -337,6 +337,14 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("dayDetail").hidden) closeDayDetail();
   });
+
+  // Severe weather alerts
+  document.getElementById("alertBar").addEventListener("click", openAlertSheet);
+  document.getElementById("alertSheetClose").addEventListener("click", closeAlertSheet);
+  document.getElementById("alertBackdrop").addEventListener("click", closeAlertSheet);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !document.getElementById("alertSheet").hidden) closeAlertSheet();
+  });
 }
 
 function applyTheme() {
@@ -526,6 +534,7 @@ async function loadPlace(place) {
   renderSavedPlaces();
   updateMapPlace();
   syncMapToPlace();
+  renderAlerts([]); // clear prior place's alerts until this one resolves
   setStatus(`Loading ${state.activePlace.name}...`);
 
   try {
@@ -534,6 +543,13 @@ async function loadPlace(place) {
     setStatus("");
   } catch (error) {
     setStatus("Could not load weather data. Try another place or reload the page.", true);
+  }
+
+  // Alerts are best-effort and US-only — never block or break the forecast
+  try {
+    renderAlerts(await fetchAlerts(state.activePlace));
+  } catch {
+    renderAlerts([]);
   }
 }
 
@@ -2307,6 +2323,106 @@ function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) 
       <strong>${t.value}</strong>
     </div>
   `).join("");
+}
+
+/* ---------- Severe weather alerts (NWS, US-only) ---------- */
+
+const SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 };
+let activeAlerts = [];
+
+async function fetchAlerts(place) {
+  const cacheKey = `alerts:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+  const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
+  if (cached && Date.now() - cached.savedAt < 5 * 60 * 1000) return cached.data;
+
+  const url = `https://api.weather.gov/alerts/active?point=${place.latitude.toFixed(4)},${place.longitude.toFixed(4)}`;
+  const res = await fetch(url, { headers: { Accept: "application/geo+json" } });
+  if (!res.ok) return [];
+  const json = await res.json();
+  const alerts = (json.features || [])
+    .map((f) => f.properties)
+    .sort((a, b) => (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0));
+  sessionStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: alerts }));
+  return alerts;
+}
+
+function alertSeverityClass(severity) {
+  if (severity === "Extreme" || severity === "Severe") return "alert-severe";
+  if (severity === "Moderate") return "alert-moderate";
+  return "alert-minor";
+}
+
+function renderAlerts(alerts) {
+  activeAlerts = alerts || [];
+  const bar = document.getElementById("alertBar");
+  if (!activeAlerts.length) {
+    bar.hidden = true;
+    return;
+  }
+  const top = activeAlerts[0];
+  bar.className = `alert-bar ${alertSeverityClass(top.severity)}`;
+  document.getElementById("alertBarEvent").textContent = top.event;
+  document.getElementById("alertBarTiming").textContent = top.ends || top.expires
+    ? `until ${formatAlertTime(top.ends || top.expires)}` : "";
+  document.getElementById("alertBarMore").textContent =
+    activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
+  bar.hidden = false;
+}
+
+function formatAlertTime(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return new Intl.DateTimeFormat(undefined, sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { weekday: "short", hour: "numeric", minute: "2-digit" }).format(d);
+}
+
+function alertWindow(a) {
+  const start = a.onset || a.effective;
+  const end = a.ends || a.expires;
+  const parts = [];
+  if (start) parts.push(`From ${formatAlertTime(start)}`);
+  if (end) parts.push(`until ${formatAlertTime(end)}`);
+  return parts.join(" ");
+}
+
+function openAlertSheet() {
+  if (!activeAlerts.length) return;
+  document.getElementById("alertList").innerHTML = activeAlerts.map((a) => `
+    <article class="alert-item ${alertSeverityClass(a.severity)}">
+      <div class="alert-item-head">
+        <span class="alert-item-event">${escapeHtml(a.event)}</span>
+        <span class="alert-item-sev">${escapeHtml(a.severity || "")}</span>
+      </div>
+      <p class="alert-item-when">${escapeHtml(alertWindow(a))}</p>
+      ${a.areaDesc ? `<p class="alert-item-area">${escapeHtml(a.areaDesc)}</p>` : ""}
+      ${a.instruction ? `<div class="alert-item-instruction"><strong>What to do</strong><p>${escapeHtml(a.instruction)}</p></div>` : ""}
+      ${a.description ? `<details class="alert-item-details"><summary>Full details</summary><p>${escapeHtml(a.description)}</p></details>` : ""}
+      ${a.senderName ? `<p class="alert-item-sender">${escapeHtml(a.senderName)}</p>` : ""}
+    </article>
+  `).join("");
+
+  const backdrop = document.getElementById("alertBackdrop");
+  const sheet = document.getElementById("alertSheet");
+  backdrop.hidden = false;
+  sheet.hidden = false;
+  requestAnimationFrame(() => {
+    backdrop.classList.add("show");
+    sheet.classList.add("show");
+  });
+  document.body.style.overflow = "hidden";
+}
+
+function closeAlertSheet() {
+  const backdrop = document.getElementById("alertBackdrop");
+  const sheet = document.getElementById("alertSheet");
+  backdrop.classList.remove("show");
+  sheet.classList.remove("show");
+  document.body.style.overflow = "";
+  setTimeout(() => {
+    backdrop.hidden = true;
+    sheet.hidden = true;
+  }, 260);
 }
 
 // Register service worker for PWA / offline support
