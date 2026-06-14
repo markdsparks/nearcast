@@ -1,4 +1,4 @@
-const VERSION = "1.0.7";
+const VERSION = "1.0.8";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -295,6 +295,9 @@ function bindEvents() {
     state.unit = state.unit === "fahrenheit" ? "celsius" : "fahrenheit";
     localStorage.setItem("weather-unit", state.unit);
     updateUnitButton();
+    // Cached glance temps are unit-specific — drop them so chips refetch
+    for (const id in glanceData) delete glanceData[id];
+    renderSavedPlaces();
     if (state.activePlace) loadPlace(state.activePlace);
   });
 
@@ -414,6 +417,34 @@ function updateSaveButton() {
   els.savePlace.classList.toggle("is-saved", Boolean(alreadySaved));
 }
 
+// Lightweight current-conditions for the saved-places glance row.
+// Cached per place + unit so re-renders and taps are instant.
+const glanceData = {};
+
+async function fetchGlance(place) {
+  const key = `glance:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+  const cached = JSON.parse(localStorage.getItem(key) || "null");
+  if (cached && Date.now() - cached.savedAt < 15 * 60 * 1000) return cached.data;
+
+  const params = new URLSearchParams({
+    latitude: place.latitude,
+    longitude: place.longitude,
+    current: "temperature_2m,weather_code,is_day",
+    temperature_unit: state.unit,
+    timezone: "auto"
+  });
+  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
+  if (!response.ok) throw new Error("Glance failed.");
+  const json = await response.json();
+  const data = {
+    temp: Math.round(json.current.temperature_2m),
+    code: json.current.weather_code,
+    isDay: Boolean(json.current.is_day)
+  };
+  localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+  return data;
+}
+
 function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
   updateSaveButton();
@@ -422,8 +453,13 @@ function renderSavedPlaces() {
     const chip = document.createElement("button");
     chip.className = `place-chip${state.activePlace && state.activePlace.id === place.id ? " active" : ""}`;
     chip.type = "button";
+    chip.dataset.placeId = place.id;
+
+    const g = glanceData[place.id];
     chip.innerHTML = `
-      <span>${escapeHtml(place.name)}</span>
+      <span class="chip-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay) : ""}</span>
+      <span class="chip-name">${escapeHtml(place.name)}</span>
+      <span class="chip-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
       <span class="remove" aria-hidden="true">x</span>
     `;
     chip.addEventListener("click", (event) => {
@@ -436,6 +472,31 @@ function renderSavedPlaces() {
     els.savedPlaces.appendChild(chip);
   });
   renderMapMarkers();
+  hydrateGlances();
+}
+
+// Fill in temp + condition icon on each saved chip; runs after the
+// synchronous render so cached chips show instantly and the rest fill in.
+function hydrateGlances() {
+  state.savedPlaces.forEach(async (place) => {
+    if (glanceData[place.id]) return;
+    try {
+      glanceData[place.id] = await fetchGlance(place);
+      updateChipGlance(place.id);
+    } catch {
+      /* leave chip as name-only on failure */
+    }
+  });
+}
+
+function updateChipGlance(placeId) {
+  const chip = els.savedPlaces.querySelector(`[data-place-id="${placeId}"]`);
+  const g = glanceData[placeId];
+  if (!chip || !g) return;
+  const icon = chip.querySelector(".chip-icon");
+  const temp = chip.querySelector(".chip-temp");
+  if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay);
+  if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
 }
 
 async function loadPlace(place) {

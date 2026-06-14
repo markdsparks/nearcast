@@ -342,9 +342,9 @@ h2 {
 .place-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-height: 36px;
-  padding: 7px 10px;
+  padding: 6px 8px 6px 9px;
   background: var(--glass-mid);
   color: var(--ink);
   border: 1px solid var(--border-glass);
@@ -353,6 +353,36 @@ h2 {
 .place-chip.active {
   background: var(--green);
   color: white;
+}
+
+.chip-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.chip-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.chip-icon:empty {
+  display: none;
+}
+
+.chip-name {
+  font-weight: 600;
+}
+
+.chip-temp {
+  font-weight: 500;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-temp:empty {
+  display: none;
 }
 
 .place-chip .remove {
