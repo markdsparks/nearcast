@@ -1,4 +1,4 @@
-const VERSION = "1.2.2";
+const VERSION = "1.2.3";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -2270,7 +2270,8 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
   const svg = document.querySelector("#sheetGraph svg");
   const guide = svg.querySelector("#graphGuide");
   const dot = svg.querySelector("#graphDot");
-  const readout = document.getElementById("sheetReadout");
+  const callout = document.getElementById("sheetReadout");
+  const wrap = document.getElementById("sheetGraphWrap");
 
   function update(i) {
     const p = graphPts[i];
@@ -2281,8 +2282,19 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
     dot.setAttribute("cx", p.x);
     dot.setAttribute("cy", p.y);
     dot.style.display = "";
+
     const long = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(p.time));
-    readout.innerHTML = `<strong>${long}</strong> · ${Math.round(p.temp)}${deg} · feels ${Math.round(p.feels)}${deg} · ${p.pop}% rain · ${Math.round(p.wind)} ${windUnit}`;
+    callout.innerHTML =
+      `<span class="callout-main">${long} · ${Math.round(p.temp)}${deg}</span>` +
+      `<span class="callout-sub">feels ${Math.round(p.feels)}${deg} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}</span>`;
+
+    // Slide the callout to ride above the active point, clamped to the chart edges.
+    // The vertical guide line marks the exact column; the callout pointer tracks it too.
+    const px = (p.x / VW) * wrap.clientWidth;
+    const cw = callout.offsetWidth;
+    const left = Math.max(cw / 2 + 2, Math.min(px, wrap.clientWidth - cw / 2 - 2));
+    callout.style.left = `${left}px`;
+    callout.style.setProperty("--pointer-x", `${px - (left - cw / 2)}px`);
   }
 
   function nearest(clientX) {
@@ -2303,7 +2315,9 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
   const now = Date.now();
   let def = hrs.findIndex((h) => Math.abs(new Date(h.time).getTime() - now) < 1800000);
   if (def < 0) def = hiIdx;
-  update(def);
+  // Defer to next frame so the sheet has laid out and the callout can be
+  // measured/positioned correctly (it's still hidden when this runs).
+  requestAnimationFrame(() => update(def));
 }
 
 function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) {

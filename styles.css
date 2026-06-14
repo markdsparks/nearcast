@@ -1347,8 +1347,15 @@ h2 {
   font-size: 0.95rem;
 }
 
+/* Wrapper reserves space at the top for the floating callout so it rides
+   ABOVE the chart — out of the path of your thumb while scrubbing. */
+.sheet-graph-wrap {
+  position: relative;
+  padding-top: 50px;
+  margin: 6px 0 16px;
+}
 .sheet-graph {
-  margin-top: 8px;
+  margin-top: 0;
 }
 .hourly-graph {
   width: 100%;
@@ -1367,16 +1374,46 @@ h2 {
   font-weight: 800;
 }
 
-.sheet-readout {
-  min-height: 1.2em;
-  margin: 6px 2px 16px;
-  font-size: 0.9rem;
-  color: var(--ink);
-  text-align: center;
+.graph-callout {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.22;
+  white-space: nowrap;
+  padding: 6px 11px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--bg);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
   font-variant-numeric: tabular-nums;
+  transition: left 0.06s linear;
+  z-index: 2;
 }
-.sheet-readout strong {
+.graph-callout::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: var(--pointer-x, 50%);
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--ink);
+}
+.graph-callout:empty {
+  display: none;
+}
+.callout-main {
   font-weight: 800;
+  font-size: 0.92rem;
+}
+.callout-sub {
+  font-size: 0.72rem;
+  opacity: 0.82;
 }
 
 .sheet-stats {
