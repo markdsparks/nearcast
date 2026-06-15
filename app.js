@@ -1,4 +1,4 @@
-const VERSION = "1.7.1";
+const VERSION = "1.8.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1343,9 +1343,8 @@ function lockGlyph() {
 }
 
 /* ---------- Ask the forecast (Q&A + activity chips) ---------- */
-// Chips carry a known intent so we can compute a correct verdict in code; the
-// model only phrases it. Tiny models can't reliably reason ("is it dry?" →
-// yes-bias errors), but they faithfully reword a verdict we hand them.
+// Chips and typed questions are answered by local deterministic forecast logic.
+// The tiny model stays focused on briefings; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
   { label: "Run", intent: "run", q: "Is right now a good time for a run?" },
   { label: "Bike", intent: "bike", q: "Is it good weather to bike right now?" },
@@ -1353,55 +1352,6 @@ const ACTIVITY_CHIPS = [
   { label: "Grill out", intent: "grill", q: "Is it good weather to grill outside?" },
   { label: "What to wear", intent: "wear", q: "What should I wear right now?" }
 ];
-
-// Deterministic verdict for a known activity, drawn straight from the data.
-// Returns a short correct assessment the model then rewrites naturally.
-function assessActivity(intent) {
-  const c = buildAIContext();
-  if (!c) return null;
-  const u = c.units;
-  const isF = state.unit === "fahrenheit";
-  const feels = c.now.feels;
-  const feelsF = isF ? feels : Math.round((feels * 9) / 5 + 32);
-  const dryNow = /^dry/i.test(c.nowcast.trim());
-  const todayRain = c.today.rainChance;
-  const gust = c.now.gust;
-  const gustMod = isF ? gust >= 20 : gust >= 32;
-  const gustHigh = isF ? gust >= 30 : gust >= 48;
-
-  if (intent === "wear") {
-    let outfit;
-    if (feelsF >= 85) outfit = "light, breathable clothes — shorts and a t-shirt";
-    else if (feelsF >= 70) outfit = "a t-shirt, with a light layer for later";
-    else if (feelsF >= 58) outfit = "a long sleeve or light jacket";
-    else if (feelsF >= 45) outfit = "a warm jacket";
-    else if (feelsF >= 30) outfit = "a heavy coat with a hat and gloves";
-    else outfit = "heavy winter layers — bundle up";
-    return `It feels like ${feels}${u.temp}, ${c.now.sky.toLowerCase()}. Good call: ${outfit}.` +
-      (dryNow ? "" : " Bring a rain layer.");
-  }
-
-  if (intent === "umbrella") {
-    if (!dryNow) return `It's already wet — ${c.nowcast.toLowerCase()}. Take an umbrella.`;
-    if (todayRain >= 40) return `Dry now, but a ${todayRain}% chance of rain later — an umbrella is a safe bet.`;
-    return `Skip it — dry now and rain is unlikely (${todayRain}% today).`;
-  }
-
-  // Outdoor activity: run / bike / walk / grill
-  const reasons = [];
-  let score = 2; // 2 good, 1 caveat, 0 poor
-  if (!dryNow) { score = 0; reasons.push(c.nowcast.toLowerCase()); }
-  else reasons.push("dry");
-  if (feelsF >= 92 || feelsF <= 25) { score = Math.min(score, 0); reasons.push(`feels ${feels}${u.temp}`); }
-  else if (feelsF >= 83 || feelsF <= 38) { score = Math.min(score, 1); reasons.push(`a bit ${feelsF >= 83 ? "warm" : "cold"} at ${feels}${u.temp}`); }
-  else reasons.push(`comfortable ${feels}${u.temp}`);
-  if (gustHigh) { score = Math.min(score, 1); reasons.push(`gusty to ${gust} ${u.wind}`); }
-  else if (gustMod && intent === "grill") { score = Math.min(score, 1); reasons.push(`breezy at ${gust} ${u.wind}`); }
-
-  const verdict = score >= 2 ? "Good conditions" : score === 1 ? "Doable, with a caveat" : "Not ideal";
-  const label = { run: "for a run", bike: "for a bike ride", walk: "for a walk", grill: "to grill outside" }[intent] || "";
-  return `${verdict} ${label}: ${reasons.join(", ")}.`;
-}
 
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
 // weekday names or relative phrases. Returns null when no day is referenced.
@@ -1424,78 +1374,6 @@ function resolveDayIndex(s, c) {
   }
   if (/\btonight\b|\bovernight\b|\btoday\b|\bright now\b|\bthis afternoon\b/.test(s)) return 0;
   return null;
-}
-
-// Deterministic answers for common free-text questions — now across the full
-// 10-day outlook, not just today/tomorrow. Returns a correct answer string, or
-// null when we can't answer it exactly (the unreliable model is never used).
-function answerFreeform(q) {
-  const c = buildAIContext();
-  if (!c) return null;
-  const u = c.units;
-  const s = ` ${q.toLowerCase()} `;
-  const has = (...words) => words.some((w) => s.includes(w));
-  const rainLk = (p) => (p < 15 ? "unlikely" : p < 50 ? "possible" : "likely");
-
-  // Activity / umbrella / clothing — "now" focused, reuse the verdict logic.
-  if (has("umbrella")) return assessActivity("umbrella");
-  if (has("what to wear", "should i wear", "what to put on", "a jacket", "a coat", "bundle")) return assessActivity("wear");
-  if (has(" run ", "running", "jog", "go for a run")) return assessActivity("run");
-  if (has("bike", "biking", "cycling", "cycle ")) return assessActivity("bike");
-  if (has("walk", "stroll")) return assessActivity("walk");
-  if (has("grill", "barbecue", "bbq", "cookout", "cook out")) return assessActivity("grill");
-
-  // Resolve a target day for day-specific questions ("…on Tuesday", "this weekend").
-  const dayIdx = resolveDayIndex(s, c);
-  const day = dayIdx != null ? c.daily[dayIdx] : null;
-  const dayWord = dayIdx == null || dayIdx === 0 ? "today" : dayIdx === 1 ? "tomorrow" : day.label;
-
-  // Sunrise / sunset (day-aware)
-  if (has("sunset", "sun set", "sundown", "sun go down", "get dark")) {
-    const d = day && day.sunset ? day : c.daily[0];
-    return `Sunset ${dayWord} is at ${d.sunset}.`;
-  }
-  if (has("sunrise", "sun rise", "sun up", "sun come up", "get light")) {
-    const d = day && day.sunrise ? day : c.daily[0];
-    if (d.sunrise) return `Sunrise ${dayWord} is at ${d.sunrise}.`;
-  }
-
-  // Rain / precipitation (day-aware)
-  if (has("rain", "wet", "precip", "shower", "storm", "drizzle", "snow", "pour")) {
-    if (day && dayIdx >= 1) {
-      return `${day.label}: rain ${rainLk(day.rainChance)} (${day.rainChance}% chance), ${day.sky.toLowerCase()}.`;
-    }
-    const dry = /^dry/i.test(c.nowcast.trim());
-    if (!dry) return `${c.nowcast.replace(/\.$/, "")}.`;
-    return `It's dry now — rain is ${rainLk(c.today.rainChance)} (${c.today.rainChance}% chance) the rest of today.`;
-  }
-
-  // Temperature (day-aware)
-  if (has("how hot", "how warm", "how cold", "temperature", "temp ", " high ", " low ", "degrees", "hot out", "cold out", "warm out")) {
-    if (day && dayIdx >= 1) return `${day.label}: high of ${day.hi}${u.temp}, low of ${day.lo}${u.temp}.`;
-    if (has("right now", " now ", "currently", "outside", "how hot", "how cold", "how warm"))
-      return `Right now it's ${c.now.temp}${u.temp} (feels like ${c.now.feels}${u.temp}), ${c.now.sky.toLowerCase()}.`;
-    return `Today: high of ${c.today.hi}${u.temp}, low of ${c.today.lo}${u.temp}.`;
-  }
-
-  // Wind / UV / humidity — current conditions.
-  if (has("wind", "windy", "gust", "breeze", "breezy")) {
-    const g = c.now.gust > c.now.wind + 2 ? ` gusting to ${c.now.gust} ${u.wind}` : "";
-    return `Wind is ${c.now.wind} ${u.wind}${g} from the ${c.now.windDir} right now.`;
-  }
-  if (has(" uv ", "sunburn", "sunscreen", "sun strong", "strong is the sun")) {
-    return `Today's UV index peaks at ${c.today.uvPeak}.`;
-  }
-  if (has("humid", "muggy", "sticky", "dry air")) {
-    return `Humidity is ${c.now.humidity}% right now.`;
-  }
-
-  // A specific day was named with no clear topic → give that day's outlook.
-  if (day && dayIdx >= 1 && has("weather", "forecast", "like", "conditions", "going to be", "look like")) {
-    return `${day.label}: ${day.sky.toLowerCase()}, high of ${day.hi}${u.temp}, low of ${day.lo}${u.temp}, rain ${rainLk(day.rainChance)} (${day.rainChance}%).`;
-  }
-
-  return null; // not answerable exactly → graceful capability message (no LLM)
 }
 
 // A short conversation thread of {q, a} for this place/session. The last entry
@@ -1535,9 +1413,392 @@ async function runAsk(question, intent) {
 }
 
 const AI_FALLBACK_MSG =
-  "I can answer about temperature, rain, wind, UV, humidity, and sunrise/sunset for " +
-  "today through the next 10 days, plus whether it's a good time for a run, walk, bike, " +
-  "or grill. Try asking one of those — like \"how warm on Saturday?\" or \"will it rain Tuesday?\"";
+  "I can answer weather decisions like \"picnic Saturday afternoon?\", \"better today or tomorrow?\", " +
+  "\"too windy for biking after 5?\", \"what should I wear tonight?\", plus rain, temperature, wind, UV, " +
+  "humidity, and sunrise/sunset through the next 10 days.";
+
+const ACTIVITY_RULES = {
+  run: { label: "a run", hot: 86, cold: 34, rain: 35, wind: 24, uv: 9, aliases: ["run", "running", "jog", "jogging"] },
+  bike: { label: "a bike ride", hot: 88, cold: 36, rain: 30, wind: 20, uv: 9, aliases: ["bike", "biking", "cycling", "cycle"] },
+  walk: { label: "a walk", hot: 90, cold: 28, rain: 45, wind: 28, uv: 10, aliases: ["walk", "walking", "stroll", "dog", "walk the dog"] },
+  grill: { label: "grilling outside", hot: 94, cold: 35, rain: 35, wind: 18, uv: 10, aliases: ["grill", "grilling", "barbecue", "bbq", "cookout", "cook out"] },
+  picnic: { label: "a picnic", hot: 90, cold: 45, rain: 25, wind: 20, uv: 8, aliases: ["picnic", "patio", "eat outside", "dinner outside", "lunch outside"] },
+  yard: { label: "yard work", hot: 86, cold: 35, rain: 35, wind: 28, uv: 8, aliases: ["yard", "mow", "mowing", "garden", "gardening", "rake", "yard work"] },
+  golf: { label: "golf", hot: 92, cold: 40, rain: 35, wind: 22, uv: 9, aliases: ["golf", "golfing"] },
+  hike: { label: "a hike", hot: 84, cold: 32, rain: 30, wind: 25, uv: 8, aliases: ["hike", "hiking", "trail"] },
+  sports: { label: "outdoor sports", hot: 88, cold: 35, rain: 35, wind: 25, uv: 9, aliases: ["soccer", "baseball", "football", "tennis", "sports", "game", "practice"] },
+  pool: { label: "the pool", hot: 95, cold: 75, rain: 25, wind: 22, uv: 9, aliases: ["pool", "swim", "swimming", "beach"] },
+  commute: { label: "the commute", hot: 100, cold: 15, rain: 55, wind: 35, uv: 99, aliases: ["commute", "drive", "driving", "school pickup", "errands", "travel"] }
+};
+
+const ASK_PERIODS = {
+  morning: { start: 6, end: 12, label: "morning" },
+  afternoon: { start: 12, end: 18, label: "afternoon" },
+  evening: { start: 18, end: 22, label: "evening" },
+  night: { start: 20, end: 24, label: "tonight" },
+  overnight: { start: 0, end: 7, label: "overnight" },
+  day: { start: 8, end: 20, label: "daytime" }
+};
+
+function askText(q) {
+  return ` ${String(q || "").toLowerCase().replace(/[^\w\s:]/g, " ").replace(/\s+/g, " ")} `;
+}
+
+function hasAny(s, words) {
+  return words.some((w) => s.includes(w));
+}
+
+function hourText(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${h < 12 ? "am" : "pm"}`;
+}
+
+function parseAskHour(value, ampm) {
+  let hour = Number(value);
+  if (!Number.isFinite(hour)) return null;
+  if (ampm) {
+    const meridiem = ampm.toLowerCase();
+    if (meridiem === "pm" && hour < 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+  }
+  return Math.min(Math.max(hour, 0), 24);
+}
+
+function askDayLabel(c, dayIdx) {
+  if (dayIdx === 0) return "today";
+  if (dayIdx === 1) return "tomorrow";
+  return c.daily[dayIdx]?.label || "that day";
+}
+
+function askWindowLabel(c, w) {
+  if (w.label === "right now" || w.label === "rest of today") return w.label;
+  const day = askDayLabel(c, w.dayIdx);
+  if (w.period && w.dayIdx === 0 && w.period === "night") return "tonight";
+  if (w.period) return `${day} ${ASK_PERIODS[w.period]?.label || w.period}`;
+  return `${day} from ${hourText(w.startHour)} to ${hourText(w.endHour)}`;
+}
+
+function currentAskWindow() {
+  const now = new Date();
+  return {
+    dayIdx: 0,
+    startHour: now.getHours(),
+    endHour: Math.min(now.getHours() + 3, 24),
+    label: "right now"
+  };
+}
+
+function resolveAskWindow(q, c) {
+  const s = askText(q);
+  let dayIdx = resolveDayIndex(s, c);
+  if (dayIdx == null) dayIdx = 0;
+
+  const between = s.match(/\b(?:from|between)\s+(\d{1,2})(?::\d{2})?\s*(am|pm)?\s+(?:and|to|-)\s+(\d{1,2})(?::\d{2})?\s*(am|pm)?\b/);
+  if (between) {
+    let start = parseAskHour(between[1], between[2] || between[4]);
+    let end = parseAskHour(between[3], between[4] || between[2]);
+    if (start != null && end != null && end <= start) end += 12;
+    return { dayIdx, startHour: start, endHour: Math.min(end, 24), label: "custom" };
+  }
+
+  const after = s.match(/\bafter\s+(\d{1,2})(?::\d{2})?\s*(am|pm)?\b/);
+  if (after) {
+    const start = parseAskHour(after[1], after[2] || "pm");
+    return { dayIdx, startHour: start, endHour: Math.min(start + 5, 24), label: "custom" };
+  }
+
+  const before = s.match(/\bbefore\s+(\d{1,2})(?::\d{2})?\s*(am|pm)?\b/);
+  if (before) {
+    const end = parseAskHour(before[1], before[2] || "pm");
+    return { dayIdx, startHour: Math.max(end - 5, 0), endHour: end, label: "custom" };
+  }
+
+  let period = null;
+  if (/\bovernight\b/.test(s)) period = "overnight";
+  else if (/\btonight\b|\bnight\b/.test(s)) period = "night";
+  else if (/\bmorning\b|\bbefore noon\b/.test(s)) period = "morning";
+  else if (/\bafternoon\b|\bmidday\b/.test(s)) period = "afternoon";
+  else if (/\bevening\b|\bafter work\b/.test(s)) period = "evening";
+  else if (/\ball day\b|\bdaytime\b/.test(s)) period = "day";
+
+  if (/\bright now\b|\bnow\b|\bcurrently\b/.test(s)) return currentAskWindow();
+  if (/\blater\b|\brest of today\b/.test(s)) {
+    const now = new Date();
+    return { dayIdx: 0, startHour: now.getHours(), endHour: 24, label: "rest of today" };
+  }
+  if (period) return { dayIdx, startHour: ASK_PERIODS[period].start, endHour: ASK_PERIODS[period].end, period };
+  return { dayIdx, startHour: dayIdx === 0 ? new Date().getHours() : 8, endHour: 20, period: "day" };
+}
+
+function askWindowHours(w) {
+  const data = state.forecast;
+  if (!data || !w) return [];
+  const day = data.daily.time[w.dayIdx];
+  if (!day) return [];
+  const now = Date.now();
+  const startHour = w.startHour ?? 0;
+  const endHour = w.endHour ?? 24;
+  return data.hourly.time
+    .map((time, index) => ({ time, index, date: new Date(time) }))
+    .filter(({ time, date }) => {
+      if (!time.startsWith(day)) return false;
+      const hour = date.getHours() + date.getMinutes() / 60;
+      if (w.dayIdx === 0 && date.getTime() < now - 60 * 60 * 1000) return false;
+      return hour >= startHour && hour < endHour;
+    });
+}
+
+function avg(values) {
+  return values.reduce((sum, item) => sum + Number(item || 0), 0) / Math.max(values.length, 1);
+}
+
+function mostCommon(values) {
+  const counts = {};
+  values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
+  return values.slice().sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0];
+}
+
+function askWindowStats(w) {
+  const data = state.forecast;
+  const c = buildAIContext();
+  if (!data || !c) return null;
+  const hours = askWindowHours(w);
+  const day = c.daily[w.dayIdx] || c.daily[0];
+  const idxs = hours.map(({ index }) => index);
+  const values = (key, fallback) => idxs.length ? idxs.map((i) => data.hourly[key][i] ?? fallback) : [fallback];
+  const temps = idxs.length ? idxs.map((i) => data.hourly.temperature_2m[i]) : [day.hi, day.lo];
+  const feels = idxs.length ? idxs.map((i) => data.hourly.apparent_temperature[i]) : temps;
+  const pop = idxs.length ? values("precipitation_probability", 0) : [day.rainChance];
+  const precip = idxs.length ? values("precipitation", 0) : [0];
+  const wind = idxs.length ? values("wind_speed_10m", c.now.wind) : [c.now.wind];
+  const gust = idxs.length ? values("wind_gusts_10m", c.now.gust) : [c.now.gust];
+  const uv = idxs.length ? values("uv_index", 0) : [w.dayIdx === 0 ? c.today.uvPeak : 0];
+  const codes = idxs.length ? idxs.map((i) => data.hourly.weather_code[i]) : [data.daily.weather_code[w.dayIdx] || data.current.weather_code];
+
+  return {
+    window: w,
+    label: askWindowLabel(c, w),
+    day,
+    tempAvg: Math.round(avg(temps)),
+    tempMin: Math.round(Math.min(...temps)),
+    tempMax: Math.round(Math.max(...temps)),
+    feelsAvg: Math.round(avg(feels)),
+    rainChance: Math.round(Math.max(...pop)),
+    precipTotal: precip.reduce((sum, item) => sum + Number(item || 0), 0),
+    windMax: Math.round(Math.max(...wind)),
+    gustMax: Math.round(Math.max(...gust)),
+    uvMax: Math.round(Math.max(...uv)),
+    sky: weatherCodes[mostCommon(codes)] || day.sky || "Weather"
+  };
+}
+
+function tempAsF(value) {
+  return state.unit === "celsius" ? Math.round((value * 9) / 5 + 32) : value;
+}
+
+function askRainWord(p) {
+  if (p < 15) return "unlikely";
+  if (p < 35) return "a slight chance";
+  if (p < 60) return "possible";
+  return "likely";
+}
+
+function activityComfort(feelsF, rule) {
+  if (feelsF >= rule.hot + 8) return "too hot";
+  if (feelsF >= rule.hot) return "hot";
+  if (feelsF <= rule.cold - 8) return "too cold";
+  if (feelsF <= rule.cold) return "cold";
+  return "comfortable";
+}
+
+function activityAnswer(rule, stats, units) {
+  const feelsF = tempAsF(stats.feelsAvg);
+  const reasons = [];
+  let score = 3;
+
+  if (stats.rainChance >= rule.rain + 25) {
+    score = Math.min(score, 0);
+    reasons.push(`${stats.rainChance}% rain chance`);
+  } else if (stats.rainChance >= rule.rain) {
+    score = Math.min(score, 1);
+    reasons.push(`${stats.rainChance}% rain chance`);
+  } else {
+    reasons.push(`${askRainWord(stats.rainChance)} rain (${stats.rainChance}%)`);
+  }
+
+  const comfort = activityComfort(feelsF, rule);
+  if (comfort === "too hot" || comfort === "too cold") {
+    score = Math.min(score, 0);
+    reasons.push(`${comfort} at ${stats.feelsAvg}${units.temp}`);
+  } else if (comfort === "hot" || comfort === "cold") {
+    score = Math.min(score, 1);
+    reasons.push(`${comfort} at ${stats.feelsAvg}${units.temp}`);
+  } else {
+    reasons.push(`${stats.feelsAvg}${units.temp} and comfortable`);
+  }
+
+  if (stats.gustMax >= rule.wind + 12) {
+    score = Math.min(score, 1);
+    reasons.push(`gusts near ${stats.gustMax} ${units.wind}`);
+  } else if (stats.windMax >= rule.wind) {
+    score = Math.min(score, 2);
+    reasons.push(`wind near ${stats.windMax} ${units.wind}`);
+  }
+
+  if (rule.uv < 99 && stats.uvMax >= rule.uv) {
+    score = Math.min(score, 2);
+    reasons.push(`UV peaks at ${stats.uvMax}`);
+  }
+
+  const verdict = score >= 3 ? "Good conditions" : score === 2 ? "Pretty good" : score === 1 ? "Doable, with caveats" : "Not ideal";
+  return `${verdict} for ${rule.label} ${stats.label}: ${reasons.join(", ")}.`;
+}
+
+function detectAskActivity(q) {
+  const s = askText(q);
+  for (const [key, rule] of Object.entries(ACTIVITY_RULES)) {
+    if (rule.aliases.some((alias) => s.includes(` ${alias} `) || s.includes(alias))) return key;
+  }
+  return null;
+}
+
+function assessActivity(intent) {
+  const c = buildAIContext();
+  if (!c) return null;
+  const stats = askWindowStats(currentAskWindow());
+  const rule = ACTIVITY_RULES[intent] || ACTIVITY_RULES.walk;
+  return stats ? activityAnswer(rule, stats, c.units) : null;
+}
+
+function outfitAnswer(stats, units) {
+  const feelsF = tempAsF(stats.feelsAvg);
+  let outfit;
+  if (feelsF >= 88) outfit = "light, breathable clothes";
+  else if (feelsF >= 72) outfit = "short sleeves";
+  else if (feelsF >= 60) outfit = "a light layer";
+  else if (feelsF >= 45) outfit = "a jacket";
+  else if (feelsF >= 30) outfit = "a warm coat";
+  else outfit = "heavy winter layers";
+  const extras = [];
+  if (stats.rainChance >= 35) extras.push("rain gear");
+  if (stats.windMax >= 20) extras.push("something wind-resistant");
+  if (stats.uvMax >= 7) extras.push("sunscreen");
+  return `${capitalize(stats.label)}: feels around ${stats.feelsAvg}${units.temp}, ${stats.sky.toLowerCase()}. Wear ${outfit}${extras.length ? `, plus ${extras.join(" and ")}` : ""}.`;
+}
+
+function umbrellaAnswer(stats) {
+  if (stats.rainChance >= 60) return `Yes — rain is likely ${stats.label} (${stats.rainChance}% chance). Take an umbrella.`;
+  if (stats.rainChance >= 35) return `Maybe — there is a ${stats.rainChance}% rain chance ${stats.label}. An umbrella is worth carrying.`;
+  return `Probably not — rain is ${askRainWord(stats.rainChance)} ${stats.label} (${stats.rainChance}% chance).`;
+}
+
+function generalForecastAnswer(stats, units) {
+  return `${capitalize(stats.label)}: ${stats.sky.toLowerCase()}, ${stats.tempMin}${units.temp} to ${stats.tempMax}${units.temp}, rain ${askRainWord(stats.rainChance)} (${stats.rainChance}%), wind up to ${stats.windMax} ${units.wind}.`;
+}
+
+function metricAskAnswer(q, stats, c) {
+  const s = askText(q);
+  const u = c.units;
+  if (hasAny(s, ["sunset", "sun set", "sundown", "sun go down", "get dark"])) {
+    return stats.day.sunset ? `Sunset ${askDayLabel(c, stats.window.dayIdx)} is at ${stats.day.sunset}.` : "I do not have sunset for that day.";
+  }
+  if (hasAny(s, ["sunrise", "sun rise", "sun up", "sun come up", "get light"])) {
+    return stats.day.sunrise ? `Sunrise ${askDayLabel(c, stats.window.dayIdx)} is at ${stats.day.sunrise}.` : "I do not have sunrise for that day.";
+  }
+  if (hasAny(s, ["rain", "wet", "precip", "shower", "storm", "drizzle", "snow", "pour"])) {
+    return `Rain is ${askRainWord(stats.rainChance)} ${stats.label}: ${stats.rainChance}% chance${stats.precipTotal ? `, about ${formatAmount(stats.precipTotal)} ${u.precip}` : ""}.`;
+  }
+  if (hasAny(s, ["hot", "warm", "cold", "temperature", "temp ", " high ", " low ", "degrees"])) {
+    return `${capitalize(stats.label)} runs from ${stats.tempMin}${u.temp} to ${stats.tempMax}${u.temp}, feeling around ${stats.feelsAvg}${u.temp}.`;
+  }
+  if (hasAny(s, ["wind", "windy", "gust", "breeze", "breezy"])) {
+    const gust = stats.gustMax > stats.windMax + 2 ? ` with gusts near ${stats.gustMax} ${u.wind}` : "";
+    return `Wind ${stats.label} should peak near ${stats.windMax} ${u.wind}${gust}.`;
+  }
+  if (hasAny(s, [" uv ", "sunburn", "sunscreen", "sun strong", "strong is the sun"])) {
+    return `UV ${stats.label} peaks at ${stats.uvMax}.`;
+  }
+  if (hasAny(s, ["humid", "muggy", "sticky", "dry air"])) {
+    return `Humidity is ${c.now.humidity}% right now. I only have detailed humidity for current conditions.`;
+  }
+  return null;
+}
+
+function comparisonDayIndexes(q, c) {
+  const s = askText(q);
+  const days = [];
+  const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  if (s.includes("today")) days.push(0);
+  if (s.includes("tomorrow")) days.push(1);
+  names.forEach((name, wd) => {
+    if (!s.includes(name)) return;
+    for (let i = 0; i < c.daily.length; i++) {
+      if (c.daily[i].dow === wd && !days.includes(i)) {
+        days.push(i);
+        break;
+      }
+    }
+  });
+  if (s.includes("weekend")) {
+    for (let i = 0; i < c.daily.length; i++) {
+      if ((c.daily[i].dow === 6 || c.daily[i].dow === 0) && !days.includes(i)) days.push(i);
+      if (days.length >= 2) break;
+    }
+  }
+  if (days.length < 2 && s.includes("better")) {
+    if (!days.includes(0)) days.push(0);
+    if (!days.includes(1)) days.push(1);
+  }
+  return days.slice(0, 2);
+}
+
+function dayComfortScore(day) {
+  const meanF = (tempAsF(day.hi) + tempAsF(day.lo)) / 2;
+  return 100 - day.rainChance - Math.abs(meanF - 72) / 4;
+}
+
+function compareAskDays(q, c) {
+  const days = comparisonDayIndexes(q, c);
+  if (days.length < 2) return null;
+  const a = c.daily[days[0]];
+  const b = c.daily[days[1]];
+  if (!a || !b) return null;
+  const better = dayComfortScore(a) >= dayComfortScore(b) ? a : b;
+  const other = better === a ? b : a;
+  const reason = better.rainChance === other.rainChance
+    ? `temps look more comfortable (${better.lo}${c.units.temp}-${better.hi}${c.units.temp})`
+    : `lower rain chance (${better.rainChance}% vs ${other.rainChance}%)`;
+  return `${better.label} looks better: ${reason}. ${a.label}: ${a.sky.toLowerCase()}, ${a.lo}${c.units.temp}-${a.hi}${c.units.temp}, ${a.rainChance}% rain. ${b.label}: ${b.sky.toLowerCase()}, ${b.lo}${c.units.temp}-${b.hi}${c.units.temp}, ${b.rainChance}% rain.`;
+}
+
+function answerFreeform(q) {
+  const c = buildAIContext();
+  if (!c) return null;
+  const s = askText(q);
+  const stats = askWindowStats(resolveAskWindow(q, c));
+  if (!stats) return null;
+
+  const comparison = compareAskDays(q, c);
+  if (comparison && hasAny(s, ["better", "which", "compare", " or "])) return comparison;
+
+  if (hasAny(s, ["umbrella"])) return umbrellaAnswer(stats);
+  if (hasAny(s, ["what to wear", "should i wear", "what to put on", "a jacket", "a coat", "bundle"])) {
+    return outfitAnswer(stats, c.units);
+  }
+
+  const activity = detectAskActivity(q);
+  if (activity) return activityAnswer(ACTIVITY_RULES[activity], stats, c.units);
+
+  const metric = metricAskAnswer(q, stats, c);
+  if (metric) return metric;
+
+  if (hasAny(s, ["weather", "forecast", "conditions", "look like", "going to be", "outside"])) {
+    return generalForecastAnswer(stats, c.units);
+  }
+
+  return null;
+}
 
 function resetAsk() {
   if (askAbort) askAbort.aborted = true;
