@@ -1,4 +1,4 @@
-const VERSION = "1.9.0";
+const VERSION = "1.10.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -329,6 +329,7 @@ function bindEvents() {
     if (action === "enable") enableAI();
     else if (action === "brief") runBrief();
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
+    else if (action === "copy-report") copySupportReport();
   });
   els.aiAsk.addEventListener("click", (event) => {
     const chip = event.target.closest("[data-ask-q]");
@@ -1168,9 +1169,22 @@ function buildAIFactSheet() {
   return lines.join("\n");
 }
 
-/* ---------- On-device AI briefing (Tier 1, opt-in) ---------- */
+/* ---------- Planner: local AI summary (Tier 1, opt-in) ---------- */
+const LOCAL_AI_MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+const LOCAL_AI_MODEL_MB = 350;
+const LOCAL_AI_MIN_FREE_BYTES = 450 * 1024 * 1024;
+
 // phase: unknown | unsupported | idle | loading | ready | generating | error
-const aiState = { phase: "unknown", progress: 0, status: "", text: "", error: "" };
+const aiState = {
+  phase: "unknown",
+  progress: 0,
+  status: "",
+  text: "",
+  error: "",
+  support: null,
+  loadError: "",
+  reportCopied: false
+};
 let aiBriefAbort = null;
 let aiModule = null;
 
@@ -1179,24 +1193,217 @@ function loadAIModule() {
   return aiModule;
 }
 
-// One-time capability probe. WebGPU + a real adapter is required (iOS 18+ / modern
-// desktop). Auto-warms the engine for users who already opted in on a past visit.
-async function detectAI() {
-  if (!("gpu" in navigator)) {
-    aiState.phase = "unsupported";
-    renderBriefing();
-    renderAsk();
-    renderAILauncher();
-    return;
-  }
+function detectBrowserName(ua) {
+  if (/Edg\//.test(ua)) return "Edge";
+  if (/CriOS\//.test(ua)) return "Chrome iOS";
+  if (/Chrome\//.test(ua) || /Chromium\//.test(ua)) return "Chrome";
+  if (/Firefox\//.test(ua) || /FxiOS\//.test(ua)) return "Firefox";
+  if (/Safari\//.test(ua)) return "Safari";
+  return "Unknown";
+}
+
+function plannerHostInfo() {
+  const ua = navigator.userAgent || "";
+  const brands = navigator.userAgentData?.brands?.map((b) => `${b.brand} ${b.version}`).join(", ") || "";
+  return {
+    browser: detectBrowserName(ua),
+    platform: navigator.userAgentData?.platform || navigator.platform || "unknown",
+    mobile: navigator.userAgentData?.mobile ?? /Mobi|Android/i.test(ua),
+    brands,
+    userAgent: ua
+  };
+}
+
+function supportsModuleWorker() {
+  if (!window.Worker || !window.Blob || !window.URL?.createObjectURL) return false;
+  let url = "";
   try {
-    const adapter = await navigator.gpu.requestAdapter();
-    aiState.phase = adapter ? "idle" : "unsupported";
+    url = URL.createObjectURL(new Blob(["export {};"], { type: "text/javascript" }));
+    const worker = new Worker(url, { type: "module" });
+    worker.terminate();
+    return true;
   } catch (_) {
-    aiState.phase = "unsupported";
+    return false;
+  } finally {
+    if (url) URL.revokeObjectURL(url);
   }
+}
+
+function bytesToMB(bytes) {
+  if (!Number.isFinite(bytes)) return null;
+  return Math.round(bytes / 1024 / 1024);
+}
+
+function cleanError(err) {
+  const text = err?.message || String(err || "");
+  return text.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+function adapterSnapshot(adapter) {
+  const limits = adapter?.limits || {};
+  return {
+    features: adapter?.features ? Array.from(adapter.features).slice(0, 25) : [],
+    limits: {
+      maxBufferSize: limits.maxBufferSize,
+      maxStorageBufferBindingSize: limits.maxStorageBufferBindingSize,
+      maxComputeWorkgroupStorageSize: limits.maxComputeWorkgroupStorageSize
+    }
+  };
+}
+
+async function probeLocalAI() {
+  const report = {
+    appVersion: VERSION,
+    model: LOCAL_AI_MODEL,
+    modelDownloadMB: LOCAL_AI_MODEL_MB,
+    checkedAt: new Date().toISOString(),
+    host: plannerHostInfo(),
+    origin: location.origin,
+    secureContext: window.isSecureContext === true,
+    webgpu: "gpu" in navigator,
+    adapter: false,
+    device: false,
+    moduleWorker: supportsModuleWorker(),
+    cacheApi: "caches" in window,
+    storage: null,
+    adapterDetails: null,
+    result: "unknown",
+    reason: "",
+    warnings: []
+  };
+
+  const fail = (code, reason, err) => {
+    report.result = code;
+    report.reason = reason;
+    if (err) report.error = cleanError(err);
+    return { ok: false, report };
+  };
+
+  if (!report.secureContext) {
+    return fail("needs-secure-context", "Private AI summary needs HTTPS or localhost.");
+  }
+  if (!report.webgpu) {
+    return fail("no-webgpu", "This browser does not expose WebGPU.");
+  }
+  if (!report.moduleWorker) {
+    return fail("no-module-worker", "This browser cannot run the module worker used by the local model.");
+  }
+  if (!report.cacheApi) {
+    report.warnings.push("Cache API is unavailable; the model may need to download again.");
+  }
+
+  if (navigator.storage?.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate();
+      const quota = estimate.quota || 0;
+      const usage = estimate.usage || 0;
+      const free = quota ? Math.max(0, quota - usage) : null;
+      report.storage = {
+        quotaMB: bytesToMB(quota),
+        usageMB: bytesToMB(usage),
+        freeMB: bytesToMB(free)
+      };
+      if (free != null && free < LOCAL_AI_MIN_FREE_BYTES) {
+        report.warnings.push(`Browser storage may be tight (${bytesToMB(free)} MB free).`);
+      }
+    } catch (err) {
+      report.warnings.push(`Storage estimate failed: ${cleanError(err)}`);
+    }
+  } else {
+    report.warnings.push("Storage estimate API is unavailable.");
+  }
+
+  let adapter = null;
+  try {
+    adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    if (!adapter) adapter = await navigator.gpu.requestAdapter();
+  } catch (err) {
+    return fail("adapter-error", "WebGPU adapter request failed.", err);
+  }
+  if (!adapter) {
+    return fail("no-adapter", "WebGPU is present, but no compatible GPU adapter was available.");
+  }
+  report.adapter = true;
+  report.adapterDetails = adapterSnapshot(adapter);
+
+  try {
+    const device = await adapter.requestDevice();
+    report.device = true;
+    if (device.destroy) device.destroy();
+  } catch (err) {
+    return fail("device-error", "WebGPU is present, but the browser could not create a GPU device.", err);
+  }
+
+  report.result = "ready";
+  report.reason = report.warnings.length
+    ? "Local AI summary appears supported, with compatibility warnings."
+    : "Local AI summary appears supported.";
+  return { ok: true, report };
+}
+
+function localAIReady() {
+  return aiState.support?.result === "ready";
+}
+
+function supportReason() {
+  return aiState.support?.reason || "Private AI summary is not available on this device.";
+}
+
+function supportReportText() {
+  return JSON.stringify({
+    app: "Nearcast",
+    appVersion: VERSION,
+    plannerPhase: aiState.phase,
+    model: LOCAL_AI_MODEL,
+    support: aiState.support,
+    loadError: aiState.loadError || null
+  }, null, 2);
+}
+
+async function copySupportReport() {
+  aiState.reportCopied = false;
+  try {
+    await navigator.clipboard.writeText(supportReportText());
+    aiState.reportCopied = true;
+  } catch (err) {
+    aiState.loadError = `Copy failed: ${cleanError(err)}`;
+  }
+  renderBriefing();
+}
+
+function classifyAIError(err) {
+  const msg = cleanError(err);
+  const lower = msg.toLowerCase();
+  aiState.loadError = msg;
+  if (/quota|storage|cache|indexeddb|opfs/.test(lower)) {
+    return "The local model could not be stored. Free up browser storage or try another browser profile.";
+  }
+  if (/fetch|network|import|cdn|load failed|failed to fetch/.test(lower)) {
+    return "The local model or runtime could not download. Check connection, content blockers, then retry.";
+  }
+  if (/gpu|adapter|device|memory|out of memory|webgpu/.test(lower)) {
+    return "This browser found WebGPU, but the device could not start the local model.";
+  }
+  return "Couldn't start the private AI summary on this device.";
+}
+
+function renderSupportActions(includeRetry = false) {
+  const copied = aiState.reportCopied ? `<span class="briefing-copy-ok">Copied</span>` : "";
+  return `<div class="briefing-actions">` +
+    (includeRetry ? `<button class="briefing-link" data-ai="enable" type="button">Retry summary</button>` : "") +
+    `<button class="briefing-link" data-ai="copy-report" type="button">Copy support report</button>` +
+    copied +
+  `</div>`;
+}
+
+// One-time capability probe. Planner works everywhere; the private summary gets
+// enabled only when the current browser, host, GPU, worker, and storage path look viable.
+async function detectAI() {
+  const support = await probeLocalAI();
+  aiState.support = support.report;
+  aiState.phase = support.ok ? "idle" : "unsupported";
   if (aiState.phase === "idle" && localStorage.getItem("ai-enabled") === "1") {
-    // Previously enabled: optimistically show "Brief me" and warm in the background.
+    // Previously enabled: optimistically show "Generate summary" and warm in the background.
     aiState.phase = "ready";
     aiState.text = "";
     warmAI();
@@ -1217,15 +1424,29 @@ function warmAI() {
 
 async function enableAI() {
   try {
+    if (!localAIReady()) {
+      const support = await probeLocalAI();
+      aiState.support = support.report;
+      if (!support.ok) {
+        aiState.phase = "unsupported";
+        renderBriefing();
+        renderAsk();
+        renderAILauncher();
+        return;
+      }
+    }
     aiState.phase = "loading";
     aiState.progress = 0;
-    aiState.status = "Starting…";
+    aiState.status = "Starting local AI summary…";
+    aiState.error = "";
+    aiState.loadError = "";
+    aiState.reportCopied = false;
     renderBriefing();
     const ai = await loadAIModule();
     await ai.load((p) => {
       aiState.phase = "loading";
       aiState.progress = Math.round((p.progress || 0) * 100);
-      aiState.status = p.text || "Preparing AI…";
+      aiState.status = p.text || "Preparing local AI summary…";
       renderBriefing();
     });
     localStorage.setItem("ai-enabled", "1");
@@ -1235,9 +1456,9 @@ async function enableAI() {
     renderAsk();
     renderAILauncher();
     runBrief(); // first briefing immediately after enabling
-  } catch (_) {
+  } catch (err) {
     aiState.phase = "error";
-    aiState.error = "Couldn't start AI on this device.";
+    aiState.error = classifyAIError(err);
     renderBriefing();
     renderAsk();
     renderAILauncher();
@@ -1263,18 +1484,21 @@ async function runBrief() {
     aiState.phase = "ready"; // text retained → shows regenerate control
     renderBriefing();
     renderAsk(); // re-enable Q&A
-  } catch (_) {
+  } catch (err) {
     aiState.phase = "error";
-    aiState.error = "Briefing failed — try again.";
+    aiState.error = classifyAIError(err) || "Private AI summary failed. Planner tools still work.";
     renderBriefing();
+    renderAsk();
+    renderAILauncher();
   }
 }
 
 // Clear per-city briefing text + Q&A when the forecast changes; keep engine state.
 function resetBriefing() {
   if (aiBriefAbort) aiBriefAbort.aborted = true;
-  if (aiState.phase === "generating" || aiState.phase === "error") aiState.phase = "ready";
+  if (aiState.phase === "generating") aiState.phase = localAIReady() ? "ready" : "unsupported";
   if (aiState.phase === "ready") aiState.text = "";
+  aiState.reportCopied = false;
   renderBriefing();
   resetAsk();
   renderAILauncher();
@@ -1284,7 +1508,7 @@ function renderBriefing() {
   const slot = els.briefing;
   if (!slot) return;
   if (!state.forecast || !state.activePlace ||
-      aiState.phase === "unknown" || aiState.phase === "unsupported") {
+      aiState.phase === "unknown") {
     slot.hidden = true;
     return;
   }
@@ -1292,15 +1516,31 @@ function renderBriefing() {
 
   // Privacy is the headline feature: the model runs entirely on-device.
   const privateTag =
-    `<span class="briefing-tag">${lockGlyph()}Runs on your device — nothing leaves your phone</span>`;
+    `<span class="briefing-tag">${lockGlyph()}Private AI summary · runs on your device</span>`;
+
+  if (aiState.phase === "unsupported") {
+    slot.className = "briefing briefing-compat";
+    slot.innerHTML =
+      `<div class="briefing-row">` +
+        `<span class="briefing-spark">${lockGlyph()}</span>` +
+        `<div class="briefing-copy">` +
+          `<strong>Private AI summary unavailable here</strong>` +
+          `<p>${escapeHtml(supportReason())}</p>` +
+          `<small>Planner windows and planning answers still work on this device.</small>` +
+        `</div>` +
+      `</div>` +
+      renderSupportActions(false);
+    return;
+  }
 
   if (aiState.phase === "idle") {
     slot.className = "briefing briefing-cta";
+    const warning = aiState.support?.warnings?.[0];
     slot.innerHTML =
       `<button class="briefing-enable" data-ai="enable" type="button">` +
         `<span class="briefing-spark">${lockGlyph()}</span>` +
-        `<span class="briefing-enable-copy"><strong>Enable private AI briefing</strong>` +
-        `<small>Runs 100% on your device · ~350&nbsp;MB, one time</small></span></button>`;
+        `<span class="briefing-enable-copy"><strong>Enable private AI summary</strong>` +
+        `<small>${escapeHtml(warning || `Runs locally with WebGPU · ~${LOCAL_AI_MODEL_MB} MB, one time`)}</small></span></button>`;
     return;
   }
 
@@ -1308,10 +1548,10 @@ function renderBriefing() {
     slot.className = "briefing briefing-loading";
     slot.innerHTML =
       `<div class="briefing-progress-head"><span class="briefing-spark spin">✦</span>` +
-      `<span>${escapeHtml(aiState.status || "Preparing AI…")}</span>` +
+      `<span>${escapeHtml(aiState.status || "Preparing local AI summary…")}</span>` +
       `<em>${aiState.progress}%</em></div>` +
       `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>` +
-      `<span class="briefing-tag">${lockGlyph()}One-time download — then runs fully offline &amp; private</span>`;
+      `<span class="briefing-tag">${lockGlyph()}One-time model download, then private on this device</span>`;
     return;
   }
 
@@ -1326,10 +1566,17 @@ function renderBriefing() {
   }
 
   if (aiState.phase === "error") {
-    slot.className = "briefing briefing-err";
+    slot.className = "briefing briefing-compat";
     slot.innerHTML =
-      `<span>${escapeHtml(aiState.error || "AI unavailable")}</span>` +
-      `<button class="briefing-act" data-ai="brief" type="button">Retry</button>`;
+      `<div class="briefing-row">` +
+        `<span class="briefing-spark">!</span>` +
+        `<div class="briefing-copy">` +
+          `<strong>Private AI summary needs attention</strong>` +
+          `<p>${escapeHtml(aiState.error || "Private AI summary unavailable.")}</p>` +
+          `<small>Planner windows and planning answers are still available.</small>` +
+        `</div>` +
+      `</div>` +
+      renderSupportActions(true);
     return;
   }
 
@@ -1346,8 +1593,8 @@ function renderBriefing() {
     slot.innerHTML =
       `<button class="briefing-enable" data-ai="brief" type="button">` +
       `<span class="briefing-spark">✦</span>` +
-      `<span class="briefing-enable-copy"><strong>Brief me</strong>` +
-      `<small>Private · on-device AI</small></span></button>`;
+      `<span class="briefing-enable-copy"><strong>Generate private AI summary</strong>` +
+      `<small>Runs locally on this device</small></span></button>`;
   }
 }
 
@@ -1359,7 +1606,7 @@ function lockGlyph() {
 
 /* ---------- Ask the forecast (Q&A + activity chips) ---------- */
 // Chips and typed questions are answered by local deterministic forecast logic.
-// The tiny model stays focused on briefings; it never owns weather verdicts.
+// The tiny model stays focused on summaries; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
   { label: "Best walk", q: "What is the best time for a walk today?" },
   { label: "Dry window", q: "What is the best dry window today?" },
@@ -2000,7 +2247,7 @@ function renderAsk() {
     `</form>`;
 }
 
-/* ---------- AI launcher + sheet (gives the assistant its own space) ---------- */
+/* ---------- Planner launcher + sheet ---------- */
 function renderAILauncher() {
   const btn = els.aiLauncher;
   if (!btn) return;
@@ -2009,9 +2256,10 @@ function renderAILauncher() {
   btn.hidden = !show;
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
-      aiState.phase === "idle" ? "Tap to enable · private, on-device"
-      : aiState.phase === "unsupported" || aiState.phase === "error" ? "Best windows & plans"
-      : "Briefing, best windows & plans · private";
+      aiState.phase === "idle" ? "Plans + optional private summary"
+      : aiState.phase === "unsupported" ? "Best windows & plans"
+      : aiState.phase === "error" ? "Planner works · summary needs attention"
+      : "Best windows, plans & private summary";
   }
 }
 

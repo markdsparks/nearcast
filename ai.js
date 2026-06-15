@@ -1,6 +1,6 @@
-// On-device LLM layer for Nearcast. Dynamically imported only when the user
-// opts in, so the base PWA stays tiny. Runs Qwen2.5-0.5B in a WebGPU worker,
-// grounded entirely on the weather context the app hands it.
+// On-device summary layer for Nearcast Planner. Dynamically imported only when
+// the user opts in, so the base PWA stays tiny. Runs Qwen2.5-0.5B in a WebGPU
+// worker, grounded entirely on the weather context the app hands it.
 import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
 
 const MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
@@ -29,7 +29,7 @@ export function load(onProgress) {
 
 const BRIEF_SYSTEM =
   "You are Nearcast's friendly weather assistant. You are given FACTS about the user's " +
-  "local weather. Write a warm, natural briefing of exactly two sentences: the first says " +
+  "local weather. Write a warm, natural summary of exactly two sentences: the first says " +
   "what to expect, the second gives one practical tip. Use ONLY the facts and never invent " +
   "numbers. Speak like a helpful local — don't mechanically recite every number. No greetings, " +
   "no lists, no markdown. Keep it under 45 words.";
@@ -43,11 +43,11 @@ const EXAMPLE_FACTS =
   "Rest of today: high 88°F, low 57°F, 20% chance of rain. UV index peaks at 8. Sunset 8:14pm.\n" +
   "Tomorrow: partly cloudy, high 90°F, low 60°F, 10% chance of rain.\n" +
   "No active weather alerts.";
-const EXAMPLE_BRIEF =
+const EXAMPLE_SUMMARY =
   "A cool, partly cloudy start near 58° warms fast to a summery high of 88°, staying mostly dry. " +
   "Get outdoor plans in early — the midday UV hits an 8, so keep sunscreen handy this afternoon.";
 
-// Async generator of token deltas for the single-shot daily briefing.
+// Async generator of token deltas for the single-shot private summary.
 export async function* brief(factSheet, signal) {
   const eng = await load();
   const stream = await eng.chat.completions.create({
@@ -59,7 +59,7 @@ export async function* brief(factSheet, signal) {
     messages: [
       { role: "system", content: BRIEF_SYSTEM },
       { role: "user", content: "FACTS:\n" + EXAMPLE_FACTS },
-      { role: "assistant", content: EXAMPLE_BRIEF },
+      { role: "assistant", content: EXAMPLE_SUMMARY },
       { role: "user", content: "FACTS:\n" + factSheet }
     ]
   });
@@ -75,4 +75,4 @@ export async function* brief(factSheet, signal) {
 // Note: free-text Q&A is intentionally NOT handled by the model. A 0.5B can't
 // reliably reason about weather (it hallucinates day-specific forecasts, etc.),
 // so app code answers questions deterministically from the data. The model is
-// used only for the briefing above, where summarization plays to its strength.
+// used only for the summary above, where summarization plays to its strength.
