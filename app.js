@@ -1,4 +1,4 @@
-const VERSION = "1.8.1";
+const VERSION = "1.8.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -27,12 +27,23 @@ const mapState = {
   _normalEls: null
 };
 
+const MAP_MIN_ZOOM = 4;
+const MAP_MAX_ZOOM = 10;
+
 const dragState = {
   active: false,
   startX: 0,
   startY: 0,
   startPanX: 0,
   startPanY: 0
+};
+
+const pinchState = {
+  active: false,
+  startDistance: 0,
+  startZoom: 0,
+  anchorX: 0,
+  anchorY: 0
 };
 
 const els = {
@@ -2125,36 +2136,84 @@ function initMap() {
 
 function bindMapDrag() {
   const el = els.weatherMap;
+  el.addEventListener("mousedown", (e) => { e.preventDefault(); startMapDrag(e.clientX, e.clientY, el); });
+  window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY));
+  window.addEventListener("mouseup", () => endMapGesture(el));
 
-  function onDragStart(x, y) {
-    dragState.active = true;
-    dragState.startX = x;
-    dragState.startY = y;
-    dragState.startPanX = mapState.panX;
-    dragState.startPanY = mapState.panY;
-    el.style.cursor = "grabbing";
-  }
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      startMapPinch(e.touches[0], e.touches[1]);
+      return;
+    }
+    const t = e.touches[0];
+    startMapDrag(t.clientX, t.clientY, el);
+  }, { passive: false });
+  el.addEventListener("touchmove", (e) => {
+    if (pinchState.active && e.touches.length === 2) {
+      e.preventDefault();
+      moveMapPinch(e.touches[0], e.touches[1]);
+      return;
+    }
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      moveMapDrag(t.clientX, t.clientY);
+    }
+  }, { passive: false });
+  el.addEventListener("touchend", () => endMapGesture(el));
+}
 
-  function onDragMove(x, y) {
-    if (!dragState.active) return;
-    mapState.panX = dragState.startPanX + (x - dragState.startX);
-    mapState.panY = dragState.startPanY + (y - dragState.startY);
-    renderTileMap();
-  }
+function startMapDrag(x, y, el = els.weatherMap) {
+  pinchState.active = false;
+  dragState.active = true;
+  dragState.startX = x;
+  dragState.startY = y;
+  dragState.startPanX = mapState.panX;
+  dragState.startPanY = mapState.panY;
+  if (el) el.style.cursor = "grabbing";
+}
 
-  function onDragEnd() {
-    if (!dragState.active) return;
-    dragState.active = false;
-    el.style.cursor = "grab";
-  }
+function moveMapDrag(x, y) {
+  if (!dragState.active || pinchState.active) return;
+  mapState.panX = dragState.startPanX + (x - dragState.startX);
+  mapState.panY = dragState.startPanY + (y - dragState.startY);
+  renderTileMap();
+}
 
-  el.addEventListener("mousedown", (e) => { e.preventDefault(); onDragStart(e.clientX, e.clientY); });
-  window.addEventListener("mousemove", (e) => onDragMove(e.clientX, e.clientY));
-  window.addEventListener("mouseup", onDragEnd);
+function endMapGesture(el = els.weatherMap) {
+  dragState.active = false;
+  pinchState.active = false;
+  if (el) el.style.cursor = "grab";
+}
 
-  el.addEventListener("touchstart", (e) => { const t = e.touches[0]; onDragStart(t.clientX, t.clientY); }, { passive: true });
-  el.addEventListener("touchmove", (e) => { const t = e.touches[0]; onDragMove(t.clientX, t.clientY); }, { passive: true });
-  el.addEventListener("touchend", onDragEnd);
+function touchDistance(a, b) {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+function touchMidpoint(a, b) {
+  return {
+    x: (a.clientX + b.clientX) / 2,
+    y: (a.clientY + b.clientY) / 2
+  };
+}
+
+function startMapPinch(a, b) {
+  const mid = touchMidpoint(a, b);
+  dragState.active = false;
+  pinchState.active = true;
+  pinchState.startDistance = touchDistance(a, b);
+  pinchState.startZoom = mapState.zoom;
+  pinchState.anchorX = mid.x;
+  pinchState.anchorY = mid.y;
+}
+
+function moveMapPinch(a, b) {
+  if (!pinchState.active || pinchState.startDistance <= 0) return;
+  const ratio = touchDistance(a, b) / pinchState.startDistance;
+  if (!Number.isFinite(ratio) || ratio <= 0) return;
+  const mid = touchMidpoint(a, b);
+  const nextZoom = Math.round(pinchState.startZoom + Math.log2(ratio));
+  setMapZoom(nextZoom, mid.x, mid.y);
 }
 
 function updateMapPlace() {
@@ -2469,12 +2528,30 @@ function renderMapLegend() {
   `;
 }
 
-function setMapZoom(nextZoom) {
-  const newZoom = Math.min(Math.max(nextZoom, 4), 7);
+function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
+  const newZoom = Math.min(Math.max(Math.round(nextZoom), MAP_MIN_ZOOM), MAP_MAX_ZOOM);
   if (newZoom === mapState.zoom) return;
   const scale = 2 ** (newZoom - mapState.zoom);
-  mapState.panX *= scale;
-  mapState.panY *= scale;
+
+  if (anchorClientX != null && anchorClientY != null && state.activePlace && els.weatherMap) {
+    const rect = els.weatherMap.getBoundingClientRect();
+    const oldPlace = projectLatLon(state.activePlace.latitude, state.activePlace.longitude, mapState.zoom);
+    const oldCenter = { x: oldPlace.x - mapState.panX, y: oldPlace.y - mapState.panY };
+    const dx = anchorClientX - rect.left - rect.width / 2;
+    const dy = anchorClientY - rect.top - rect.height / 2;
+    const anchoredWorld = { x: oldCenter.x + dx, y: oldCenter.y + dy };
+    const newPlace = projectLatLon(state.activePlace.latitude, state.activePlace.longitude, newZoom);
+    const newCenter = {
+      x: anchoredWorld.x * scale - dx,
+      y: anchoredWorld.y * scale - dy
+    };
+    mapState.panX = newPlace.x - newCenter.x;
+    mapState.panY = newPlace.y - newCenter.y;
+  } else {
+    mapState.panX *= scale;
+    mapState.panY *= scale;
+  }
+
   mapState.zoom = newZoom;
   renderTileMap();
 }
@@ -2511,6 +2588,7 @@ function renderWeatherTiles(viewport = null) {
   const layers = frame.layers || [{ url: frame.url, opacity: 0.78 }];
   layers.forEach((weatherLayer, index) => {
     if (weatherLayer.opacity <= 0.01) return;
+    const sourceZoom = Math.min(mapState.zoom, frame.maxZoom || mapState.zoom);
     renderTileLayer(els.weatherTileLayer, tileViewport, ({ z, x, y }) => {
       return weatherLayer.url
         .replace("{z}", z)
@@ -2518,23 +2596,29 @@ function renderWeatherTiles(viewport = null) {
         .replace("{y}", y)
         .replace("%7Bbbox%7D", tileBbox3857(z, x, y))
         .replace("{bbox}", tileBbox3857(z, x, y));
-    }, { append: index > 0, opacity: weatherLayer.opacity });
+    }, { append: index > 0, opacity: weatherLayer.opacity, sourceZoom });
   });
 }
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   if (!options.append) layer.innerHTML = "";
-  const z = mapState.zoom;
+  const z = options.sourceZoom || mapState.zoom;
   const tileSize = 256;
+  const sourceScale = 2 ** (mapState.zoom - z);
+  const displayTileSize = tileSize * sourceScale;
   const worldTiles = 2 ** z;
   const topLeft = {
     x: viewport.center.x - viewport.width / 2,
     y: viewport.center.y - viewport.height / 2
   };
-  const startX = Math.floor(topLeft.x / tileSize);
-  const endX = Math.floor((topLeft.x + viewport.width) / tileSize);
-  const startY = Math.floor(topLeft.y / tileSize);
-  const endY = Math.floor((topLeft.y + viewport.height) / tileSize);
+  const sourceTopLeft = {
+    x: topLeft.x / sourceScale,
+    y: topLeft.y / sourceScale
+  };
+  const startX = Math.floor(sourceTopLeft.x / tileSize);
+  const endX = Math.floor((sourceTopLeft.x + viewport.width / sourceScale) / tileSize);
+  const startY = Math.floor(sourceTopLeft.y / tileSize);
+  const endY = Math.floor((sourceTopLeft.y + viewport.height / sourceScale) / tileSize);
 
   for (let tileX = startX; tileX <= endX; tileX += 1) {
     for (let tileY = startY; tileY <= endY; tileY += 1) {
@@ -2549,8 +2633,10 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
       if (typeof options.opacity === "number") {
         img.style.opacity = String(options.opacity);
       }
-      img.style.left = `${Math.round(tileX * tileSize - topLeft.x)}px`;
-      img.style.top = `${Math.round(tileY * tileSize - topLeft.y)}px`;
+      img.style.width = `${Math.ceil(displayTileSize)}px`;
+      img.style.height = `${Math.ceil(displayTileSize)}px`;
+      img.style.left = `${Math.round(tileX * displayTileSize - topLeft.x)}px`;
+      img.style.top = `${Math.round(tileY * displayTileSize - topLeft.y)}px`;
       layer.appendChild(img);
     }
   }
@@ -2951,31 +3037,34 @@ function bindImmersiveDrag() {
   const sig = immersiveDragAbort.signal;
   const canvas = document.getElementById("immersiveMapCanvas");
 
-  const move = (x, y) => {
-    if (!dragState.active) return;
-    mapState.panX = dragState.startPanX + (x - dragState.startX);
-    mapState.panY = dragState.startPanY + (y - dragState.startY);
-    renderTileMap();
-  };
-
   canvas.addEventListener("mousedown", (e) => {
-    dragState.active = true;
-    dragState.startX = e.clientX; dragState.startY = e.clientY;
-    dragState.startPanX = mapState.panX; dragState.startPanY = mapState.panY;
+    e.preventDefault();
+    startMapDrag(e.clientX, e.clientY, canvas);
   }, { signal: sig });
-  window.addEventListener("mousemove", (e) => move(e.clientX, e.clientY), { signal: sig });
-  window.addEventListener("mouseup",   ()  => { dragState.active = false; },  { signal: sig });
+  window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY), { signal: sig });
+  window.addEventListener("mouseup", () => endMapGesture(canvas), { signal: sig });
 
   canvas.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      startMapPinch(e.touches[0], e.touches[1]);
+      return;
+    }
     const t = e.touches[0];
-    dragState.active = true;
-    dragState.startX = t.clientX; dragState.startY = t.clientY;
-    dragState.startPanX = mapState.panX; dragState.startPanY = mapState.panY;
-  }, { passive: true, signal: sig });
+    startMapDrag(t.clientX, t.clientY, canvas);
+  }, { passive: false, signal: sig });
   window.addEventListener("touchmove", (e) => {
-    if (dragState.active) move(e.touches[0].clientX, e.touches[0].clientY);
-  }, { passive: true, signal: sig });
-  window.addEventListener("touchend", () => { dragState.active = false; }, { signal: sig });
+    if (pinchState.active && e.touches.length === 2) {
+      e.preventDefault();
+      moveMapPinch(e.touches[0], e.touches[1]);
+      return;
+    }
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      moveMapDrag(t.clientX, t.clientY);
+    }
+  }, { passive: false, signal: sig });
+  window.addEventListener("touchend", () => endMapGesture(canvas), { signal: sig });
 }
 
 // ── Sky Canvas ────────────────────────────────────────────────────────────────
