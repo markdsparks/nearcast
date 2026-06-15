@@ -1,4 +1,4 @@
-const VERSION = "1.8.2";
+const VERSION = "1.9.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1185,6 +1185,8 @@ async function detectAI() {
   if (!("gpu" in navigator)) {
     aiState.phase = "unsupported";
     renderBriefing();
+    renderAsk();
+    renderAILauncher();
     return;
   }
   try {
@@ -1237,6 +1239,8 @@ async function enableAI() {
     aiState.phase = "error";
     aiState.error = "Couldn't start AI on this device.";
     renderBriefing();
+    renderAsk();
+    renderAILauncher();
   }
 }
 
@@ -1357,11 +1361,11 @@ function lockGlyph() {
 // Chips and typed questions are answered by local deterministic forecast logic.
 // The tiny model stays focused on briefings; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
-  { label: "Run", intent: "run", q: "Is right now a good time for a run?" },
-  { label: "Bike", intent: "bike", q: "Is it good weather to bike right now?" },
-  { label: "Walk the dog", intent: "walk", q: "Is it a good time to walk the dog?" },
-  { label: "Grill out", intent: "grill", q: "Is it good weather to grill outside?" },
-  { label: "What to wear", intent: "wear", q: "What should I wear right now?" }
+  { label: "Best walk", q: "What is the best time for a walk today?" },
+  { label: "Dry window", q: "What is the best dry window today?" },
+  { label: "Yard work", q: "What is the best time for yard work today?" },
+  { label: "Grill tonight", q: "Is it good weather to grill tonight?" },
+  { label: "What to wear", q: "What should I wear tonight?" }
 ];
 
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
@@ -1624,6 +1628,11 @@ function activityComfort(feelsF, rule) {
 }
 
 function activityAnswer(rule, stats, units) {
+  const result = scoreActivityWindow(rule, stats, units);
+  return `${result.verdict} for ${rule.label} ${stats.label}: ${result.reasons.join(", ")}.`;
+}
+
+function scoreActivityWindow(rule, stats, units) {
   const feelsF = tempAsF(stats.feelsAvg);
   const reasons = [];
   let score = 3;
@@ -1663,7 +1672,109 @@ function activityAnswer(rule, stats, units) {
   }
 
   const verdict = score >= 3 ? "Good conditions" : score === 2 ? "Pretty good" : score === 1 ? "Doable, with caveats" : "Not ideal";
-  return `${verdict} for ${rule.label} ${stats.label}: ${reasons.join(", ")}.`;
+  return { score, verdict, reasons };
+}
+
+function numericWindowScore(rule, stats) {
+  const feelsF = tempAsF(stats.feelsAvg);
+  const target = 72;
+  const tempPenalty = Math.abs(feelsF - target) * (rule.label === "the pool" ? 0.35 : 0.8);
+  const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80;
+  const windPenalty = Math.max(0, stats.windMax - rule.wind) * 2 + Math.max(0, stats.gustMax - rule.wind - 8) * 2;
+  const uvPenalty = rule.uv < 99 ? Math.max(0, stats.uvMax - rule.uv + 1) * 5 : 0;
+  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
+}
+
+function candidateAskWindows({ dayIdx = 0, hours = 2, limitHour = 22 } = {}) {
+  const start = dayIdx === 0 ? Math.max(new Date().getHours(), 6) : 6;
+  const windows = [];
+  for (let h = start; h + hours <= limitHour; h += 1) {
+    windows.push({ dayIdx, startHour: h, endHour: h + hours, label: "custom" });
+  }
+  return windows;
+}
+
+function bestWindowForRule(rule, options = {}) {
+  const c = buildAIContext();
+  if (!c) return null;
+  let candidates = candidateAskWindows(options)
+    .map((window) => askWindowStats(window))
+    .filter(Boolean)
+    .map((stats) => ({ stats, score: numericWindowScore(rule, stats) }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!candidates.length && (options.dayIdx || 0) === 0) {
+    candidates = candidateAskWindows({ ...options, dayIdx: 1 })
+      .map((window) => askWindowStats(window))
+      .filter(Boolean)
+      .map((stats) => ({ stats, score: numericWindowScore(rule, stats) }))
+      .sort((a, b) => b.score - a.score);
+  }
+
+  if (!candidates.length) return null;
+  const best = candidates[0];
+  const assessment = scoreActivityWindow(rule, best.stats, c.units);
+  return {
+    ...best,
+    title: `Best for ${rule.label}`,
+    answer: `${assessment.verdict} for ${rule.label} ${best.stats.label}: ${assessment.reasons.join(", ")}.`,
+    reasons: assessment.reasons
+  };
+}
+
+function bestDryWindow(options = {}) {
+  const c = buildAIContext();
+  if (!c) return null;
+  const windows = candidateAskWindows(options)
+    .map((window) => askWindowStats(window))
+    .filter(Boolean)
+    .map((stats) => ({
+      stats,
+      score: 100 - stats.rainChance - stats.precipTotal * 120 - Math.max(0, stats.windMax - 25)
+    }))
+    .sort((a, b) => b.score - a.score);
+  if (!windows.length) return null;
+  const best = windows[0];
+  return {
+    ...best,
+    title: "Best dry window",
+    answer: `Best dry window ${best.stats.label}: rain is ${askRainWord(best.stats.rainChance)} (${best.stats.rainChance}%), wind up to ${best.stats.windMax} ${c.units.wind}.`,
+    reasons: [`${best.stats.rainChance}% rain`, `${best.stats.windMax} ${c.units.wind} wind`, `${best.stats.tempAvg}${c.units.temp}`]
+  };
+}
+
+function bestWindowAnswer(activityKey) {
+  const c = buildAIContext();
+  if (!c) return null;
+  if (activityKey === "dry") return bestDryWindow()?.answer || null;
+  const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
+  return bestWindowForRule(rule)?.answer || null;
+}
+
+function buildBestWindowCards() {
+  const c = buildAIContext();
+  if (!c) return [];
+  const defaults = [
+    bestDryWindow(),
+    bestWindowForRule(ACTIVITY_RULES.walk),
+    bestWindowForRule(ACTIVITY_RULES.yard),
+    bestWindowForRule(ACTIVITY_RULES.grill)
+  ].filter(Boolean);
+
+  return defaults.slice(0, 4).map((item) => {
+    const score = Math.max(0, Math.min(100, item.score));
+    const subject = item.title.replace(/^Best for /, "");
+    const q = item.title === "Best dry window"
+      ? "What is the best dry window today?"
+      : `What is the best time for ${subject} today?`;
+    return {
+      q,
+      title: item.title,
+      window: capitalize(item.stats.label),
+      meta: item.reasons.slice(0, 2).join(" · "),
+      score
+    };
+  });
 }
 
 function detectAskActivity(q) {
@@ -1799,6 +1910,12 @@ function answerFreeform(q) {
   }
 
   const activity = detectAskActivity(q);
+  if (hasAny(s, ["best", "best time", "best window", "when should", "when can", "what time"])) {
+    if (hasAny(s, ["dry", "rain-free", "rain free"])) return bestWindowAnswer("dry");
+    if (activity) return bestWindowAnswer(activity);
+    return bestWindowAnswer("walk");
+  }
+
   if (activity) return activityAnswer(ACTIVITY_RULES[activity], stats, c.units);
 
   const metric = metricAskAnswer(q, stats, c);
@@ -1831,7 +1948,7 @@ function renderAsk() {
   const panel = els.aiAsk;
   if (!panel) return;
   const available = state.forecast && state.activePlace &&
-    (aiState.phase === "ready" || aiState.phase === "generating");
+    aiState.phase !== "unknown";
   if (!available) {
     panel.hidden = true;
     return;
@@ -1841,9 +1958,20 @@ function renderAsk() {
   const busy = aiState.phase === "generating" || askStreaming;
   const dis = busy ? " disabled" : "";
 
+  const bestCards = buildBestWindowCards().map((card) =>
+    `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"${dis}>` +
+      `<span class="best-window-score">${card.score}</span>` +
+      `<span class="best-window-copy">` +
+        `<strong>${escapeHtml(card.title)}</strong>` +
+        `<em>${escapeHtml(card.window)}</em>` +
+        `<small>${escapeHtml(card.meta)}</small>` +
+      `</span>` +
+    `</button>`
+  ).join("");
+
   const chips = ACTIVITY_CHIPS.map((c) =>
-    `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}" ` +
-    `data-ask-intent="${escapeHtml(c.intent)}"${dis}>${escapeHtml(c.label)}</button>`
+    `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}"` +
+    `${c.intent ? ` data-ask-intent="${escapeHtml(c.intent)}"` : ""}${dis}>${escapeHtml(c.label)}</button>`
   ).join("");
 
   const thread = askThread.map((ex, i) => {
@@ -1856,11 +1984,18 @@ function renderAsk() {
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
 
   panel.innerHTML =
-    `<div class="ask-chips">${chips}</div>` +
+    (bestCards ? `<section class="best-windows" aria-label="Best weather windows">` +
+      `<div class="ai-section-title"><strong>Best windows</strong><span>Tap for the reasoning</span></div>` +
+      `<div class="best-window-grid">${bestCards}</div>` +
+    `</section>` : "") +
+    `<section class="plan-presets" aria-label="Plan presets">` +
+      `<div class="ai-section-title"><strong>Plan something</strong><span>Useful defaults</span></div>` +
+      `<div class="ask-chips">${chips}</div>` +
+    `</section>` +
     (thread ? `<div class="ask-thread">${thread}${errLine}</div>` : "") +
     `<form class="ask-form" id="askForm">` +
       `<input id="askInput" type="text" autocomplete="off" ` +
-        `placeholder="Ask about your forecast…"${dis}>` +
+        `placeholder="Plan something… picnic Saturday afternoon"${dis}>` +
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
 }
@@ -1870,12 +2005,13 @@ function renderAILauncher() {
   const btn = els.aiLauncher;
   if (!btn) return;
   const show = state.forecast && state.activePlace &&
-    aiState.phase !== "unknown" && aiState.phase !== "unsupported";
+    aiState.phase !== "unknown";
   btn.hidden = !show;
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
       aiState.phase === "idle" ? "Tap to enable · private, on-device"
-      : "Briefing, run check & more · private";
+      : aiState.phase === "unsupported" || aiState.phase === "error" ? "Best windows & plans"
+      : "Briefing, best windows & plans · private";
   }
 }
 

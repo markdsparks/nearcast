@@ -768,11 +768,87 @@ h2 {
 .ai-ask {
   margin-bottom: 12px;
 }
+.ai-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 8px;
+}
+.ai-section-title strong {
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ai-section-title span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+.best-window-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.best-window-card {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 88px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.best-window-card:hover {
+  border-color: var(--blue);
+}
+.best-window-card:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.best-window-score {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 0.9rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+.best-window-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.best-window-copy strong {
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+.best-window-copy em {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 700;
+}
+.best-window-copy small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
 .ask-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-  margin-bottom: 9px;
+  margin-bottom: 12px;
 }
 .ask-chip {
   padding: 7px 13px;
@@ -864,6 +940,12 @@ h2 {
   margin: 11px 0;
   display: grid;
   gap: 9px;
+}
+
+@media (max-width: 560px) {
+  .best-window-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- AI launcher (main view) + sheet ---------- */
