@@ -1,4 +1,4 @@
-const VERSION = "1.7.0";
+const VERSION = "1.7.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1032,6 +1032,23 @@ function buildAIContext() {
     });
   }
 
+  // Full multi-day outlook (today=0 … +9) so day-specific questions
+  // ("will it rain Tuesday?") can be answered exactly from the data.
+  const dayName = (iso) => new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(new Date(`${iso}T12:00:00`));
+  const dailyArr = [];
+  for (let i = 0; i < daily.time.length && i < 10; i++) {
+    dailyArr.push({
+      dow: new Date(`${daily.time[i]}T12:00:00`).getDay(),
+      label: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayName(daily.time[i]),
+      hi: r(daily.temperature_2m_max[i]),
+      lo: r(daily.temperature_2m_min[i]),
+      rainChance: daily.precipitation_probability_max[i] || 0,
+      sky: sky(daily.weather_code[i]),
+      sunrise: daily.sunrise[i] ? shortClock(new Date(daily.sunrise[i]).getTime()) : null,
+      sunset: daily.sunset[i] ? shortClock(new Date(daily.sunset[i]).getTime()) : null
+    });
+  }
+
   const alerts = (activeAlerts || []).slice(0, 3).map((a) => ({
     event: a.event,
     severity: a.severity,
@@ -1070,6 +1087,7 @@ function buildAIContext() {
       sunset: daily.sunset[1] ? shortClock(new Date(daily.sunset[1]).getTime()) : null
     },
     next12h,
+    daily: dailyArr,
     alerts
   };
 }
@@ -1385,19 +1403,41 @@ function assessActivity(intent) {
   return `${verdict} ${label}: ${reasons.join(", ")}.`;
 }
 
-// Deterministic answers for the common free-text questions (temperature, rain,
-// sunset, wind, etc.). Returns a correct answer string, or null to fall back to
-// the LLM. Keeps the unreliable model off the questions we can answer exactly.
+// Resolve a target day (index into c.daily, 0=today … 9) from a question's
+// weekday names or relative phrases. Returns null when no day is referenced.
+function resolveDayIndex(s, c) {
+  const days = c.daily;
+  if (!days || !days.length) return null;
+  if (/\bday after tomorrow\b/.test(s)) return Math.min(2, days.length - 1);
+  if (/\btomorrow\b/.test(s)) return 1;
+  const inN = s.match(/\bin (\d+) days?\b/);
+  if (inN) { const n = +inN[1]; if (n >= 0 && n < days.length) return n; }
+  // Weekday names → next occurrence (today counts if it matches).
+  const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  for (let wd = 0; wd < 7; wd++) {
+    if (s.includes(names[wd])) {
+      for (let i = 0; i < days.length; i++) if (days[i].dow === wd) return i;
+    }
+  }
+  if (s.includes("weekend")) {
+    for (let i = 0; i < days.length; i++) if (days[i].dow === 6) return i; // next Saturday
+  }
+  if (/\btonight\b|\bovernight\b|\btoday\b|\bright now\b|\bthis afternoon\b/.test(s)) return 0;
+  return null;
+}
+
+// Deterministic answers for common free-text questions — now across the full
+// 10-day outlook, not just today/tomorrow. Returns a correct answer string, or
+// null when we can't answer it exactly (the unreliable model is never used).
 function answerFreeform(q) {
   const c = buildAIContext();
   if (!c) return null;
   const u = c.units;
   const s = ` ${q.toLowerCase()} `;
   const has = (...words) => words.some((w) => s.includes(w));
-  const tomorrow = has("tomorrow");
-  const tonight = has("tonight", "overnight");
+  const rainLk = (p) => (p < 15 ? "unlikely" : p < 50 ? "possible" : "likely");
 
-  // Activity / umbrella / clothing — reuse the verdict logic.
+  // Activity / umbrella / clothing — "now" focused, reuse the verdict logic.
   if (has("umbrella")) return assessActivity("umbrella");
   if (has("what to wear", "should i wear", "what to put on", "a jacket", "a coat", "bundle")) return assessActivity("wear");
   if (has(" run ", "running", "jog", "go for a run")) return assessActivity("run");
@@ -1405,52 +1445,57 @@ function answerFreeform(q) {
   if (has("walk", "stroll")) return assessActivity("walk");
   if (has("grill", "barbecue", "bbq", "cookout", "cook out")) return assessActivity("grill");
 
-  // Sunrise / sunset
+  // Resolve a target day for day-specific questions ("…on Tuesday", "this weekend").
+  const dayIdx = resolveDayIndex(s, c);
+  const day = dayIdx != null ? c.daily[dayIdx] : null;
+  const dayWord = dayIdx == null || dayIdx === 0 ? "today" : dayIdx === 1 ? "tomorrow" : day.label;
+
+  // Sunrise / sunset (day-aware)
   if (has("sunset", "sun set", "sundown", "sun go down", "get dark")) {
-    if (tomorrow && c.tomorrow.sunset) return `Sunset tomorrow is at ${c.tomorrow.sunset}.`;
-    return `Sunset today is at ${c.today.sunset}.`;
+    const d = day && day.sunset ? day : c.daily[0];
+    return `Sunset ${dayWord} is at ${d.sunset}.`;
   }
   if (has("sunrise", "sun rise", "sun up", "sun come up", "get light")) {
-    if (tomorrow && c.tomorrow.sunrise) return `Sunrise tomorrow is at ${c.tomorrow.sunrise}.`;
-    if (c.today.sunrise) return `Sunrise today is at ${c.today.sunrise}.`;
+    const d = day && day.sunrise ? day : c.daily[0];
+    if (d.sunrise) return `Sunrise ${dayWord} is at ${d.sunrise}.`;
   }
 
-  // Rain / precipitation
+  // Rain / precipitation (day-aware)
   if (has("rain", "wet", "precip", "shower", "storm", "drizzle", "snow", "pour")) {
-    const rainLine = (p) =>
-      p < 15 ? `unlikely (${p}% chance)` : p < 50 ? `possible (${p}% chance)` : `likely (${p}% chance)`;
-    if (tomorrow) return `Rain looks ${rainLine(c.tomorrow.rainChance)} tomorrow.`;
+    if (day && dayIdx >= 1) {
+      return `${day.label}: rain ${rainLk(day.rainChance)} (${day.rainChance}% chance), ${day.sky.toLowerCase()}.`;
+    }
     const dry = /^dry/i.test(c.nowcast.trim());
     if (!dry) return `${c.nowcast.replace(/\.$/, "")}.`;
-    return `It's dry now — rain is ${rainLine(c.today.rainChance)} the rest of today.`;
+    return `It's dry now — rain is ${rainLk(c.today.rainChance)} (${c.today.rainChance}% chance) the rest of today.`;
   }
 
-  // Temperature
+  // Temperature (day-aware)
   if (has("how hot", "how warm", "how cold", "temperature", "temp ", " high ", " low ", "degrees", "hot out", "cold out", "warm out")) {
-    if (tomorrow) return `Tomorrow: high of ${c.tomorrow.hi}${u.temp}, low of ${c.tomorrow.lo}${u.temp}.`;
-    if (tonight) return `Tonight's low is around ${c.tomorrow.lo}${u.temp}.`;
+    if (day && dayIdx >= 1) return `${day.label}: high of ${day.hi}${u.temp}, low of ${day.lo}${u.temp}.`;
     if (has("right now", " now ", "currently", "outside", "how hot", "how cold", "how warm"))
       return `Right now it's ${c.now.temp}${u.temp} (feels like ${c.now.feels}${u.temp}), ${c.now.sky.toLowerCase()}.`;
     return `Today: high of ${c.today.hi}${u.temp}, low of ${c.today.lo}${u.temp}.`;
   }
 
-  // Wind
+  // Wind / UV / humidity — current conditions.
   if (has("wind", "windy", "gust", "breeze", "breezy")) {
     const g = c.now.gust > c.now.wind + 2 ? ` gusting to ${c.now.gust} ${u.wind}` : "";
     return `Wind is ${c.now.wind} ${u.wind}${g} from the ${c.now.windDir} right now.`;
   }
-
-  // UV / sun strength
   if (has(" uv ", "sunburn", "sunscreen", "sun strong", "strong is the sun")) {
     return `Today's UV index peaks at ${c.today.uvPeak}.`;
   }
-
-  // Humidity
   if (has("humid", "muggy", "sticky", "dry air")) {
     return `Humidity is ${c.now.humidity}% right now.`;
   }
 
-  return null; // no deterministic match → fall back to the LLM
+  // A specific day was named with no clear topic → give that day's outlook.
+  if (day && dayIdx >= 1 && has("weather", "forecast", "like", "conditions", "going to be", "look like")) {
+    return `${day.label}: ${day.sky.toLowerCase()}, high of ${day.hi}${u.temp}, low of ${day.lo}${u.temp}, rain ${rainLk(day.rainChance)} (${day.rainChance}%).`;
+  }
+
+  return null; // not answerable exactly → graceful capability message (no LLM)
 }
 
 // A short conversation thread of {q, a} for this place/session. The last entry
@@ -1479,42 +1524,20 @@ async function runAsk(question, intent) {
     return;
   }
 
-  // Free-form: answer common questions deterministically (always correct);
-  // only fall back to the best-effort LLM for genuinely open ones.
+  // Free-form: answer deterministically from the data (always correct). We do
+  // NOT route open questions to the model — a 0.5B hallucinates on these
+  // (e.g. inventing a day's forecast). If we can't answer exactly, say what we
+  // CAN answer rather than guessing.
   const direct = answerFreeform(question);
-  if (direct) {
-    askThread.push({ q: question, a: direct });
-    renderAsk();
-    scrollAskIntoView();
-    return;
-  }
-
-  const factSheet = buildAIFactSheet();
-  if (!factSheet) return;
-  const entry = { q: question, a: "" };
-  askThread.push(entry);
-  askStreaming = true;
-  askAbort = { aborted: false };
-  const mine = askAbort;
+  askThread.push({ q: question, a: direct || AI_FALLBACK_MSG });
   renderAsk();
   scrollAskIntoView();
-  const answerEls = els.aiAsk.querySelectorAll(".ask-a");
-  const answerEl = answerEls[answerEls.length - 1];
-
-  try {
-    const ai = await loadAIModule();
-    for await (const delta of ai.ask(factSheet, question, mine)) {
-      if (mine.aborted) break;
-      entry.a += delta;
-      if (answerEl) answerEl.textContent = entry.a; // cheap per-token update
-    }
-  } catch (_) {
-    askError = "Couldn't answer that — try again.";
-  } finally {
-    askStreaming = false;
-    renderAsk();
-  }
 }
+
+const AI_FALLBACK_MSG =
+  "I can answer about temperature, rain, wind, UV, humidity, and sunrise/sunset for " +
+  "today through the next 10 days, plus whether it's a good time for a run, walk, bike, " +
+  "or grill. Try asking one of those — like \"how warm on Saturday?\" or \"will it rain Tuesday?\"";
 
 function resetAsk() {
   if (askAbort) askAbort.aborted = true;

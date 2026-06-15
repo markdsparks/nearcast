@@ -1,4 +1,4 @@
-const CACHE = "nearcast-v33";
+const CACHE = "nearcast-v34";
 
 // App shell — everything needed to render offline
 const SHELL = [

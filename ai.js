@@ -72,44 +72,7 @@ export async function* brief(factSheet, signal) {
   }
 }
 
-// The example lives INSIDE the system prompt as an illustration — not as a real
-// conversation turn. A 0.5B model given a separate example turn (with different
-// city facts) fails to bind the user's question to the real facts and answers
-// generically. Single-turn with the real facts immediately above the question,
-// question last, fixes the grounding.
-const ASK_SYSTEM =
-  "You are Nearcast's weather assistant. You are given the user's CURRENT LOCAL WEATHER as " +
-  "facts, then their QUESTION. Answer in ONE or TWO sentences that quote the specific fact that " +
-  "settles the question (the temperature, the rain wording, the wind, or the timing) and give a " +
-  "clear practical recommendation. Never answer with a bare 'yes' or 'no' — always include the " +
-  "number or condition you based it on. Use ONLY the facts; never invent data or thresholds. If " +
-  "the facts don't cover it, say so briefly. No markdown, no lists.\n\n" +
-  "Example of the format:\n" +
-  "WEATHER:\nDry for the next 2 hours. Rest of today: high 88°F, slight rain chance (20%).\n" +
-  "QUESTION: Should I bring an umbrella this morning?\n" +
-  "ANSWER: It's dry for the next couple hours and rain is unlikely today (20%), so you can leave " +
-  "the umbrella at home.";
-
-// Async generator of token deltas answering a free-text question about the
-// forecast. (Activity chips don't come here — they're answered deterministically
-// in app code, since a tiny model can't reliably reason about the weather.)
-export async function* ask(factSheet, question, signal) {
-  const eng = await load();
-  const stream = await eng.chat.completions.create({
-    stream: true,
-    temperature: 0.15,
-    max_tokens: 120,
-    frequency_penalty: 0.3,
-    messages: [
-      { role: "system", content: ASK_SYSTEM },
-      { role: "user", content: `WEATHER:\n${factSheet}\n\nQUESTION: ${question}\n\nANSWER:` }
-    ]
-  });
-  for await (const chunk of stream) {
-    if (signal && signal.aborted) {
-      try { await eng.interruptGenerate(); } catch (_) {}
-      break;
-    }
-    yield chunk.choices[0]?.delta?.content || "";
-  }
-}
+// Note: free-text Q&A is intentionally NOT handled by the model. A 0.5B can't
+// reliably reason about weather (it hallucinates day-specific forecasts, etc.),
+// so app code answers questions deterministically from the data. The model is
+// used only for the briefing above, where summarization plays to its strength.
