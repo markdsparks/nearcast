@@ -1,4 +1,4 @@
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -851,39 +851,62 @@ function snowGlyph() {
 }
 
 function buildNowcastGraph(analysis) {
-  const { slots, wet, peak } = analysis;
-  const VW = 320, H = 56;
-  const padX = 4, baseY = 40, topY = 6;
+  const { slots } = analysis;
+  const inch = state.unit === "fahrenheit";
+  // Intensity thresholds in display units PER HOUR (precip is per 15 min → ×4)
+  const lightMax = inch ? 0.1 : 2.5;   // light/moderate boundary
+  const modMax = inch ? 0.3 : 7.6;     // moderate/heavy boundary
+  const heavyCap = inch ? 0.6 : 15;    // top of chart
+
+  const VW = 320, H = 96;
+  const padL = 42, padR = 10, topY = 10, baseY = 70;
+  const plotW = VW - padL - padR;
+  const plotH = baseY - topY;
   const n = slots.length;
-  const barW = (VW - padX * 2) / n * 0.62;
-  const gap = (VW - padX * 2) / n;
-  const norm = Math.max(peak, 0.001);
 
-  const now = Date.now();
-  let bars = "";
-  slots.forEach((s, i) => {
-    const cx = padX + gap * i + gap / 2;
-    const h = wet[i] ? Math.max(4, ((s.precip / norm) * (baseY - topY))) : 1.5;
-    const y = baseY - h;
-    const fill = wet[i] ? "#4a90d9" : "var(--line)";
-    const op = wet[i] ? (0.55 + 0.45 * (s.precip / norm)) : 0.5;
-    bars += `<rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}" opacity="${op.toFixed(2)}"/>`;
-  });
-
-  // Axis labels: Now, +1h, +2h (aligned to slot positions)
-  const labelAt = (i, text) => {
-    const cx = padX + gap * i + gap / 2;
-    return `<text x="${cx.toFixed(1)}" y="${H - 2}" text-anchor="middle" class="nowcast-axis">${text}</text>`;
+  // Absolute, piecewise mapping so each intensity band is an equal third of
+  // the chart — the height tells you light vs moderate vs heavy at a glance.
+  const frac = (perHour) => {
+    if (perHour <= 0) return 0;
+    if (perHour <= lightMax) return (perHour / lightMax) / 3;
+    if (perHour <= modMax) return 1 / 3 + ((perHour - lightMax) / (modMax - lightMax)) / 3;
+    return Math.min(1, 2 / 3 + ((perHour - modMax) / (heavyCap - modMax)) / 3);
   };
-  const labels =
-    labelAt(0, "Now") +
-    (n > 4 ? labelAt(4, "1 hr") : "") +
-    (n > 7 ? labelAt(7, "2 hr") : "");
+  const x = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const y = (perHour) => baseY - frac(perHour) * plotH;
+
+  const pts = slots.map((s, i) => ({ x: x(i), y: y((s.precip || 0) * 4) }));
+  const line = smoothPath(pts);
+  const area = `${line} L ${pts[n - 1].x.toFixed(1)} ${baseY} L ${pts[0].x.toFixed(1)} ${baseY} Z`;
+
+  // Band guide lines (thirds) + left-margin intensity labels
+  const yMod = (baseY - (2 / 3) * plotH).toFixed(1);    // moderate/heavy line
+  const yLight = (baseY - (1 / 3) * plotH).toFixed(1);   // light/moderate line
+  const guides =
+    `<line x1="${padL}" y1="${yMod}" x2="${VW - padR}" y2="${yMod}" class="nowcast-guide"/>` +
+    `<line x1="${padL}" y1="${yLight}" x2="${VW - padR}" y2="${yLight}" class="nowcast-guide"/>`;
+  const band = (cy, t) => `<text x="${(padL - 7).toFixed(1)}" y="${(cy + 3).toFixed(1)}" text-anchor="end" class="nowcast-band">${t}</text>`;
+  const bands =
+    band(topY + plotH / 6, "Heavy") +
+    band(topY + plotH / 2, "Mod") +
+    band(baseY - plotH / 6, "Light");
+
+  const timeLabel = (i, t) => `<text x="${x(i).toFixed(1)}" y="${H - 3}" text-anchor="middle" class="nowcast-axis">${t}</text>`;
+  const times = timeLabel(0, "Now") + (n > 4 ? timeLabel(4, "1 hr") : "") + (n > 7 ? timeLabel(n - 1, "2 hr") : "");
 
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
-    <line x1="${padX}" y1="${baseY}" x2="${VW - padX}" y2="${baseY}" stroke="var(--line)" stroke-width="1"/>
-    ${bars}
-    ${labels}
+    <defs>
+      <linearGradient id="nowcastGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#4a90d9" stop-opacity="0.5"/>
+        <stop offset="100%" stop-color="#4a90d9" stop-opacity="0.04"/>
+      </linearGradient>
+    </defs>
+    ${guides}
+    ${bands}
+    <path d="${area}" fill="url(#nowcastGrad)"/>
+    <path d="${line}" fill="none" stroke="#4a90d9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="${padL}" y1="${baseY}" x2="${VW - padR}" y2="${baseY}" class="nowcast-base"/>
+    ${times}
   </svg>`;
 }
 
