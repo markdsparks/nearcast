@@ -1,4 +1,4 @@
-const VERSION = "1.10.1";
+const VERSION = "1.10.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1939,11 +1939,38 @@ function numericWindowScore(rule, stats) {
   return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
 }
 
+function currentHourFloat() {
+  const now = new Date();
+  return now.getHours() + now.getMinutes() / 60;
+}
+
 function windowVerdict(score) {
   if (score >= 80) return "Great";
   if (score >= 65) return "Good";
   if (score >= 45) return "Iffy";
   return "Poor";
+}
+
+function windowQuality(score) {
+  if (score >= 70) return "show";
+  if (score >= 45) return "caution";
+  return "fallback";
+}
+
+function plannerWindow({ todayStart, todayEnd, tomorrowStart = todayStart, tomorrowEnd = todayEnd, rolloverAt = todayEnd - 0.25 }) {
+  const hour = currentHourFloat();
+  if (hour >= rolloverAt) {
+    return { dayIdx: 1, earliestHour: tomorrowStart, limitHour: tomorrowEnd };
+  }
+  return { dayIdx: 0, earliestHour: todayStart, limitHour: todayEnd, allowTomorrow: false };
+}
+
+function cardWindowText(stats, prefix = "") {
+  return prefix ? `${prefix}: ${capitalize(stats.label)}` : capitalize(stats.label);
+}
+
+function cardMeta(prefix, reasons) {
+  return `${prefix}: ${reasons.slice(0, 2).join(" · ")}`;
 }
 
 function bestWindowOptionsFromText(s, c) {
@@ -2049,57 +2076,100 @@ function buildBestWindowCards() {
   if (!c) return [];
 
   const dry = bestDryWindow();
-  const walk = bestWindowForRule(ACTIVITY_RULES.walk, { limitHour: 21 });
-  const dinner = bestWindowForRule(ACTIVITY_RULES.dinner, {
-    earliestHour: 17,
-    limitHour: 21,
-    allowTomorrow: false
-  });
-  const afterWork = bestWindowForRule(ACTIVITY_RULES.picnic, {
-    earliestHour: 17,
-    limitHour: 22
-  });
+  const walkWindow = plannerWindow({ todayStart: 6, todayEnd: 21, tomorrowStart: 7, tomorrowEnd: 11, rolloverAt: 20.75 });
+  const dinnerWindow = plannerWindow({ todayStart: 17, todayEnd: 21, tomorrowStart: 17, tomorrowEnd: 21, rolloverAt: 20.5 });
+  const afterWorkWindow = plannerWindow({ todayStart: 17, todayEnd: 22, tomorrowStart: 17, tomorrowEnd: 22, rolloverAt: 21.5 });
+  const walk = bestWindowForRule(ACTIVITY_RULES.walk, walkWindow);
+  const dinner = bestWindowForRule(ACTIVITY_RULES.dinner, dinnerWindow);
+  const afterWork = bestWindowForRule(ACTIVITY_RULES.picnic, afterWorkWindow);
+
+  const dryCard = dry && (() => {
+    const rain = dry.stats.rainChance;
+    if (rain < 25) {
+      return {
+        ...dry,
+        badge: "Dry",
+        title: "Driest stretch",
+        q: "What is the best dry window today?",
+        window: cardWindowText(dry.stats),
+        meta: cardMeta("Lowest rain chance", dry.reasons)
+      };
+    }
+    if (rain < 60) {
+      return {
+        ...dry,
+        badge: "Maybe",
+        title: "Least wet stretch",
+        q: "What is the least wet window today?",
+        window: cardWindowText(dry.stats),
+        meta: cardMeta("Not truly dry", dry.reasons)
+      };
+    }
+    return {
+      ...dry,
+      badge: "Wet",
+      title: "Rainy day",
+      q: "Is there any useful dry window today?",
+      window: cardWindowText(dry.stats, "Best odds"),
+      meta: cardMeta("No reliable dry stretch", dry.reasons)
+    };
+  })();
+
+  const walkCard = walk && (() => {
+    const quality = windowQuality(walk.score);
+    const tomorrow = walk.stats.window.dayIdx > 0;
+    return {
+      ...walk,
+      badge: quality === "show" ? windowVerdict(walk.score) : quality === "caution" ? "Iffy" : "Brief",
+      title: quality === "show" ? "Comfortable walk" : quality === "caution" ? "Walk check" : "Quick walk only",
+      q: tomorrow ? "When is a comfortable time for a walk tomorrow?" : "When is a comfortable time for a walk today?",
+      window: cardWindowText(walk.stats),
+      meta: cardMeta(quality === "fallback" ? "Keep it short" : "Comfort window", walk.reasons)
+    };
+  })();
+
+  const dinnerCard = dinner && (() => {
+    const quality = windowQuality(dinner.score);
+    const tomorrow = dinner.stats.window.dayIdx > 0;
+    return {
+      ...dinner,
+      badge: quality === "show" ? windowVerdict(dinner.score) : quality === "caution" ? "Iffy" : "Indoor",
+      title: quality === "show" ? (tomorrow ? "Tomorrow dinner outside" : "Dinner outside")
+        : quality === "caution" ? "Dinner check" : "Indoor dinner weather",
+      q: tomorrow ? "Is dinner outside tomorrow a good idea?" : "Is dinner outside tonight a good idea?",
+      window: cardWindowText(dinner.stats),
+      meta: cardMeta(quality === "fallback" ? "Better inside" : "Dinner hours", dinner.reasons)
+    };
+  })();
+
+  const afterWorkCard = afterWork && (() => {
+    const quality = windowQuality(afterWork.score);
+    const tomorrow = afterWork.stats.window.dayIdx > 0;
+    return {
+      ...afterWork,
+      badge: quality === "show" ? windowVerdict(afterWork.score) : quality === "caution" ? "Iffy" : "Skip",
+      title: quality === "show" ? "After work outside" : quality === "caution" ? "After-work check" : "After-work indoor weather",
+      q: tomorrow ? "What is the best patio window after work tomorrow?" : "What is the best patio window after work today?",
+      window: cardWindowText(afterWork.stats),
+      meta: cardMeta(quality === "fallback" ? "Not much payoff" : "After 5pm", afterWork.reasons)
+    };
+  })();
 
   const defaults = [
-    dry && {
-      ...dry,
-      badge: "Dry",
-      title: "Driest stretch",
-      q: "What is the best dry window today?",
-      metaPrefix: "Lowest rain chance"
-    },
-    walk && {
-      ...walk,
-      badge: windowVerdict(walk.score),
-      title: "Comfortable walk",
-      q: "When is a comfortable time for a walk today?",
-      metaPrefix: "Comfort window"
-    },
-    dinner && {
-      ...dinner,
-      badge: windowVerdict(dinner.score),
-      title: "Dinner outside",
-      q: "Is dinner outside tonight a good idea?",
-      metaPrefix: "Dinner hours"
-    },
-    afterWork && {
-      ...afterWork,
-      badge: windowVerdict(afterWork.score),
-      title: "After work outside",
-      q: "What is the best patio window after work today?",
-      metaPrefix: "After 5pm"
-    }
+    dryCard,
+    walkCard,
+    dinnerCard,
+    afterWorkCard
   ].filter(Boolean);
 
   return defaults.slice(0, 4).map((item) => {
     const score = Math.max(0, Math.min(100, item.score));
-    const reasons = item.reasons.slice(0, 2).join(" · ");
     return {
       q: item.q,
       badge: item.badge || windowVerdict(score),
       title: item.title,
-      window: capitalize(item.stats.label),
-      meta: `${item.metaPrefix}: ${reasons}`,
+      window: item.window || capitalize(item.stats.label),
+      meta: item.meta || cardMeta("Weather", item.reasons),
       score
     };
   });
