@@ -1,4 +1,4 @@
-const VERSION = "1.5.0";
+const VERSION = "1.5.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -264,6 +264,7 @@ function init() {
   updateUnitButton();
   bindEvents();
   initMetricTipListeners();
+  detectAI();
 
   // Returning users open straight to their weather (last viewed → first saved).
   // First-timers get the welcome state to find a place — no arbitrary default.
@@ -305,6 +306,14 @@ function bindEvents() {
   });
 
   els.themeToggle.addEventListener("click", toggleTheme);
+  els.briefing.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-ai]");
+    if (!btn) return;
+    const action = btn.dataset.ai;
+    if (action === "enable") enableAI();
+    else if (action === "brief") runBrief();
+    else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
+  });
   els.searchToggle.addEventListener("click", () => toggleSearch());
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
   document.getElementById("searchLocate").addEventListener("click", () => {
@@ -715,6 +724,7 @@ function renderForecast(data, place) {
 
   renderNowcast(data);
   renderInsights(data, windUnit);
+  resetBriefing();
   renderHourly(data, tempUnit);
   renderDaily(data, tempUnit, precipUnit);
   updateMapPlace();
@@ -1038,6 +1048,170 @@ function buildAIContext() {
     next12h,
     alerts
   };
+}
+
+/* ---------- On-device AI briefing (Tier 1, opt-in) ---------- */
+// phase: unknown | unsupported | idle | loading | ready | generating | error
+const aiState = { phase: "unknown", progress: 0, status: "", text: "", error: "" };
+let aiBriefAbort = null;
+let aiModule = null;
+
+function loadAIModule() {
+  if (!aiModule) aiModule = import("./ai.js");
+  return aiModule;
+}
+
+// One-time capability probe. WebGPU + a real adapter is required (iOS 18+ / modern
+// desktop). Auto-warms the engine for users who already opted in on a past visit.
+async function detectAI() {
+  if (!("gpu" in navigator)) {
+    aiState.phase = "unsupported";
+    renderBriefing();
+    return;
+  }
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    aiState.phase = adapter ? "idle" : "unsupported";
+  } catch (_) {
+    aiState.phase = "unsupported";
+  }
+  if (aiState.phase === "idle" && localStorage.getItem("ai-enabled") === "1") {
+    // Previously enabled: optimistically show "Brief me" and warm in the background.
+    aiState.phase = "ready";
+    aiState.text = "";
+    warmAI();
+  }
+  renderBriefing();
+}
+
+function warmAI() {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1200));
+  idle(() => {
+    loadAIModule()
+      .then((ai) => ai.load())
+      .catch(() => {}); // a failed warm just means the first tap pays the load
+  });
+}
+
+async function enableAI() {
+  try {
+    aiState.phase = "loading";
+    aiState.progress = 0;
+    aiState.status = "Starting…";
+    renderBriefing();
+    const ai = await loadAIModule();
+    await ai.load((p) => {
+      aiState.phase = "loading";
+      aiState.progress = Math.round((p.progress || 0) * 100);
+      aiState.status = p.text || "Preparing AI…";
+      renderBriefing();
+    });
+    localStorage.setItem("ai-enabled", "1");
+    aiState.phase = "ready";
+    aiState.text = "";
+    renderBriefing();
+    runBrief(); // first briefing immediately after enabling
+  } catch (_) {
+    aiState.phase = "error";
+    aiState.error = "Couldn't start AI on this device.";
+    renderBriefing();
+  }
+}
+
+async function runBrief() {
+  const context = buildAIContext();
+  if (!context) return;
+  aiBriefAbort = { aborted: false };
+  const mine = aiBriefAbort;
+  aiState.phase = "generating";
+  aiState.text = "";
+  renderBriefing();
+  try {
+    const ai = await loadAIModule();
+    for await (const delta of ai.brief(context, mine)) {
+      if (mine.aborted) break;
+      aiState.text += delta;
+      renderBriefing();
+    }
+    aiState.phase = "ready"; // text retained → shows regenerate control
+    renderBriefing();
+  } catch (_) {
+    aiState.phase = "error";
+    aiState.error = "Briefing failed — try again.";
+    renderBriefing();
+  }
+}
+
+// Clear per-city briefing text when the forecast changes; keep engine state.
+function resetBriefing() {
+  if (aiBriefAbort) aiBriefAbort.aborted = true;
+  if (aiState.phase === "generating" || aiState.phase === "error") aiState.phase = "ready";
+  if (aiState.phase === "ready") aiState.text = "";
+  renderBriefing();
+}
+
+function renderBriefing() {
+  const slot = els.briefing;
+  if (!slot) return;
+  if (!state.forecast || !state.activePlace ||
+      aiState.phase === "unknown" || aiState.phase === "unsupported") {
+    slot.hidden = true;
+    return;
+  }
+  slot.hidden = false;
+
+  if (aiState.phase === "idle") {
+    slot.className = "briefing briefing-cta";
+    slot.innerHTML =
+      `<button class="briefing-enable" data-ai="enable" type="button">` +
+        `<span class="briefing-spark">✦</span>` +
+        `<span class="briefing-enable-copy"><strong>Enable AI briefing</strong>` +
+        `<small>one-time ~350&nbsp;MB download</small></span></button>`;
+    return;
+  }
+
+  if (aiState.phase === "loading") {
+    slot.className = "briefing briefing-loading";
+    slot.innerHTML =
+      `<div class="briefing-progress-head"><span class="briefing-spark spin">✦</span>` +
+      `<span>${escapeHtml(aiState.status || "Preparing AI…")}</span>` +
+      `<em>${aiState.progress}%</em></div>` +
+      `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>`;
+    return;
+  }
+
+  if (aiState.phase === "generating") {
+    slot.className = "briefing briefing-text generating";
+    slot.innerHTML =
+      `<span class="briefing-spark">✦</span>` +
+      `<p class="briefing-body">${escapeHtml(aiState.text)}<i class="briefing-caret"></i></p>` +
+      `<button class="briefing-act" data-ai="stop" type="button" aria-label="Stop">■</button>`;
+    return;
+  }
+
+  if (aiState.phase === "error") {
+    slot.className = "briefing briefing-err";
+    slot.innerHTML =
+      `<span>${escapeHtml(aiState.error || "AI unavailable")}</span>` +
+      `<button class="briefing-act" data-ai="brief" type="button">Retry</button>`;
+    return;
+  }
+
+  // ready
+  if (aiState.text) {
+    slot.className = "briefing briefing-text";
+    slot.innerHTML =
+      `<span class="briefing-spark">✦</span>` +
+      `<p class="briefing-body">${escapeHtml(aiState.text)}</p>` +
+      `<button class="briefing-act" data-ai="brief" type="button" aria-label="Regenerate">↻</button>`;
+  } else {
+    slot.className = "briefing briefing-cta";
+    slot.innerHTML =
+      `<button class="briefing-enable" data-ai="brief" type="button">` +
+      `<span class="briefing-spark">✦</span>` +
+      `<span class="briefing-enable-copy"><strong>Brief me</strong>` +
+      `<small>AI summary of your forecast</small></span></button>`;
+  }
 }
 
 function hoursInRange(data, fromMs, toMs) {
