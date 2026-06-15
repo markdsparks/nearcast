@@ -1,4 +1,4 @@
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -307,6 +307,11 @@ function bindEvents() {
   els.locateButton.addEventListener("click", useCurrentLocation);
   els.searchToggle.addEventListener("click", () => toggleSearch());
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
+
+  // Refresh stale data when the app is reopened/foregrounded (esp. iOS PWA)
+  document.addEventListener("visibilitychange", refreshOnForeground);
+  window.addEventListener("pageshow", (event) => { if (event.persisted) refreshOnForeground(); });
+  window.addEventListener("focus", refreshOnForeground);
   els.savePlace.addEventListener("click", () => {
     if (!state.activePlace) return;
     savePlace(state.activePlace);
@@ -549,7 +554,7 @@ function updateChipGlance(placeId) {
   if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
 }
 
-async function loadPlace(place) {
+async function loadPlace(place, force = false) {
   state.activePlace = normalizePlace(place);
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
@@ -562,9 +567,10 @@ async function loadPlace(place) {
   setStatus(`Loading ${state.activePlace.name}...`);
 
   try {
-    const data = await fetchForecast(state.activePlace);
+    const data = await fetchForecast(state.activePlace, force);
     renderForecast(data, state.activePlace);
     setStatus("");
+    lastLoadedAt = Date.now();
   } catch (error) {
     setStatus("Could not load weather data. Try another place or reload the page.", true);
   }
@@ -575,6 +581,19 @@ async function loadPlace(place) {
   } catch {
     renderAlerts([]);
   }
+}
+
+// When the PWA returns to the foreground after being idle (a common iOS case
+// where the frozen page is restored without re-running), pull fresh data.
+let lastLoadedAt = Date.now();
+const FOREGROUND_STALE_MS = 8 * 60 * 1000;
+
+function refreshOnForeground() {
+  if (document.visibilityState === "hidden") return;
+  if (!state.activePlace) return;
+  if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
+  for (const id in glanceData) delete glanceData[id]; // let chips re-pull too
+  loadPlace(state.activePlace, true);
 }
 
 function showView(view) {
@@ -593,12 +612,12 @@ function showView(view) {
   }
 }
 
-async function fetchForecast(place) {
+async function fetchForecast(place, force = false) {
   const cacheKey = `forecast:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
   const maxCacheAge = 15 * 60 * 1000;
 
-  if (cached && Date.now() - cached.savedAt < maxCacheAge) {
+  if (!force && cached && Date.now() - cached.savedAt < maxCacheAge) {
     return cached.data;
   }
 
