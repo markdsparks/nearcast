@@ -1,4 +1,4 @@
-const VERSION = "1.4.1";
+const VERSION = "1.4.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -850,22 +850,52 @@ function snowGlyph() {
   return `<svg viewBox="0 0 20 20" fill="none" stroke="#7fb0dd" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="4" y1="4" x2="16" y2="16"/><line x1="16" y1="4" x2="4" y2="16"/></svg>`;
 }
 
+// Radar-matched intensity ramp: light-blue → green → yellow → orange → red.
+function nowcastIntensityColor(f) {
+  const stops = [
+    [0.00, [126, 200, 255]],
+    [0.25, [54, 177, 106]],
+    [0.50, [240, 216, 70]],
+    [0.75, [240, 138, 48]],
+    [1.00, [200, 63, 107]]
+  ];
+  const t = Math.min(Math.max(f, 0), 1);
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t <= stops[i + 1][0]) {
+      const [a, ca] = stops[i], [b, cb] = stops[i + 1];
+      const k = (t - a) / (b - a || 1);
+      const rgb = ca.map((c, j) => Math.round(c + (cb[j] - c) * k));
+      return `rgb(${rgb.join(",")})`;
+    }
+  }
+  const last = stops[stops.length - 1][1];
+  return `rgb(${last.join(",")})`;
+}
+
+function shortClock(t) {
+  const d = new Date(t);
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ap = h < 12 ? "a" : "p";
+  h = h % 12 || 12;
+  return `${h}:${m}${ap}`;
+}
+
 function buildNowcastGraph(analysis) {
   const { slots } = analysis;
   const inch = state.unit === "fahrenheit";
   // Intensity thresholds in display units PER HOUR (precip is per 15 min → ×4)
-  const lightMax = inch ? 0.1 : 2.5;   // light/moderate boundary
-  const modMax = inch ? 0.3 : 7.6;     // moderate/heavy boundary
-  const heavyCap = inch ? 0.6 : 15;    // top of chart
+  const lightMax = inch ? 0.1 : 2.5;
+  const modMax = inch ? 0.3 : 7.6;
+  const heavyCap = inch ? 0.6 : 15;
 
-  const VW = 320, H = 96;
-  const padL = 42, padR = 10, topY = 10, baseY = 70;
+  const VW = 320, H = 104;
+  const padL = 8, padR = 8, topY = 22, baseY = 80;
   const plotW = VW - padL - padR;
   const plotH = baseY - topY;
   const n = slots.length;
 
-  // Absolute, piecewise mapping so each intensity band is an equal third of
-  // the chart — the height tells you light vs moderate vs heavy at a glance.
+  // Map rate → 0..1 intensity; drives both curve height and color.
   const frac = (perHour) => {
     if (perHour <= 0) return 0;
     if (perHour <= lightMax) return (perHour / lightMax) / 3;
@@ -873,40 +903,33 @@ function buildNowcastGraph(analysis) {
     return Math.min(1, 2 / 3 + ((perHour - modMax) / (heavyCap - modMax)) / 3);
   };
   const x = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const y = (perHour) => baseY - frac(perHour) * plotH;
-
-  const pts = slots.map((s, i) => ({ x: x(i), y: y((s.precip || 0) * 4) }));
+  const fr = (i) => frac((slots[i].precip || 0) * 4);
+  const pts = slots.map((s, i) => ({ x: x(i), y: baseY - fr(i) * plotH }));
   const line = smoothPath(pts);
   const area = `${line} L ${pts[n - 1].x.toFixed(1)} ${baseY} L ${pts[0].x.toFixed(1)} ${baseY} Z`;
 
-  // Band guide lines (thirds) + left-margin intensity labels
-  const yMod = (baseY - (2 / 3) * plotH).toFixed(1);    // moderate/heavy line
-  const yLight = (baseY - (1 / 3) * plotH).toFixed(1);   // light/moderate line
-  const guides =
-    `<line x1="${padL}" y1="${yMod}" x2="${VW - padR}" y2="${yMod}" class="nowcast-guide"/>` +
-    `<line x1="${padL}" y1="${yLight}" x2="${VW - padR}" y2="${yLight}" class="nowcast-guide"/>`;
-  const band = (cy, t) => `<text x="${(padL - 7).toFixed(1)}" y="${(cy + 3).toFixed(1)}" text-anchor="end" class="nowcast-band">${t}</text>`;
-  const bands =
-    band(topY + plotH / 6, "Heavy") +
-    band(topY + plotH / 2, "Mod") +
-    band(baseY - plotH / 6, "Light");
+  // Horizontal gradient coloring the curve by intensity at each moment.
+  const gradStops = pts.map((p, i) =>
+    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
+  ).join("");
 
-  const timeLabel = (i, t) => `<text x="${x(i).toFixed(1)}" y="${H - 3}" text-anchor="middle" class="nowcast-axis">${t}</text>`;
-  const times = timeLabel(0, "Now") + (n > 4 ? timeLabel(4, "1 hr") : "") + (n > 7 ? timeLabel(n - 1, "2 hr") : "");
+  // Absolute clock times on top, friendly "from now" on the bottom.
+  const idxMid = Math.min(4, n - 1);
+  const idxEnd = n - 1;
+  const topTime = (i, anchor) => `<text x="${x(i).toFixed(1)}" y="11" text-anchor="${anchor}" class="nowcast-clock">${shortClock(slots[i].t)}</text>`;
+  const botTime = (i, anchor, t) => `<text x="${x(i).toFixed(1)}" y="${H - 3}" text-anchor="${anchor}" class="nowcast-axis">${t}</text>`;
+  const topLabels = topTime(0, "start") + topTime(idxMid, "middle") + topTime(idxEnd, "end");
+  const botLabels = botTime(0, "start", "Now") + botTime(idxMid, "middle", "1 hr") + botTime(idxEnd, "end", "2 hr");
 
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
     <defs>
-      <linearGradient id="nowcastGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#4a90d9" stop-opacity="0.5"/>
-        <stop offset="100%" stop-color="#4a90d9" stop-opacity="0.04"/>
-      </linearGradient>
+      <linearGradient id="nowcastGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
     </defs>
-    ${guides}
-    ${bands}
-    <path d="${area}" fill="url(#nowcastGrad)"/>
-    <path d="${line}" fill="none" stroke="#4a90d9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${topLabels}
+    <path d="${area}" fill="url(#nowcastGrad)" fill-opacity="0.28"/>
+    <path d="${line}" fill="none" stroke="url(#nowcastGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
     <line x1="${padL}" y1="${baseY}" x2="${VW - padR}" y2="${baseY}" class="nowcast-base"/>
-    ${times}
+    ${botLabels}
   </svg>`;
 }
 
