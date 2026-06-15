@@ -1,4 +1,4 @@
-const VERSION = "1.10.3";
+const VERSION = "1.10.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -81,6 +81,11 @@ const els = {
   aiLauncherSub: document.querySelector("#aiLauncherSub"),
   aiSheet: document.querySelector("#aiSheet"),
   aiBackdrop: document.querySelector("#aiBackdrop"),
+  placeSwitcher: document.querySelector("#placeSwitcher"),
+  placeSwitcherName: document.querySelector("#placeSwitcherName"),
+  placeSwitcherMeta: document.querySelector("#placeSwitcherMeta"),
+  placeSheet: document.querySelector("#placeSheet"),
+  placeBackdrop: document.querySelector("#placeBackdrop"),
   hourly: document.querySelector("#hourly"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
@@ -346,6 +351,9 @@ function bindEvents() {
   els.aiBackdrop.addEventListener("click", closeAISheet);
   document.getElementById("aiSheetClose").addEventListener("click", closeAISheet);
   els.searchToggle.addEventListener("click", () => toggleSearch());
+  els.placeSwitcher.addEventListener("click", openPlaceSheet);
+  els.placeBackdrop.addEventListener("click", closePlaceSheet);
+  document.getElementById("placeSheetClose").addEventListener("click", closePlaceSheet);
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
   document.getElementById("searchLocate").addEventListener("click", () => {
     toggleSearch(false);
@@ -392,6 +400,9 @@ function bindEvents() {
   document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("dayDetail").hidden) closeDayDetail();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.placeSheet.hidden) closePlaceSheet();
   });
 
   // Severe weather alerts
@@ -553,31 +564,57 @@ async function fetchGlance(place) {
 function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
   updateSaveButton();
+  updatePlaceSwitcher();
+
+  if (!state.savedPlaces.length) {
+    els.savedPlaces.innerHTML = `
+      <div class="place-empty">
+        <strong>No saved places yet</strong>
+        <span>Save a place from the forecast to make switching faster.</span>
+      </div>
+    `;
+  }
 
   state.savedPlaces.forEach((place) => {
-    const chip = document.createElement("button");
-    chip.className = `place-chip${state.activePlace && state.activePlace.id === place.id ? " active" : ""}`;
-    chip.type = "button";
-    chip.dataset.placeId = place.id;
-
     const g = glanceData[place.id];
-    chip.innerHTML = `
-      <span class="chip-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay) : ""}</span>
-      <span class="chip-name">${escapeHtml(place.name)}</span>
-      <span class="chip-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
-      <span class="remove" aria-hidden="true">x</span>
+    const isActive = state.activePlace && state.activePlace.id === place.id;
+    const placeName = escapeHtml(place.name);
+    const item = document.createElement("article");
+    item.className = `place-item${isActive ? " active" : ""}`;
+    item.dataset.placeId = place.id;
+    item.innerHTML = `
+      <button class="place-item-main" type="button" aria-label="Load ${placeName}">
+        <span class="place-item-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay) : ""}</span>
+        <span class="place-item-copy">
+          <strong>${placeName}</strong>
+          <span>${escapeHtml(place.admin1 || place.country || (isActive ? "Current place" : "Saved place"))}</span>
+        </span>
+        <span class="place-item-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
+      </button>
+      <button class="place-item-remove" type="button" aria-label="Remove ${placeName}">×</button>
     `;
-    chip.addEventListener("click", (event) => {
-      if (event.target.classList.contains("remove")) {
-        removeSavedPlace(place.id);
-      } else {
-        loadPlace(place);
-      }
+    item.querySelector(".place-item-main").addEventListener("click", () => {
+      closePlaceSheet();
+      loadPlace(place);
     });
-    els.savedPlaces.appendChild(chip);
+    item.querySelector(".place-item-remove").addEventListener("click", () => removeSavedPlace(place.id));
+    els.savedPlaces.appendChild(item);
   });
   renderMapMarkers();
   hydrateGlances();
+}
+
+function updatePlaceSwitcher() {
+  const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
+  els.placeSwitcher.hidden = !hasContext;
+  if (!hasContext) return;
+
+  const place = state.activePlace || state.savedPlaces[0];
+  const count = state.savedPlaces.length;
+  const g = place ? glanceData[place.id] : null;
+  els.placeSwitcherName.textContent = place ? place.name : "Places";
+  els.placeSwitcherMeta.textContent =
+    `${count} saved${g ? ` · ${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}`;
 }
 
 // Fill in temp + condition icon on each saved chip; runs after the
@@ -587,27 +624,50 @@ function hydrateGlances() {
     if (glanceData[place.id]) return;
     try {
       glanceData[place.id] = await fetchGlance(place);
-      updateChipGlance(place.id);
+      updatePlaceGlance(place.id);
     } catch {
       /* leave chip as name-only on failure */
     }
   });
 }
 
-function updateChipGlance(placeId) {
+function updatePlaceGlance(placeId) {
   const chip = els.savedPlaces.querySelector(`[data-place-id="${placeId}"]`);
   const g = glanceData[placeId];
-  if (!chip || !g) return;
-  const icon = chip.querySelector(".chip-icon");
-  const temp = chip.querySelector(".chip-temp");
+  if (!g) return;
+  const icon = chip?.querySelector(".place-item-icon");
+  const temp = chip?.querySelector(".place-item-temp");
   if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay);
   if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
+  updatePlaceSwitcher();
+}
+
+function openPlaceSheet() {
+  renderSavedPlaces();
+  els.placeBackdrop.hidden = false;
+  els.placeSheet.hidden = false;
+  requestAnimationFrame(() => {
+    els.placeBackdrop.classList.add("show");
+    els.placeSheet.classList.add("show");
+  });
+  document.body.style.overflow = "hidden";
+}
+
+function closePlaceSheet() {
+  els.placeBackdrop.classList.remove("show");
+  els.placeSheet.classList.remove("show");
+  document.body.style.overflow = "";
+  setTimeout(() => {
+    els.placeBackdrop.hidden = true;
+    els.placeSheet.hidden = true;
+  }, 260);
 }
 
 async function loadPlace(place, force = false) {
   state.activePlace = normalizePlace(place);
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
+  updatePlaceSwitcher();
   mapState.panX = 0;
   mapState.panY = 0;
   renderSavedPlaces();

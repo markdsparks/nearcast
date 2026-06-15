@@ -51,7 +51,16 @@
       </button>
 
       <section class="saved-row" aria-label="Saved places">
-        <div class="saved-places" id="savedPlaces"></div>
+        <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
+          <span class="place-switcher-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
+          </span>
+          <span class="place-switcher-copy">
+            <strong id="placeSwitcherName">Places</strong>
+            <span id="placeSwitcherMeta">Saved places</span>
+          </span>
+          <span class="place-switcher-chevron" aria-hidden="true">›</span>
+        </button>
       </section>
 
       <section class="status" id="status" hidden></section>
@@ -245,6 +254,22 @@
     </main>
 
     <div class="metric-tip" id="metricTip" hidden></div>
+
+    <div class="sheet-backdrop" id="placeBackdrop" hidden></div>
+    <aside class="day-sheet place-sheet" id="placeSheet" hidden aria-label="Saved places" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="placeSheetClose" type="button" aria-label="Close saved places">✕</button>
+      <header class="sheet-head place-sheet-head">
+        <span class="place-sheet-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
+        </span>
+        <div class="sheet-head-text">
+          <h2>Places</h2>
+          <p class="place-sheet-sub">Switch locations without crowding the forecast</p>
+        </div>
+      </header>
+      <div class="place-list" id="savedPlaces"></div>
+    </aside>
 
     <div class="sheet-backdrop" id="dayDetailBackdrop" hidden></div>
     <aside class="day-sheet" id="dayDetail" hidden aria-label="Day detail" role="dialog" aria-modal="true">
