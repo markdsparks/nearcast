@@ -1,4 +1,4 @@
-const VERSION = "1.3.1";
+const VERSION = "1.4.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -661,6 +661,8 @@ async function fetchForecast(place, force = false) {
       "sunrise",
       "sunset"
     ].join(","),
+    minutely_15: "precipitation,precipitation_probability,snowfall",
+    forecast_minutely_15: "8",
     temperature_unit: state.unit,
     wind_speed_unit: state.unit === "fahrenheit" ? "mph" : "kmh",
     precipitation_unit: state.unit === "fahrenheit" ? "inch" : "mm",
@@ -706,6 +708,7 @@ function renderForecast(data, place) {
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(current.weather_code, isDay);
 
+  renderNowcast(data);
   renderInsights(data, windUnit);
   renderHourly(data, tempUnit);
   renderDaily(data, tempUnit, precipUnit);
@@ -753,6 +756,135 @@ function buildSummary(data) {
 
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/* ---------- Precipitation nowcast ("rain in ~X min") ---------- */
+
+// Analyze the next ~2 hours of 15-minute precipitation into a plain-language
+// headline + a timeline. Returns null when it's dry (so the strip stays hidden).
+function analyzeNowcast(data) {
+  const m = data.minutely_15;
+  if (!m || !m.time || !m.precipitation) return null;
+
+  const now = Date.now();
+  const inch = (state.unit === "fahrenheit");
+  const wetThreshold = inch ? 0.002 : 0.05; // measurable precip per 15 min
+
+  // Keep the current slot through the next ~2 hours.
+  const slots = [];
+  for (let i = 0; i < m.time.length; i++) {
+    const t = new Date(m.time[i]).getTime();
+    if (t < now - 15 * 60 * 1000) continue; // drop fully-past slots
+    slots.push({
+      t,
+      precip: m.precipitation[i] || 0,
+      snow: (m.snowfall && m.snowfall[i]) || 0,
+      prob: (m.precipitation_probability && m.precipitation_probability[i]) || 0
+    });
+    if (slots.length >= 8) break;
+  }
+  if (!slots.length) return null;
+
+  const wet = slots.map((s) => s.precip > wetThreshold);
+  if (!wet.some(Boolean)) return null; // dry → hide
+
+  const wetSlots = slots.filter((_, i) => wet[i]);
+  const peak = Math.max(...wetSlots.map((s) => s.precip));
+  const perHour = peak * 4;
+  const isSnow = wetSlots.some((s) => s.snow > 0);
+  const heavy = inch ? perHour > 0.3 : perHour > 7.6;
+  const moderate = inch ? perHour > 0.1 : perHour > 2.5;
+  const intensity = heavy ? "Heavy " : moderate ? "" : "Light ";
+  const word = isSnow ? "snow" : "rain";
+  const label = `${intensity}${word}`.trim();
+  const Label = capitalize(label);
+
+  const roundMin = (ms) => {
+    const min = Math.max(0, Math.round(ms / 60000));
+    if (min <= 5) return 5;
+    return Math.round(min / 5) * 5;
+  };
+
+  let headline;
+  if (wet[0]) {
+    // Raining now — when does it ease?
+    const firstDry = wet.indexOf(false);
+    if (firstDry === -1) {
+      headline = `${Label} for at least the next 2 hours`;
+    } else {
+      headline = `${Label} now, easing around ${formatTime(slots[firstDry].t)}`;
+    }
+  } else {
+    // Dry now — when does it start?
+    const startIdx = wet.indexOf(true);
+    const mins = roundMin(slots[startIdx].t - now);
+    headline = `${Label} starting in about ${mins} min`;
+    const dryAfter = wet.indexOf(false, startIdx);
+    if (dryAfter !== -1) {
+      const dur = roundMin(slots[dryAfter].t - slots[startIdx].t);
+      headline += `, lasting about ${dur} min`;
+    }
+  }
+
+  return { headline, slots, wet, peak, isSnow };
+}
+
+function renderNowcast(data) {
+  const el = document.getElementById("nowcast");
+  const analysis = analyzeNowcast(data);
+  if (!analysis) {
+    el.hidden = true;
+    return;
+  }
+
+  document.getElementById("nowcastHeadline").textContent = analysis.headline;
+  document.getElementById("nowcastIcon").innerHTML = analysis.isSnow ? snowGlyph() : raindropGlyph();
+  document.getElementById("nowcastGraph").innerHTML = buildNowcastGraph(analysis);
+  el.hidden = false;
+}
+
+function raindropGlyph() {
+  return `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.5C10 2.5 4.5 9 4.5 13a5.5 5.5 0 0 0 11 0C15.5 9 10 2.5 10 2.5z" fill="#4a90d9"/></svg>`;
+}
+function snowGlyph() {
+  return `<svg viewBox="0 0 20 20" fill="none" stroke="#7fb0dd" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="4" y1="4" x2="16" y2="16"/><line x1="16" y1="4" x2="4" y2="16"/></svg>`;
+}
+
+function buildNowcastGraph(analysis) {
+  const { slots, wet, peak } = analysis;
+  const VW = 320, H = 56;
+  const padX = 4, baseY = 40, topY = 6;
+  const n = slots.length;
+  const barW = (VW - padX * 2) / n * 0.62;
+  const gap = (VW - padX * 2) / n;
+  const norm = Math.max(peak, 0.001);
+
+  const now = Date.now();
+  let bars = "";
+  slots.forEach((s, i) => {
+    const cx = padX + gap * i + gap / 2;
+    const h = wet[i] ? Math.max(4, ((s.precip / norm) * (baseY - topY))) : 1.5;
+    const y = baseY - h;
+    const fill = wet[i] ? "#4a90d9" : "var(--line)";
+    const op = wet[i] ? (0.55 + 0.45 * (s.precip / norm)) : 0.5;
+    bars += `<rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${fill}" opacity="${op.toFixed(2)}"/>`;
+  });
+
+  // Axis labels: Now, +1h, +2h (aligned to slot positions)
+  const labelAt = (i, text) => {
+    const cx = padX + gap * i + gap / 2;
+    return `<text x="${cx.toFixed(1)}" y="${H - 2}" text-anchor="middle" class="nowcast-axis">${text}</text>`;
+  };
+  const labels =
+    labelAt(0, "Now") +
+    (n > 4 ? labelAt(4, "1 hr") : "") +
+    (n > 7 ? labelAt(7, "2 hr") : "");
+
+  return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
+    <line x1="${padX}" y1="${baseY}" x2="${VW - padX}" y2="${baseY}" stroke="var(--line)" stroke-width="1"/>
+    ${bars}
+    ${labels}
+  </svg>`;
 }
 
 function renderInsights(data, windUnit) {

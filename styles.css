@@ -1688,3 +1688,51 @@ h2 {
 .welcome-locate:hover {
   border-color: var(--blue);
 }
+
+/* ---------- Precipitation nowcast ---------- */
+.nowcast[hidden] {
+  display: none;
+}
+.nowcast {
+  margin-bottom: 18px;
+  padding: 14px 16px 10px;
+  border-radius: 12px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-left: 4px solid #4a90d9;
+}
+.nowcast-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+.nowcast-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.nowcast-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.nowcast-headline {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+.nowcast-graph {
+  width: 100%;
+}
+.nowcast-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.nowcast-axis {
+  fill: var(--ink);
+  opacity: 0.45;
+  font-size: 9px;
+  font-weight: 600;
+}
