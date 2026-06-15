@@ -1,4 +1,4 @@
-const VERSION = "1.10.0";
+const VERSION = "1.10.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1608,10 +1608,10 @@ function lockGlyph() {
 // Chips and typed questions are answered by local deterministic forecast logic.
 // The tiny model stays focused on summaries; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
-  { label: "Best walk", q: "What is the best time for a walk today?" },
   { label: "Dry window", q: "What is the best dry window today?" },
-  { label: "Yard work", q: "What is the best time for yard work today?" },
-  { label: "Grill tonight", q: "Is it good weather to grill tonight?" },
+  { label: "After work", q: "What is the best patio window after work today?" },
+  { label: "Dinner outside", q: "Is dinner outside tonight a good idea?" },
+  { label: "Yard work", q: "What is a reasonable yard-work window this weekend?" },
   { label: "What to wear", q: "What should I wear tonight?" }
 ];
 
@@ -1675,7 +1675,7 @@ async function runAsk(question, intent) {
 }
 
 const AI_FALLBACK_MSG =
-  "I can answer weather decisions like \"picnic Saturday afternoon?\", \"better today or tomorrow?\", " +
+  "I can answer weather decisions like \"dinner outside tonight?\", \"better today or tomorrow?\", " +
   "\"too windy for biking after 5?\", \"what should I wear tonight?\", plus rain, temperature, wind, UV, " +
   "humidity, and sunrise/sunset through the next 10 days.";
 
@@ -1683,6 +1683,7 @@ const ACTIVITY_RULES = {
   run: { label: "a run", hot: 86, cold: 34, rain: 35, wind: 24, uv: 9, aliases: ["run", "running", "jog", "jogging"] },
   bike: { label: "a bike ride", hot: 88, cold: 36, rain: 30, wind: 20, uv: 9, aliases: ["bike", "biking", "cycling", "cycle"] },
   walk: { label: "a walk", hot: 90, cold: 28, rain: 45, wind: 28, uv: 10, aliases: ["walk", "walking", "stroll", "dog", "walk the dog"] },
+  dinner: { label: "dinner outside", hot: 92, cold: 45, rain: 30, wind: 18, uv: 9, aliases: ["dinner", "supper", "dinner outside", "eat outside", "eating outside", "patio dinner"] },
   grill: { label: "grilling outside", hot: 94, cold: 35, rain: 35, wind: 18, uv: 10, aliases: ["grill", "grilling", "barbecue", "bbq", "cookout", "cook out"] },
   picnic: { label: "a picnic", hot: 90, cold: 45, rain: 25, wind: 20, uv: 8, aliases: ["picnic", "patio", "eat outside", "dinner outside", "lunch outside"] },
   yard: { label: "yard work", hot: 86, cold: 35, rain: 35, wind: 28, uv: 8, aliases: ["yard", "mow", "mowing", "garden", "gardening", "rake", "yard work"] },
@@ -1788,6 +1789,12 @@ function resolveAskWindow(q, c) {
   if (/\blater\b|\brest of today\b/.test(s)) {
     const now = new Date();
     return { dayIdx: 0, startHour: now.getHours(), endHour: 24, label: "rest of today" };
+  }
+  if (hasAny(s, ["dinner", "supper", "grill", "grilling", "bbq", "barbecue", "eat outside"])) {
+    return { dayIdx, startHour: 17, endHour: 21, label: "custom" };
+  }
+  if (hasAny(s, ["after work", "after 5", "after five"])) {
+    return { dayIdx, startHour: 17, endHour: 22, label: "custom" };
   }
   if (period) return { dayIdx, startHour: ASK_PERIODS[period].start, endHour: ASK_PERIODS[period].end, period };
   return { dayIdx, startHour: dayIdx === 0 ? new Date().getHours() : 8, endHour: 20, period: "day" };
@@ -1932,8 +1939,44 @@ function numericWindowScore(rule, stats) {
   return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
 }
 
-function candidateAskWindows({ dayIdx = 0, hours = 2, limitHour = 22 } = {}) {
-  const start = dayIdx === 0 ? Math.max(new Date().getHours(), 6) : 6;
+function windowVerdict(score) {
+  if (score >= 80) return "Great";
+  if (score >= 65) return "Good";
+  if (score >= 45) return "Iffy";
+  return "Poor";
+}
+
+function bestWindowOptionsFromText(s, c) {
+  const options = {};
+  const dayIdx = resolveDayIndex(s, c);
+  if (dayIdx != null) options.dayIdx = dayIdx;
+
+  if (hasAny(s, ["dinner", "supper", "grill", "grilling", "bbq", "barbecue", "eat outside"])) {
+    options.earliestHour = 17;
+    options.limitHour = 21;
+    options.allowTomorrow = !hasAny(s, ["tonight", "today"]);
+  } else if (hasAny(s, ["after work", "after 5", "after five"])) {
+    options.earliestHour = 17;
+    options.limitHour = 22;
+  } else if (hasAny(s, ["morning"])) {
+    options.earliestHour = 6;
+    options.limitHour = 12;
+  } else if (hasAny(s, ["afternoon", "midday"])) {
+    options.earliestHour = 12;
+    options.limitHour = 18;
+  } else if (hasAny(s, ["evening"])) {
+    options.earliestHour = 17;
+    options.limitHour = 22;
+  } else if (hasAny(s, ["weekend"])) {
+    options.earliestHour = 8;
+    options.limitHour = 18;
+  }
+
+  return options;
+}
+
+function candidateAskWindows({ dayIdx = 0, hours = 2, earliestHour = 6, limitHour = 22 } = {}) {
+  const start = dayIdx === 0 ? Math.max(new Date().getHours(), earliestHour) : earliestHour;
   const windows = [];
   for (let h = start; h + hours <= limitHour; h += 1) {
     windows.push({ dayIdx, startHour: h, endHour: h + hours, label: "custom" });
@@ -1950,7 +1993,7 @@ function bestWindowForRule(rule, options = {}) {
     .map((stats) => ({ stats, score: numericWindowScore(rule, stats) }))
     .sort((a, b) => b.score - a.score);
 
-  if (!candidates.length && (options.dayIdx || 0) === 0) {
+  if (!candidates.length && (options.dayIdx || 0) === 0 && options.allowTomorrow !== false) {
     candidates = candidateAskWindows({ ...options, dayIdx: 1 })
       .map((window) => askWindowStats(window))
       .filter(Boolean)
@@ -1990,35 +2033,73 @@ function bestDryWindow(options = {}) {
   };
 }
 
-function bestWindowAnswer(activityKey) {
+function bestWindowAnswer(activityKey, options = {}) {
   const c = buildAIContext();
   if (!c) return null;
-  if (activityKey === "dry") return bestDryWindow()?.answer || null;
+  if (activityKey === "dry") return bestDryWindow(options)?.answer || null;
   const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
-  return bestWindowForRule(rule)?.answer || null;
+  const result = bestWindowForRule(rule, options);
+  if (result) return result.answer;
+  if (options.allowTomorrow === false) return `I do not see a useful ${rule.label} window left tonight.`;
+  return null;
 }
 
 function buildBestWindowCards() {
   const c = buildAIContext();
   if (!c) return [];
+
+  const dry = bestDryWindow();
+  const walk = bestWindowForRule(ACTIVITY_RULES.walk, { limitHour: 21 });
+  const dinner = bestWindowForRule(ACTIVITY_RULES.dinner, {
+    earliestHour: 17,
+    limitHour: 21,
+    allowTomorrow: false
+  });
+  const afterWork = bestWindowForRule(ACTIVITY_RULES.picnic, {
+    earliestHour: 17,
+    limitHour: 22
+  });
+
   const defaults = [
-    bestDryWindow(),
-    bestWindowForRule(ACTIVITY_RULES.walk),
-    bestWindowForRule(ACTIVITY_RULES.yard),
-    bestWindowForRule(ACTIVITY_RULES.grill)
+    dry && {
+      ...dry,
+      badge: "Dry",
+      title: "Driest stretch",
+      q: "What is the best dry window today?",
+      metaPrefix: "Lowest rain chance"
+    },
+    walk && {
+      ...walk,
+      badge: windowVerdict(walk.score),
+      title: "Comfortable walk",
+      q: "When is a comfortable time for a walk today?",
+      metaPrefix: "Comfort window"
+    },
+    dinner && {
+      ...dinner,
+      badge: windowVerdict(dinner.score),
+      title: "Dinner outside",
+      q: "Is dinner outside tonight a good idea?",
+      metaPrefix: "Dinner hours"
+    },
+    afterWork && {
+      ...afterWork,
+      badge: windowVerdict(afterWork.score),
+      title: "After work outside",
+      q: "What is the best patio window after work today?",
+      metaPrefix: "After 5pm"
+    }
   ].filter(Boolean);
 
   return defaults.slice(0, 4).map((item) => {
     const score = Math.max(0, Math.min(100, item.score));
-    const subject = item.title.replace(/^Best for /, "");
-    const q = item.title === "Best dry window"
-      ? "What is the best dry window today?"
-      : `What is the best time for ${subject} today?`;
+    const reasons = item.reasons.slice(0, 2).join(" · ");
     return {
-      q,
+      q: item.q,
+      badge: item.badge || windowVerdict(score),
       title: item.title,
       window: capitalize(item.stats.label),
-      meta: item.reasons.slice(0, 2).join(" · "),
+      meta: `${item.metaPrefix}: ${reasons}`,
       score
     };
   });
@@ -2157,10 +2238,11 @@ function answerFreeform(q) {
   }
 
   const activity = detectAskActivity(q);
-  if (hasAny(s, ["best", "best time", "best window", "when should", "when can", "what time"])) {
-    if (hasAny(s, ["dry", "rain-free", "rain free"])) return bestWindowAnswer("dry");
-    if (activity) return bestWindowAnswer(activity);
-    return bestWindowAnswer("walk");
+  if (hasAny(s, ["best", "best time", "best window", "when should", "when can", "what time", "window"])) {
+    const options = bestWindowOptionsFromText(s, c);
+    if (hasAny(s, ["dry", "rain-free", "rain free"])) return bestWindowAnswer("dry", options);
+    if (activity) return bestWindowAnswer(activity, options);
+    return bestWindowAnswer("walk", options);
   }
 
   if (activity) return activityAnswer(ACTIVITY_RULES[activity], stats, c.units);
@@ -2207,9 +2289,11 @@ function renderAsk() {
 
   const bestCards = buildBestWindowCards().map((card) =>
     `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"${dis}>` +
-      `<span class="best-window-score">${card.score}</span>` +
       `<span class="best-window-copy">` +
-        `<strong>${escapeHtml(card.title)}</strong>` +
+        `<span class="best-window-top">` +
+          `<strong>${escapeHtml(card.title)}</strong>` +
+          `<span class="best-window-badge">${escapeHtml(card.badge)}</span>` +
+        `</span>` +
         `<em>${escapeHtml(card.window)}</em>` +
         `<small>${escapeHtml(card.meta)}</small>` +
       `</span>` +
@@ -2231,8 +2315,8 @@ function renderAsk() {
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
 
   panel.innerHTML =
-    (bestCards ? `<section class="best-windows" aria-label="Best weather windows">` +
-      `<div class="ai-section-title"><strong>Best windows</strong><span>Tap for the reasoning</span></div>` +
+    (bestCards ? `<section class="best-windows" aria-label="Weather windows">` +
+      `<div class="ai-section-title"><strong>Weather windows</strong><span>Weather only</span></div>` +
       `<div class="best-window-grid">${bestCards}</div>` +
     `</section>` : "") +
     `<section class="plan-presets" aria-label="Plan presets">` +

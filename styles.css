@@ -843,10 +843,7 @@ h2 {
   gap: 9px;
 }
 .best-window-card {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
+  display: block;
   min-height: 88px;
   padding: 11px;
   border: 1px solid var(--line);
@@ -863,26 +860,32 @@ h2 {
   opacity: 0.55;
   cursor: default;
 }
-.best-window-score {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--bg);
-  font-size: 0.9rem;
-  font-weight: 850;
-  font-variant-numeric: tabular-nums;
-}
 .best-window-copy {
   display: grid;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
+}
+.best-window-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
   min-width: 0;
 }
 .best-window-copy strong {
   font-size: 0.9rem;
   font-weight: 850;
+  min-width: 0;
+}
+.best-window-badge {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1;
 }
 .best-window-copy em {
   color: var(--ink);
