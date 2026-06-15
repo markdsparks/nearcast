@@ -1,4 +1,4 @@
-const VERSION = "1.6.1";
+const VERSION = "1.6.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1048,13 +1048,16 @@ function buildAIContext() {
       lo: r(daily.temperature_2m_min[0]),
       rainChance: daily.precipitation_probability_max[0] || 0,
       uvPeak: r(daily.uv_index_max[0]),
+      sunrise: daily.sunrise[0] ? shortClock(new Date(daily.sunrise[0]).getTime()) : null,
       sunset: shortClock(new Date(daily.sunset[0]).getTime())
     },
     tomorrow: {
       hi: r(daily.temperature_2m_max[1]),
       lo: r(daily.temperature_2m_min[1]),
       rainChance: daily.precipitation_probability_max[1] || 0,
-      sky: sky(daily.weather_code[1])
+      sky: sky(daily.weather_code[1]),
+      sunrise: daily.sunrise[1] ? shortClock(new Date(daily.sunrise[1]).getTime()) : null,
+      sunset: daily.sunset[1] ? shortClock(new Date(daily.sunset[1]).getTime()) : null
     },
     next12h,
     alerts
@@ -1365,8 +1368,76 @@ function assessActivity(intent) {
   else if (gustMod && intent === "grill") { score = Math.min(score, 1); reasons.push(`breezy at ${gust} ${u.wind}`); }
 
   const verdict = score >= 2 ? "Good conditions" : score === 1 ? "Doable, with a caveat" : "Not ideal";
-  const label = { run: "for a run", bike: "for a bike ride", walk: "for a dog walk", grill: "to grill outside" }[intent] || "";
+  const label = { run: "for a run", bike: "for a bike ride", walk: "for a walk", grill: "to grill outside" }[intent] || "";
   return `${verdict} ${label}: ${reasons.join(", ")}.`;
+}
+
+// Deterministic answers for the common free-text questions (temperature, rain,
+// sunset, wind, etc.). Returns a correct answer string, or null to fall back to
+// the LLM. Keeps the unreliable model off the questions we can answer exactly.
+function answerFreeform(q) {
+  const c = buildAIContext();
+  if (!c) return null;
+  const u = c.units;
+  const s = ` ${q.toLowerCase()} `;
+  const has = (...words) => words.some((w) => s.includes(w));
+  const tomorrow = has("tomorrow");
+  const tonight = has("tonight", "overnight");
+
+  // Activity / umbrella / clothing — reuse the verdict logic.
+  if (has("umbrella")) return assessActivity("umbrella");
+  if (has("what to wear", "should i wear", "what to put on", "a jacket", "a coat", "bundle")) return assessActivity("wear");
+  if (has(" run ", "running", "jog", "go for a run")) return assessActivity("run");
+  if (has("bike", "biking", "cycling", "cycle ")) return assessActivity("bike");
+  if (has("walk", "stroll")) return assessActivity("walk");
+  if (has("grill", "barbecue", "bbq", "cookout", "cook out")) return assessActivity("grill");
+
+  // Sunrise / sunset
+  if (has("sunset", "sun set", "sundown", "sun go down", "get dark")) {
+    if (tomorrow && c.tomorrow.sunset) return `Sunset tomorrow is at ${c.tomorrow.sunset}.`;
+    return `Sunset today is at ${c.today.sunset}.`;
+  }
+  if (has("sunrise", "sun rise", "sun up", "sun come up", "get light")) {
+    if (tomorrow && c.tomorrow.sunrise) return `Sunrise tomorrow is at ${c.tomorrow.sunrise}.`;
+    if (c.today.sunrise) return `Sunrise today is at ${c.today.sunrise}.`;
+  }
+
+  // Rain / precipitation
+  if (has("rain", "wet", "precip", "shower", "storm", "drizzle", "snow", "pour")) {
+    const rainLine = (p) =>
+      p < 15 ? `unlikely (${p}% chance)` : p < 50 ? `possible (${p}% chance)` : `likely (${p}% chance)`;
+    if (tomorrow) return `Rain looks ${rainLine(c.tomorrow.rainChance)} tomorrow.`;
+    const dry = /^dry/i.test(c.nowcast.trim());
+    if (!dry) return `${c.nowcast.replace(/\.$/, "")}.`;
+    return `It's dry now — rain is ${rainLine(c.today.rainChance)} the rest of today.`;
+  }
+
+  // Temperature
+  if (has("how hot", "how warm", "how cold", "temperature", "temp ", " high ", " low ", "degrees", "hot out", "cold out", "warm out")) {
+    if (tomorrow) return `Tomorrow: high of ${c.tomorrow.hi}${u.temp}, low of ${c.tomorrow.lo}${u.temp}.`;
+    if (tonight) return `Tonight's low is around ${c.tomorrow.lo}${u.temp}.`;
+    if (has("right now", " now ", "currently", "outside", "how hot", "how cold", "how warm"))
+      return `Right now it's ${c.now.temp}${u.temp} (feels like ${c.now.feels}${u.temp}), ${c.now.sky.toLowerCase()}.`;
+    return `Today: high of ${c.today.hi}${u.temp}, low of ${c.today.lo}${u.temp}.`;
+  }
+
+  // Wind
+  if (has("wind", "windy", "gust", "breeze", "breezy")) {
+    const g = c.now.gust > c.now.wind + 2 ? ` gusting to ${c.now.gust} ${u.wind}` : "";
+    return `Wind is ${c.now.wind} ${u.wind}${g} from the ${c.now.windDir} right now.`;
+  }
+
+  // UV / sun strength
+  if (has(" uv ", "sunburn", "sunscreen", "sun strong", "strong is the sun")) {
+    return `Today's UV index peaks at ${c.today.uvPeak}.`;
+  }
+
+  // Humidity
+  if (has("humid", "muggy", "sticky", "dry air")) {
+    return `Humidity is ${c.now.humidity}% right now.`;
+  }
+
+  return null; // no deterministic match → fall back to the LLM
 }
 
 let askState = { phase: "idle", question: "", answer: "", error: "" };
@@ -1389,7 +1460,15 @@ async function runAsk(question, intent) {
     return;
   }
 
-  // Free-form: best-effort LLM answer grounded on the fact sheet.
+  // Free-form: answer common questions deterministically (always correct);
+  // only fall back to the best-effort LLM for genuinely open ones.
+  const direct = answerFreeform(question);
+  if (direct) {
+    askState = { phase: "idle", question, answer: direct, error: "" };
+    renderAsk();
+    return;
+  }
+
   const factSheet = buildAIFactSheet();
   if (!factSheet) return;
   askState = { phase: "answering", question, answer: "", error: "" };
