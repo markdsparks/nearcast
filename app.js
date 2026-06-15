@@ -1,4 +1,4 @@
-const VERSION = "1.5.2";
+const VERSION = "1.5.3";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1219,13 +1219,17 @@ function renderBriefing() {
   }
   slot.hidden = false;
 
+  // Privacy is the headline feature: the model runs entirely on-device.
+  const privateTag =
+    `<span class="briefing-tag">${lockGlyph()}Runs on your device — nothing leaves your phone</span>`;
+
   if (aiState.phase === "idle") {
     slot.className = "briefing briefing-cta";
     slot.innerHTML =
       `<button class="briefing-enable" data-ai="enable" type="button">` +
-        `<span class="briefing-spark">✦</span>` +
-        `<span class="briefing-enable-copy"><strong>Enable AI briefing</strong>` +
-        `<small>one-time ~350&nbsp;MB download</small></span></button>`;
+        `<span class="briefing-spark">${lockGlyph()}</span>` +
+        `<span class="briefing-enable-copy"><strong>Enable private AI briefing</strong>` +
+        `<small>Runs 100% on your device · ~350&nbsp;MB, one time</small></span></button>`;
     return;
   }
 
@@ -1235,16 +1239,18 @@ function renderBriefing() {
       `<div class="briefing-progress-head"><span class="briefing-spark spin">✦</span>` +
       `<span>${escapeHtml(aiState.status || "Preparing AI…")}</span>` +
       `<em>${aiState.progress}%</em></div>` +
-      `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>`;
+      `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>` +
+      `<span class="briefing-tag">${lockGlyph()}One-time download — then runs fully offline &amp; private</span>`;
     return;
   }
 
   if (aiState.phase === "generating") {
     slot.className = "briefing briefing-text generating";
     slot.innerHTML =
-      `<span class="briefing-spark">✦</span>` +
+      `<div class="briefing-row"><span class="briefing-spark">✦</span>` +
       `<p class="briefing-body">${escapeHtml(aiState.text)}<i class="briefing-caret"></i></p>` +
-      `<button class="briefing-act" data-ai="stop" type="button" aria-label="Stop">■</button>`;
+      `<button class="briefing-act" data-ai="stop" type="button" aria-label="Stop">■</button></div>` +
+      privateTag;
     return;
   }
 
@@ -1260,17 +1266,24 @@ function renderBriefing() {
   if (aiState.text) {
     slot.className = "briefing briefing-text";
     slot.innerHTML =
-      `<span class="briefing-spark">✦</span>` +
+      `<div class="briefing-row"><span class="briefing-spark">✦</span>` +
       `<p class="briefing-body">${escapeHtml(aiState.text)}</p>` +
-      `<button class="briefing-act" data-ai="brief" type="button" aria-label="Regenerate">↻</button>`;
+      `<button class="briefing-act" data-ai="brief" type="button" aria-label="Regenerate">↻</button></div>` +
+      privateTag;
   } else {
     slot.className = "briefing briefing-cta";
     slot.innerHTML =
       `<button class="briefing-enable" data-ai="brief" type="button">` +
       `<span class="briefing-spark">✦</span>` +
       `<span class="briefing-enable-copy"><strong>Brief me</strong>` +
-      `<small>AI summary of your forecast</small></span></button>`;
+      `<small>Private · on-device AI</small></span></button>`;
   }
+}
+
+function lockGlyph() {
+  return `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">` +
+    `<rect x="3.2" y="7" width="9.6" height="6.3" rx="1.6" fill="currentColor"/>` +
+    `<path d="M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>`;
 }
 
 function hoursInRange(data, fromMs, toMs) {

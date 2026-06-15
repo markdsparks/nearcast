@@ -610,6 +610,11 @@ h2 {
   font-size: 0.95rem;
   flex-shrink: 0;
 }
+.briefing-spark svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+}
 .briefing-spark.spin {
   display: inline-block;
   animation: briefing-spin 1.4s linear infinite;
@@ -686,13 +691,28 @@ h2 {
 }
 
 /* Generated / streaming text */
-.briefing-text {
+.briefing-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
 }
-.briefing-text .briefing-spark {
+.briefing-row .briefing-spark {
   margin-top: 2px;
+}
+.briefing-tag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 9px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.briefing-tag svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.75;
 }
 .briefing-body {
   flex: 1;
