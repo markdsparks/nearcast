@@ -1,4 +1,4 @@
-const VERSION = "1.4.2";
+const VERSION = "1.4.3";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -890,7 +890,7 @@ function buildNowcastGraph(analysis) {
   const heavyCap = inch ? 0.6 : 15;
 
   const VW = 320, H = 104;
-  const padL = 8, padR = 8, topY = 22, baseY = 80;
+  const padL = 8, padR = 26, topY = 22, baseY = 80;
   const plotW = VW - padL - padR;
   const plotH = baseY - topY;
   const n = slots.length;
@@ -913,6 +913,20 @@ function buildNowcastGraph(analysis) {
     `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
   ).join("");
 
+  // Vertical legend bar (right side): bottom=light, top=heavy.
+  const lx = VW - 13, lw = 7;
+  const legendGrad = `<linearGradient id="ncLegend" x1="0" y1="1" x2="0" y2="0">
+    <stop offset="0%" stop-color="#7ec8ff"/>
+    <stop offset="25%" stop-color="#36b16a"/>
+    <stop offset="50%" stop-color="#f0d846"/>
+    <stop offset="75%" stop-color="#f08a30"/>
+    <stop offset="100%" stop-color="#c83f6b"/>
+  </linearGradient>`;
+  const legendEl = `
+    <text x="${lx}" y="${topY - 4}" text-anchor="middle" class="nowcast-legend-label">H</text>
+    <rect x="${(lx - lw / 2).toFixed(1)}" y="${topY}" width="${lw}" height="${baseY - topY}" rx="3.5" fill="url(#ncLegend)"/>
+    <text x="${lx}" y="${baseY + 9}" text-anchor="middle" class="nowcast-legend-label">L</text>`;
+
   // Absolute clock times on top, friendly "from now" on the bottom.
   const idxMid = Math.min(4, n - 1);
   const idxEnd = n - 1;
@@ -924,12 +938,14 @@ function buildNowcastGraph(analysis) {
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
     <defs>
       <linearGradient id="nowcastGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
+      ${legendGrad}
     </defs>
     ${topLabels}
     <path d="${area}" fill="url(#nowcastGrad)" fill-opacity="0.28"/>
     <path d="${line}" fill="none" stroke="url(#nowcastGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="${padL}" y1="${baseY}" x2="${VW - padR}" y2="${baseY}" class="nowcast-base"/>
+    <line x1="${padL}" y1="${baseY}" x2="${padL + plotW}" y2="${baseY}" class="nowcast-base"/>
     ${botLabels}
+    ${legendEl}
   </svg>`;
 }
 

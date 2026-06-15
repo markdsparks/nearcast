@@ -1747,20 +1747,8 @@ h2 {
   stroke: var(--line);
   stroke-width: 1;
 }
-.nowcast-legend {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-.nowcast-legend span {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-.nowcast-legend-bar {
-  flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, #7ec8ff, #36b16a, #f0d846, #f08a30, #c83f6b);
+.nowcast-legend-label {
+  fill: var(--muted);
+  font-size: 8px;
+  font-weight: 700;
 }
