@@ -591,11 +591,18 @@ h2 {
   font-size: 1.35rem;
 }
 
+.insights-section {
+  margin-bottom: 18px;
+}
+
+.briefing[hidden] {
+  display: none;
+}
+
 .insight-band {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 18px;
 }
 
 .insight {

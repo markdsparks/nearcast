@@ -1,4 +1,4 @@
-const VERSION = "1.4.5";
+const VERSION = "1.5.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -62,6 +62,8 @@ const els = {
   sunrise: document.querySelector("#sunrise"),
   sunset: document.querySelector("#sunset"),
   insights: document.querySelector("#insights"),
+  insightCards: document.querySelector("#insightCards"),
+  briefing: document.querySelector("#briefing"),
   hourly: document.querySelector("#hourly"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
@@ -954,12 +956,88 @@ function renderInsights(data, windUnit) {
       ? buildMorningInsights(data, windUnit)
       : buildAfternoonInsights(data, windUnit);
 
-  els.insights.innerHTML = cards.map(({ label, value }) => `
+  els.insightCards.innerHTML = cards.map(({ label, value }) => `
     <article class="insight">
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(value)}</strong>
     </article>
   `).join("");
+}
+
+// Compact, grounded snapshot of the current forecast for the on-device LLM.
+// Every value carries its unit so a tiny model never has to infer them.
+// Returns null until a place is loaded.
+function buildAIContext() {
+  const data = state.forecast;
+  if (!data || !state.activePlace) return null;
+
+  const inch = state.unit === "fahrenheit";
+  const cur = data.current;
+  const daily = data.daily;
+  const hourly = data.hourly;
+  const now = Date.now();
+  const r = Math.round;
+  const sky = (code) => weatherCodes[code] || "—";
+  const dir = (deg) => {
+    if (deg == null) return "";
+    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8];
+  };
+
+  // Reuse the existing nowcast analysis; headline or an explicit "dry".
+  const nc = analyzeNowcast(data);
+  const nowcast = nc ? nc.headline : "Dry for the next 2 hours";
+
+  // Sparse hourly points (~every 3h) so the model can answer "later today".
+  let start = hourly.time.findIndex((t) => new Date(t).getTime() >= now - 30 * 60 * 1000);
+  if (start < 0) start = 0;
+  const next12h = [];
+  for (let k = 0; k < 5; k++) {
+    const i = start + k * 3;
+    if (i >= hourly.time.length) break;
+    next12h.push({
+      t: shortClock(new Date(hourly.time[i]).getTime()),
+      temp: r(hourly.temperature_2m[i]),
+      rain: hourly.precipitation_probability[i] || 0
+    });
+  }
+
+  const alerts = (activeAlerts || []).slice(0, 3).map((a) => ({
+    event: a.event,
+    severity: a.severity,
+    until: (a.ends || a.expires) ? shortClock(new Date(a.ends || a.expires).getTime()) : null
+  }));
+
+  return {
+    place: placeLabel(state.activePlace),
+    asOf: shortClock(new Date(cur.time).getTime()),
+    units: { temp: inch ? "°F" : "°C", wind: inch ? "mph" : "km/h", precip: inch ? "in" : "mm" },
+    now: {
+      temp: r(cur.temperature_2m),
+      feels: r(cur.apparent_temperature),
+      humidity: r(cur.relative_humidity_2m),
+      sky: sky(cur.weather_code),
+      wind: r(cur.wind_speed_10m),
+      gust: r(cur.wind_gusts_10m),
+      windDir: dir(cur.wind_direction_10m),
+      isDay: cur.is_day !== 0
+    },
+    nowcast,
+    today: {
+      hi: r(daily.temperature_2m_max[0]),
+      lo: r(daily.temperature_2m_min[0]),
+      rainChance: daily.precipitation_probability_max[0] || 0,
+      uvPeak: r(daily.uv_index_max[0]),
+      sunset: shortClock(new Date(daily.sunset[0]).getTime())
+    },
+    tomorrow: {
+      hi: r(daily.temperature_2m_max[1]),
+      lo: r(daily.temperature_2m_min[1]),
+      rainChance: daily.precipitation_probability_max[1] || 0,
+      sky: sky(daily.weather_code[1])
+    },
+    next12h,
+    alerts
+  };
 }
 
 function hoursInRange(data, fromMs, toMs) {
