@@ -1747,8 +1747,3 @@ h2 {
   stroke: var(--line);
   stroke-width: 1;
 }
-.nowcast-legend-label {
-  fill: var(--muted);
-  font-size: 8px;
-  font-weight: 700;
-}

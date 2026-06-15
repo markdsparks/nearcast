@@ -1,4 +1,4 @@
-const VERSION = "1.4.3";
+const VERSION = "1.4.4";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -794,7 +794,8 @@ function analyzeNowcast(data) {
   const isSnow = wetSlots.some((s) => s.snow > 0);
   const heavy = inch ? perHour > 0.3 : perHour > 7.6;
   const moderate = inch ? perHour > 0.1 : perHour > 2.5;
-  const intensity = heavy ? "Heavy " : moderate ? "" : "Light ";
+  const intensity = heavy ? "Heavy " : moderate ? "Moderate " : "Light ";
+  const peakFrac = nowcastFrac(perHour, inch);
   const word = isSnow ? "snow" : "rain";
   const label = `${intensity}${word}`.trim();
   const Label = capitalize(label);
@@ -826,7 +827,7 @@ function analyzeNowcast(data) {
     }
   }
 
-  return { headline, slots, wet, peak, isSnow };
+  return { headline, slots, wet, peak, peakFrac, isSnow };
 }
 
 function renderNowcast(data) {
@@ -840,6 +841,7 @@ function renderNowcast(data) {
   document.getElementById("nowcastHeadline").textContent = analysis.headline;
   document.getElementById("nowcastIcon").innerHTML = analysis.isSnow ? snowGlyph() : raindropGlyph();
   document.getElementById("nowcastGraph").innerHTML = buildNowcastGraph(analysis);
+  el.style.borderLeftColor = nowcastIntensityColor(analysis.peakFrac);
   el.hidden = false;
 }
 
@@ -848,6 +850,17 @@ function raindropGlyph() {
 }
 function snowGlyph() {
   return `<svg viewBox="0 0 20 20" fill="none" stroke="#7fb0dd" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="4" y1="4" x2="16" y2="16"/><line x1="16" y1="4" x2="4" y2="16"/></svg>`;
+}
+
+// Shared intensity fraction: maps precip rate (per-hour, display units) → 0..1.
+function nowcastFrac(perHour, inch) {
+  const lightMax = inch ? 0.1 : 2.5;
+  const modMax   = inch ? 0.3 : 7.6;
+  const heavyCap = inch ? 0.6 : 15;
+  if (perHour <= 0) return 0;
+  if (perHour <= lightMax) return (perHour / lightMax) / 3;
+  if (perHour <= modMax)   return 1 / 3 + ((perHour - lightMax) / (modMax - lightMax)) / 3;
+  return Math.min(1, 2 / 3 + ((perHour - modMax) / (heavyCap - modMax)) / 3);
 }
 
 // Radar-matched intensity ramp: light-blue → green → yellow → orange → red.
@@ -884,26 +897,15 @@ function shortClock(t) {
 function buildNowcastGraph(analysis) {
   const { slots } = analysis;
   const inch = state.unit === "fahrenheit";
-  // Intensity thresholds in display units PER HOUR (precip is per 15 min → ×4)
-  const lightMax = inch ? 0.1 : 2.5;
-  const modMax = inch ? 0.3 : 7.6;
-  const heavyCap = inch ? 0.6 : 15;
 
   const VW = 320, H = 104;
-  const padL = 8, padR = 26, topY = 22, baseY = 80;
+  const padL = 8, padR = 8, topY = 22, baseY = 80;
   const plotW = VW - padL - padR;
   const plotH = baseY - topY;
   const n = slots.length;
 
-  // Map rate → 0..1 intensity; drives both curve height and color.
-  const frac = (perHour) => {
-    if (perHour <= 0) return 0;
-    if (perHour <= lightMax) return (perHour / lightMax) / 3;
-    if (perHour <= modMax) return 1 / 3 + ((perHour - lightMax) / (modMax - lightMax)) / 3;
-    return Math.min(1, 2 / 3 + ((perHour - modMax) / (heavyCap - modMax)) / 3);
-  };
+  const fr = (i) => nowcastFrac((slots[i].precip || 0) * 4, inch);
   const x = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const fr = (i) => frac((slots[i].precip || 0) * 4);
   const pts = slots.map((s, i) => ({ x: x(i), y: baseY - fr(i) * plotH }));
   const line = smoothPath(pts);
   const area = `${line} L ${pts[n - 1].x.toFixed(1)} ${baseY} L ${pts[0].x.toFixed(1)} ${baseY} Z`;
@@ -912,20 +914,6 @@ function buildNowcastGraph(analysis) {
   const gradStops = pts.map((p, i) =>
     `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
   ).join("");
-
-  // Vertical legend bar (right side): bottom=light, top=heavy.
-  const lx = VW - 13, lw = 7;
-  const legendGrad = `<linearGradient id="ncLegend" x1="0" y1="1" x2="0" y2="0">
-    <stop offset="0%" stop-color="#7ec8ff"/>
-    <stop offset="25%" stop-color="#36b16a"/>
-    <stop offset="50%" stop-color="#f0d846"/>
-    <stop offset="75%" stop-color="#f08a30"/>
-    <stop offset="100%" stop-color="#c83f6b"/>
-  </linearGradient>`;
-  const legendEl = `
-    <text x="${lx}" y="${topY - 4}" text-anchor="middle" class="nowcast-legend-label">H</text>
-    <rect x="${(lx - lw / 2).toFixed(1)}" y="${topY}" width="${lw}" height="${baseY - topY}" rx="3.5" fill="url(#ncLegend)"/>
-    <text x="${lx}" y="${baseY + 9}" text-anchor="middle" class="nowcast-legend-label">L</text>`;
 
   // Absolute clock times on top, friendly "from now" on the bottom.
   const idxMid = Math.min(4, n - 1);
@@ -938,14 +926,12 @@ function buildNowcastGraph(analysis) {
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
     <defs>
       <linearGradient id="nowcastGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
-      ${legendGrad}
     </defs>
     ${topLabels}
     <path d="${area}" fill="url(#nowcastGrad)" fill-opacity="0.28"/>
     <path d="${line}" fill="none" stroke="url(#nowcastGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="${padL}" y1="${baseY}" x2="${padL + plotW}" y2="${baseY}" class="nowcast-base"/>
+    <line x1="${padL}" y1="${baseY}" x2="${VW - padR}" y2="${baseY}" class="nowcast-base"/>
     ${botLabels}
-    ${legendEl}
   </svg>`;
 }
 
