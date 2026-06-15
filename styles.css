@@ -1856,12 +1856,43 @@ h2 {
   font-size: 0.95rem;
 }
 
+.sheet-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  margin: 12px 0 10px;
+  border-radius: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
+.sheet-mode-btn {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.sheet-mode-btn.active {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.08);
+}
+
 /* Wrapper reserves space at the top for the floating callout so it rides
    ABOVE the chart — out of the path of your thumb while scrubbing. */
 .sheet-graph-wrap {
   position: relative;
   padding-top: 50px;
   margin: 6px 0 16px;
+}
+.sheet-graph-wrap[hidden],
+.sheet-hourly-list[hidden] {
+  display: none;
 }
 .sheet-graph {
   margin-top: 0;
@@ -1925,6 +1956,88 @@ h2 {
   opacity: 0.82;
 }
 
+.sheet-hourly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+.sheet-hour-row {
+  display: grid;
+  grid-template-columns: 48px 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 68px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.sheet-hour-row.is-rainy {
+  border-color: rgba(74, 144, 217, 0.55);
+}
+.sheet-hour-row.is-windy {
+  box-shadow: inset 3px 0 0 rgba(132, 121, 255, 0.55);
+}
+.sheet-hour-row.is-sunny {
+  box-shadow: inset 3px 0 0 rgba(244, 180, 64, 0.68);
+}
+.sheet-hour-row.is-windy.is-sunny {
+  box-shadow: inset 3px 0 0 rgba(244, 180, 64, 0.68), inset 6px 0 0 rgba(132, 121, 255, 0.45);
+}
+.sheet-hour-time,
+.sheet-hour-metrics {
+  font-variant-numeric: tabular-nums;
+}
+.sheet-hour-time {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+.sheet-hour-icon {
+  width: 30px;
+  height: 30px;
+}
+.sheet-hour-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.sheet-hour-main {
+  min-width: 0;
+}
+.sheet-hour-main strong,
+.sheet-hour-main span,
+.sheet-hour-metrics span,
+.sheet-hour-metrics strong {
+  display: block;
+}
+.sheet-hour-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.94rem;
+}
+.sheet-hour-main span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+.sheet-hour-metrics {
+  min-width: 74px;
+  text-align: right;
+}
+.sheet-hour-metrics strong {
+  font-size: 1rem;
+  font-weight: 850;
+}
+.sheet-hour-metrics span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
 .sheet-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1950,6 +2063,21 @@ h2 {
   font-size: 1.05rem;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 430px) {
+  .sheet-hour-row {
+    grid-template-columns: 42px 30px minmax(0, 1fr);
+    align-items: start;
+  }
+  .sheet-hour-metrics {
+    grid-column: 3;
+    text-align: left;
+  }
+  .sheet-hour-metrics span {
+    display: inline;
+    margin-right: 8px;
+  }
 }
 
 /* ---------- Severe weather alerts ---------- */

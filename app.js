@@ -1,4 +1,5 @@
-const VERSION = "1.10.2";
+const VERSION = "1.10.3";
+const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -385,6 +386,8 @@ function bindEvents() {
     }
   });
   els.hourly.addEventListener("click", openNext24Detail);
+  document.getElementById("sheetGraphMode").addEventListener("click", () => setDayDetailMode("graph"));
+  document.getElementById("sheetHourlyMode").addEventListener("click", () => setDayDetailMode("hourly"));
   document.getElementById("dayDetailClose").addEventListener("click", closeDayDetail);
   document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
   document.addEventListener("keydown", (event) => {
@@ -3860,7 +3863,8 @@ function openDayFromIndex(i) {
     code: data.daily.weather_code[i],
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
-    sunsetISO: data.daily.sunset[i]
+    sunsetISO: data.daily.sunset[i],
+    initialMode: getDayDetailMode()
   });
 }
 
@@ -3879,11 +3883,35 @@ function openNext24Detail() {
     code: data.current.weather_code,
     isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
     sunriseISO: data.daily.sunrise[0],
-    sunsetISO: data.daily.sunset[0]
+    sunsetISO: data.daily.sunset[0],
+    initialMode: "hourly",
+    persistInitialMode: false
   });
 }
 
-function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO }) {
+function getDayDetailMode() {
+  return localStorage.getItem(DAY_DETAIL_MODE_KEY) === "hourly" ? "hourly" : "graph";
+}
+
+function setDayDetailMode(mode, persist = true) {
+  const normalized = mode === "hourly" ? "hourly" : "graph";
+  const graphBtn = document.getElementById("sheetGraphMode");
+  const hourlyBtn = document.getElementById("sheetHourlyMode");
+  const graphWrap = document.getElementById("sheetGraphWrap");
+  const hourlyList = document.getElementById("sheetHourlyList");
+  const isHourly = normalized === "hourly";
+
+  graphBtn.classList.toggle("active", !isHourly);
+  hourlyBtn.classList.toggle("active", isHourly);
+  graphBtn.setAttribute("aria-pressed", String(!isHourly));
+  hourlyBtn.setAttribute("aria-pressed", String(isHourly));
+  graphWrap.hidden = isHourly;
+  hourlyList.hidden = !isHourly;
+
+  if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
+}
+
+function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, initialMode = getDayDetailMode(), persistInitialMode = false }) {
   const data = state.forecast;
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -3898,7 +3926,9 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO }) {
     precip: data.hourly.precipitation[h] || 0,
     wind: data.hourly.wind_speed_10m[h],
     gust: data.hourly.wind_gusts_10m[h],
-    uv: data.hourly.uv_index[h] || 0
+    uv: data.hourly.uv_index[h] || 0,
+    code: data.hourly.weather_code[h],
+    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
   }));
 
   const temps = hrs.map((h) => h.temp);
@@ -3912,7 +3942,9 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO }) {
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   buildHourlyGraph(hrs, tempUnit, windUnit);
+  renderHourlyList(hrs, tempUnit, windUnit, precipUnit);
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
+  setDayDetailMode(initialMode, persistInitialMode);
 
   const backdrop = document.getElementById("dayDetailBackdrop");
   const sheet = document.getElementById("dayDetail");
@@ -3947,6 +3979,45 @@ function buildDaySummary(hrs, windUnit) {
   else parts.push("Mostly dry");
   if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
   return parts.join(", ") + ".";
+}
+
+function hourlyRowNote(hour, windUnit, precipUnit) {
+  const notes = [];
+  if (hour.pop >= 50) notes.push(`${hour.pop}% rain`);
+  else if (hour.pop >= 25) notes.push(`${hour.pop}% chance`);
+  if (hour.gust >= 25) notes.push(`gusts ${Math.round(hour.gust)} ${windUnit}`);
+  if (hour.uv >= 6) notes.push(`UV ${Math.round(hour.uv)}`);
+  if (hour.precip > 0.02) notes.push(`${formatAmount(hour.precip)} ${precipUnit}`);
+  return notes.join(" · ");
+}
+
+function renderHourlyList(hrs, tempUnit, windUnit, precipUnit) {
+  const deg = degree(tempUnit);
+  const list = document.getElementById("sheetHourlyList");
+  list.innerHTML = hrs.map((hour) => {
+    const condition = weatherCodes[hour.code] || "Weather";
+    const note = hourlyRowNote(hour, windUnit, precipUnit);
+    const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
+    const rainClass = hour.pop >= 40 ? " is-rainy" : "";
+    const uvClass = hour.uv >= 6 ? " is-sunny" : "";
+    const windClass = hour.gust >= 25 ? " is-windy" : "";
+    return `
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}">
+        <div class="sheet-hour-time">${formatHour(hour.time)}</div>
+        <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
+        <div class="sheet-hour-main">
+          <strong>${escapeHtml(condition)}</strong>
+          <span>${note || "No big weather flags"}</span>
+        </div>
+        <div class="sheet-hour-metrics">
+          <strong>${Math.round(hour.temp)}${deg}</strong>
+          <span>Feels ${Math.round(hour.feels)}${deg}</span>
+          <span>${hour.pop}% rain</span>
+          <span>${Math.round(hour.wind)} ${windUnit}${windy ? `, gust ${Math.round(hour.gust)}` : ""}</span>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 // Build a smooth cardinal-spline path through the points.

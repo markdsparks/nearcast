@@ -258,10 +258,15 @@
         </div>
       </header>
       <p class="sheet-summary" id="sheetSummary"></p>
+      <div class="sheet-mode" role="group" aria-label="Day detail display">
+        <button class="sheet-mode-btn active" id="sheetGraphMode" type="button" aria-pressed="true" aria-controls="sheetGraphWrap">Graph</button>
+        <button class="sheet-mode-btn" id="sheetHourlyMode" type="button" aria-pressed="false" aria-controls="sheetHourlyList">Hourly</button>
+      </div>
       <div class="sheet-graph-wrap" id="sheetGraphWrap">
         <div class="graph-callout" id="sheetReadout" aria-live="polite"></div>
         <div class="sheet-graph" id="sheetGraph"></div>
       </div>
+      <div class="sheet-hourly-list" id="sheetHourlyList" hidden></div>
       <div class="sheet-stats" id="sheetStats"></div>
     </aside>
 
