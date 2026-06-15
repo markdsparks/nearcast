@@ -860,6 +860,81 @@ h2 {
   font-size: 0.82rem;
   color: var(--red);
 }
+.ask-thread {
+  margin: 11px 0;
+  display: grid;
+  gap: 9px;
+}
+
+/* ---------- AI launcher (main view) + sheet ---------- */
+.ai-launcher[hidden] {
+  display: none;
+}
+.ai-launcher {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.ai-launcher:hover {
+  border-color: var(--blue);
+}
+.ai-launcher-spark {
+  color: var(--blue);
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+.ai-launcher-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.ai-launcher-copy strong {
+  font-weight: 800;
+  font-size: 1rem;
+}
+.ai-launcher-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 1px;
+}
+.ai-launcher-chev {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.ai-sheet-head {
+  margin-bottom: 4px;
+}
+.ai-sheet-spark {
+  color: var(--blue);
+  font-size: 1.6rem;
+  flex-shrink: 0;
+  width: 30px;
+  text-align: center;
+}
+.ai-sheet-sub {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+/* Inside the sheet the briefing/ask sit flush — no card chrome competition */
+.ai-sheet .briefing {
+  margin-top: 12px;
+}
+.ai-sheet .ai-ask {
+  margin-bottom: 0;
+}
 
 .insight-band {
   display: grid;

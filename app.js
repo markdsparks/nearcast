@@ -1,4 +1,4 @@
-const VERSION = "1.6.2";
+const VERSION = "1.7.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -65,6 +65,10 @@ const els = {
   insightCards: document.querySelector("#insightCards"),
   briefing: document.querySelector("#briefing"),
   aiAsk: document.querySelector("#aiAsk"),
+  aiLauncher: document.querySelector("#aiLauncher"),
+  aiLauncherSub: document.querySelector("#aiLauncherSub"),
+  aiSheet: document.querySelector("#aiSheet"),
+  aiBackdrop: document.querySelector("#aiBackdrop"),
   hourly: document.querySelector("#hourly"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
@@ -325,6 +329,9 @@ function bindEvents() {
     const input = document.getElementById("askInput");
     runAsk(input.value);
   });
+  els.aiLauncher.addEventListener("click", openAISheet);
+  els.aiBackdrop.addEventListener("click", closeAISheet);
+  document.getElementById("aiSheetClose").addEventListener("click", closeAISheet);
   els.searchToggle.addEventListener("click", () => toggleSearch());
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
   document.getElementById("searchLocate").addEventListener("click", () => {
@@ -378,6 +385,9 @@ function bindEvents() {
   document.getElementById("alertBackdrop").addEventListener("click", closeAlertSheet);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("alertSheet").hidden) closeAlertSheet();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.aiSheet.hidden) closeAISheet();
   });
 }
 
@@ -1162,6 +1172,7 @@ async function detectAI() {
   }
   renderBriefing();
   renderAsk();
+  renderAILauncher();
 }
 
 function warmAI() {
@@ -1191,6 +1202,7 @@ async function enableAI() {
     aiState.text = "";
     renderBriefing();
     renderAsk();
+    renderAILauncher();
     runBrief(); // first briefing immediately after enabling
   } catch (_) {
     aiState.phase = "error";
@@ -1232,6 +1244,7 @@ function resetBriefing() {
   if (aiState.phase === "ready") aiState.text = "";
   renderBriefing();
   resetAsk();
+  renderAILauncher();
 }
 
 function renderBriefing() {
@@ -1440,14 +1453,19 @@ function answerFreeform(q) {
   return null; // no deterministic match → fall back to the LLM
 }
 
-let askState = { phase: "idle", question: "", answer: "", error: "" };
+// A short conversation thread of {q, a} for this place/session. The last entry
+// may be mid-stream (askStreaming). Cleared when the place changes.
+let askThread = [];
+let askStreaming = false;
+let askError = "";
 let askAbort = null;
 
 async function runAsk(question, intent) {
   question = (question || "").trim();
   if (!question) return;
   // Engine does one generation at a time — ignore taps while it's busy.
-  if (aiState.phase === "generating" || askState.phase === "answering") return;
+  if (aiState.phase === "generating" || askStreaming) return;
+  askError = "";
 
   // Activity chips: answer instantly from a code-computed verdict. No model —
   // a tiny model can't reliably reason about this, and even handed the correct
@@ -1455,8 +1473,9 @@ async function runAsk(question, intent) {
   if (intent) {
     const assessment = assessActivity(intent);
     if (!assessment) return;
-    askState = { phase: "idle", question, answer: assessment, error: "" };
+    askThread.push({ q: question, a: assessment });
     renderAsk();
+    scrollAskIntoView();
     return;
   }
 
@@ -1464,39 +1483,53 @@ async function runAsk(question, intent) {
   // only fall back to the best-effort LLM for genuinely open ones.
   const direct = answerFreeform(question);
   if (direct) {
-    askState = { phase: "idle", question, answer: direct, error: "" };
+    askThread.push({ q: question, a: direct });
     renderAsk();
+    scrollAskIntoView();
     return;
   }
 
   const factSheet = buildAIFactSheet();
   if (!factSheet) return;
-  askState = { phase: "answering", question, answer: "", error: "" };
+  const entry = { q: question, a: "" };
+  askThread.push(entry);
+  askStreaming = true;
   askAbort = { aborted: false };
   const mine = askAbort;
   renderAsk();
-  const answerEl = els.aiAsk.querySelector(".ask-a");
+  scrollAskIntoView();
+  const answerEls = els.aiAsk.querySelectorAll(".ask-a");
+  const answerEl = answerEls[answerEls.length - 1];
 
   try {
     const ai = await loadAIModule();
     for await (const delta of ai.ask(factSheet, question, mine)) {
       if (mine.aborted) break;
-      askState.answer += delta;
-      if (answerEl) answerEl.textContent = askState.answer; // cheap per-token update
+      entry.a += delta;
+      if (answerEl) answerEl.textContent = entry.a; // cheap per-token update
     }
-    askState.phase = "idle";
-    renderAsk();
   } catch (_) {
-    askState.phase = "idle";
-    askState.error = "Couldn't answer that — try again.";
+    askError = "Couldn't answer that — try again.";
+  } finally {
+    askStreaming = false;
     renderAsk();
   }
 }
 
 function resetAsk() {
   if (askAbort) askAbort.aborted = true;
-  askState = { phase: "idle", question: "", answer: "", error: "" };
+  askThread = [];
+  askStreaming = false;
+  askError = "";
   renderAsk();
+}
+
+function scrollAskIntoView() {
+  // Keep the newest exchange + input visible inside the sheet.
+  requestAnimationFrame(() => {
+    const form = document.getElementById("askForm");
+    if (form) form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
 }
 
 function renderAsk() {
@@ -1510,7 +1543,7 @@ function renderAsk() {
   }
   panel.hidden = false;
 
-  const busy = aiState.phase === "generating" || askState.phase === "answering";
+  const busy = aiState.phase === "generating" || askStreaming;
   const dis = busy ? " disabled" : "";
 
   const chips = ACTIVITY_CHIPS.map((c) =>
@@ -1518,25 +1551,59 @@ function renderAsk() {
     `data-ask-intent="${escapeHtml(c.intent)}"${dis}>${escapeHtml(c.label)}</button>`
   ).join("");
 
-  let exchange = "";
-  if (askState.question) {
-    const answering = askState.phase === "answering";
-    exchange =
-      `<div class="ask-exchange${answering ? " answering" : ""}">` +
-        `<p class="ask-q">${escapeHtml(askState.question)}</p>` +
-        `<p class="ask-a">${escapeHtml(askState.answer)}</p>` +
-        (askState.error ? `<p class="ask-err">${escapeHtml(askState.error)}</p>` : "") +
-      `</div>`;
-  }
+  const thread = askThread.map((ex, i) => {
+    const streaming = askStreaming && i === askThread.length - 1;
+    return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
+      `<p class="ask-q">${escapeHtml(ex.q)}</p>` +
+      `<p class="ask-a">${escapeHtml(ex.a)}</p>` +
+    `</div>`;
+  }).join("");
+  const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
 
   panel.innerHTML =
     `<div class="ask-chips">${chips}</div>` +
+    (thread ? `<div class="ask-thread">${thread}${errLine}</div>` : "") +
     `<form class="ask-form" id="askForm">` +
       `<input id="askInput" type="text" autocomplete="off" ` +
         `placeholder="Ask about your forecast…"${dis}>` +
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
-    `</form>` +
-    exchange;
+    `</form>`;
+}
+
+/* ---------- AI launcher + sheet (gives the assistant its own space) ---------- */
+function renderAILauncher() {
+  const btn = els.aiLauncher;
+  if (!btn) return;
+  const show = state.forecast && state.activePlace &&
+    aiState.phase !== "unknown" && aiState.phase !== "unsupported";
+  btn.hidden = !show;
+  if (show && els.aiLauncherSub) {
+    els.aiLauncherSub.textContent =
+      aiState.phase === "idle" ? "Tap to enable · private, on-device"
+      : "Briefing, run check & more · private";
+  }
+}
+
+function openAISheet() {
+  els.aiBackdrop.hidden = false;
+  els.aiSheet.hidden = false;
+  requestAnimationFrame(() => {
+    els.aiBackdrop.classList.add("show");
+    els.aiSheet.classList.add("show");
+  });
+  document.body.style.overflow = "hidden";
+  // Auto-generate the briefing the first time it's opened for a place.
+  if (aiState.phase === "ready" && !aiState.text) runBrief();
+}
+
+function closeAISheet() {
+  els.aiBackdrop.classList.remove("show");
+  els.aiSheet.classList.remove("show");
+  document.body.style.overflow = "";
+  setTimeout(() => {
+    els.aiBackdrop.hidden = true;
+    els.aiSheet.hidden = true;
+  }, 280);
 }
 
 function hoursInRange(data, fromMs, toMs) {
