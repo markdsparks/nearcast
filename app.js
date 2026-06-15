@@ -1,4 +1,4 @@
-const VERSION = "1.10.4";
+const VERSION = "1.10.5";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6,7 +6,6 @@ const state = {
   theme: localStorage.getItem("weather-theme") || "auto",
   sunriseMs: null,
   sunsetMs: null,
-  view: "forecast",
   activePlace: null,
   savedPlaces: JSON.parse(localStorage.getItem("weather-places") || "[]"),
   searchResults: [],
@@ -54,8 +53,6 @@ const els = {
   welcomeLocate: document.querySelector("#welcomeLocate"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
-  forecastTab: document.querySelector("#forecastTab"),
-  mapTab: document.querySelector("#mapTab"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -370,8 +367,6 @@ function bindEvents() {
     savePlace(state.activePlace);
     setStatus(`${state.activePlace.name} saved.`);
   });
-  els.forecastTab.addEventListener("click", () => showView("forecast"));
-  els.mapTab.addEventListener("click", () => showView("map"));
   els.radarMode.addEventListener("click", () => setMapMode("radar"));
   els.futureMode.addEventListener("click", () => setMapMode("future"));
   els.zoomOutMap.addEventListener("click", () => setMapZoom(mapState.zoom - 1));
@@ -706,22 +701,6 @@ function refreshOnForeground() {
   loadPlace(state.activePlace, true);
 }
 
-function showView(view) {
-  state.view = view;
-  els.forecastTab.classList.toggle("active", view === "forecast");
-  els.mapTab.classList.toggle("active", view === "map");
-  els.forecastView.hidden = view !== "forecast";
-  els.mapView.hidden = view !== "map";
-
-  if (view === "map") {
-    initMap();
-    syncMapToPlace();
-    loadMapFrames();
-  } else {
-    stopRadarPlayback();
-  }
-}
-
 async function fetchForecast(place, force = false) {
   const cacheKey = `forecast:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
@@ -824,6 +803,7 @@ function renderForecast(data, place) {
   renderHourly(data, tempUnit);
   renderDaily(data, tempUnit, precipUnit);
   updateMapPlace();
+  refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(current.weather_code, isDay);
 }
@@ -2826,6 +2806,13 @@ function syncMapToPlace() {
   renderTileMap();
 }
 
+function refreshInlineMap(forceFrames = false) {
+  if (!state.activePlace || !els.weatherMap) return;
+  initMap();
+  syncMapToPlace();
+  loadMapFrames(forceFrames);
+}
+
 function renderMapMarkers() {
   if (!mapState.initialized || !els.markerLayer) return;
   els.markerLayer.innerHTML = "";
@@ -2850,7 +2837,7 @@ async function setMapMode(mode) {
 }
 
 async function loadMapFrames(force = false) {
-  if (state.view !== "map" || !mapState.initialized) return;
+  if (!mapState.initialized || !state.activePlace) return;
   if (!force && mapState.frames.length) {
     showFrame(mapState.frameIndex);
     return;

@@ -75,11 +75,6 @@
         <span class="alert-bar-chevron" aria-hidden="true">›</span>
       </button>
 
-      <nav class="view-tabs" aria-label="Weather views">
-        <button class="view-tab active" id="forecastTab" type="button" aria-controls="forecastView">Forecast</button>
-        <button class="view-tab" id="mapTab" type="button" aria-controls="mapView">Map</button>
-      </nav>
-
       <div id="forecastView">
         <section class="hero" id="hero" aria-live="polite">
           <div class="hero-copy">
@@ -178,6 +173,37 @@
           <div class="hourly" id="hourly"></div>
         </section>
 
+        <section class="map-panel" id="mapView" aria-label="Precipitation map">
+          <div class="map-toolbar">
+            <div>
+              <h2>Precipitation Map</h2>
+              <p id="mapPlace">Centered on selected place</p>
+            </div>
+            <div class="map-actions">
+              <button class="map-mode" id="zoomOutMap" type="button" aria-label="Zoom map out">-</button>
+              <button class="map-mode" id="zoomInMap" type="button" aria-label="Zoom map in">+</button>
+              <button class="map-mode active" id="radarMode" type="button">Nowcast</button>
+              <button class="map-mode" id="futureMode" type="button">Forecast</button>
+              <button class="map-mode" id="expandMap" type="button" aria-label="Enter immersive map mode" title="Immersive mode">⤢</button>
+            </div>
+          </div>
+          <div class="map-wrap">
+            <div id="weatherMap" class="tile-map" aria-label="Weather radar map">
+              <div class="tile-layer" id="baseTileLayer"></div>
+              <div class="tile-layer weather-layer" id="weatherTileLayer"></div>
+              <div class="marker-layer" id="markerLayer"></div>
+            </div>
+            <div class="map-loading" id="mapLoading" hidden>Loading map data...</div>
+            <div class="map-legend" id="mapLegend" aria-label="Map legend"></div>
+          </div>
+          <div class="timeline">
+            <button class="play-button" id="playRadar" type="button" aria-label="Play radar animation">Play</button>
+            <input id="frameSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
+            <strong id="frameLabel">No frames</strong>
+          </div>
+          <p class="map-credit">Radar data by <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">RainViewer</a>. Forecast precipitation by NOAA/NWS nowCOAST/NDFD. Map data by OpenStreetMap contributors.</p>
+        </section>
+
         <section class="panel">
           <div class="section-head">
             <h2>10-Day Outlook</h2>
@@ -186,37 +212,6 @@
           <div class="daily" id="daily"></div>
         </section>
       </div>
-
-      <section class="map-panel" id="mapView" hidden>
-        <div class="map-toolbar">
-          <div>
-            <h2>Animated Radar</h2>
-            <p id="mapPlace">Centered on selected place</p>
-          </div>
-          <div class="map-actions">
-            <button class="map-mode" id="zoomOutMap" type="button" aria-label="Zoom map out">-</button>
-            <button class="map-mode" id="zoomInMap" type="button" aria-label="Zoom map in">+</button>
-            <button class="map-mode active" id="radarMode" type="button">Nowcast</button>
-            <button class="map-mode" id="futureMode" type="button">Forecast</button>
-            <button class="map-mode" id="expandMap" type="button" aria-label="Enter immersive map mode" title="Immersive mode">⤢</button>
-          </div>
-        </div>
-        <div class="map-wrap">
-          <div id="weatherMap" class="tile-map" aria-label="Weather radar map">
-            <div class="tile-layer" id="baseTileLayer"></div>
-            <div class="tile-layer weather-layer" id="weatherTileLayer"></div>
-            <div class="marker-layer" id="markerLayer"></div>
-          </div>
-          <div class="map-loading" id="mapLoading" hidden>Loading map data...</div>
-          <div class="map-legend" id="mapLegend" aria-label="Map legend"></div>
-        </div>
-        <div class="timeline">
-          <button class="play-button" id="playRadar" type="button" aria-label="Play radar animation">Play</button>
-          <input id="frameSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
-          <strong id="frameLabel">No frames</strong>
-        </div>
-        <p class="map-credit">Radar data by <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">RainViewer</a>. Forecast precipitation by NOAA/NWS nowCOAST/NDFD. Map data by OpenStreetMap contributors.</p>
-      </section>
 
       <div id="immersiveMap" class="immersive-map" hidden aria-label="Immersive radar map">
         <div id="immersiveMapCanvas" class="tile-map" aria-label="Full screen weather radar map">

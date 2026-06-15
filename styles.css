@@ -290,7 +290,6 @@ h2 {
 .search button,
 .result-button,
 .save-button,
-.view-tab,
 .map-mode,
 .play-button {
   border: 0;
@@ -418,28 +417,6 @@ h2 {
 .status.error {
   border-left-color: var(--red);
   color: var(--red);
-}
-
-.view-tabs {
-  display: inline-flex;
-  gap: 6px;
-  margin-bottom: 18px;
-  padding: 6px;
-  border: 1px solid var(--border-glass);
-  border-radius: 8px;
-  background: var(--glass-mid);
-}
-
-.view-tab {
-  min-height: 38px;
-  padding: 0 16px;
-  background: transparent;
-  color: var(--muted);
-}
-
-.view-tab.active {
-  background: var(--btn-bg);
-  color: var(--btn-fg);
 }
 
 .hero {
@@ -1381,6 +1358,7 @@ h2 {
   border-radius: 8px;
   background: var(--glass-heavy);
   box-shadow: var(--shadow);
+  margin-bottom: 18px;
 }
 
 .map-toolbar {
@@ -1574,7 +1552,7 @@ h2 {
 
 .map-wrap {
   position: relative;
-  min-height: 520px;
+  min-height: 300px;
   overflow: hidden;
   border-radius: 8px;
   border: 1px solid var(--line);
@@ -1582,7 +1560,7 @@ h2 {
 }
 
 #weatherMap {
-  height: 520px;
+  height: 300px;
   width: 100%;
   cursor: grab;
   user-select: none;
@@ -2389,9 +2367,7 @@ h2 {
 
 /* WELCOME MODE: search/location is the hero; weather chrome steps aside */
 .mode-welcome .saved-row,
-.mode-welcome .view-tabs,
 .mode-welcome #forecastView,
-.mode-welcome #mapView,
 .mode-welcome .alert-bar,
 .mode-welcome .search-toggle {
   display: none;
