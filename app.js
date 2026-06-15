@@ -1,4 +1,4 @@
-const VERSION = "1.8.0";
+const VERSION = "1.8.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -3597,7 +3597,7 @@ function closeAlertSheet() {
 // Register service worker for PWA / offline support
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register(new URL("sw.js", window.location.href).pathname).catch(() => {});
   });
 }
 
