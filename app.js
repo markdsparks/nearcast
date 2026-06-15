@@ -1,4 +1,4 @@
-const VERSION = "1.6.0";
+const VERSION = "1.6.1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -316,8 +316,8 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
   });
   els.aiAsk.addEventListener("click", (event) => {
-    const chip = event.target.closest("[data-ask-chip]");
-    if (chip) runAsk(chip.dataset.askChip);
+    const chip = event.target.closest("[data-ask-q]");
+    if (chip) runAsk(chip.dataset.askQ, chip.dataset.askIntent);
   });
   els.aiAsk.addEventListener("submit", (event) => {
     if (event.target.id !== "askForm") return;
@@ -1069,6 +1069,12 @@ function buildAIFactSheet() {
   if (!c) return null;
   const u = c.units;
   const lines = [];
+  // Word the rain chance so a tiny model can't mistake "5% chance of rain" for "it will rain".
+  const rainWord = (p) =>
+    p < 15 ? `rain unlikely (${p}%)`
+    : p < 35 ? `slight rain chance (${p}%)`
+    : p < 60 ? `decent rain chance (${p}%)`
+    : `rain likely (${p}%)`;
 
   lines.push(`Place: ${c.place}. Local time ${c.asOf}, ${c.now.isDay ? "daytime" : "night"}.`);
 
@@ -1085,19 +1091,19 @@ function buildAIFactSheet() {
     // Daytime: the day's high/low and UV still lie ahead.
     lines.push(
       `Rest of today: high ${c.today.hi}${u.temp}, low ${c.today.lo}${u.temp}, ` +
-      `${c.today.rainChance}% chance of rain. UV index peaks at ${c.today.uvPeak}. ` +
+      `${rainWord(c.today.rainChance)}. UV index peaks at ${c.today.uvPeak}. ` +
       `Sunset ${c.today.sunset}.`
     );
     lines.push(
       `Tomorrow: ${c.tomorrow.sky.toLowerCase()}, high ${c.tomorrow.hi}${u.temp}, ` +
-      `low ${c.tomorrow.lo}${u.temp}, ${c.tomorrow.rainChance}% chance of rain.`
+      `low ${c.tomorrow.lo}${u.temp}, ${rainWord(c.tomorrow.rainChance)}.`
     );
   } else {
     // Night: today's high is already past — frame around the overnight low and tomorrow.
     lines.push(
       `Tonight: low near ${c.tomorrow.lo}${u.temp}. ` +
       `Tomorrow: ${c.tomorrow.sky.toLowerCase()}, high ${c.tomorrow.hi}${u.temp}, ` +
-      `${c.tomorrow.rainChance}% chance of rain. UV index peaks at ${c.today.uvPeak}.`
+      `${rainWord(c.tomorrow.rainChance)}. UV index peaks at ${c.today.uvPeak}.`
     );
   }
 
@@ -1303,26 +1309,89 @@ function lockGlyph() {
 }
 
 /* ---------- Ask the forecast (Q&A + activity chips) ---------- */
-// One-tap chips prefill grounded questions; the text box takes anything.
+// Chips carry a known intent so we can compute a correct verdict in code; the
+// model only phrases it. Tiny models can't reliably reason ("is it dry?" →
+// yes-bias errors), but they faithfully reword a verdict we hand them.
 const ACTIVITY_CHIPS = [
-  { label: "Run", q: "Is right now a good time for a run?" },
-  { label: "Bike", q: "Is it good weather to bike right now?" },
-  { label: "Walk the dog", q: "Is it a good time to walk the dog?" },
-  { label: "Grill out", q: "Is it good weather to grill outside today?" },
-  { label: "What to wear", q: "What should I wear for the weather right now?" }
+  { label: "Run", intent: "run", q: "Is right now a good time for a run?" },
+  { label: "Bike", intent: "bike", q: "Is it good weather to bike right now?" },
+  { label: "Walk the dog", intent: "walk", q: "Is it a good time to walk the dog?" },
+  { label: "Grill out", intent: "grill", q: "Is it good weather to grill outside?" },
+  { label: "What to wear", intent: "wear", q: "What should I wear right now?" }
 ];
+
+// Deterministic verdict for a known activity, drawn straight from the data.
+// Returns a short correct assessment the model then rewrites naturally.
+function assessActivity(intent) {
+  const c = buildAIContext();
+  if (!c) return null;
+  const u = c.units;
+  const isF = state.unit === "fahrenheit";
+  const feels = c.now.feels;
+  const feelsF = isF ? feels : Math.round((feels * 9) / 5 + 32);
+  const dryNow = /^dry/i.test(c.nowcast.trim());
+  const todayRain = c.today.rainChance;
+  const gust = c.now.gust;
+  const gustMod = isF ? gust >= 20 : gust >= 32;
+  const gustHigh = isF ? gust >= 30 : gust >= 48;
+
+  if (intent === "wear") {
+    let outfit;
+    if (feelsF >= 85) outfit = "light, breathable clothes — shorts and a t-shirt";
+    else if (feelsF >= 70) outfit = "a t-shirt, with a light layer for later";
+    else if (feelsF >= 58) outfit = "a long sleeve or light jacket";
+    else if (feelsF >= 45) outfit = "a warm jacket";
+    else if (feelsF >= 30) outfit = "a heavy coat with a hat and gloves";
+    else outfit = "heavy winter layers — bundle up";
+    return `It feels like ${feels}${u.temp}, ${c.now.sky.toLowerCase()}. Good call: ${outfit}.` +
+      (dryNow ? "" : " Bring a rain layer.");
+  }
+
+  if (intent === "umbrella") {
+    if (!dryNow) return `It's already wet — ${c.nowcast.toLowerCase()}. Take an umbrella.`;
+    if (todayRain >= 40) return `Dry now, but a ${todayRain}% chance of rain later — an umbrella is a safe bet.`;
+    return `Skip it — dry now and rain is unlikely (${todayRain}% today).`;
+  }
+
+  // Outdoor activity: run / bike / walk / grill
+  const reasons = [];
+  let score = 2; // 2 good, 1 caveat, 0 poor
+  if (!dryNow) { score = 0; reasons.push(c.nowcast.toLowerCase()); }
+  else reasons.push("dry");
+  if (feelsF >= 92 || feelsF <= 25) { score = Math.min(score, 0); reasons.push(`feels ${feels}${u.temp}`); }
+  else if (feelsF >= 83 || feelsF <= 38) { score = Math.min(score, 1); reasons.push(`a bit ${feelsF >= 83 ? "warm" : "cold"} at ${feels}${u.temp}`); }
+  else reasons.push(`comfortable ${feels}${u.temp}`);
+  if (gustHigh) { score = Math.min(score, 1); reasons.push(`gusty to ${gust} ${u.wind}`); }
+  else if (gustMod && intent === "grill") { score = Math.min(score, 1); reasons.push(`breezy at ${gust} ${u.wind}`); }
+
+  const verdict = score >= 2 ? "Good conditions" : score === 1 ? "Doable, with a caveat" : "Not ideal";
+  const label = { run: "for a run", bike: "for a bike ride", walk: "for a dog walk", grill: "to grill outside" }[intent] || "";
+  return `${verdict} ${label}: ${reasons.join(", ")}.`;
+}
 
 let askState = { phase: "idle", question: "", answer: "", error: "" };
 let askAbort = null;
 
-async function runAsk(question) {
+async function runAsk(question, intent) {
   question = (question || "").trim();
   if (!question) return;
   // Engine does one generation at a time — ignore taps while it's busy.
   if (aiState.phase === "generating" || askState.phase === "answering") return;
+
+  // Activity chips: answer instantly from a code-computed verdict. No model —
+  // a tiny model can't reliably reason about this, and even handed the correct
+  // verdict it sometimes mangles or flips it. Deterministic = always correct.
+  if (intent) {
+    const assessment = assessActivity(intent);
+    if (!assessment) return;
+    askState = { phase: "idle", question, answer: assessment, error: "" };
+    renderAsk();
+    return;
+  }
+
+  // Free-form: best-effort LLM answer grounded on the fact sheet.
   const factSheet = buildAIFactSheet();
   if (!factSheet) return;
-
   askState = { phase: "answering", question, answer: "", error: "" };
   askAbort = { aborted: false };
   const mine = askAbort;
@@ -1366,7 +1435,8 @@ function renderAsk() {
   const dis = busy ? " disabled" : "";
 
   const chips = ACTIVITY_CHIPS.map((c) =>
-    `<button class="ask-chip" type="button" data-ask-chip="${escapeHtml(c.q)}"${dis}>${escapeHtml(c.label)}</button>`
+    `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}" ` +
+    `data-ask-intent="${escapeHtml(c.intent)}"${dis}>${escapeHtml(c.label)}</button>`
   ).join("");
 
   let exchange = "";

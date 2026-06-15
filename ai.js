@@ -72,31 +72,37 @@ export async function* brief(factSheet, signal) {
   }
 }
 
+// The example lives INSIDE the system prompt as an illustration — not as a real
+// conversation turn. A 0.5B model given a separate example turn (with different
+// city facts) fails to bind the user's question to the real facts and answers
+// generically. Single-turn with the real facts immediately above the question,
+// question last, fixes the grounding.
 const ASK_SYSTEM =
-  "You are Nearcast's weather assistant. Answer the user's question using ONLY the FACTS " +
-  "about their local weather — never invent numbers. Be direct and practical in 1-2 short " +
-  "sentences: when the question implies a yes/no or a recommendation, give one clearly, then " +
-  "a brief reason from the facts. If the facts don't cover it, say so. No markdown, no lists.";
+  "You are Nearcast's weather assistant. You are given the user's CURRENT LOCAL WEATHER as " +
+  "facts, then their QUESTION. Answer in ONE or TWO sentences that quote the specific fact that " +
+  "settles the question (the temperature, the rain wording, the wind, or the timing) and give a " +
+  "clear practical recommendation. Never answer with a bare 'yes' or 'no' — always include the " +
+  "number or condition you based it on. Use ONLY the facts; never invent data or thresholds. If " +
+  "the facts don't cover it, say so briefly. No markdown, no lists.\n\n" +
+  "Example of the format:\n" +
+  "WEATHER:\nDry for the next 2 hours. Rest of today: high 88°F, slight rain chance (20%).\n" +
+  "QUESTION: Should I bring an umbrella this morning?\n" +
+  "ANSWER: It's dry for the next couple hours and rain is unlikely today (20%), so you can leave " +
+  "the umbrella at home.";
 
-const ASK_EXAMPLE_Q = "Should I bring an umbrella this morning?";
-const ASK_EXAMPLE_A =
-  "Probably not — it's dry for the next couple hours and only a 20% chance of rain today. " +
-  "You're fine without one, though keep an eye on the afternoon if you'll be out late.";
-
-// Async generator of token deltas answering a grounded question about the forecast.
+// Async generator of token deltas answering a free-text question about the
+// forecast. (Activity chips don't come here — they're answered deterministically
+// in app code, since a tiny model can't reliably reason about the weather.)
 export async function* ask(factSheet, question, signal) {
   const eng = await load();
   const stream = await eng.chat.completions.create({
     stream: true,
-    temperature: 0.2,
-    max_tokens: 130,
+    temperature: 0.15,
+    max_tokens: 120,
     frequency_penalty: 0.3,
-    presence_penalty: 0.2,
     messages: [
       { role: "system", content: ASK_SYSTEM },
-      { role: "user", content: "FACTS:\n" + EXAMPLE_FACTS + "\n\nQUESTION: " + ASK_EXAMPLE_Q },
-      { role: "assistant", content: ASK_EXAMPLE_A },
-      { role: "user", content: "FACTS:\n" + factSheet + "\n\nQUESTION: " + question }
+      { role: "user", content: `WEATHER:\n${factSheet}\n\nQUESTION: ${question}\n\nANSWER:` }
     ]
   });
   for await (const chunk of stream) {
