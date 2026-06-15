@@ -1,4 +1,4 @@
-const VERSION = "1.5.3";
+const VERSION = "1.6.0";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -64,6 +64,7 @@ const els = {
   insights: document.querySelector("#insights"),
   insightCards: document.querySelector("#insightCards"),
   briefing: document.querySelector("#briefing"),
+  aiAsk: document.querySelector("#aiAsk"),
   hourly: document.querySelector("#hourly"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
@@ -313,6 +314,16 @@ function bindEvents() {
     if (action === "enable") enableAI();
     else if (action === "brief") runBrief();
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
+  });
+  els.aiAsk.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-ask-chip]");
+    if (chip) runAsk(chip.dataset.askChip);
+  });
+  els.aiAsk.addEventListener("submit", (event) => {
+    if (event.target.id !== "askForm") return;
+    event.preventDefault();
+    const input = document.getElementById("askInput");
+    runAsk(input.value);
   });
   els.searchToggle.addEventListener("click", () => toggleSearch());
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
@@ -1141,6 +1152,7 @@ async function detectAI() {
     warmAI();
   }
   renderBriefing();
+  renderAsk();
 }
 
 function warmAI() {
@@ -1169,6 +1181,7 @@ async function enableAI() {
     aiState.phase = "ready";
     aiState.text = "";
     renderBriefing();
+    renderAsk();
     runBrief(); // first briefing immediately after enabling
   } catch (_) {
     aiState.phase = "error";
@@ -1185,6 +1198,7 @@ async function runBrief() {
   aiState.phase = "generating";
   aiState.text = "";
   renderBriefing();
+  renderAsk(); // reflect engine-busy (disable Q&A) during the briefing
   try {
     const ai = await loadAIModule();
     for await (const delta of ai.brief(factSheet, mine)) {
@@ -1194,6 +1208,7 @@ async function runBrief() {
     }
     aiState.phase = "ready"; // text retained → shows regenerate control
     renderBriefing();
+    renderAsk(); // re-enable Q&A
   } catch (_) {
     aiState.phase = "error";
     aiState.error = "Briefing failed — try again.";
@@ -1201,12 +1216,13 @@ async function runBrief() {
   }
 }
 
-// Clear per-city briefing text when the forecast changes; keep engine state.
+// Clear per-city briefing text + Q&A when the forecast changes; keep engine state.
 function resetBriefing() {
   if (aiBriefAbort) aiBriefAbort.aborted = true;
   if (aiState.phase === "generating" || aiState.phase === "error") aiState.phase = "ready";
   if (aiState.phase === "ready") aiState.text = "";
   renderBriefing();
+  resetAsk();
 }
 
 function renderBriefing() {
@@ -1284,6 +1300,94 @@ function lockGlyph() {
   return `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">` +
     `<rect x="3.2" y="7" width="9.6" height="6.3" rx="1.6" fill="currentColor"/>` +
     `<path d="M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>`;
+}
+
+/* ---------- Ask the forecast (Q&A + activity chips) ---------- */
+// One-tap chips prefill grounded questions; the text box takes anything.
+const ACTIVITY_CHIPS = [
+  { label: "Run", q: "Is right now a good time for a run?" },
+  { label: "Bike", q: "Is it good weather to bike right now?" },
+  { label: "Walk the dog", q: "Is it a good time to walk the dog?" },
+  { label: "Grill out", q: "Is it good weather to grill outside today?" },
+  { label: "What to wear", q: "What should I wear for the weather right now?" }
+];
+
+let askState = { phase: "idle", question: "", answer: "", error: "" };
+let askAbort = null;
+
+async function runAsk(question) {
+  question = (question || "").trim();
+  if (!question) return;
+  // Engine does one generation at a time — ignore taps while it's busy.
+  if (aiState.phase === "generating" || askState.phase === "answering") return;
+  const factSheet = buildAIFactSheet();
+  if (!factSheet) return;
+
+  askState = { phase: "answering", question, answer: "", error: "" };
+  askAbort = { aborted: false };
+  const mine = askAbort;
+  renderAsk();
+  const answerEl = els.aiAsk.querySelector(".ask-a");
+
+  try {
+    const ai = await loadAIModule();
+    for await (const delta of ai.ask(factSheet, question, mine)) {
+      if (mine.aborted) break;
+      askState.answer += delta;
+      if (answerEl) answerEl.textContent = askState.answer; // cheap per-token update
+    }
+    askState.phase = "idle";
+    renderAsk();
+  } catch (_) {
+    askState.phase = "idle";
+    askState.error = "Couldn't answer that — try again.";
+    renderAsk();
+  }
+}
+
+function resetAsk() {
+  if (askAbort) askAbort.aborted = true;
+  askState = { phase: "idle", question: "", answer: "", error: "" };
+  renderAsk();
+}
+
+function renderAsk() {
+  const panel = els.aiAsk;
+  if (!panel) return;
+  const available = state.forecast && state.activePlace &&
+    (aiState.phase === "ready" || aiState.phase === "generating");
+  if (!available) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+
+  const busy = aiState.phase === "generating" || askState.phase === "answering";
+  const dis = busy ? " disabled" : "";
+
+  const chips = ACTIVITY_CHIPS.map((c) =>
+    `<button class="ask-chip" type="button" data-ask-chip="${escapeHtml(c.q)}"${dis}>${escapeHtml(c.label)}</button>`
+  ).join("");
+
+  let exchange = "";
+  if (askState.question) {
+    const answering = askState.phase === "answering";
+    exchange =
+      `<div class="ask-exchange${answering ? " answering" : ""}">` +
+        `<p class="ask-q">${escapeHtml(askState.question)}</p>` +
+        `<p class="ask-a">${escapeHtml(askState.answer)}</p>` +
+        (askState.error ? `<p class="ask-err">${escapeHtml(askState.error)}</p>` : "") +
+      `</div>`;
+  }
+
+  panel.innerHTML =
+    `<div class="ask-chips">${chips}</div>` +
+    `<form class="ask-form" id="askForm">` +
+      `<input id="askInput" type="text" autocomplete="off" ` +
+        `placeholder="Ask about your forecast…"${dis}>` +
+      `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
+    `</form>` +
+    exchange;
 }
 
 function hoursInRange(data, fromMs, toMs) {

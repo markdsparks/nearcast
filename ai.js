@@ -71,3 +71,39 @@ export async function* brief(factSheet, signal) {
     yield chunk.choices[0]?.delta?.content || "";
   }
 }
+
+const ASK_SYSTEM =
+  "You are Nearcast's weather assistant. Answer the user's question using ONLY the FACTS " +
+  "about their local weather — never invent numbers. Be direct and practical in 1-2 short " +
+  "sentences: when the question implies a yes/no or a recommendation, give one clearly, then " +
+  "a brief reason from the facts. If the facts don't cover it, say so. No markdown, no lists.";
+
+const ASK_EXAMPLE_Q = "Should I bring an umbrella this morning?";
+const ASK_EXAMPLE_A =
+  "Probably not — it's dry for the next couple hours and only a 20% chance of rain today. " +
+  "You're fine without one, though keep an eye on the afternoon if you'll be out late.";
+
+// Async generator of token deltas answering a grounded question about the forecast.
+export async function* ask(factSheet, question, signal) {
+  const eng = await load();
+  const stream = await eng.chat.completions.create({
+    stream: true,
+    temperature: 0.2,
+    max_tokens: 130,
+    frequency_penalty: 0.3,
+    presence_penalty: 0.2,
+    messages: [
+      { role: "system", content: ASK_SYSTEM },
+      { role: "user", content: "FACTS:\n" + EXAMPLE_FACTS + "\n\nQUESTION: " + ASK_EXAMPLE_Q },
+      { role: "assistant", content: ASK_EXAMPLE_A },
+      { role: "user", content: "FACTS:\n" + factSheet + "\n\nQUESTION: " + question }
+    ]
+  });
+  for await (const chunk of stream) {
+    if (signal && signal.aborted) {
+      try { await eng.interruptGenerate(); } catch (_) {}
+      break;
+    }
+    yield chunk.choices[0]?.delta?.content || "";
+  }
+}

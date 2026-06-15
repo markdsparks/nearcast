@@ -761,6 +761,106 @@ h2 {
   margin-left: auto;
 }
 
+/* ---------- Ask the forecast (Q&A) ---------- */
+.ai-ask[hidden] {
+  display: none;
+}
+.ai-ask {
+  margin-bottom: 12px;
+}
+.ask-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 9px;
+}
+.ask-chip {
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ask-chip:hover {
+  border-color: var(--blue);
+}
+.ask-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.ask-form input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  outline: 1px solid transparent;
+}
+.ask-form input:focus {
+  outline-color: var(--blue);
+  border-color: var(--blue);
+}
+.ask-form input:disabled {
+  opacity: 0.6;
+}
+.ask-send {
+  width: 42px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.ask-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-exchange {
+  margin-top: 11px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
+.ask-q {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ask-a {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.ask-exchange.answering .ask-a::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--blue);
+  animation: briefing-blink 1s steps(2) infinite;
+}
+.ask-err {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: var(--red);
+}
+
 .insight-band {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
