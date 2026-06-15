@@ -1,4 +1,4 @@
-const VERSION = "1.4.4";
+const VERSION = "1.4.5";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -42,7 +42,6 @@ const els = {
   welcomeLocate: document.querySelector("#welcomeLocate"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
-  locateButton: document.querySelector("#locateButton"),
   forecastTab: document.querySelector("#forecastTab"),
   mapTab: document.querySelector("#mapTab"),
   forecastView: document.querySelector("#forecastView"),
@@ -304,9 +303,13 @@ function bindEvents() {
   });
 
   els.themeToggle.addEventListener("click", toggleTheme);
-  els.locateButton.addEventListener("click", useCurrentLocation);
   els.searchToggle.addEventListener("click", () => toggleSearch());
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
+  document.getElementById("searchLocate").addEventListener("click", () => {
+    toggleSearch(false);
+    useCurrentLocation();
+  });
+  document.getElementById("nowcast").addEventListener("click", openNext24Detail);
 
   // Refresh stale data when the app is reopened/foregrounded (esp. iOS PWA)
   document.addEventListener("visibilitychange", refreshOnForeground);
@@ -733,10 +736,11 @@ function buildSummary(data) {
   const rain1 = daily.precipitation_probability_max[1] || 0;
   const gust1 = Math.round(daily.wind_gusts_10m_max[1] || 0);
 
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const rainPhrase = (pct) =>
     pct >= 70 ? "rain is likely" : pct >= 40 ? "rain is possible" : "rain chances stay low";
   const gustPhrase = (g) =>
-    g > 0 ? `Gusts may reach ${g}.` : "";
+    g > 0 ? `Gusts may reach ${g} ${windUnit}.` : "";
 
   const isEvening = sunsetMs && now >= sunsetMs - twoHoursMs;
   const isMorning = sunriseMs && now < sunriseMs + twoHoursMs;

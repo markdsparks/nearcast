@@ -27,7 +27,6 @@
           </button>
           <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☀︎</button>
           <button class="icon-button" id="unitToggle" type="button" aria-label="Switch units" title="Switch units">F</button>
-          <button class="icon-button" id="locateButton" type="button" aria-label="Use current location" title="Use current location">GPS</button>
         </div>
       </section>
 
@@ -39,6 +38,9 @@
       <form class="search" id="searchForm">
         <label class="sr-only" for="placeSearch">Search for a city or ZIP code</label>
         <input id="placeSearch" name="placeSearch" autocomplete="off" placeholder="Search city or ZIP code">
+        <button type="button" id="searchLocate" class="search-locate" aria-label="Use current location" title="Use my location">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
         <button type="submit">Search</button>
       </form>
       <div class="search-results" id="searchResults" hidden></div>
