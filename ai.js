@@ -28,20 +28,39 @@ export function load(onProgress) {
 }
 
 const BRIEF_SYSTEM =
-  "You are Nearcast's weather assistant. Use ONLY the DATA provided — never invent " +
-  "numbers. Write a friendly 2-sentence briefing of what to expect today, then one " +
-  "practical tip. No greetings, no lists, no markdown. Keep it under 45 words.";
+  "You are Nearcast's friendly weather assistant. You are given FACTS about the user's " +
+  "local weather. Write a warm, natural briefing of exactly two sentences: the first says " +
+  "what to expect, the second gives one practical tip. Use ONLY the facts and never invent " +
+  "numbers. Speak like a helpful local — don't mechanically recite every number. No greetings, " +
+  "no lists, no markdown. Keep it under 45 words.";
+
+// A single gold-standard example anchors tone, length, and format — disproportionately
+// effective for a tiny model.
+const EXAMPLE_FACTS =
+  "Place: Austin, Texas. Local time 7:10am, daytime.\n" +
+  "Right now: 58°F, feels like 56°F, partly cloudy. Wind 6 mph from the S. Humidity 72%.\n" +
+  "Next 2 hours: dry.\n" +
+  "Rest of today: high 88°F, low 57°F, 20% chance of rain. UV index peaks at 8. Sunset 8:14pm.\n" +
+  "Tomorrow: partly cloudy, high 90°F, low 60°F, 10% chance of rain.\n" +
+  "No active weather alerts.";
+const EXAMPLE_BRIEF =
+  "A cool, partly cloudy start near 58° warms fast to a summery high of 88°, staying mostly dry. " +
+  "Get outdoor plans in early — the midday UV hits an 8, so keep sunscreen handy this afternoon.";
 
 // Async generator of token deltas for the single-shot daily briefing.
-export async function* brief(context, signal) {
+export async function* brief(factSheet, signal) {
   const eng = await load();
   const stream = await eng.chat.completions.create({
     stream: true,
-    temperature: 0.3,
-    max_tokens: 120,
+    temperature: 0.2,
+    max_tokens: 110,
+    frequency_penalty: 0.3,
+    presence_penalty: 0.2,
     messages: [
       { role: "system", content: BRIEF_SYSTEM },
-      { role: "user", content: "DATA:\n" + JSON.stringify(context) }
+      { role: "user", content: "FACTS:\n" + EXAMPLE_FACTS },
+      { role: "assistant", content: EXAMPLE_BRIEF },
+      { role: "user", content: "FACTS:\n" + factSheet }
     ]
   });
   for await (const chunk of stream) {

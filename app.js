@@ -1,4 +1,4 @@
-const VERSION = "1.5.1";
+const VERSION = "1.5.2";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -1050,6 +1050,65 @@ function buildAIContext() {
   };
 }
 
+// Natural-language fact sheet for the LLM. Tiny models reason over prose far
+// better than nested JSON, so we pre-digest the context into plain sentences
+// and let the model do only phrasing — not parsing or arithmetic.
+function buildAIFactSheet() {
+  const c = buildAIContext();
+  if (!c) return null;
+  const u = c.units;
+  const lines = [];
+
+  lines.push(`Place: ${c.place}. Local time ${c.asOf}, ${c.now.isDay ? "daytime" : "night"}.`);
+
+  const gust = c.now.gust > c.now.wind + 2 ? ` gusting to ${c.now.gust}` : "";
+  lines.push(
+    `Right now: ${c.now.temp}${u.temp}, feels like ${c.now.feels}${u.temp}, ` +
+    `${c.now.sky.toLowerCase()}. Wind ${c.now.wind} ${u.wind}${gust} from the ${c.now.windDir}. ` +
+    `Humidity ${c.now.humidity}%.`
+  );
+
+  lines.push(`${c.nowcast.replace(/\.$/, "")}.`);
+
+  if (c.now.isDay) {
+    // Daytime: the day's high/low and UV still lie ahead.
+    lines.push(
+      `Rest of today: high ${c.today.hi}${u.temp}, low ${c.today.lo}${u.temp}, ` +
+      `${c.today.rainChance}% chance of rain. UV index peaks at ${c.today.uvPeak}. ` +
+      `Sunset ${c.today.sunset}.`
+    );
+    lines.push(
+      `Tomorrow: ${c.tomorrow.sky.toLowerCase()}, high ${c.tomorrow.hi}${u.temp}, ` +
+      `low ${c.tomorrow.lo}${u.temp}, ${c.tomorrow.rainChance}% chance of rain.`
+    );
+  } else {
+    // Night: today's high is already past — frame around the overnight low and tomorrow.
+    lines.push(
+      `Tonight: low near ${c.tomorrow.lo}${u.temp}. ` +
+      `Tomorrow: ${c.tomorrow.sky.toLowerCase()}, high ${c.tomorrow.hi}${u.temp}, ` +
+      `${c.tomorrow.rainChance}% chance of rain. UV index peaks at ${c.today.uvPeak}.`
+    );
+  }
+
+  if (c.next12h && c.next12h.length) {
+    const pts = c.next12h
+      .map((h) => `${h.t} ${h.temp}${u.temp}${h.rain >= 30 ? ` (${h.rain}% rain)` : ""}`)
+      .join(", ");
+    lines.push(`Coming hours: ${pts}.`);
+  }
+
+  if (c.alerts && c.alerts.length) {
+    lines.push(
+      "Active alerts: " +
+      c.alerts.map((a) => `${a.event}${a.until ? ` until ${a.until}` : ""}`).join("; ") + "."
+    );
+  } else {
+    lines.push("No active weather alerts.");
+  }
+
+  return lines.join("\n");
+}
+
 /* ---------- On-device AI briefing (Tier 1, opt-in) ---------- */
 // phase: unknown | unsupported | idle | loading | ready | generating | error
 const aiState = { phase: "unknown", progress: 0, status: "", text: "", error: "" };
@@ -1119,8 +1178,8 @@ async function enableAI() {
 }
 
 async function runBrief() {
-  const context = buildAIContext();
-  if (!context) return;
+  const factSheet = buildAIFactSheet();
+  if (!factSheet) return;
   aiBriefAbort = { aborted: false };
   const mine = aiBriefAbort;
   aiState.phase = "generating";
@@ -1128,7 +1187,7 @@ async function runBrief() {
   renderBriefing();
   try {
     const ai = await loadAIModule();
-    for await (const delta of ai.brief(context, mine)) {
+    for await (const delta of ai.brief(factSheet, mine)) {
       if (mine.aborted) break;
       aiState.text += delta;
       renderBriefing();
