@@ -1,4 +1,4 @@
-const VERSION = "1.10.14";
+const VERSION = "1.10.15";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -25,6 +25,9 @@ const mapState = {
   mode: "radar",
   immersive: false,
   userPausedRadar: false,
+  playPos: 0,
+  playClock: 0,
+  xfadeFrames: [null, null],
   _normalEls: null
 };
 
@@ -373,7 +376,7 @@ function bindEvents() {
   els.zoomOutMap.addEventListener("click", () => setMapZoom(mapState.zoom - 1));
   els.zoomInMap.addEventListener("click", () => setMapZoom(mapState.zoom + 1));
   els.playRadar.addEventListener("click", toggleRadarPlayback);
-  els.frameSlider.addEventListener("input", () => showFrame(Number(els.frameSlider.value)));
+  els.frameSlider.addEventListener("input", () => scrubToFrame(Number(els.frameSlider.value)));
   document.getElementById("expandMap").addEventListener("click", enterImmersiveMap);
 
   // Day-detail drill-down: tap a 10-day row or the hourly strip
@@ -3065,14 +3068,108 @@ function showFrame(index) {
   renderWeatherTiles();
 }
 
+// Dragging the timeline is a manual scrub — pause playback so the loop and the
+// finger don't fight, and hold the pause while the map stays in view.
+function scrubToFrame(index) {
+  if (mapState.playing) {
+    mapState.userPausedRadar = true;
+    stopRadarPlayback();
+  }
+  showFrame(index);
+}
+
+// Playback timing. Each frame holds sharp for most of its step, then cross-fades
+// into the next over the tail — so the radar loop reads as motion, not a slideshow.
+const FRAME_STEP_MS = 720;
+const XFADE_PORTION = 0.42;
+
+function frameUrl(frame) {
+  return frame && (frame.url || (frame.layers && frame.layers[0] && frame.layers[0].url));
+}
+
+// How far we are through the cross-fade for a fractional playback position:
+// 0 while the current frame holds, ramping 0→1 across the tail of the step.
+function xfadeAmount(within) {
+  return within <= 1 - XFADE_PORTION ? 0 : (within - (1 - XFADE_PORTION)) / XFADE_PORTION;
+}
+
+// Continuous, cross-faded radar render. Two panes double-buffer: the incoming
+// frame loads on the hidden pane (opacity ~0) and fades up while the outgoing
+// pane fades down, so a frame's tiles never swap while they're visible.
+function renderXfade(pos, viewport = null) {
+  const N = mapState.frames.length;
+  if (!N || !els.weatherTileLayer) return;
+  const i = ((Math.floor(pos) % N) + N) % N;
+  const next = N > 1 ? (i + 1) % N : i;
+  const fade = xfadeAmount(pos - Math.floor(pos));
+
+  // Keep the two panes covering frames i and next; reassign only the stale pane.
+  const frames = mapState.xfadeFrames;
+  for (const need of [i, next]) {
+    if (frames[0] !== need && frames[1] !== need) {
+      const other = need === i ? next : i;
+      frames[frames[0] === other ? 1 : 0] = need;
+    }
+  }
+
+  const vp = viewport || getMapViewport();
+  for (let s = 0; s < 2; s++) {
+    let pane = els.weatherTileLayer.children[s];
+    if (!pane) {
+      pane = document.createElement("div");
+      pane.className = "tile-sublayer";
+      els.weatherTileLayer.appendChild(pane);
+    }
+    const f = frames[s];
+    const frame = mapState.frames[f];
+    const url = frameUrl(frame);
+    if (url) {
+      const sourceZoom = Math.min(mapState.zoom, (frame && frame.maxZoom) || mapState.zoom);
+      renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
+    }
+    pane.style.opacity = String(f === i ? 0.78 * (1 - fade) : f === next ? 0.78 * fade : 0);
+  }
+  while (els.weatherTileLayer.children.length > 2) {
+    els.weatherTileLayer.lastElementChild.remove();
+  }
+}
+
 function startRadarPlayback() {
   if (mapState.playing || !mapState.frames.length) return;
   mapState.playing = true;
   els.playRadar.textContent = "Pause";
-  mapState.timer = window.setInterval(() => {
-    const next = mapState.frameIndex >= mapState.frames.length - 1 ? 0 : mapState.frameIndex + 1;
-    showFrame(next);
-  }, 850);
+  mapState.playPos = mapState.frameIndex;
+  mapState.playClock = performance.now();
+  mapState.xfadeFrames = [null, null];
+  if (mapState.mode === "radar" && els.weatherTileLayer) els.weatherTileLayer.innerHTML = "";
+  mapState.timer = requestAnimationFrame(playbackTick);
+}
+
+function playbackTick(now) {
+  if (!mapState.playing) return;
+  const N = mapState.frames.length;
+  if (!N) { stopRadarPlayback(); return; }
+
+  const dt = now - mapState.playClock;
+  mapState.playClock = now;
+  mapState.playPos += dt / FRAME_STEP_MS;
+  if (mapState.playPos >= N) mapState.playPos -= N; // loop
+
+  if (mapState.mode === "radar" && N > 1) {
+    renderXfade(mapState.playPos);
+    const i = Math.floor(mapState.playPos) % N;
+    const dom = xfadeAmount(mapState.playPos - Math.floor(mapState.playPos)) < 0.5 ? i : (i + 1) % N;
+    if (dom !== mapState.frameIndex) {
+      mapState.frameIndex = dom;
+      els.frameSlider.value = String(dom);
+      setFrameLabel(mapState.frames[dom].label);
+    }
+  } else {
+    // Forecast frames are already interpolated hourly — step them discretely.
+    const idx = Math.floor(mapState.playPos) % N;
+    if (idx !== mapState.frameIndex) showFrame(idx);
+  }
+  mapState.timer = requestAnimationFrame(playbackTick);
 }
 
 function toggleRadarPlayback() {
@@ -3121,12 +3218,16 @@ function initMapAutoPlay() {
 }
 
 function stopRadarPlayback() {
+  const wasPlaying = mapState.playing;
   mapState.playing = false;
   els.playRadar.textContent = "Play";
   if (mapState.timer) {
-    window.clearInterval(mapState.timer);
+    cancelAnimationFrame(mapState.timer);
     mapState.timer = null;
   }
+  mapState.xfadeFrames = [null, null];
+  // Settle on the current frame as a clean, accurate static render.
+  if (wasPlaying && mapState.frames.length) showFrame(mapState.frameIndex);
 }
 
 function clearMapLayers() {
@@ -3218,44 +3319,52 @@ function renderTileMap() {
 
   const viewport = getMapViewport();
   renderTileLayer(els.baseTileLayer, viewport, ({ z, x, y }) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`);
-  renderWeatherTiles(viewport);
+  if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.playPos, viewport);
+  else renderWeatherTiles(viewport);
   renderMapMarkers();
 }
 
-function renderWeatherTiles(viewport = null) {
-  if (!mapState.initialized || !els.weatherTileLayer) return;
-  const frame = mapState.frames[mapState.frameIndex];
-  const layers = (frame && state.activePlace)
-    ? (frame.layers || [{ url: frame.url, opacity: 0.78 }]).filter((l) => l.opacity > 0.01)
-    : [];
+function weatherTileUrl(template, z, x, y) {
+  return template
+    .replace("{z}", z)
+    .replace("{x}", x)
+    .replace("{y}", y)
+    .replace("%7Bbbox%7D", tileBbox3857(z, x, y))
+    .replace("{bbox}", tileBbox3857(z, x, y));
+}
 
-  // Each weather sublayer (radar, or two cross-faded NOAA forecast frames) gets
-  // its own pane. They share z/x/y tile keys, so a flat tile set would clobber;
-  // separate panes also let the cross-fade ride on the pane's opacity.
+// Render an explicit set of weather sublayers, one pane each. Each weather
+// sublayer (radar, a cross-fade pair, or two interpolated NOAA frames) gets its
+// own pane: they share z/x/y tile keys, so a flat tile set would clobber, and
+// separate panes let the cross-fade ride on each pane's opacity.
+function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
+  if (!mapState.initialized || !els.weatherTileLayer) return;
+  layers = (layers || []).filter((l) => l && l.url && l.opacity > 0.01);
   while (els.weatherTileLayer.children.length > layers.length) {
     els.weatherTileLayer.lastElementChild.remove();
   }
   if (!layers.length) return;
 
   const tileViewport = viewport || getMapViewport();
-  const sourceZoom = Math.min(mapState.zoom, frame.maxZoom || mapState.zoom);
-  layers.forEach((weatherLayer, index) => {
+  const sourceZoom = Math.min(mapState.zoom, frameMaxZoom || mapState.zoom);
+  layers.forEach((layer, index) => {
     let pane = els.weatherTileLayer.children[index];
     if (!pane) {
       pane = document.createElement("div");
       pane.className = "tile-sublayer";
       els.weatherTileLayer.appendChild(pane);
     }
-    pane.style.opacity = String(weatherLayer.opacity);
-    renderTileLayer(pane, tileViewport, ({ z, x, y }) =>
-      weatherLayer.url
-        .replace("{z}", z)
-        .replace("{x}", x)
-        .replace("{y}", y)
-        .replace("%7Bbbox%7D", tileBbox3857(z, x, y))
-        .replace("{bbox}", tileBbox3857(z, x, y)),
-      { sourceZoom });
+    pane.style.opacity = String(layer.opacity);
+    renderTileLayer(pane, tileViewport, ({ z, x, y }) => weatherTileUrl(layer.url, z, x, y), { sourceZoom });
   });
+}
+
+function renderWeatherTiles(viewport = null) {
+  const frame = mapState.frames[mapState.frameIndex];
+  const layers = (frame && state.activePlace)
+    ? (frame.layers || [{ url: frame.url, opacity: 0.78 }])
+    : [];
+  renderWeatherLayers(layers, frame && frame.maxZoom, viewport);
 }
 
 // One extra ring of tiles beyond the viewport so a pan always has loaded tiles
@@ -3772,7 +3881,7 @@ function bindImmersiveModeButtons() {
   document.getElementById("immZoomIn").onclick    = () => setMapZoom(mapState.zoom + 1);
   document.getElementById("immZoomOut").onclick   = () => setMapZoom(mapState.zoom - 1);
   document.getElementById("immPlay").onclick      = toggleRadarPlayback;
-  document.getElementById("immSlider").oninput    = (e) => showFrame(Number(e.target.value));
+  document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
   immRadar.onclick  = () => { setMapMode("radar");  immRadar.classList.add("imm-active");  immFuture.classList.remove("imm-active"); };
   immFuture.onclick = () => { setMapMode("future"); immFuture.classList.add("imm-active"); immRadar.classList.remove("imm-active"); };
 }
