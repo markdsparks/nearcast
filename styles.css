@@ -278,7 +278,7 @@ button {
 .topbar {
   position: fixed;
   top: max(14px, env(safe-area-inset-top, 0px));
-  right: max(14px, calc((100vw - 1120px) / 2));
+  left: max(14px, calc((100vw - 1120px) / 2));
   z-index: 80;
   display: block;
   padding: 0;
@@ -366,7 +366,7 @@ h2 {
 .app-menu {
   position: absolute;
   top: 56px;
-  right: 0;
+  left: 0;
   width: min(372px, calc(100vw - 28px));
   padding: 14px;
   border: 1px solid var(--border-glass-md);
@@ -2357,7 +2357,7 @@ body.map-immersive-active #mapLegend {
 
   .topbar {
     top: calc(env(safe-area-inset-top, 0px) + 12px);
-    right: 12px;
+    left: 12px;
   }
 
   /* Four action icons need to fit beside the title on phones */
@@ -2375,7 +2375,6 @@ body.map-immersive-active #mapLegend {
 
   .shell:not(.mode-welcome).search-open .search-popover {
     top: calc(env(safe-area-inset-top, 0px) + 66px);
-    right: 12px;
     left: 12px;
     width: auto;
   }
@@ -3523,7 +3522,7 @@ body.map-immersive-active #mapLegend {
   position: fixed;
   z-index: 75;
   top: calc(max(14px, env(safe-area-inset-top, 0px)) + 58px);
-  right: max(14px, calc((100vw - 1120px) / 2));
+  left: max(14px, calc((100vw - 1120px) / 2));
   width: min(420px, calc(100vw - 28px));
 }
 
