@@ -1,4 +1,4 @@
-const VERSION = "1.10.33";
+const VERSION = "1.10.34";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -34,6 +34,7 @@ const mapState = {
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
+const MAP_TAP_MOVE_PX = 8;
 const US_STATE_NAMES = {
   AL: "Alabama",
   AK: "Alaska",
@@ -136,6 +137,15 @@ const pinchState = {
   startZoom: 0,
   anchorX: 0,
   anchorY: 0
+};
+
+const mapTapState = {
+  active: false,
+  valid: false,
+  moved: false,
+  startX: 0,
+  startY: 0,
+  targetEl: null
 };
 
 let searchSuggestTimer = null;
@@ -3021,17 +3031,28 @@ function initMap() {
 
 function bindMapDrag() {
   const el = els.weatherMap;
-  el.addEventListener("mousedown", (e) => { e.preventDefault(); startMapDrag(e.clientX, e.clientY, el); });
+  el.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    startMapPreviewTap(e.clientX, e.clientY, el);
+    startMapDrag(e.clientX, e.clientY, el);
+  });
   window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY));
-  window.addEventListener("mouseup", () => endMapGesture(el));
+  window.addEventListener("mouseup", (e) => {
+    const shouldOpen = finishMapPreviewTap(e.clientX, e.clientY);
+    endMapGesture(el);
+    if (shouldOpen) enterImmersiveMap();
+  });
 
   el.addEventListener("touchstart", (e) => {
     if (e.touches.length === 2) {
       e.preventDefault();
+      cancelMapPreviewTap();
       startMapPinch(e.touches[0], e.touches[1]);
       return;
     }
     const t = e.touches[0];
+    startMapPreviewTap(t.clientX, t.clientY, el);
     startMapDrag(t.clientX, t.clientY, el);
   }, { passive: false });
   el.addEventListener("touchmove", (e) => {
@@ -3045,7 +3066,57 @@ function bindMapDrag() {
       moveMapDrag(t.clientX, t.clientY);
     }
   }, { passive: false });
-  el.addEventListener("touchend", () => endMapGesture(el));
+  el.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    const shouldOpen = t ? finishMapPreviewTap(t.clientX, t.clientY) : false;
+    endMapGesture(el);
+    if (shouldOpen) enterImmersiveMap();
+  });
+  el.addEventListener("touchcancel", () => {
+    cancelMapPreviewTap();
+    endMapGesture(el);
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (!state.activePlace || mapState.immersive) return;
+    e.preventDefault();
+    enterImmersiveMap();
+  });
+}
+
+function startMapPreviewTap(x, y, el = els.weatherMap) {
+  mapTapState.active = true;
+  mapTapState.valid = !mapState.immersive && Boolean(state.activePlace);
+  mapTapState.moved = false;
+  mapTapState.startX = x;
+  mapTapState.startY = y;
+  mapTapState.targetEl = el;
+}
+
+function updateMapPreviewTap(x, y) {
+  if (!mapTapState.active || mapTapState.moved) return;
+  const dx = x - mapTapState.startX;
+  const dy = y - mapTapState.startY;
+  if (Math.hypot(dx, dy) > MAP_TAP_MOVE_PX) mapTapState.moved = true;
+}
+
+function finishMapPreviewTap(x, y) {
+  updateMapPreviewTap(x, y);
+  const el = mapTapState.targetEl;
+  const rect = el?.getBoundingClientRect();
+  const inside = rect
+    ? x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    : false;
+  const shouldOpen = mapTapState.active && mapTapState.valid && !mapTapState.moved && inside;
+  cancelMapPreviewTap();
+  return shouldOpen;
+}
+
+function cancelMapPreviewTap() {
+  mapTapState.active = false;
+  mapTapState.valid = false;
+  mapTapState.moved = false;
+  mapTapState.targetEl = null;
 }
 
 function startMapDrag(x, y, el = els.weatherMap) {
@@ -3060,6 +3131,7 @@ function startMapDrag(x, y, el = els.weatherMap) {
 
 function moveMapDrag(x, y) {
   if (!dragState.active || pinchState.active) return;
+  updateMapPreviewTap(x, y);
   mapState.panX = dragState.startPanX + (x - dragState.startX);
   mapState.panY = dragState.startPanY + (y - dragState.startY);
   scheduleMapRender();

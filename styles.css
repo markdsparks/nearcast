@@ -1860,6 +1860,13 @@ body.map-immersive-active #mapLegend {
   user-select: none;
   touch-action: none;
 }
+#weatherMap:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: -3px;
+}
+#weatherMap:active {
+  cursor: grabbing;
+}
 
 .tile-map {
   position: relative;
