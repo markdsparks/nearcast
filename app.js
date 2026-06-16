@@ -1,4 +1,4 @@
-const VERSION = "1.10.36";
+const VERSION = "1.10.37";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3814,7 +3814,7 @@ function renderTileMap() {
 }
 
 function baseTileUrl({ z, x, y }) {
-  return `https://a.basemaps.cartocdn.com/light_nolabels/${z}/${x}/${y}.png`;
+  return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 }
 
 function labelTileUrl({ z, x, y }) {
