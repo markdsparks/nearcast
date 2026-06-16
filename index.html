@@ -65,12 +65,17 @@
       <section class="status" id="status" hidden></section>
 
       <button class="alert-bar" id="alertBar" type="button" hidden>
-        <span class="alert-bar-icon" aria-hidden="true">⚠</span>
-        <span class="alert-bar-text">
-          <strong id="alertBarEvent">—</strong>
-          <span id="alertBarTiming"></span>
+        <span class="alert-bar-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none"><path d="M10 3.2 18 16.4H2L10 3.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 7.8v4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="0.9" fill="currentColor"/></svg>
         </span>
-        <span class="alert-bar-more" id="alertBarMore"></span>
+        <span class="alert-bar-text">
+          <span class="alert-bar-kicker" id="alertBarSeverity">Weather alert</span>
+          <strong id="alertBarEvent">—</strong>
+        </span>
+        <span class="alert-bar-meta">
+          <span class="alert-bar-timing" id="alertBarTiming"></span>
+          <span class="alert-bar-more" id="alertBarMore"></span>
+        </span>
         <span class="alert-bar-chevron" aria-hidden="true">›</span>
       </button>
 
@@ -301,7 +306,11 @@
     <aside class="day-sheet alert-sheet" id="alertSheet" hidden aria-label="Weather alerts" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="alertSheetClose" type="button" aria-label="Close alerts">✕</button>
-      <h2 class="alert-sheet-title">Active Alerts</h2>
+      <header class="alert-sheet-head">
+        <p class="alert-sheet-kicker" id="alertSheetKicker">Weather alert</p>
+        <h2 class="alert-sheet-title" id="alertSheetTitle">Active Alerts</h2>
+        <p class="alert-sheet-summary" id="alertSheetSummary"></p>
+      </header>
       <div class="alert-list" id="alertList"></div>
     </aside>
 

@@ -1,4 +1,4 @@
-const VERSION = "1.10.29";
+const VERSION = "1.10.31";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -2903,6 +2903,7 @@ function renderHourly(data, tempUnit) {
     const rain = data.hourly.precipitation_probability[index] || 0;
     const wcode = data.hourly.weather_code[index];
     const code = weatherCodes[wcode] || "Weather";
+    const compactCode = compactHourlyCondition(wcode, code);
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
     const label = position === 0 ? "Now" : formatHour(time);
     return `
@@ -2910,12 +2911,23 @@ function renderHourly(data, tempUnit) {
         <span>${label}</span>
         <strong>${Math.round(data.hourly.temperature_2m[index])}${degree(tempUnit)}</strong>
         <div class="hour-icon" aria-hidden="true">${weatherIcon(wcode, isHourDay)}</div>
-        <div class="code">${escapeHtml(code)}</div>
+        <div class="code" title="${escapeHtml(code)}" aria-label="${escapeHtml(code)}">${escapeHtml(compactCode)}</div>
         <span>${rain}% rain</span>
         <div class="rain-bar" aria-hidden="true"><i style="width: ${rain}%"></i></div>
       </article>
     `;
   }).join("");
+}
+
+function compactHourlyCondition(code, label) {
+  if (code === 95) return "Storms";
+  if (code === 96 || code === 99) return "Storms + hail";
+  if (label === "Rain showers") return "Showers";
+  if (label === "Heavy showers") return "Heavy showers";
+  if (label === "Freezing drizzle") return "Icy drizzle";
+  if (label === "Freezing rain") return "Icy rain";
+  if (label === "Heavy snow showers") return "Heavy snow";
+  return label;
 }
 
 // Absolute temperature → color, anchored to real-world warm/cold norms (°F).
@@ -4256,6 +4268,7 @@ let immersiveDragAbort = null;
 function enterImmersiveMap() {
   if (mapState.immersive) return;
   mapState.immersive = true;
+  document.body.classList.add("map-immersive-active");
 
   mapState._normalEls = {
     baseTileLayer: els.baseTileLayer,
@@ -4310,6 +4323,7 @@ function exitImmersiveMap() {
 
   document.getElementById("immersiveMap").hidden = true;
   document.body.style.overflow = "";
+  document.body.classList.remove("map-immersive-active");
 
   if (immersiveDragAbort) { immersiveDragAbort.abort(); immersiveDragAbort = null; }
   document.removeEventListener("keydown", onImmersiveKey);
@@ -5153,6 +5167,17 @@ function alertSeverityClass(severity) {
   return "alert-minor";
 }
 
+function alertSeverityLabel(severity) {
+  if (severity === "Extreme" || severity === "Severe") return "Urgent alert";
+  if (severity === "Moderate") return "Weather alert";
+  if (severity === "Minor") return "Advisory";
+  return "Weather notice";
+}
+
+function alertCountLabel(count) {
+  return count === 1 ? "1 active alert" : `${count} active alerts`;
+}
+
 function renderAlerts(alerts) {
   activeAlerts = alerts || [];
   const bar = document.getElementById("alertBar");
@@ -5162,11 +5187,13 @@ function renderAlerts(alerts) {
   }
   const top = activeAlerts[0];
   bar.className = `alert-bar ${alertSeverityClass(top.severity)}`;
+  document.getElementById("alertBarSeverity").textContent = alertSeverityLabel(top.severity);
   document.getElementById("alertBarEvent").textContent = top.event;
   document.getElementById("alertBarTiming").textContent = top.ends || top.expires
-    ? `until ${formatAlertTime(top.ends || top.expires)}` : "";
+    ? `Until ${formatAlertTime(top.ends || top.expires)}` : "";
   document.getElementById("alertBarMore").textContent =
     activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
+  bar.setAttribute("aria-label", `${top.event}${top.ends || top.expires ? ` until ${formatAlertTime(top.ends || top.expires)}` : ""}. ${alertCountLabel(activeAlerts.length)}. Open alert details.`);
   bar.hidden = false;
 }
 
@@ -5189,13 +5216,19 @@ function alertWindow(a) {
 
 function openAlertSheet() {
   if (!activeAlerts.length) return;
+  const top = activeAlerts[0];
+  document.getElementById("alertSheetKicker").textContent = alertSeverityLabel(top.severity);
+  document.getElementById("alertSheetTitle").textContent = alertCountLabel(activeAlerts.length);
+  document.getElementById("alertSheetSummary").textContent = `${top.event}${alertWindow(top) ? ` · ${alertWindow(top)}` : ""}`;
   document.getElementById("alertList").innerHTML = activeAlerts.map((a) => `
     <article class="alert-item ${alertSeverityClass(a.severity)}">
       <div class="alert-item-head">
-        <span class="alert-item-event">${escapeHtml(a.event)}</span>
-        <span class="alert-item-sev">${escapeHtml(a.severity || "")}</span>
+        <div>
+          <span class="alert-item-event">${escapeHtml(a.event)}</span>
+          <p class="alert-item-when">${escapeHtml(alertWindow(a))}</p>
+        </div>
+        <span class="alert-item-sev">${escapeHtml(alertSeverityLabel(a.severity))}</span>
       </div>
-      <p class="alert-item-when">${escapeHtml(alertWindow(a))}</p>
       ${a.areaDesc ? `<p class="alert-item-area">${escapeHtml(a.areaDesc)}</p>` : ""}
       ${a.instruction ? `<div class="alert-item-instruction"><strong>What to do</strong><p>${escapeHtml(a.instruction)}</p></div>` : ""}
       ${a.description ? `<details class="alert-item-details"><summary>Full details</summary><p>${escapeHtml(a.description)}</p></details>` : ""}
