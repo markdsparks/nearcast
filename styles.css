@@ -2033,6 +2033,19 @@ h2 {
   stroke-dasharray: 3 3;
   opacity: 0.85;
 }
+.graph-day-line {
+  stroke: var(--ink);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.32;
+}
+.graph-day-label {
+  fill: var(--muted);
+  font-size: 8.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .graph-now-pill {
   fill: var(--blue);
 }
@@ -2101,6 +2114,24 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
+}
+.sheet-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 2px 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sheet-day-divider::before,
+.sheet-day-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 .sheet-hour-row.is-now {
   border-color: var(--blue);

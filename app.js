@@ -1,4 +1,4 @@
-const VERSION = "1.10.11";
+const VERSION = "1.10.12";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -24,6 +24,7 @@ const mapState = {
   timer: null,
   mode: "radar",
   immersive: false,
+  userPausedRadar: false,
   _normalEls: null
 };
 
@@ -2713,6 +2714,7 @@ function initMap() {
   bindMapDrag();
   renderMapLegend();
   renderTileMap();
+  initMapAutoPlay();
 }
 
 function bindMapDrag() {
@@ -2869,6 +2871,7 @@ async function loadMapFrames(force = false) {
     mapState.frameIndex = mapState.mode === "future" ? 0 : mapState.frames.length - 1;
     els.frameSlider.max = String(mapState.frames.length - 1);
     showFrame(mapState.frameIndex);
+    maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
   } catch (error) {
     setFrameLabel("Map data unavailable");
   } finally {
@@ -3060,19 +3063,59 @@ function showFrame(index) {
   renderWeatherTiles();
 }
 
-function toggleRadarPlayback() {
-  if (!mapState.frames.length) return;
-  if (mapState.playing) {
-    stopRadarPlayback();
-    return;
-  }
-
+function startRadarPlayback() {
+  if (mapState.playing || !mapState.frames.length) return;
   mapState.playing = true;
   els.playRadar.textContent = "Pause";
   mapState.timer = window.setInterval(() => {
     const next = mapState.frameIndex >= mapState.frames.length - 1 ? 0 : mapState.frameIndex + 1;
     showFrame(next);
   }, 850);
+}
+
+function toggleRadarPlayback() {
+  if (!mapState.frames.length) return;
+  if (mapState.playing) {
+    mapState.userPausedRadar = true; // honor a manual pause while the map stays in view
+    stopRadarPlayback();
+  } else {
+    mapState.userPausedRadar = false;
+    startRadarPlayback();
+  }
+}
+
+// Auto-play the radar loop while the inline map is on screen; pause when it
+// scrolls out of view or the user pauses manually. Immersive mode drives itself.
+let mapInView = false;
+let mapViewObserver = null;
+
+function maybeAutoPlayRadar() {
+  if (mapState.immersive || !mapInView) return;
+  if (mapState.userPausedRadar || !mapState.frames.length) return;
+  startRadarPlayback();
+}
+
+function initMapAutoPlay() {
+  if (mapViewObserver) return;
+  const target = document.getElementById("mapView");
+  if (!target || !("IntersectionObserver" in window)) return;
+  mapViewObserver = new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1];
+    mapInView = entry.isIntersecting && entry.intersectionRatio >= 0.4;
+    if (mapInView) {
+      maybeAutoPlayRadar();
+    } else if (!mapState.immersive) {
+      stopRadarPlayback();
+      mapState.userPausedRadar = false; // arriving back at the map should auto-play again
+    }
+  }, { threshold: [0, 0.4, 0.75] });
+  mapViewObserver.observe(target);
+
+  // Don't keep the loop running in a backgrounded tab.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") stopRadarPlayback();
+    else maybeAutoPlayRadar();
+  });
 }
 
 function stopRadarPlayback() {
@@ -3469,17 +3512,36 @@ function initMetricTipListeners() {
     if (card) hideMetricTip();
   }, true);
 
-  // Tap: toggle tip. touchstart fires before any synthetic mouse events,
-  // so we handle it here and stopPropagation to prevent the click handler below.
+  // Tap: toggle tip — but only on a genuine tap, never a scroll. We let
+  // touchstart pass through (no preventDefault) so the page can still scroll
+  // when a swipe begins on a metric card, and only toggle on touchend if the
+  // finger didn't move. This fixes the mobile annoyance where scrolling from a
+  // card would snap open a tip and stop the scroll.
+  let tipTouch = null;
+  const TIP_MOVE_TOLERANCE = 10;
+
   metricsEl.addEventListener("touchstart", (event) => {
     const card = event.target.closest(".has-tip");
-    if (!card) return;
-    event.preventDefault(); // block the subsequent synthetic click
-    if (activeTipCard === card) {
-      hideMetricTip();
-    } else {
-      showMetricTip(card);
+    const t = event.touches[0];
+    tipTouch = card ? { card, x: t.clientX, y: t.clientY, moved: false } : null;
+  }, { passive: true });
+
+  metricsEl.addEventListener("touchmove", (event) => {
+    if (!tipTouch) return;
+    const t = event.touches[0];
+    if (Math.abs(t.clientX - tipTouch.x) > TIP_MOVE_TOLERANCE ||
+        Math.abs(t.clientY - tipTouch.y) > TIP_MOVE_TOLERANCE) {
+      tipTouch.moved = true; // it's a scroll, not a tap
     }
+  }, { passive: true });
+
+  metricsEl.addEventListener("touchend", (event) => {
+    const touch = tipTouch;
+    tipTouch = null;
+    if (!touch || touch.moved) return; // scrolled — leave tips alone
+    event.preventDefault(); // a real tap: block the synthetic click + mouse events
+    if (activeTipCard === touch.card) hideMetricTip();
+    else showMetricTip(touch.card);
   }, { passive: false });
 
   document.addEventListener("click", (event) => {
@@ -3529,6 +3591,31 @@ function formatDay(value, index) {
   if (index === 0) return "Today";
   if (index === 1) return "Tomorrow";
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(`${value}T12:00:00`));
+}
+
+// Day relative to today: 0 = today, 1 = tomorrow, etc. Used to mark the day
+// rollover inside the rolling next-24h views.
+function daysFromToday(value) {
+  const d = new Date(value);
+  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  return Math.round((startOf(d) - startOf(new Date())) / 86400000);
+}
+
+// Full divider label for the hourly list, e.g. "Tomorrow · Tuesday".
+function dayDividerLabel(value) {
+  const diff = daysFromToday(value);
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(new Date(value));
+  if (diff === 0) return `Today · ${weekday}`;
+  if (diff === 1) return `Tomorrow · ${weekday}`;
+  return weekday;
+}
+
+// Compact label for the graph's midnight line, e.g. "Tomorrow" or "Wed".
+function dayShortLabel(value) {
+  const diff = daysFromToday(value);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(value));
 }
 
 function formatFrameTime(seconds) {
@@ -3631,7 +3718,7 @@ function exitImmersiveMap() {
   if (immersiveDragAbort) { immersiveDragAbort.abort(); immersiveDragAbort = null; }
   document.removeEventListener("keydown", onImmersiveKey);
 
-  setTimeout(() => { renderTileMap(); renderMapLegend(); }, 40);
+  setTimeout(() => { renderTileMap(); renderMapLegend(); maybeAutoPlayRadar(); }, 40);
 }
 
 function onImmersiveKey(e) {
@@ -4099,7 +4186,14 @@ function isCurrentHour(time) {
 function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) {
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
+  let prevDay = null;
   list.innerHTML = hrs.map((hour) => {
+    // Mark where the day rolls over (the list runs from "now" into tomorrow).
+    const dayKey = hour.time.slice(0, 10);
+    const divider = prevDay && dayKey !== prevDay
+      ? `<div class="sheet-day-divider"><span>${escapeHtml(dayDividerLabel(hour.time))}</span></div>`
+      : "";
+    prevDay = dayKey;
     const condition = weatherCodes[hour.code] || "Weather";
     const note = hourlyRowNote(hour, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
@@ -4108,7 +4202,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const nowClass = now ? " is-now" : "";
-    return `
+    return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
@@ -4221,6 +4315,17 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
     `<text x="${x(i).toFixed(1)}" y="${labelY}" text-anchor="middle" class="graph-axis">${shortHour(hrs[i].time)}</text>`
   ).join("");
 
+  // Vertical line at each midnight so the day rollover is visible on the curve.
+  const dayLines = hrs.map((h, i) => {
+    if (i === 0 || new Date(h.time).getHours() !== 0) return "";
+    const lx = x(i);
+    const nearRight = lx > VW - 46;
+    const tx = nearRight ? lx - 4 : lx + 4;
+    const anchor = nearRight ? "end" : "start";
+    return `<line x1="${lx.toFixed(1)}" y1="${tempTop}" x2="${lx.toFixed(1)}" y2="${precipBottom}" class="graph-day-line"/>` +
+      `<text x="${tx.toFixed(1)}" y="${(tempTop + 9).toFixed(1)}" text-anchor="${anchor}" class="graph-day-label">${escapeHtml(dayShortLabel(h.time))}</text>`;
+  }).join("");
+
   const firstMs = new Date(hrs[0].time).getTime();
   const lastMs = new Date(hrs[n - 1].time).getTime();
   const nowMs = Date.now();
@@ -4239,6 +4344,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
       <path d="${areaPath}" fill="url(#tempGrad)" fill-opacity="0.13"/>
       <path d="${linePath}" fill="none" stroke="url(#tempGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       ${precipBars}
+      ${dayLines}
       ${markers}
       ${nowMarker}
       ${axisLabels}
