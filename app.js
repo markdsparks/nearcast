@@ -1,4 +1,4 @@
-const VERSION = "1.10.18";
+const VERSION = "1.10.19";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3778,19 +3778,79 @@ async function useCurrentLocation() {
 
   setStatus("Waiting for location permission...");
   navigator.geolocation.getCurrentPosition(
-    (position) => {
-      loadPlace({
-        id: `gps-${position.coords.latitude.toFixed(3)}-${position.coords.longitude.toFixed(3)}`,
-        name: "Current Location",
-        admin1: "",
-        country: "",
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      });
+    async (position) => {
+      const fallback = placeFromCoordinates(position.coords);
+      setStatus("Naming your location...");
+      try {
+        loadPlace(await reverseGeocodePlace(position.coords, fallback));
+      } catch {
+        loadPlace(fallback);
+      }
     },
     () => setStatus("Location permission was not granted.", true),
     { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
   );
+}
+
+function placeFromCoordinates(coords) {
+  return {
+    id: `gps-${coords.latitude.toFixed(3)}-${coords.longitude.toFixed(3)}`,
+    name: "Current Location",
+    admin1: "",
+    country: "",
+    latitude: coords.latitude,
+    longitude: coords.longitude
+  };
+}
+
+async function reverseGeocodePlace(coords, fallback) {
+  const cacheKey = `reverse-place:${coords.latitude.toFixed(3)}:${coords.longitude.toFixed(3)}`;
+  const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+  const maxCacheAge = 30 * 24 * 60 * 60 * 1000;
+
+  if (cached && Date.now() - cached.savedAt < maxCacheAge) {
+    return { ...fallback, ...cached.place };
+  }
+
+  const url = new URL("https://nominatim.openstreetmap.org/reverse");
+  url.search = new URLSearchParams({
+    format: "jsonv2",
+    lat: coords.latitude.toFixed(5),
+    lon: coords.longitude.toFixed(5),
+    zoom: "12",
+    addressdetails: "1",
+    layer: "address",
+    "accept-language": "en"
+  }).toString();
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Reverse geocoding failed.");
+  const json = await response.json();
+  const place = placeFromReverseGeocode(json, fallback);
+  localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), place }));
+  return { ...fallback, ...place };
+}
+
+function placeFromReverseGeocode(json, fallback) {
+  const address = json?.address || {};
+  const name = address.city ||
+    address.town ||
+    address.village ||
+    address.municipality ||
+    address.hamlet ||
+    address.suburb ||
+    address.county ||
+    json?.name ||
+    fallback.name;
+  const admin1 = address.state || address.region || address.state_district || "";
+  const country = address.country || "";
+
+  return {
+    id: `gps-${slug(name)}-${fallback.latitude.toFixed(3)}-${fallback.longitude.toFixed(3)}`,
+    name,
+    admin1,
+    country
+  };
 }
 
 function savePlace(place) {

@@ -1,4 +1,4 @@
-const CACHE = "nearcast-v57";
+const CACHE = "nearcast-v58";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -45,6 +45,7 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("nowcoast.noaa.gov") ||
     url.hostname.includes("opengeo.ncep.noaa.gov") ||
     url.hostname.includes("mrms.ncep.noaa.gov") ||
+    url.hostname.includes("nominatim.openstreetmap.org") ||
     url.hostname.includes("openstreetmap.org") ||
     url.hostname.includes("tile.openstreetmap") ||
     url.hostname.includes("tilecache") ||
