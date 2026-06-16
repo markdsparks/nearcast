@@ -1,4 +1,4 @@
-const VERSION = "1.10.32";
+const VERSION = "1.10.33";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5174,6 +5174,11 @@ function alertSeverityLabel(severity) {
   return "Weather notice";
 }
 
+function alertMotionClass(alert) {
+  const event = (alert?.event || "").toLowerCase();
+  return alert?.severity === "Extreme" || event.includes("warning") ? "alert-pulse" : "";
+}
+
 function alertCountLabel(count) {
   return count === 1 ? "1 active alert" : `${count} active alerts`;
 }
@@ -5214,30 +5219,52 @@ function alertWindow(a) {
   return parts.join(" ");
 }
 
+function compactAlertAreas(areaDesc, max = 5) {
+  if (!areaDesc) return "";
+  const areas = areaDesc.split(";").map((area) => area.trim()).filter(Boolean);
+  if (!areas.length) return areaDesc;
+  if (areas.length <= max) return areas.join("; ");
+  return `${areas.slice(0, max).join("; ")} +${areas.length - max} more`;
+}
+
 function openAlertSheet() {
   if (!activeAlerts.length) return;
   const top = activeAlerts[0];
+  const sheet = document.getElementById("alertSheet");
+  sheet.className = `day-sheet alert-sheet ${alertSeverityClass(top.severity)} ${alertMotionClass(top)}`.trim();
   document.getElementById("alertSheetKicker").textContent = alertSeverityLabel(top.severity);
-  document.getElementById("alertSheetTitle").textContent = alertCountLabel(activeAlerts.length);
-  document.getElementById("alertSheetSummary").textContent = `${top.event}${alertWindow(top) ? ` · ${alertWindow(top)}` : ""}`;
+  document.getElementById("alertSheetTitle").textContent = top.event;
+  document.getElementById("alertSheetSummary").textContent = [
+    alertWindow(top),
+    activeAlerts.length > 1 ? alertCountLabel(activeAlerts.length) : ""
+  ].filter(Boolean).join(" · ");
   document.getElementById("alertList").innerHTML = activeAlerts.map((a) => `
     <article class="alert-item ${alertSeverityClass(a.severity)}">
-      <div class="alert-item-head">
-        <div>
-          <span class="alert-item-event">${escapeHtml(a.event)}</span>
-          <p class="alert-item-when">${escapeHtml(alertWindow(a))}</p>
+      ${activeAlerts.length > 1 ? `
+        <div class="alert-item-head">
+          <div>
+            <span class="alert-item-event">${escapeHtml(a.event)}</span>
+            <p class="alert-item-when">${escapeHtml(alertWindow(a))}</p>
+          </div>
+          <span class="alert-item-sev">${escapeHtml(alertSeverityLabel(a.severity))}</span>
         </div>
-        <span class="alert-item-sev">${escapeHtml(alertSeverityLabel(a.severity))}</span>
-      </div>
-      ${a.areaDesc ? `<p class="alert-item-area">${escapeHtml(a.areaDesc)}</p>` : ""}
-      ${a.instruction ? `<div class="alert-item-instruction"><strong>What to do</strong><p>${escapeHtml(a.instruction)}</p></div>` : ""}
-      ${a.description ? `<details class="alert-item-details"><summary>Full details</summary><p>${escapeHtml(a.description)}</p></details>` : ""}
-      ${a.senderName ? `<p class="alert-item-sender">${escapeHtml(a.senderName)}</p>` : ""}
+      ` : ""}
+      ${a.instruction ? `<section class="alert-item-instruction"><strong>What to do</strong><p>${escapeHtml(a.instruction)}</p></section>` : ""}
+      ${a.areaDesc ? `
+        <details class="alert-item-area">
+          <summary>
+            <span>Affected areas</span>
+            <strong>${escapeHtml(compactAlertAreas(a.areaDesc))}</strong>
+          </summary>
+          <p>${escapeHtml(a.areaDesc)}</p>
+        </details>
+      ` : ""}
+      ${a.description ? `<details class="alert-item-details"><summary>Full NWS details</summary><p>${escapeHtml(a.description)}</p></details>` : ""}
+      ${a.senderName ? `<p class="alert-item-sender">Issued by ${escapeHtml(a.senderName)}</p>` : ""}
     </article>
   `).join("");
 
   const backdrop = document.getElementById("alertBackdrop");
-  const sheet = document.getElementById("alertSheet");
   backdrop.hidden = false;
   sheet.hidden = false;
   requestAnimationFrame(() => {
