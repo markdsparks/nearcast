@@ -1,4 +1,4 @@
-const CACHE = "nearcast-v54";
+const CACHE = "nearcast-v55";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -31,8 +31,8 @@ self.addEventListener("activate", e => {
 });
 
 // Fetch strategy:
-//  - API calls (Open-Meteo, RainViewer) → network-first, no caching
-//  - Map tiles (OSM, rainviewer tiles) → network-only (too large to cache)
+//  - API calls (Open-Meteo, RainViewer, NWS/NOAA) → network-first, no caching
+//  - Map tiles (OSM, radar/forecast tiles) → network-only (too large to cache)
 //  - Everything else (shell) → cache-first, fall back to network
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
@@ -41,6 +41,10 @@ self.addEventListener("fetch", e => {
   if (
     url.hostname.includes("open-meteo.com") ||
     url.hostname.includes("rainviewer.com") ||
+    url.hostname.includes("weather.gov") ||
+    url.hostname.includes("nowcoast.noaa.gov") ||
+    url.hostname.includes("opengeo.ncep.noaa.gov") ||
+    url.hostname.includes("mrms.ncep.noaa.gov") ||
     url.hostname.includes("openstreetmap.org") ||
     url.hostname.includes("tile.openstreetmap") ||
     url.hostname.includes("tilecache") ||

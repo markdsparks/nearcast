@@ -1,4 +1,4 @@
-const VERSION = "1.10.15";
+const VERSION = "1.10.16";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -33,6 +33,40 @@ const mapState = {
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
+const NWS_RADAR_FRAME_LIMIT = 30;
+const NWS_RADAR_WINDOW_MS = 60 * 60 * 1000;
+const NWS_RADAR_REGIONS = {
+  conus: {
+    layer: "conus_bref_qcd",
+    style: "radar_reflectivity",
+    endpoint: "https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows",
+    label: "NWS radar"
+  },
+  alaska: {
+    layer: "alaska_bref_qcd",
+    style: "radar_reflectivity",
+    endpoint: "https://opengeo.ncep.noaa.gov/geoserver/alaska/alaska_bref_qcd/ows",
+    label: "NWS Alaska radar"
+  },
+  hawaii: {
+    layer: "hawaii_bref_qcd",
+    style: "radar_reflectivity",
+    endpoint: "https://opengeo.ncep.noaa.gov/geoserver/hawaii/hawaii_bref_qcd/ows",
+    label: "NWS Hawaii radar"
+  },
+  carib: {
+    layer: "carib_bref_qcd",
+    style: "radar_reflectivity",
+    endpoint: "https://opengeo.ncep.noaa.gov/geoserver/carib/carib_bref_qcd/ows",
+    label: "NWS Caribbean radar"
+  },
+  guam: {
+    layer: "guam_bref_qcd",
+    style: "radar_reflectivity",
+    endpoint: "https://opengeo.ncep.noaa.gov/geoserver/guam/guam_bref_qcd/ows",
+    label: "NWS Guam radar"
+  }
+};
 
 const dragState = {
   active: false,
@@ -2866,7 +2900,7 @@ async function loadMapFrames(force = false) {
   clearMapLayers();
 
   try {
-    mapState.frames = mapState.mode === "future" ? await fetchNoaaFutureRainFrames() : await fetchRainViewerFrames();
+    mapState.frames = mapState.mode === "future" ? await fetchNoaaFutureRainFrames() : await fetchRadarFrames();
 
     if (!mapState.frames.length) {
       setFrameLabel(mapState.mode === "future" ? "No NWS forecast frames" : "No radar frames");
@@ -2915,6 +2949,87 @@ async function fetchRainViewerData() {
 
 function rainViewerTileUrl(data, frame) {
   return `${data.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+}
+
+async function fetchRadarFrames() {
+  try {
+    const nwsFrames = await fetchNwsRadarFrames();
+    if (nwsFrames.length) return nwsFrames;
+  } catch {
+    /* RainViewer remains the global/fallback radar source for this spike. */
+  }
+  return fetchRainViewerFrames();
+}
+
+async function fetchNwsRadarFrames() {
+  const config = getNwsRadarConfig();
+  if (!config) return [];
+
+  const capabilities = await fetchNwsRadarCapabilities(config);
+  const times = getNoaaLayerTimes(capabilities, config.layer);
+  const recentTimes = selectNwsRadarTimes(times);
+
+  return recentTimes.map((time) => buildNwsRadarFrame(config, time));
+}
+
+async function fetchNwsRadarCapabilities(config) {
+  const cacheKey = `nws-radar-capabilities:${config.layer}`;
+  const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+  const maxCacheAge = 60 * 1000;
+
+  if (cached && Date.now() - cached.savedAt < maxCacheAge) {
+    return cached.xml;
+  }
+
+  const params = new URLSearchParams({
+    SERVICE: "WMS",
+    VERSION: "1.3.0",
+    REQUEST: "GetCapabilities"
+  });
+  const response = await fetch(`${config.endpoint}?${params.toString()}`);
+  if (!response.ok) throw new Error("NWS radar capabilities failed.");
+  const xml = await response.text();
+  localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), xml }));
+  return xml;
+}
+
+function selectNwsRadarTimes(times) {
+  const cutoff = Date.now() - NWS_RADAR_WINDOW_MS;
+  const parsed = times
+    .map((time) => ({ time, timestamp: new Date(time).getTime() }))
+    .filter((item) => Number.isFinite(item.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  const recent = parsed.filter((item) => item.timestamp >= cutoff);
+  return (recent.length ? recent : parsed)
+    .slice(-NWS_RADAR_FRAME_LIMIT)
+    .map((item) => item.time);
+}
+
+function buildNwsRadarFrame(config, time) {
+  const params = new URLSearchParams({
+    SERVICE: "WMS",
+    VERSION: "1.3.0",
+    REQUEST: "GetMap",
+    LAYERS: config.layer,
+    STYLES: config.style,
+    CRS: "EPSG:3857",
+    BBOX: "{bbox}",
+    WIDTH: "256",
+    HEIGHT: "256",
+    FORMAT: "image/png",
+    TRANSPARENT: "true",
+    TIME: time,
+    TILED: "true"
+  });
+
+  return {
+    label: `${config.label} ${formatDateTime(time)}`,
+    time,
+    timestamp: new Date(time).getTime(),
+    url: `${config.endpoint}?${params.toString()}`,
+    attribution: "NOAA/NWS MRMS",
+    maxZoom: MAP_MAX_ZOOM
+  };
 }
 
 async function fetchNoaaFutureRainFrames() {
@@ -3047,10 +3162,37 @@ function getNoaaLayerTimes(xml, layerName) {
     .filter(Boolean);
 }
 
+function getNwsRadarConfig() {
+  return NWS_RADAR_REGIONS[getNwsRadarRegion()] || null;
+}
+
+function getNwsRadarRegion(place = state.activePlace) {
+  if (!place) return null;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  if (latitude >= 13 && latitude <= 15 && longitude >= 143 && longitude <= 146) return "guam";
+  if (latitude >= 18 && latitude <= 23 && longitude >= -161 && longitude <= -154) return "hawaii";
+  if (latitude >= 51 && latitude <= 72 && longitude >= -170 && longitude <= -129) return "alaska";
+  if (latitude >= 5 && latitude <= 30 && longitude >= -90 && longitude <= -55) return "carib";
+  if (latitude >= 20 && latitude <= 55 && longitude >= -130 && longitude <= -60) return "conus";
+  return null;
+}
+
+function normalizeMapLongitude(value) {
+  let longitude = Number(value);
+  if (!Number.isFinite(longitude)) return NaN;
+  while (longitude < -180) longitude += 360;
+  while (longitude > 180) longitude -= 360;
+  return longitude;
+}
+
 function getNoaaRegion() {
   const place = state.activePlace;
   if (!place) return "conus";
-  const { latitude, longitude } = place;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
 
   if (latitude >= 18 && latitude <= 23 && longitude >= -161 && longitude <= -154) return "hawaii";
   if (latitude >= 51 && latitude <= 72 && longitude >= -170 && longitude <= -129) return "alaska";
