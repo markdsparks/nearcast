@@ -1,4 +1,4 @@
-const VERSION = "1.10.49";
+const VERSION = "1.10.50";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -11,7 +11,8 @@ const state = {
   searchResults: [],
   skyCode: null,
   skyIsDay: null,
-  locationIsDay: null
+  locationIsDay: null,
+  forecastUnit: null
 };
 
 const mapState = {
@@ -164,6 +165,7 @@ const els = {
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
+  searchClose: document.querySelector("#searchClose"),
   placeSearch: document.querySelector("#placeSearch"),
   searchResults: document.querySelector("#searchResults"),
   savedPlaces: document.querySelector("#savedPlaces"),
@@ -444,13 +446,20 @@ function bindEvents() {
   });
 
   els.unitToggle.addEventListener("click", () => {
+    const oldUnit = state.unit;
     state.unit = state.unit === "fahrenheit" ? "celsius" : "fahrenheit";
     localStorage.setItem("weather-unit", state.unit);
     updateUnitButton();
     // Cached glance temps are unit-specific — drop them so chips refetch
     for (const id in glanceData) delete glanceData[id];
     renderSavedPlaces();
-    if (state.activePlace) loadPlace(state.activePlace);
+    if (state.forecast && state.activePlace) {
+      const forecastUnit = state.forecastUnit || oldUnit;
+      state.forecast = convertForecastUnits(state.forecast, forecastUnit, state.unit);
+      renderForecast(state.forecast, state.activePlace);
+    } else if (state.activePlace) {
+      loadPlace(state.activePlace);
+    }
   });
 
   els.themeToggle.addEventListener("click", toggleTheme);
@@ -481,6 +490,7 @@ function bindEvents() {
     closeAppMenu();
     toggleSearch(true);
   });
+  els.searchClose.addEventListener("click", () => toggleSearch(false));
   els.placeSwitcher.addEventListener("click", () => {
     closeAppMenu();
     openPlaceSheet();
@@ -1108,8 +1118,93 @@ async function fetchForecast(place, force = false) {
   return data;
 }
 
+function convertForecastUnits(data, fromUnit, toUnit) {
+  if (!data || fromUnit === toUnit) return data;
+
+  const converted = JSON.parse(JSON.stringify(data));
+  const temp = converterForUnit(fromUnit, toUnit, "temp");
+  const wind = converterForUnit(fromUnit, toUnit, "wind");
+  const precip = converterForUnit(fromUnit, toUnit, "precip");
+
+  convertFields(converted.current, ["temperature_2m", "apparent_temperature"], temp);
+  convertFields(converted.current, ["wind_speed_10m", "wind_gusts_10m"], wind);
+  convertFields(converted.current, ["precipitation"], precip);
+  convertFields(converted.hourly, ["temperature_2m", "apparent_temperature"], temp);
+  convertFields(converted.hourly, ["wind_speed_10m", "wind_gusts_10m"], wind);
+  convertFields(converted.hourly, ["precipitation"], precip);
+  convertFields(converted.daily, [
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "apparent_temperature_max",
+    "apparent_temperature_min"
+  ], temp);
+  convertFields(converted.daily, ["wind_speed_10m_max", "wind_gusts_10m_max"], wind);
+  convertFields(converted.daily, ["precipitation_sum"], precip);
+  convertFields(converted.minutely_15, ["precipitation", "snowfall"], precip);
+  updateForecastUnitLabels(converted, toUnit);
+
+  return converted;
+}
+
+function convertFields(source, keys, convert) {
+  if (!source) return;
+  keys.forEach((key) => {
+    if (Array.isArray(source[key])) {
+      source[key] = source[key].map((value) => convertNumber(value, convert));
+    } else if (source[key] !== undefined) {
+      source[key] = convertNumber(source[key], convert);
+    }
+  });
+}
+
+function convertNumber(value, convert) {
+  return typeof value === "number" ? convert(value) : value;
+}
+
+function converterForUnit(fromUnit, toUnit, type) {
+  if (type === "temp") {
+    return fromUnit === "fahrenheit" && toUnit === "celsius"
+      ? (value) => (value - 32) * 5 / 9
+      : (value) => (value * 9 / 5) + 32;
+  }
+  if (type === "wind") {
+    return fromUnit === "fahrenheit" && toUnit === "celsius"
+      ? (value) => value * 1.609344
+      : (value) => value / 1.609344;
+  }
+  return fromUnit === "fahrenheit" && toUnit === "celsius"
+    ? (value) => value * 25.4
+    : (value) => value / 25.4;
+}
+
+function updateForecastUnitLabels(data, unit) {
+  const temp = unit === "fahrenheit" ? "°F" : "°C";
+  const wind = unit === "fahrenheit" ? "mp/h" : "km/h";
+  const precip = unit === "fahrenheit" ? "inch" : "mm";
+  [data.current_units, data.hourly_units, data.daily_units, data.minutely_15_units].forEach((units) => {
+    if (!units) return;
+    [
+      "temperature_2m",
+      "apparent_temperature",
+      "temperature_2m_max",
+      "temperature_2m_min",
+      "apparent_temperature_max",
+      "apparent_temperature_min"
+    ].forEach((key) => {
+      if (units[key] !== undefined) units[key] = temp;
+    });
+    ["wind_speed_10m", "wind_gusts_10m", "wind_speed_10m_max", "wind_gusts_10m_max"].forEach((key) => {
+      if (units[key] !== undefined) units[key] = wind;
+    });
+    ["precipitation", "precipitation_sum", "snowfall"].forEach((key) => {
+      if (units[key] !== undefined) units[key] = precip;
+    });
+  });
+}
+
 function renderForecast(data, place) {
   state.forecast = data; // retained for the day-detail sheet
+  state.forecastUnit = state.unit;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
