@@ -1,4 +1,4 @@
-const VERSION = "1.10.7";
+const VERSION = "1.10.8";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3960,6 +3960,7 @@ function setDayDetailMode(mode, persist = true) {
   graphWrap.hidden = isHourly;
   hourlyList.hidden = !isHourly;
 
+  if (!isHourly) scheduleGraphCalloutReflow();
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
@@ -4108,6 +4109,18 @@ function shortHour(t) {
 }
 
 let graphPts = [];
+let graphActiveIndex = 0;
+let graphUpdateActive = null;
+
+function scheduleGraphCalloutReflow() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (typeof graphUpdateActive === "function") {
+        graphUpdateActive(graphActiveIndex);
+      }
+    });
+  });
+}
 
 function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   const VW = 340;
@@ -4130,6 +4143,8 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
 
   const pts = hrs.map((h, i) => ({ ...h, x: x(i), y: y(h.temp) }));
   graphPts = pts;
+  graphActiveIndex = 0;
+  graphUpdateActive = null;
 
   const deg = degree(tempUnit);
   const gradStops = pts.map((p, i) =>
@@ -4199,6 +4214,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   function update(i) {
     const p = graphPts[i];
     if (!p) return;
+    graphActiveIndex = i;
     guide.setAttribute("x1", p.x);
     guide.setAttribute("x2", p.x);
     guide.style.display = "";
@@ -4213,12 +4229,19 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
 
     // Slide the callout to ride above the active point, clamped to the chart edges.
     // The vertical guide line marks the exact column; the callout pointer tracks it too.
-    const px = (p.x / VW) * wrap.clientWidth;
+    const wrapWidth = wrap.clientWidth;
     const cw = callout.offsetWidth;
-    const left = Math.max(cw / 2 + 2, Math.min(px, wrap.clientWidth - cw / 2 - 2));
+    if (!wrapWidth || !cw) return;
+
+    const px = (p.x / VW) * wrapWidth;
+    const minLeft = cw / 2 + 2;
+    const maxLeft = Math.max(minLeft, wrapWidth - cw / 2 - 2);
+    const left = Math.max(minLeft, Math.min(px, maxLeft));
+    const pointerX = Math.max(8, Math.min(cw - 8, px - (left - cw / 2)));
     callout.style.left = `${left}px`;
-    callout.style.setProperty("--pointer-x", `${px - (left - cw / 2)}px`);
+    callout.style.setProperty("--pointer-x", `${pointerX}px`);
   }
+  graphUpdateActive = update;
 
   function nearest(clientX) {
     const rect = svg.getBoundingClientRect();
@@ -4240,7 +4263,8 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   if (def < 0) def = hiIdx;
   // Defer to next frame so the sheet has laid out and the callout can be
   // measured/positioned correctly (it's still hidden when this runs).
-  requestAnimationFrame(() => update(def));
+  graphActiveIndex = def;
+  scheduleGraphCalloutReflow();
 }
 
 function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) {
