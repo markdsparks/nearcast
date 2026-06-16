@@ -1,4 +1,4 @@
-const VERSION = "1.10.39";
+const VERSION = "1.10.42";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3541,9 +3541,19 @@ function showFrame(index) {
   const nextIndex = Math.min(Math.max(index, 0), mapState.frames.length - 1);
   mapState.frameIndex = nextIndex;
   els.frameSlider.value = String(nextIndex);
+  updateRangeProgress(els.frameSlider);
 
   setFrameLabel(mapState.frames[nextIndex].label);
   renderWeatherTiles();
+}
+
+function updateRangeProgress(slider) {
+  if (!slider) return;
+  const min = Number(slider.min || 0);
+  const max = Number(slider.max || 0);
+  const value = Number(slider.value || 0);
+  const progress = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  slider.style.setProperty("--range-progress", `${Math.min(Math.max(progress, 0), 100)}%`);
 }
 
 // Dragging the timeline is a manual scrub — pause playback so the loop and the
@@ -3640,6 +3650,7 @@ function playbackTick(now) {
     if (dom !== mapState.frameIndex) {
       mapState.frameIndex = dom;
       els.frameSlider.value = String(dom);
+      updateRangeProgress(els.frameSlider);
       setFrameLabel(mapState.frames[dom].label);
     }
   } else {
@@ -3714,6 +3725,7 @@ function clearMapLayers() {
   mapState.frameIndex = 0;
   els.frameSlider.max = "0";
   els.frameSlider.value = "0";
+  updateRangeProgress(els.frameSlider);
   els.weatherTileLayer.innerHTML = "";
   setFrameLabel("No frames");
 }
@@ -4384,6 +4396,7 @@ function enterImmersiveMap() {
   // Sync slider range before rendering so scrubbing works immediately
   els.frameSlider.max   = String(Math.max(0, mapState.frames.length - 1));
   els.frameSlider.value = String(mapState.frameIndex);
+  updateRangeProgress(els.frameSlider);
   if (mapState.playing) els.playRadar.textContent = "Pause";
 
   // Wait two frames so the browser has painted the full-screen canvas
@@ -4406,6 +4419,9 @@ function exitImmersiveMap() {
   Object.assign(els, mapState._normalEls);
   mapState._normalEls = null;
   mapState.immersive = false;
+  els.frameSlider.max = String(Math.max(0, mapState.frames.length - 1));
+  els.frameSlider.value = String(mapState.frameIndex);
+  updateRangeProgress(els.frameSlider);
 
   document.getElementById("immersiveMap").hidden = true;
   document.body.style.overflow = "";
