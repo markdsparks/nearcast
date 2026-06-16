@@ -1,4 +1,4 @@
-const VERSION = "1.10.16";
+const VERSION = "1.10.17";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -33,6 +33,59 @@ const mapState = {
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
+const US_STATE_NAMES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia"
+};
 const NWS_RADAR_FRAME_LIMIT = 30;
 const NWS_RADAR_WINDOW_MS = 60 * 60 * 1000;
 const NWS_RADAR_REGIONS = {
@@ -83,6 +136,9 @@ const pinchState = {
   anchorX: 0,
   anchorY: 0
 };
+
+let searchSuggestTimer = null;
+let searchRequestSeq = 0;
 
 const els = {
   shell: document.querySelector(".shell"),
@@ -346,6 +402,16 @@ function bindEvents() {
   els.placeSearch.addEventListener("keydown", (event) => {
     if (event.key === "Escape") clearSearchResults();
   });
+  els.placeSearch.addEventListener("input", () => {
+    const query = els.placeSearch.value.trim();
+    clearTimeout(searchSuggestTimer);
+    if (query.length < 2) {
+      searchRequestSeq += 1;
+      hideSearchResults();
+      return;
+    }
+    searchSuggestTimer = setTimeout(() => searchPlaces(query, { quiet: true }), 260);
+  });
 
   document.addEventListener("click", (event) => {
     const inSearch = els.searchForm.contains(event.target) || els.searchResults.contains(event.target);
@@ -493,32 +559,101 @@ function updateUnitButton() {
   els.unitToggle.title = state.unit === "fahrenheit" ? "Switch to Celsius" : "Switch to Fahrenheit";
 }
 
-async function searchPlaces(query) {
-  setStatus("Searching places...");
+async function searchPlaces(query, { quiet = false } = {}) {
+  const requestId = ++searchRequestSeq;
+  const parsed = parseLocationQuery(query);
+  if (!quiet) setStatus("Searching places...");
   try {
-    const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
-    url.search = new URLSearchParams({
-      name: query,
-      count: "6",
-      language: "en",
-      format: "json"
-    }).toString();
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Place search failed.");
-    const data = await response.json();
-    state.searchResults = data.results || [];
+    let results = await fetchPlaceResults(parsed.raw);
+    if (!results.length && parsed.primary && parsed.primary !== parsed.raw) {
+      results = await fetchPlaceResults(parsed.primary, 10);
+    }
+    if (requestId !== searchRequestSeq) return;
+    state.searchResults = rankPlaceResults(results, parsed).slice(0, 6);
     renderSearchResults();
-    setStatus(state.searchResults.length ? "" : "No matching places found.", !state.searchResults.length);
+    if (quiet) {
+      if (state.searchResults.length) setStatus("");
+    } else {
+      setStatus(state.searchResults.length ? "" : `No matching places found for "${query}".`, !state.searchResults.length);
+    }
   } catch (error) {
+    if (requestId !== searchRequestSeq) return;
+    if (quiet) return;
     setStatus("Could not search places. Check the connection and try again.", true);
   }
 }
 
+async function fetchPlaceResults(name, count = 8) {
+  const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+  url.search = new URLSearchParams({
+    name,
+    count: String(count),
+    language: "en",
+    format: "json"
+  }).toString();
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Place search failed.");
+  const data = await response.json();
+  return data.results || [];
+}
+
+function parseLocationQuery(query) {
+  const raw = query.trim().replace(/\s+/g, " ");
+  const parts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  let primary = parts[0] || raw;
+  let region = parts.slice(1).join(" ");
+
+  if (!region) {
+    const trailingState = raw.match(/^(.+?)\s+([A-Za-z]{2})$/);
+    if (trailingState) {
+      primary = trailingState[1].trim();
+      region = trailingState[2].trim();
+    }
+  }
+
+  const stateName = normalizeRegionName(region);
+  return { raw, primary, region, stateName };
+}
+
+function normalizeRegionName(region) {
+  const value = String(region || "").trim();
+  if (!value) return "";
+  const upper = value.replace(/\./g, "").toUpperCase();
+  return US_STATE_NAMES[upper] || value;
+}
+
+function rankPlaceResults(results, parsed) {
+  const primary = parsed.primary.toLowerCase();
+  const stateName = parsed.stateName.toLowerCase();
+
+  return [...results].sort((a, b) => placeScore(b, primary, stateName) - placeScore(a, primary, stateName));
+}
+
+function placeScore(place, primary, stateName) {
+  let score = 0;
+  const name = String(place.name || "").toLowerCase();
+  const admin = String(place.admin1 || "").toLowerCase();
+  const country = String(place.country || "").toLowerCase();
+  if (name === primary) score += 20;
+  else if (name.startsWith(primary)) score += 10;
+  if (stateName && admin === stateName) score += 50;
+  else if (stateName && (admin.includes(stateName) || country.includes(stateName))) score += 15;
+  if (place.country_code === "US") score += 3;
+  return score;
+}
+
 function clearSearchResults() {
+  searchRequestSeq += 1;
+  clearTimeout(searchSuggestTimer);
+  state.searchResults = [];
+  hideSearchResults();
+  els.placeSearch.value = "";
+}
+
+function hideSearchResults() {
   state.searchResults = [];
   els.searchResults.hidden = true;
   els.searchResults.innerHTML = "";
-  els.placeSearch.value = "";
 }
 
 // Two modes: "welcome" (no place yet — search/location is the hero) and
@@ -4480,13 +4615,14 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const nowClass = now ? " is-now" : "";
+    const noteLine = note ? `<span>${escapeHtml(note)}</span>` : "";
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
         <div class="sheet-hour-main">
           <strong>${escapeHtml(condition)}</strong>
-          <span>${note || "No big weather flags"}</span>
+          ${noteLine}
         </div>
         <div class="sheet-hour-metrics">
           <strong>${Math.round(hour.temp)}${deg}</strong>
