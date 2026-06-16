@@ -34,6 +34,8 @@ const dragState = {
   active: false,
   startX: 0,
   startY: 0,
+  lastX: 0,
+  lastY: 0,
   startPanX: 0,
   startPanY: 0
 };
@@ -2749,6 +2751,8 @@ function startMapDrag(x, y, el = els.weatherMap) {
   dragState.active = true;
   dragState.startX = x;
   dragState.startY = y;
+  dragState.lastX = x;
+  dragState.lastY = y;
   dragState.startPanX = mapState.panX;
   dragState.startPanY = mapState.panY;
   if (el) el.style.cursor = "grabbing";
@@ -2756,12 +2760,20 @@ function startMapDrag(x, y, el = els.weatherMap) {
 
 function moveMapDrag(x, y) {
   if (!dragState.active || pinchState.active) return;
-  mapState.panX = dragState.startPanX + (x - dragState.startX);
-  mapState.panY = dragState.startPanY + (y - dragState.startY);
-  renderTileMap();
+  dragState.lastX = x;
+  dragState.lastY = y;
+  // Translate the whole map visually without re-rendering tiles — avoids the
+  // innerHTML clear/reload flash on every touchmove. Tiles reload on drag end.
+  els.weatherMap.style.transform = `translate(${x - dragState.startX}px, ${y - dragState.startY}px)`;
 }
 
 function endMapGesture(el = els.weatherMap) {
+  if (dragState.active && !pinchState.active) {
+    mapState.panX = dragState.startPanX + (dragState.lastX - dragState.startX);
+    mapState.panY = dragState.startPanY + (dragState.lastY - dragState.startY);
+    els.weatherMap.style.transform = "";
+    renderTileMap();
+  }
   dragState.active = false;
   pinchState.active = false;
   if (el) el.style.cursor = "grab";
@@ -2781,6 +2793,7 @@ function touchMidpoint(a, b) {
 function startMapPinch(a, b) {
   const mid = touchMidpoint(a, b);
   dragState.active = false;
+  els.weatherMap.style.transform = "";
   pinchState.active = true;
   pinchState.startDistance = touchDistance(a, b);
   pinchState.startZoom = mapState.zoom;
