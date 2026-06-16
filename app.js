@@ -1,4 +1,4 @@
-const VERSION = "1.10.51";
+const VERSION = "1.10.54";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3845,6 +3845,20 @@ function updateRangeProgress(slider) {
   slider.style.setProperty("--range-progress", `${Math.min(Math.max(progress, 0), 100)}%`);
 }
 
+function setPlaybackButtonState(button = els.playRadar, playing = mapState.playing) {
+  if (!button) return;
+  const label = playing ? "Pause radar animation" : "Play radar animation";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+
+  if (button.classList.contains("imm-play-button")) {
+    button.classList.toggle("is-playing", playing);
+    return;
+  }
+
+  button.textContent = playing ? "Pause" : "Play";
+}
+
 // Dragging the timeline is a manual scrub — pause playback so the loop and the
 // finger don't fight, and hold the pause while the map stays in view.
 function scrubToFrame(index) {
@@ -3914,7 +3928,7 @@ function renderXfade(pos, viewport = null) {
 function startRadarPlayback() {
   if (mapState.playing || !mapState.frames.length) return;
   mapState.playing = true;
-  els.playRadar.textContent = "Pause";
+  setPlaybackButtonState();
   mapState.playPos = mapState.frameIndex;
   mapState.playClock = performance.now();
   mapState.xfadeFrames = [null, null];
@@ -3998,7 +4012,7 @@ function initMapAutoPlay() {
 function stopRadarPlayback() {
   const wasPlaying = mapState.playing;
   mapState.playing = false;
-  els.playRadar.textContent = "Play";
+  setPlaybackButtonState();
   if (mapState.timer) {
     cancelAnimationFrame(mapState.timer);
     mapState.timer = null;
@@ -4696,7 +4710,7 @@ function enterImmersiveMap() {
   els.frameSlider.max   = String(Math.max(0, mapState.frames.length - 1));
   els.frameSlider.value = String(mapState.frameIndex);
   updateRangeProgress(els.frameSlider);
-  if (mapState.playing) els.playRadar.textContent = "Pause";
+  setPlaybackButtonState(els.playRadar, mapState.playing);
 
   // Wait two frames so the browser has painted the full-screen canvas
   // before we measure its bounding rect for tile placement
@@ -4721,6 +4735,7 @@ function exitImmersiveMap() {
   els.frameSlider.max = String(Math.max(0, mapState.frames.length - 1));
   els.frameSlider.value = String(mapState.frameIndex);
   updateRangeProgress(els.frameSlider);
+  setPlaybackButtonState(els.playRadar, mapState.playing);
 
   document.getElementById("immersiveMap").hidden = true;
   document.body.style.overflow = "";
