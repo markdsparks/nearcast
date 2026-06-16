@@ -1889,9 +1889,12 @@ body.map-immersive-active #mapLegend {
   -webkit-user-drag: none;
 }
 
-#baseTileLayer img,
-#immersiveBaseTiles img {
+#baseTileLayer img {
   filter: grayscale(0.85) saturate(0.35) brightness(1.06) contrast(0.92);
+}
+
+#immersiveBaseTiles img {
+  filter: none;
 }
 
 /* Opacity lives on the sublayer pane (set per frame in JS) so the NOAA
