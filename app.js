@@ -1,4 +1,4 @@
-const VERSION = "1.10.6";
+const VERSION = "1.10.7";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3914,7 +3914,8 @@ function openDayFromIndex(i) {
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
-    initialMode: getDayDetailMode()
+    initialMode: getDayDetailMode(),
+    showNow: i === 0
   });
 }
 
@@ -3935,7 +3936,8 @@ function openNext24Detail() {
     sunriseISO: data.daily.sunrise[0],
     sunsetISO: data.daily.sunset[0],
     initialMode: "hourly",
-    persistInitialMode: false
+    persistInitialMode: false,
+    showNow: true
   });
 }
 
@@ -3961,7 +3963,7 @@ function setDayDetailMode(mode, persist = true) {
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
-function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, initialMode = getDayDetailMode(), persistInitialMode = false }) {
+function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
   const data = state.forecast;
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -3991,8 +3993,8 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, ini
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
-  buildHourlyGraph(hrs, tempUnit, windUnit);
-  renderHourlyList(hrs, tempUnit, windUnit, precipUnit);
+  buildHourlyGraph(hrs, tempUnit, windUnit, showNow);
+  renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow);
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
 
@@ -4041,19 +4043,30 @@ function hourlyRowNote(hour, windUnit, precipUnit) {
   return notes.join(" · ");
 }
 
-function renderHourlyList(hrs, tempUnit, windUnit, precipUnit) {
+function isCurrentHour(time) {
+  const d = new Date(time);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate() &&
+    d.getHours() === now.getHours();
+}
+
+function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) {
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
   list.innerHTML = hrs.map((hour) => {
     const condition = weatherCodes[hour.code] || "Weather";
     const note = hourlyRowNote(hour, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
+    const now = showNow && isCurrentHour(hour.time);
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
+    const nowClass = now ? " is-now" : "";
     return `
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}">
-        <div class="sheet-hour-time">${formatHour(hour.time)}</div>
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}">
+        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
         <div class="sheet-hour-main">
           <strong>${escapeHtml(condition)}</strong>
@@ -4096,7 +4109,7 @@ function shortHour(t) {
 
 let graphPts = [];
 
-function buildHourlyGraph(hrs, tempUnit, windUnit) {
+function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   const VW = 340;
   const padL = 18, padR = 18;
   const plotW = VW - padL - padR;
@@ -4150,6 +4163,16 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
     `<text x="${x(i).toFixed(1)}" y="${labelY}" text-anchor="middle" class="graph-axis">${shortHour(hrs[i].time)}</text>`
   ).join("");
 
+  const firstMs = new Date(hrs[0].time).getTime();
+  const lastMs = new Date(hrs[n - 1].time).getTime();
+  const nowMs = Date.now();
+  const nowX = firstMs < lastMs ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW : null;
+  const nowMarker = showNow && nowX != null && nowX >= padL && nowX <= padL + plotW ? `
+    <line x1="${nowX.toFixed(1)}" y1="${tempTop}" x2="${nowX.toFixed(1)}" y2="${precipBottom}" class="graph-now-line"/>
+    <rect x="${(nowX - 13).toFixed(1)}" y="2" width="26" height="14" rx="7" class="graph-now-pill"/>
+    <text x="${nowX.toFixed(1)}" y="12" text-anchor="middle" class="graph-now-label">Now</text>
+  ` : "";
+
   document.getElementById("sheetGraph").innerHTML = `
     <svg viewBox="0 0 ${VW} 162" class="hourly-graph">
       <defs>
@@ -4159,6 +4182,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit) {
       <path d="${linePath}" fill="none" stroke="url(#tempGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       ${precipBars}
       ${markers}
+      ${nowMarker}
       ${axisLabels}
       <line id="graphGuide" x1="0" y1="${tempTop}" x2="0" y2="${precipBottom}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
       <circle id="graphDot" r="4" fill="var(--ink)" style="display:none"/>
