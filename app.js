@@ -1,4 +1,4 @@
-const VERSION = "1.10.8";
+const VERSION = "1.10.9";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
