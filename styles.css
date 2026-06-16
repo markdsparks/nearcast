@@ -1577,7 +1577,8 @@ h2 {
 }
 
 .tile-layer,
-.marker-layer {
+.marker-layer,
+.tile-sublayer {
   position: absolute;
   inset: 0;
 }
@@ -1594,8 +1595,9 @@ h2 {
   filter: grayscale(0.85) saturate(0.35) brightness(1.06) contrast(0.92);
 }
 
+/* Opacity lives on the sublayer pane (set per frame in JS) so the NOAA
+   cross-fade works and radar shows at a steady 0.78. */
 .weather-layer img {
-  opacity: 0.78;
   mix-blend-mode: normal;
 }
 

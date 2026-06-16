@@ -1,4 +1,4 @@
-const VERSION = "1.10.10";
+const VERSION = "1.10.11";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -34,8 +34,6 @@ const dragState = {
   active: false,
   startX: 0,
   startY: 0,
-  lastX: 0,
-  lastY: 0,
   startPanX: 0,
   startPanY: 0
 };
@@ -2751,8 +2749,6 @@ function startMapDrag(x, y, el = els.weatherMap) {
   dragState.active = true;
   dragState.startX = x;
   dragState.startY = y;
-  dragState.lastX = x;
-  dragState.lastY = y;
   dragState.startPanX = mapState.panX;
   dragState.startPanY = mapState.panY;
   if (el) el.style.cursor = "grabbing";
@@ -2760,34 +2756,27 @@ function startMapDrag(x, y, el = els.weatherMap) {
 
 function moveMapDrag(x, y) {
   if (!dragState.active || pinchState.active) return;
-  dragState.lastX = x;
-  dragState.lastY = y;
-  // Slide the tile panes inside the fixed (overflow:hidden) viewport instead of
-  // re-tiling on every move — that innerHTML clear/reload is what caused the
-  // flash. The map re-tiles once on release. Same idea as Leaflet's pan pane.
-  setMapPanOffset(x - dragState.startX, y - dragState.startY);
+  mapState.panX = dragState.startPanX + (x - dragState.startX);
+  mapState.panY = dragState.startPanY + (y - dragState.startY);
+  scheduleMapRender();
 }
 
 function endMapGesture(el = els.weatherMap) {
-  if (dragState.active && !pinchState.active) {
-    mapState.panX = dragState.startPanX + (dragState.lastX - dragState.startX);
-    mapState.panY = dragState.startPanY + (dragState.lastY - dragState.startY);
-    setMapPanOffset(0, 0);
-    renderTileMap();
-  }
   dragState.active = false;
   pinchState.active = false;
   if (el) el.style.cursor = "grab";
 }
 
-// Visually offset the tile + marker panes during a drag. The viewport element
-// (#weatherMap / #immersiveMapCanvas) stays put and keeps clipping; only its
-// inner panes move. els.* are repointed in immersive mode, so this covers both.
-function setMapPanOffset(dx, dy) {
-  const transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
-  if (els.baseTileLayer) els.baseTileLayer.style.transform = transform;
-  if (els.weatherTileLayer) els.weatherTileLayer.style.transform = transform;
-  if (els.markerLayer) els.markerLayer.style.transform = transform;
+// Re-tiling is cheap (tiles are reused by key, not rebuilt) but we still cap it
+// to one render per frame so a burst of touchmove events can't thrash layout.
+let mapRenderQueued = false;
+function scheduleMapRender() {
+  if (mapRenderQueued) return;
+  mapRenderQueued = true;
+  requestAnimationFrame(() => {
+    mapRenderQueued = false;
+    renderTileMap();
+  });
 }
 
 function touchDistance(a, b) {
@@ -2804,7 +2793,6 @@ function touchMidpoint(a, b) {
 function startMapPinch(a, b) {
   const mid = touchMidpoint(a, b);
   dragState.active = false;
-  setMapPanOffset(0, 0);
   pinchState.active = true;
   pinchState.startDistance = touchDistance(a, b);
   pinchState.startZoom = mapState.zoom;
@@ -3191,29 +3179,45 @@ function renderTileMap() {
 
 function renderWeatherTiles(viewport = null) {
   if (!mapState.initialized || !els.weatherTileLayer) return;
-  els.weatherTileLayer.innerHTML = "";
   const frame = mapState.frames[mapState.frameIndex];
-  if (!frame || !state.activePlace) return;
+  const layers = (frame && state.activePlace)
+    ? (frame.layers || [{ url: frame.url, opacity: 0.78 }]).filter((l) => l.opacity > 0.01)
+    : [];
+
+  // Each weather sublayer (radar, or two cross-faded NOAA forecast frames) gets
+  // its own pane. They share z/x/y tile keys, so a flat tile set would clobber;
+  // separate panes also let the cross-fade ride on the pane's opacity.
+  while (els.weatherTileLayer.children.length > layers.length) {
+    els.weatherTileLayer.lastElementChild.remove();
+  }
+  if (!layers.length) return;
 
   const tileViewport = viewport || getMapViewport();
-
-  const layers = frame.layers || [{ url: frame.url, opacity: 0.78 }];
+  const sourceZoom = Math.min(mapState.zoom, frame.maxZoom || mapState.zoom);
   layers.forEach((weatherLayer, index) => {
-    if (weatherLayer.opacity <= 0.01) return;
-    const sourceZoom = Math.min(mapState.zoom, frame.maxZoom || mapState.zoom);
-    renderTileLayer(els.weatherTileLayer, tileViewport, ({ z, x, y }) => {
-      return weatherLayer.url
+    let pane = els.weatherTileLayer.children[index];
+    if (!pane) {
+      pane = document.createElement("div");
+      pane.className = "tile-sublayer";
+      els.weatherTileLayer.appendChild(pane);
+    }
+    pane.style.opacity = String(weatherLayer.opacity);
+    renderTileLayer(pane, tileViewport, ({ z, x, y }) =>
+      weatherLayer.url
         .replace("{z}", z)
         .replace("{x}", x)
         .replace("{y}", y)
         .replace("%7Bbbox%7D", tileBbox3857(z, x, y))
-        .replace("{bbox}", tileBbox3857(z, x, y));
-    }, { append: index > 0, opacity: weatherLayer.opacity, sourceZoom });
+        .replace("{bbox}", tileBbox3857(z, x, y)),
+      { sourceZoom });
   });
 }
 
+// One extra ring of tiles beyond the viewport so a pan always has loaded tiles
+// to slide into before an edge could show.
+const TILE_BUFFER = 1;
+
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
-  if (!options.append) layer.innerHTML = "";
   const z = options.sourceZoom || mapState.zoom;
   const tileSize = 256;
   const sourceScale = 2 ** (mapState.zoom - z);
@@ -3227,35 +3231,50 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
     x: topLeft.x / sourceScale,
     y: topLeft.y / sourceScale
   };
-  const startX = Math.floor(sourceTopLeft.x / tileSize);
-  const endX = Math.floor((sourceTopLeft.x + viewport.width / sourceScale) / tileSize);
-  const startY = Math.floor(sourceTopLeft.y / tileSize);
-  const endY = Math.floor((sourceTopLeft.y + viewport.height / sourceScale) / tileSize);
+  const startX = Math.floor(sourceTopLeft.x / tileSize) - TILE_BUFFER;
+  const endX = Math.floor((sourceTopLeft.x + viewport.width / sourceScale) / tileSize) + TILE_BUFFER;
+  const startY = Math.floor(sourceTopLeft.y / tileSize) - TILE_BUFFER;
+  const endY = Math.floor((sourceTopLeft.y + viewport.height / sourceScale) / tileSize) + TILE_BUFFER;
 
+  // Reconcile against tiles already in the pane: reuse the ones still on screen
+  // (just reposition them) and only create/remove at the edges. Rebuilding every
+  // <img> each move is what made the map flash while panning.
+  const wanted = new Set();
   for (let tileX = startX; tileX <= endX; tileX += 1) {
     for (let tileY = startY; tileY <= endY; tileY += 1) {
       if (tileY < 0 || tileY >= worldTiles) continue;
       const wrappedX = ((tileX % worldTiles) + worldTiles) % worldTiles;
-      const img = document.createElement("img");
-      img.alt = "";
-      img.decoding = "async";
-      img.loading = "eager";
-      img.src = urlForTile({ z, x: wrappedX, y: tileY });
-      img.addEventListener("error", () => handleWeatherTileError(layer));
-      if (typeof options.opacity === "number") {
-        img.style.opacity = String(options.opacity);
+      const key = `${z}/${tileX}/${tileY}`; // unwrapped tileX → distinct keys across the date line
+      wanted.add(key);
+      const url = urlForTile({ z, x: wrappedX, y: tileY });
+      let img = layer.querySelector(`:scope > img[data-tile="${key}"]`);
+      if (!img) {
+        img = document.createElement("img");
+        img.alt = "";
+        img.decoding = "async";
+        img.loading = "eager";
+        img.dataset.tile = key;
+        img.addEventListener("error", () => handleWeatherTileError(layer));
+        layer.appendChild(img);
+      }
+      if (img.dataset.url !== url) {
+        img.src = url;
+        img.dataset.url = url;
       }
       img.style.width = `${Math.ceil(displayTileSize)}px`;
       img.style.height = `${Math.ceil(displayTileSize)}px`;
       img.style.left = `${Math.round(tileX * displayTileSize - topLeft.x)}px`;
       img.style.top = `${Math.round(tileY * displayTileSize - topLeft.y)}px`;
-      layer.appendChild(img);
     }
   }
+  layer.querySelectorAll(":scope > img").forEach((img) => {
+    if (!wanted.has(img.dataset.tile)) img.remove();
+  });
 }
 
 function handleWeatherTileError(layer) {
-  if (layer !== els.weatherTileLayer || mapState.mode !== "future") return;
+  if (mapState.mode !== "future") return;
+  if (!els.weatherTileLayer || !els.weatherTileLayer.contains(layer)) return;
   setFrameLabel("Forecast unavailable");
 }
 
