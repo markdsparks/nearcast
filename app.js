@@ -1,4 +1,4 @@
-const VERSION = "1.10.9";
+const VERSION = "1.10.10";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -2762,21 +2762,32 @@ function moveMapDrag(x, y) {
   if (!dragState.active || pinchState.active) return;
   dragState.lastX = x;
   dragState.lastY = y;
-  // Translate the whole map visually without re-rendering tiles — avoids the
-  // innerHTML clear/reload flash on every touchmove. Tiles reload on drag end.
-  els.weatherMap.style.transform = `translate(${x - dragState.startX}px, ${y - dragState.startY}px)`;
+  // Slide the tile panes inside the fixed (overflow:hidden) viewport instead of
+  // re-tiling on every move — that innerHTML clear/reload is what caused the
+  // flash. The map re-tiles once on release. Same idea as Leaflet's pan pane.
+  setMapPanOffset(x - dragState.startX, y - dragState.startY);
 }
 
 function endMapGesture(el = els.weatherMap) {
   if (dragState.active && !pinchState.active) {
     mapState.panX = dragState.startPanX + (dragState.lastX - dragState.startX);
     mapState.panY = dragState.startPanY + (dragState.lastY - dragState.startY);
-    els.weatherMap.style.transform = "";
+    setMapPanOffset(0, 0);
     renderTileMap();
   }
   dragState.active = false;
   pinchState.active = false;
   if (el) el.style.cursor = "grab";
+}
+
+// Visually offset the tile + marker panes during a drag. The viewport element
+// (#weatherMap / #immersiveMapCanvas) stays put and keeps clipping; only its
+// inner panes move. els.* are repointed in immersive mode, so this covers both.
+function setMapPanOffset(dx, dy) {
+  const transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+  if (els.baseTileLayer) els.baseTileLayer.style.transform = transform;
+  if (els.weatherTileLayer) els.weatherTileLayer.style.transform = transform;
+  if (els.markerLayer) els.markerLayer.style.transform = transform;
 }
 
 function touchDistance(a, b) {
@@ -2793,7 +2804,7 @@ function touchMidpoint(a, b) {
 function startMapPinch(a, b) {
   const mid = touchMidpoint(a, b);
   dragState.active = false;
-  els.weatherMap.style.transform = "";
+  setMapPanOffset(0, 0);
   pinchState.active = true;
   pinchState.startDistance = touchDistance(a, b);
   pinchState.startZoom = mapState.zoom;
