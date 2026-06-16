@@ -1,4 +1,4 @@
-const VERSION = "1.10.42";
+const VERSION = "1.10.44";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -154,6 +154,8 @@ let searchRequestSeq = 0;
 
 const els = {
   shell: document.querySelector(".shell"),
+  appMenuToggle: document.querySelector("#appMenuToggle"),
+  appMenu: document.querySelector("#appMenu"),
   searchToggle: document.querySelector("#searchToggle"),
   welcome: document.querySelector("#welcome"),
   welcomeLocate: document.querySelector("#welcomeLocate"),
@@ -167,6 +169,7 @@ const els = {
   savedPlaces: document.querySelector("#savedPlaces"),
   status: document.querySelector("#status"),
   locationName: document.querySelector("#locationName"),
+  launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
   nowSummary: document.querySelector("#nowSummary"),
   feelsLike: document.querySelector("#feelsLike"),
@@ -429,6 +432,16 @@ function bindEvents() {
     const inSearch = els.searchForm.contains(event.target) || els.searchResults.contains(event.target);
     if (!inSearch) clearSearchResults();
   });
+  document.addEventListener("click", (event) => {
+    const inMenu = els.appMenu.contains(event.target) || els.appMenuToggle.contains(event.target);
+    if (!inMenu) closeAppMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAppMenu();
+      toggleSearch(false);
+    }
+  });
 
   els.unitToggle.addEventListener("click", () => {
     state.unit = state.unit === "fahrenheit" ? "celsius" : "fahrenheit";
@@ -463,8 +476,18 @@ function bindEvents() {
   els.aiLauncher.addEventListener("click", openAISheet);
   els.aiBackdrop.addEventListener("click", closeAISheet);
   document.getElementById("aiSheetClose").addEventListener("click", closeAISheet);
-  els.searchToggle.addEventListener("click", () => toggleSearch());
-  els.placeSwitcher.addEventListener("click", openPlaceSheet);
+  els.appMenuToggle.addEventListener("click", () => toggleAppMenu());
+  els.searchToggle.addEventListener("click", () => {
+    closeAppMenu();
+    toggleSearch(true);
+  });
+  els.placeSwitcher.addEventListener("click", () => {
+    closeAppMenu();
+    openPlaceSheet();
+  });
+  els.launchPlaceButton.addEventListener("click", () => {
+    if (state.activePlace || state.savedPlaces.length) openPlaceSheet();
+  });
   els.placeBackdrop.addEventListener("click", closePlaceSheet);
   document.getElementById("placeSheetClose").addEventListener("click", closePlaceSheet);
   els.welcomeLocate.addEventListener("click", useCurrentLocation);
@@ -774,7 +797,22 @@ function hideSearchResults() {
 function updateMode() {
   const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
   els.shell.classList.toggle("mode-welcome", !hasContext);
-  if (!hasContext) els.shell.classList.remove("search-open");
+  if (!hasContext) {
+    els.shell.classList.remove("search-open");
+    closeAppMenu();
+  }
+}
+
+function toggleAppMenu(open) {
+  const next = open === undefined ? els.appMenu.hidden : open;
+  els.appMenu.hidden = !next;
+  els.appMenuToggle.setAttribute("aria-expanded", String(next));
+  els.shell.classList.toggle("menu-open", next);
+}
+
+function closeAppMenu() {
+  if (!els.appMenu || els.appMenu.hidden) return;
+  toggleAppMenu(false);
 }
 
 function toggleSearch(open) {
@@ -890,11 +928,14 @@ function renderSavedPlaces() {
 function updatePlaceSwitcher() {
   const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
   els.placeSwitcher.hidden = !hasContext;
+  els.launchPlaceButton.disabled = !hasContext;
+  els.launchPlaceButton.setAttribute("aria-disabled", String(!hasContext));
   if (!hasContext) return;
 
   const place = state.activePlace || state.savedPlaces[0];
   const count = state.savedPlaces.length;
   const g = place ? glanceData[place.id] : null;
+  els.launchPlaceButton.setAttribute("aria-label", `Open saved places for ${place ? place.name : "current place"}`);
   els.placeSwitcherName.textContent = place ? place.name : "Places";
   els.placeSwitcherMeta.textContent =
     `${count} saved${g ? ` · ${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}`;

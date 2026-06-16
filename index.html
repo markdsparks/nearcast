@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.42">
+    <link rel="stylesheet" href="styles.css?v=1.10.44">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -16,29 +16,36 @@
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
     <main class="shell">
-      <section class="topbar" aria-label="Weather search and settings">
-        <div class="brand-lockup">
-          <p class="eyebrow">Weather for the places that matter</p>
-          <h1>Nearcast <span id="appVersion" class="app-version"></span></h1>
-        </div>
-        <section class="saved-row" aria-label="Saved places">
-          <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
-            <span class="place-switcher-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
-            </span>
-            <span class="place-switcher-copy">
-              <strong id="placeSwitcherName">Places</strong>
-              <span id="placeSwitcherMeta">Saved places</span>
-            </span>
-            <span class="place-switcher-chevron" aria-hidden="true">›</span>
-          </button>
-        </section>
-        <div class="actions">
-          <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Search places" title="Search">
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"/><line x1="13.5" y1="13.5" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
-          <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☀︎</button>
-          <button class="icon-button" id="unitToggle" type="button" aria-label="Switch units" title="Switch units">F</button>
+      <section class="topbar" aria-label="Weather controls">
+        <button class="app-menu-toggle" id="appMenuToggle" type="button" aria-label="Open weather controls" aria-expanded="false" aria-controls="appMenu">
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+        </button>
+        <div class="app-menu" id="appMenu" hidden>
+          <div class="brand-lockup">
+            <p class="eyebrow">Weather for the places that matter</p>
+            <h1>Nearcast <span id="appVersion" class="app-version"></span></h1>
+          </div>
+          <section class="saved-row" aria-label="Saved places">
+            <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
+              <span class="place-switcher-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
+              </span>
+              <span class="place-switcher-copy">
+                <strong id="placeSwitcherName">Places</strong>
+                <span id="placeSwitcherMeta">Saved places</span>
+              </span>
+              <span class="place-switcher-chevron" aria-hidden="true">›</span>
+            </button>
+          </section>
+          <div class="actions">
+            <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Search places" title="Search">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"/><line x1="13.5" y1="13.5" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☀︎</button>
+            <button class="icon-button" id="unitToggle" type="button" aria-label="Switch units" title="Switch units">F</button>
+          </div>
         </div>
       </section>
 
@@ -47,15 +54,17 @@
         <p class="welcome-sub">Search for a city or ZIP, or use your current location to get started.</p>
       </section>
 
-      <form class="search" id="searchForm">
-        <label class="sr-only" for="placeSearch">Search for a city or ZIP code</label>
-        <input id="placeSearch" name="placeSearch" autocomplete="off" placeholder="Search city or ZIP code">
-        <button type="button" id="searchLocate" class="search-locate" aria-label="Use current location" title="Use my location">
-          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </button>
-        <button type="submit">Search</button>
-      </form>
-      <div class="search-results" id="searchResults" hidden></div>
+      <div class="search-popover" id="searchPopover">
+        <form class="search" id="searchForm">
+          <label class="sr-only" for="placeSearch">Search for a city or ZIP code</label>
+          <input id="placeSearch" name="placeSearch" autocomplete="off" placeholder="Search city or ZIP code">
+          <button type="button" id="searchLocate" class="search-locate" aria-label="Use current location" title="Use my location">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          <button type="submit">Search</button>
+        </form>
+        <div class="search-results" id="searchResults" hidden></div>
+      </div>
 
       <button class="welcome-locate" id="welcomeLocate" type="button">
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -80,14 +89,20 @@
       </button>
 
       <div id="forecastView">
-        <section class="hero" id="hero" aria-live="polite">
-          <div class="hero-copy">
-            <p class="location" id="locationName">Pick a place</p>
-            <div class="hero-icon-row">
-              <p class="now-temp" id="nowTemp">--</p>
-              <div class="hero-icon" id="heroIcon" aria-hidden="true"></div>
-            </div>
-            <p class="summary" id="nowSummary">Search for a city to load a clean forecast.</p>
+        <section class="launch-stage" aria-live="polite">
+          <button class="launch-location" id="launchPlaceButton" type="button" aria-label="Open saved places">
+            <span id="locationName">Pick a place</span>
+          </button>
+          <div class="launch-current">
+            <p class="now-temp" id="nowTemp">--</p>
+            <div class="hero-icon" id="heroIcon" aria-hidden="true"></div>
+          </div>
+          <p class="summary" id="nowSummary">Search for a city to load a clean forecast.</p>
+        </section>
+
+        <section class="hero" id="hero" aria-label="Forecast details">
+          <div class="hero-copy hero-detail-copy">
+            <p class="detail-kicker">Today</p>
             <button class="save-button" id="savePlace" type="button">Save place</button>
           </div>
           <div class="hero-metrics" aria-label="Current conditions and today's forecast">
@@ -334,6 +349,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.42"></script>
+    <script src="app.js?v=1.10.44"></script>
   </body>
 </html>
