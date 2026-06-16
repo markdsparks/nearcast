@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.44">
+    <link rel="stylesheet" href="styles.css?v=1.10.46">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -90,9 +90,17 @@
 
       <div id="forecastView">
         <section class="launch-stage" aria-live="polite">
-          <button class="launch-location" id="launchPlaceButton" type="button" aria-label="Open saved places">
-            <span id="locationName">Pick a place</span>
-          </button>
+          <div class="launch-place-row">
+            <button class="launch-location" id="launchPlaceButton" type="button" aria-label="Open saved places">
+              <span id="locationName">Pick a place</span>
+            </button>
+            <button class="favorite-button" id="savePlace" type="button" aria-label="Save place" aria-pressed="false" title="Save place">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="favorite-fill" d="M12 3.5l2.45 5 5.52.8-4 3.9.94 5.5L12 16.1l-4.91 2.6.94-5.5-4-3.9 5.52-.8L12 3.5z" fill="currentColor"/>
+                <path class="favorite-outline" d="M12 3.5l2.45 5 5.52.8-4 3.9.94 5.5L12 16.1l-4.91 2.6.94-5.5-4-3.9 5.52-.8L12 3.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
           <div class="launch-current">
             <p class="now-temp" id="nowTemp">--</p>
             <div class="hero-icon" id="heroIcon" aria-hidden="true"></div>
@@ -101,10 +109,6 @@
         </section>
 
         <section class="hero" id="hero" aria-label="Forecast details">
-          <div class="hero-copy hero-detail-copy">
-            <p class="detail-kicker">Today</p>
-            <button class="save-button" id="savePlace" type="button">Save place</button>
-          </div>
           <div class="hero-metrics" aria-label="Current conditions and today's forecast">
             <p class="metrics-group-label">Right now</p>
             <div class="metrics-group">
@@ -349,6 +353,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.44"></script>
+    <script src="app.js?v=1.10.46"></script>
   </body>
 </html>

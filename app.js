@@ -1,4 +1,4 @@
-const VERSION = "1.10.44";
+const VERSION = "1.10.46";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -503,7 +503,13 @@ function bindEvents() {
   window.addEventListener("focus", refreshOnForeground);
   els.savePlace.addEventListener("click", () => {
     if (!state.activePlace) return;
+    const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
+    if (alreadySaved) {
+      openPlaceSheet();
+      return;
+    }
     savePlace(state.activePlace);
+    updateSaveButton();
     setStatus(`${state.activePlace.name} saved.`);
   });
   els.radarMode.addEventListener("click", () => setMapMode("radar"));
@@ -847,11 +853,18 @@ function renderSearchResults() {
 
 function updateSaveButton() {
   if (!els.savePlace) return;
-  const alreadySaved = state.activePlace &&
-    state.savedPlaces.some((p) => p.id === state.activePlace.id);
-  els.savePlace.textContent = alreadySaved ? "Saved ✓" : "Save place";
-  els.savePlace.disabled = alreadySaved;
-  els.savePlace.classList.toggle("is-saved", Boolean(alreadySaved));
+  const alreadySaved = Boolean(state.activePlace &&
+    state.savedPlaces.some((p) => p.id === state.activePlace.id));
+  const placeName = state.activePlace?.name || "place";
+
+  els.savePlace.disabled = !state.activePlace;
+  els.savePlace.classList.toggle("is-saved", alreadySaved);
+  els.savePlace.setAttribute("aria-pressed", String(alreadySaved));
+  els.savePlace.setAttribute(
+    "aria-label",
+    alreadySaved ? `${placeName} is saved. Open saved places.` : `Save ${placeName}`
+  );
+  els.savePlace.title = alreadySaved ? "Saved place" : "Save place";
 }
 
 // Lightweight current-conditions for the saved-places glance row.
