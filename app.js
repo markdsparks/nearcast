@@ -1,4 +1,4 @@
-const VERSION = "1.10.17";
+const VERSION = "1.10.18";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3452,7 +3452,7 @@ function playbackTick(now) {
 function toggleRadarPlayback() {
   if (!mapState.frames.length) return;
   if (mapState.playing) {
-    mapState.userPausedRadar = true; // honor a manual pause while the map stays in view
+    mapState.userPausedRadar = true;
     stopRadarPlayback();
   } else {
     mapState.userPausedRadar = false;
@@ -3461,7 +3461,8 @@ function toggleRadarPlayback() {
 }
 
 // Auto-play the radar loop while the inline map is on screen; pause when it
-// scrolls out of view or the user pauses manually. Immersive mode drives itself.
+// scrolls out of view. A manual pause disables scroll-triggered auto-play until
+// the user presses Play again in this session. Immersive mode drives itself.
 let mapInView = false;
 let mapViewObserver = null;
 
@@ -3482,7 +3483,6 @@ function initMapAutoPlay() {
       maybeAutoPlayRadar();
     } else if (!mapState.immersive) {
       stopRadarPlayback();
-      mapState.userPausedRadar = false; // arriving back at the map should auto-play again
     }
   }, { threshold: [0, 0.4, 0.75] });
   mapViewObserver.observe(target);
