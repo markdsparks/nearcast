@@ -2288,9 +2288,15 @@ body.map-immersive-active #mapLegend {
   max-height: 92vh;
   overflow-y: auto;
   padding: 10px 20px 28px;
-  background: var(--bg);
+  overscroll-behavior: contain;
+  background:
+    linear-gradient(180deg, var(--glass-heavy), var(--glass-mid)),
+    var(--bg);
+  border: 1px solid var(--border-glass);
+  border-bottom: 0;
   border-radius: 20px 20px 0 0;
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 -18px 52px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(18px);
   transform: translateY(101%);
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -2313,8 +2319,8 @@ body.map-immersive-active #mapLegend {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  border: 0;
-  background: var(--panel-soft);
+  border: 1px solid var(--border-glass);
+  background: var(--glass-light);
   color: var(--ink);
   font-size: 0.85rem;
   cursor: pointer;
@@ -2323,11 +2329,12 @@ body.map-immersive-active #mapLegend {
 .sheet-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
+  padding: 2px 38px 0 0;
 }
 .sheet-icon {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
 }
 .sheet-icon svg {
@@ -2335,13 +2342,14 @@ body.map-immersive-active #mapLegend {
   height: 100%;
 }
 .sheet-head-text h2 {
-  font-size: 1.3rem;
+  font-size: 1.22rem;
   margin: 0;
 }
 .sheet-range {
-  margin: 2px 0 0;
+  margin: 3px 0 0;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
 }
 .sheet-range-sep {
   opacity: 0.4;
@@ -2353,26 +2361,30 @@ body.map-immersive-active #mapLegend {
 }
 
 .sheet-summary {
-  margin: 12px 0 6px;
+  margin: 12px 0 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
   color: var(--ink);
   opacity: 0.85;
   font-size: 0.95rem;
+  line-height: 1.4;
 }
 
 .sheet-mode {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  margin: 12px 0 10px;
-  border-radius: 10px;
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
+  gap: 0;
+  padding: 0;
+  margin: 14px 0 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-glass);
+  overflow: hidden;
 }
 .sheet-mode-btn {
   min-height: 34px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -2380,34 +2392,39 @@ body.map-immersive-active #mapLegend {
   font-weight: 800;
   cursor: pointer;
 }
+.sheet-mode-btn + .sheet-mode-btn {
+  border-left: 1px solid var(--border-glass);
+}
 .sheet-mode-btn.active {
-  background: var(--bg);
+  background: var(--glass-heavy);
   color: var(--ink);
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 -2px 0 var(--blue);
 }
 
 .graph-metric {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 0 2px;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 4px;
 }
 .graph-metric[hidden] {
   display: none;
 }
 .graph-metric-tabs {
   display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 8px;
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
+  gap: 12px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
 }
 .graph-metric-btn {
-  min-height: 26px;
-  padding: 0 12px;
+  min-height: 28px;
+  padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -2416,9 +2433,10 @@ body.map-immersive-active #mapLegend {
   cursor: pointer;
 }
 .graph-metric-btn.active {
-  background: var(--bg);
+  background: transparent;
   color: var(--ink);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+  border-bottom-color: var(--blue);
+  box-shadow: none;
 }
 .graph-metric-hint {
   color: var(--muted);
@@ -2435,8 +2453,9 @@ body.map-immersive-active #mapLegend {
    ABOVE the chart — out of the path of your thumb while scrubbing. */
 .sheet-graph-wrap {
   position: relative;
-  padding-top: 50px;
-  margin: 6px 0 16px;
+  padding-top: 48px;
+  margin: 6px 0 18px;
+  border-bottom: 1px solid var(--line);
 }
 .sheet-graph-wrap[hidden],
 .sheet-hourly-list[hidden] {
@@ -2444,6 +2463,7 @@ body.map-immersive-active #mapLegend {
 }
 .sheet-graph {
   margin-top: 0;
+  padding-bottom: 8px;
 }
 .hourly-graph {
   width: 100%;
@@ -2502,9 +2522,10 @@ body.map-immersive-active #mapLegend {
   max-width: calc(100% - 4px);
   padding: 6px 11px;
   border-radius: 9px;
-  background: var(--ink);
-  color: var(--bg);
-  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border-glass-md);
+  background: var(--glass-heavy);
+  color: var(--ink);
+  box-shadow: 0 9px 24px rgba(0, 0, 0, 0.16);
   pointer-events: none;
   font-variant-numeric: tabular-nums;
   transition: left 0.06s linear;
@@ -2518,7 +2539,7 @@ body.map-immersive-active #mapLegend {
   transform: translateX(-50%);
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-top: 5px solid var(--ink);
+  border-top: 5px solid var(--glass-heavy);
 }
 .graph-callout:empty {
   display: none;
@@ -2535,25 +2556,43 @@ body.map-immersive-active #mapLegend {
 .sheet-hourly-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 10px 0 16px;
+  gap: 0;
+  margin: 8px 0 18px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .sheet-hour-row {
+  position: relative;
   display: grid;
   grid-template-columns: 48px 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 68px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  padding: 12px 0 12px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.sheet-hour-row:last-child {
+  border-bottom: 0;
+}
+.sheet-hour-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 999px;
+  background: transparent;
 }
 .sheet-day-divider {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 4px 2px 2px;
+  margin: 0;
+  padding: 11px 0 6px;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 900;
@@ -2568,20 +2607,36 @@ body.map-immersive-active #mapLegend {
   background: var(--line);
 }
 .sheet-hour-row.is-now {
-  border-color: var(--blue);
-  box-shadow: inset 3px 0 0 var(--blue);
+  box-shadow: none;
+}
+.sheet-hour-row.is-now::before {
+  background: var(--blue);
 }
 .sheet-hour-row.is-rainy {
-  border-color: rgba(74, 144, 217, 0.55);
+  border-color: var(--line);
+}
+.sheet-hour-row.is-rainy::before {
+  background: rgba(74, 144, 217, 0.78);
 }
 .sheet-hour-row.is-windy {
-  box-shadow: inset 3px 0 0 rgba(132, 121, 255, 0.55);
+  box-shadow: none;
+}
+.sheet-hour-row.is-windy::before {
+  background: rgba(132, 121, 255, 0.70);
 }
 .sheet-hour-row.is-sunny {
-  box-shadow: inset 3px 0 0 rgba(244, 180, 64, 0.68);
+  box-shadow: none;
+}
+.sheet-hour-row.is-sunny::before {
+  background: rgba(244, 180, 64, 0.78);
 }
 .sheet-hour-row.is-windy.is-sunny {
-  box-shadow: inset 3px 0 0 rgba(244, 180, 64, 0.68), inset 6px 0 0 rgba(132, 121, 255, 0.45);
+  box-shadow: none;
+}
+.sheet-hour-row.is-rainy.is-now::before,
+.sheet-hour-row.is-windy.is-now::before,
+.sheet-hour-row.is-sunny.is-now::before {
+  background: var(--blue);
 }
 .sheet-hour-time,
 .sheet-hour-metrics {
@@ -2600,10 +2655,10 @@ body.map-immersive-active #mapLegend {
   align-items: center;
   justify-content: center;
   width: fit-content;
-  padding: 2px 6px;
+  padding: 2px 0;
   border-radius: 999px;
-  background: var(--blue);
-  color: #fff;
+  background: transparent;
+  color: var(--blue);
   font-size: 0.62rem;
   font-weight: 900;
   line-height: 1.2;
@@ -2626,10 +2681,11 @@ body.map-immersive-active #mapLegend {
   display: block;
 }
 .sheet-hour-main strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
   font-size: 0.94rem;
+  line-height: 1.15;
 }
 .sheet-hour-main span {
   margin-top: 2px;
@@ -2655,16 +2711,24 @@ body.map-immersive-active #mapLegend {
 .sheet-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .sheet-stat {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
+  padding: 11px 12px;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+}
+.sheet-stat:not(:nth-child(3n + 1)) {
+  border-left: 1px solid var(--line);
+}
+.sheet-stat:nth-child(n + 4) {
+  border-top: 1px solid var(--line);
 }
 .sheet-stat span {
   font-size: 0.7rem;
