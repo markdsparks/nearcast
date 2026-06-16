@@ -1,4 +1,4 @@
-const VERSION = "1.10.34";
+const VERSION = "1.10.36";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -35,6 +35,7 @@ const mapState = {
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
 const MAP_TAP_MOVE_PX = 8;
+const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
 const US_STATE_NAMES = {
   AL: "Alabama",
   AK: "Alaska",
@@ -196,6 +197,7 @@ const els = {
   weatherMap: document.querySelector("#weatherMap"),
   baseTileLayer: document.querySelector("#baseTileLayer"),
   weatherTileLayer: document.querySelector("#weatherTileLayer"),
+  labelTileLayer: document.querySelector("#labelTileLayer"),
   markerLayer: document.querySelector("#markerLayer"),
   mapPlace: document.querySelector("#mapPlace"),
   mapLoading: document.querySelector("#mapLoading"),
@@ -3181,7 +3183,7 @@ function moveMapPinch(a, b) {
   const ratio = touchDistance(a, b) / pinchState.startDistance;
   if (!Number.isFinite(ratio) || ratio <= 0) return;
   const mid = touchMidpoint(a, b);
-  const nextZoom = Math.round(pinchState.startZoom + Math.log2(ratio));
+  const nextZoom = pinchState.startZoom + Math.log2(ratio);
   setMapZoom(nextZoom, mid.x, mid.y);
 }
 
@@ -3601,7 +3603,7 @@ function renderXfade(pos, viewport = null) {
     const frame = mapState.frames[f];
     const url = frameUrl(frame);
     if (url) {
-      const sourceZoom = Math.min(mapState.zoom, (frame && frame.maxZoom) || mapState.zoom);
+      const sourceZoom = mapTileSourceZoom((frame && frame.maxZoom) || MAP_MAX_ZOOM);
       renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
     }
     pane.style.opacity = String(f === i ? 0.78 * (1 - fade) : f === next ? 0.78 * fade : 0);
@@ -3751,9 +3753,18 @@ function renderMapLegend() {
   `;
 }
 
+function clampMapZoom(value) {
+  return Math.min(Math.max(value, MAP_MIN_ZOOM), MAP_MAX_ZOOM);
+}
+
+function mapTileSourceZoom(maxZoom = MAP_MAX_ZOOM) {
+  const max = Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(maxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
+  return Math.min(Math.max(Math.floor(mapState.zoom + 0.0001), MAP_MIN_ZOOM), max);
+}
+
 function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
-  const newZoom = Math.min(Math.max(Math.round(nextZoom), MAP_MIN_ZOOM), MAP_MAX_ZOOM);
-  if (newZoom === mapState.zoom) return;
+  const newZoom = clampMapZoom(nextZoom);
+  if (Math.abs(newZoom - mapState.zoom) < 0.001) return;
   const scale = 2 ** (newZoom - mapState.zoom);
 
   if (anchorClientX != null && anchorClientY != null && state.activePlace && els.weatherMap) {
@@ -3795,10 +3806,24 @@ function renderTileMap() {
   if (!rect.width || !rect.height) return;
 
   const viewport = getMapViewport();
-  renderTileLayer(els.baseTileLayer, viewport, ({ z, x, y }) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`);
+  renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.playPos, viewport);
   else renderWeatherTiles(viewport);
+  renderLabelTiles(viewport);
   renderMapMarkers();
+}
+
+function baseTileUrl({ z, x, y }) {
+  return `https://a.basemaps.cartocdn.com/light_nolabels/${z}/${x}/${y}.png`;
+}
+
+function labelTileUrl({ z, x, y }) {
+  return `https://a.basemaps.cartocdn.com/light_only_labels/${z}/${x}/${y}.png`;
+}
+
+function renderLabelTiles(viewport = null) {
+  if (!els.labelTileLayer) return;
+  renderTileLayer(els.labelTileLayer, viewport || getMapViewport(), labelTileUrl, { sourceZoom: mapTileSourceZoom() });
 }
 
 function weatherTileUrl(template, z, x, y) {
@@ -3823,7 +3848,7 @@ function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
   if (!layers.length) return;
 
   const tileViewport = viewport || getMapViewport();
-  const sourceZoom = Math.min(mapState.zoom, frameMaxZoom || mapState.zoom);
+  const sourceZoom = mapTileSourceZoom(frameMaxZoom || MAP_MAX_ZOOM);
   layers.forEach((layer, index) => {
     let pane = els.weatherTileLayer.children[index];
     if (!pane) {
@@ -3849,7 +3874,7 @@ function renderWeatherTiles(viewport = null) {
 const TILE_BUFFER = 1;
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
-  const z = options.sourceZoom || mapState.zoom;
+  const z = mapTileSourceZoom(options.sourceZoom || MAP_MAX_ZOOM);
   const tileSize = 256;
   const sourceScale = 2 ** (mapState.zoom - z);
   const displayTileSize = tileSize * sourceScale;
@@ -4345,6 +4370,7 @@ function enterImmersiveMap() {
   mapState._normalEls = {
     baseTileLayer: els.baseTileLayer,
     weatherTileLayer: els.weatherTileLayer,
+    labelTileLayer: els.labelTileLayer,
     markerLayer: els.markerLayer,
     weatherMap: els.weatherMap,
     mapLoading: els.mapLoading,
@@ -4356,6 +4382,7 @@ function enterImmersiveMap() {
 
   els.baseTileLayer    = document.getElementById("immersiveBaseTiles");
   els.weatherTileLayer = document.getElementById("immersiveWeatherTiles");
+  els.labelTileLayer   = document.getElementById("immersiveLabelTiles");
   els.markerLayer      = document.getElementById("immersiveMarker");
   els.weatherMap       = document.getElementById("immersiveMapCanvas");
   els.mapLoading       = document.getElementById("immersiveLoading");
@@ -4444,6 +4471,10 @@ function bindImmersiveDrag() {
     e.preventDefault();
     startMapDrag(e.clientX, e.clientY, canvas);
   }, { signal: sig });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoomMapFromWheel(e);
+  }, { passive: false, signal: sig });
   window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY), { signal: sig });
   window.addEventListener("mouseup", () => endMapGesture(canvas), { signal: sig });
 
@@ -4468,6 +4499,13 @@ function bindImmersiveDrag() {
     }
   }, { passive: false, signal: sig });
   window.addEventListener("touchend", () => endMapGesture(canvas), { signal: sig });
+}
+
+function zoomMapFromWheel(e) {
+  const pixelDelta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 240 : e.deltaY;
+  const zoomDelta = Math.max(-0.7, Math.min(0.7, -pixelDelta / MAP_WHEEL_ZOOM_SENSITIVITY));
+  if (Math.abs(zoomDelta) < 0.01) return;
+  setMapZoom(mapState.zoom + zoomDelta, e.clientX, e.clientY);
 }
 
 // ── Sky Canvas ────────────────────────────────────────────────────────────────

@@ -1878,6 +1878,7 @@ body.map-immersive-active #mapLegend {
 .tile-sublayer {
   position: absolute;
   inset: 0;
+  pointer-events: none;
 }
 
 .tile-layer img {
@@ -1888,7 +1889,8 @@ body.map-immersive-active #mapLegend {
   -webkit-user-drag: none;
 }
 
-#baseTileLayer img {
+#baseTileLayer img,
+#immersiveBaseTiles img {
   filter: grayscale(0.85) saturate(0.35) brightness(1.06) contrast(0.92);
 }
 
@@ -1897,10 +1899,22 @@ body.map-immersive-active #mapLegend {
 .weather-layer img {
   mix-blend-mode: normal;
 }
+.weather-layer {
+  z-index: 10;
+}
+.label-layer {
+  z-index: 15;
+  opacity: 0.92;
+}
+.label-layer img {
+  filter: saturate(0.5) contrast(1.08);
+}
+.marker-layer {
+  z-index: 20;
+}
 
 .map-marker {
   position: absolute;
-  z-index: 20;
   transform: translate(-50%, -100%);
   min-width: 74px;
   max-width: 130px;
