@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v78";
-const ASSET_VERSION = "1.10.37";
+const CACHE = "nearcast-v79";
+const ASSET_VERSION = "1.10.38";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -33,7 +33,7 @@ self.addEventListener("activate", e => {
 
 // Fetch strategy:
 //  - API calls (Open-Meteo, RainViewer, NWS/NOAA) → network-first, no caching
-//  - Map tiles (OSM/CARTO, radar/forecast tiles) → network-only (too large to cache)
+//  - Map tiles (OSM, radar/forecast tiles) → network-only (too large to cache)
 //  - Everything else (shell) → cache-first, fall back to network
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
@@ -48,7 +48,6 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("mrms.ncep.noaa.gov") ||
     url.hostname.includes("nominatim.openstreetmap.org") ||
     url.hostname.includes("openstreetmap.org") ||
-    url.hostname.includes("basemaps.cartocdn.com") ||
     url.hostname.includes("tile.openstreetmap") ||
     url.hostname.includes("tilecache") ||
     url.pathname.includes("/v2/radar/") ||

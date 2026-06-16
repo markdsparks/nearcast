@@ -1,4 +1,4 @@
-const VERSION = "1.10.37";
+const VERSION = "1.10.38";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -197,7 +197,6 @@ const els = {
   weatherMap: document.querySelector("#weatherMap"),
   baseTileLayer: document.querySelector("#baseTileLayer"),
   weatherTileLayer: document.querySelector("#weatherTileLayer"),
-  labelTileLayer: document.querySelector("#labelTileLayer"),
   markerLayer: document.querySelector("#markerLayer"),
   mapPlace: document.querySelector("#mapPlace"),
   mapLoading: document.querySelector("#mapLoading"),
@@ -3809,21 +3808,11 @@ function renderTileMap() {
   renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.playPos, viewport);
   else renderWeatherTiles(viewport);
-  renderLabelTiles(viewport);
   renderMapMarkers();
 }
 
 function baseTileUrl({ z, x, y }) {
   return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-}
-
-function labelTileUrl({ z, x, y }) {
-  return `https://a.basemaps.cartocdn.com/light_only_labels/${z}/${x}/${y}.png`;
-}
-
-function renderLabelTiles(viewport = null) {
-  if (!els.labelTileLayer) return;
-  renderTileLayer(els.labelTileLayer, viewport || getMapViewport(), labelTileUrl, { sourceZoom: mapTileSourceZoom() });
 }
 
 function weatherTileUrl(template, z, x, y) {
@@ -4370,7 +4359,6 @@ function enterImmersiveMap() {
   mapState._normalEls = {
     baseTileLayer: els.baseTileLayer,
     weatherTileLayer: els.weatherTileLayer,
-    labelTileLayer: els.labelTileLayer,
     markerLayer: els.markerLayer,
     weatherMap: els.weatherMap,
     mapLoading: els.mapLoading,
@@ -4382,7 +4370,6 @@ function enterImmersiveMap() {
 
   els.baseTileLayer    = document.getElementById("immersiveBaseTiles");
   els.weatherTileLayer = document.getElementById("immersiveWeatherTiles");
-  els.labelTileLayer   = document.getElementById("immersiveLabelTiles");
   els.markerLayer      = document.getElementById("immersiveMarker");
   els.weatherMap       = document.getElementById("immersiveMapCanvas");
   els.mapLoading       = document.getElementById("immersiveLoading");

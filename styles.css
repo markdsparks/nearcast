@@ -1902,13 +1902,6 @@ body.map-immersive-active #mapLegend {
 .weather-layer {
   z-index: 10;
 }
-.label-layer {
-  z-index: 15;
-  opacity: 0.78;
-}
-.label-layer img {
-  filter: saturate(0.45) contrast(1.08) drop-shadow(0 1px 1px rgba(255, 255, 255, 0.72));
-}
 .marker-layer {
   z-index: 20;
 }
