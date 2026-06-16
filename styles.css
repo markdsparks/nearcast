@@ -594,6 +594,7 @@ h2 {
 
 .launch-place-row,
 .launch-current,
+.launch-alert,
 .launch-stage .summary {
   position: relative;
   z-index: 1;
@@ -3110,8 +3111,8 @@ body.map-immersive-active #mapLegend {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
-  width: calc(100% - 58px);
-  margin: 0 58px 10px 0;
+  width: min(640px, 100%);
+  margin: 18px auto 0;
   padding: 9px 12px 9px 11px;
   border-radius: 8px;
   border: 1px solid rgba(195, 126, 68, 0.22);
@@ -3485,8 +3486,6 @@ body.map-immersive-active #mapLegend {
   .alert-bar {
     grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 8px 10px;
-    width: calc(100% - 54px);
-    margin-right: 54px;
   }
   .alert-bar-meta {
     grid-column: 2;

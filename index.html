@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.46">
+    <link rel="stylesheet" href="styles.css?v=1.10.47">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -73,21 +73,6 @@
 
       <section class="status" id="status" hidden></section>
 
-      <button class="alert-bar" id="alertBar" type="button" hidden>
-        <span class="alert-bar-icon" aria-hidden="true">
-          <svg viewBox="0 0 20 20" fill="none"><path d="M10 3.2 18 16.4H2L10 3.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 7.8v4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="0.9" fill="currentColor"/></svg>
-        </span>
-        <span class="alert-bar-text">
-          <span class="alert-bar-kicker" id="alertBarSeverity">Weather alert</span>
-          <strong id="alertBarEvent">—</strong>
-        </span>
-        <span class="alert-bar-meta">
-          <span class="alert-bar-timing" id="alertBarTiming"></span>
-          <span class="alert-bar-more" id="alertBarMore"></span>
-        </span>
-        <span class="alert-bar-chevron" aria-hidden="true">›</span>
-      </button>
-
       <div id="forecastView">
         <section class="launch-stage" aria-live="polite">
           <div class="launch-place-row">
@@ -105,6 +90,20 @@
             <p class="now-temp" id="nowTemp">--</p>
             <div class="hero-icon" id="heroIcon" aria-hidden="true"></div>
           </div>
+          <button class="alert-bar launch-alert" id="alertBar" type="button" hidden>
+            <span class="alert-bar-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><path d="M10 3.2 18 16.4H2L10 3.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 7.8v4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="0.9" fill="currentColor"/></svg>
+            </span>
+            <span class="alert-bar-text">
+              <span class="alert-bar-kicker" id="alertBarSeverity">Weather alert</span>
+              <strong id="alertBarEvent">—</strong>
+            </span>
+            <span class="alert-bar-meta">
+              <span class="alert-bar-timing" id="alertBarTiming"></span>
+              <span class="alert-bar-more" id="alertBarMore"></span>
+            </span>
+            <span class="alert-bar-chevron" aria-hidden="true">›</span>
+          </button>
           <p class="summary" id="nowSummary">Search for a city to load a clean forecast.</p>
         </section>
 
@@ -353,6 +352,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.46"></script>
+    <script src="app.js?v=1.10.47"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-const VERSION = "1.10.46";
+const VERSION = "1.10.47";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -510,7 +510,7 @@ function bindEvents() {
     }
     savePlace(state.activePlace);
     updateSaveButton();
-    setStatus(`${state.activePlace.name} saved.`);
+    openPlaceSheet();
   });
   els.radarMode.addEventListener("click", () => setMapMode("radar"));
   els.futureMode.addEventListener("click", () => setMapMode("future"));
@@ -5358,7 +5358,7 @@ function renderAlerts(alerts) {
     return;
   }
   const top = activeAlerts[0];
-  bar.className = `alert-bar ${alertSeverityClass(top.severity)}`;
+  bar.className = `alert-bar launch-alert ${alertSeverityClass(top.severity)}`;
   document.getElementById("alertBarSeverity").textContent = alertSeverityLabel(top.severity);
   document.getElementById("alertBarEvent").textContent = top.event;
   document.getElementById("alertBarTiming").textContent = top.ends || top.expires
