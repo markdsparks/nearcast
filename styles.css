@@ -1997,6 +1997,51 @@ h2 {
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.08);
 }
 
+.graph-metric {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 2px;
+}
+.graph-metric[hidden] {
+  display: none;
+}
+.graph-metric-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
+.graph-metric-btn {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.graph-metric-btn.active {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+}
+.graph-metric-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.graph-peak-sub {
+  fill: var(--muted);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
 /* Wrapper reserves space at the top for the floating callout so it rides
    ABOVE the chart — out of the path of your thumb while scrubbing. */
 .sheet-graph-wrap {

@@ -1,4 +1,4 @@
-const VERSION = "1.10.13";
+const VERSION = "1.10.14";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -392,6 +392,8 @@ function bindEvents() {
   els.hourly.addEventListener("click", openNext24Detail);
   document.getElementById("sheetGraphMode").addEventListener("click", () => setDayDetailMode("graph"));
   document.getElementById("sheetHourlyMode").addEventListener("click", () => setDayDetailMode("hourly"));
+  document.getElementById("graphTempBtn").addEventListener("click", () => setGraphMetric("temp"));
+  document.getElementById("graphWindBtn").addEventListener("click", () => setGraphMetric("wind"));
   document.getElementById("dayDetailClose").addEventListener("click", closeDayDetail);
   document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
   document.addEventListener("keydown", (event) => {
@@ -4111,6 +4113,8 @@ function setDayDetailMode(mode, persist = true) {
   hourlyBtn.setAttribute("aria-pressed", String(isHourly));
   graphWrap.hidden = isHourly;
   hourlyList.hidden = !isHourly;
+  const metricToggle = document.getElementById("graphMetricToggle");
+  if (metricToggle) metricToggle.hidden = isHourly; // Temp/Wind only applies to the graph
 
   if (!isHourly) scheduleGraphCalloutReflow();
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
@@ -4146,6 +4150,7 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, ini
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
+  graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow);
   renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow);
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
@@ -4281,7 +4286,40 @@ function scheduleGraphCalloutReflow() {
   });
 }
 
+// The graph can plot two metrics, each as a primary curve + a dashed secondary
+// curve: Temp (with Feels-like) by default, or Wind (with Gusts). The current
+// metric + last-rendered context are kept so the toggle can redraw in place.
+let graphMetric = "temp";
+let graphCtx = null;
+const GRAPH_WIND_COLOR = "#8479ff";
+
+function setGraphMetric(metric) {
+  graphMetric = metric === "wind" ? "wind" : "temp";
+  if (graphCtx) drawHourlyGraph();
+}
+
 function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
+  graphCtx = { hrs, tempUnit, windUnit, showNow };
+  drawHourlyGraph();
+}
+
+function drawHourlyGraph() {
+  if (!graphCtx) return;
+  const { hrs, tempUnit, windUnit, showNow } = graphCtx;
+  const isWind = graphMetric === "wind";
+
+  // Reflect the active metric in the toggle + hint.
+  const tempBtn = document.getElementById("graphTempBtn");
+  const windBtn = document.getElementById("graphWindBtn");
+  const hint = document.getElementById("graphMetricHint");
+  if (tempBtn && windBtn) {
+    tempBtn.classList.toggle("active", !isWind);
+    windBtn.classList.toggle("active", isWind);
+    tempBtn.setAttribute("aria-pressed", String(!isWind));
+    windBtn.setAttribute("aria-pressed", String(isWind));
+  }
+  if (hint) hint.textContent = isWind ? "dashed = gusts" : "dashed = feels like";
+
   const VW = 340;
   const padL = 18, padR = 18;
   const plotW = VW - padL - padR;
@@ -4291,44 +4329,81 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   const labelY = 152;
   const n = hrs.length;
 
-  const temps = hrs.map((h) => h.temp);
-  const tMin = Math.min(...temps), tMax = Math.max(...temps);
-  const range = Math.max(tMax - tMin, 1);
-  const dMin = tMin - range * 0.18, dMax = tMax + range * 0.18;
+  const primaryKey = isWind ? "wind" : "temp";
+  const secondaryKey = isWind ? "gust" : "feels";
+  const unitSuffix = isWind ? ` ${windUnit}` : degree(tempUnit);
+  const fmt = (v) => `${Math.round(v)}${unitSuffix}`;
+
+  const primaryVals = hrs.map((h) => h[primaryKey]);
+  const secondaryVals = hrs.map((h) => h[secondaryKey]);
+  const all = primaryVals.concat(secondaryVals);
+  let vMin = Math.min(...all), vMax = Math.max(...all);
+  if (isWind) vMin = Math.min(vMin, 0); // wind reads naturally from a 0 baseline
+  const range = Math.max(vMax - vMin, 1);
+  const dMin = vMin - range * 0.18, dMax = vMax + range * 0.18;
   const dRange = dMax - dMin;
 
   const x = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const y = (temp) => tempBottom - ((temp - dMin) / dRange) * (tempBottom - tempTop);
+  const yv = (v) => tempBottom - ((v - dMin) / dRange) * (tempBottom - tempTop);
 
-  const pts = hrs.map((h, i) => ({ ...h, x: x(i), y: y(h.temp) }));
-  graphPts = pts;
+  const pPts = hrs.map((h, i) => ({ ...h, x: x(i), y: yv(h[primaryKey]) }));
+  const sPts = hrs.map((h, i) => ({ x: x(i), y: yv(h[secondaryKey]) }));
+  graphPts = pPts; // scrubbing tracks the primary curve
   graphActiveIndex = 0;
   graphUpdateActive = null;
 
-  const deg = degree(tempUnit);
-  const gradStops = pts.map((p, i) =>
-    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp)}"/>`
-  ).join("");
+  // Primary stroke: temp is colored by value (gradient); wind is a solid hue.
+  let defs = "";
+  let primaryStroke, areaFill, areaOpacity, secondaryStroke;
+  if (isWind) {
+    primaryStroke = areaFill = secondaryStroke = GRAPH_WIND_COLOR;
+    areaOpacity = 0.10;
+  } else {
+    const gradStops = pPts.map((p, i) =>
+      `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp)}"/>`
+    ).join("");
+    defs = `<linearGradient id="tempGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>`;
+    primaryStroke = areaFill = "url(#tempGrad)";
+    secondaryStroke = "var(--ink)";
+    areaOpacity = 0.13;
+  }
 
-  const linePath = smoothPath(pts);
-  const areaPath = `${linePath} L ${pts[n - 1].x.toFixed(1)} ${tempBottom} L ${pts[0].x.toFixed(1)} ${tempBottom} Z`;
+  const primaryPath = smoothPath(pPts);
+  const secondaryPath = smoothPath(sPts);
+  const areaPath = `${primaryPath} L ${pPts[n - 1].x.toFixed(1)} ${tempBottom} L ${pPts[0].x.toFixed(1)} ${tempBottom} Z`;
 
-  // Precip bars
+  // Precip bars — useful context in either metric.
   const barW = Math.max((plotW / n) * 0.5, 2);
-  const precipBars = pts.map((p) => {
+  const precipBars = pPts.map((p) => {
     if (p.pop <= 0) return "";
     const h = (p.pop / 100) * precipH;
     return `<rect x="${(p.x - barW / 2).toFixed(1)}" y="${(precipBottom - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#4a90d9" opacity="0.5"/>`;
   }).join("");
 
-  // High / low markers
-  const hiIdx = temps.indexOf(tMax), loIdx = temps.indexOf(tMin);
-  const markers = `
-    <circle cx="${pts[hiIdx].x.toFixed(1)}" cy="${pts[hiIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMax)}"/>
-    <text x="${pts[hiIdx].x.toFixed(1)}" y="${(pts[hiIdx].y - 7).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMax)}${deg}</text>
-    <circle cx="${pts[loIdx].x.toFixed(1)}" cy="${pts[loIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMin)}"/>
-    <text x="${pts[loIdx].x.toFixed(1)}" y="${(pts[loIdx].y + 13).toFixed(1)}" text-anchor="middle" class="graph-peak">${Math.round(tMin)}${deg}</text>
-  `;
+  // Keep marker labels inside the chart even when a peak lands at an edge.
+  const peakText = (px, py, text, cls) => {
+    const edge = px < 26 ? { x: 2, anchor: "start" } : px > VW - 26 ? { x: VW - 2, anchor: "end" } : { x: px, anchor: "middle" };
+    return `<text x="${edge.x.toFixed(1)}" y="${py.toFixed(1)}" text-anchor="${edge.anchor}" class="${cls}">${text}</text>`;
+  };
+
+  // Markers: temp shows hi/lo; wind shows peak wind + peak gust.
+  let markers;
+  if (isWind) {
+    const wIdx = primaryVals.indexOf(Math.max(...primaryVals));
+    const gIdx = secondaryVals.indexOf(Math.max(...secondaryVals));
+    markers =
+      `<circle cx="${pPts[wIdx].x.toFixed(1)}" cy="${pPts[wIdx].y.toFixed(1)}" r="2.6" fill="${GRAPH_WIND_COLOR}"/>` +
+      peakText(pPts[wIdx].x, pPts[wIdx].y - 7, fmt(primaryVals[wIdx]), "graph-peak") +
+      peakText(sPts[gIdx].x, sPts[gIdx].y - 6, `gust ${fmt(secondaryVals[gIdx])}`, "graph-peak-sub");
+  } else {
+    const tMax = Math.max(...primaryVals), tMin = Math.min(...primaryVals);
+    const hiIdx = primaryVals.indexOf(tMax), loIdx = primaryVals.indexOf(tMin);
+    markers =
+      `<circle cx="${pPts[hiIdx].x.toFixed(1)}" cy="${pPts[hiIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMax)}"/>` +
+      peakText(pPts[hiIdx].x, pPts[hiIdx].y - 7, fmt(tMax), "graph-peak") +
+      `<circle cx="${pPts[loIdx].x.toFixed(1)}" cy="${pPts[loIdx].y.toFixed(1)}" r="2.6" fill="${tempColor(tMin)}"/>` +
+      peakText(pPts[loIdx].x, pPts[loIdx].y + 13, fmt(tMin), "graph-peak");
+  }
 
   // X-axis time labels
   const steps = 4;
@@ -4360,11 +4435,10 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
 
   document.getElementById("sheetGraph").innerHTML = `
     <svg viewBox="0 0 ${VW} 162" class="hourly-graph">
-      <defs>
-        <linearGradient id="tempGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
-      </defs>
-      <path d="${areaPath}" fill="url(#tempGrad)" fill-opacity="0.13"/>
-      <path d="${linePath}" fill="none" stroke="url(#tempGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <defs>${defs}</defs>
+      <path d="${areaPath}" fill="${areaFill}" fill-opacity="${areaOpacity}"/>
+      <path d="${secondaryPath}" fill="none" stroke="${secondaryStroke}" stroke-width="1.6" stroke-dasharray="4 3" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
+      <path d="${primaryPath}" fill="none" stroke="${primaryStroke}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       ${precipBars}
       ${dayLines}
       ${markers}
@@ -4394,9 +4468,14 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
     dot.style.display = "";
 
     const long = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(p.time));
+    const main = isWind
+      ? `${long} · ${Math.round(p.wind)} ${windUnit}`
+      : `${long} · ${Math.round(p.temp)}${degree(tempUnit)}`;
+    const sub = isWind
+      ? `gust ${Math.round(p.gust)} ${windUnit} · ${p.pop}% rain`
+      : `feels ${Math.round(p.feels)}${degree(tempUnit)} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}`;
     callout.innerHTML =
-      `<span class="callout-main">${long} · ${Math.round(p.temp)}${deg}</span>` +
-      `<span class="callout-sub">feels ${Math.round(p.feels)}${deg} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}</span>`;
+      `<span class="callout-main">${main}</span><span class="callout-sub">${sub}</span>`;
 
     // Slide the callout to ride above the active point, clamped to the chart edges.
     // The vertical guide line marks the exact column; the callout pointer tracks it too.
@@ -4428,10 +4507,10 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
   svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
 
-  // Default readout: the hour nearest "now" if present, else the day's peak.
+  // Default readout: the hour nearest "now" if present, else the first point.
   const now = Date.now();
   let def = hrs.findIndex((h) => Math.abs(new Date(h.time).getTime() - now) < 1800000);
-  if (def < 0) def = hiIdx;
+  if (def < 0) def = 0;
   // Defer to next frame so the sheet has laid out and the callout can be
   // measured/positioned correctly (it's still hidden when this runs).
   graphActiveIndex = def;
