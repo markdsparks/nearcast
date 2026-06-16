@@ -1,4 +1,4 @@
-const VERSION = "1.10.12";
+const VERSION = "1.10.13";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3297,12 +3297,15 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
         img.decoding = "async";
         img.loading = "eager";
         img.dataset.tile = key;
-        img.addEventListener("error", () => handleWeatherTileError(layer));
+        img.addEventListener("load", () => { img.style.visibility = ""; img.dataset.tries = "0"; });
+        img.addEventListener("error", () => onTileError(img, layer));
         layer.appendChild(img);
       }
       if (img.dataset.url !== url) {
-        img.src = url;
         img.dataset.url = url;
+        img.dataset.tries = "0";
+        img.style.visibility = "";
+        img.src = url;
       }
       img.style.width = `${Math.ceil(displayTileSize)}px`;
       img.style.height = `${Math.ceil(displayTileSize)}px`;
@@ -3313,6 +3316,25 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   layer.querySelectorAll(":scope > img").forEach((img) => {
     if (!wanted.has(img.dataset.tile)) img.remove();
   });
+}
+
+// A tile that fails to load should never show the browser's broken-image
+// glyph (the "?" box). Hide it, then retry a couple of times with a short
+// backoff to ride out transient OSM/RainViewer/NOAA hiccups. After that we
+// give up quietly — a brief hole is far less jarring than a "?".
+function onTileError(img, layer) {
+  handleWeatherTileError(layer);
+  img.style.visibility = "hidden";
+  const tries = (Number(img.dataset.tries) || 0) + 1;
+  img.dataset.tries = String(tries);
+  if (tries > 2) return;
+  const url = img.dataset.url;
+  setTimeout(() => {
+    // Only retry if this <img> is still the live tile for its key/url.
+    if (img.isConnected && img.dataset.url === url) {
+      img.src = `${url}${url.includes("?") ? "&" : "?"}retry=${tries}`;
+    }
+  }, 400 * tries);
 }
 
 function handleWeatherTileError(layer) {
