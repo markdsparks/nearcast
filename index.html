@@ -17,10 +17,22 @@
     <div id="skyCanvas" aria-hidden="true"></div>
     <main class="shell">
       <section class="topbar" aria-label="Weather search and settings">
-        <div>
+        <div class="brand-lockup">
           <p class="eyebrow">Weather for the places that matter</p>
           <h1>Nearcast <span id="appVersion" class="app-version"></span></h1>
         </div>
+        <section class="saved-row" aria-label="Saved places">
+          <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
+            <span class="place-switcher-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
+            </span>
+            <span class="place-switcher-copy">
+              <strong id="placeSwitcherName">Places</strong>
+              <span id="placeSwitcherMeta">Saved places</span>
+            </span>
+            <span class="place-switcher-chevron" aria-hidden="true">›</span>
+          </button>
+        </section>
         <div class="actions">
           <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Search places" title="Search">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"/><line x1="13.5" y1="13.5" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -49,19 +61,6 @@
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         Use my location
       </button>
-
-      <section class="saved-row" aria-label="Saved places">
-        <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
-          <span class="place-switcher-icon" aria-hidden="true">
-            <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
-          </span>
-          <span class="place-switcher-copy">
-            <strong id="placeSwitcherName">Places</strong>
-            <span id="placeSwitcherMeta">Saved places</span>
-          </span>
-          <span class="place-switcher-chevron" aria-hidden="true">›</span>
-        </button>
-      </section>
 
       <section class="status" id="status" hidden></section>
 
@@ -148,7 +147,10 @@
         <section class="nowcast" id="nowcast" aria-label="Precipitation nowcast" hidden>
           <div class="nowcast-head">
             <span class="nowcast-icon" id="nowcastIcon" aria-hidden="true"></span>
-            <p class="nowcast-headline" id="nowcastHeadline"></p>
+            <div class="nowcast-copy">
+              <p class="nowcast-title" id="nowcastTitle"></p>
+              <p class="nowcast-subtitle" id="nowcastSubtitle"></p>
+            </div>
           </div>
           <div class="nowcast-graph" id="nowcastGraph"></div>
         </section>
@@ -165,7 +167,7 @@
           <div class="insight-band" id="insightCards"></div>
         </section>
 
-        <section class="panel">
+        <section class="panel hourly-panel">
           <div class="section-head">
             <h2>Next 24 Hours</h2>
             <span id="updatedAt">Not loaded</span>
@@ -204,7 +206,7 @@
           <p class="map-credit">Nowcast radar by NOAA/NWS MRMS/RIDGE2 where available, with <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">RainViewer</a> fallback. Forecast precipitation by NOAA/NWS nowCOAST/NDFD. Map and location name data by OpenStreetMap contributors.</p>
         </section>
 
-        <section class="panel">
+        <section class="panel daily-panel">
           <div class="section-head">
             <h2>10-Day Outlook</h2>
             <span>Open-Meteo</span>

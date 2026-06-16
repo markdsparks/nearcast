@@ -1,4 +1,4 @@
-const VERSION = "1.10.19";
+const VERSION = "1.10.29";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -10,7 +10,8 @@ const state = {
   savedPlaces: JSON.parse(localStorage.getItem("weather-places") || "[]"),
   searchResults: [],
   skyCode: null,
-  skyIsDay: null
+  skyIsDay: null,
+  locationIsDay: null
 };
 
 const mapState = {
@@ -521,7 +522,9 @@ function bindEvents() {
 function applyTheme() {
   let isDark;
   if (state.theme === "auto") {
-    if (state.sunriseMs && state.sunsetMs) {
+    if (state.locationIsDay !== null) {
+      isDark = !state.locationIsDay;
+    } else if (state.sunriseMs && state.sunsetMs) {
       const now = Date.now();
       isDark = now < state.sunriseMs || now > state.sunsetMs;
     } else {
@@ -552,6 +555,105 @@ function toggleTheme() {
   }
   localStorage.setItem("weather-theme", state.theme);
   applyTheme();
+}
+
+function forecastOffsetMs(data = state.forecast) {
+  const seconds = Number(data?.utc_offset_seconds);
+  return Number.isFinite(seconds) ? seconds * 1000 : 0;
+}
+
+function localDateTimeParts(value) {
+  if (typeof value !== "string") return null;
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+    second: Number(match[6] || 0)
+  };
+}
+
+function parseForecastTimestamp(value, data = state.forecast) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return value;
+  const parts = localDateTimeParts(value);
+  if (parts) {
+    return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - forecastOffsetMs(data);
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function forecastNowMs(data = state.forecast) {
+  return parseForecastTimestamp(data?.current?.time, data) ?? Date.now();
+}
+
+function datePart(value) {
+  if (typeof value === "string") {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function addDaysToDateString(value, offsetDays) {
+  const parts = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!parts) return null;
+  const d = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]) + offsetDays));
+  return [
+    d.getUTCFullYear(),
+    String(d.getUTCMonth() + 1).padStart(2, "0"),
+    String(d.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function forecastLocalDate(data = state.forecast, offsetDays = 0) {
+  const base = datePart(data?.current?.time) || data?.daily?.time?.[0] || datePart(Date.now());
+  return addDaysToDateString(base, offsetDays);
+}
+
+function forecastLocalBoundaryMs(data, hour, offsetDays = 0) {
+  const dayShift = Math.floor(hour / 24);
+  const localHour = ((hour % 24) + 24) % 24;
+  const day = forecastLocalDate(data, offsetDays + dayShift);
+  if (!day) return null;
+  return parseForecastTimestamp(`${day}T${String(localHour).padStart(2, "0")}:00`, data);
+}
+
+function forecastLocalHour(value) {
+  const parts = localDateTimeParts(value);
+  if (parts) return parts.hour + parts.minute / 60;
+  const d = new Date(value);
+  if (!Number.isNaN(d.getTime())) return d.getHours() + d.getMinutes() / 60;
+  const now = new Date();
+  return now.getHours() + now.getMinutes() / 60;
+}
+
+function forecastCurrentHour(data = state.forecast) {
+  return Math.floor(forecastLocalHour(data?.current?.time));
+}
+
+function daysFromForecastToday(value, data = state.forecast) {
+  const base = forecastLocalDate(data, 0);
+  const target = datePart(value);
+  if (!base || !target) {
+    const d = new Date(value);
+    const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    return Math.round((startOf(d) - startOf(new Date())) / 86400000);
+  }
+  const baseDate = new Date(`${base}T12:00:00Z`);
+  const targetDate = new Date(`${target}T12:00:00Z`);
+  return Math.round((targetDate.getTime() - baseDate.getTime()) / 86400000);
 }
 
 function updateUnitButton() {
@@ -951,6 +1053,11 @@ function renderForecast(data, place) {
   const todayCode = weatherCodes[current.weather_code] || "Weather";
 
   const isDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
+  state.locationIsDay = isDay;
+  state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[0], data);
+  state.sunsetMs = parseForecastTimestamp(data.daily.sunset[0], data);
+  if (state.theme === "auto") applyTheme();
+
   els.locationName.textContent = placeLabel(place);
   els.nowTemp.textContent = `${Math.round(current.temperature_2m)}${degree(tempUnit)}`;
   els.nowSummary.textContent = buildSummary(data);
@@ -962,12 +1069,6 @@ function renderForecast(data, place) {
   els.sunrise.textContent = data.daily.sunrise[0] ? formatTime(data.daily.sunrise[0]) : "--";
   els.sunset.textContent = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : "--";
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
-
-  if (data.daily.sunrise[0] && data.daily.sunset[0]) {
-    state.sunriseMs = new Date(data.daily.sunrise[0]).getTime();
-    state.sunsetMs = new Date(data.daily.sunset[0]).getTime();
-    if (state.theme === "auto") applyTheme();
-  }
 
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(current.weather_code, isDay);
@@ -985,9 +1086,9 @@ function renderForecast(data, place) {
 
 function buildSummary(data) {
   const daily = data.daily;
-  const now = Date.now();
-  const sunriseMs = state.sunriseMs || (daily.sunrise[0] ? new Date(daily.sunrise[0]).getTime() : null);
-  const sunsetMs = state.sunsetMs || (daily.sunset[0] ? new Date(daily.sunset[0]).getTime() : null);
+  const now = forecastNowMs(data);
+  const sunriseMs = state.sunriseMs || parseForecastTimestamp(daily.sunrise[0], data);
+  const sunsetMs = state.sunsetMs || parseForecastTimestamp(daily.sunset[0], data);
   const twoHoursMs = 2 * 60 * 60 * 1000;
 
   const high0 = Math.round(daily.temperature_2m_max[0]);
@@ -1033,17 +1134,19 @@ function analyzeNowcast(data) {
   const m = data.minutely_15;
   if (!m || !m.time || !m.precipitation) return null;
 
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const inch = (state.unit === "fahrenheit");
   const wetThreshold = inch ? 0.002 : 0.05; // measurable precip per 15 min
 
   // Keep the current slot through the next ~2 hours.
   const slots = [];
   for (let i = 0; i < m.time.length; i++) {
-    const t = new Date(m.time[i]).getTime();
+    const t = parseForecastTimestamp(m.time[i], data);
+    if (t === null) continue;
     if (t < now - 15 * 60 * 1000) continue; // drop fully-past slots
     slots.push({
       t,
+      time: m.time[i],
       precip: m.precipitation[i] || 0,
       snow: (m.snowfall && m.snowfall[i]) || 0,
       prob: (m.precipitation_probability && m.precipitation_probability[i]) || 0
@@ -1073,28 +1176,32 @@ function analyzeNowcast(data) {
     return Math.round(min / 5) * 5;
   };
 
-  let headline;
+  let title;
+  let detail;
   if (wet[0]) {
     // Raining now — when does it ease?
     const firstDry = wet.indexOf(false);
+    title = `${Label} now`;
     if (firstDry === -1) {
-      headline = `${Label} for at least the next 2 hours`;
+      detail = "Likely for at least the next 2 hours";
     } else {
-      headline = `${Label} now, easing around ${formatTime(slots[firstDry].t)}`;
+      detail = `Easing around ${formatTime(slots[firstDry].time)}`;
     }
   } else {
     // Dry now — when does it start?
     const startIdx = wet.indexOf(true);
     const mins = roundMin(slots[startIdx].t - now);
-    headline = `${Label} starting in about ${mins} min`;
+    title = `${Label} soon`;
+    detail = `Starting in about ${mins} min`;
     const dryAfter = wet.indexOf(false, startIdx);
     if (dryAfter !== -1) {
       const dur = roundMin(slots[dryAfter].t - slots[startIdx].t);
-      headline += `, lasting about ${dur} min`;
+      detail += `, lasting about ${dur} min`;
     }
   }
 
-  return { headline, slots, wet, peak, peakFrac, isSnow };
+  const headline = `${title}, ${detail.charAt(0).toLowerCase()}${detail.slice(1)}`;
+  return { headline, title, detail, slots, wet, peak, peakFrac, isSnow };
 }
 
 function renderNowcast(data) {
@@ -1105,18 +1212,21 @@ function renderNowcast(data) {
     return;
   }
 
-  document.getElementById("nowcastHeadline").textContent = analysis.headline;
+  document.getElementById("nowcastTitle").textContent = analysis.title;
+  document.getElementById("nowcastSubtitle").textContent = analysis.detail;
   document.getElementById("nowcastIcon").innerHTML = analysis.isSnow ? snowGlyph() : raindropGlyph();
   document.getElementById("nowcastGraph").innerHTML = buildNowcastGraph(analysis);
-  el.style.borderLeftColor = nowcastIntensityColor(analysis.peakFrac);
+  el.style.setProperty("--nowcast-accent", nowcastIntensityColor(analysis.peakFrac));
+  el.style.setProperty("--nowcast-glow", nowcastIntensityRgba(analysis.peakFrac, analysis.isSnow ? 0.18 : 0.22));
+  el.setAttribute("aria-label", `${analysis.headline}. Open hourly details.`);
   el.hidden = false;
 }
 
 function raindropGlyph() {
-  return `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.5C10 2.5 4.5 9 4.5 13a5.5 5.5 0 0 0 11 0C15.5 9 10 2.5 10 2.5z" fill="#4a90d9"/></svg>`;
+  return `<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.5C10 2.5 4.5 9 4.5 13a5.5 5.5 0 0 0 11 0C15.5 9 10 2.5 10 2.5z" fill="currentColor"/></svg>`;
 }
 function snowGlyph() {
-  return `<svg viewBox="0 0 20 20" fill="none" stroke="#7fb0dd" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="4" y1="4" x2="16" y2="16"/><line x1="16" y1="4" x2="4" y2="16"/></svg>`;
+  return `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="10" y1="2" x2="10" y2="18"/><line x1="2" y1="10" x2="18" y2="10"/><line x1="4" y1="4" x2="16" y2="16"/><line x1="16" y1="4" x2="4" y2="16"/></svg>`;
 }
 
 // Shared intensity fraction: maps precip rate (per-hour, display units) → 0..1.
@@ -1130,29 +1240,36 @@ function nowcastFrac(perHour, inch) {
   return Math.min(1, 2 / 3 + ((perHour - modMax) / (heavyCap - modMax)) / 3);
 }
 
-// Radar-matched intensity ramp: light-blue → green → yellow → orange → red.
-function nowcastIntensityColor(f) {
+// Compact nowcast ramp: intensity stays rain-native instead of alert-colored.
+function nowcastIntensityRgb(f) {
   const stops = [
-    [0.00, [126, 200, 255]],
-    [0.25, [54, 177, 106]],
-    [0.50, [240, 216, 70]],
-    [0.75, [240, 138, 48]],
-    [1.00, [200, 63, 107]]
+    [0.00, [117, 201, 230]],
+    [0.35, [87, 166, 226]],
+    [0.70, [106, 135, 224]],
+    [1.00, [165, 126, 216]]
   ];
   const t = Math.min(Math.max(f, 0), 1);
   for (let i = 0; i < stops.length - 1; i++) {
     if (t <= stops[i + 1][0]) {
       const [a, ca] = stops[i], [b, cb] = stops[i + 1];
       const k = (t - a) / (b - a || 1);
-      const rgb = ca.map((c, j) => Math.round(c + (cb[j] - c) * k));
-      return `rgb(${rgb.join(",")})`;
+      return ca.map((c, j) => Math.round(c + (cb[j] - c) * k));
     }
   }
-  const last = stops[stops.length - 1][1];
-  return `rgb(${last.join(",")})`;
+  return stops[stops.length - 1][1];
+}
+
+function nowcastIntensityColor(f) {
+  return `rgb(${nowcastIntensityRgb(f).join(",")})`;
+}
+
+function nowcastIntensityRgba(f, alpha) {
+  return `rgba(${nowcastIntensityRgb(f).join(",")}, ${alpha})`;
 }
 
 function shortClock(t) {
+  const parts = localDateTimeParts(t);
+  if (parts) return formatClock(parts.hour, parts.minute, true);
   const d = new Date(t);
   let h = d.getHours();
   const m = String(d.getMinutes()).padStart(2, "0");
@@ -1165,8 +1282,8 @@ function buildNowcastGraph(analysis) {
   const { slots } = analysis;
   const inch = state.unit === "fahrenheit";
 
-  const VW = 320, H = 104;
-  const padL = 8, padR = 8, topY = 22, baseY = 80;
+  const VW = 320, H = 72;
+  const padL = 8, padR = 8, topY = 8, baseY = 48;
   const plotW = VW - padL - padR;
   const plotH = baseY - topY;
   const n = slots.length;
@@ -1182,31 +1299,26 @@ function buildNowcastGraph(analysis) {
     `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
   ).join("");
 
-  // Absolute clock times on top, friendly "from now" on the bottom.
-  const idxMid = Math.min(4, n - 1);
   const idxEnd = n - 1;
-  const topTime = (i, anchor) => `<text x="${x(i).toFixed(1)}" y="11" text-anchor="${anchor}" class="nowcast-clock">${shortClock(slots[i].t)}</text>`;
-  const botTime = (i, anchor, t) => `<text x="${x(i).toFixed(1)}" y="${H - 3}" text-anchor="${anchor}" class="nowcast-axis">${t}</text>`;
-  const topLabels = topTime(0, "start") + topTime(idxMid, "middle") + topTime(idxEnd, "end");
-  const botLabels = botTime(0, "start", "Now") + botTime(idxMid, "middle", "1 hr") + botTime(idxEnd, "end", "2 hr");
+  const botTime = (i, anchor, t) => `<text x="${x(i).toFixed(1)}" y="${H - 2}" text-anchor="${anchor}" class="nowcast-axis">${t}</text>`;
+  const botLabels = botTime(0, "start", "Now") + botTime(idxEnd, "end", "2 hr");
 
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
     <defs>
       <linearGradient id="nowcastGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>
     </defs>
-    ${topLabels}
-    <path d="${area}" fill="url(#nowcastGrad)" fill-opacity="0.28"/>
-    <path d="${line}" fill="none" stroke="url(#nowcastGrad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${area}" fill="url(#nowcastGrad)" fill-opacity="0.18"/>
+    <path d="${line}" fill="none" stroke="url(#nowcastGrad)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
     <line x1="${padL}" y1="${baseY}" x2="${VW - padR}" y2="${baseY}" class="nowcast-base"/>
     ${botLabels}
   </svg>`;
 }
 
 function renderInsights(data, windUnit) {
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const sunsetMs = state.sunsetMs;
   const twoHoursMs = 2 * 60 * 60 * 1000;
-  const noonMs = new Date().setHours(12, 0, 0, 0);
+  const noonMs = forecastLocalBoundaryMs(data, 12) ?? new Date().setHours(12, 0, 0, 0);
 
   const isEvening = sunsetMs && now >= sunsetMs - twoHoursMs;
   const isMorning = now < noonMs;
@@ -1236,7 +1348,7 @@ function buildAIContext() {
   const cur = data.current;
   const daily = data.daily;
   const hourly = data.hourly;
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const r = Math.round;
   const sky = (code) => weatherCodes[code] || "—";
   const dir = (deg) => {
@@ -1249,14 +1361,17 @@ function buildAIContext() {
   const nowcast = nc ? nc.headline : "Dry for the next 2 hours";
 
   // Sparse hourly points (~every 3h) so the model can answer "later today".
-  let start = hourly.time.findIndex((t) => new Date(t).getTime() >= now - 30 * 60 * 1000);
+  let start = hourly.time.findIndex((t) => {
+    const ms = parseForecastTimestamp(t, data);
+    return ms !== null && ms >= now - 30 * 60 * 1000;
+  });
   if (start < 0) start = 0;
   const next12h = [];
   for (let k = 0; k < 5; k++) {
     const i = start + k * 3;
     if (i >= hourly.time.length) break;
     next12h.push({
-      t: shortClock(new Date(hourly.time[i]).getTime()),
+      t: shortClock(hourly.time[i]),
       temp: r(hourly.temperature_2m[i]),
       rain: hourly.precipitation_probability[i] || 0
     });
@@ -1274,8 +1389,8 @@ function buildAIContext() {
       lo: r(daily.temperature_2m_min[i]),
       rainChance: daily.precipitation_probability_max[i] || 0,
       sky: sky(daily.weather_code[i]),
-      sunrise: daily.sunrise[i] ? shortClock(new Date(daily.sunrise[i]).getTime()) : null,
-      sunset: daily.sunset[i] ? shortClock(new Date(daily.sunset[i]).getTime()) : null
+      sunrise: daily.sunrise[i] ? shortClock(daily.sunrise[i]) : null,
+      sunset: daily.sunset[i] ? shortClock(daily.sunset[i]) : null
     });
   }
 
@@ -1287,7 +1402,7 @@ function buildAIContext() {
 
   return {
     place: placeLabel(state.activePlace),
-    asOf: shortClock(new Date(cur.time).getTime()),
+    asOf: shortClock(cur.time),
     units: { temp: inch ? "°F" : "°C", wind: inch ? "mph" : "km/h", precip: inch ? "in" : "mm" },
     now: {
       temp: r(cur.temperature_2m),
@@ -1305,16 +1420,16 @@ function buildAIContext() {
       lo: r(daily.temperature_2m_min[0]),
       rainChance: daily.precipitation_probability_max[0] || 0,
       uvPeak: r(daily.uv_index_max[0]),
-      sunrise: daily.sunrise[0] ? shortClock(new Date(daily.sunrise[0]).getTime()) : null,
-      sunset: shortClock(new Date(daily.sunset[0]).getTime())
+      sunrise: daily.sunrise[0] ? shortClock(daily.sunrise[0]) : null,
+      sunset: shortClock(daily.sunset[0])
     },
     tomorrow: {
       hi: r(daily.temperature_2m_max[1]),
       lo: r(daily.temperature_2m_min[1]),
       rainChance: daily.precipitation_probability_max[1] || 0,
       sky: sky(daily.weather_code[1]),
-      sunrise: daily.sunrise[1] ? shortClock(new Date(daily.sunrise[1]).getTime()) : null,
-      sunset: daily.sunset[1] ? shortClock(new Date(daily.sunset[1]).getTime()) : null
+      sunrise: daily.sunrise[1] ? shortClock(daily.sunrise[1]) : null,
+      sunset: daily.sunset[1] ? shortClock(daily.sunset[1]) : null
     },
     next12h,
     daily: dailyArr,
@@ -1961,11 +2076,11 @@ function askWindowLabel(c, w) {
 }
 
 function currentAskWindow() {
-  const now = new Date();
+  const hour = forecastCurrentHour();
   return {
     dayIdx: 0,
-    startHour: now.getHours(),
-    endHour: Math.min(now.getHours() + 3, 24),
+    startHour: hour,
+    endHour: Math.min(hour + 3, 24),
     label: "right now"
   };
 }
@@ -2005,8 +2120,7 @@ function resolveAskWindow(q, c) {
 
   if (/\bright now\b|\bnow\b|\bcurrently\b/.test(s)) return currentAskWindow();
   if (/\blater\b|\brest of today\b/.test(s)) {
-    const now = new Date();
-    return { dayIdx: 0, startHour: now.getHours(), endHour: 24, label: "rest of today" };
+    return { dayIdx: 0, startHour: forecastCurrentHour(), endHour: 24, label: "rest of today" };
   }
   if (hasAny(s, ["dinner", "supper", "grill", "grilling", "bbq", "barbecue", "eat outside"])) {
     return { dayIdx, startHour: 17, endHour: 21, label: "custom" };
@@ -2015,7 +2129,7 @@ function resolveAskWindow(q, c) {
     return { dayIdx, startHour: 17, endHour: 22, label: "custom" };
   }
   if (period) return { dayIdx, startHour: ASK_PERIODS[period].start, endHour: ASK_PERIODS[period].end, period };
-  return { dayIdx, startHour: dayIdx === 0 ? new Date().getHours() : 8, endHour: 20, period: "day" };
+  return { dayIdx, startHour: dayIdx === 0 ? forecastCurrentHour() : 8, endHour: 20, period: "day" };
 }
 
 function askWindowHours(w) {
@@ -2023,15 +2137,14 @@ function askWindowHours(w) {
   if (!data || !w) return [];
   const day = data.daily.time[w.dayIdx];
   if (!day) return [];
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const startHour = w.startHour ?? 0;
   const endHour = w.endHour ?? 24;
   return data.hourly.time
-    .map((time, index) => ({ time, index, date: new Date(time) }))
-    .filter(({ time, date }) => {
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data), hour: forecastLocalHour(time) }))
+    .filter(({ time, ms, hour }) => {
       if (!time.startsWith(day)) return false;
-      const hour = date.getHours() + date.getMinutes() / 60;
-      if (w.dayIdx === 0 && date.getTime() < now - 60 * 60 * 1000) return false;
+      if (w.dayIdx === 0 && ms !== null && ms < now - 60 * 60 * 1000) return false;
       return hour >= startHour && hour < endHour;
     });
 }
@@ -2221,7 +2334,7 @@ function bestWindowOptionsFromText(s, c) {
 }
 
 function candidateAskWindows({ dayIdx = 0, hours = 2, earliestHour = 6, limitHour = 22 } = {}) {
-  const start = dayIdx === 0 ? Math.max(new Date().getHours(), earliestHour) : earliestHour;
+  const start = dayIdx === 0 ? Math.max(forecastCurrentHour(), earliestHour) : earliestHour;
   const windows = [];
   for (let h = start; h + hours <= limitHour; h += 1) {
     windows.push({ dayIdx, startHour: h, endHour: h + hours, label: "custom" });
@@ -2659,8 +2772,8 @@ function closeAISheet() {
 
 function hoursInRange(data, fromMs, toMs) {
   return data.hourly.time
-    .map((t, i) => ({ ms: new Date(t).getTime(), i }))
-    .filter(({ ms }) => ms >= fromMs && ms < toMs);
+    .map((t, i) => ({ ms: parseForecastTimestamp(t, data), i }))
+    .filter(({ ms }) => ms !== null && ms >= fromMs && ms < toMs);
 }
 
 function maxRainInRange(data, fromMs, toMs) {
@@ -2676,9 +2789,9 @@ function rainPhraseShort(pct) {
 }
 
 function buildMorningInsights(data, windUnit) {
-  const now = Date.now();
-  const noonMs = new Date().setHours(12, 0, 0, 0);
-  const sixPmMs = new Date().setHours(18, 0, 0, 0);
+  const now = forecastNowMs(data);
+  const noonMs = forecastLocalBoundaryMs(data, 12) ?? new Date().setHours(12, 0, 0, 0);
+  const sixPmMs = forecastLocalBoundaryMs(data, 18) ?? new Date().setHours(18, 0, 0, 0);
   const sunsetTime = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
   const low0 = Math.round(data.daily.temperature_2m_min[0]);
 
@@ -2710,9 +2823,9 @@ function buildMorningInsights(data, windUnit) {
 }
 
 function buildAfternoonInsights(data, windUnit) {
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const sunsetMs = state.sunsetMs;
-  const midnightMs = new Date().setHours(24, 0, 0, 0);
+  const midnightMs = forecastLocalBoundaryMs(data, 24) ?? new Date().setHours(24, 0, 0, 0);
   const low0 = Math.round(data.daily.temperature_2m_min[0]);
   const high1 = Math.round(data.daily.temperature_2m_max[1]);
   const rain1 = data.daily.precipitation_probability_max[1] || 0;
@@ -2740,9 +2853,8 @@ function buildAfternoonInsights(data, windUnit) {
 }
 
 function buildEveningInsights(data, windUnit) {
-  const now = Date.now();
-  const midnightMs = new Date().setHours(24, 0, 0, 0);
-  const sixAmMs = new Date(now + 86400000).setHours(6, 0, 0, 0);
+  const now = forecastNowMs(data);
+  const sixAmMs = forecastLocalBoundaryMs(data, 6, 1) ?? new Date(now + 86400000).setHours(6, 0, 0, 0);
   const low0 = Math.round(data.daily.temperature_2m_min[0]);
   const high1 = Math.round(data.daily.temperature_2m_max[1]);
   const rain1 = data.daily.precipitation_probability_max[1] || 0;
@@ -2781,20 +2893,21 @@ function buildHeadsUp(data, uv1, gust1, rain1, high1, low0, windUnit) {
 }
 
 function renderHourly(data, tempUnit) {
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const rows = data.hourly.time
-    .map((time, index) => ({ time, index }))
-    .filter((row) => new Date(row.time).getTime() >= now - 60 * 60 * 1000)
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
     .slice(0, 24);
 
-  els.hourly.innerHTML = rows.map(({ time, index }) => {
+  els.hourly.innerHTML = rows.map(({ time, index }, position) => {
     const rain = data.hourly.precipitation_probability[index] || 0;
     const wcode = data.hourly.weather_code[index];
     const code = weatherCodes[wcode] || "Weather";
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
+    const label = position === 0 ? "Now" : formatHour(time);
     return `
-      <article class="hour-card">
-        <span>${formatHour(time)}</span>
+      <article class="hour-card${position === 0 ? " current" : ""}">
+        <span>${label}</span>
         <strong>${Math.round(data.hourly.temperature_2m[index])}${degree(tempUnit)}</strong>
         <div class="hour-icon" aria-hidden="true">${weatherIcon(wcode, isHourDay)}</div>
         <div class="code">${escapeHtml(code)}</div>
@@ -2860,7 +2973,7 @@ function renderDaily(data, tempUnit, precipUnit) {
     const wcode = data.daily.weather_code[index];
     const code = weatherCodes[wcode] || "Weather";
     return `
-      <article class="day-row" data-index="${index}" role="button" tabindex="0" aria-label="${formatDay(time, index)} detail">
+      <article class="day-row${index === 0 ? " current" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${formatDay(time, index)} detail">
         <div class="day-label">
           <div class="day-icon" aria-hidden="true">${weatherIcon(wcode, true)}</div>
           <div>
@@ -2875,7 +2988,10 @@ function renderDaily(data, tempUnit, precipUnit) {
           </div>
           <span class="day-high">${high}°</span>
         </div>
-        <div class="day-meta day-rain">${rain}% rain<br>${formatAmount(precip)} ${precipUnit}</div>
+        <div class="day-rain" aria-label="${rain}% rain, ${formatAmount(precip)} ${precipUnit} precipitation">
+          <span>${rain}%</span>
+          <small>${formatAmount(precip)} ${precipUnit}</small>
+        </div>
       </article>
     `;
   }).join("");
@@ -4049,11 +4165,23 @@ function degree(unit) {
   return `°${unit}`;
 }
 
+function formatClock(hour, minute = 0, compact = false, showMinutes = true) {
+  const normalized = ((Math.floor(hour) % 24) + 24) % 24;
+  const hr = normalized % 12 || 12;
+  const suffix = normalized < 12 ? (compact ? "a" : "AM") : (compact ? "p" : "PM");
+  const mins = String(Math.floor(minute)).padStart(2, "0");
+  return showMinutes ? `${hr}:${mins}${compact ? "" : " "}${suffix}` : `${hr}${compact ? "" : " "}${suffix}`;
+}
+
 function formatTime(value) {
+  const parts = localDateTimeParts(value);
+  if (parts) return formatClock(parts.hour, parts.minute);
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
 function formatHour(value) {
+  const parts = localDateTimeParts(value);
+  if (parts) return formatClock(parts.hour, 0, false, false);
   return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(value));
 }
 
@@ -4066,9 +4194,7 @@ function formatDay(value, index) {
 // Day relative to today: 0 = today, 1 = tomorrow, etc. Used to mark the day
 // rollover inside the rolling next-24h views.
 function daysFromToday(value) {
-  const d = new Date(value);
-  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  return Math.round((startOf(d) - startOf(new Date())) / 86400000);
+  return daysFromForecastToday(value);
 }
 
 // Full divider label for the hourly list, e.g. "Tomorrow · Tuesday".
@@ -4270,12 +4396,12 @@ const SKY_CFG = {
     thunder:         { bg: "linear-gradient(160deg,#040406 0%,#09090e 100%)",             stars: 0,  moon: false, moonGlow: false, sun: false, clouds: 5, rain: true,  snow: false, lightning: true  }
   },
   day: {
-    clear:           { bg: "linear-gradient(180deg,#1260a8 0%,#1e90d8 45%,#56b8f0 100%)", stars: 0, moon: false, moonGlow: false, sun: true,  clouds: 0, rain: false, snow: false, lightning: false },
-    "partly-cloudy": { bg: "linear-gradient(180deg,#1470b8 0%,#40a8e8 100%)",             stars: 0, moon: false, moonGlow: false, sun: true,  clouds: 2, rain: false, snow: false, lightning: false },
-    overcast:        { bg: "linear-gradient(180deg,#46606c 0%,#6a8490 100%)",             stars: 0, moon: false, moonGlow: false, sun: false, clouds: 5, rain: false, snow: false, lightning: false },
-    rain:            { bg: "linear-gradient(180deg,#303840 0%,#485460 100%)",             stars: 0, moon: false, moonGlow: false, sun: false, clouds: 4, rain: true,  snow: false, lightning: false },
-    snow:            { bg: "linear-gradient(180deg,#586070 0%,#7a8898 100%)",             stars: 0, moon: false, moonGlow: false, sun: false, clouds: 3, rain: false, snow: true,  lightning: false },
-    thunder:         { bg: "linear-gradient(180deg,#1e2028 0%,#2e3038 100%)",             stars: 0, moon: false, moonGlow: false, sun: false, clouds: 5, rain: true,  snow: false, lightning: true  }
+    clear:           { bg: "linear-gradient(180deg,#7fa8d8 0%,#b6d2ea 48%,#dcecf6 100%)", stars: 0, moon: false, moonGlow: false, sun: true,  clouds: 0, rain: false, snow: false, lightning: false },
+    "partly-cloudy": { bg: "linear-gradient(180deg,#86add9 0%,#bfd8eb 58%,#e3eef6 100%)", stars: 0, moon: false, moonGlow: false, sun: true,  clouds: 2, rain: false, snow: false, lightning: false },
+    overcast:        { bg: "linear-gradient(180deg,#92a8b6 0%,#bac8d2 58%,#dce5ea 100%)", stars: 0, moon: false, moonGlow: false, sun: false, clouds: 5, rain: false, snow: false, lightning: false },
+    rain:            { bg: "linear-gradient(180deg,#718796 0%,#aab8c2 58%,#d3dce2 100%)", stars: 0, moon: false, moonGlow: false, sun: false, clouds: 4, rain: true,  snow: false, lightning: false },
+    snow:            { bg: "linear-gradient(180deg,#a5b7c5 0%,#cbd8e0 58%,#edf3f6 100%)", stars: 0, moon: false, moonGlow: false, sun: false, clouds: 3, rain: false, snow: true,  lightning: false },
+    thunder:         { bg: "linear-gradient(180deg,#4f6070 0%,#808f9b 58%,#b9c5cf 100%)", stars: 0, moon: false, moonGlow: false, sun: false, clouds: 5, rain: true,  snow: false, lightning: true  }
   }
 };
 
@@ -4523,10 +4649,11 @@ function openDayFromIndex(i) {
 function openNext24Detail() {
   const data = state.forecast;
   if (!data) return;
-  const now = Date.now();
+  const now = forecastNowMs(data);
   const indices = [];
   data.hourly.time.forEach((t, h) => {
-    if (new Date(t).getTime() >= now - 3600000 && indices.length < 24) indices.push(h);
+    const ms = parseForecastTimestamp(t, data);
+    if (ms !== null && ms >= now - 3600000 && indices.length < 24) indices.push(h);
   });
   openDayDetail({
     indices,
@@ -4648,12 +4775,17 @@ function hourlyRowNote(hour, windUnit, precipUnit) {
 }
 
 function isCurrentHour(time) {
-  const d = new Date(time);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate() &&
-    d.getHours() === now.getHours();
+  const target = localDateTimeParts(time);
+  const current = localDateTimeParts(state.forecast?.current?.time);
+  if (target && current) {
+    return target.year === current.year &&
+      target.month === current.month &&
+      target.day === current.day &&
+      target.hour === current.hour;
+  }
+  const targetMs = parseForecastTimestamp(time, state.forecast);
+  const now = forecastNowMs(state.forecast);
+  return targetMs !== null && Math.abs(targetMs - now) < 1800000;
 }
 
 function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) {
@@ -4714,6 +4846,8 @@ function smoothPath(points) {
 }
 
 function shortHour(t) {
+  const parts = localDateTimeParts(t);
+  if (parts) return formatClock(parts.hour, 0, true, false);
   const h = new Date(t).getHours();
   const hr = h % 12 === 0 ? 12 : h % 12;
   return `${hr}${h < 12 ? "a" : "p"}`;
@@ -4861,7 +4995,7 @@ function drawHourlyGraph() {
 
   // Vertical line at each midnight so the day rollover is visible on the curve.
   const dayLines = hrs.map((h, i) => {
-    if (i === 0 || new Date(h.time).getHours() !== 0) return "";
+    if (i === 0 || Math.floor(forecastLocalHour(h.time)) !== 0) return "";
     const lx = x(i);
     const nearRight = lx > VW - 46;
     const tx = nearRight ? lx - 4 : lx + 4;
@@ -4870,10 +5004,12 @@ function drawHourlyGraph() {
       `<text x="${tx.toFixed(1)}" y="${(tempTop + 9).toFixed(1)}" text-anchor="${anchor}" class="graph-day-label">${escapeHtml(dayShortLabel(h.time))}</text>`;
   }).join("");
 
-  const firstMs = new Date(hrs[0].time).getTime();
-  const lastMs = new Date(hrs[n - 1].time).getTime();
-  const nowMs = Date.now();
-  const nowX = firstMs < lastMs ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW : null;
+  const firstMs = parseForecastTimestamp(hrs[0].time, state.forecast);
+  const lastMs = parseForecastTimestamp(hrs[n - 1].time, state.forecast);
+  const nowMs = forecastNowMs(state.forecast);
+  const nowX = firstMs !== null && lastMs !== null && firstMs < lastMs
+    ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW
+    : null;
   const nowMarker = showNow && nowX != null && nowX >= padL && nowX <= padL + plotW ? `
     <line x1="${nowX.toFixed(1)}" y1="${tempTop}" x2="${nowX.toFixed(1)}" y2="${precipBottom}" class="graph-now-line"/>
     <rect x="${(nowX - 13).toFixed(1)}" y="2" width="26" height="14" rx="7" class="graph-now-pill"/>
@@ -4955,8 +5091,11 @@ function drawHourlyGraph() {
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
 
   // Default readout: the hour nearest "now" if present, else the first point.
-  const now = Date.now();
-  let def = hrs.findIndex((h) => Math.abs(new Date(h.time).getTime() - now) < 1800000);
+  const now = forecastNowMs(state.forecast);
+  let def = hrs.findIndex((h) => {
+    const ms = parseForecastTimestamp(h.time, state.forecast);
+    return ms !== null && Math.abs(ms - now) < 1800000;
+  });
   if (def < 0) def = 0;
   // Defer to next frame so the sheet has laid out and the callout can be
   // measured/positioned correctly (it's still hidden when this runs).
