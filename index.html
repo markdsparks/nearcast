@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.50">
+    <link rel="stylesheet" href="styles.css?v=1.10.51">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -108,61 +108,62 @@
           </button>
         </section>
 
-        <section class="hero" id="hero" aria-label="Forecast details">
-          <div class="hero-metrics" aria-label="Current conditions and today's forecast">
-            <p class="metrics-group-label">Right now</p>
-            <div class="metrics-group">
-              <div>
+        <section class="hero" id="hero" aria-label="Today at a glance">
+          <div class="today-glance" aria-label="Today at a glance">
+            <div class="glance-head">
+              <p class="glance-kicker">Today at a glance</p>
+              <p class="glance-title" id="glanceTitle">Forecast is loading.</p>
+            </div>
+
+            <div class="glance-signals">
+              <div class="glance-signal" id="feelsSignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="7" y="2" width="2" height="7" rx="1" fill="currentColor"/><circle cx="8" cy="11.5" r="2.5" fill="currentColor"/><line x1="10" y1="4" x2="12" y2="4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="10" y1="6.5" x2="12" y2="6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
                   Feels
                 </span>
                 <strong id="feelsLike">--</strong>
+                <small id="feelsContext">--</small>
               </div>
-              <div>
+              <div class="glance-signal" id="rainSignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5 C8 2.5 4 7.5 4 10.5 a4 4 0 0 0 8 0 C12 7.5 8 2.5 8 2.5z" fill="currentColor" opacity="0.85"/></svg>
                   Rain
                 </span>
                 <strong id="rainChance">--</strong>
+                <small id="rainContext">--</small>
               </div>
-              <div>
+              <div class="glance-signal" id="windSignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 5.5 Q6 3.5 8 5.5 Q10 7.5 14 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><path d="M2 9 Q5 7 7 9 Q9 11 13 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><line x1="11" y1="12" x2="14" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
                   Wind
                 </span>
                 <strong id="wind">--</strong>
+                <small id="windContext">--</small>
               </div>
-              <div>
+              <div class="glance-signal glance-signal-optional" id="humiditySignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2 C8 2 4.5 6.5 4.5 9.5 a3.5 3.5 0 0 0 7 0 C11.5 6.5 8 2 8 2z" stroke="currentColor" stroke-width="1.2" fill="currentColor" opacity="0.25"/><line x1="6" y1="9.5" x2="10" y2="9.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/></svg>
-                  Humidity
+                  Air
                 </span>
                 <strong id="humidity">--</strong>
+                <small id="humidityContext">--</small>
               </div>
             </div>
-            <p class="metrics-group-label">Today</p>
-            <div class="metrics-group">
-              <div>
-                <span>
-                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.8" fill="currentColor"/><g stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><line x1="8" y1="1" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="15"/><line x1="1" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="15" y2="8"/><line x1="3.1" y1="3.1" x2="4.5" y2="4.5"/><line x1="11.5" y1="11.5" x2="12.9" y2="12.9"/><line x1="12.9" y1="3.1" x2="11.5" y2="4.5"/><line x1="4.5" y1="11.5" x2="3.1" y2="12.9"/></g></svg>
-                  UV Peak
-                </span>
-                <strong id="uv">--</strong>
+
+            <div class="daylight-card" id="daylightCard">
+              <div class="daylight-head">
+                <span>Daylight</span>
+                <strong id="daylightSummary">--</strong>
               </div>
-              <div>
-                <span>
-                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11 Q8 4 13 11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><line x1="8" y1="2" x2="8" y2="4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="1" y1="12.5" x2="15" y2="12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="5.5" y1="4.5" x2="4" y2="3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="10.5" y1="4.5" x2="12" y2="3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-                  Sunrise
-                </span>
-                <strong id="sunrise">--</strong>
+              <div class="daylight-track" aria-hidden="true">
+                <span class="daylight-fill" id="daylightFill"></span>
+                <span class="daylight-now" id="daylightNow"></span>
+                <span class="daylight-uv" id="daylightUv"></span>
               </div>
-              <div>
-                <span>
-                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8 Q8 1 13 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><line x1="8" y1="9.5" x2="8" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="1" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="5.5" y1="10" x2="4" y2="11.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="10.5" y1="10" x2="12" y2="11.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-                  Sunset
-                </span>
-                <strong id="sunset">--</strong>
+              <div class="daylight-times">
+                <span><b>Sunrise</b><strong id="sunrise">--</strong></span>
+                <span><b>UV peak</b><strong id="uv">--</strong></span>
+                <span><b>Sunset</b><strong id="sunset">--</strong></span>
               </div>
             </div>
           </div>
@@ -353,6 +354,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.50"></script>
+    <script src="app.js?v=1.10.51"></script>
   </body>
 </html>

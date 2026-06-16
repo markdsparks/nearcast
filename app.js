@@ -1,4 +1,4 @@
-const VERSION = "1.10.50";
+const VERSION = "1.10.51";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -174,13 +174,24 @@ const els = {
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
   nowSummary: document.querySelector("#nowSummary"),
+  glanceTitle: document.querySelector("#glanceTitle"),
+  glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
+  feelsContext: document.querySelector("#feelsContext"),
   rainChance: document.querySelector("#rainChance"),
+  rainContext: document.querySelector("#rainContext"),
   wind: document.querySelector("#wind"),
+  windContext: document.querySelector("#windContext"),
   uv: document.querySelector("#uv"),
   humidity: document.querySelector("#humidity"),
+  humiditySignal: document.querySelector("#humiditySignal"),
+  humidityContext: document.querySelector("#humidityContext"),
   sunrise: document.querySelector("#sunrise"),
   sunset: document.querySelector("#sunset"),
+  daylightSummary: document.querySelector("#daylightSummary"),
+  daylightFill: document.querySelector("#daylightFill"),
+  daylightNow: document.querySelector("#daylightNow"),
+  daylightUv: document.querySelector("#daylightUv"),
   insights: document.querySelector("#insights"),
   insightCards: document.querySelector("#insightCards"),
   briefing: document.querySelector("#briefing"),
@@ -691,6 +702,12 @@ function forecastLocalHour(value) {
 
 function forecastCurrentHour(data = state.forecast) {
   return Math.floor(forecastLocalHour(data?.current?.time));
+}
+
+function currentRainChance(data = state.forecast) {
+  const chances = data?.hourly?.precipitation_probability || [];
+  const hour = forecastCurrentHour(data);
+  return chances[hour] ?? chances[0] ?? data?.daily?.precipitation_probability_max?.[0] ?? 0;
 }
 
 function daysFromForecastToday(value, data = state.forecast) {
@@ -1209,7 +1226,7 @@ function renderForecast(data, place) {
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const current = data.current;
-  const firstRainChance = data.hourly.precipitation_probability[0] ?? data.daily.precipitation_probability_max[0];
+  const firstRainChance = currentRainChance(data);
   const todayCode = weatherCodes[current.weather_code] || "Weather";
 
   const isDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
@@ -1233,6 +1250,7 @@ function renderForecast(data, place) {
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(current.weather_code, isDay);
 
+  renderTodayGlance(data, tempUnit, windUnit);
   renderNowcast(data);
   renderInsights(data, windUnit);
   resetBriefing();
@@ -1242,6 +1260,128 @@ function renderForecast(data, place) {
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(current.weather_code, isDay);
+}
+
+function renderTodayGlance(data, tempUnit, windUnit) {
+  const current = data.current;
+  const feelsVal = Math.round(current.apparent_temperature);
+  const actualVal = Math.round(current.temperature_2m);
+  const diff = feelsVal - actualVal;
+  const rainVal = currentRainChance(data);
+  const windVal = Math.round(current.wind_speed_10m);
+  const humidityVal = current.relative_humidity_2m ?? 0;
+  const uvVal = Math.round(data.daily.uv_index_max[0] || 0);
+  const comfort = comfortGlance(actualVal, feelsVal, humidityVal, tempUnit);
+  const rain = rainGlance(data, rainVal);
+  const wind = windGlance(windVal, windUnit);
+  const showHumidity = humidityVal >= 70 || humidityVal <= 30 || Math.abs(diff) >= 5;
+
+  if (els.glanceTitle) {
+    els.glanceTitle.textContent = `${comfort.headline}, ${rain.headline.toLowerCase()}, ${wind.headline.toLowerCase()}.`;
+  }
+  if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
+  if (els.rainContext) els.rainContext.textContent = rain.context;
+  if (els.windContext) els.windContext.textContent = wind.context;
+  if (els.humidityContext) els.humidityContext.textContent = humidityContext(humidityVal);
+  if (els.humiditySignal) els.humiditySignal.classList.toggle("is-visible", showHumidity);
+  if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", showHumidity);
+
+  renderDaylightGlance(data, uvVal);
+}
+
+function comfortGlance(actual, feels, humidity, tempUnit) {
+  const feelsF = tempUnit === "F" ? feels : feels * 9 / 5 + 32;
+  const actualF = tempUnit === "F" ? actual : actual * 9 / 5 + 32;
+  if (feelsF >= 96) return { headline: "Dangerously hot" };
+  if (feelsF >= 88) return { headline: humidity >= 65 ? "Hot and humid" : "Hot" };
+  if (feelsF >= 78) return { headline: humidity >= 65 ? "Warm and muggy" : "Warm" };
+  if (feelsF >= 60) return { headline: Math.abs(feelsF - actualF) <= 3 ? "Comfortable" : "Mild" };
+  if (feelsF >= 45) return { headline: "Cool" };
+  return { headline: "Cold" };
+}
+
+function feelsContext(diff, tempUnit) {
+  const unit = degree(tempUnit);
+  if (diff >= 5) return `Feels ${diff}${unit} warmer`;
+  if (diff <= -5) return `Feels ${Math.abs(diff)}${unit} cooler`;
+  return "Near the air temp";
+}
+
+function rainGlance(data, currentChance) {
+  if (currentChance >= 60) return { headline: "rain likely now", context: `${currentChance}% now` };
+  if (currentChance >= 30) return { headline: "rain possible now", context: `${currentChance}% now` };
+
+  const next = nextRainChance(data, 12, 35);
+  if (next) {
+    return {
+      headline: `rain possible near ${formatTime(next.time)}`,
+      context: `${next.chance}% around ${formatTime(next.time)}`
+    };
+  }
+
+  const start = forecastCurrentHour(data);
+  const maxToday = Math.max(...(data.hourly.precipitation_probability || []).slice(start, start + 12).filter((value) => Number.isFinite(value)), 0);
+  if (maxToday >= 20) return { headline: "rain chances stay low", context: `Peak ${maxToday}% nearby` };
+  return { headline: "staying dry nearby", context: "No meaningful rain nearby" };
+}
+
+function nextRainChance(data, hoursAhead, threshold) {
+  const start = forecastCurrentHour(data);
+  const chances = data.hourly.precipitation_probability || [];
+  const times = data.hourly.time || [];
+  const end = Math.min(chances.length, start + hoursAhead + 1);
+  for (let i = start + 1; i < end; i += 1) {
+    if ((chances[i] || 0) >= threshold && times[i]) {
+      return { chance: chances[i], time: times[i] };
+    }
+  }
+  return null;
+}
+
+function windGlance(speed, unit) {
+  const mph = unit === "mph" ? speed : speed / 1.609344;
+  if (mph >= 30) return { headline: "very windy", context: "Secure loose items" };
+  if (mph >= 20) return { headline: "windy", context: "Noticeable gusts" };
+  if (mph >= 12) return { headline: "breezy", context: "A steady breeze" };
+  if (mph >= 5) return { headline: "light wind", context: "Gentle movement" };
+  return { headline: "calm wind", context: "Barely moving" };
+}
+
+function humidityContext(value) {
+  if (value >= 80) return "Very muggy";
+  if (value >= 65) return "Muggy air";
+  if (value <= 25) return "Very dry";
+  if (value <= 35) return "Dry air";
+  return "In the background";
+}
+
+function renderDaylightGlance(data, uvVal) {
+  const sunriseISO = data.daily.sunrise[0];
+  const sunsetISO = data.daily.sunset[0];
+  const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
+  const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
+  const nowMs = forecastNowMs(data);
+  let progress = 0;
+  let summary = "--";
+
+  if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) {
+    progress = Math.max(0, Math.min(100, ((nowMs - sunriseMs) / (sunsetMs - sunriseMs)) * 100));
+    if (nowMs < sunriseMs) {
+      summary = `Sunrise ${formatTime(sunriseISO)}`;
+    } else if (nowMs > sunsetMs) {
+      summary = `Sunset was ${formatTime(sunsetISO)}`;
+    } else {
+      summary = `Light until ${formatTime(sunsetISO)}`;
+    }
+  }
+
+  if (els.daylightSummary) els.daylightSummary.textContent = summary;
+  if (els.daylightFill) els.daylightFill.style.setProperty("--daylight-progress", `${progress}%`);
+  if (els.daylightNow) els.daylightNow.style.setProperty("--marker-position", `${progress}%`);
+  if (els.daylightUv) {
+    els.daylightUv.style.setProperty("--uv-position", "52%");
+    els.daylightUv.hidden = uvVal < 2;
+  }
 }
 
 function buildSummary(data) {
@@ -4246,12 +4386,16 @@ function removeSavedPlace(id) {
 }
 
 function bindMetricTips(data, tempUnit, windUnit) {
+  document.querySelectorAll(".today-glance .has-tip").forEach((card) => {
+    card.classList.remove("has-tip");
+    delete card.dataset.tip;
+  });
   const current = data.current;
   const isFahrenheit = tempUnit === "F";
   const feelsVal = Math.round(current.apparent_temperature);
   const actualVal = Math.round(current.temperature_2m);
   const diff = feelsVal - actualVal;
-  const rainVal = data.hourly.precipitation_probability[0] ?? data.daily.precipitation_probability_max[0] ?? 0;
+  const rainVal = currentRainChance(data);
   const windVal = Math.round(current.wind_speed_10m);
   const uvVal = Math.round(data.daily.uv_index_max[0] || 0);
   const humidityVal = current.relative_humidity_2m ?? 0;
@@ -4262,15 +4406,13 @@ function bindMetricTips(data, tempUnit, windUnit) {
     feelsLike: metricTipFeels(diff, feelsVal, tempUnit),
     rainChance: metricTipRain(rainVal),
     wind: metricTipWind(windVal, windUnit),
-    uv: metricTipUv(uvVal),
     humidity: metricTipHumidity(humidityVal),
-    sunrise: sunriseTime ? `Golden light starts at ${sunriseTime}. Temps are coolest right after dawn.` : null,
-    sunset: sunsetTime ? `Sun sets at ${sunsetTime}. Temperatures will drop noticeably within the hour.` : null
+    daylightCard: metricTipDaylight(uvVal, sunriseTime, sunsetTime)
   };
 
   Object.entries(tips).forEach(([id, tip]) => {
     if (!tip) return;
-    const card = document.getElementById(id)?.closest(".metrics-group > div");
+    const card = document.getElementById(id)?.closest(".glance-signal, .daylight-card");
     if (!card) return;
     card.dataset.tip = tip;
     card.classList.add("has-tip");
@@ -4309,6 +4451,13 @@ function metricTipUv(uv) {
   return `Today's UV index stays low at ${uv}. No special sun protection needed.`;
 }
 
+function metricTipDaylight(uv, sunriseTime, sunsetTime) {
+  const daylight = sunriseTime && sunsetTime
+    ? `Daylight runs from ${sunriseTime} to ${sunsetTime}.`
+    : "Daylight timing is based on the selected place.";
+  return `${daylight} ${metricTipUv(uv)}`;
+}
+
 function metricTipHumidity(pct) {
   if (pct >= 85) return `Very high humidity. Sweat won't evaporate well — the heat index will feel elevated. Stay cool.`;
   if (pct >= 70) return `Muggy conditions. You'll notice the air feels heavy, especially during activity.`;
@@ -4344,7 +4493,8 @@ function hideMetricTip() {
 }
 
 function initMetricTipListeners() {
-  const metricsEl = document.querySelector(".hero-metrics");
+  const metricsEl = document.querySelector(".today-glance");
+  if (!metricsEl) return;
 
   // Hover: mouse only
   metricsEl.addEventListener("mouseenter", (event) => {
@@ -4390,7 +4540,7 @@ function initMetricTipListeners() {
   }, { passive: false });
 
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".hero-metrics") && !event.target.closest("#metricTip")) {
+    if (!event.target.closest(".today-glance") && !event.target.closest("#metricTip")) {
       hideMetricTip();
     }
   });
