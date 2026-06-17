@@ -1963,35 +1963,37 @@ h2 {
 
 .storm-potential-badge {
   position: absolute;
-  right: -5px;
-  bottom: -4px;
+  right: -7px;
+  bottom: -5px;
   z-index: 2;
   display: grid !important;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid rgba(245, 181, 61, 0.82);
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 230, 137, 0.98), rgba(238, 163, 43, 0.96));
-  color: #2b1c02 !important;
-  box-shadow: 0 5px 14px rgba(177, 103, 18, 0.24), 0 0 0 2px rgba(255, 255, 255, 0.70);
+  width: 18px;
+  height: 20px;
+  border: 1px solid rgba(245, 181, 61, 0.88);
+  border-radius: 7px 7px 8px 8px;
+  background: rgba(20, 27, 38, 0.94);
+  color: #ffd95a !important;
+  box-shadow: 0 5px 14px rgba(177, 103, 18, 0.24), 0 0 0 2px rgba(255, 255, 255, 0.74);
   font-size: 0;
 }
 
 :root[data-theme="dark"] .storm-potential-badge {
+  background: rgba(8, 12, 20, 0.96);
   box-shadow: 0 5px 18px rgba(245, 181, 61, 0.22), 0 0 0 2px rgba(12, 18, 28, 0.78);
 }
 
 .storm-potential-badge svg {
-  width: 72% !important;
-  height: 72% !important;
+  width: 16px !important;
+  height: 18px !important;
+  filter: drop-shadow(0 0 3px rgba(255, 217, 90, 0.36));
 }
 
 .sheet-icon .storm-potential-badge {
-  right: -3px;
-  bottom: -3px;
-  width: 17px;
-  height: 17px;
+  right: -4px;
+  bottom: -5px;
+  width: 19px;
+  height: 21px;
 }
 
 .rain-bar {
@@ -2038,8 +2040,8 @@ h2 {
 }
 
 .day-icon .storm-potential-badge {
-  right: -4px;
-  bottom: -3px;
+  right: -6px;
+  bottom: -5px;
 }
 
 .day-row {
@@ -3564,8 +3566,8 @@ body.map-immersive-active #mapLegend {
   height: 100%;
 }
 .sheet-hour-icon .storm-potential-badge {
-  right: -6px;
-  bottom: -4px;
+  right: -8px;
+  bottom: -5px;
 }
 .sheet-hour-main {
   display: flex;

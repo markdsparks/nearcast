@@ -1,4 +1,4 @@
-const VERSION = "1.10.82";
+const VERSION = "1.10.83";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -460,7 +460,7 @@ function hasThunderPotential(rawCode, pop, shownCode) {
 function thunderBadgeHtml(label = "Thunder possible") {
   return `<span class="storm-potential-badge" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <path d="M11.7 1.7 4.4 11h4.4l-1 7.3 7.8-10.7h-4.5l.6-5.9Z" fill="currentColor"/>
+      <path d="M12.8 1.2 4.7 10.9h4.5L7.3 18.8l8.5-10.5h-4.4l1.4-7.1Z" fill="currentColor"/>
     </svg>
   </span>`;
 }
