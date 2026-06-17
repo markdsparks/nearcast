@@ -1921,17 +1921,19 @@ h2 {
   color: var(--blue);
 }
 
-/* Colored temps pair a per-temp hue (set inline) with a theme-aware lightness
-   so they stay legible on the light glass and pop on the dark glass. */
-:root { --temp-text-l: 38%; }
-:root[data-theme="dark"] { --temp-text-l: 66%; }
+/* Colored temps use OKLCH: its lightness is perceptually uniform, so a single
+   theme-aware lightness gives every hue (incl. green, which washed out in HSL)
+   the same contrast on the light/dark glass. Hue is set inline per temp.
+   Browsers without OKLCH simply fall back to the inherited ink color. */
+:root { --temp-text-l: 0.50; }
+:root[data-theme="dark"] { --temp-text-l: 0.80; }
 
 .hour-card .hour-temp {
   font-size: 1.1rem;
   font-weight: 850;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
-  color: hsl(var(--t-h, 220), var(--t-s, 0%), var(--temp-text-l));
+  color: oklch(var(--temp-text-l) 0.13 var(--t-h, 230));
 }
 
 .hour-card .hour-rain {
@@ -2133,7 +2135,8 @@ h2 {
    controls, timeline and attribution, so the glimpse itself stays chrome-free. */
 .map-panel .map-toolbar,
 .map-panel .timeline,
-.map-panel .map-credit {
+.map-panel .map-credit,
+.map-panel .map-legend {
   display: none;
 }
 

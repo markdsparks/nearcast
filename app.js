@@ -1,4 +1,4 @@
-const VERSION = "1.10.74";
+const VERSION = "1.10.75";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3812,13 +3812,12 @@ function renderHourly(data, tempUnit) {
     const code = weatherCodes[wcode] || "Weather";
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
     const temp = Math.round(data.hourly.temperature_2m[index]);
-    const { h, s } = tempHueSat(temp);
     const label = position === 0 ? "Now" : formatHour(time);
     return `
       <article class="hour-card${position === 0 ? " current" : ""}" title="${escapeHtml(code)}">
         <span class="hour-label">${label}</span>
         <div class="hour-icon" aria-hidden="true">${weatherIcon(wcode, isHourDay)}</div>
-        <strong class="hour-temp" style="--t-h:${h.toFixed(0)};--t-s:${s.toFixed(0)}%">${temp}°</strong>
+        <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
         <span class="hour-rain${rain >= 20 ? " wet" : ""}">${rain >= 20 ? `${rain}%` : ""}</span>
         <div class="rain-bar" aria-hidden="true"><i style="width:${rain}%"></i></div>
       </article>
@@ -3862,24 +3861,28 @@ function hslStop([, h, s, l]) {
   return `hsl(${(((h % 360) + 360) % 360)}, ${s}%, ${l}%)`;
 }
 
-// Hue + saturation for a temperature, without lightness — so colored temp text
-// can pair it with a theme-aware lightness in CSS and stay legible on both the
-// light and dark glass backgrounds (the baked-in lightness only worked on dark).
-function tempHueSat(value, unit = state.unit) {
+// OKLCH hue for a temperature, paired in CSS with a theme-aware OKLCH lightness.
+// HSL "lightness" isn't perceptually uniform — green at a given L looks far
+// brighter than blue/red, so colored temps washed out on the light background.
+// OKLCH lightness IS perceptual, so one lightness value gives every hue the same
+// contrast. Anchors mirror TEMP_SCALE (cold→hot) but in OKLCH hue degrees.
+const TEMP_OKLCH_HUE = [
+  [10, 300], [25, 266], [40, 232], [55, 178], [68, 146],
+  [78, 100], [88, 64], [100, 33], [112, 18]
+];
+
+function tempOklchHue(value, unit = state.unit) {
   const f = unit === "celsius" ? value * 9 / 5 + 32 : value;
-  const s = TEMP_SCALE;
-  const stop = (st) => ({ h: ((st[1] % 360) + 360) % 360, s: st[2] });
-  if (f <= s[0][0]) return stop(s[0]);
-  if (f >= s[s.length - 1][0]) return stop(s[s.length - 1]);
+  const s = TEMP_OKLCH_HUE;
+  if (f <= s[0][0]) return s[0][1];
+  if (f >= s[s.length - 1][0]) return s[s.length - 1][1];
   for (let i = 0; i < s.length - 1; i++) {
     if (f >= s[i][0] && f <= s[i + 1][0]) {
       const k = (f - s[i][0]) / (s[i + 1][0] - s[i][0]);
-      const h = s[i][1] + (s[i + 1][1] - s[i][1]) * k;
-      const sa = s[i][2] + (s[i + 1][2] - s[i][2]) * k;
-      return { h: ((h % 360) + 360) % 360, s: sa };
+      return s[i][1] + (s[i + 1][1] - s[i][1]) * k;
     }
   }
-  return stop(s[s.length - 1]);
+  return s[s.length - 1][1];
 }
 
 function renderDaily(data, tempUnit, precipUnit) {
