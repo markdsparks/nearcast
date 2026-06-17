@@ -1033,7 +1033,7 @@ h2 {
 
 .daylight-now-badge {
   position: absolute;
-  top: 1px;
+  top: -9px;
   left: var(--now-x, 50%);
   z-index: 2;
   min-width: 34px;
