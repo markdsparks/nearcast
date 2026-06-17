@@ -1,4 +1,4 @@
-const VERSION = "1.10.80";
+const VERSION = "1.10.81";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5989,19 +5989,19 @@ function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
   if (hour.code >= 95) {
     const hail = hour.code === 96 || hour.code === 99 ? " Hail is also possible." : "";
     const amount = hour.precip > 0.02 ? ` Around ${formatAmount(hour.precip)} ${precipUnit} could fall.` : "";
-    return `Thunderstorms are the main watch item for this hour. Stay alert for lightning and quick downpours.${hail}${amount}`;
+    return `Thunderstorms possible. Watch for lightning and quick downpours.${hail}${amount}`;
   }
   if (hour.pop >= 50) {
-    const amount = hour.precip > 0.02 ? `, ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
-    return `Rain is the main watch item for this hour${amount}.`;
+    const amount = hour.precip > 0.02 ? `; ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
+    return `Rain likely${amount}.`;
   }
-  if (hour.gust >= 25) return `The wind is more noticeable here, with gusts near ${Math.round(hour.gust)} ${windUnit}.`;
-  if (hour.uv >= 6) return `Sun exposure is elevated; sunscreen is useful if you are outside.`;
+  if (hour.gust >= 25) return `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
+  if (hour.uv >= 6) return `High UV. Sunscreen helps outdoors.`;
   const feelsDelta = Math.round(hour.feels - hour.temp);
   if (Math.abs(feelsDelta) >= 6) {
-    return `It will feel ${Math.abs(feelsDelta)}${degree(tempUnit)} ${feelsDelta > 0 ? "warmer" : "cooler"} than the air temperature.`;
+    return `Feels ${Math.abs(feelsDelta)}${degree(tempUnit)} ${feelsDelta > 0 ? "warmer" : "cooler"} than the air temp.`;
   }
-  return "No major weather flags for this hour.";
+  return "No major weather flags.";
 }
 
 function toggleSheetHourRow(row) {
