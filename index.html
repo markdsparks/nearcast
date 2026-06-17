@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.66">
+    <link rel="stylesheet" href="styles.css?v=1.10.67">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -167,6 +167,11 @@
                     <path class="daylight-night-arc" id="daylightNightPath"></path>
                     <path class="daylight-fill" id="daylightFill"></path>
                     <path class="daylight-uv-band" id="daylightUvBand"></path>
+                    <g class="daylight-now-marker" id="daylightNowMarker" hidden>
+                      <line class="graph-now-line" id="daylightNowLine" x1="0" y1="12" x2="0" y2="122"></line>
+                      <rect class="graph-now-pill" id="daylightNowPill" x="0" y="4" width="32" height="16" rx="8"></rect>
+                      <text class="graph-now-label" id="daylightNowLabel" x="0" y="15" text-anchor="middle">Now</text>
+                    </g>
                     <line class="daylight-scrub-guide" id="daylightScrubGuide" x1="0" y1="12" x2="0" y2="122" hidden></line>
                   </svg>
                   <span class="daylight-uv" id="daylightUv"></span>
@@ -335,6 +340,7 @@
         <div class="graph-metric-tabs">
           <button class="graph-metric-btn active" id="graphTempBtn" type="button" aria-pressed="true">Temp</button>
           <button class="graph-metric-btn" id="graphWindBtn" type="button" aria-pressed="false">Wind</button>
+          <button class="graph-metric-btn" id="graphSunBtn" type="button" aria-pressed="false">Sun</button>
         </div>
         <span class="graph-metric-hint" id="graphMetricHint">dashed = feels like</span>
       </div>
@@ -378,6 +384,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.66"></script>
+    <script src="app.js?v=1.10.67"></script>
   </body>
 </html>

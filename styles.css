@@ -1027,6 +1027,10 @@ h2 {
   display: none;
 }
 
+.daylight-now-marker[hidden] {
+  display: none;
+}
+
 .daylight-now,
 .daylight-uv,
 .daylight-now-glow {
@@ -3230,6 +3234,9 @@ body.map-immersive-active #mapLegend {
 .graph-callout:empty {
   display: none;
 }
+.graph-callout.is-sun {
+  min-width: 156px;
+}
 .callout-main {
   font-weight: 800;
   font-size: 0.92rem;
@@ -3237,6 +3244,30 @@ body.map-immersive-active #mapLegend {
 .callout-sub {
   font-size: 0.72rem;
   opacity: 0.82;
+}
+.sun-graph .daylight-horizon {
+  stroke: var(--border-glass-md);
+}
+.sun-graph .daylight-night-arc {
+  stroke: rgba(81, 101, 121, 0.22);
+}
+.sun-graph .daylight-fill {
+  stroke: rgba(129, 151, 172, 0.34);
+}
+.sun-graph .daylight-uv-band {
+  stroke: var(--uv-dot);
+  filter: drop-shadow(0 0 7px var(--uv-accent));
+}
+.sun-graph .sun-uv-dot {
+  fill: var(--uv-dot);
+  stroke: var(--panel);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 8px var(--uv-accent));
+}
+.sun-graph .daylight-now,
+.sun-graph .daylight-now-glow,
+.sun-graph .daylight-uv {
+  pointer-events: none;
 }
 
 .sheet-hourly-list {

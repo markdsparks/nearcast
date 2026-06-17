@@ -1,4 +1,4 @@
-const VERSION = "1.10.66";
+const VERSION = "1.10.67";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -153,6 +153,7 @@ const mapTapState = {
 const daylightScrub = {
   chart: null,
   data: null,
+  uv: null,
   points: [],
   defaultIndex: 0,
   activeIndex: 0,
@@ -206,6 +207,10 @@ const els = {
   daylightNightPath: document.querySelector("#daylightNightPath"),
   daylightFill: document.querySelector("#daylightFill"),
   daylightUvBand: document.querySelector("#daylightUvBand"),
+  daylightNowMarker: document.querySelector("#daylightNowMarker"),
+  daylightNowLine: document.querySelector("#daylightNowLine"),
+  daylightNowPill: document.querySelector("#daylightNowPill"),
+  daylightNowLabel: document.querySelector("#daylightNowLabel"),
   daylightScrubGuide: document.querySelector("#daylightScrubGuide"),
   daylightNow: document.querySelector("#daylightNow"),
   daylightNowGlow: document.querySelector("#daylightNowGlow"),
@@ -583,6 +588,7 @@ function bindEvents() {
   document.getElementById("sheetHourlyMode").addEventListener("click", () => setDayDetailMode("hourly"));
   document.getElementById("graphTempBtn").addEventListener("click", () => setGraphMetric("temp"));
   document.getElementById("graphWindBtn").addEventListener("click", () => setGraphMetric("wind"));
+  document.getElementById("graphSunBtn").addEventListener("click", () => setGraphMetric("sun"));
   document.getElementById("dayDetailClose").addEventListener("click", closeDayDetail);
   document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
   document.addEventListener("keydown", (event) => {
@@ -1438,11 +1444,12 @@ function renderDaylightGlance(data, uvVal) {
 }
 
 function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) {
-  const chart = sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs);
+  const chart = sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs, 0);
   if (!chart) {
     [els.daylightNightPath, els.daylightFill, els.daylightUvBand].forEach((path) => {
       if (path) path.setAttribute("d", "");
     });
+    if (els.daylightNowMarker) els.daylightNowMarker.setAttribute("hidden", "");
     resetDaylightScrub();
     return;
   }
@@ -1474,6 +1481,8 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
     }
   }
 
+  positionDaylightNowMarker(chart, nowMs);
+
   const nowPoint = sunPathPoint(chart, nowMs);
   positionSunMarker(els.daylightNow, nowPoint, chart);
   positionSunMarker(els.daylightNowGlow, nowPoint, chart);
@@ -1490,15 +1499,31 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
     els.daylightUv.hidden = !uv.showMarker;
   }
 
-  setupDaylightScrub(data, chart, nowMs);
+  setupDaylightScrub(data, chart, nowMs, uv);
 }
 
-function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs) {
-  const dayStartMs = forecastLocalBoundaryMs(data, 0, 0);
-  const dayEndMs = forecastLocalBoundaryMs(data, 24, 0);
+function positionDaylightNowMarker(chart, nowMs) {
+  if (!els.daylightNowMarker || !chart || nowMs < chart.dayStartMs || nowMs > chart.dayEndMs) {
+    if (els.daylightNowMarker) els.daylightNowMarker.setAttribute("hidden", "");
+    return;
+  }
+  const point = sunPathPoint(chart, nowMs);
+  const x = roundSvg(point.x);
+  els.daylightNowLine?.setAttribute("x1", x);
+  els.daylightNowLine?.setAttribute("x2", x);
+  if (els.daylightNowPill) {
+    els.daylightNowPill.setAttribute("x", roundSvg(clamp(point.x - 16, 0, chart.width - 32)));
+  }
+  els.daylightNowLabel?.setAttribute("x", x);
+  els.daylightNowMarker.removeAttribute("hidden");
+}
+
+function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs, offsetDays = 0) {
+  const dayStartMs = forecastLocalBoundaryMs(data, 0, offsetDays);
+  const dayEndMs = forecastLocalBoundaryMs(data, 24, offsetDays);
   if (!dayStartMs || !dayEndMs || dayEndMs <= dayStartMs) return null;
 
-  const mode = sunExposureMode(data, sunriseMs, sunsetMs);
+  const mode = sunExposureMode(data, sunriseMs, sunsetMs, offsetDays);
   const validSunWindow = mode === "normal";
   const safeSunriseMs = validSunWindow ? sunriseMs : dayStartMs;
   const safeSunsetMs = validSunWindow ? sunsetMs : dayEndMs;
@@ -1577,14 +1602,14 @@ function sunPeakMs(chart) {
   return chart.dayStartMs + (chart.dayEndMs - chart.dayStartMs) / 2;
 }
 
-function sunExposureMode(data, sunriseMs, sunsetMs) {
-  const rows = sunExposureRows(data);
+function sunExposureMode(data, sunriseMs, sunsetMs, offsetDays = 0) {
+  const rows = sunExposureRows(data, offsetDays);
   const hasDay = rows.some((row) => row.isDay);
   const hasNight = rows.some((row) => !row.isDay);
   if (hasDay && !hasNight) return "polar-day";
   if (hasNight && !hasDay) return "polar-night";
   if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) return "normal";
-  return data?.current?.is_day ? "polar-day" : "polar-night";
+  return offsetDays === 0 && data?.current?.is_day ? "polar-day" : "polar-night";
 }
 
 function todaySunMode(data) {
@@ -1593,8 +1618,8 @@ function todaySunMode(data) {
   return sunExposureMode(data, sunriseMs, sunsetMs);
 }
 
-function sunExposureRows(data) {
-  const day = forecastLocalDate(data, 0);
+function sunExposureRows(data, offsetDays = 0) {
+  const day = forecastLocalDate(data, offsetDays);
   return data?.hourly?.time?.map((time, index) => ({
     time,
     isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : null
@@ -1607,9 +1632,10 @@ function positionSunMarker(marker, point, chart) {
   marker.style.setProperty("--sun-y", `${(point.y / chart.height) * 100}%`);
 }
 
-function setupDaylightScrub(data, chart, nowMs) {
+function setupDaylightScrub(data, chart, nowMs, uv = null) {
   daylightScrub.data = data;
   daylightScrub.chart = chart;
+  daylightScrub.uv = uv;
   daylightScrub.points = buildDaylightScrubPoints(data, chart);
   daylightScrub.defaultIndex = nearestDaylightPointIndexByMs(nowMs);
   daylightScrub.activeIndex = daylightScrub.defaultIndex;
@@ -1619,6 +1645,7 @@ function setupDaylightScrub(data, chart, nowMs) {
 function resetDaylightScrub() {
   daylightScrub.chart = null;
   daylightScrub.data = null;
+  daylightScrub.uv = null;
   daylightScrub.points = [];
   daylightScrub.defaultIndex = 0;
   daylightScrub.activeIndex = 0;
@@ -1708,7 +1735,7 @@ function updateDaylightScrub(index, { showGuide = true } = {}) {
   if (els.daylightArc) {
     const dayPct = percentBetween(point.ms, chart.dayStartMs, chart.dayEndMs);
     const valueNow = Math.round((dayPct / 100) * 24 * 10) / 10;
-    const copy = daylightReadoutCopy(point, data, chart);
+    const copy = daylightReadoutCopy(point, data, chart, daylightScrub.uv);
     els.daylightArc.classList.toggle("is-scrubbing", showGuide);
     els.daylightArc.setAttribute("aria-valuenow", String(valueNow));
     els.daylightArc.setAttribute("aria-valuetext", `${copy.time}: ${copy.title}. ${copy.meta}`);
@@ -1734,19 +1761,19 @@ function positionDaylightReadout(point, chart) {
   els.daylightReadout.style.setProperty("--pointer-x", `${pointerX}px`);
 }
 
-function daylightReadoutCopy(point, data, chart) {
+function daylightReadoutCopy(point, data, chart, uvWindow = null) {
   const nowish = Math.abs(point.ms - forecastNowMs(data)) <= 16 * 60 * 1000;
   const time = nowish ? "Now" : formatForecastMs(point.ms, data);
   const uvValue = Math.max(0, Math.round(point.uv || 0));
   const risk = uvRisk(uvValue);
-  let title = point.isDay ? "Sun above horizon" : "Sun below horizon";
-  let meta = point.isDay ? `${risk.label} UV ${uvValue}` : "No UV risk";
+  let title = point.isDay ? "Day" : "Night";
+  let meta = point.isDay ? uvReadoutMeta(point, data, uvWindow) : "No UV risk";
 
   if (chart.mode === "polar-day") {
-    title = "Continuous daylight";
-    meta = `${risk.label} UV ${uvValue}`;
+    title = "All day";
+    meta = uvReadoutMeta(point, data, uvWindow);
   } else if (chart.mode === "polar-night") {
-    title = "Sun stays below horizon";
+    title = "Night";
     meta = "No UV risk";
   } else if (isNearTime(point.ms, chart.sunriseMs, 18 * 60 * 1000)) {
     title = "Sunrise";
@@ -1759,6 +1786,23 @@ function daylightReadoutCopy(point, data, chart) {
   }
 
   return { time, title, meta };
+}
+
+function uvReadoutMeta(point, data, uvWindow = null) {
+  const uvValue = Math.max(0, Math.round(point.uv || 0));
+  const risk = uvRisk(uvValue);
+  if (uvValue < 1) return "UV 0";
+
+  if (uvWindow?.startMs && uvWindow?.endMs && point.ms >= uvWindow.startMs && point.ms <= uvWindow.endMs) {
+    return `${risk.label} UV ${uvValue} · until ${formatForecastMs(uvWindow.endMs, data)}`;
+  }
+  if (uvWindow?.startMs && point.ms < uvWindow.startMs) {
+    return `${risk.label} UV ${uvValue} · higher near ${formatForecastMs(uvWindow.startMs, data)}`;
+  }
+  if (uvWindow?.endMs && point.ms > uvWindow.endMs && uvWindow?.peakMs) {
+    return `${risk.label} UV ${uvValue} · peaked ${formatForecastMs(uvWindow.peakMs, data)}`;
+  }
+  return `${risk.label} UV ${uvValue}`;
 }
 
 function formatForecastMs(ms, data = state.forecast) {
@@ -1825,9 +1869,9 @@ function durationBrief(ms) {
   return `${hours}h ${mins}m`;
 }
 
-function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
-  const dayStartMs = forecastLocalBoundaryMs(data, 0, 0);
-  const dayEndMs = forecastLocalBoundaryMs(data, 24, 0);
+function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv, offsetDays = 0) {
+  const dayStartMs = forecastLocalBoundaryMs(data, 0, offsetDays);
+  const dayEndMs = forecastLocalBoundaryMs(data, 24, offsetDays);
   const hasSunWindow = Boolean(sunriseMs && sunsetMs && sunsetMs > sunriseMs);
   const low = {
     display: `Low ${Math.round(fallbackUv || 0)}`,
@@ -1856,7 +1900,7 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     };
   }
 
-  const day = forecastLocalDate(data, 0);
+  const day = forecastLocalDate(data, offsetDays);
   const rows = data.hourly.time
     .map((time, index) => ({
       time,
@@ -5682,6 +5726,7 @@ function openDayFromIndex(i) {
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
+    dayIndex: i,
     initialMode: getDayDetailMode(),
     showNow: i === 0
   });
@@ -5704,6 +5749,7 @@ function openNext24Detail() {
     isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
     sunriseISO: data.daily.sunrise[0],
     sunsetISO: data.daily.sunset[0],
+    dayIndex: 0,
     initialMode: "hourly",
     persistInitialMode: false,
     showNow: true
@@ -5735,7 +5781,7 @@ function setDayDetailMode(mode, persist = true) {
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
-function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
+function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, dayIndex = 0, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
   const data = state.forecast;
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -5766,7 +5812,7 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, ini
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
-  buildHourlyGraph(hrs, tempUnit, windUnit, showNow);
+  buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO });
   renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow);
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
@@ -5917,12 +5963,12 @@ let graphCtx = null;
 const GRAPH_WIND_COLOR = "#8479ff";
 
 function setGraphMetric(metric) {
-  graphMetric = metric === "wind" ? "wind" : "temp";
+  graphMetric = metric === "wind" || metric === "sun" ? metric : "temp";
   if (graphCtx) drawHourlyGraph();
 }
 
-function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false) {
-  graphCtx = { hrs, tempUnit, windUnit, showNow };
+function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false, options = {}) {
+  graphCtx = { hrs, tempUnit, windUnit, showNow, ...options };
   drawHourlyGraph();
 }
 
@@ -5930,18 +5976,27 @@ function drawHourlyGraph() {
   if (!graphCtx) return;
   const { hrs, tempUnit, windUnit, showNow } = graphCtx;
   const isWind = graphMetric === "wind";
+  const isSun = graphMetric === "sun";
 
   // Reflect the active metric in the toggle + hint.
   const tempBtn = document.getElementById("graphTempBtn");
   const windBtn = document.getElementById("graphWindBtn");
+  const sunBtn = document.getElementById("graphSunBtn");
   const hint = document.getElementById("graphMetricHint");
-  if (tempBtn && windBtn) {
-    tempBtn.classList.toggle("active", !isWind);
+  if (tempBtn && windBtn && sunBtn) {
+    tempBtn.classList.toggle("active", !isWind && !isSun);
     windBtn.classList.toggle("active", isWind);
-    tempBtn.setAttribute("aria-pressed", String(!isWind));
+    sunBtn.classList.toggle("active", isSun);
+    tempBtn.setAttribute("aria-pressed", String(!isWind && !isSun));
     windBtn.setAttribute("aria-pressed", String(isWind));
+    sunBtn.setAttribute("aria-pressed", String(isSun));
   }
-  if (hint) hint.textContent = isWind ? "dashed = gusts" : "dashed = feels like";
+  if (hint) hint.textContent = isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : "dashed = feels like";
+  if (isSun) {
+    drawSunGraph();
+    return;
+  }
+  document.getElementById("sheetReadout")?.classList.remove("is-sun");
 
   const VW = 340;
   const padL = 18, padR = 18;
@@ -6143,6 +6198,127 @@ function drawHourlyGraph() {
   // measured/positioned correctly (it's still hidden when this runs).
   graphActiveIndex = def;
   scheduleGraphCalloutReflow();
+}
+
+function drawSunGraph() {
+  if (!graphCtx) return;
+  const { hrs, dayIndex = 0, sunriseISO, sunsetISO, showNow } = graphCtx;
+  const data = state.forecast;
+  const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
+  const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
+  const tomorrowSunriseISO = data?.daily?.sunrise?.[dayIndex + 1];
+  const tomorrowSunriseMs = tomorrowSunriseISO ? parseForecastTimestamp(tomorrowSunriseISO, data) : null;
+  const fallbackUv = Math.round(data?.daily?.uv_index_max?.[dayIndex] || Math.max(...hrs.map((h) => h.uv || 0), 0));
+  const uv = sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv, dayIndex);
+  const chart = sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs, dayIndex);
+  const callout = document.getElementById("sheetReadout");
+  const wrap = document.getElementById("sheetGraphWrap");
+  const graph = document.getElementById("sheetGraph");
+  if (!chart) {
+    graph.innerHTML = `<div class="sheet-empty">Sun data unavailable.</div>`;
+    callout.innerHTML = "";
+    callout.classList.remove("is-sun");
+    return;
+  }
+
+  const VW = chart.width;
+  const showUvBand = uv.showBand && uv.startMs && uv.endMs && uv.endMs > uv.startMs;
+  const nightPath = chart.mode === "polar-day" ? "" : sunPathSegment(chart, chart.dayStartMs, chart.dayEndMs, 96);
+  const dayPath = chart.mode === "polar-night" ? "" : sunPathSegment(chart, chart.daylightStartMs, chart.daylightEndMs, 64);
+  const uvPath = showUvBand ? sunPathSegment(chart, uv.startMs, uv.endMs, 24) : "";
+  const peakMs = uv.peakMs || sunPeakMs(chart);
+  const peakPoint = peakMs ? sunPathPoint(chart, peakMs) : null;
+  const nowMs = forecastNowMs(data);
+  const nowPoint = sunPathPoint(chart, nowMs);
+  const nowMarker = showNow && nowMs >= chart.dayStartMs && nowMs <= chart.dayEndMs ? `
+    <g>
+      <line x1="${roundSvg(nowPoint.x)}" y1="12" x2="${roundSvg(nowPoint.x)}" y2="122" class="graph-now-line"/>
+      <rect x="${roundSvg(clamp(nowPoint.x - 16, 0, chart.width - 32))}" y="4" width="32" height="16" rx="8" class="graph-now-pill"/>
+      <text x="${roundSvg(nowPoint.x)}" y="15" text-anchor="middle" class="graph-now-label">Now</text>
+    </g>
+  ` : "";
+  const uvMarker = peakPoint && uv.showMarker ? `
+    <circle cx="${roundSvg(peakPoint.x)}" cy="${roundSvg(peakPoint.y)}" r="3.2" class="sun-uv-dot"/>
+  ` : "";
+  const activeMs = showNow ? nowMs : parseForecastTimestamp(hrs[0]?.time, data) ?? chart.daylightStartMs;
+
+  graphPts = buildDaylightScrubPoints(data, chart);
+  graphActiveIndex = nearestGraphSunIndexByMs(activeMs);
+  graphUpdateActive = null;
+
+  graph.innerHTML = `
+    <svg viewBox="0 0 ${VW} 152" class="hourly-graph sun-graph">
+      <line class="daylight-horizon" x1="${chart.left}" y1="${chart.horizonY}" x2="${chart.right}" y2="${chart.horizonY}"></line>
+      <path class="daylight-night-arc" d="${nightPath}"></path>
+      <path class="daylight-fill" d="${dayPath}"></path>
+      <path class="daylight-uv-band" d="${uvPath}" ${showUvBand ? "" : "hidden"}></path>
+      ${uvMarker}
+      ${nowMarker}
+      <text x="${chart.left}" y="148" text-anchor="start" class="graph-axis">${escapeHtml(chart.mode === "normal" && sunriseISO ? formatTime(sunriseISO) : chart.mode === "polar-day" ? "All day" : "No sunrise")}</text>
+      <text x="${chart.right}" y="148" text-anchor="end" class="graph-axis">${escapeHtml(chart.mode === "normal" && sunsetISO ? formatTime(sunsetISO) : chart.mode === "polar-day" ? "No sunset" : "No sunset")}</text>
+      <line id="graphGuide" x1="0" y1="12" x2="0" y2="122" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
+      <circle id="graphDot" r="4.5" fill="var(--ink)" style="display:none"/>
+      <rect id="graphHit" x="0" y="0" width="${VW}" height="136" fill="transparent" style="cursor:crosshair"/>
+    </svg>
+  `;
+
+  const svg = graph.querySelector("svg");
+  const guide = svg.querySelector("#graphGuide");
+  const dot = svg.querySelector("#graphDot");
+
+  function update(i) {
+    const p = graphPts[i];
+    if (!p) return;
+    graphActiveIndex = i;
+    guide.setAttribute("x1", p.x);
+    guide.setAttribute("x2", p.x);
+    guide.style.display = "";
+    dot.setAttribute("cx", p.x);
+    dot.setAttribute("cy", p.y);
+    dot.style.display = "";
+
+    const copy = daylightReadoutCopy(p, data, chart, uv);
+    callout.classList.add("is-sun");
+    callout.innerHTML =
+      `<span class="callout-main">${escapeHtml(copy.time)} · ${escapeHtml(copy.title)}</span><span class="callout-sub">${escapeHtml(copy.meta)}</span>`;
+
+    const wrapWidth = wrap.clientWidth;
+    const cw = callout.offsetWidth;
+    if (!wrapWidth || !cw) return;
+    const px = (p.x / VW) * wrapWidth;
+    const minLeft = cw / 2 + 2;
+    const maxLeft = Math.max(minLeft, wrapWidth - cw / 2 - 2);
+    const left = clamp(px, minLeft, maxLeft);
+    const pointerX = clamp(px - (left - cw / 2), 8, cw - 8);
+    callout.style.left = `${left}px`;
+    callout.style.setProperty("--pointer-x", `${pointerX}px`);
+  }
+  graphUpdateActive = update;
+
+  function nearest(clientX) {
+    const rect = svg.getBoundingClientRect();
+    const vbX = ((clientX - rect.left) / rect.width) * VW;
+    let best = 0, bd = Infinity;
+    graphPts.forEach((p, idx) => {
+      const d = Math.abs(p.x - vbX);
+      if (d < bd) { bd = d; best = idx; }
+    });
+    return best;
+  }
+
+  svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
+  svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
+  scheduleGraphCalloutReflow();
+}
+
+function nearestGraphSunIndexByMs(ms) {
+  if (!graphPts.length) return 0;
+  let best = 0, bd = Infinity;
+  graphPts.forEach((point, index) => {
+    const d = Math.abs(point.ms - ms);
+    if (d < bd) { bd = d; best = index; }
+  });
+  return best;
 }
 
 function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) {
