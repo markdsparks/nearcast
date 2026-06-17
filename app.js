@@ -1,4 +1,4 @@
-const VERSION = "1.10.65";
+const VERSION = "1.10.66";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1721,33 +1721,17 @@ function updateDaylightScrub(index, { showGuide = true } = {}) {
 
 function positionDaylightReadout(point, chart) {
   if (!els.daylightArc || !els.daylightReadout || !point || !chart) return;
-  const arcWidth = els.daylightArc.clientWidth;
-  const arcHeight = els.daylightArc.clientHeight;
-  if (!arcWidth || !arcHeight) return;
+  const wrapWidth = els.daylightArc.clientWidth;
+  const calloutWidth = els.daylightReadout.offsetWidth;
+  if (!wrapWidth || !calloutWidth) return;
 
-  const x = (point.x / chart.width) * arcWidth;
-  const y = (point.y / chart.height) * arcHeight;
-  const margin = 6;
-  const gap = 12;
-  const calloutWidth = els.daylightReadout.offsetWidth || Math.min(232, arcWidth - margin * 2);
-  const calloutHeight = els.daylightReadout.offsetHeight || 46;
-  const maxLeft = Math.max(margin, arcWidth - calloutWidth - margin);
-  const left = clamp(x - calloutWidth / 2, margin, maxLeft);
-
-  let top = y - calloutHeight - gap;
-  let below = false;
-  if (top < margin) {
-    top = y + gap;
-    below = true;
-  }
-  const maxTop = Math.max(margin, arcHeight - calloutHeight - margin);
-  top = clamp(top, margin, maxTop);
-
-  const pointerX = clamp(x - left, 12, calloutWidth - 12);
-  els.daylightReadout.style.setProperty("--readout-left", `${left}px`);
-  els.daylightReadout.style.setProperty("--readout-top", `${top}px`);
+  const px = (point.x / chart.width) * wrapWidth;
+  const minLeft = calloutWidth / 2 + 2;
+  const maxLeft = Math.max(minLeft, wrapWidth - calloutWidth / 2 - 2);
+  const left = clamp(px, minLeft, maxLeft);
+  const pointerX = clamp(px - (left - calloutWidth / 2), 8, calloutWidth - 8);
+  els.daylightReadout.style.left = `${left}px`;
   els.daylightReadout.style.setProperty("--pointer-x", `${pointerX}px`);
-  els.daylightReadout.classList.toggle("is-below", below);
 }
 
 function daylightReadoutCopy(point, data, chart) {
