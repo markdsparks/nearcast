@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.55">
+    <link rel="stylesheet" href="styles.css?v=1.10.58">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -156,11 +156,17 @@
                 <strong id="daylightSummary">--</strong>
               </div>
               <p class="daylight-context" id="daylightContext">--</p>
-              <div class="daylight-track" aria-hidden="true">
-                <span class="daylight-fill" id="daylightFill"></span>
-                <span class="daylight-uv-band" id="daylightUvBand"></span>
-                <span class="daylight-now" id="daylightNow"></span>
+              <div class="daylight-arc" aria-hidden="true">
+                <svg viewBox="0 0 320 126" preserveAspectRatio="none" focusable="false">
+                  <line class="daylight-horizon" x1="0" y1="86" x2="320" y2="86"></line>
+                  <path class="daylight-night-arc" d="M 8 104 C 78 104 100 88 160 88 C 220 88 242 104 312 104"></path>
+                  <path class="daylight-arc-base" d="M 8 86 C 76 86 96 38 160 38 C 224 38 244 86 312 86" pathLength="100"></path>
+                  <path class="daylight-fill" id="daylightFill" d="M 8 86 C 76 86 96 38 160 38 C 224 38 244 86 312 86" pathLength="100"></path>
+                  <path class="daylight-uv-band" id="daylightUvBand" d="M 8 86 C 76 86 96 38 160 38 C 224 38 244 86 312 86" pathLength="100"></path>
+                </svg>
                 <span class="daylight-uv" id="daylightUv"></span>
+                <span class="daylight-now-glow" id="daylightNowGlow"></span>
+                <span class="daylight-now" id="daylightNow"></span>
               </div>
               <div class="daylight-times">
                 <span><b>Sunrise</b><strong id="sunrise">--</strong></span>
@@ -366,6 +372,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.55"></script>
+    <script src="app.js?v=1.10.58"></script>
   </body>
 </html>

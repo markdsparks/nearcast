@@ -1,4 +1,4 @@
-const VERSION = "1.10.55";
+const VERSION = "1.10.58";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -194,6 +194,7 @@ const els = {
   daylightFill: document.querySelector("#daylightFill"),
   daylightUvBand: document.querySelector("#daylightUvBand"),
   daylightNow: document.querySelector("#daylightNow"),
+  daylightNowGlow: document.querySelector("#daylightNowGlow"),
   daylightUv: document.querySelector("#daylightUv"),
   uvLabel: document.querySelector("#uvLabel"),
   insights: document.querySelector("#insights"),
@@ -1397,19 +1398,39 @@ function renderDaylightGlance(data, uvVal) {
   }
   if (els.daylightSummary) els.daylightSummary.textContent = summary;
   if (els.daylightContext) els.daylightContext.textContent = context;
-  if (els.daylightFill) els.daylightFill.style.setProperty("--daylight-progress", `${progress}%`);
-  if (els.daylightNow) els.daylightNow.style.setProperty("--marker-position", `${progress}%`);
+  if (els.daylightFill) els.daylightFill.style.setProperty("--arc-progress", `${progress}`);
+  positionSunMarker(els.daylightNow, progress);
+  positionSunMarker(els.daylightNowGlow, progress);
   if (els.daylightUvBand) {
-    els.daylightUvBand.style.setProperty("--uv-start", `${uv.startPct}%`);
-    els.daylightUvBand.style.setProperty("--uv-width", `${uv.widthPct}%`);
-    els.daylightUvBand.hidden = !uv.showBand;
+    els.daylightUvBand.style.strokeDasharray = `${uv.widthPct} 100`;
+    els.daylightUvBand.style.strokeDashoffset = String(-uv.startPct);
+    if (uv.showBand) {
+      els.daylightUvBand.removeAttribute("hidden");
+    } else {
+      els.daylightUvBand.setAttribute("hidden", "");
+    }
   }
   if (els.daylightUv) {
-    els.daylightUv.style.setProperty("--uv-position", `${uv.peakPct}%`);
+    positionSunMarker(els.daylightUv, uv.peakPct);
     els.daylightUv.hidden = !uv.showMarker;
   }
   if (els.uvLabel) els.uvLabel.textContent = "UV risk";
   if (els.uv) els.uv.textContent = uv.display;
+}
+
+function positionSunMarker(marker, percent) {
+  if (!marker) return;
+  const point = sunArcPoint(percent);
+  marker.style.setProperty("--sun-x", `${(point.x / 320) * 100}%`);
+  marker.style.setProperty("--sun-y", `${(point.y / 126) * 100}%`);
+}
+
+function sunArcPoint(percent) {
+  const t = Math.max(0, Math.min(100, percent)) / 100;
+  return {
+    x: 8 + t * 304,
+    y: 86 - Math.sin(Math.PI * t) * 48
+  };
 }
 
 function daylightPercent(ms, sunriseMs, sunsetMs) {
