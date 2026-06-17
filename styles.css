@@ -3670,25 +3670,32 @@ body.map-immersive-active #mapLegend {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 50px 34px minmax(0, 1fr);
+    grid-template-columns: 48px 30px 58px minmax(0, 1fr);
     align-items: center;
-    gap: 10px 12px;
-    min-height: 70px;
-    padding: 12px 42px 12px 12px;
+    gap: 8px;
+    min-height: 58px;
+    padding: 10px 34px 10px 12px;
+  }
+  .sheet-hour-icon {
+    width: 28px;
+    height: 28px;
   }
   .sheet-hour-main strong {
-    font-size: 1.22rem;
+    font-size: 1.12rem;
   }
   .sheet-hour-signals {
-    grid-column: 3;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    margin-top: 2px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 5px;
   }
   .sheet-hour-chip {
-    min-height: 28px;
-    padding: 5px 10px;
-    font-size: 0.76rem;
+    min-height: 24px;
+    padding: 4px 7px;
+    font-size: 0.68rem;
+  }
+  .sheet-hour-cue {
+    top: 20px;
+    right: 9px;
   }
   .sheet-hour-detail {
     grid-column: 1 / -1;

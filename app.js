@@ -1,4 +1,4 @@
-const VERSION = "1.10.79";
+const VERSION = "1.10.80";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1007,25 +1007,27 @@ function updateSaveButton() {
 // Lightweight current-conditions for the saved-places glance row.
 // Cached per place + unit so re-renders and taps are instant.
 const glanceData = {};
+const GLANCE_CACHE_VERSION = "v2";
 
 async function fetchGlance(place) {
-  const key = `glance:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+  const key = `glance:${GLANCE_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
   const cached = JSON.parse(localStorage.getItem(key) || "null");
   if (cached && Date.now() - cached.savedAt < 15 * 60 * 1000) return cached.data;
 
   const params = new URLSearchParams({
     latitude: place.latitude,
     longitude: place.longitude,
-    current: "temperature_2m,weather_code,is_day",
+    current: "temperature_2m,precipitation,weather_code,cloud_cover,is_day",
     temperature_unit: state.unit,
     timezone: "auto"
   });
   const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
   if (!response.ok) throw new Error("Glance failed.");
   const json = await response.json();
+  const code = effectiveCurrentCode(json.current);
   const data = {
     temp: Math.round(json.current.temperature_2m),
-    code: json.current.weather_code,
+    code,
     isDay: Boolean(json.current.is_day)
   };
   localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
@@ -5969,7 +5971,7 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   if (hour.precip > 0.02) {
     signals.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
   } else if (windy) {
-    signals.push({ label: `Gust ${Math.round(hour.gust)} ${windUnit}`, tone: " is-wind" });
+    signals.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
   } else if (hour.uv >= 6) {
     signals.push({ label: `UV ${Math.round(hour.uv)}`, tone: " is-flag" });
   } else if (Math.abs(feelsDelta) >= 6) {
@@ -5984,6 +5986,11 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
+  if (hour.code >= 95) {
+    const hail = hour.code === 96 || hour.code === 99 ? " Hail is also possible." : "";
+    const amount = hour.precip > 0.02 ? ` Around ${formatAmount(hour.precip)} ${precipUnit} could fall.` : "";
+    return `Thunderstorms are the main watch item for this hour. Stay alert for lightning and quick downpours.${hail}${amount}`;
+  }
   if (hour.pop >= 50) {
     const amount = hour.precip > 0.02 ? `, ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
     return `Rain is the main watch item for this hour${amount}.`;
