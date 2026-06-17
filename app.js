@@ -1,4 +1,4 @@
-const VERSION = "1.10.76";
+const VERSION = "1.10.77";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -655,6 +655,17 @@ function bindEvents() {
   els.hourly.addEventListener("click", openNext24Detail);
   document.getElementById("sheetGraphMode").addEventListener("click", () => setDayDetailMode("graph"));
   document.getElementById("sheetHourlyMode").addEventListener("click", () => setDayDetailMode("hourly"));
+  document.getElementById("sheetHourlyList").addEventListener("click", (event) => {
+    const row = event.target.closest(".sheet-hour-row");
+    if (row) toggleSheetHourRow(row);
+  });
+  document.getElementById("sheetHourlyList").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest(".sheet-hour-row");
+    if (!row) return;
+    event.preventDefault();
+    toggleSheetHourRow(row);
+  });
   document.getElementById("graphTempBtn").addEventListener("click", () => setGraphMetric("temp"));
   document.getElementById("graphWindBtn").addEventListener("click", () => setGraphMetric("wind"));
   document.getElementById("graphSunBtn").addEventListener("click", () => setGraphMetric("sun"));
@@ -5945,14 +5956,46 @@ function buildDaySummary(hrs, windUnit) {
   return parts.join(", ") + ".";
 }
 
-function hourlyRowNote(hour, windUnit, precipUnit) {
-  const notes = [];
-  if (hour.pop >= 50) notes.push(`${hour.pop}% rain`);
-  else if (hour.pop >= 25) notes.push(`${hour.pop}% chance`);
-  if (hour.gust >= 25) notes.push(`gusts ${Math.round(hour.gust)} ${windUnit}`);
-  if (hour.uv >= 6) notes.push(`UV ${Math.round(hour.uv)}`);
-  if (hour.precip > 0.02) notes.push(`${formatAmount(hour.precip)} ${precipUnit}`);
-  return notes.join(" · ");
+function hourlyRowFlag(hour, tempUnit, windUnit, precipUnit) {
+  const deg = degree(tempUnit);
+  const feelsDelta = Math.round(hour.feels - hour.temp);
+  if (hour.precip > 0.02) return `${formatAmount(hour.precip)} ${precipUnit}`;
+  if (hour.gust >= 25) return `Gust ${Math.round(hour.gust)} ${windUnit}`;
+  if (hour.uv >= 6) return `UV ${Math.round(hour.uv)}`;
+  if (Math.abs(feelsDelta) >= 6) {
+    return `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`;
+  }
+  return "";
+}
+
+function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
+  if (hour.pop >= 50) {
+    const amount = hour.precip > 0.02 ? `, ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
+    return `Rain is the main watch item for this hour${amount}.`;
+  }
+  if (hour.gust >= 25) return `The wind is more noticeable here, with gusts near ${Math.round(hour.gust)} ${windUnit}.`;
+  if (hour.uv >= 6) return `Sun exposure is elevated; sunscreen is useful if you are outside.`;
+  const feelsDelta = Math.round(hour.feels - hour.temp);
+  if (Math.abs(feelsDelta) >= 6) {
+    return `It will feel ${Math.abs(feelsDelta)}${degree(tempUnit)} ${feelsDelta > 0 ? "warmer" : "cooler"} than the air temperature.`;
+  }
+  return "No major weather flags for this hour.";
+}
+
+function toggleSheetHourRow(row) {
+  const list = document.getElementById("sheetHourlyList");
+  const shouldOpen = !row.classList.contains("is-expanded");
+  list.querySelectorAll(".sheet-hour-row.is-expanded").forEach((openRow) => {
+    setSheetHourRowExpanded(openRow, false);
+  });
+  if (shouldOpen) setSheetHourRowExpanded(row, true);
+}
+
+function setSheetHourRowExpanded(row, expanded) {
+  row.classList.toggle("is-expanded", expanded);
+  row.setAttribute("aria-expanded", String(expanded));
+  const detail = row.querySelector(".sheet-hour-detail");
+  if (detail) detail.hidden = !expanded;
 }
 
 function isCurrentHour(time) {
@@ -5973,7 +6016,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
   let prevDay = null;
-  list.innerHTML = hrs.map((hour) => {
+  list.innerHTML = hrs.map((hour, rowIndex) => {
     // Mark where the day rolls over (the list runs from "now" into tomorrow).
     const dayKey = hour.time.slice(0, 10);
     const divider = prevDay && dayKey !== prevDay
@@ -5981,27 +6024,40 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
       : "";
     prevDay = dayKey;
     const condition = weatherCodes[hour.code] || "Weather";
-    const note = hourlyRowNote(hour, windUnit, precipUnit);
+    const note = hourlyRowFlag(hour, tempUnit, windUnit, precipUnit);
+    const detailNote = hourlyDetailNote(hour, tempUnit, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time);
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const nowClass = now ? " is-now" : "";
-    const noteLine = note ? `<span>${escapeHtml(note)}</span>` : "";
+    const flag = note ? `<span class="sheet-hour-chip is-flag">${escapeHtml(note)}</span>` : "";
+    const detailId = `sheet-hour-detail-${rowIndex}`;
     return `${divider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}">
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}" role="button" tabindex="0" aria-expanded="false" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
         <div class="sheet-hour-main">
-          <strong>${escapeHtml(condition)}</strong>
-          ${noteLine}
-        </div>
-        <div class="sheet-hour-metrics">
           <strong>${Math.round(hour.temp)}${deg}</strong>
-          <span>Feels ${Math.round(hour.feels)}${deg}</span>
-          <span>${hour.pop}% rain</span>
-          <span>${Math.round(hour.wind)} ${windUnit}${windy ? `, gust ${Math.round(hour.gust)}` : ""}</span>
+          <span>${escapeHtml(condition)}</span>
+        </div>
+        <div class="sheet-hour-signals">
+          <span class="sheet-hour-chip${hour.pop >= 40 ? " is-wet" : ""}">${hour.pop}% rain</span>
+          <span class="sheet-hour-chip${windy ? " is-wind" : ""}">${windy ? `Gust ${Math.round(hour.gust)}` : `${Math.round(hour.wind)} ${windUnit}`}</span>
+          ${flag}
+          <span class="sheet-hour-cue" aria-hidden="true"></span>
+        </div>
+        <div class="sheet-hour-detail" id="${detailId}" hidden>
+          <p>${escapeHtml(detailNote)}</p>
+          <div class="sheet-hour-detail-grid">
+            <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
+            <span><small>Rain</small><strong>${hour.pop}%</strong></span>
+            <span><small>Precip</small><strong>${hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`}</strong></span>
+            <span><small>Wind</small><strong>${Math.round(hour.wind)} ${windUnit}</strong></span>
+            <span><small>Gust</small><strong>${Math.round(hour.gust)} ${windUnit}</strong></span>
+            <span><small>UV</small><strong>${Math.round(hour.uv)}</strong></span>
+          </div>
         </div>
       </article>
     `;
