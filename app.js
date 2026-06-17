@@ -1,4 +1,4 @@
-const VERSION = "1.10.59";
+const VERSION = "1.10.63";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1373,8 +1373,11 @@ function renderDaylightGlance(data, uvVal) {
   let summary = "--";
   let context = "Daylight timing is unavailable.";
   const uv = sunRiskWindow(data, sunriseMs, sunsetMs, uvVal);
+  const sunMode = sunExposureMode(data, sunriseMs, sunsetMs);
 
-  if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) {
+  if (sunMode === "normal") {
+    if (els.sunrise) els.sunrise.textContent = sunriseISO ? formatTime(sunriseISO) : "--";
+    if (els.sunset) els.sunset.textContent = sunsetISO ? formatTime(sunsetISO) : "--";
     if (nowMs < sunriseMs) {
       summary = `Sunrise in ${durationBrief(sunriseMs - nowMs)}`;
       context = `First light starts at ${formatTime(sunriseISO)}. ${uv.context}`;
@@ -1390,6 +1393,20 @@ function renderDaylightGlance(data, uvVal) {
         : `${durationBrief(remaining)} daylight left`;
       context = uv.context;
     }
+  } else if (sunMode === "polar-day") {
+    summary = "Sun stays up";
+    if (els.sunrise) els.sunrise.textContent = "All day";
+    if (els.sunset) els.sunset.textContent = "No sunset";
+    context = uv.context === "Low sun risk today."
+      ? "The sun stays above the horizon today."
+      : uv.context;
+  } else if (sunMode === "polar-night") {
+    summary = "No daylight today";
+    if (els.sunrise) els.sunrise.textContent = "No sunrise";
+    if (els.sunset) els.sunset.textContent = "No sunset";
+    context = tomorrowSunriseISO
+      ? `Next sunrise is ${formatTime(tomorrowSunriseISO)}.`
+      : "The sun stays below the horizon today.";
   }
 
   if (els.daylightCard) {
@@ -1419,10 +1436,14 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
     els.daylightHorizon.setAttribute("y2", String(chart.horizonY));
   }
   if (els.daylightNightPath) {
-    els.daylightNightPath.setAttribute("d", sunPathSegment(chart, chart.dayStartMs, chart.dayEndMs, 96));
+    const path = chart.mode === "polar-day" ? "" : sunPathSegment(chart, chart.dayStartMs, chart.dayEndMs, 96);
+    els.daylightNightPath.setAttribute("d", path);
   }
   if (els.daylightFill) {
-    els.daylightFill.setAttribute("d", sunPathSegment(chart, sunriseMs, sunsetMs, 64));
+    const path = chart.mode === "polar-night"
+      ? ""
+      : sunPathSegment(chart, chart.daylightStartMs, chart.daylightEndMs, 64);
+    els.daylightFill.setAttribute("d", path);
   }
   if (els.daylightUvBand) {
     const showBand = uv.showBand && uv.startMs && uv.endMs && uv.endMs > uv.startMs;
@@ -1446,7 +1467,7 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
   });
 
   if (els.daylightUv) {
-    const peakMs = uv.peakMs || (sunriseMs + (sunsetMs - sunriseMs) / 2);
+    const peakMs = uv.peakMs || sunPeakMs(chart);
     positionSunMarker(els.daylightUv, sunPathPoint(chart, peakMs), chart);
     els.daylightUv.hidden = !uv.showMarker;
   }
@@ -1455,10 +1476,19 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
 function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs) {
   const dayStartMs = forecastLocalBoundaryMs(data, 0, 0);
   const dayEndMs = forecastLocalBoundaryMs(data, 24, 0);
-  if (!dayStartMs || !dayEndMs || !sunriseMs || !sunsetMs || sunsetMs <= sunriseMs || dayEndMs <= dayStartMs) return null;
+  if (!dayStartMs || !dayEndMs || dayEndMs <= dayStartMs) return null;
 
-  const dayHours = (sunsetMs - sunriseMs) / 3600000;
+  const mode = sunExposureMode(data, sunriseMs, sunsetMs);
+  const validSunWindow = mode === "normal";
+  const safeSunriseMs = validSunWindow ? sunriseMs : dayStartMs;
+  const safeSunsetMs = validSunWindow ? sunsetMs : dayEndMs;
+  const dayHours = validSunWindow
+    ? Math.max(0, Math.min(24, (Math.min(safeSunsetMs, dayEndMs) - Math.max(safeSunriseMs, dayStartMs)) / 3600000))
+    : mode === "polar-day" ? 24 : 0;
+  const previousSunsetMs = validSunWindow ? safeSunsetMs - 24 * 60 * 60 * 1000 : null;
+  const nextSunriseMs = validSunWindow ? tomorrowSunriseMs || safeSunriseMs + 24 * 60 * 60 * 1000 : null;
   return {
+    mode,
     width: 320,
     height: 136,
     left: 8,
@@ -1466,11 +1496,15 @@ function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs) {
     horizonY: 76,
     dayStartMs,
     dayEndMs,
-    sunriseMs,
-    sunsetMs,
+    sunriseMs: safeSunriseMs,
+    sunsetMs: safeSunsetMs,
     tomorrowSunriseMs,
+    previousSunsetMs,
+    nextSunriseMs,
+    daylightStartMs: validSunWindow ? safeSunriseMs : dayStartMs,
+    daylightEndMs: validSunWindow ? safeSunsetMs : dayEndMs,
     dayAmplitude: clamp(24 + ((dayHours - 8) / 8) * 34, 22, 58),
-    nightDepth: clamp(24 + (((24 - dayHours) - 8) / 8) * 20, 24, 44)
+    nightDepth: clamp(18 + (((24 - dayHours) - 8) / 8) * 20, 18, 44)
   };
 }
 
@@ -1493,18 +1527,58 @@ function sunPathPoint(chart, ms) {
   const x = chart.left + tDay * (chart.right - chart.left);
   let y = chart.horizonY;
 
-  if (ms < chart.sunriseMs) {
-    const t = Math.max(0, Math.min(1, (ms - chart.dayStartMs) / (chart.sunriseMs - chart.dayStartMs)));
-    y = chart.horizonY + chart.nightDepth * Math.cos(t * Math.PI / 2);
+  if (chart.mode === "polar-day") {
+    y = chart.horizonY - 14 - chart.dayAmplitude * 0.72 * Math.sin(tDay * Math.PI);
+  } else if (chart.mode === "polar-night") {
+    y = chart.horizonY + 12 + chart.nightDepth * 0.72 * Math.sin(tDay * Math.PI);
+  } else if (ms < chart.sunriseMs) {
+    y = sunNightY(chart, ms, chart.previousSunsetMs, chart.sunriseMs);
   } else if (ms <= chart.sunsetMs) {
     const t = Math.max(0, Math.min(1, (ms - chart.sunriseMs) / (chart.sunsetMs - chart.sunriseMs)));
     y = chart.horizonY - chart.dayAmplitude * Math.sin(t * Math.PI);
   } else {
-    const t = Math.max(0, Math.min(1, (ms - chart.sunsetMs) / (chart.dayEndMs - chart.sunsetMs)));
-    y = chart.horizonY + chart.nightDepth * Math.sin(t * Math.PI / 2);
+    y = sunNightY(chart, ms, chart.sunsetMs, chart.nextSunriseMs);
   }
 
   return { x, y };
+}
+
+function sunNightY(chart, ms, nightStartMs, nightEndMs) {
+  if (!nightStartMs || !nightEndMs || nightEndMs <= nightStartMs) {
+    return chart.horizonY + chart.nightDepth;
+  }
+  const t = Math.max(0, Math.min(1, (ms - nightStartMs) / (nightEndMs - nightStartMs)));
+  return chart.horizonY + chart.nightDepth * Math.sin(t * Math.PI);
+}
+
+function sunPeakMs(chart) {
+  if (!chart) return null;
+  if (chart.mode === "normal") return chart.sunriseMs + (chart.sunsetMs - chart.sunriseMs) / 2;
+  return chart.dayStartMs + (chart.dayEndMs - chart.dayStartMs) / 2;
+}
+
+function sunExposureMode(data, sunriseMs, sunsetMs) {
+  const rows = sunExposureRows(data);
+  const hasDay = rows.some((row) => row.isDay);
+  const hasNight = rows.some((row) => !row.isDay);
+  if (hasDay && !hasNight) return "polar-day";
+  if (hasNight && !hasDay) return "polar-night";
+  if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) return "normal";
+  return data?.current?.is_day ? "polar-day" : "polar-night";
+}
+
+function todaySunMode(data) {
+  const sunriseMs = data?.daily?.sunrise?.[0] ? parseForecastTimestamp(data.daily.sunrise[0], data) : null;
+  const sunsetMs = data?.daily?.sunset?.[0] ? parseForecastTimestamp(data.daily.sunset[0], data) : null;
+  return sunExposureMode(data, sunriseMs, sunsetMs);
+}
+
+function sunExposureRows(data) {
+  const day = forecastLocalDate(data, 0);
+  return data?.hourly?.time?.map((time, index) => ({
+    time,
+    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : null
+  })).filter((row) => row.isDay !== null && datePart(row.time) === day) || [];
 }
 
 function positionSunMarker(marker, point, chart) {
@@ -1521,11 +1595,6 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function daylightPercent(ms, sunriseMs, sunsetMs) {
-  if (!sunriseMs || !sunsetMs || sunsetMs <= sunriseMs) return 0;
-  return Math.max(0, Math.min(100, ((ms - sunriseMs) / (sunsetMs - sunriseMs)) * 100));
-}
-
 function durationBrief(ms) {
   const minutes = Math.max(0, Math.round(ms / 60000));
   if (minutes < 1) return "now";
@@ -1537,6 +1606,9 @@ function durationBrief(ms) {
 }
 
 function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
+  const dayStartMs = forecastLocalBoundaryMs(data, 0, 0);
+  const dayEndMs = forecastLocalBoundaryMs(data, 24, 0);
+  const hasSunWindow = Boolean(sunriseMs && sunsetMs && sunsetMs > sunriseMs);
   const low = {
     display: `Low ${Math.round(fallbackUv || 0)}`,
     severity: "low",
@@ -1550,7 +1622,7 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     showMarker: false,
     context: "Low sun risk today."
   };
-  if (!data?.hourly?.time?.length || !data?.hourly?.uv_index?.length || !sunriseMs || !sunsetMs || sunsetMs <= sunriseMs) {
+  if (!data?.hourly?.time?.length || !data?.hourly?.uv_index?.length || !dayStartMs || !dayEndMs) {
     const fallback = Math.round(fallbackUv || 0);
     if (fallback < 3) return { ...low, display: `Low ${fallback}` };
     const risk = uvRisk(fallback);
@@ -1558,7 +1630,7 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
       ...low,
       display: `${risk.label} ${fallback}`,
       severity: risk.severity,
-      peakMs: sunriseMs && sunsetMs ? sunriseMs + (sunsetMs - sunriseMs) / 2 : null,
+      peakMs: hasSunWindow ? sunriseMs + (sunsetMs - sunriseMs) / 2 : dayStartMs + (dayEndMs - dayStartMs) / 2,
       showMarker: true,
       context: `${risk.label} UV peaks at ${fallback}.`
     };
@@ -1575,8 +1647,8 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     .filter((row) =>
       row.ms !== null &&
       datePart(row.time) === day &&
-      row.ms >= sunriseMs - 60 * 60 * 1000 &&
-      row.ms <= sunsetMs + 60 * 60 * 1000 &&
+      row.ms >= (hasSunWindow ? sunriseMs - 60 * 60 * 1000 : dayStartMs) &&
+      row.ms <= (hasSunWindow ? sunsetMs + 60 * 60 * 1000 : dayEndMs) &&
       Number.isFinite(row.value)
     );
 
@@ -1586,16 +1658,19 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
   const peakValue = Math.round(peak.value);
   const risk = uvRisk(peakValue);
   const threshold = peakValue >= 6 ? 6 : peakValue >= 3 ? 3 : 0;
-  const activeRows = threshold ? rows.filter((row) => row.value >= threshold) : [];
+  let activeRows = threshold ? rows.filter((row) => Math.round(row.value) >= threshold) : [];
+  if (threshold && !activeRows.length) activeRows = [peak];
   const first = activeRows[0];
   const last = activeRows[activeRows.length - 1];
   const endTime = last ? data.hourly.time[last.index + 1] || last.time : null;
   const endMs = endTime ? parseForecastTimestamp(endTime, data) : last ? last.ms + 60 * 60 * 1000 : null;
-  const startPct = first ? daylightPercent(Math.max(first.ms, sunriseMs), sunriseMs, sunsetMs) : 0;
-  const endPct = endMs ? daylightPercent(Math.min(endMs, sunsetMs), sunriseMs, sunsetMs) : startPct;
+  const percentStartMs = hasSunWindow ? sunriseMs : dayStartMs;
+  const percentEndMs = hasSunWindow ? sunsetMs : dayEndMs;
+  const startPct = first ? percentBetween(Math.max(first.ms, percentStartMs), percentStartMs, percentEndMs) : 0;
+  const endPct = endMs ? percentBetween(Math.min(endMs, percentEndMs), percentStartMs, percentEndMs) : startPct;
   const widthPct = Math.max(0, endPct - startPct);
   const nowMs = forecastNowMs(data);
-  const peakPct = daylightPercent(peak.ms, sunriseMs, sunsetMs);
+  const peakPct = percentBetween(peak.ms, percentStartMs, percentEndMs);
   const peakTime = formatTime(peak.time);
   const display = `${risk.label} ${peakValue}`;
   let context = peakValue < 3
@@ -1625,6 +1700,11 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     showMarker: peakValue >= 3,
     context
   };
+}
+
+function percentBetween(ms, startMs, endMs) {
+  if (!startMs || !endMs || endMs <= startMs) return 0;
+  return Math.max(0, Math.min(100, ((ms - startMs) / (endMs - startMs)) * 100));
 }
 
 function uvRisk(value) {
@@ -3343,7 +3423,8 @@ function buildMorningInsights(data, windUnit) {
   const now = forecastNowMs(data);
   const noonMs = forecastLocalBoundaryMs(data, 12) ?? new Date().setHours(12, 0, 0, 0);
   const sixPmMs = forecastLocalBoundaryMs(data, 18) ?? new Date().setHours(18, 0, 0, 0);
-  const sunsetTime = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
+  const sunMode = todaySunMode(data);
+  const sunsetTime = sunMode === "normal" && data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
   const low0 = Math.round(data.daily.temperature_2m_min[0]);
 
   const morningRain = maxRainInRange(data, now, noonMs);
@@ -3352,6 +3433,14 @@ function buildMorningInsights(data, windUnit) {
   const afternoonHigh = afternoonHours.length
     ? Math.max(...afternoonHours.map(({ i }) => Math.round(data.hourly.temperature_2m[i])))
     : Math.round(data.daily.temperature_2m_max[0]);
+  let tonightValue = `Overnight low drops to ${low0}°.`;
+  if (sunMode === "polar-day") {
+    tonightValue = `Sun stays up tonight. Overnight low drops to ${low0}°.`;
+  } else if (sunMode === "polar-night") {
+    tonightValue = `Sun stays below the horizon today. Overnight low drops to ${low0}°.`;
+  } else if (sunsetTime) {
+    tonightValue = `Sun sets at ${sunsetTime}. Overnight low drops to ${low0}°.`;
+  }
 
   return [
     {
@@ -3366,9 +3455,7 @@ function buildMorningInsights(data, windUnit) {
     },
     {
       label: "Tonight",
-      value: sunsetTime
-        ? `Sun sets at ${sunsetTime}. Overnight low drops to ${low0}°.`
-        : `Overnight low drops to ${low0}°.`
+      value: tonightValue
     }
   ];
 }
@@ -3377,13 +3464,14 @@ function buildAfternoonInsights(data, windUnit) {
   const now = forecastNowMs(data);
   const sunsetMs = state.sunsetMs;
   const midnightMs = forecastLocalBoundaryMs(data, 24) ?? new Date().setHours(24, 0, 0, 0);
+  const sunMode = todaySunMode(data);
   const low0 = Math.round(data.daily.temperature_2m_min[0]);
   const high1 = Math.round(data.daily.temperature_2m_max[1]);
   const rain1 = data.daily.precipitation_probability_max[1] || 0;
 
   const remainingRain = maxRainInRange(data, now, sunsetMs || midnightMs);
   const overnightRain = maxRainInRange(data, sunsetMs || now, midnightMs);
-  const sunsetTime = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
+  const sunsetTime = sunMode === "normal" && data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
 
   return [
     {
