@@ -1,4 +1,4 @@
-const VERSION = "1.10.67";
+const VERSION = "1.10.68";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -209,8 +209,7 @@ const els = {
   daylightUvBand: document.querySelector("#daylightUvBand"),
   daylightNowMarker: document.querySelector("#daylightNowMarker"),
   daylightNowLine: document.querySelector("#daylightNowLine"),
-  daylightNowPill: document.querySelector("#daylightNowPill"),
-  daylightNowLabel: document.querySelector("#daylightNowLabel"),
+  daylightNowBadge: document.querySelector("#daylightNowBadge"),
   daylightScrubGuide: document.querySelector("#daylightScrubGuide"),
   daylightNow: document.querySelector("#daylightNow"),
   daylightNowGlow: document.querySelector("#daylightNowGlow"),
@@ -1450,6 +1449,7 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
       if (path) path.setAttribute("d", "");
     });
     if (els.daylightNowMarker) els.daylightNowMarker.setAttribute("hidden", "");
+    if (els.daylightNowBadge) els.daylightNowBadge.hidden = true;
     resetDaylightScrub();
     return;
   }
@@ -1505,16 +1505,17 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
 function positionDaylightNowMarker(chart, nowMs) {
   if (!els.daylightNowMarker || !chart || nowMs < chart.dayStartMs || nowMs > chart.dayEndMs) {
     if (els.daylightNowMarker) els.daylightNowMarker.setAttribute("hidden", "");
+    if (els.daylightNowBadge) els.daylightNowBadge.hidden = true;
     return;
   }
   const point = sunPathPoint(chart, nowMs);
   const x = roundSvg(point.x);
   els.daylightNowLine?.setAttribute("x1", x);
   els.daylightNowLine?.setAttribute("x2", x);
-  if (els.daylightNowPill) {
-    els.daylightNowPill.setAttribute("x", roundSvg(clamp(point.x - 16, 0, chart.width - 32)));
+  if (els.daylightNowBadge) {
+    els.daylightNowBadge.style.setProperty("--now-x", `${(point.x / chart.width) * 100}%`);
+    els.daylightNowBadge.hidden = false;
   }
-  els.daylightNowLabel?.setAttribute("x", x);
   els.daylightNowMarker.removeAttribute("hidden");
 }
 
@@ -6247,7 +6248,7 @@ function drawSunGraph() {
   graphUpdateActive = null;
 
   graph.innerHTML = `
-    <svg viewBox="0 0 ${VW} 152" class="hourly-graph sun-graph">
+    <svg viewBox="0 0 ${VW} 152" class="hourly-graph sun-graph uv-${uv.severity}">
       <line class="daylight-horizon" x1="${chart.left}" y1="${chart.horizonY}" x2="${chart.right}" y2="${chart.horizonY}"></line>
       <path class="daylight-night-arc" d="${nightPath}"></path>
       <path class="daylight-fill" d="${dayPath}"></path>
