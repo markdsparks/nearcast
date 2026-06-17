@@ -1,4 +1,4 @@
-const VERSION = "1.10.71";
+const VERSION = "1.10.72";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3803,35 +3803,26 @@ function renderHourly(data, tempUnit) {
     .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
     .slice(0, 24);
 
+  // Compact, scannable columns — hour, icon, color-coded temp, and a rain tick.
+  // The full condition word, feels-like, wind, etc. live one tap away in the
+  // day sheet (tapping the strip opens it), so the strip stays glanceable.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
     const rain = data.hourly.precipitation_probability[index] || 0;
     const wcode = data.hourly.weather_code[index];
     const code = weatherCodes[wcode] || "Weather";
-    const compactCode = compactHourlyCondition(wcode, code);
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
+    const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
     return `
-      <article class="hour-card${position === 0 ? " current" : ""}">
-        <span>${label}</span>
-        <strong>${Math.round(data.hourly.temperature_2m[index])}${degree(tempUnit)}</strong>
+      <article class="hour-card${position === 0 ? " current" : ""}" title="${escapeHtml(code)}">
+        <span class="hour-label">${label}</span>
         <div class="hour-icon" aria-hidden="true">${weatherIcon(wcode, isHourDay)}</div>
-        <div class="code" title="${escapeHtml(code)}" aria-label="${escapeHtml(code)}">${escapeHtml(compactCode)}</div>
-        <span>${rain}% rain</span>
-        <div class="rain-bar" aria-hidden="true"><i style="width: ${rain}%"></i></div>
+        <strong class="hour-temp" style="color:${tempColor(temp)}">${temp}°</strong>
+        <span class="hour-rain${rain >= 20 ? " wet" : ""}">${rain >= 20 ? `${rain}%` : ""}</span>
+        <div class="rain-bar" aria-hidden="true"><i style="width:${rain}%"></i></div>
       </article>
     `;
   }).join("");
-}
-
-function compactHourlyCondition(code, label) {
-  if (code === 95) return "Storms";
-  if (code === 96 || code === 99) return "Storms + hail";
-  if (label === "Rain showers") return "Showers";
-  if (label === "Heavy showers") return "Heavy showers";
-  if (label === "Freezing drizzle") return "Icy drizzle";
-  if (label === "Freezing rain") return "Icy rain";
-  if (label === "Heavy snow showers") return "Heavy snow";
-  return label;
 }
 
 // Absolute temperature → color, anchored to real-world warm/cold norms (°F).
@@ -3904,9 +3895,9 @@ function renderDaily(data, tempUnit, precipUnit) {
           </div>
           <span class="day-high">${high}°</span>
         </div>
-        <div class="day-rain" aria-label="${rain}% rain, ${formatAmount(precip)} ${precipUnit} precipitation">
+        <div class="day-rain" aria-label="${rain}% rain${precip > 0 ? `, ${formatAmount(precip)} ${precipUnit} precipitation` : ""}">
           <span>${rain}%</span>
-          <small>${formatAmount(precip)} ${precipUnit}</small>
+          ${precip > 0 ? `<small>${formatAmount(precip)} ${precipUnit}</small>` : ""}
         </div>
       </article>
     `;

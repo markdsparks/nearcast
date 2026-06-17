@@ -1851,7 +1851,7 @@ h2 {
 .hourly {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 112px;
+  grid-auto-columns: 56px;
   gap: 0;
   overflow-x: auto;
   padding: 12px 0 14px;
@@ -1879,69 +1879,73 @@ h2 {
 
 .hour-card {
   position: relative;
-  min-height: 144px;
-  padding: 10px 16px 10px 0;
+  min-height: 86px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
   border: 0;
-  border-radius: 0;
+  border-radius: 12px;
   background: transparent;
   box-shadow: none;
+  text-align: center;
+}
+
+.hour-card .rain-bar {
+  width: 30px;
+  margin-top: 4px;
 }
 
 .hour-card:not(:last-child)::after {
   content: "";
   position: absolute;
-  top: 10px;
-  right: 8px;
-  bottom: 12px;
+  top: 12px;
+  right: 0;
+  bottom: 14px;
   width: 1px;
   background: var(--border-glass);
 }
 
 .hour-card.current {
-  padding-left: 12px;
+  background: rgba(91, 140, 255, 0.12);
 }
 
-.hour-card.current::before {
-  content: "";
-  position: absolute;
-  top: 11px;
-  left: 0;
-  bottom: 13px;
-  width: 3px;
-  border-radius: 999px;
-  background: var(--blue);
+.hour-card .hour-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
 }
 
-.hour-card strong {
-  display: block;
-  margin: 6px 0 5px;
-  font-size: 1.38rem;
+.hour-card.current .hour-label {
+  color: var(--blue);
+}
+
+.hour-card .hour-temp {
+  font-size: 1.1rem;
+  font-weight: 850;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.hour-card .hour-rain {
+  min-height: 0.95em;
+  color: var(--blue);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .hour-icon {
-  width: 32px;
-  height: 32px;
-  margin-bottom: 5px;
+  width: 24px;
+  height: 24px;
+  margin: 1px 0;
 }
 
 .hour-icon svg {
   width: 100%;
   height: 100%;
-}
-
-.hour-card .code {
-  min-height: 34px;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 0.86rem;
-  font-weight: 750;
-  line-height: 1.12;
-  overflow-wrap: anywhere;
-  text-wrap: balance;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .rain-bar {
@@ -2024,6 +2028,12 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The icon already carries the condition, so keep the repeated word quiet. */
+.day-row .day-meta {
+  font-size: 0.76rem;
+  opacity: 0.78;
 }
 
 .day-temps {
@@ -2855,26 +2865,22 @@ body.map-immersive-active #mapLegend {
   }
 
   .hourly {
-    grid-auto-columns: 112px;
+    grid-auto-columns: 54px;
   }
 
-  .hour-card {
-    min-height: 136px;
-    padding-right: 14px;
-  }
-
-  .hour-card .code {
-    font-size: 0.8rem;
-  }
-
+  /* Keep the 10-day rows on a single tight line (no wrapping the temp track
+     to a second row) so all 10 days are scannable with minimal scrolling. */
   .day-row {
-    grid-template-columns: 1fr auto;
-    row-gap: 10px;
+    grid-template-columns: minmax(0, auto) minmax(96px, 1fr) auto;
+    gap: 10px;
+    min-height: 50px;
+    padding: 8px 0;
   }
 
-  .day-row .day-label { grid-column: 1; grid-row: 1; }
-  .day-row .day-rain { grid-column: 2; grid-row: 1; text-align: right; }
-  .day-row .day-temps { grid-column: 1 / -1; grid-row: 2; }
+  .day-row .day-icon { width: 26px; height: 26px; }
+  .day-row .day-temps { gap: 7px; }
+  .day-row .day-low,
+  .day-row .day-high { font-size: 0.92rem; }
 }
 
 @media (max-width: 480px) {
