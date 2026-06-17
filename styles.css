@@ -1921,11 +1921,17 @@ h2 {
   color: var(--blue);
 }
 
+/* Colored temps pair a per-temp hue (set inline) with a theme-aware lightness
+   so they stay legible on the light glass and pop on the dark glass. */
+:root { --temp-text-l: 38%; }
+:root[data-theme="dark"] { --temp-text-l: 66%; }
+
 .hour-card .hour-temp {
   font-size: 1.1rem;
   font-weight: 850;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
+  color: hsl(var(--t-h, 220), var(--t-s, 0%), var(--temp-text-l));
 }
 
 .hour-card .hour-rain {
@@ -1998,15 +2004,13 @@ h2 {
   gap: 18px;
   align-items: center;
   min-height: 66px;
-  padding: 12px 0;
+  /* Uniform left gutter on every row so the current-day accent bar lives in the
+     gutter instead of shifting Today's content out of line with the others. */
+  padding: 12px 0 12px 16px;
   border: 0;
   border-bottom: 1px solid var(--border-glass);
   border-radius: 0;
   background: transparent;
-}
-
-.day-row.current {
-  padding-left: 14px;
 }
 
 .day-row.current::before {
@@ -2022,6 +2026,7 @@ h2 {
 
 .day-name {
   font-weight: 850;
+  white-space: nowrap;
 }
 
 .day-meta {
@@ -2871,10 +2876,10 @@ body.map-immersive-active #mapLegend {
   /* Keep the 10-day rows on a single tight line (no wrapping the temp track
      to a second row) so all 10 days are scannable with minimal scrolling. */
   .day-row {
-    grid-template-columns: minmax(0, auto) minmax(96px, 1fr) auto;
+    grid-template-columns: minmax(0, auto) minmax(84px, 1fr) auto;
     gap: 10px;
     min-height: 50px;
-    padding: 8px 0;
+    padding: 8px 0 8px 12px;
   }
 
   .day-row .day-icon { width: 26px; height: 26px; }
