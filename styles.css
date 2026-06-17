@@ -1956,6 +1956,44 @@ h2 {
   height: 100%;
 }
 
+.weather-icon-with-badge {
+  position: relative;
+  overflow: visible;
+}
+
+.storm-potential-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  z-index: 2;
+  display: grid !important;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(245, 181, 61, 0.82);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 230, 137, 0.98), rgba(238, 163, 43, 0.96));
+  color: #2b1c02 !important;
+  box-shadow: 0 5px 14px rgba(177, 103, 18, 0.24), 0 0 0 2px rgba(255, 255, 255, 0.70);
+  font-size: 0;
+}
+
+:root[data-theme="dark"] .storm-potential-badge {
+  box-shadow: 0 5px 18px rgba(245, 181, 61, 0.22), 0 0 0 2px rgba(12, 18, 28, 0.78);
+}
+
+.storm-potential-badge svg {
+  width: 72% !important;
+  height: 72% !important;
+}
+
+.sheet-icon .storm-potential-badge {
+  right: -3px;
+  bottom: -3px;
+  width: 17px;
+  height: 17px;
+}
+
 .rain-bar {
   width: 100%;
   height: 5px;
@@ -1997,6 +2035,11 @@ h2 {
 .day-icon svg {
   width: 100%;
   height: 100%;
+}
+
+.day-icon .storm-potential-badge {
+  right: -4px;
+  bottom: -3px;
 }
 
 .day-row {
@@ -3475,12 +3518,16 @@ body.map-immersive-active #mapLegend {
 .sheet-hour-row.is-sunny::before {
   background: rgba(244, 180, 64, 0.78);
 }
+.sheet-hour-row.is-stormy::before {
+  background: rgba(238, 163, 43, 0.82);
+}
 .sheet-hour-row.is-windy.is-sunny {
   box-shadow: none;
 }
 .sheet-hour-row.is-rainy.is-now::before,
 .sheet-hour-row.is-windy.is-now::before,
-.sheet-hour-row.is-sunny.is-now::before {
+.sheet-hour-row.is-sunny.is-now::before,
+.sheet-hour-row.is-stormy.is-now::before {
   background: var(--blue);
 }
 .sheet-hour-time,
@@ -3515,6 +3562,10 @@ body.map-immersive-active #mapLegend {
 .sheet-hour-icon svg {
   width: 100%;
   height: 100%;
+}
+.sheet-hour-icon .storm-potential-badge {
+  right: -6px;
+  bottom: -4px;
 }
 .sheet-hour-main {
   display: flex;
@@ -3563,6 +3614,11 @@ body.map-immersive-active #mapLegend {
 .sheet-hour-chip.is-flag {
   border-color: rgba(244, 180, 64, 0.34);
   background: rgba(244, 180, 64, 0.12);
+  color: var(--ink);
+}
+.sheet-hour-chip.is-storm {
+  border-color: rgba(238, 163, 43, 0.44);
+  background: rgba(238, 163, 43, 0.16);
   color: var(--ink);
 }
 .sheet-hour-cue {

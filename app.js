@@ -1,4 +1,4 @@
-const VERSION = "1.10.81";
+const VERSION = "1.10.82";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -430,6 +430,7 @@ function weatherIcon(code, isDay = true) {
 // afternoon still coded "thunderstorms". Gate precipitation codes by probability
 // and fall back to the actual sky, so the icon/label match what's likely.
 const PRECIP_FEATURE_POP = 30; // POP% at/above which precipitation is featured
+const THUNDER_POTENTIAL_POP = 20; // Lower-confidence thunder gets a badge, not the main icon
 
 function skyCodeFromCloud(cloudPct) {
   if (cloudPct == null) return 2; // unknown → partly cloudy
@@ -444,6 +445,24 @@ function effectiveWeatherCode(code, pop, cloudPct) {
   if (code == null || code < 51) return code;                // sky/fog — keep
   if (pop == null || pop >= PRECIP_FEATURE_POP) return code; // precip likely → keep
   return skyCodeFromCloud(cloudPct);                         // unlikely → show sky
+}
+
+function isThunderCode(code) {
+  return code === 95 || code === 96 || code === 99;
+}
+
+function hasThunderPotential(rawCode, pop, shownCode) {
+  return isThunderCode(rawCode) &&
+    !isThunderCode(shownCode) &&
+    (pop || 0) >= THUNDER_POTENTIAL_POP;
+}
+
+function thunderBadgeHtml(label = "Thunder possible") {
+  return `<span class="storm-potential-badge" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M11.7 1.7 4.4 11h4.4l-1 7.3 7.8-10.7h-4.5l.6-5.9Z" fill="currentColor"/>
+    </svg>
+  </span>`;
 }
 
 // "Now" has no probability, so gate by whether precipitation is actually falling.
@@ -493,6 +512,32 @@ function representativeDailyCode(data, dayIndex) {
   if (precipCode != null) return precipCode;
   const modalSky = Object.keys(skyCounts).sort((a, b) => skyCounts[b] - skyCounts[a])[0];
   return modalSky != null ? Number(modalSky) : skyCodeFromCloud(cloudN ? cloudSum / cloudN : null);
+}
+
+function hasThunderPotentialForDay(data, dayIndex, shownCode) {
+  if (isThunderCode(shownCode)) return false;
+  const dayStr = data.daily.time[dayIndex];
+  const h = data.hourly;
+  if (!h || !h.time) return false;
+  return h.time.some((time, i) => {
+    if (!time.startsWith(dayStr)) return false;
+    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
+    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
+    return hasThunderPotential(h.weather_code[i], pop, eff);
+  });
+}
+
+function hasThunderPotentialForIndices(data, indices, shownCode) {
+  if (isThunderCode(shownCode)) return false;
+  const h = data.hourly;
+  if (!h || !h.time) return false;
+  return indices.some((i) => {
+    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
+    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
+    return hasThunderPotential(h.weather_code[i], pop, eff);
+  });
 }
 
 function init() {
@@ -3894,15 +3939,18 @@ function renderHourly(data, tempUnit) {
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
     const rain = data.hourly.precipitation_probability[index] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[index] : null;
-    const wcode = effectiveWeatherCode(data.hourly.weather_code[index], rain, cloud);
+    const rawCode = data.hourly.weather_code[index];
+    const wcode = effectiveWeatherCode(rawCode, rain, cloud);
     const code = weatherCodes[wcode] || "Weather";
+    const stormPotential = hasThunderPotential(rawCode, rain, wcode);
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
+    const title = stormPotential ? `${code}; thunder possible` : code;
     return `
-      <article class="hour-card${position === 0 ? " current" : ""}" title="${escapeHtml(code)}">
+      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" title="${escapeHtml(title)}">
         <span class="hour-label">${label}</span>
-        <div class="hour-icon" aria-hidden="true">${weatherIcon(wcode, isHourDay)}</div>
+        <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay)}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
         <span class="hour-rain${rain >= 20 ? " wet" : ""}">${rain >= 20 ? `${rain}%` : ""}</span>
         <div class="rain-bar" aria-hidden="true"><i style="width:${rain}%"></i></div>
@@ -3989,10 +4037,12 @@ function renderDaily(data, tempUnit, precipUnit) {
     const precip = data.daily.precipitation_sum[index] || 0;
     const wcode = representativeDailyCode(data, index);
     const code = weatherCodes[wcode] || "Weather";
+    const stormPotential = hasThunderPotentialForDay(data, index, wcode);
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}`;
     return `
-      <article class="day-row${index === 0 ? " current" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${formatDay(time, index)} detail">
+      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
-          <div class="day-icon" aria-hidden="true">${weatherIcon(wcode, true)}</div>
+          <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true)}${stormPotential ? thunderBadgeHtml() : ""}</div>
           <div>
             <div class="day-name">${formatDay(time, index)}</div>
             <div class="day-meta">${escapeHtml(code)}</div>
@@ -5821,10 +5871,12 @@ function openDayFromIndex(i) {
   const dayStr = data.daily.time[i];
   const indices = [];
   data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
+  const code = representativeDailyCode(data, i);
   openDayDetail({
     indices,
     title: formatDay(data.daily.time[i], i),
-    code: representativeDailyCode(data, i),
+    code,
+    stormPotential: hasThunderPotentialForDay(data, i, code),
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
@@ -5844,10 +5896,12 @@ function openNext24Detail() {
     const ms = parseForecastTimestamp(t, data);
     if (ms !== null && ms >= now - 3600000 && indices.length < 24) indices.push(h);
   });
+  const code = effectiveCurrentCode(data.current);
   openDayDetail({
     indices,
     title: "Next 24 Hours",
-    code: effectiveCurrentCode(data.current),
+    code,
+    stormPotential: hasThunderPotentialForIndices(data, indices, code),
     isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
     sunriseISO: data.daily.sunrise[0],
     sunsetISO: data.daily.sunset[0],
@@ -5883,36 +5937,41 @@ function setDayDetailMode(mode, persist = true) {
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
-function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, dayIndex = 0, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
+function openDayDetail({ indices, title, code, stormPotential = false, isDay, sunriseISO, sunsetISO, dayIndex = 0, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
   const data = state.forecast;
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
 
-  const hrs = indices.map((h) => ({
-    time: data.hourly.time[h],
-    temp: data.hourly.temperature_2m[h],
-    feels: data.hourly.apparent_temperature[h],
-    pop: data.hourly.precipitation_probability[h] || 0,
-    precip: data.hourly.precipitation[h] || 0,
-    wind: data.hourly.wind_speed_10m[h],
-    gust: data.hourly.wind_gusts_10m[h],
-    uv: data.hourly.uv_index[h] || 0,
-    code: effectiveWeatherCode(
-      data.hourly.weather_code[h],
-      data.hourly.precipitation_probability[h] || 0,
-      data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null
-    ),
-    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
-  }));
+  const hrs = indices.map((h) => {
+    const rawCode = data.hourly.weather_code[h];
+    const pop = data.hourly.precipitation_probability[h] || 0;
+    const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
+    const code = effectiveWeatherCode(rawCode, pop, cloud);
+    return {
+      time: data.hourly.time[h],
+      temp: data.hourly.temperature_2m[h],
+      feels: data.hourly.apparent_temperature[h],
+      pop,
+      precip: data.hourly.precipitation[h] || 0,
+      wind: data.hourly.wind_speed_10m[h],
+      gust: data.hourly.wind_gusts_10m[h],
+      uv: data.hourly.uv_index[h] || 0,
+      rawCode,
+      code,
+      stormPotential: hasThunderPotential(rawCode, pop, code),
+      isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
+    };
+  });
 
   const temps = hrs.map((h) => h.temp);
   const high = Math.round(Math.max(...temps));
   const low = Math.round(Math.min(...temps));
 
   document.getElementById("sheetTitle").textContent = title;
-  document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay);
+  document.getElementById("sheetIcon").classList.toggle("weather-icon-with-badge", stormPotential);
+  document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay) + (stormPotential ? thunderBadgeHtml() : "");
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
@@ -5948,10 +6007,11 @@ function closeDayDetail() {
 
 function buildDaySummary(hrs, windUnit) {
   const maxPop = Math.max(...hrs.map((h) => h.pop));
-  const totalPrecip = hrs.reduce((sum, h) => sum + h.precip, 0);
   const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
+  const thunder = hrs.some((h) => isThunderCode(h.code) || h.stormPotential);
   const parts = [];
-  if (maxPop >= 50) parts.push(`Rain likely, up to ${maxPop}% chance`);
+  if (thunder) parts.push(`Thunder possible${maxPop >= 20 ? `, up to ${maxPop}% rain` : ""}`);
+  else if (maxPop >= 50) parts.push(`Rain likely, up to ${maxPop}% chance`);
   else if (maxPop >= 20) parts.push(`Slight chance of rain (${maxPop}%)`);
   else parts.push("Mostly dry");
   if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
@@ -5963,6 +6023,10 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   const feelsDelta = Math.round(hour.feels - hour.temp);
   const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
   const signals = [];
+
+  if (hour.stormPotential) {
+    signals.push({ label: "Thunder", tone: " is-storm" });
+  }
 
   if (hour.pop >= 20) {
     signals.push({ label: `${hour.pop}% rain`, tone: hour.pop >= 40 ? " is-wet" : "" });
@@ -5986,8 +6050,9 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
-  if (hour.code >= 95) {
-    const hail = hour.code === 96 || hour.code === 99 ? " Hail is also possible." : "";
+  if (isThunderCode(hour.code) || hour.stormPotential) {
+    const stormCode = hour.rawCode || hour.code;
+    const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
     const amount = hour.precip > 0.02 ? ` Around ${formatAmount(hour.precip)} ${precipUnit} could fall.` : "";
     return `Thunderstorms possible. Watch for lightning and quick downpours.${hail}${amount}`;
   }
@@ -6053,14 +6118,15 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
+    const stormClass = hour.stormPotential ? " is-stormy" : "";
     const nowClass = now ? " is-now" : "";
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
-    const rowLabel = `${formatHour(hour.time)} ${condition}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
+    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
     return `${divider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
-        <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
+        <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>
         </div>
