@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.54">
+    <link rel="stylesheet" href="styles.css?v=1.10.55">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -152,17 +152,19 @@
 
             <div class="daylight-card" id="daylightCard">
               <div class="daylight-head">
-                <span>Daylight</span>
+                <span>Light &amp; Sun</span>
                 <strong id="daylightSummary">--</strong>
               </div>
+              <p class="daylight-context" id="daylightContext">--</p>
               <div class="daylight-track" aria-hidden="true">
                 <span class="daylight-fill" id="daylightFill"></span>
+                <span class="daylight-uv-band" id="daylightUvBand"></span>
                 <span class="daylight-now" id="daylightNow"></span>
                 <span class="daylight-uv" id="daylightUv"></span>
               </div>
               <div class="daylight-times">
                 <span><b>Sunrise</b><strong id="sunrise">--</strong></span>
-                <span><b>UV peak</b><strong id="uv">--</strong></span>
+                <span><b id="uvLabel">UV risk</b><strong id="uv">--</strong></span>
                 <span><b>Sunset</b><strong id="sunset">--</strong></span>
               </div>
             </div>
@@ -364,6 +366,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.54"></script>
+    <script src="app.js?v=1.10.55"></script>
   </body>
 </html>

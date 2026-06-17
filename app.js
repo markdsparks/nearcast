@@ -1,4 +1,4 @@
-const VERSION = "1.10.54";
+const VERSION = "1.10.55";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -188,10 +188,14 @@ const els = {
   humidityContext: document.querySelector("#humidityContext"),
   sunrise: document.querySelector("#sunrise"),
   sunset: document.querySelector("#sunset"),
+  daylightCard: document.querySelector("#daylightCard"),
   daylightSummary: document.querySelector("#daylightSummary"),
+  daylightContext: document.querySelector("#daylightContext"),
   daylightFill: document.querySelector("#daylightFill"),
+  daylightUvBand: document.querySelector("#daylightUvBand"),
   daylightNow: document.querySelector("#daylightNow"),
   daylightUv: document.querySelector("#daylightUv"),
+  uvLabel: document.querySelector("#uvLabel"),
   insights: document.querySelector("#insights"),
   insightCards: document.querySelector("#insightCards"),
   briefing: document.querySelector("#briefing"),
@@ -1358,30 +1362,161 @@ function humidityContext(value) {
 function renderDaylightGlance(data, uvVal) {
   const sunriseISO = data.daily.sunrise[0];
   const sunsetISO = data.daily.sunset[0];
+  const tomorrowSunriseISO = data.daily.sunrise[1];
   const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
+  const tomorrowSunriseMs = tomorrowSunriseISO ? parseForecastTimestamp(tomorrowSunriseISO, data) : null;
   const nowMs = forecastNowMs(data);
   let progress = 0;
   let summary = "--";
+  let context = "Daylight timing is unavailable.";
+  const uv = sunRiskWindow(data, sunriseMs, sunsetMs, uvVal);
 
   if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) {
-    progress = Math.max(0, Math.min(100, ((nowMs - sunriseMs) / (sunsetMs - sunriseMs)) * 100));
+    progress = daylightPercent(nowMs, sunriseMs, sunsetMs);
     if (nowMs < sunriseMs) {
-      summary = `Sunrise ${formatTime(sunriseISO)}`;
+      summary = `Sunrise in ${durationBrief(sunriseMs - nowMs)}`;
+      context = `First light starts at ${formatTime(sunriseISO)}. ${uv.context}`;
     } else if (nowMs > sunsetMs) {
-      summary = `Sunset was ${formatTime(sunsetISO)}`;
+      summary = "Dark now";
+      context = tomorrowSunriseMs
+        ? `Next sunrise is ${formatTime(tomorrowSunriseISO)}.`
+        : `Sunset was ${formatTime(sunsetISO)}.`;
     } else {
-      summary = `Light until ${formatTime(sunsetISO)}`;
+      const remaining = sunsetMs - nowMs;
+      summary = remaining <= 90 * 60 * 1000
+        ? `Sunset in ${durationBrief(remaining)}`
+        : `${durationBrief(remaining)} daylight left`;
+      context = uv.context;
     }
   }
 
+  if (els.daylightCard) {
+    els.daylightCard.classList.remove("uv-low", "uv-moderate", "uv-high", "uv-very-high", "uv-extreme");
+    els.daylightCard.classList.add(`uv-${uv.severity}`);
+  }
   if (els.daylightSummary) els.daylightSummary.textContent = summary;
+  if (els.daylightContext) els.daylightContext.textContent = context;
   if (els.daylightFill) els.daylightFill.style.setProperty("--daylight-progress", `${progress}%`);
   if (els.daylightNow) els.daylightNow.style.setProperty("--marker-position", `${progress}%`);
-  if (els.daylightUv) {
-    els.daylightUv.style.setProperty("--uv-position", "52%");
-    els.daylightUv.hidden = uvVal < 2;
+  if (els.daylightUvBand) {
+    els.daylightUvBand.style.setProperty("--uv-start", `${uv.startPct}%`);
+    els.daylightUvBand.style.setProperty("--uv-width", `${uv.widthPct}%`);
+    els.daylightUvBand.hidden = !uv.showBand;
   }
+  if (els.daylightUv) {
+    els.daylightUv.style.setProperty("--uv-position", `${uv.peakPct}%`);
+    els.daylightUv.hidden = !uv.showMarker;
+  }
+  if (els.uvLabel) els.uvLabel.textContent = "UV risk";
+  if (els.uv) els.uv.textContent = uv.display;
+}
+
+function daylightPercent(ms, sunriseMs, sunsetMs) {
+  if (!sunriseMs || !sunsetMs || sunsetMs <= sunriseMs) return 0;
+  return Math.max(0, Math.min(100, ((ms - sunriseMs) / (sunsetMs - sunriseMs)) * 100));
+}
+
+function durationBrief(ms) {
+  const minutes = Math.max(0, Math.round(ms / 60000));
+  if (minutes < 1) return "now";
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (!hours) return `${mins}m`;
+  if (!mins) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+}
+
+function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
+  const low = {
+    display: `Low ${Math.round(fallbackUv || 0)}`,
+    severity: "low",
+    peakPct: 50,
+    startPct: 0,
+    widthPct: 0,
+    showBand: false,
+    showMarker: false,
+    context: "Low sun risk today."
+  };
+  if (!data?.hourly?.time?.length || !data?.hourly?.uv_index?.length || !sunriseMs || !sunsetMs || sunsetMs <= sunriseMs) {
+    const fallback = Math.round(fallbackUv || 0);
+    if (fallback < 3) return { ...low, display: `Low ${fallback}` };
+    const risk = uvRisk(fallback);
+    return {
+      ...low,
+      display: `${risk.label} ${fallback}`,
+      severity: risk.severity,
+      showMarker: true,
+      context: `${risk.label} UV peaks at ${fallback}.`
+    };
+  }
+
+  const day = forecastLocalDate(data, 0);
+  const rows = data.hourly.time
+    .map((time, index) => ({
+      time,
+      index,
+      value: Number(data.hourly.uv_index[index] || 0),
+      ms: parseForecastTimestamp(time, data)
+    }))
+    .filter((row) =>
+      row.ms !== null &&
+      datePart(row.time) === day &&
+      row.ms >= sunriseMs - 60 * 60 * 1000 &&
+      row.ms <= sunsetMs + 60 * 60 * 1000 &&
+      Number.isFinite(row.value)
+    );
+
+  if (!rows.length) return low;
+
+  const peak = rows.reduce((best, row) => row.value > best.value ? row : best, rows[0]);
+  const peakValue = Math.round(peak.value);
+  const risk = uvRisk(peakValue);
+  const threshold = peakValue >= 6 ? 6 : peakValue >= 3 ? 3 : 0;
+  const activeRows = threshold ? rows.filter((row) => row.value >= threshold) : [];
+  const first = activeRows[0];
+  const last = activeRows[activeRows.length - 1];
+  const endTime = last ? data.hourly.time[last.index + 1] || last.time : null;
+  const endMs = endTime ? parseForecastTimestamp(endTime, data) : last ? last.ms + 60 * 60 * 1000 : null;
+  const startPct = first ? daylightPercent(Math.max(first.ms, sunriseMs), sunriseMs, sunsetMs) : 0;
+  const endPct = endMs ? daylightPercent(Math.min(endMs, sunsetMs), sunriseMs, sunsetMs) : startPct;
+  const widthPct = Math.max(0, endPct - startPct);
+  const nowMs = forecastNowMs(data);
+  const peakPct = daylightPercent(peak.ms, sunriseMs, sunsetMs);
+  const peakTime = formatTime(peak.time);
+  const display = `${risk.label} ${peakValue}`;
+  let context = peakValue < 3
+    ? "Low sun risk today."
+    : `${risk.label} UV peaks around ${peakTime}.`;
+
+  if (first && endMs && peakValue >= 3) {
+    if (nowMs < first.ms) {
+      context = `${risk.label} UV starts around ${formatTime(first.time)}.`;
+    } else if (nowMs <= endMs) {
+      context = `${risk.label} UV now; eases around ${formatTime(endTime || last.time)}.`;
+    } else {
+      context = `${risk.label} UV window has passed.`;
+    }
+  }
+
+  return {
+    display,
+    severity: risk.severity,
+    peakPct,
+    startPct,
+    widthPct,
+    showBand: peakValue >= 3 && widthPct > 0,
+    showMarker: peakValue >= 3,
+    context
+  };
+}
+
+function uvRisk(value) {
+  if (value >= 11) return { label: "Extreme", severity: "extreme" };
+  if (value >= 8) return { label: "Very high", severity: "very-high" };
+  if (value >= 6) return { label: "High", severity: "high" };
+  if (value >= 3) return { label: "Moderate", severity: "moderate" };
+  return { label: "Low", severity: "low" };
 }
 
 function buildSummary(data) {
@@ -4415,13 +4550,16 @@ function bindMetricTips(data, tempUnit, windUnit) {
   const humidityVal = current.relative_humidity_2m ?? 0;
   const sunriseTime = data.daily.sunrise[0] ? formatTime(data.daily.sunrise[0]) : null;
   const sunsetTime = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
+  const sunriseMs = data.daily.sunrise[0] ? parseForecastTimestamp(data.daily.sunrise[0], data) : null;
+  const sunsetMs = data.daily.sunset[0] ? parseForecastTimestamp(data.daily.sunset[0], data) : null;
+  const sunRisk = sunRiskWindow(data, sunriseMs, sunsetMs, uvVal);
 
   const tips = {
     feelsLike: metricTipFeels(diff, feelsVal, tempUnit),
     rainChance: metricTipRain(rainVal),
     wind: metricTipWind(windVal, windUnit),
     humidity: metricTipHumidity(humidityVal),
-    daylightCard: metricTipDaylight(uvVal, sunriseTime, sunsetTime)
+    daylightCard: metricTipDaylight(sunRisk, sunriseTime, sunsetTime)
   };
 
   Object.entries(tips).forEach(([id, tip]) => {
@@ -4457,19 +4595,11 @@ function metricTipWind(speed, unit) {
   return `Calm air. Ideal for any outdoor activity.`;
 }
 
-function metricTipUv(uv) {
-  if (uv >= 11) return `Today's UV peaks at ${uv} — extreme. If you're going out, full-cover clothing and SPF 50+ are essential.`;
-  if (uv >= 8) return `Today's UV peaks at ${uv} — very high. Plan outdoor time before 10am or after 4pm, and wear SPF 30+.`;
-  if (uv >= 6) return `Today's UV peaks at ${uv} — high. Sunscreen and a hat are a good idea for any extended time outside.`;
-  if (uv >= 3) return `Today's UV peaks at ${uv} — moderate. Sunscreen is worth it if you're out for more than 30 minutes.`;
-  return `Today's UV index stays low at ${uv}. No special sun protection needed.`;
-}
-
-function metricTipDaylight(uv, sunriseTime, sunsetTime) {
+function metricTipDaylight(sunRisk, sunriseTime, sunsetTime) {
   const daylight = sunriseTime && sunsetTime
     ? `Daylight runs from ${sunriseTime} to ${sunsetTime}.`
     : "Daylight timing is based on the selected place.";
-  return `${daylight} ${metricTipUv(uv)}`;
+  return `${daylight} ${sunRisk?.context || "UV risk is based on the hourly forecast."}`;
 }
 
 function metricTipHumidity(pct) {
