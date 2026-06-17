@@ -2129,6 +2129,63 @@ h2 {
   font-weight: 700;
 }
 
+/* The inline map is a tap-to-open preview; the immersive view carries the full
+   controls, timeline and attribution, so the glimpse itself stays chrome-free. */
+.map-panel .map-toolbar,
+.map-panel .timeline,
+.map-panel .map-credit {
+  display: none;
+}
+
+/* Subtle affordance that the preview opens the full-screen map on tap. */
+.map-expand-hint {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(8, 12, 18, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 18px rgba(2, 6, 12, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+.map-expand-hint svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Attribution lives on the immersive map (where the full experience is),
+   tucked just below the frame chip so it clears the crowded bottom rail. */
+.imm-credit {
+  position: absolute;
+  top: 110px;
+  left: 18px;
+  z-index: 9;
+  max-width: min(440px, calc(100vw - 36px));
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 12, 18, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.imm-credit a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* ── Immersive map ─────────────────────────────────────────── */
 .immersive-map {
   position: fixed;

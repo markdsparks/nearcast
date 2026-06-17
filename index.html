@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.73">
+    <link rel="stylesheet" href="styles.css?v=1.10.74">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -238,6 +238,9 @@
               <div class="tile-layer weather-layer" id="weatherTileLayer"></div>
               <div class="marker-layer" id="markerLayer"></div>
             </div>
+            <span class="map-expand-hint" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
             <div class="map-loading" id="mapLoading" hidden>Loading map data...</div>
             <div class="map-legend" id="mapLegend" aria-label="Map legend"></div>
           </div>
@@ -286,6 +289,8 @@
         <div class="imm-frame-chip" aria-live="polite">
           <span id="immLabel">No frames</span>
         </div>
+
+        <p class="imm-credit">Radar NOAA/NWS, RainViewer · Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></p>
 
         <div class="imm-timeline">
           <button class="play-button imm-play-button" id="immPlay" type="button" aria-label="Play radar animation" title="Play radar animation">
@@ -383,6 +388,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.73"></script>
+    <script src="app.js?v=1.10.74"></script>
   </body>
 </html>
