@@ -1,4 +1,4 @@
-const VERSION = "1.10.64";
+const VERSION = "1.10.65";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1715,7 +1715,39 @@ function updateDaylightScrub(index, { showGuide = true } = {}) {
     if (els.daylightReadoutTime) els.daylightReadoutTime.textContent = copy.time;
     if (els.daylightReadoutTitle) els.daylightReadoutTitle.textContent = copy.title;
     if (els.daylightReadoutMeta) els.daylightReadoutMeta.textContent = copy.meta;
+    positionDaylightReadout(point, chart);
   }
+}
+
+function positionDaylightReadout(point, chart) {
+  if (!els.daylightArc || !els.daylightReadout || !point || !chart) return;
+  const arcWidth = els.daylightArc.clientWidth;
+  const arcHeight = els.daylightArc.clientHeight;
+  if (!arcWidth || !arcHeight) return;
+
+  const x = (point.x / chart.width) * arcWidth;
+  const y = (point.y / chart.height) * arcHeight;
+  const margin = 6;
+  const gap = 12;
+  const calloutWidth = els.daylightReadout.offsetWidth || Math.min(232, arcWidth - margin * 2);
+  const calloutHeight = els.daylightReadout.offsetHeight || 46;
+  const maxLeft = Math.max(margin, arcWidth - calloutWidth - margin);
+  const left = clamp(x - calloutWidth / 2, margin, maxLeft);
+
+  let top = y - calloutHeight - gap;
+  let below = false;
+  if (top < margin) {
+    top = y + gap;
+    below = true;
+  }
+  const maxTop = Math.max(margin, arcHeight - calloutHeight - margin);
+  top = clamp(top, margin, maxTop);
+
+  const pointerX = clamp(x - left, 12, calloutWidth - 12);
+  els.daylightReadout.style.setProperty("--readout-left", `${left}px`);
+  els.daylightReadout.style.setProperty("--readout-top", `${top}px`);
+  els.daylightReadout.style.setProperty("--pointer-x", `${pointerX}px`);
+  els.daylightReadout.classList.toggle("is-below", below);
 }
 
 function daylightReadoutCopy(point, data, chart) {
@@ -5058,6 +5090,7 @@ function initDaylightScrubListeners() {
 
   arc.addEventListener("pointerup", (event) => {
     daylightScrub.pointerDown = false;
+    if (event.pointerType === "mouse" && arc.matches(":hover")) return;
     if (event.pointerType === "mouse") scheduleDaylightDefaultRestore();
   });
 
@@ -5083,6 +5116,11 @@ function initDaylightScrubListeners() {
     clearTimeout(daylightScrub.restoreTimer);
     updateDaylightScrub(next, { showGuide: true });
   });
+
+  window.addEventListener("resize", () => {
+    if (!daylightScrub.points.length) return;
+    positionDaylightReadout(daylightScrub.points[daylightScrub.activeIndex], daylightScrub.chart);
+  }, { passive: true });
 }
 
 function initMetricTipListeners() {
