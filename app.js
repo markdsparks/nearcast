@@ -1,4 +1,4 @@
-const VERSION = "1.10.75";
+const VERSION = "1.10.76";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -423,6 +423,76 @@ function weatherIcon(code, isDay = true) {
   let key = weatherIcons[code] || "cloudy";
   if (key === "clear-day" && !isDay) key = "clear-night";
   return iconSvgs[key] || iconSvgs["cloudy"];
+}
+
+// Open-Meteo's weather_code reports the most significant *possible* condition,
+// which over-states rain/storms when the probability is low — e.g. a 4%-chance
+// afternoon still coded "thunderstorms". Gate precipitation codes by probability
+// and fall back to the actual sky, so the icon/label match what's likely.
+const PRECIP_FEATURE_POP = 30; // POP% at/above which precipitation is featured
+
+function skyCodeFromCloud(cloudPct) {
+  if (cloudPct == null) return 2; // unknown → partly cloudy
+  if (cloudPct < 15) return 0;    // clear
+  if (cloudPct < 45) return 1;    // mainly clear
+  if (cloudPct < 75) return 2;    // partly cloudy
+  return 3;                       // overcast
+}
+
+// code: WMO weather code; pop: precip probability %; cloudPct: cloud cover %.
+function effectiveWeatherCode(code, pop, cloudPct) {
+  if (code == null || code < 51) return code;                // sky/fog — keep
+  if (pop == null || pop >= PRECIP_FEATURE_POP) return code; // precip likely → keep
+  return skyCodeFromCloud(cloudPct);                         // unlikely → show sky
+}
+
+// "Now" has no probability, so gate by whether precipitation is actually falling.
+function effectiveCurrentCode(current) {
+  const code = current.weather_code;
+  if (code == null || code < 51) return code;
+  if ((current.precipitation || 0) > 0) return code;
+  return skyCodeFromCloud(current.cloud_cover);
+}
+
+// Rough severity ranking so a daily headline can feature the most significant
+// precipitation, not just the lightest/likeliest one.
+function precipRank(code) {
+  if (code >= 95) return 6;                                  // thunderstorms
+  if (code === 65 || code === 67 || code === 75 || code === 82 || code === 86) return 5; // heavy
+  if (code === 63 || code === 73 || code === 81 || code === 80 || code === 85) return 4; // moderate / showers
+  if (code === 61 || code === 66 || code === 71 || code === 77) return 3;  // light rain / snow
+  if (code >= 56) return 2;                                  // freezing drizzle / light snow
+  return 1;                                                  // drizzle (51-55)
+}
+
+// Daily headline derived from the day's *gated* hourly codes, not Open-Meteo's
+// daily code (which takes the single most-severe code regardless of probability,
+// so a 4%-chance afternoon makes the whole day read "thunderstorms"). Among the
+// hours where precip is likely enough to feature, take the most significant;
+// if none, take the dominant sky.
+function representativeDailyCode(data, dayIndex) {
+  const dayStr = data.daily.time[dayIndex];
+  const h = data.hourly;
+  if (!h || !h.time) return data.daily.weather_code[dayIndex];
+  let precipCode = null, precipScore = -1;
+  const skyCounts = {};
+  let cloudSum = 0, cloudN = 0;
+  for (let i = 0; i < h.time.length; i++) {
+    if (!h.time[i].startsWith(dayStr)) continue;
+    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
+    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
+    if (eff >= 51) {
+      const score = precipRank(eff) * 1000 + pop; // severity first, likelihood breaks ties
+      if (score > precipScore) { precipScore = score; precipCode = eff; }
+    } else {
+      skyCounts[eff] = (skyCounts[eff] || 0) + 1;
+    }
+    if (Number.isFinite(cloud)) { cloudSum += cloud; cloudN++; }
+  }
+  if (precipCode != null) return precipCode;
+  const modalSky = Object.keys(skyCounts).sort((a, b) => skyCounts[b] - skyCounts[a])[0];
+  return modalSky != null ? Number(modalSky) : skyCodeFromCloud(cloudN ? cloudSum / cloudN : null);
 }
 
 function init() {
@@ -1129,6 +1199,7 @@ async function fetchForecast(place, force = false) {
       "precipitation_probability",
       "precipitation",
       "weather_code",
+      "cloud_cover",
       "wind_speed_10m",
       "wind_gusts_10m",
       "uv_index",
@@ -1276,8 +1347,9 @@ function renderForecast(data, place) {
   els.sunset.textContent = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : "--";
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
 
+  const nowCode = effectiveCurrentCode(current);
   const heroIcon = document.getElementById("heroIcon");
-  if (heroIcon) heroIcon.innerHTML = weatherIcon(current.weather_code, isDay);
+  if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
 
   renderTodayGlance(data, tempUnit, windUnit);
   renderNowcast(data);
@@ -1288,7 +1360,7 @@ function renderForecast(data, place) {
   updateMapPlace();
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
-  updateSkyCanvas(current.weather_code, isDay);
+  updateSkyCanvas(nowCode, isDay);
 }
 
 function renderTodayGlance(data, tempUnit, windUnit) {
@@ -3808,7 +3880,8 @@ function renderHourly(data, tempUnit) {
   // day sheet (tapping the strip opens it), so the strip stays glanceable.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
     const rain = data.hourly.precipitation_probability[index] || 0;
-    const wcode = data.hourly.weather_code[index];
+    const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[index] : null;
+    const wcode = effectiveWeatherCode(data.hourly.weather_code[index], rain, cloud);
     const code = weatherCodes[wcode] || "Weather";
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
     const temp = Math.round(data.hourly.temperature_2m[index]);
@@ -3901,7 +3974,7 @@ function renderDaily(data, tempUnit, precipUnit) {
     const highColor = tempColor(high);
     const rain = data.daily.precipitation_probability_max[index] || 0;
     const precip = data.daily.precipitation_sum[index] || 0;
-    const wcode = data.daily.weather_code[index];
+    const wcode = representativeDailyCode(data, index);
     const code = weatherCodes[wcode] || "Weather";
     return `
       <article class="day-row${index === 0 ? " current" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${formatDay(time, index)} detail">
@@ -5418,7 +5491,7 @@ function updateImmersiveHUD() {
   const temp = document.getElementById("immTemp");
   const icon = document.getElementById("immIcon");
   const condition = document.getElementById("immCondition");
-  const currentCode = state.forecast?.current?.weather_code;
+  const currentCode = state.forecast?.current ? effectiveCurrentCode(state.forecast.current) : null;
   if (loc)  loc.textContent  = placeLabel(state.activePlace);
   if (temp) temp.textContent = document.getElementById("nowTemp").textContent;
   if (icon) icon.innerHTML   = document.getElementById("heroIcon").innerHTML;
@@ -5738,7 +5811,7 @@ function openDayFromIndex(i) {
   openDayDetail({
     indices,
     title: formatDay(data.daily.time[i], i),
-    code: data.daily.weather_code[i],
+    code: representativeDailyCode(data, i),
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
@@ -5761,7 +5834,7 @@ function openNext24Detail() {
   openDayDetail({
     indices,
     title: "Next 24 Hours",
-    code: data.current.weather_code,
+    code: effectiveCurrentCode(data.current),
     isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
     sunriseISO: data.daily.sunrise[0],
     sunsetISO: data.daily.sunset[0],
@@ -5813,7 +5886,11 @@ function openDayDetail({ indices, title, code, isDay, sunriseISO, sunsetISO, day
     wind: data.hourly.wind_speed_10m[h],
     gust: data.hourly.wind_gusts_10m[h],
     uv: data.hourly.uv_index[h] || 0,
-    code: data.hourly.weather_code[h],
+    code: effectiveWeatherCode(
+      data.hourly.weather_code[h],
+      data.hourly.precipitation_probability[h] || 0,
+      data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null
+    ),
     isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
   }));
 
