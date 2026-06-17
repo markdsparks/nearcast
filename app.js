@@ -1,4 +1,4 @@
-const VERSION = "1.10.78";
+const VERSION = "1.10.79";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6049,13 +6049,13 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const nowClass = now ? " is-now" : "";
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
+    const rowLabel = `${formatHour(hour.time)} ${condition}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
     return `${divider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}" role="button" tabindex="0" aria-expanded="false" aria-controls="${detailId}">
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>
-          <span>${escapeHtml(condition)}</span>
         </div>
         <div class="sheet-hour-signals">
           ${signalChips}

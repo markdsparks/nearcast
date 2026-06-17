@@ -3401,8 +3401,8 @@ body.map-immersive-active #mapLegend {
   grid-template-columns: 48px 34px minmax(0, 1fr) minmax(150px, auto);
   align-items: center;
   gap: 11px;
-  min-height: 70px;
-  padding: 13px 42px 13px 12px;
+  min-height: 62px;
+  padding: 11px 42px 11px 12px;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -3517,8 +3517,8 @@ body.map-immersive-active #mapLegend {
   height: 100%;
 }
 .sheet-hour-main {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 .sheet-hour-main strong {
@@ -3527,15 +3527,6 @@ body.map-immersive-active #mapLegend {
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
-}
-.sheet-hour-main span {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-  line-height: 1.18;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
 }
 .sheet-hour-signals {
   display: flex;
@@ -3680,16 +3671,13 @@ body.map-immersive-active #mapLegend {
 @media (max-width: 720px) {
   .sheet-hour-row {
     grid-template-columns: 50px 34px minmax(0, 1fr);
-    align-items: start;
+    align-items: center;
     gap: 10px 12px;
-    min-height: 82px;
-    padding: 14px 42px 14px 12px;
+    min-height: 70px;
+    padding: 12px 42px 12px 12px;
   }
   .sheet-hour-main strong {
     font-size: 1.22rem;
-  }
-  .sheet-hour-main span {
-    font-size: 0.82rem;
   }
   .sheet-hour-signals {
     grid-column: 3;
