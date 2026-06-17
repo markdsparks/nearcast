@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.63">
+    <link rel="stylesheet" href="styles.css?v=1.10.64">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -156,16 +156,22 @@
                 <strong id="daylightSummary">--</strong>
               </div>
               <p class="daylight-context" id="daylightContext">--</p>
-              <div class="daylight-arc" aria-hidden="true">
-                <svg viewBox="0 0 320 136" preserveAspectRatio="none" focusable="false">
+              <div class="daylight-arc" id="daylightArc" role="slider" tabindex="0" aria-label="Inspect light and UV by time" aria-valuemin="0" aria-valuemax="24" aria-valuenow="0" aria-valuetext="Light and sun details">
+                <svg viewBox="0 0 320 136" preserveAspectRatio="none" focusable="false" aria-hidden="true">
                   <line class="daylight-horizon" id="daylightHorizon" x1="8" y1="76" x2="312" y2="76"></line>
                   <path class="daylight-night-arc" id="daylightNightPath"></path>
                   <path class="daylight-fill" id="daylightFill"></path>
                   <path class="daylight-uv-band" id="daylightUvBand"></path>
+                  <line class="daylight-scrub-guide" id="daylightScrubGuide" x1="0" y1="12" x2="0" y2="122" hidden></line>
                 </svg>
                 <span class="daylight-uv" id="daylightUv"></span>
                 <span class="daylight-now-glow" id="daylightNowGlow"></span>
                 <span class="daylight-now" id="daylightNow"></span>
+              </div>
+              <div class="daylight-readout" id="daylightReadout">
+                <span id="daylightReadoutTime">Now</span>
+                <strong id="daylightReadoutTitle">--</strong>
+                <span id="daylightReadoutMeta">--</span>
               </div>
               <div class="daylight-times">
                 <span><b>Sunrise</b><strong id="sunrise">--</strong></span>
@@ -371,6 +377,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.63"></script>
+    <script src="app.js?v=1.10.64"></script>
   </body>
 </html>

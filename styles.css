@@ -845,26 +845,22 @@ h2 {
   font-weight: 750;
 }
 
-.glance-signal.has-tip,
-.daylight-card.has-tip {
+.glance-signal.has-tip {
   cursor: help;
   position: relative;
 }
 
-.glance-signal.has-tip::before,
-.daylight-card.has-tip::before {
+.glance-signal.has-tip::before {
   display: none;
 }
 
-.glance-signal.has-tip > span,
-.daylight-card.has-tip .daylight-head span {
+.glance-signal.has-tip > span {
   text-decoration: underline dotted var(--border-glass-md);
   text-underline-offset: 4px;
   text-decoration-thickness: 1px;
 }
 
-.glance-signal.has-tip:hover > span,
-.daylight-card.has-tip:hover .daylight-head span {
+.glance-signal.has-tip:hover > span {
   color: var(--ink);
   text-decoration-color: var(--blue);
 }
@@ -955,12 +951,20 @@ h2 {
   height: clamp(116px, 15vw, 148px);
   overflow: hidden;
   border-radius: 7px;
+  cursor: crosshair;
+  touch-action: pan-y;
 }
 
 .daylight-arc svg {
   display: block;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+}
+
+.daylight-arc:focus-visible {
+  outline: 2px solid rgba(91, 141, 220, 0.86);
+  outline-offset: 3px;
 }
 
 .daylight-horizon {
@@ -1002,6 +1006,18 @@ h2 {
   display: none;
 }
 
+.daylight-scrub-guide {
+  stroke: var(--ink);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.34;
+  vector-effect: non-scaling-stroke;
+}
+
+.daylight-scrub-guide[hidden] {
+  display: none;
+}
+
 .daylight-now,
 .daylight-uv,
 .daylight-now-glow {
@@ -1032,6 +1048,10 @@ h2 {
   box-shadow: 0 4px 12px rgba(12, 24, 36, 0.18);
 }
 
+.daylight-arc.is-scrubbing .daylight-now {
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
 .daylight-now.is-day {
   background: var(--sun);
   border-color: rgba(255, 255, 255, 0.82);
@@ -1048,6 +1068,40 @@ h2 {
   background: var(--uv-dot);
   opacity: 0.9;
   filter: drop-shadow(0 2px 8px var(--uv-accent));
+}
+
+.daylight-readout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.daylight-readout span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.daylight-readout strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daylight-readout span:last-child {
+  text-align: right;
 }
 
 .daylight-times span {
@@ -2704,6 +2758,15 @@ body.map-immersive-active #mapLegend {
   .daylight-head,
   .daylight-times {
     align-items: flex-start;
+  }
+
+  .daylight-readout {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .daylight-readout span:last-child {
+    text-align: left;
   }
 
   .map-toolbar,

@@ -1,4 +1,4 @@
-const VERSION = "1.10.63";
+const VERSION = "1.10.64";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -150,6 +150,16 @@ const mapTapState = {
   targetEl: null
 };
 
+const daylightScrub = {
+  chart: null,
+  data: null,
+  points: [],
+  defaultIndex: 0,
+  activeIndex: 0,
+  pointerDown: false,
+  restoreTimer: null
+};
+
 let searchSuggestTimer = null;
 let searchRequestSeq = 0;
 
@@ -189,15 +199,21 @@ const els = {
   sunrise: document.querySelector("#sunrise"),
   sunset: document.querySelector("#sunset"),
   daylightCard: document.querySelector("#daylightCard"),
+  daylightArc: document.querySelector("#daylightArc"),
   daylightSummary: document.querySelector("#daylightSummary"),
   daylightContext: document.querySelector("#daylightContext"),
   daylightHorizon: document.querySelector("#daylightHorizon"),
   daylightNightPath: document.querySelector("#daylightNightPath"),
   daylightFill: document.querySelector("#daylightFill"),
   daylightUvBand: document.querySelector("#daylightUvBand"),
+  daylightScrubGuide: document.querySelector("#daylightScrubGuide"),
   daylightNow: document.querySelector("#daylightNow"),
   daylightNowGlow: document.querySelector("#daylightNowGlow"),
   daylightUv: document.querySelector("#daylightUv"),
+  daylightReadout: document.querySelector("#daylightReadout"),
+  daylightReadoutTime: document.querySelector("#daylightReadoutTime"),
+  daylightReadoutTitle: document.querySelector("#daylightReadoutTitle"),
+  daylightReadoutMeta: document.querySelector("#daylightReadoutMeta"),
   uvLabel: document.querySelector("#uvLabel"),
   insights: document.querySelector("#insights"),
   insightCards: document.querySelector("#insightCards"),
@@ -412,6 +428,7 @@ function init() {
   updateUnitButton();
   bindEvents();
   initMetricTipListeners();
+  initDaylightScrubListeners();
   detectAI();
 
   // Returning users open straight to their weather (last viewed → first saved).
@@ -1426,6 +1443,7 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
     [els.daylightNightPath, els.daylightFill, els.daylightUvBand].forEach((path) => {
       if (path) path.setAttribute("d", "");
     });
+    resetDaylightScrub();
     return;
   }
 
@@ -1471,6 +1489,8 @@ function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) 
     positionSunMarker(els.daylightUv, sunPathPoint(chart, peakMs), chart);
     els.daylightUv.hidden = !uv.showMarker;
   }
+
+  setupDaylightScrub(data, chart, nowMs);
 }
 
 function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs) {
@@ -1585,6 +1605,190 @@ function positionSunMarker(marker, point, chart) {
   if (!marker || !point || !chart) return;
   marker.style.setProperty("--sun-x", `${(point.x / chart.width) * 100}%`);
   marker.style.setProperty("--sun-y", `${(point.y / chart.height) * 100}%`);
+}
+
+function setupDaylightScrub(data, chart, nowMs) {
+  daylightScrub.data = data;
+  daylightScrub.chart = chart;
+  daylightScrub.points = buildDaylightScrubPoints(data, chart);
+  daylightScrub.defaultIndex = nearestDaylightPointIndexByMs(nowMs);
+  daylightScrub.activeIndex = daylightScrub.defaultIndex;
+  updateDaylightScrub(daylightScrub.defaultIndex, { showGuide: false });
+}
+
+function resetDaylightScrub() {
+  daylightScrub.chart = null;
+  daylightScrub.data = null;
+  daylightScrub.points = [];
+  daylightScrub.defaultIndex = 0;
+  daylightScrub.activeIndex = 0;
+  clearTimeout(daylightScrub.restoreTimer);
+  if (els.daylightScrubGuide) els.daylightScrubGuide.setAttribute("hidden", "");
+  if (els.daylightArc) {
+    els.daylightArc.classList.remove("is-scrubbing");
+    els.daylightArc.setAttribute("aria-valuenow", "0");
+    els.daylightArc.setAttribute("aria-valuetext", "Light and sun details unavailable");
+  }
+  if (els.daylightReadoutTime) els.daylightReadoutTime.textContent = "Now";
+  if (els.daylightReadoutTitle) els.daylightReadoutTitle.textContent = "--";
+  if (els.daylightReadoutMeta) els.daylightReadoutMeta.textContent = "--";
+}
+
+function buildDaylightScrubPoints(data, chart) {
+  const samples = 96; // 15-minute steps give the small chart a smooth but stable feel.
+  const points = [];
+  for (let i = 0; i <= samples; i += 1) {
+    const ms = chart.dayStartMs + ((chart.dayEndMs - chart.dayStartMs) * i) / samples;
+    const point = sunPathPoint(chart, ms);
+    const hourly = nearestHourlyAt(data, ms);
+    const isDay = sunPointIsDay(chart, ms);
+    points.push({
+      ms,
+      x: point.x,
+      y: point.y,
+      isDay,
+      uv: Number(hourly?.uv ?? 0),
+      temp: hourly?.temp,
+      rain: hourly?.rain
+    });
+  }
+  return points;
+}
+
+function nearestHourlyAt(data, ms) {
+  const times = data?.hourly?.time || [];
+  if (!times.length) return null;
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+  times.forEach((time, index) => {
+    const rowMs = parseForecastTimestamp(time, data);
+    if (rowMs === null) return;
+    const distance = Math.abs(rowMs - ms);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  if (bestIndex < 0) return null;
+  return {
+    uv: data.hourly.uv_index?.[bestIndex],
+    temp: data.hourly.temperature_2m?.[bestIndex],
+    rain: data.hourly.precipitation_probability?.[bestIndex],
+    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[bestIndex]) : null
+  };
+}
+
+function sunPointIsDay(chart, ms) {
+  if (chart.mode === "polar-day") return true;
+  if (chart.mode === "polar-night") return false;
+  return ms >= chart.sunriseMs && ms <= chart.sunsetMs;
+}
+
+function updateDaylightScrub(index, { showGuide = true } = {}) {
+  const point = daylightScrub.points[index];
+  const chart = daylightScrub.chart;
+  const data = daylightScrub.data;
+  if (!point || !chart || !data) return;
+
+  daylightScrub.activeIndex = index;
+  positionSunMarker(els.daylightNow, point, chart);
+  positionSunMarker(els.daylightNowGlow, point, chart);
+  [els.daylightNow, els.daylightNowGlow].forEach((marker) => {
+    if (!marker) return;
+    marker.classList.toggle("is-day", point.isDay);
+    marker.classList.toggle("is-night", !point.isDay);
+  });
+
+  if (els.daylightScrubGuide) {
+    els.daylightScrubGuide.setAttribute("x1", roundSvg(point.x));
+    els.daylightScrubGuide.setAttribute("x2", roundSvg(point.x));
+    if (showGuide) els.daylightScrubGuide.removeAttribute("hidden");
+    else els.daylightScrubGuide.setAttribute("hidden", "");
+  }
+  if (els.daylightArc) {
+    const dayPct = percentBetween(point.ms, chart.dayStartMs, chart.dayEndMs);
+    const valueNow = Math.round((dayPct / 100) * 24 * 10) / 10;
+    const copy = daylightReadoutCopy(point, data, chart);
+    els.daylightArc.classList.toggle("is-scrubbing", showGuide);
+    els.daylightArc.setAttribute("aria-valuenow", String(valueNow));
+    els.daylightArc.setAttribute("aria-valuetext", `${copy.time}: ${copy.title}. ${copy.meta}`);
+    if (els.daylightReadoutTime) els.daylightReadoutTime.textContent = copy.time;
+    if (els.daylightReadoutTitle) els.daylightReadoutTitle.textContent = copy.title;
+    if (els.daylightReadoutMeta) els.daylightReadoutMeta.textContent = copy.meta;
+  }
+}
+
+function daylightReadoutCopy(point, data, chart) {
+  const nowish = Math.abs(point.ms - forecastNowMs(data)) <= 16 * 60 * 1000;
+  const time = nowish ? "Now" : formatForecastMs(point.ms, data);
+  const uvValue = Math.max(0, Math.round(point.uv || 0));
+  const risk = uvRisk(uvValue);
+  let title = point.isDay ? "Sun above horizon" : "Sun below horizon";
+  let meta = point.isDay ? `${risk.label} UV ${uvValue}` : "No UV risk";
+
+  if (chart.mode === "polar-day") {
+    title = "Continuous daylight";
+    meta = `${risk.label} UV ${uvValue}`;
+  } else if (chart.mode === "polar-night") {
+    title = "Sun stays below horizon";
+    meta = "No UV risk";
+  } else if (isNearTime(point.ms, chart.sunriseMs, 18 * 60 * 1000)) {
+    title = "Sunrise";
+    meta = "Light begins";
+  } else if (isNearTime(point.ms, chart.sunsetMs, 18 * 60 * 1000)) {
+    title = "Sunset";
+    meta = "Light fades";
+  } else if (point.isDay && uvValue >= 6) {
+    title = `${risk.label} UV`;
+  }
+
+  return { time, title, meta };
+}
+
+function formatForecastMs(ms, data = state.forecast) {
+  const local = new Date(ms + forecastOffsetMs(data));
+  return formatClock(local.getUTCHours(), local.getUTCMinutes());
+}
+
+function isNearTime(ms, targetMs, toleranceMs) {
+  return targetMs && Math.abs(ms - targetMs) <= toleranceMs;
+}
+
+function nearestDaylightPointIndexByMs(ms) {
+  if (!daylightScrub.points.length) return 0;
+  let best = 0;
+  let bestDistance = Infinity;
+  daylightScrub.points.forEach((point, index) => {
+    const distance = Math.abs(point.ms - ms);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function nearestDaylightPointIndexFromClientX(clientX) {
+  if (!els.daylightArc || !daylightScrub.points.length) return 0;
+  const rect = els.daylightArc.getBoundingClientRect();
+  const x = ((clientX - rect.left) / rect.width) * daylightScrub.chart.width;
+  let best = 0;
+  let bestDistance = Infinity;
+  daylightScrub.points.forEach((point, index) => {
+    const distance = Math.abs(point.x - x);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function scheduleDaylightDefaultRestore() {
+  clearTimeout(daylightScrub.restoreTimer);
+  daylightScrub.restoreTimer = setTimeout(() => {
+    updateDaylightScrub(daylightScrub.defaultIndex, { showGuide: false });
+  }, 650);
 }
 
 function roundSvg(value) {
@@ -4750,25 +4954,18 @@ function bindMetricTips(data, tempUnit, windUnit) {
   const diff = feelsVal - actualVal;
   const rainVal = currentRainChance(data);
   const windVal = Math.round(current.wind_speed_10m);
-  const uvVal = Math.round(data.daily.uv_index_max[0] || 0);
   const humidityVal = current.relative_humidity_2m ?? 0;
-  const sunriseTime = data.daily.sunrise[0] ? formatTime(data.daily.sunrise[0]) : null;
-  const sunsetTime = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
-  const sunriseMs = data.daily.sunrise[0] ? parseForecastTimestamp(data.daily.sunrise[0], data) : null;
-  const sunsetMs = data.daily.sunset[0] ? parseForecastTimestamp(data.daily.sunset[0], data) : null;
-  const sunRisk = sunRiskWindow(data, sunriseMs, sunsetMs, uvVal);
 
   const tips = {
     feelsLike: metricTipFeels(diff, feelsVal, tempUnit),
     rainChance: metricTipRain(rainVal),
     wind: metricTipWind(windVal, windUnit),
-    humidity: metricTipHumidity(humidityVal),
-    daylightCard: metricTipDaylight(sunRisk, sunriseTime, sunsetTime)
+    humidity: metricTipHumidity(humidityVal)
   };
 
   Object.entries(tips).forEach(([id, tip]) => {
     if (!tip) return;
-    const card = document.getElementById(id)?.closest(".glance-signal, .daylight-card");
+    const card = document.getElementById(id)?.closest(".glance-signal");
     if (!card) return;
     card.dataset.tip = tip;
     card.classList.add("has-tip");
@@ -4797,13 +4994,6 @@ function metricTipWind(speed, unit) {
   if (speed >= threshold[1]) return `Noticeable breeze. Keep an eye on light items and hats outdoors.`;
   if (speed >= threshold[0]) return `Light wind. Generally comfortable — might notice it on exposed walks.`;
   return `Calm air. Ideal for any outdoor activity.`;
-}
-
-function metricTipDaylight(sunRisk, sunriseTime, sunsetTime) {
-  const daylight = sunriseTime && sunsetTime
-    ? `Daylight runs from ${sunriseTime} to ${sunsetTime}.`
-    : "Daylight timing is based on the selected place.";
-  return `${daylight} ${sunRisk?.context || "UV risk is based on the hourly forecast."}`;
 }
 
 function metricTipHumidity(pct) {
@@ -4838,6 +5028,61 @@ function showMetricTip(card) {
 function hideMetricTip() {
   els.metricTip.hidden = true;
   activeTipCard = null;
+}
+
+function initDaylightScrubListeners() {
+  const arc = els.daylightArc;
+  if (!arc) return;
+
+  const inspect = (clientX) => {
+    if (!daylightScrub.points.length) return;
+    clearTimeout(daylightScrub.restoreTimer);
+    updateDaylightScrub(nearestDaylightPointIndexFromClientX(clientX), { showGuide: true });
+  };
+
+  arc.addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "touch") inspect(event.clientX);
+  });
+
+  arc.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "mouse" || daylightScrub.pointerDown) inspect(event.clientX);
+  });
+
+  arc.addEventListener("pointerdown", (event) => {
+    daylightScrub.pointerDown = true;
+    if (event.pointerType !== "mouse" && arc.setPointerCapture) {
+      arc.setPointerCapture(event.pointerId);
+    }
+    inspect(event.clientX);
+  });
+
+  arc.addEventListener("pointerup", (event) => {
+    daylightScrub.pointerDown = false;
+    if (event.pointerType === "mouse") scheduleDaylightDefaultRestore();
+  });
+
+  arc.addEventListener("pointercancel", () => {
+    daylightScrub.pointerDown = false;
+    scheduleDaylightDefaultRestore();
+  });
+
+  arc.addEventListener("pointerleave", (event) => {
+    if (!daylightScrub.pointerDown && event.pointerType === "mouse") scheduleDaylightDefaultRestore();
+  });
+
+  arc.addEventListener("keydown", (event) => {
+    if (!daylightScrub.points.length) return;
+    const max = daylightScrub.points.length - 1;
+    let next = daylightScrub.activeIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = Math.min(max, next + 1);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = Math.max(0, next - 1);
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = max;
+    else return;
+    event.preventDefault();
+    clearTimeout(daylightScrub.restoreTimer);
+    updateDaylightScrub(next, { showGuide: true });
+  });
 }
 
 function initMetricTipListeners() {
