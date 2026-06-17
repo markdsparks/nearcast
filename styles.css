@@ -952,7 +952,7 @@ h2 {
 
 .daylight-arc {
   position: relative;
-  height: clamp(96px, 14vw, 126px);
+  height: clamp(116px, 15vw, 148px);
   overflow: hidden;
   border-radius: 7px;
 }
@@ -965,40 +965,35 @@ h2 {
 
 .daylight-horizon {
   stroke: var(--border-glass-md);
-  stroke-width: 1.4;
+  stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
 }
 
 .daylight-night-arc {
   fill: none;
-  stroke: rgba(67, 85, 104, 0.22);
-  stroke-width: 10;
+  stroke: rgba(81, 101, 121, 0.22);
+  stroke-width: 5;
   stroke-linecap: round;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.daylight-arc-base,
 .daylight-fill,
 .daylight-uv-band {
   fill: none;
   stroke-linecap: round;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.daylight-arc-base {
-  stroke: rgba(82, 99, 117, 0.24);
-  stroke-width: 7;
-}
-
 .daylight-fill {
-  stroke: rgba(82, 99, 117, 0.34);
-  stroke-width: 7;
-  stroke-dasharray: var(--arc-progress, 0) 100;
+  stroke: rgba(129, 151, 172, 0.34);
+  stroke-width: 6;
 }
 
 .daylight-uv-band {
   stroke: var(--uv-dot);
-  stroke-width: 7;
+  stroke-width: 6;
   opacity: 0.9;
   filter: drop-shadow(0 0 7px var(--uv-accent));
 }
@@ -1025,12 +1020,25 @@ h2 {
   filter: blur(5px);
 }
 
+.daylight-now-glow.is-day {
+  background: rgba(232, 177, 58, 0.26);
+}
+
 .daylight-now {
   width: 16px;
   height: 16px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--panel);
   background: var(--panel);
   box-shadow: 0 4px 12px rgba(12, 24, 36, 0.18);
+}
+
+.daylight-now.is-day {
+  background: var(--sun);
+  border-color: rgba(255, 255, 255, 0.82);
+}
+
+.daylight-now.is-night {
+  background: var(--card-strong);
 }
 
 .daylight-uv {

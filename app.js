@@ -1,4 +1,4 @@
-const VERSION = "1.10.58";
+const VERSION = "1.10.59";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -191,6 +191,8 @@ const els = {
   daylightCard: document.querySelector("#daylightCard"),
   daylightSummary: document.querySelector("#daylightSummary"),
   daylightContext: document.querySelector("#daylightContext"),
+  daylightHorizon: document.querySelector("#daylightHorizon"),
+  daylightNightPath: document.querySelector("#daylightNightPath"),
   daylightFill: document.querySelector("#daylightFill"),
   daylightUvBand: document.querySelector("#daylightUvBand"),
   daylightNow: document.querySelector("#daylightNow"),
@@ -1368,13 +1370,11 @@ function renderDaylightGlance(data, uvVal) {
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
   const tomorrowSunriseMs = tomorrowSunriseISO ? parseForecastTimestamp(tomorrowSunriseISO, data) : null;
   const nowMs = forecastNowMs(data);
-  let progress = 0;
   let summary = "--";
   let context = "Daylight timing is unavailable.";
   const uv = sunRiskWindow(data, sunriseMs, sunsetMs, uvVal);
 
   if (sunriseMs && sunsetMs && sunsetMs > sunriseMs) {
-    progress = daylightPercent(nowMs, sunriseMs, sunsetMs);
     if (nowMs < sunriseMs) {
       summary = `Sunrise in ${durationBrief(sunriseMs - nowMs)}`;
       context = `First light starts at ${formatTime(sunriseISO)}. ${uv.context}`;
@@ -1398,39 +1398,127 @@ function renderDaylightGlance(data, uvVal) {
   }
   if (els.daylightSummary) els.daylightSummary.textContent = summary;
   if (els.daylightContext) els.daylightContext.textContent = context;
-  if (els.daylightFill) els.daylightFill.style.setProperty("--arc-progress", `${progress}`);
-  positionSunMarker(els.daylightNow, progress);
-  positionSunMarker(els.daylightNowGlow, progress);
-  if (els.daylightUvBand) {
-    els.daylightUvBand.style.strokeDasharray = `${uv.widthPct} 100`;
-    els.daylightUvBand.style.strokeDashoffset = String(-uv.startPct);
-    if (uv.showBand) {
-      els.daylightUvBand.removeAttribute("hidden");
-    } else {
-      els.daylightUvBand.setAttribute("hidden", "");
-    }
-  }
-  if (els.daylightUv) {
-    positionSunMarker(els.daylightUv, uv.peakPct);
-    els.daylightUv.hidden = !uv.showMarker;
-  }
+  renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv);
   if (els.uvLabel) els.uvLabel.textContent = "UV risk";
   if (els.uv) els.uv.textContent = uv.display;
 }
 
-function positionSunMarker(marker, percent) {
-  if (!marker) return;
-  const point = sunArcPoint(percent);
-  marker.style.setProperty("--sun-x", `${(point.x / 320) * 100}%`);
-  marker.style.setProperty("--sun-y", `${(point.y / 126) * 100}%`);
+function renderSunPath(data, sunriseMs, sunsetMs, tomorrowSunriseMs, nowMs, uv) {
+  const chart = sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs);
+  if (!chart) {
+    [els.daylightNightPath, els.daylightFill, els.daylightUvBand].forEach((path) => {
+      if (path) path.setAttribute("d", "");
+    });
+    return;
+  }
+
+  if (els.daylightHorizon) {
+    els.daylightHorizon.setAttribute("x1", String(chart.left));
+    els.daylightHorizon.setAttribute("x2", String(chart.right));
+    els.daylightHorizon.setAttribute("y1", String(chart.horizonY));
+    els.daylightHorizon.setAttribute("y2", String(chart.horizonY));
+  }
+  if (els.daylightNightPath) {
+    els.daylightNightPath.setAttribute("d", sunPathSegment(chart, chart.dayStartMs, chart.dayEndMs, 96));
+  }
+  if (els.daylightFill) {
+    els.daylightFill.setAttribute("d", sunPathSegment(chart, sunriseMs, sunsetMs, 64));
+  }
+  if (els.daylightUvBand) {
+    const showBand = uv.showBand && uv.startMs && uv.endMs && uv.endMs > uv.startMs;
+    if (showBand) {
+      els.daylightUvBand.setAttribute("d", sunPathSegment(chart, uv.startMs, uv.endMs, 24));
+      els.daylightUvBand.removeAttribute("hidden");
+    } else {
+      els.daylightUvBand.setAttribute("d", "");
+      els.daylightUvBand.setAttribute("hidden", "");
+    }
+  }
+
+  const nowPoint = sunPathPoint(chart, nowMs);
+  positionSunMarker(els.daylightNow, nowPoint, chart);
+  positionSunMarker(els.daylightNowGlow, nowPoint, chart);
+  [els.daylightNow, els.daylightNowGlow].forEach((marker) => {
+    if (!marker) return;
+    const isDay = nowPoint.y < chart.horizonY;
+    marker.classList.toggle("is-day", isDay);
+    marker.classList.toggle("is-night", !isDay);
+  });
+
+  if (els.daylightUv) {
+    const peakMs = uv.peakMs || (sunriseMs + (sunsetMs - sunriseMs) / 2);
+    positionSunMarker(els.daylightUv, sunPathPoint(chart, peakMs), chart);
+    els.daylightUv.hidden = !uv.showMarker;
+  }
 }
 
-function sunArcPoint(percent) {
-  const t = Math.max(0, Math.min(100, percent)) / 100;
+function sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs) {
+  const dayStartMs = forecastLocalBoundaryMs(data, 0, 0);
+  const dayEndMs = forecastLocalBoundaryMs(data, 24, 0);
+  if (!dayStartMs || !dayEndMs || !sunriseMs || !sunsetMs || sunsetMs <= sunriseMs || dayEndMs <= dayStartMs) return null;
+
+  const dayHours = (sunsetMs - sunriseMs) / 3600000;
   return {
-    x: 8 + t * 304,
-    y: 86 - Math.sin(Math.PI * t) * 48
+    width: 320,
+    height: 136,
+    left: 8,
+    right: 312,
+    horizonY: 76,
+    dayStartMs,
+    dayEndMs,
+    sunriseMs,
+    sunsetMs,
+    tomorrowSunriseMs,
+    dayAmplitude: clamp(24 + ((dayHours - 8) / 8) * 34, 22, 58),
+    nightDepth: clamp(24 + (((24 - dayHours) - 8) / 8) * 20, 24, 44)
   };
+}
+
+function sunPathSegment(chart, startMs, endMs, samples) {
+  const start = Math.max(chart.dayStartMs, startMs);
+  const end = Math.min(chart.dayEndMs, endMs);
+  if (end <= start) return "";
+  const steps = Math.max(2, samples);
+  const points = [];
+  for (let i = 0; i <= steps; i++) {
+    points.push(sunPathPoint(chart, start + ((end - start) * i) / steps));
+  }
+  return points
+    .map((point, index) => `${index ? "L" : "M"} ${roundSvg(point.x)} ${roundSvg(point.y)}`)
+    .join(" ");
+}
+
+function sunPathPoint(chart, ms) {
+  const tDay = Math.max(0, Math.min(1, (ms - chart.dayStartMs) / (chart.dayEndMs - chart.dayStartMs)));
+  const x = chart.left + tDay * (chart.right - chart.left);
+  let y = chart.horizonY;
+
+  if (ms < chart.sunriseMs) {
+    const t = Math.max(0, Math.min(1, (ms - chart.dayStartMs) / (chart.sunriseMs - chart.dayStartMs)));
+    y = chart.horizonY + chart.nightDepth * Math.cos(t * Math.PI / 2);
+  } else if (ms <= chart.sunsetMs) {
+    const t = Math.max(0, Math.min(1, (ms - chart.sunriseMs) / (chart.sunsetMs - chart.sunriseMs)));
+    y = chart.horizonY - chart.dayAmplitude * Math.sin(t * Math.PI);
+  } else {
+    const t = Math.max(0, Math.min(1, (ms - chart.sunsetMs) / (chart.dayEndMs - chart.sunsetMs)));
+    y = chart.horizonY + chart.nightDepth * Math.sin(t * Math.PI / 2);
+  }
+
+  return { x, y };
+}
+
+function positionSunMarker(marker, point, chart) {
+  if (!marker || !point || !chart) return;
+  marker.style.setProperty("--sun-x", `${(point.x / chart.width) * 100}%`);
+  marker.style.setProperty("--sun-y", `${(point.y / chart.height) * 100}%`);
+}
+
+function roundSvg(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function daylightPercent(ms, sunriseMs, sunsetMs) {
@@ -1455,6 +1543,9 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     peakPct: 50,
     startPct: 0,
     widthPct: 0,
+    startMs: null,
+    endMs: null,
+    peakMs: null,
     showBand: false,
     showMarker: false,
     context: "Low sun risk today."
@@ -1467,6 +1558,7 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
       ...low,
       display: `${risk.label} ${fallback}`,
       severity: risk.severity,
+      peakMs: sunriseMs && sunsetMs ? sunriseMs + (sunsetMs - sunriseMs) / 2 : null,
       showMarker: true,
       context: `${risk.label} UV peaks at ${fallback}.`
     };
@@ -1526,6 +1618,9 @@ function sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv) {
     peakPct,
     startPct,
     widthPct,
+    startMs: first ? first.ms : null,
+    endMs,
+    peakMs: peak.ms,
     showBand: peakValue >= 3 && widthPct > 0,
     showMarker: peakValue >= 3,
     context
