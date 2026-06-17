@@ -1,4 +1,4 @@
-const VERSION = "1.10.77";
+const VERSION = "1.10.78";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5956,16 +5956,31 @@ function buildDaySummary(hrs, windUnit) {
   return parts.join(", ") + ".";
 }
 
-function hourlyRowFlag(hour, tempUnit, windUnit, precipUnit) {
+function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   const deg = degree(tempUnit);
   const feelsDelta = Math.round(hour.feels - hour.temp);
-  if (hour.precip > 0.02) return `${formatAmount(hour.precip)} ${precipUnit}`;
-  if (hour.gust >= 25) return `Gust ${Math.round(hour.gust)} ${windUnit}`;
-  if (hour.uv >= 6) return `UV ${Math.round(hour.uv)}`;
-  if (Math.abs(feelsDelta) >= 6) {
-    return `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`;
+  const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
+  const signals = [];
+
+  if (hour.pop >= 20) {
+    signals.push({ label: `${hour.pop}% rain`, tone: hour.pop >= 40 ? " is-wet" : "" });
   }
-  return "";
+
+  if (hour.precip > 0.02) {
+    signals.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
+  } else if (windy) {
+    signals.push({ label: `Gust ${Math.round(hour.gust)} ${windUnit}`, tone: " is-wind" });
+  } else if (hour.uv >= 6) {
+    signals.push({ label: `UV ${Math.round(hour.uv)}`, tone: " is-flag" });
+  } else if (Math.abs(feelsDelta) >= 6) {
+    signals.push({ label: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`, tone: " is-flag" });
+  }
+
+  if (signals.length < 2) {
+    signals.push({ label: `${Math.round(hour.wind)} ${windUnit}`, tone: "" });
+  }
+
+  return signals.slice(0, 2);
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
@@ -6024,7 +6039,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
       : "";
     prevDay = dayKey;
     const condition = weatherCodes[hour.code] || "Weather";
-    const note = hourlyRowFlag(hour, tempUnit, windUnit, precipUnit);
+    const signals = hourlyRowSignals(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time);
@@ -6032,7 +6047,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const nowClass = now ? " is-now" : "";
-    const flag = note ? `<span class="sheet-hour-chip is-flag">${escapeHtml(note)}</span>` : "";
+    const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${nowClass}" role="button" tabindex="0" aria-expanded="false" aria-controls="${detailId}">
@@ -6043,9 +6058,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
           <span>${escapeHtml(condition)}</span>
         </div>
         <div class="sheet-hour-signals">
-          <span class="sheet-hour-chip${hour.pop >= 40 ? " is-wet" : ""}">${hour.pop}% rain</span>
-          <span class="sheet-hour-chip${windy ? " is-wind" : ""}">${windy ? `Gust ${Math.round(hour.gust)}` : `${Math.round(hour.wind)} ${windUnit}`}</span>
-          ${flag}
+          ${signalChips}
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}" hidden>
