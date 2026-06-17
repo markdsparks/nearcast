@@ -2082,10 +2082,71 @@ h2 {
   white-space: nowrap;
 }
 
+.day-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.day-meta-line .day-meta {
+  min-width: 0;
+}
+
 /* The icon already carries the condition, so keep the repeated word quiet. */
 .day-row .day-meta {
   font-size: 0.76rem;
   opacity: 0.78;
+}
+
+.day-row.has-alert::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 0;
+  bottom: 13px;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(219, 77, 64, 0.88);
+}
+
+.day-row.has-alert.is-alert-watch::before {
+  background: rgba(225, 149, 45, 0.86);
+}
+
+.day-row.has-alert.is-alert-advisory::before,
+.day-row.has-alert.is-alert-notice::before {
+  background: rgba(179, 138, 62, 0.72);
+}
+
+.alert-context-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 18px;
+  padding: 2px 7px;
+  border: 1px solid rgba(219, 77, 64, 0.34);
+  border-radius: 999px;
+  background: rgba(219, 77, 64, 0.12);
+  color: var(--ink);
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.alert-context-chip.is-alert-watch {
+  border-color: rgba(225, 149, 45, 0.36);
+  background: rgba(225, 149, 45, 0.13);
+}
+
+.alert-context-chip.is-alert-advisory,
+.alert-context-chip.is-alert-notice {
+  border-color: rgba(179, 138, 62, 0.32);
+  background: rgba(179, 138, 62, 0.10);
+  color: var(--muted);
 }
 
 .day-temps {
@@ -3496,6 +3557,48 @@ body.map-immersive-active #mapLegend {
   height: 1px;
   background: var(--line);
 }
+.sheet-alert-band {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(219, 77, 64, 0.30);
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(219, 77, 64, 0.14), rgba(219, 77, 64, 0.05));
+}
+.sheet-alert-band span,
+.sheet-alert-band small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.sheet-alert-band span {
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sheet-alert-band strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-alert-band.is-alert-watch {
+  border-color: rgba(225, 149, 45, 0.32);
+  background: linear-gradient(90deg, rgba(225, 149, 45, 0.15), rgba(225, 149, 45, 0.05));
+}
+.sheet-alert-band.is-alert-advisory,
+.sheet-alert-band.is-alert-notice {
+  border-color: rgba(179, 138, 62, 0.24);
+  background: rgba(179, 138, 62, 0.07);
+}
 .sheet-hour-row.is-now {
   box-shadow: none;
 }
@@ -3523,6 +3626,16 @@ body.map-immersive-active #mapLegend {
 .sheet-hour-row.is-stormy::before {
   background: rgba(238, 163, 43, 0.82);
 }
+.sheet-hour-row.has-alert.is-alert-warning::before {
+  background: rgba(219, 77, 64, 0.90);
+}
+.sheet-hour-row.has-alert.is-alert-watch::before {
+  background: rgba(225, 149, 45, 0.88);
+}
+.sheet-hour-row.has-alert.is-alert-advisory::before,
+.sheet-hour-row.has-alert.is-alert-notice::before {
+  background: rgba(179, 138, 62, 0.72);
+}
 .sheet-hour-row.is-windy.is-sunny {
   box-shadow: none;
 }
@@ -3531,6 +3644,16 @@ body.map-immersive-active #mapLegend {
 .sheet-hour-row.is-sunny.is-now::before,
 .sheet-hour-row.is-stormy.is-now::before {
   background: var(--blue);
+}
+.sheet-hour-row.has-alert.is-now::before {
+  background: rgba(219, 77, 64, 0.90);
+}
+.sheet-hour-row.has-alert.is-alert-watch.is-now::before {
+  background: rgba(225, 149, 45, 0.88);
+}
+.sheet-hour-row.has-alert.is-alert-advisory.is-now::before,
+.sheet-hour-row.has-alert.is-alert-notice.is-now::before {
+  background: rgba(179, 138, 62, 0.72);
 }
 .sheet-hour-time,
 .sheet-hour-signals {
@@ -3623,6 +3746,22 @@ body.map-immersive-active #mapLegend {
   background: rgba(238, 163, 43, 0.16);
   color: var(--ink);
 }
+.sheet-hour-chip.is-alert-warning {
+  border-color: rgba(219, 77, 64, 0.44);
+  background: rgba(219, 77, 64, 0.14);
+  color: var(--ink);
+}
+.sheet-hour-chip.is-alert-watch {
+  border-color: rgba(225, 149, 45, 0.42);
+  background: rgba(225, 149, 45, 0.14);
+  color: var(--ink);
+}
+.sheet-hour-chip.is-alert-advisory,
+.sheet-hour-chip.is-alert-notice {
+  border-color: rgba(179, 138, 62, 0.30);
+  background: rgba(179, 138, 62, 0.10);
+  color: var(--muted);
+}
 .sheet-hour-cue {
   position: absolute;
   top: 25px;
@@ -3654,6 +3793,36 @@ body.map-immersive-active #mapLegend {
 }
 .sheet-hour-detail[hidden] {
   display: none;
+}
+.sheet-hour-alert-note {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 12px;
+  padding: 10px 11px;
+  border: 1px solid rgba(219, 77, 64, 0.30);
+  border-radius: 8px;
+  background: rgba(219, 77, 64, 0.10);
+}
+.sheet-hour-alert-note.is-alert-watch {
+  border-color: rgba(225, 149, 45, 0.32);
+  background: rgba(225, 149, 45, 0.10);
+}
+.sheet-hour-alert-note.is-alert-advisory,
+.sheet-hour-alert-note.is-alert-notice {
+  border-color: rgba(179, 138, 62, 0.24);
+  background: rgba(179, 138, 62, 0.08);
+}
+.sheet-hour-alert-note strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.sheet-hour-alert-note span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.25;
 }
 .sheet-hour-detail p {
   margin: 0 0 13px;
@@ -3727,6 +3896,13 @@ body.map-immersive-active #mapLegend {
 }
 
 @media (max-width: 720px) {
+  .sheet-alert-band {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 5px 8px;
+  }
+  .sheet-alert-band small {
+    grid-column: 2;
+  }
   .sheet-hour-row {
     grid-template-columns: 48px 30px 58px minmax(0, 1fr);
     align-items: center;

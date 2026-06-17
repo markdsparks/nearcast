@@ -1,4 +1,4 @@
-const VERSION = "1.10.83";
+const VERSION = "1.10.84";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1194,7 +1194,7 @@ async function loadPlace(place, force = false) {
   renderSavedPlaces();
   updateMapPlace();
   syncMapToPlace();
-  renderAlerts([]); // clear prior place's alerts until this one resolves
+  renderAlerts([], false); // clear prior place's alerts until this one resolves
   setStatus(`Loading ${state.activePlace.name}...`);
 
   try {
@@ -4038,14 +4038,18 @@ function renderDaily(data, tempUnit, precipUnit) {
     const wcode = representativeDailyCode(data, index);
     const code = weatherCodes[wcode] || "Weather";
     const stormPotential = hasThunderPotentialForDay(data, index, wcode);
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}`;
+    const alert = topAlertForDay(data, index);
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${alert ? `, ${alert.event}` : ""}`;
     return `
-      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
+      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${alert ? ` has-alert is-alert-${alertTone(alert)}` : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
           <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true)}${stormPotential ? thunderBadgeHtml() : ""}</div>
           <div>
             <div class="day-name">${formatDay(time, index)}</div>
-            <div class="day-meta">${escapeHtml(code)}</div>
+            <div class="day-meta-line">
+              <div class="day-meta">${escapeHtml(code)}</div>
+              ${alert ? alertContextChipHtml(alert, "day-alert-chip") : ""}
+            </div>
           </div>
         </div>
         <div class="day-temps">
@@ -5949,8 +5953,14 @@ function openDayDetail({ indices, title, code, stormPotential = false, isDay, su
     const pop = data.hourly.precipitation_probability[h] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
     const code = effectiveWeatherCode(rawCode, pop, cloud);
+    const ms = parseForecastTimestamp(data.hourly.time[h], data);
+    const nextMs = indices.includes(h + 1)
+      ? parseForecastTimestamp(data.hourly.time[h + 1], data)
+      : ms !== null ? ms + 60 * 60 * 1000 : null;
     return {
       time: data.hourly.time[h],
+      ms,
+      endMs: nextMs,
       temp: data.hourly.temperature_2m[h],
       feels: data.hourly.apparent_temperature[h],
       pop,
@@ -5961,6 +5971,7 @@ function openDayDetail({ indices, title, code, stormPotential = false, isDay, su
       rawCode,
       code,
       stormPotential: hasThunderPotential(rawCode, pop, code),
+      alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs) : null,
       isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
     };
   });
@@ -6024,6 +6035,10 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
   const signals = [];
 
+  if (hour.alert) {
+    signals.push({ label: alertToneLabel(alertTone(hour.alert)), tone: ` is-alert is-alert-${alertTone(hour.alert)}` });
+  }
+
   if (hour.stormPotential) {
     signals.push({ label: "Thunder", tone: " is-storm" });
   }
@@ -6050,6 +6065,9 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
+  if (hour.alert && alertTone(hour.alert) === "warning") {
+    return `${hour.alert.event} is active for this hour. Check the alert details and follow local guidance.`;
+  }
   if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
@@ -6103,6 +6121,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
   let prevDay = null;
+  let prevAlertKey = null;
   list.innerHTML = hrs.map((hour, rowIndex) => {
     // Mark where the day rolls over (the list runs from "now" into tomorrow).
     const dayKey = hour.time.slice(0, 10);
@@ -6119,12 +6138,16 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const stormClass = hour.stormPotential ? " is-stormy" : "";
+    const alertClass = hour.alert ? ` has-alert is-alert-${alertTone(hour.alert)}` : "";
     const nowClass = now ? " is-now" : "";
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
-    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
-    return `${divider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
+    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
+    const alertKey = hour.alert ? alertIdentity(hour.alert) : "";
+    const alertBand = hour.alert && alertKey !== prevAlertKey ? sheetAlertBandHtml(hour.alert) : "";
+    prevAlertKey = alertKey || null;
+    return `${divider}${alertBand}
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
@@ -6135,6 +6158,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}" hidden>
+          ${hour.alert ? sheetHourAlertNoteHtml(hour.alert) : ""}
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
@@ -6582,6 +6606,7 @@ function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) 
 /* ---------- Severe weather alerts (NWS, US-only) ---------- */
 
 const SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 };
+const ALERT_TONE_RANK = { warning: 4, watch: 3, advisory: 2, notice: 1 };
 let activeAlerts = [];
 
 async function fetchAlerts(place) {
@@ -6613,6 +6638,35 @@ function alertSeverityLabel(severity) {
   return "Weather notice";
 }
 
+function alertTone(alert) {
+  const event = (alert?.event || "").toLowerCase();
+  if (event.includes("warning")) return "warning";
+  if (event.includes("watch")) return "watch";
+  if (event.includes("advisory")) return "advisory";
+  if (alert?.severity === "Extreme" || alert?.severity === "Severe") return "warning";
+  if (alert?.severity === "Moderate" || alert?.severity === "Minor") return "advisory";
+  return "notice";
+}
+
+function alertToneLabel(tone) {
+  if (tone === "warning") return "Warning";
+  if (tone === "watch") return "Watch";
+  if (tone === "advisory") return "Advisory";
+  return "Notice";
+}
+
+function alertPriority(alert) {
+  return (ALERT_TONE_RANK[alertTone(alert)] || 0) * 100 + (SEVERITY_RANK[alert?.severity] || 0) * 10;
+}
+
+function alertIdentity(alert) {
+  return [
+    alert?.event || "Alert",
+    alert?.onset || alert?.effective || "",
+    alert?.ends || alert?.expires || ""
+  ].join("|");
+}
+
 function alertMotionClass(alert) {
   const event = (alert?.event || "").toLowerCase();
   return alert?.severity === "Extreme" || event.includes("warning") ? "alert-pulse" : "";
@@ -6622,11 +6676,12 @@ function alertCountLabel(count) {
   return count === 1 ? "1 active alert" : `${count} active alerts`;
 }
 
-function renderAlerts(alerts) {
+function renderAlerts(alerts, refreshViews = true) {
   activeAlerts = alerts || [];
   const bar = document.getElementById("alertBar");
   if (!activeAlerts.length) {
     bar.hidden = true;
+    if (refreshViews) refreshAlertContextViews();
     return;
   }
   const top = activeAlerts[0];
@@ -6639,6 +6694,14 @@ function renderAlerts(alerts) {
     activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
   bar.setAttribute("aria-label", `${top.event}${top.ends || top.expires ? ` until ${formatAlertTime(top.ends || top.expires)}` : ""}. ${alertCountLabel(activeAlerts.length)}. Open alert details.`);
   bar.hidden = false;
+  if (refreshViews) refreshAlertContextViews();
+}
+
+function refreshAlertContextViews() {
+  if (!state.forecast) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  renderDaily(state.forecast, tempUnit, precipUnit);
 }
 
 function formatAlertTime(iso) {
@@ -6656,6 +6719,64 @@ function alertWindow(a) {
   if (start) parts.push(`From ${formatAlertTime(start)}`);
   if (end) parts.push(`until ${formatAlertTime(end)}`);
   return parts.join(" ");
+}
+
+function alertStartMs(alert) {
+  return parseForecastTimestamp(alert?.onset || alert?.effective);
+}
+
+function alertEndMs(alert) {
+  return parseForecastTimestamp(alert?.ends || alert?.expires);
+}
+
+function alertOverlapsRange(alert, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+  const alertStart = alertStartMs(alert);
+  const alertEnd = alertEndMs(alert);
+  const startsBeforeEnd = alertStart === null || alertStart < endMs;
+  const endsAfterStart = alertEnd === null || alertEnd > startMs;
+  return startsBeforeEnd && endsAfterStart;
+}
+
+function topAlertForRange(startMs, endMs) {
+  return activeAlerts
+    .filter((alert) => alertOverlapsRange(alert, startMs, endMs))
+    .sort((a, b) => alertPriority(b) - alertPriority(a))[0] || null;
+}
+
+function topAlertForDay(data, dayIndex) {
+  const day = data?.daily?.time?.[dayIndex];
+  if (!day) return null;
+  const startMs = parseForecastTimestamp(`${day}T00:00`, data);
+  if (startMs === null) return null;
+  return topAlertForRange(startMs, startMs + 24 * 60 * 60 * 1000);
+}
+
+function alertContextChipHtml(alert, extraClass = "") {
+  const tone = alertTone(alert);
+  const label = alertToneLabel(tone);
+  return `<span class="alert-context-chip ${extraClass} is-alert-${tone}" title="${escapeHtml(alert.event || label)}">${escapeHtml(label)}</span>`;
+}
+
+function sheetAlertBandHtml(alert) {
+  const tone = alertTone(alert);
+  return `
+    <div class="sheet-alert-band is-alert-${tone}">
+      <span>${escapeHtml(alertToneLabel(tone))}</span>
+      <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
+      <small>${escapeHtml(alertWindow(alert) || "Active now")}</small>
+    </div>
+  `;
+}
+
+function sheetHourAlertNoteHtml(alert) {
+  const tone = alertTone(alert);
+  return `
+    <div class="sheet-hour-alert-note is-alert-${tone}">
+      <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
+      <span>${escapeHtml(alertWindow(alert) || "Active now")}</span>
+    </div>
+  `;
 }
 
 function compactAlertAreas(areaDesc, max = 5) {
