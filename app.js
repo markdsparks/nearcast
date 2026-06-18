@@ -1,4 +1,4 @@
-const VERSION = "1.10.100";
+const VERSION = "1.10.101";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -93,6 +93,71 @@ const US_STATE_NAMES = {
   WY: "Wyoming",
   DC: "District of Columbia"
 };
+const COUNTRY_CODES = [
+  "AF", "AX", "AL", "DZ", "AS", "AD", "AO", "AI", "AQ", "AG", "AR", "AM", "AW", "AU", "AT", "AZ",
+  "BS", "BH", "BD", "BB", "BY", "BE", "BZ", "BJ", "BM", "BT", "BO", "BQ", "BA", "BW", "BV", "BR",
+  "IO", "BN", "BG", "BF", "BI", "CV", "KH", "CM", "CA", "KY", "CF", "TD", "CL", "CN", "CX", "CC",
+  "CO", "KM", "CG", "CD", "CK", "CR", "CI", "HR", "CU", "CW", "CY", "CZ", "DK", "DJ", "DM", "DO",
+  "EC", "EG", "SV", "GQ", "ER", "EE", "SZ", "ET", "FK", "FO", "FJ", "FI", "FR", "GF", "PF", "TF",
+  "GA", "GM", "GE", "DE", "GH", "GI", "GR", "GL", "GD", "GP", "GU", "GT", "GG", "GN", "GW", "GY",
+  "HT", "HM", "VA", "HN", "HK", "HU", "IS", "IN", "ID", "IR", "IQ", "IE", "IM", "IL", "IT", "JM",
+  "JP", "JE", "JO", "KZ", "KE", "KI", "KP", "KR", "KW", "KG", "LA", "LV", "LB", "LS", "LR", "LY",
+  "LI", "LT", "LU", "MO", "MG", "MW", "MY", "MV", "ML", "MT", "MH", "MQ", "MR", "MU", "YT", "MX",
+  "FM", "MD", "MC", "MN", "ME", "MS", "MA", "MZ", "MM", "NA", "NR", "NP", "NL", "NC", "NZ", "NI",
+  "NE", "NG", "NU", "NF", "MK", "MP", "NO", "OM", "PK", "PW", "PS", "PA", "PG", "PY", "PE", "PH",
+  "PN", "PL", "PT", "PR", "QA", "RE", "RO", "RU", "RW", "BL", "SH", "KN", "LC", "MF", "PM", "VC",
+  "WS", "SM", "ST", "SA", "SN", "RS", "SC", "SL", "SG", "SX", "SK", "SI", "SB", "SO", "ZA", "GS",
+  "SS", "ES", "LK", "SD", "SR", "SJ", "SE", "CH", "SY", "TW", "TJ", "TZ", "TH", "TL", "TG", "TK",
+  "TO", "TT", "TN", "TR", "TM", "TC", "TV", "UG", "UA", "AE", "GB", "UM", "US", "UY", "UZ", "VU",
+  "VE", "VN", "VG", "VI", "WF", "EH", "YE", "ZM", "ZW", "XK"
+];
+const COUNTRY_ALIAS_OVERRIDES = {
+  america: "US",
+  "united states of america": "US",
+  usa: "US",
+  "u s": "US",
+  "u s a": "US",
+  uk: "GB",
+  "u k": "GB",
+  britain: "GB",
+  "great britain": "GB",
+  england: "GB",
+  scotland: "GB",
+  wales: "GB",
+  "northern ireland": "GB",
+  uae: "AE",
+  "u a e": "AE",
+  "south korea": "KR",
+  "north korea": "KP",
+  "czech republic": "CZ",
+  russia: "RU",
+  "ivory coast": "CI",
+  "cote d ivoire": "CI",
+  bolivia: "BO",
+  brunei: "BN",
+  iran: "IR",
+  laos: "LA",
+  macedonia: "MK",
+  moldova: "MD",
+  palestine: "PS",
+  syria: "SY",
+  tanzania: "TZ",
+  turkey: "TR",
+  venezuela: "VE",
+  vietnam: "VN",
+  aland: "AX",
+  "aland islands": "AX",
+  curacao: "CW",
+  reunion: "RE",
+  kosovo: "XK"
+};
+const COUNTRY_DISPLAY_NAMES = buildCountryDisplayNames();
+const COUNTRY_ALIASES = buildCountryAliases();
+const COUNTRY_ALIAS_KEYS = [...COUNTRY_ALIASES.keys()].sort((a, b) => b.split(" ").length - a.split(" ").length || b.length - a.length);
+const COUNTRY_ALIAS_MAX_WORDS = COUNTRY_ALIAS_KEYS.reduce((max, key) => Math.max(max, key.split(" ").length), 1);
+const US_STATE_ALIASES = buildUsStateAliases();
+const US_STATE_ALIAS_KEYS = [...US_STATE_ALIASES.keys()].sort((a, b) => b.split(" ").length - a.split(" ").length || b.length - a.length);
+const US_STATE_ALIAS_MAX_WORDS = US_STATE_ALIAS_KEYS.reduce((max, key) => Math.max(max, key.split(" ").length), 1);
 const NWS_RADAR_FRAME_LIMIT = 30;
 const NWS_RADAR_WINDOW_MS = 60 * 60 * 1000;
 const NWS_RADAR_REGIONS = {
@@ -976,9 +1041,11 @@ async function searchPlaces(query, { quiet = false } = {}) {
   const parsed = parseLocationQuery(query);
   if (!quiet) setStatus("Searching places...");
   try {
-    let results = await fetchPlaceResults(parsed.raw);
-    if (!results.length && parsed.primary && parsed.primary !== parsed.raw) {
-      results = await fetchPlaceResults(parsed.primary, 10);
+    let results = [];
+    const attempts = buildPlaceSearchAttempts(parsed);
+    for (const attempt of attempts) {
+      results = await fetchPlaceResults(attempt.name, 12, attempt);
+      if (results.length) break;
     }
     if (requestId !== searchRequestSeq) return;
     state.searchResults = rankPlaceResults(results, parsed).slice(0, 6);
@@ -995,14 +1062,35 @@ async function searchPlaces(query, { quiet = false } = {}) {
   }
 }
 
-async function fetchPlaceResults(name, count = 8) {
+function buildPlaceSearchAttempts(parsed) {
+  const attempts = [];
+  const seen = new Set();
+  const add = (name, countryCode = "") => {
+    const cleanName = String(name || "").trim();
+    const cleanCountry = String(countryCode || "").toUpperCase();
+    if (!cleanName) return;
+    const key = `${cleanName.toLowerCase()}|${cleanCountry}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    attempts.push({ name: cleanName, countryCode: cleanCountry });
+  };
+
+  add(parsed.primary || parsed.raw, parsed.countryCode);
+  if (parsed.countryCode) add(parsed.primary || parsed.raw);
+  if (parsed.primary !== parsed.raw) add(parsed.raw);
+  return attempts;
+}
+
+async function fetchPlaceResults(name, count = 12, { countryCode = "" } = {}) {
   const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
-  url.search = new URLSearchParams({
+  const params = new URLSearchParams({
     name,
     count: String(count),
     language: "en",
     format: "json"
-  }).toString();
+  });
+  if (countryCode) params.set("countryCode", countryCode);
+  url.search = params.toString();
   const response = await fetch(url);
   if (!response.ok) throw new Error("Place search failed.");
   const data = await response.json();
@@ -1014,43 +1102,182 @@ function parseLocationQuery(query) {
   const parts = raw.split(",").map((part) => part.trim()).filter(Boolean);
   let primary = parts[0] || raw;
   let region = parts.slice(1).join(" ");
+  let stateName = "";
+  let countryCode = "";
+  let countryName = "";
 
-  if (!region) {
-    const trailingState = raw.match(/^(.+?)\s+([A-Za-z]{2})$/);
-    if (trailingState) {
-      primary = trailingState[1].trim();
-      region = trailingState[2].trim();
+  if (region) {
+    const qualifier = parseLocationQualifier(region);
+    stateName = qualifier.stateName;
+    countryCode = qualifier.countryCode;
+    countryName = qualifier.countryName;
+  } else {
+    const stateSuffix = extractUsStateSuffix(raw);
+    const countrySuffix = stateSuffix ? null : extractCountrySuffix(raw);
+    const suffix = stateSuffix || countrySuffix;
+    if (suffix) {
+      primary = suffix.primary;
+      region = suffix.region;
+      stateName = suffix.stateName || "";
+      countryCode = suffix.countryCode || "";
+      countryName = suffix.countryName || "";
     }
   }
 
-  const stateName = normalizeRegionName(region);
-  return { raw, primary, region, stateName };
+  return { raw, primary, region, stateName, countryCode, countryName };
+}
+
+function parseLocationQualifier(region) {
+  const stateName = resolveUsStateName(region);
+  if (stateName) {
+    return { stateName, countryCode: "US", countryName: COUNTRY_DISPLAY_NAMES.US || "United States" };
+  }
+
+  const country = resolveCountry(region);
+  if (country) return { stateName: "", countryCode: country.code, countryName: country.name };
+
+  return { stateName: normalizeRegionName(region), countryCode: "", countryName: "" };
+}
+
+function extractUsStateSuffix(raw) {
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const maxWords = Math.min(tokens.length - 1, US_STATE_ALIAS_MAX_WORDS);
+  for (let wordCount = maxWords; wordCount >= 1; wordCount -= 1) {
+    const region = tokens.slice(-wordCount).join(" ");
+    const stateName = resolveUsStateName(region);
+    const primary = tokens.slice(0, -wordCount).join(" ").trim();
+    if (stateName && primary) {
+      return {
+        primary,
+        region,
+        stateName,
+        countryCode: "US",
+        countryName: COUNTRY_DISPLAY_NAMES.US || "United States"
+      };
+    }
+  }
+  return null;
+}
+
+function extractCountrySuffix(raw) {
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const maxWords = Math.min(tokens.length - 1, COUNTRY_ALIAS_MAX_WORDS);
+  for (let wordCount = maxWords; wordCount >= 1; wordCount -= 1) {
+    const region = tokens.slice(-wordCount).join(" ");
+    const country = resolveCountry(region);
+    const primary = tokens.slice(0, -wordCount).join(" ").trim();
+    if (country && primary) {
+      return {
+        primary,
+        region,
+        countryCode: country.code,
+        countryName: country.name
+      };
+    }
+  }
+  return null;
+}
+
+function resolveUsStateName(region) {
+  const value = String(region || "").trim();
+  if (!value) return "";
+  const upper = value.replace(/\./g, "").toUpperCase();
+  if (US_STATE_NAMES[upper]) return US_STATE_NAMES[upper];
+  return US_STATE_ALIASES.get(normalizeQualifierKey(value)) || "";
 }
 
 function normalizeRegionName(region) {
   const value = String(region || "").trim();
-  if (!value) return "";
-  const upper = value.replace(/\./g, "").toUpperCase();
-  return US_STATE_NAMES[upper] || value;
+  return resolveUsStateName(value) || value;
+}
+
+function resolveCountry(region) {
+  const match = COUNTRY_ALIASES.get(normalizeQualifierKey(region));
+  if (!match) return null;
+  return match;
+}
+
+function buildCountryDisplayNames() {
+  const displayNames = typeof Intl !== "undefined" && Intl.DisplayNames
+    ? new Intl.DisplayNames(["en"], { type: "region" })
+    : null;
+  return COUNTRY_CODES.reduce((names, code) => {
+    names[code] = displayNames?.of(code) || code;
+    return names;
+  }, {});
+}
+
+function buildCountryAliases() {
+  const aliases = new Map();
+  COUNTRY_CODES.forEach((code) => {
+    const name = COUNTRY_DISPLAY_NAMES[code];
+    addCountryAlias(aliases, name, code);
+    addCountryAlias(aliases, code, code);
+  });
+  Object.entries(COUNTRY_ALIAS_OVERRIDES).forEach(([alias, code]) => addCountryAlias(aliases, alias, code));
+  return aliases;
+}
+
+function addCountryAlias(aliases, alias, code) {
+  const normalizedCode = String(code || "").toUpperCase();
+  const key = normalizeQualifierKey(alias);
+  if (!key || !normalizedCode) return;
+  aliases.set(key, {
+    code: normalizedCode,
+    name: COUNTRY_DISPLAY_NAMES[normalizedCode] || alias
+  });
+}
+
+function buildUsStateAliases() {
+  return Object.entries(US_STATE_NAMES).reduce((aliases, [code, name]) => {
+    aliases.set(normalizeQualifierKey(code), name);
+    aliases.set(normalizeQualifierKey(name), name);
+    return aliases;
+  }, new Map());
+}
+
+function normalizeQualifierKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function rankPlaceResults(results, parsed) {
-  const primary = parsed.primary.toLowerCase();
-  const stateName = parsed.stateName.toLowerCase();
-
-  return [...results].sort((a, b) => placeScore(b, primary, stateName) - placeScore(a, primary, stateName));
+  return results
+    .map((place, index) => ({ place, index, score: placeScore(place, parsed) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.place);
 }
 
-function placeScore(place, primary, stateName) {
+function placeScore(place, parsed) {
   let score = 0;
+  const primary = parsed.primary.toLowerCase();
+  const stateName = parsed.stateName.toLowerCase();
+  const explicitCountry = String(parsed.countryCode || "").toUpperCase();
   const name = String(place.name || "").toLowerCase();
   const admin = String(place.admin1 || "").toLowerCase();
   const country = String(place.country || "").toLowerCase();
-  if (name === primary) score += 20;
-  else if (name.startsWith(primary)) score += 10;
-  if (stateName && admin === stateName) score += 50;
-  else if (stateName && (admin.includes(stateName) || country.includes(stateName))) score += 15;
-  if (place.country_code === "US") score += 3;
+  const countryCode = placeCountryCode(place);
+  const featureCode = String(place.feature_code || place.featureCode || "").toUpperCase();
+  const population = Number(place.population) || 0;
+
+  if (name === primary) score += 35;
+  else if (name.startsWith(primary)) score += 18;
+  else if (primary && name.includes(primary)) score += 8;
+
+  if (explicitCountry) score += countryCode === explicitCountry ? 70 : -50;
+  if (stateName && admin === stateName) score += 80;
+  else if (stateName && (admin.includes(stateName) || country.includes(stateName))) score += 35;
+
+  if (featureCode === "PPLC") score += 35;
+  else if (featureCode === "PPLA") score += 18;
+  else if (featureCode === "PPLA2" || featureCode === "PPLA3") score += 10;
+
+  if (population > 0) score += Math.min(32, Math.log10(population) * 5);
   return score;
 }
 
@@ -1111,7 +1338,7 @@ function renderSearchResults() {
     button.type = "button";
     button.innerHTML = `
       <span>${escapeHtml(place.name)}</span>
-      <small>${escapeHtml(place.admin1 || place.country || "")}</small>
+      <small>${escapeHtml(formatPlaceResultMeta(place))}</small>
     `;
     bindTapAction(button, () => {
       toggleSearch(false);
@@ -1193,7 +1420,7 @@ function renderSavedPlaces() {
         <span class="place-item-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay) : ""}</span>
         <span class="place-item-copy">
           <strong>${placeName}</strong>
-          <span>${escapeHtml(place.admin1 || place.country || (isActive ? "Current place" : "Saved place"))}</span>
+          <span>${escapeHtml(formatPlaceResultMeta(place) || (isActive ? "Current place" : "Saved place"))}</span>
         </span>
         <span class="place-item-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
       </button>
@@ -5568,13 +5795,31 @@ function normalizePlace(place) {
     name: place.name || "Selected Place",
     admin1: place.admin1 || "",
     country: place.country || "",
+    countryCode: placeCountryCode(place),
     latitude: Number(place.latitude),
     longitude: Number(place.longitude)
   };
 }
 
 function placeLabel(place) {
+  const countryCode = placeCountryCode(place);
+  if (place.admin1 && place.country && countryCode && countryCode !== "US") {
+    return [place.name, place.admin1, place.country].filter(Boolean).join(", ");
+  }
   return [place.name, place.admin1 || place.country].filter(Boolean).join(", ");
+}
+
+function formatPlaceResultMeta(place) {
+  const admin = place.admin1 || "";
+  const country = place.country || "";
+  if (admin && country && normalizeQualifierKey(admin) !== normalizeQualifierKey(country)) {
+    return `${admin}, ${country}`;
+  }
+  return admin || country || "";
+}
+
+function placeCountryCode(place) {
+  return String(place?.countryCode || place?.country_code || "").toUpperCase();
 }
 
 function degree(unit) {
