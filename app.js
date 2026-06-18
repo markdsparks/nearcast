@@ -1,4 +1,4 @@
-const VERSION = "1.10.96";
+const VERSION = "1.10.98";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1183,7 +1183,7 @@ function openPlaceSheet() {
 function closePlaceSheet() {
   els.placeBackdrop.classList.remove("show");
   els.placeSheet.classList.remove("show");
-  document.body.style.overflow = "";
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
   setTimeout(() => {
     els.placeBackdrop.hidden = true;
     els.placeSheet.hidden = true;
@@ -5611,12 +5611,16 @@ function onImmersiveKey(e) {
 
 function updateImmersiveHUD() {
   if (!state.activePlace) return;
+  const card = document.getElementById("immWeatherCard");
   const loc  = document.getElementById("immLocation");
   const temp = document.getElementById("immTemp");
   const icon = document.getElementById("immIcon");
   const condition = document.getElementById("immCondition");
   const currentCode = state.forecast?.current ? effectiveCurrentCode(state.forecast.current) : null;
-  if (loc)  loc.textContent  = (state.activePlace.name || placeLabel(state.activePlace)).split(",")[0].trim();
+  const placeName = (state.activePlace.name || placeLabel(state.activePlace)).split(",")[0].trim();
+  const savedCount = state.savedPlaces.length;
+  if (card) card.setAttribute("aria-label", `Open saved places for ${placeName}${savedCount ? `, ${savedCount} saved` : ""}`);
+  if (loc)  loc.textContent  = placeName;
   if (temp) temp.textContent = document.getElementById("nowTemp").textContent;
   if (icon) icon.innerHTML   = document.getElementById("heroIcon").innerHTML;
   if (condition) condition.textContent = weatherCodes[currentCode] || document.getElementById("nowSummary").textContent || "Current";
@@ -5629,8 +5633,7 @@ function bindImmersiveModeButtons() {
   immFuture.classList.toggle("imm-active", mapState.mode === "future");
 
   document.getElementById("collapseMap").onclick = exitImmersiveMap;
-  document.getElementById("immZoomIn").onclick    = () => setMapZoom(mapState.zoom + 1);
-  document.getElementById("immZoomOut").onclick   = () => setMapZoom(mapState.zoom - 1);
+  document.getElementById("immWeatherCard").onclick = openPlaceSheet;
   document.getElementById("immPlay").onclick      = toggleRadarPlayback;
   document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
   immRadar.onclick  = () => { setMapMode("radar");  immRadar.classList.add("imm-active");  immFuture.classList.remove("imm-active"); };

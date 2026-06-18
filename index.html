@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.96">
+    <link rel="stylesheet" href="styles.css?v=1.10.98">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -270,26 +270,22 @@
         <div class="map-loading" id="immersiveLoading" hidden>Loading map data...</div>
 
         <div class="imm-top-hud">
-          <div class="imm-weather-pill" id="immWeatherCard" aria-label="Current conditions">
+          <button class="imm-btn imm-close" id="collapseMap" aria-label="Exit immersive mode" title="Exit immersive mode">✕</button>
+          <button class="imm-weather-pill" id="immWeatherCard" type="button" aria-label="Open saved places">
             <span class="imm-location" id="immLocation">—</span>
             <span class="imm-temp" id="immTemp">—</span>
             <span class="imm-icon" id="immIcon" aria-hidden="true"></span>
             <span class="imm-condition" id="immCondition">—</span>
-          </div>
+          </button>
           <div class="imm-mode-switch" role="group" aria-label="Map mode">
             <button class="imm-btn imm-active" id="immRadar" type="button">Nowcast</button>
             <button class="imm-btn" id="immFuture" type="button">Forecast</button>
           </div>
-          <button class="imm-btn imm-close" id="collapseMap" aria-label="Exit immersive mode" title="Exit immersive mode">✕</button>
         </div>
 
-        <div class="imm-zoom-stack" role="group" aria-label="Map zoom controls">
-          <button class="imm-btn" id="immZoomIn" aria-label="Zoom in">+</button>
-          <button class="imm-btn" id="immZoomOut" aria-label="Zoom out">−</button>
-        </div>
+        <div class="map-legend imm-map-legend" id="immersiveLegend" aria-label="Map legend"></div>
 
         <div class="imm-bottom-hud">
-          <div class="map-legend" id="immersiveLegend" aria-label="Map legend"></div>
           <div class="imm-timeline">
             <button class="play-button imm-play-button" id="immPlay" type="button" aria-label="Play radar animation" title="Play radar animation">
               <svg class="imm-play-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -389,6 +385,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.96"></script>
+    <script src="app.js?v=1.10.98"></script>
   </body>
 </html>
