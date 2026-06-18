@@ -1,4 +1,4 @@
-const VERSION = "1.10.85";
+const VERSION = "1.10.86";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6066,26 +6066,39 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
-  if (hour.alert && alertTone(hour.alert) === "warning") {
-    return `${hour.alert.event} is active for this hour. Check the alert details and follow local guidance.`;
-  }
+  const alertNote = hour.alert ? hourlyAlertDetailNote(hour.alert) : "";
+  let weatherNote = "";
   if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
     const amount = hour.precip > 0.02 ? ` Around ${formatAmount(hour.precip)} ${precipUnit} could fall.` : "";
-    return `Thunderstorms possible. Watch for lightning and quick downpours.${hail}${amount}`;
-  }
-  if (hour.pop >= 50) {
+    weatherNote = `Thunderstorms possible. Watch for lightning and quick downpours.${hail}${amount}`;
+  } else if (hour.pop >= 50) {
     const amount = hour.precip > 0.02 ? `; ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
-    return `Rain likely${amount}.`;
+    weatherNote = `Rain likely${amount}.`;
+  } else if (hour.gust >= 25) {
+    weatherNote = `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
+  } else if (hour.uv >= 6) {
+    weatherNote = `High UV. Sunscreen helps outdoors.`;
+  } else {
+    const feelsDelta = Math.round(hour.feels - hour.temp);
+    weatherNote = Math.abs(feelsDelta) >= 6
+      ? `Feels ${Math.abs(feelsDelta)}${degree(tempUnit)} ${feelsDelta > 0 ? "warmer" : "cooler"} than the air temp.`
+      : "No major weather flags.";
   }
-  if (hour.gust >= 25) return `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
-  if (hour.uv >= 6) return `High UV. Sunscreen helps outdoors.`;
-  const feelsDelta = Math.round(hour.feels - hour.temp);
-  if (Math.abs(feelsDelta) >= 6) {
-    return `Feels ${Math.abs(feelsDelta)}${degree(tempUnit)} ${feelsDelta > 0 ? "warmer" : "cooler"} than the air temp.`;
-  }
-  return "No major weather flags.";
+
+  if (!alertNote) return weatherNote;
+  if (weatherNote === "No major weather flags.") return alertNote;
+  return `${alertNote} ${weatherNote}`;
+}
+
+function hourlyAlertDetailNote(alert) {
+  const tone = alertTone(alert);
+  const event = alert?.event || alertToneLabel(tone);
+  if (tone === "warning") return `${event} active. Check alert details and follow local guidance.`;
+  if (tone === "watch") return `${event} active. Stay weather aware.`;
+  if (tone === "advisory") return `${event} active.`;
+  return `${event} active for this hour.`;
 }
 
 function toggleSheetHourRow(row) {
