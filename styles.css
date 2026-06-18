@@ -2658,8 +2658,12 @@ body.map-immersive-active #mapLegend {
   -webkit-user-drag: none;
 }
 
-#baseTileLayer img {
+#baseTileLayer[data-map-theme="light"] img {
   filter: grayscale(0.85) saturate(0.35) brightness(1.06) contrast(0.92);
+}
+
+#baseTileLayer[data-map-theme="dark"] img {
+  filter: saturate(0.82) brightness(0.9) contrast(1.04);
 }
 
 #immersiveBaseTiles img {
@@ -2674,6 +2678,13 @@ body.map-immersive-active #mapLegend {
 }
 .weather-layer {
   z-index: 10;
+}
+.label-layer {
+  z-index: 15;
+}
+.label-layer img {
+  opacity: 0.96;
+  mix-blend-mode: normal;
 }
 .marker-layer {
   z-index: 20;

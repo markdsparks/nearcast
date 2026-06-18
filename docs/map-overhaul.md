@@ -12,7 +12,7 @@ zoom flicker, scattered HUD, city labels hidden under storms.
 | 2 | Precip pixelated on zoom-in | 1 — engine | ✅ shipped v1.10.89 (z8 cap + proportional blur) |
 | 3 | Immersive zoom flicker / blank | 1 — engine | ✅ v1.10.89 deferred-purge; v1.10.90 realign kept tiles |
 | 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.99 (simplified immersive HUD + interaction fixes) |
-| 5 | City names hidden under storms | 3 — basemap/labels | ⏳ pending CARTO decision |
+| 5 | City names hidden under storms | 3 — basemap/labels | ✅ spiked v1.10.103 (CARTO no-label base + labels layer) |
 
 ## Phase 2 — HUD redesign (#4) — SHIPPED v1.10.99
 
@@ -50,7 +50,7 @@ immersive**. Design the HUD glass to read well over BOTH a light and a dark base
 blur generally works on both; verify on dark when #5 lands). Don't bake in assumptions that only
 hold over the current light OSM base.
 
-## Phase 3 — labels over radar / basemap (#5) — PENDING DECISION
+## Phase 3 — labels over radar / basemap (#5) — SPIKED v1.10.103
 
 Problem: OSM bakes labels into the base tile, so radar always covers city names.
 Recommended: switch base tiles to **CARTO** (OSM data, restyled — same coverage/zooms, no
@@ -60,6 +60,15 @@ capability loss) and render a **labels-only layer ABOVE the radar** so names sta
 - Open question the user is weighing: CARTO dependency (keyless raster, attribution, fair-use) vs
   keeping OSM. Verify CARTO keyless tiles actually load before committing.
 - Theme-matched dark basemap in immersive is a real aesthetic upgrade OSM can't give.
+
+Spike notes:
+- Keyless CARTO tiles were verified for Voyager no-labels/only-labels and Dark Matter
+  no-labels/only-labels.
+- The renderer now uses `baseTileLayer`, `weatherTileLayer`, `labelTileLayer`, then
+  `markerLayer`, so place names stay above radar while saved-place markers remain topmost.
+- Attribution was updated to CARTO + OpenStreetMap contributors.
+- Remaining decision after mobile testing: keep CARTO long-term, or preserve this layer
+  abstraction and swap providers if public-launch terms require it.
 
 ## Deploy ritual reminder
 Bump 5 spots in lockstep: `VERSION` (app.js), `CACHE` and `ASSET_VERSION` (sw.js), and both

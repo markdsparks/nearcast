@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v142";
-const ASSET_VERSION = "1.10.101";
+const CACHE = "nearcast-v144";
+const ASSET_VERSION = "1.10.103";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -49,6 +49,7 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("nominatim.openstreetmap.org") ||
     url.hostname.includes("openstreetmap.org") ||
     url.hostname.includes("tile.openstreetmap") ||
+    url.hostname.includes("basemaps.cartocdn.com") ||
     url.hostname.includes("tilecache") ||
     url.pathname.includes("/v2/radar/") ||
     url.pathname.includes("/nowcast/")

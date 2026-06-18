@@ -1,4 +1,4 @@
-const VERSION = "1.10.101";
+const VERSION = "1.10.103";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -40,6 +40,7 @@ const MAP_MAX_ZOOM = 10;
 const RADAR_TILE_MAX_ZOOM = 8; // cap radar source tiles so they upscale smoothly past z8
 const MAP_TAP_MOVE_PX = 8;
 const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
+const CARTO_TILE_HOSTS = ["a", "b", "c", "d"];
 const US_STATE_NAMES = {
   AL: "Alabama",
   AK: "Alaska",
@@ -308,6 +309,7 @@ const els = {
   weatherMap: document.querySelector("#weatherMap"),
   baseTileLayer: document.querySelector("#baseTileLayer"),
   weatherTileLayer: document.querySelector("#weatherTileLayer"),
+  labelTileLayer: document.querySelector("#labelTileLayer"),
   markerLayer: document.querySelector("#markerLayer"),
   mapPlace: document.querySelector("#mapPlace"),
   mapLoading: document.querySelector("#mapLoading"),
@@ -912,6 +914,10 @@ function applyTheme() {
     updateSkyCanvas(state.skyCode, state.skyIsDay);
   } else if (state.theme !== "auto") {
     clearSkyCanvas();
+  }
+
+  if (mapState.initialized && state.activePlace) {
+    renderTileMap();
   }
 }
 
@@ -5262,14 +5268,49 @@ function renderTileMap() {
   if (!rect.width || !rect.height) return;
 
   const viewport = getMapViewport();
+  const style = mapTileStyle();
+  setMapTileTheme(style);
   renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.frameIndex, viewport);
   else renderWeatherTiles(viewport);
+  renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
   renderMapMarkers();
 }
 
+function mapTileStyle() {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  return isDark
+    ? {
+        theme: "dark",
+        base: "dark_nolabels",
+        labels: "dark_only_labels"
+      }
+    : {
+        theme: "light",
+        base: "rastertiles/voyager_nolabels",
+        labels: "rastertiles/voyager_only_labels"
+      };
+}
+
+function setMapTileTheme(style) {
+  [els.weatherMap, els.baseTileLayer, els.labelTileLayer].forEach((el) => {
+    if (el) el.dataset.mapTheme = style.theme;
+  });
+}
+
 function baseTileUrl({ z, x, y }) {
-  return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+  const style = mapTileStyle();
+  return cartoTileUrl(style.base, z, x, y);
+}
+
+function labelTileUrl({ z, x, y }) {
+  const style = mapTileStyle();
+  return cartoTileUrl(style.labels, z, x, y);
+}
+
+function cartoTileUrl(style, z, x, y) {
+  const host = CARTO_TILE_HOSTS[Math.abs((x + y) % CARTO_TILE_HOSTS.length)];
+  return `https://${host}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`;
 }
 
 function weatherTileUrl(template, z, x, y) {
@@ -5321,6 +5362,7 @@ function renderWeatherTiles(viewport = null) {
 const TILE_BUFFER = 1;
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
+  if (!layer) return;
   const z = mapTileSourceZoom(options.sourceZoom || MAP_MAX_ZOOM);
   const tileSize = 256;
   const sourceScale = 2 ** (mapState.zoom - z);
@@ -5922,6 +5964,7 @@ function enterImmersiveMap() {
   mapState._normalEls = {
     baseTileLayer: els.baseTileLayer,
     weatherTileLayer: els.weatherTileLayer,
+    labelTileLayer: els.labelTileLayer,
     markerLayer: els.markerLayer,
     weatherMap: els.weatherMap,
     mapLoading: els.mapLoading,
@@ -5933,6 +5976,7 @@ function enterImmersiveMap() {
 
   els.baseTileLayer    = document.getElementById("immersiveBaseTiles");
   els.weatherTileLayer = document.getElementById("immersiveWeatherTiles");
+  els.labelTileLayer   = document.getElementById("immersiveLabelTiles");
   els.markerLayer      = document.getElementById("immersiveMarker");
   els.weatherMap       = document.getElementById("immersiveMapCanvas");
   els.mapLoading       = document.getElementById("immersiveLoading");
@@ -5952,11 +5996,13 @@ function enterImmersiveMap() {
 
   // Wait two frames so the browser has painted the full-screen canvas
   // before we measure its bounding rect for tile placement
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  const renderImmersiveFrame = () => {
     renderTileMap();
     renderMapLegend();
     showFrame(mapState.frameIndex);
-  }));
+  };
+  requestAnimationFrame(() => requestAnimationFrame(renderImmersiveFrame));
+  setTimeout(renderImmersiveFrame, 140);
 
   updateImmersiveHUD();
   bindImmersiveModeButtons();

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.101">
+    <link rel="stylesheet" href="styles.css?v=1.10.103">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -236,6 +236,7 @@
             <div id="weatherMap" class="tile-map" role="button" tabindex="0" aria-label="Open full-screen precipitation map">
               <div class="tile-layer" id="baseTileLayer"></div>
               <div class="tile-layer weather-layer" id="weatherTileLayer"></div>
+              <div class="tile-layer label-layer" id="labelTileLayer"></div>
               <div class="marker-layer" id="markerLayer"></div>
             </div>
             <span class="map-expand-hint" aria-hidden="true">
@@ -249,7 +250,7 @@
             <input id="frameSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
             <strong id="frameLabel">No frames</strong>
           </div>
-          <p class="map-credit">Nowcast radar by NOAA/NWS MRMS/RIDGE2 where available, with <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">RainViewer</a> fallback. Forecast precipitation by NOAA/NWS nowCOAST/NDFD. Map and location name data by OpenStreetMap contributors.</p>
+          <p class="map-credit">Nowcast radar by NOAA/NWS MRMS/RIDGE2 where available, with <a href="https://www.rainviewer.com/" target="_blank" rel="noreferrer">RainViewer</a> fallback. Forecast precipitation by NOAA/NWS nowCOAST/NDFD. Map tiles by <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a>, © OpenStreetMap contributors.</p>
         </section>
 
         <section class="panel daily-panel">
@@ -265,6 +266,7 @@
         <div id="immersiveMapCanvas" class="tile-map" aria-label="Full screen weather radar map">
           <div class="tile-layer" id="immersiveBaseTiles"></div>
           <div class="tile-layer weather-layer" id="immersiveWeatherTiles"></div>
+          <div class="tile-layer label-layer" id="immersiveLabelTiles"></div>
           <div class="marker-layer" id="immersiveMarker"></div>
         </div>
         <div class="map-loading" id="immersiveLoading" hidden>Loading map data...</div>
@@ -298,7 +300,7 @@
             <input id="immSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
             <strong class="imm-frame-time" id="immLabel" aria-live="polite">No frames</strong>
           </div>
-          <p class="imm-credit">Radar NOAA/NWS, RainViewer · Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></p>
+          <p class="imm-credit">Radar NOAA/NWS, RainViewer · Map <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OSM</a></p>
         </div>
       </div>
     </main>
@@ -385,6 +387,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.101"></script>
+    <script src="app.js?v=1.10.103"></script>
   </body>
 </html>
