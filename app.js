@@ -1,4 +1,4 @@
-const VERSION = "1.10.84";
+const VERSION = "1.10.85";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -455,6 +455,11 @@ function hasThunderPotential(rawCode, pop, shownCode) {
   return isThunderCode(rawCode) &&
     !isThunderCode(shownCode) &&
     (pop || 0) >= THUNDER_POTENTIAL_POP;
+}
+
+function dailyConditionLabel(code) {
+  if (isThunderCode(code)) return "Storms";
+  return weatherCodes[code] || "Weather";
 }
 
 function thunderBadgeHtml(label = "Thunder possible") {
@@ -1194,7 +1199,7 @@ async function loadPlace(place, force = false) {
   renderSavedPlaces();
   updateMapPlace();
   syncMapToPlace();
-  renderAlerts([], false); // clear prior place's alerts until this one resolves
+  renderAlerts([]); // clear prior place's alerts until this one resolves
   setStatus(`Loading ${state.activePlace.name}...`);
 
   try {
@@ -4036,20 +4041,16 @@ function renderDaily(data, tempUnit, precipUnit) {
     const rain = data.daily.precipitation_probability_max[index] || 0;
     const precip = data.daily.precipitation_sum[index] || 0;
     const wcode = representativeDailyCode(data, index);
-    const code = weatherCodes[wcode] || "Weather";
+    const code = dailyConditionLabel(wcode);
     const stormPotential = hasThunderPotentialForDay(data, index, wcode);
-    const alert = topAlertForDay(data, index);
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${alert ? `, ${alert.event}` : ""}`;
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}`;
     return `
-      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${alert ? ` has-alert is-alert-${alertTone(alert)}` : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
+      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
           <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true)}${stormPotential ? thunderBadgeHtml() : ""}</div>
           <div>
             <div class="day-name">${formatDay(time, index)}</div>
-            <div class="day-meta-line">
-              <div class="day-meta">${escapeHtml(code)}</div>
-              ${alert ? alertContextChipHtml(alert, "day-alert-chip") : ""}
-            </div>
+            <div class="day-meta">${escapeHtml(code)}</div>
           </div>
         </div>
         <div class="day-temps">
@@ -6121,7 +6122,6 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
   let prevDay = null;
-  let prevAlertKey = null;
   list.innerHTML = hrs.map((hour, rowIndex) => {
     // Mark where the day rolls over (the list runs from "now" into tomorrow).
     const dayKey = hour.time.slice(0, 10);
@@ -6143,10 +6143,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
-    const alertKey = hour.alert ? alertIdentity(hour.alert) : "";
-    const alertBand = hour.alert && alertKey !== prevAlertKey ? sheetAlertBandHtml(hour.alert) : "";
-    prevAlertKey = alertKey || null;
-    return `${divider}${alertBand}
+    return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
@@ -6158,7 +6155,6 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}" hidden>
-          ${hour.alert ? sheetHourAlertNoteHtml(hour.alert) : ""}
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
@@ -6659,14 +6655,6 @@ function alertPriority(alert) {
   return (ALERT_TONE_RANK[alertTone(alert)] || 0) * 100 + (SEVERITY_RANK[alert?.severity] || 0) * 10;
 }
 
-function alertIdentity(alert) {
-  return [
-    alert?.event || "Alert",
-    alert?.onset || alert?.effective || "",
-    alert?.ends || alert?.expires || ""
-  ].join("|");
-}
-
 function alertMotionClass(alert) {
   const event = (alert?.event || "").toLowerCase();
   return alert?.severity === "Extreme" || event.includes("warning") ? "alert-pulse" : "";
@@ -6676,12 +6664,11 @@ function alertCountLabel(count) {
   return count === 1 ? "1 active alert" : `${count} active alerts`;
 }
 
-function renderAlerts(alerts, refreshViews = true) {
+function renderAlerts(alerts) {
   activeAlerts = alerts || [];
   const bar = document.getElementById("alertBar");
   if (!activeAlerts.length) {
     bar.hidden = true;
-    if (refreshViews) refreshAlertContextViews();
     return;
   }
   const top = activeAlerts[0];
@@ -6694,14 +6681,6 @@ function renderAlerts(alerts, refreshViews = true) {
     activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
   bar.setAttribute("aria-label", `${top.event}${top.ends || top.expires ? ` until ${formatAlertTime(top.ends || top.expires)}` : ""}. ${alertCountLabel(activeAlerts.length)}. Open alert details.`);
   bar.hidden = false;
-  if (refreshViews) refreshAlertContextViews();
-}
-
-function refreshAlertContextViews() {
-  if (!state.forecast) return;
-  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
-  renderDaily(state.forecast, tempUnit, precipUnit);
 }
 
 function formatAlertTime(iso) {
@@ -6742,41 +6721,6 @@ function topAlertForRange(startMs, endMs) {
   return activeAlerts
     .filter((alert) => alertOverlapsRange(alert, startMs, endMs))
     .sort((a, b) => alertPriority(b) - alertPriority(a))[0] || null;
-}
-
-function topAlertForDay(data, dayIndex) {
-  const day = data?.daily?.time?.[dayIndex];
-  if (!day) return null;
-  const startMs = parseForecastTimestamp(`${day}T00:00`, data);
-  if (startMs === null) return null;
-  return topAlertForRange(startMs, startMs + 24 * 60 * 60 * 1000);
-}
-
-function alertContextChipHtml(alert, extraClass = "") {
-  const tone = alertTone(alert);
-  const label = alertToneLabel(tone);
-  return `<span class="alert-context-chip ${extraClass} is-alert-${tone}" title="${escapeHtml(alert.event || label)}">${escapeHtml(label)}</span>`;
-}
-
-function sheetAlertBandHtml(alert) {
-  const tone = alertTone(alert);
-  return `
-    <div class="sheet-alert-band is-alert-${tone}">
-      <span>${escapeHtml(alertToneLabel(tone))}</span>
-      <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
-      <small>${escapeHtml(alertWindow(alert) || "Active now")}</small>
-    </div>
-  `;
-}
-
-function sheetHourAlertNoteHtml(alert) {
-  const tone = alertTone(alert);
-  return `
-    <div class="sheet-hour-alert-note is-alert-${tone}">
-      <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
-      <span>${escapeHtml(alertWindow(alert) || "Active now")}</span>
-    </div>
-  `;
 }
 
 function compactAlertAreas(areaDesc, max = 5) {
