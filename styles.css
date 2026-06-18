@@ -414,6 +414,8 @@ h2 {
   color: var(--ink);
   font-weight: 800;
   box-shadow: 0 8px 22px rgba(29, 48, 58, 0.1);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .search-popover {
@@ -630,6 +632,10 @@ h2 {
 }
 
 .launch-location {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
   max-width: min(520px, 88vw);
   padding: 0;
   border: 0;
@@ -641,6 +647,8 @@ h2 {
   letter-spacing: 0.01em;
   text-align: center;
   text-shadow: 0 1px 14px rgba(255, 255, 255, 0.36);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .launch-location:not(:disabled) {
@@ -667,6 +675,8 @@ h2 {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .favorite-button svg {
@@ -1876,6 +1886,8 @@ h2 {
   padding: 12px 0 14px;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .hourly::-webkit-scrollbar {
@@ -2077,6 +2089,9 @@ h2 {
   border-bottom: 1px solid var(--border-glass);
   border-radius: 0;
   background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .day-row.current::before {
@@ -3342,6 +3357,8 @@ body.map-immersive-active .day-sheet.show {
   color: var(--ink);
   font-size: 0.85rem;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .sheet-head {
@@ -3400,7 +3417,7 @@ body.map-immersive-active .day-sheet.show {
   overflow: hidden;
 }
 .sheet-mode-btn {
-  min-height: 34px;
+  min-height: 38px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -3409,6 +3426,8 @@ body.map-immersive-active .day-sheet.show {
   font-size: 0.86rem;
   font-weight: 800;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .sheet-mode-btn + .sheet-mode-btn {
   border-left: 1px solid var(--border-glass);
@@ -3438,8 +3457,9 @@ body.map-immersive-active .day-sheet.show {
   border: 0;
 }
 .graph-metric-btn {
-  min-height: 28px;
-  padding: 0;
+  min-height: 34px;
+  min-width: 40px;
+  padding: 0 5px;
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -3449,6 +3469,8 @@ body.map-immersive-active .day-sheet.show {
   font-size: 0.76rem;
   font-weight: 800;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .graph-metric-btn.active {
   background: transparent;
@@ -3640,6 +3662,8 @@ body.map-immersive-active .day-sheet.show {
   border-radius: 0;
   background: transparent;
   cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.16s ease, border-color 0.16s ease;
 }
 .sheet-hour-row:hover,
@@ -4516,6 +4540,8 @@ body.map-immersive-active .day-sheet.show {
   box-shadow:
     inset 2px 0 0 var(--nowcast-accent),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .nowcast::after {
   content: "";
@@ -4583,4 +4609,48 @@ body.map-immersive-active .day-sheet.show {
   stroke: var(--muted);
   stroke-width: 1;
   stroke-opacity: 0.22;
+}
+
+@media (pointer: coarse) {
+  .launch-location {
+    min-height: 44px;
+    padding: 0 8px;
+  }
+
+  .favorite-button,
+  .sheet-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sheet-close {
+    top: 8px;
+    right: 10px;
+  }
+
+  .sheet-head {
+    padding-right: 52px;
+  }
+
+  .sheet-mode-btn {
+    min-height: 44px;
+  }
+
+  .graph-metric {
+    min-height: 44px;
+  }
+
+  .graph-metric-tabs {
+    gap: 4px;
+  }
+
+  .graph-metric-btn {
+    min-width: 48px;
+    min-height: 44px;
+    padding: 0 10px;
+  }
+
+  .sheet-hour-row {
+    min-height: 64px;
+  }
 }

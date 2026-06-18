@@ -1,4 +1,4 @@
-const VERSION = "1.10.99";
+const VERSION = "1.10.100";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -570,6 +570,88 @@ function init() {
   }
 }
 
+const TAP_MOVE_TOLERANCE = 22;
+
+function bindTapAction(element, action, options = {}) {
+  if (!element) return;
+  const { moveTolerance = TAP_MOVE_TOLERANCE, preventDefault = true } = options;
+  let tapStart = null;
+  let suppressClick = false;
+
+  if (element._tapActionAbort) element._tapActionAbort.abort();
+  const abort = new AbortController();
+  element._tapActionAbort = abort;
+
+  element.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    tapStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+    if (element.setPointerCapture) {
+      try { element.setPointerCapture(event.pointerId); } catch { /* capture can fail after fast taps */ }
+    }
+  }, { signal: abort.signal });
+
+  element.addEventListener("pointerup", (event) => {
+    if (!tapStart || tapStart.id !== event.pointerId) return;
+    const moved = Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y);
+    tapStart = null;
+    if (moved > moveTolerance) return;
+    suppressClick = true;
+    if (preventDefault && event.cancelable) event.preventDefault();
+    action(event);
+    setTimeout(() => { suppressClick = false; }, 350);
+  }, { signal: abort.signal });
+
+  element.addEventListener("pointercancel", () => { tapStart = null; }, { signal: abort.signal });
+  element.addEventListener("click", (event) => {
+    if (suppressClick) {
+      event.preventDefault();
+      return;
+    }
+    action(event);
+  }, { signal: abort.signal });
+}
+
+function bindTapDelegate(container, selector, action, options = {}) {
+  if (!container) return;
+  const { moveTolerance = TAP_MOVE_TOLERANCE, preventDefault = true } = options;
+  let tapStart = null;
+  let suppressClick = false;
+
+  const matchingTarget = (target) => {
+    const match = target?.closest?.(selector);
+    return match && container.contains(match) ? match : null;
+  };
+
+  container.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = matchingTarget(event.target);
+    if (!target) return;
+    tapStart = { x: event.clientX, y: event.clientY, id: event.pointerId, target };
+  });
+
+  container.addEventListener("pointerup", (event) => {
+    if (!tapStart || tapStart.id !== event.pointerId) return;
+    const start = tapStart;
+    tapStart = null;
+    const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (moved > moveTolerance || !container.contains(start.target)) return;
+    suppressClick = true;
+    if (preventDefault && event.cancelable) event.preventDefault();
+    action(event, start.target);
+    setTimeout(() => { suppressClick = false; }, 350);
+  });
+
+  container.addEventListener("pointercancel", () => { tapStart = null; });
+  container.addEventListener("click", (event) => {
+    if (suppressClick) {
+      event.preventDefault();
+      return;
+    }
+    const target = matchingTarget(event.target);
+    if (target) action(event, target);
+  });
+}
+
 function bindEvents() {
   els.searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -607,7 +689,7 @@ function bindEvents() {
     }
   });
 
-  els.unitToggle.addEventListener("click", () => {
+  bindTapAction(els.unitToggle, () => {
     const oldUnit = state.unit;
     state.unit = state.unit === "fahrenheit" ? "celsius" : "fahrenheit";
     localStorage.setItem("weather-unit", state.unit);
@@ -624,7 +706,7 @@ function bindEvents() {
     }
   });
 
-  els.themeToggle.addEventListener("click", toggleTheme);
+  bindTapAction(els.themeToggle, toggleTheme);
   els.briefing.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-ai]");
     if (!btn) return;
@@ -644,36 +726,36 @@ function bindEvents() {
     const input = document.getElementById("askInput");
     runAsk(input.value);
   });
-  els.aiLauncher.addEventListener("click", openAISheet);
-  els.aiBackdrop.addEventListener("click", closeAISheet);
-  document.getElementById("aiSheetClose").addEventListener("click", closeAISheet);
-  els.appMenuToggle.addEventListener("click", () => toggleAppMenu());
-  els.searchToggle.addEventListener("click", () => {
+  bindTapAction(els.aiLauncher, openAISheet);
+  bindTapAction(els.aiBackdrop, closeAISheet);
+  bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
+  bindTapAction(els.appMenuToggle, () => toggleAppMenu());
+  bindTapAction(els.searchToggle, () => {
     closeAppMenu();
     toggleSearch(true);
   });
-  els.searchClose.addEventListener("click", () => toggleSearch(false));
-  els.placeSwitcher.addEventListener("click", () => {
+  bindTapAction(els.searchClose, () => toggleSearch(false));
+  bindTapAction(els.placeSwitcher, () => {
     closeAppMenu();
     openPlaceSheet();
   });
-  els.launchPlaceButton.addEventListener("click", () => {
+  bindTapAction(els.launchPlaceButton, () => {
     if (state.activePlace || state.savedPlaces.length) openPlaceSheet();
   });
-  els.placeBackdrop.addEventListener("click", closePlaceSheet);
-  document.getElementById("placeSheetClose").addEventListener("click", closePlaceSheet);
-  els.welcomeLocate.addEventListener("click", useCurrentLocation);
-  document.getElementById("searchLocate").addEventListener("click", () => {
+  bindTapAction(els.placeBackdrop, closePlaceSheet);
+  bindTapAction(document.getElementById("placeSheetClose"), closePlaceSheet);
+  bindTapAction(els.welcomeLocate, useCurrentLocation);
+  bindTapAction(document.getElementById("searchLocate"), () => {
     toggleSearch(false);
     useCurrentLocation();
   });
-  document.getElementById("nowcast").addEventListener("click", openNext24Detail);
+  bindTapAction(document.getElementById("nowcast"), openNext24Detail);
 
   // Refresh stale data when the app is reopened/foregrounded (esp. iOS PWA)
   document.addEventListener("visibilitychange", refreshOnForeground);
   window.addEventListener("pageshow", (event) => { if (event.persisted) refreshOnForeground(); });
   window.addEventListener("focus", refreshOnForeground);
-  els.savePlace.addEventListener("click", () => {
+  bindTapAction(els.savePlace, () => {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
     if (alreadySaved) {
@@ -684,17 +766,16 @@ function bindEvents() {
     updateSaveButton();
     openPlaceSheet();
   });
-  els.radarMode.addEventListener("click", () => setMapMode("radar"));
-  els.futureMode.addEventListener("click", () => setMapMode("future"));
-  els.zoomOutMap.addEventListener("click", () => setMapZoom(mapState.zoom - 1));
-  els.zoomInMap.addEventListener("click", () => setMapZoom(mapState.zoom + 1));
-  els.playRadar.addEventListener("click", toggleRadarPlayback);
+  bindTapAction(els.radarMode, () => setMapMode("radar"));
+  bindTapAction(els.futureMode, () => setMapMode("future"));
+  bindTapAction(els.zoomOutMap, () => setMapZoom(mapState.zoom - 1));
+  bindTapAction(els.zoomInMap, () => setMapZoom(mapState.zoom + 1));
+  bindTapAction(els.playRadar, toggleRadarPlayback);
   els.frameSlider.addEventListener("input", () => scrubToFrame(Number(els.frameSlider.value)));
-  document.getElementById("expandMap").addEventListener("click", enterImmersiveMap);
+  bindTapAction(document.getElementById("expandMap"), enterImmersiveMap);
 
   // Day-detail drill-down: tap a 10-day row or the hourly strip
-  els.daily.addEventListener("click", (event) => {
-    const row = event.target.closest(".day-row");
+  bindTapDelegate(els.daily, ".day-row", (event, row) => {
     if (row && row.dataset.index !== undefined) openDayFromIndex(Number(row.dataset.index));
   });
   els.daily.addEventListener("keydown", (event) => {
@@ -705,12 +786,11 @@ function bindEvents() {
       openDayFromIndex(Number(row.dataset.index));
     }
   });
-  els.hourly.addEventListener("click", openNext24Detail);
-  document.getElementById("sheetGraphMode").addEventListener("click", () => setDayDetailMode("graph"));
-  document.getElementById("sheetHourlyMode").addEventListener("click", () => setDayDetailMode("hourly"));
-  document.getElementById("sheetHourlyList").addEventListener("click", (event) => {
-    const row = event.target.closest(".sheet-hour-row");
-    if (row) toggleSheetHourRow(row);
+  bindTapAction(els.hourly, openNext24Detail, { moveTolerance: 12 });
+  bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
+  bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
+  bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
+    toggleSheetHourRow(row);
   });
   document.getElementById("sheetHourlyList").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -719,11 +799,11 @@ function bindEvents() {
     event.preventDefault();
     toggleSheetHourRow(row);
   });
-  document.getElementById("graphTempBtn").addEventListener("click", () => setGraphMetric("temp"));
-  document.getElementById("graphWindBtn").addEventListener("click", () => setGraphMetric("wind"));
-  document.getElementById("graphSunBtn").addEventListener("click", () => setGraphMetric("sun"));
-  document.getElementById("dayDetailClose").addEventListener("click", closeDayDetail);
-  document.getElementById("dayDetailBackdrop").addEventListener("click", closeDayDetail);
+  bindTapAction(document.getElementById("graphTempBtn"), () => setGraphMetric("temp"));
+  bindTapAction(document.getElementById("graphWindBtn"), () => setGraphMetric("wind"));
+  bindTapAction(document.getElementById("graphSunBtn"), () => setGraphMetric("sun"));
+  bindTapAction(document.getElementById("dayDetailClose"), closeDayDetail);
+  bindTapAction(document.getElementById("dayDetailBackdrop"), closeDayDetail);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("dayDetail").hidden) closeDayDetail();
   });
@@ -732,9 +812,9 @@ function bindEvents() {
   });
 
   // Severe weather alerts
-  document.getElementById("alertBar").addEventListener("click", openAlertSheet);
-  document.getElementById("alertSheetClose").addEventListener("click", closeAlertSheet);
-  document.getElementById("alertBackdrop").addEventListener("click", closeAlertSheet);
+  bindTapAction(document.getElementById("alertBar"), openAlertSheet);
+  bindTapAction(document.getElementById("alertSheetClose"), closeAlertSheet);
+  bindTapAction(document.getElementById("alertBackdrop"), closeAlertSheet);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("alertSheet").hidden) closeAlertSheet();
   });
@@ -1033,7 +1113,7 @@ function renderSearchResults() {
       <span>${escapeHtml(place.name)}</span>
       <small>${escapeHtml(place.admin1 || place.country || "")}</small>
     `;
-    button.addEventListener("click", () => {
+    bindTapAction(button, () => {
       toggleSearch(false);
       loadPlace(normalizePlace(place));
     });
@@ -1119,11 +1199,11 @@ function renderSavedPlaces() {
       </button>
       <button class="place-item-remove" type="button" aria-label="Remove ${placeName}">×</button>
     `;
-    item.querySelector(".place-item-main").addEventListener("click", () => {
+    bindTapAction(item.querySelector(".place-item-main"), () => {
       closePlaceSheet();
       loadPlace(place);
     });
-    item.querySelector(".place-item-remove").addEventListener("click", () => removeSavedPlace(place.id));
+    bindTapAction(item.querySelector(".place-item-remove"), () => removeSavedPlace(place.id));
     els.savedPlaces.appendChild(item);
   });
   renderMapMarkers();
@@ -1171,14 +1251,19 @@ function updatePlaceGlance(placeId) {
   updatePlaceSwitcher();
 }
 
+function showSheet(backdrop, sheet) {
+  // Force the initial translated state to commit before adding `.show`.
+  // This keeps the slide transition, and avoids relying on deferred timers.
+  void sheet.offsetHeight;
+  backdrop.classList.add("show");
+  sheet.classList.add("show");
+}
+
 function openPlaceSheet() {
   renderSavedPlaces();
   els.placeBackdrop.hidden = false;
   els.placeSheet.hidden = false;
-  requestAnimationFrame(() => {
-    els.placeBackdrop.classList.add("show");
-    els.placeSheet.classList.add("show");
-  });
+  showSheet(els.placeBackdrop, els.placeSheet);
   document.body.style.overflow = "hidden";
 }
 
@@ -3785,10 +3870,7 @@ function renderAILauncher() {
 function openAISheet() {
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
-  requestAnimationFrame(() => {
-    els.aiBackdrop.classList.add("show");
-    els.aiSheet.classList.add("show");
-  });
+  showSheet(els.aiBackdrop, els.aiSheet);
   document.body.style.overflow = "hidden";
   // Auto-generate the briefing the first time it's opened for a place.
   if (aiState.phase === "ready" && !aiState.text) runBrief();
@@ -5679,56 +5761,22 @@ function updateImmersiveHUD() {
   if (condition) condition.textContent = weatherCodes[currentCode] || document.getElementById("nowSummary").textContent || "Current";
 }
 
-function bindReliableTap(button, action) {
-  if (!button) return;
-  let tapStart = null;
-  let suppressClick = false;
-
-  button.onpointerdown = (event) => {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    tapStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
-    if (button.setPointerCapture) {
-      try { button.setPointerCapture(event.pointerId); } catch { /* capture can fail after fast taps */ }
-    }
-  };
-
-  button.onpointerup = (event) => {
-    if (!tapStart || tapStart.id !== event.pointerId) return;
-    const moved = Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y);
-    tapStart = null;
-    if (moved > 18) return;
-    suppressClick = true;
-    event.preventDefault();
-    action(event);
-    setTimeout(() => { suppressClick = false; }, 0);
-  };
-
-  button.onpointercancel = () => { tapStart = null; };
-  button.onclick = (event) => {
-    if (suppressClick) {
-      event.preventDefault();
-      return;
-    }
-    action(event);
-  };
-}
-
 function bindImmersiveModeButtons() {
   const immRadar  = document.getElementById("immRadar");
   const immFuture = document.getElementById("immFuture");
   immRadar.classList.toggle("imm-active", mapState.mode === "radar");
   immFuture.classList.toggle("imm-active", mapState.mode === "future");
 
-  bindReliableTap(document.getElementById("collapseMap"), exitImmersiveMap);
-  bindReliableTap(document.getElementById("immWeatherCard"), openPlaceSheet);
-  bindReliableTap(document.getElementById("immPlay"), toggleRadarPlayback);
+  bindTapAction(document.getElementById("collapseMap"), exitImmersiveMap);
+  bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
+  bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
-  bindReliableTap(immRadar, () => {
+  bindTapAction(immRadar, () => {
     setMapMode("radar");
     immRadar.classList.add("imm-active");
     immFuture.classList.remove("imm-active");
   });
-  bindReliableTap(immFuture, () => {
+  bindTapAction(immFuture, () => {
     setMapMode("future");
     immFuture.classList.add("imm-active");
     immRadar.classList.remove("imm-active");
@@ -6152,10 +6200,7 @@ function openDayDetail({ indices, title, code, stormPotential = false, isDay, su
   const sheet = document.getElementById("dayDetail");
   backdrop.hidden = false;
   sheet.hidden = false;
-  requestAnimationFrame(() => {
-    backdrop.classList.add("show");
-    sheet.classList.add("show");
-  });
+  showSheet(backdrop, sheet);
   document.body.style.overflow = "hidden";
 }
 
@@ -6938,10 +6983,7 @@ function openAlertSheet() {
   const backdrop = document.getElementById("alertBackdrop");
   backdrop.hidden = false;
   sheet.hidden = false;
-  requestAnimationFrame(() => {
-    backdrop.classList.add("show");
-    sheet.classList.add("show");
-  });
+  showSheet(backdrop, sheet);
   document.body.style.overflow = "hidden";
 }
 
