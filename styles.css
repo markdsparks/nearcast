@@ -440,6 +440,7 @@ h2 {
   background: var(--panel-soft);
   color: var(--ink);
   outline: 1px solid transparent;
+  touch-action: manipulation;
 }
 
 .search input:focus {
@@ -455,6 +456,8 @@ h2 {
   background: var(--btn-bg);
   color: var(--btn-fg);
   font-weight: 800;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .search-close {
@@ -1701,6 +1704,8 @@ h2 {
   background: var(--panel);
   color: var(--ink);
   text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .place-item.active .place-item-main {
   border-color: rgba(29, 122, 87, 0.55);
@@ -1765,6 +1770,8 @@ h2 {
   color: var(--muted);
   font-size: 1.1rem;
   font-weight: 900;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .place-item-remove:hover {
   color: var(--red);
@@ -2389,6 +2396,8 @@ body.map-immersive-active #mapLegend {
   font-size: 0.88rem;
   font-weight: 500;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s, border-color 0.15s;
 }
 .imm-btn:hover { background: rgba(20,28,44,0.92); border-color: rgba(255,255,255,0.3); }
@@ -2419,6 +2428,8 @@ body.map-immersive-active #mapLegend {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   z-index: 10;
 }
 .imm-weather-pill:hover {
@@ -2561,6 +2572,7 @@ body.map-immersive-active #mapLegend {
   text-align: right;
   white-space: nowrap;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
 }
 
 .map-actions {
@@ -3304,6 +3316,10 @@ body.map-immersive-active .sheet-backdrop {
 
 body.map-immersive-active .day-sheet {
   z-index: 1101;
+}
+
+body.map-immersive-active .day-sheet.show {
+  transform: translateY(0);
 }
 
 .sheet-grabber {

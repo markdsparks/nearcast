@@ -11,10 +11,10 @@ zoom flicker, scattered HUD, city labels hidden under storms.
 | 1 | Radar animation "pulses" | 1 — engine | ✅ shipped v1.10.89 (hard-cut, retimed loop) |
 | 2 | Precip pixelated on zoom-in | 1 — engine | ✅ shipped v1.10.89 (z8 cap + proportional blur) |
 | 3 | Immersive zoom flicker / blank | 1 — engine | ✅ v1.10.89 deferred-purge; v1.10.90 realign kept tiles |
-| 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.98 (simplified immersive HUD + subtle rail) |
+| 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.99 (simplified immersive HUD + interaction fixes) |
 | 5 | City names hidden under storms | 3 — basemap/labels | ⏳ pending CARTO decision |
 
-## Phase 2 — HUD redesign (#4) — SHIPPED v1.10.98
+## Phase 2 — HUD redesign (#4) — SHIPPED v1.10.99
 
 Target: a cohesive **two-zone** immersive HUD instead of independently-placed chips.
 
@@ -42,6 +42,8 @@ Shipped notes:
 - v1.10.98 simplification: use the same lightweight HUD language across desktop/mobile, move close
   to top-left, make the place pill open saved places, remove explicit zoom controls, and switch the
   immersive legend to a vertical strip.
+- v1.10.99 interaction pass: keep play/pause intent across place/mode changes, add more tolerant
+  immersive taps, and avoid outrunning still-loading radar tiles on the first animation pass.
 
 **Keep in mind for #5:** the basemap will likely move to CARTO with a **theme-matched dark base in
 immersive**. Design the HUD glass to read well over BOTH a light and a dark basemap (dark glass +

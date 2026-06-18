@@ -1,4 +1,4 @@
-const VERSION = "1.10.98";
+const VERSION = "1.10.99";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -29,6 +29,8 @@ const mapState = {
   userPausedRadar: false,
   playAccum: 0,
   playClock: 0,
+  frameWaitIndex: null,
+  frameWaitStart: 0,
   xfadeFrames: [null, null],
   _normalEls: null
 };
@@ -4267,23 +4269,26 @@ function renderMapMarkers() {
 }
 
 async function setMapMode(mode) {
+  if (mapState.mode === mode) return;
+  const shouldResumePlayback = mapState.playing;
   mapState.mode = mode;
-  stopRadarPlayback();
+  stopRadarPlayback({ renderStatic: false });
   els.radarMode.classList.toggle("active", mode === "radar");
   els.futureMode.classList.toggle("active", mode === "future");
   renderMapLegend();
-  await loadMapFrames(true);
+  await loadMapFrames(true, { resumePlayback: shouldResumePlayback });
 }
 
-async function loadMapFrames(force = false) {
+async function loadMapFrames(force = false, options = {}) {
   if (!mapState.initialized || !state.activePlace) return;
   if (!force && mapState.frames.length) {
     showFrame(mapState.frameIndex);
     return;
   }
 
+  const shouldResumePlayback = Boolean(options.resumePlayback || mapState.playing);
   setMapLoading(true);
-  clearMapLayers();
+  clearMapLayers({ renderStatic: false });
 
   try {
     mapState.frames = mapState.mode === "future" ? await fetchNoaaFutureRainFrames() : await fetchRadarFrames();
@@ -4293,10 +4298,11 @@ async function loadMapFrames(force = false) {
       return;
     }
 
-    mapState.frameIndex = mapState.mode === "future" ? 0 : mapState.frames.length - 1;
+    mapState.frameIndex = shouldResumePlayback || mapState.mode === "future" ? 0 : mapState.frames.length - 1;
     els.frameSlider.max = String(mapState.frames.length - 1);
     showFrame(mapState.frameIndex);
-    maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
+    if (shouldResumePlayback) startRadarPlayback();
+    else maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
   } catch (error) {
     setFrameLabel("Map data unavailable");
   } finally {
@@ -4693,12 +4699,50 @@ function renderXfade(index, viewport = null) {
   }
 }
 
-function startRadarPlayback() {
+function radarFramePane(frameIndex) {
+  const paneIndex = mapState.xfadeFrames.findIndex((frame) => frame === frameIndex);
+  return paneIndex >= 0 ? els.weatherTileLayer?.children[paneIndex] : null;
+}
+
+function radarPaneReady(frameIndex) {
+  const pane = radarFramePane(frameIndex);
+  if (!pane) return false;
+  const images = [...pane.querySelectorAll(":scope > img")];
+  return images.length > 0 && images.every((img) => img.complete && img.naturalWidth > 0);
+}
+
+function waitForBufferedRadarFrame(frameIndex, now) {
+  if (radarPaneReady(frameIndex)) {
+    mapState.frameWaitIndex = null;
+    mapState.frameWaitStart = 0;
+    return true;
+  }
+
+  if (mapState.frameWaitIndex !== frameIndex) {
+    mapState.frameWaitIndex = frameIndex;
+    mapState.frameWaitStart = now;
+  }
+
+  // Don't freeze forever on a failed or slow tile. Most frames are ready well
+  // before this; this only keeps first-pass playback from outrunning warm tiles.
+  return now - mapState.frameWaitStart > 1300;
+}
+
+function startRadarPlayback(options = {}) {
   if (mapState.playing || !mapState.frames.length) return;
+  const { restartIfAtEnd = false } = options;
+  if (restartIfAtEnd && mapState.frameIndex >= mapState.frames.length - 1 && mapState.frames.length > 1) {
+    mapState.frameIndex = 0;
+    els.frameSlider.value = "0";
+    updateRangeProgress(els.frameSlider);
+    setFrameLabel(mapState.frames[0].label);
+  }
   mapState.playing = true;
   setPlaybackButtonState();
   mapState.playAccum = 0;
   mapState.playClock = performance.now();
+  mapState.frameWaitIndex = null;
+  mapState.frameWaitStart = 0;
   mapState.xfadeFrames = [null, null];
   if (mapState.mode === "radar" && els.weatherTileLayer) {
     els.weatherTileLayer.innerHTML = "";
@@ -4723,6 +4767,12 @@ function playbackTick(now) {
     mapState.playAccum -= interval;
     const idx = (mapState.frameIndex + 1) % N;
     if (mapState.mode === "radar" && N > 1) {
+      renderXfade(mapState.frameIndex); // keep the upcoming hidden pane warming
+      if (!waitForBufferedRadarFrame(idx, now)) {
+        mapState.playAccum = interval;
+        mapState.timer = requestAnimationFrame(playbackTick);
+        return;
+      }
       mapState.frameIndex = idx;
       renderXfade(idx); // hard swap to idx, preload idx+1
       els.frameSlider.value = String(idx);
@@ -4742,7 +4792,7 @@ function toggleRadarPlayback() {
     stopRadarPlayback();
   } else {
     mapState.userPausedRadar = false;
-    startRadarPlayback();
+    startRadarPlayback({ restartIfAtEnd: true });
   }
 }
 
@@ -4755,7 +4805,7 @@ let mapViewObserver = null;
 function maybeAutoPlayRadar() {
   if (mapState.immersive || !mapInView) return;
   if (mapState.userPausedRadar || !mapState.frames.length) return;
-  startRadarPlayback();
+  startRadarPlayback({ restartIfAtEnd: true });
 }
 
 function initMapAutoPlay() {
@@ -4780,7 +4830,8 @@ function initMapAutoPlay() {
   });
 }
 
-function stopRadarPlayback() {
+function stopRadarPlayback(options = {}) {
+  const { renderStatic = true } = options;
   const wasPlaying = mapState.playing;
   mapState.playing = false;
   setPlaybackButtonState();
@@ -4789,12 +4840,14 @@ function stopRadarPlayback() {
     mapState.timer = null;
   }
   mapState.xfadeFrames = [null, null];
+  mapState.frameWaitIndex = null;
+  mapState.frameWaitStart = 0;
   // Settle on the current frame as a clean, accurate static render.
-  if (wasPlaying && mapState.frames.length) showFrame(mapState.frameIndex);
+  if (renderStatic && wasPlaying && mapState.frames.length) showFrame(mapState.frameIndex);
 }
 
-function clearMapLayers() {
-  stopRadarPlayback();
+function clearMapLayers(options = {}) {
+  stopRadarPlayback(options);
   mapState.frames = [];
   mapState.frameIndex = 0;
   els.frameSlider.max = "0";
@@ -5626,18 +5679,60 @@ function updateImmersiveHUD() {
   if (condition) condition.textContent = weatherCodes[currentCode] || document.getElementById("nowSummary").textContent || "Current";
 }
 
+function bindReliableTap(button, action) {
+  if (!button) return;
+  let tapStart = null;
+  let suppressClick = false;
+
+  button.onpointerdown = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    tapStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+    if (button.setPointerCapture) {
+      try { button.setPointerCapture(event.pointerId); } catch { /* capture can fail after fast taps */ }
+    }
+  };
+
+  button.onpointerup = (event) => {
+    if (!tapStart || tapStart.id !== event.pointerId) return;
+    const moved = Math.hypot(event.clientX - tapStart.x, event.clientY - tapStart.y);
+    tapStart = null;
+    if (moved > 18) return;
+    suppressClick = true;
+    event.preventDefault();
+    action(event);
+    setTimeout(() => { suppressClick = false; }, 0);
+  };
+
+  button.onpointercancel = () => { tapStart = null; };
+  button.onclick = (event) => {
+    if (suppressClick) {
+      event.preventDefault();
+      return;
+    }
+    action(event);
+  };
+}
+
 function bindImmersiveModeButtons() {
   const immRadar  = document.getElementById("immRadar");
   const immFuture = document.getElementById("immFuture");
   immRadar.classList.toggle("imm-active", mapState.mode === "radar");
   immFuture.classList.toggle("imm-active", mapState.mode === "future");
 
-  document.getElementById("collapseMap").onclick = exitImmersiveMap;
-  document.getElementById("immWeatherCard").onclick = openPlaceSheet;
-  document.getElementById("immPlay").onclick      = toggleRadarPlayback;
+  bindReliableTap(document.getElementById("collapseMap"), exitImmersiveMap);
+  bindReliableTap(document.getElementById("immWeatherCard"), openPlaceSheet);
+  bindReliableTap(document.getElementById("immPlay"), toggleRadarPlayback);
   document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
-  immRadar.onclick  = () => { setMapMode("radar");  immRadar.classList.add("imm-active");  immFuture.classList.remove("imm-active"); };
-  immFuture.onclick = () => { setMapMode("future"); immFuture.classList.add("imm-active"); immRadar.classList.remove("imm-active"); };
+  bindReliableTap(immRadar, () => {
+    setMapMode("radar");
+    immRadar.classList.add("imm-active");
+    immFuture.classList.remove("imm-active");
+  });
+  bindReliableTap(immFuture, () => {
+    setMapMode("future");
+    immFuture.classList.add("imm-active");
+    immRadar.classList.remove("imm-active");
+  });
 }
 
 function bindImmersiveDrag() {
