@@ -2225,7 +2225,7 @@ h2 {
    tucked just below the frame chip so it clears the crowded bottom rail. */
 .imm-credit {
   position: absolute;
-  top: 110px;
+  top: var(--imm-credit-top);
   left: 18px;
   z-index: 9;
   max-width: min(440px, calc(100vw - 36px));
@@ -2253,6 +2253,10 @@ h2 {
   z-index: 1000;
   overflow: hidden;
   background: transparent;
+  --imm-safe-top: env(safe-area-inset-top, 0px);
+  --imm-hud-top: max(18px, calc(var(--imm-safe-top) + 14px));
+  --imm-chip-top: calc(var(--imm-hud-top) + 54px);
+  --imm-credit-top: calc(var(--imm-chip-top) + 38px);
   --imm-safe-bottom: env(safe-area-inset-bottom, 0px);
   --imm-rail-bottom: max(18px, calc(var(--imm-safe-bottom) + 18px));
   --imm-rail-gap: 62px;
@@ -2278,7 +2282,7 @@ body.map-immersive-active #mapLegend {
 
 .immersive-map .map-loading {
   position: absolute;
-  top: 64px;
+  top: var(--imm-chip-top);
   left: 50%;
   transform: translateX(-50%);
   background: rgba(10,14,24,0.72);
@@ -2303,7 +2307,7 @@ body.map-immersive-active #mapLegend {
 
 .imm-hud-tr {
   position: absolute;
-  top: 18px;
+  top: var(--imm-hud-top);
   right: 18px;
   display: flex;
   gap: 8px;
@@ -2381,7 +2385,7 @@ body.map-immersive-active #mapLegend {
 
 .imm-frame-chip {
   position: absolute;
-  top: 72px;
+  top: var(--imm-chip-top);
   left: 18px;
   z-index: 10;
   max-width: min(420px, calc(100vw - 36px));
@@ -3040,6 +3044,7 @@ body.map-immersive-active #mapLegend {
 
 @media (max-width: 600px) {
   .immersive-map {
+    --imm-hud-top: max(56px, calc(var(--imm-safe-top) + 14px));
     --imm-rail-bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
     --imm-rail-gap: 78px;
   }
@@ -3052,7 +3057,6 @@ body.map-immersive-active #mapLegend {
   }
 
   .imm-frame-chip {
-    top: 74px;
     left: 12px;
     max-width: min(320px, calc(100vw - 24px));
     font-size: 0.74rem;
