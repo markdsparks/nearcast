@@ -1,4 +1,4 @@
-const CACHE = "nearcast-v129";
+const CACHE = "nearcast-v130";
 const ASSET_VERSION = "1.10.88";
 
 // App shell — everything needed to render offline

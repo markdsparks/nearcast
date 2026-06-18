@@ -1,4 +1,4 @@
-const VERSION = "1.10.88";
+const VERSION = "1.10.89";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -27,7 +27,7 @@ const mapState = {
   mode: "radar",
   immersive: false,
   userPausedRadar: false,
-  playPos: 0,
+  playAccum: 0,
   playClock: 0,
   xfadeFrames: [null, null],
   _normalEls: null
@@ -35,6 +35,7 @@ const mapState = {
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
+const RADAR_TILE_MAX_ZOOM = 8; // cap radar source tiles so they upscale smoothly past z8
 const MAP_TAP_MOVE_PX = 8;
 const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
 const US_STATE_NAMES = {
@@ -4413,7 +4414,10 @@ function buildNwsRadarFrame(config, time) {
     timestamp: new Date(time).getTime(),
     url: `${config.endpoint}?${params.toString()}`,
     attribution: "NOAA/NWS MRMS",
-    maxZoom: MAP_MAX_ZOOM
+    // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser bilinear-smooths
+    // them) instead of the WMS server rendering MRMS's ~1km grid as hard blocks
+    // at native zoom. Also means fewer, larger tiles per frame.
+    maxZoom: RADAR_TILE_MAX_ZOOM
   };
 }
 
@@ -4629,36 +4633,39 @@ function scrubToFrame(index) {
   showFrame(index);
 }
 
-// Playback timing. Each frame holds sharp for most of its step, then cross-fades
-// into the next over the tail — so the radar loop reads as motion, not a slideshow.
-const FRAME_STEP_MS = 720;
-const XFADE_PORTION = 0.42;
+// Playback timing. The NWS MRMS frames are dense (≈2-min cadence, up to 30 of
+// them), so a clean hard-cut between frames reads as fluid motion — exactly like
+// scrubbing the slider. We aim for a ~4.5s loop, clamped to a sane per-frame
+// range, and hold a beat on the latest frame before looping (radar convention).
+const TARGET_LOOP_MS = 4500;
+const MIN_STEP_MS = 90;
+const MAX_STEP_MS = 380;
+const LAST_FRAME_HOLD_MS = 700;
+
+function radarStepMs(n) {
+  return Math.min(Math.max(TARGET_LOOP_MS / Math.max(n, 1), MIN_STEP_MS), MAX_STEP_MS);
+}
 
 function frameUrl(frame) {
   return frame && (frame.url || (frame.layers && frame.layers[0] && frame.layers[0].url));
 }
 
-// How far we are through the cross-fade for a fractional playback position:
-// 0 while the current frame holds, ramping 0→1 across the tail of the step.
-function xfadeAmount(within) {
-  return within <= 1 - XFADE_PORTION ? 0 : (within - (1 - XFADE_PORTION)) / XFADE_PORTION;
-}
-
-// Continuous, cross-faded radar render. Two panes double-buffer: the incoming
-// frame loads on the hidden pane (opacity ~0) and fades up while the outgoing
-// pane fades down, so a frame's tiles never swap while they're visible.
-function renderXfade(pos, viewport = null) {
+// Hard-cut radar render with a two-pane double-buffer: the current frame shows
+// at full opacity while the NEXT frame preloads on the hidden pane (opacity 0),
+// so advancing is an instant swap with no load flash and — crucially — no
+// alpha-blend of two frames (which caused the pulsing/double-exposure).
+function renderXfade(index, viewport = null) {
   const N = mapState.frames.length;
   if (!N || !els.weatherTileLayer) return;
-  const i = ((Math.floor(pos) % N) + N) % N;
-  const next = N > 1 ? (i + 1) % N : i;
-  const fade = xfadeAmount(pos - Math.floor(pos));
+  const cur = ((index % N) + N) % N;
+  const next = N > 1 ? (cur + 1) % N : cur;
 
-  // Keep the two panes covering frames i and next; reassign only the stale pane.
+  // Keep the two panes covering {cur, next}; reassign only the stale pane (which
+  // is at opacity 0, so its reload is invisible).
   const frames = mapState.xfadeFrames;
-  for (const need of [i, next]) {
+  for (const need of [cur, next]) {
     if (frames[0] !== need && frames[1] !== need) {
-      const other = need === i ? next : i;
+      const other = need === cur ? next : cur;
       frames[frames[0] === other ? 1 : 0] = need;
     }
   }
@@ -4677,8 +4684,9 @@ function renderXfade(pos, viewport = null) {
     if (url) {
       const sourceZoom = mapTileSourceZoom((frame && frame.maxZoom) || MAP_MAX_ZOOM);
       renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
+      pane.style.filter = radarBlurFilter(sourceZoom);
     }
-    pane.style.opacity = String(f === i ? 0.78 * (1 - fade) : f === next ? 0.78 * fade : 0);
+    pane.style.opacity = f === cur ? "0.78" : "0"; // hard cut; next preloads hidden
   }
   while (els.weatherTileLayer.children.length > 2) {
     els.weatherTileLayer.lastElementChild.remove();
@@ -4689,10 +4697,13 @@ function startRadarPlayback() {
   if (mapState.playing || !mapState.frames.length) return;
   mapState.playing = true;
   setPlaybackButtonState();
-  mapState.playPos = mapState.frameIndex;
+  mapState.playAccum = 0;
   mapState.playClock = performance.now();
   mapState.xfadeFrames = [null, null];
-  if (mapState.mode === "radar" && els.weatherTileLayer) els.weatherTileLayer.innerHTML = "";
+  if (mapState.mode === "radar" && els.weatherTileLayer) {
+    els.weatherTileLayer.innerHTML = "";
+    renderXfade(mapState.frameIndex); // show current + preload next immediately
+  }
   mapState.timer = requestAnimationFrame(playbackTick);
 }
 
@@ -4703,23 +4714,23 @@ function playbackTick(now) {
 
   const dt = now - mapState.playClock;
   mapState.playClock = now;
-  mapState.playPos += dt / FRAME_STEP_MS;
-  if (mapState.playPos >= N) mapState.playPos -= N; // loop
+  mapState.playAccum += dt;
 
-  if (mapState.mode === "radar" && N > 1) {
-    renderXfade(mapState.playPos);
-    const i = Math.floor(mapState.playPos) % N;
-    const dom = xfadeAmount(mapState.playPos - Math.floor(mapState.playPos)) < 0.5 ? i : (i + 1) % N;
-    if (dom !== mapState.frameIndex) {
-      mapState.frameIndex = dom;
-      els.frameSlider.value = String(dom);
+  const stepMs = radarStepMs(N);
+  // Hold an extra beat on the most recent frame before looping back to the start.
+  const interval = mapState.frameIndex >= N - 1 ? stepMs + LAST_FRAME_HOLD_MS : stepMs;
+  if (mapState.playAccum >= interval) {
+    mapState.playAccum -= interval;
+    const idx = (mapState.frameIndex + 1) % N;
+    if (mapState.mode === "radar" && N > 1) {
+      mapState.frameIndex = idx;
+      renderXfade(idx); // hard swap to idx, preload idx+1
+      els.frameSlider.value = String(idx);
       updateRangeProgress(els.frameSlider);
-      setFrameLabel(mapState.frames[dom].label);
+      setFrameLabel(mapState.frames[idx].label);
+    } else {
+      showFrame(idx); // forecast frames are already interpolated — step discretely
     }
-  } else {
-    // Forecast frames are already interpolated hourly — step them discretely.
-    const idx = Math.floor(mapState.playPos) % N;
-    if (idx !== mapState.frameIndex) showFrame(idx);
   }
   mapState.timer = requestAnimationFrame(playbackTick);
 }
@@ -4836,6 +4847,15 @@ function mapTileSourceZoom(maxZoom = MAP_MAX_ZOOM) {
   return Math.min(Math.max(Math.floor(mapState.zoom + 0.0001), MAP_MIN_ZOOM), max);
 }
 
+// Radar tiles are coarse (capped source zoom + low-res precip data), so soften
+// them in proportion to how much they're being upscaled — bilinear alone leaves
+// hard cell blocks at high zoom. Returns a CSS filter string for a weather pane.
+function radarBlurFilter(sourceZoom) {
+  const scale = 2 ** (mapState.zoom - sourceZoom);
+  const px = Math.min(Math.max(scale * 0.55, 0.6), 2.4);
+  return `blur(${px.toFixed(2)}px)`;
+}
+
 function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
   const newZoom = clampMapZoom(nextZoom);
   if (Math.abs(newZoom - mapState.zoom) < 0.001) return;
@@ -4881,7 +4901,7 @@ function renderTileMap() {
 
   const viewport = getMapViewport();
   renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
-  if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.playPos, viewport);
+  if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.frameIndex, viewport);
   else renderWeatherTiles(viewport);
   renderMapMarkers();
 }
@@ -4921,6 +4941,7 @@ function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
       els.weatherTileLayer.appendChild(pane);
     }
     pane.style.opacity = String(layer.opacity);
+    pane.style.filter = radarBlurFilter(sourceZoom);
     renderTileLayer(pane, tileViewport, ({ z, x, y }) => weatherTileUrl(layer.url, z, x, y), { sourceZoom });
   });
 }
@@ -4974,7 +4995,11 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
         img.decoding = "async";
         img.loading = "eager";
         img.dataset.tile = key;
-        img.addEventListener("load", () => { img.style.visibility = ""; img.dataset.tries = "0"; });
+        img.addEventListener("load", () => {
+          img.style.visibility = "";
+          img.dataset.tries = "0";
+          maybePurgeStaleTiles(layer); // drop the old zoom once this set has painted
+        });
         img.addEventListener("error", () => onTileError(img, layer));
         layer.appendChild(img);
       }
@@ -4989,6 +5014,29 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
       img.style.left = `${Math.round(tileX * displayTileSize - topLeft.x)}px`;
       img.style.top = `${Math.round(tileY * displayTileSize - topLeft.y)}px`;
     }
+  }
+
+  // Drop same-zoom tiles that scrolled out of view right away (panning already has
+  // the buffer to cover it). Tiles from a PREVIOUS zoom level stay under the new
+  // ones until the new set has painted — otherwise an integer zoom step purges
+  // everything at once and the map blanks for a frame.
+  layer._wantedTiles = wanted;
+  layer.querySelectorAll(":scope > img").forEach((img) => {
+    if (wanted.has(img.dataset.tile)) return;
+    if (Number((img.dataset.tile || "").split("/")[0]) === z) img.remove();
+  });
+  maybePurgeStaleTiles(layer);
+}
+
+// Remove leftover tiles (typically the previous zoom level) once every currently
+// wanted tile has settled — called after each render and on each tile load, so the
+// old view stays visible until the new one is ready.
+function maybePurgeStaleTiles(layer) {
+  const wanted = layer._wantedTiles;
+  if (!wanted) return;
+  for (const key of wanted) {
+    const img = layer.querySelector(`:scope > img[data-tile="${key}"]`);
+    if (!img || !img.complete) return; // new set hasn't finished loading yet
   }
   layer.querySelectorAll(":scope > img").forEach((img) => {
     if (!wanted.has(img.dataset.tile)) img.remove();

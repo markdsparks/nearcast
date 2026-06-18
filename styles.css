@@ -2572,6 +2572,7 @@ body.map-immersive-active #mapLegend {
    cross-fade works and radar shows at a steady 0.78. */
 .weather-layer img {
   mix-blend-mode: normal;
+  image-rendering: auto; /* smooth bilinear upscale for capped radar tiles, never blocky */
 }
 .weather-layer {
   z-index: 10;
