@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.90">
+    <link rel="stylesheet" href="styles.css?v=1.10.93">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -268,40 +268,41 @@
           <div class="marker-layer" id="immersiveMarker"></div>
         </div>
         <div class="map-loading" id="immersiveLoading" hidden>Loading map data...</div>
-        <div class="map-legend" id="immersiveLegend" aria-label="Map legend"></div>
 
-        <div class="imm-hud-tr">
-          <button class="imm-btn" id="immZoomOut" aria-label="Zoom out">−</button>
-          <button class="imm-btn" id="immZoomIn" aria-label="Zoom in">+</button>
-          <button class="imm-btn imm-active" id="immRadar" type="button">Nowcast</button>
-          <button class="imm-btn" id="immFuture" type="button">Forecast</button>
+        <div class="imm-top-hud">
+          <div class="imm-weather-pill" id="immWeatherCard" aria-label="Current conditions">
+            <span class="imm-location" id="immLocation">—</span>
+            <span class="imm-temp" id="immTemp">—</span>
+            <span class="imm-icon" id="immIcon" aria-hidden="true"></span>
+            <span class="imm-condition" id="immCondition">—</span>
+          </div>
+          <div class="imm-mode-switch" role="group" aria-label="Map mode">
+            <button class="imm-btn imm-active" id="immRadar" type="button">Nowcast</button>
+            <button class="imm-btn" id="immFuture" type="button">Forecast</button>
+          </div>
           <button class="imm-btn imm-close" id="collapseMap" aria-label="Exit immersive mode" title="Exit immersive mode">✕</button>
         </div>
 
-        <div class="imm-weather-pill" id="immWeatherCard" aria-label="Current conditions">
-          <span class="imm-location" id="immLocation">—</span>
-          <span class="imm-temp" id="immTemp">—</span>
-          <span class="imm-icon" id="immIcon" aria-hidden="true"></span>
-          <span class="imm-condition" id="immCondition">—</span>
+        <div class="imm-zoom-stack" role="group" aria-label="Map zoom controls">
+          <button class="imm-btn" id="immZoomIn" aria-label="Zoom in">+</button>
+          <button class="imm-btn" id="immZoomOut" aria-label="Zoom out">−</button>
         </div>
 
-
-        <div class="imm-frame-chip" aria-live="polite">
-          <span id="immLabel">No frames</span>
-        </div>
-
-        <p class="imm-credit">Radar NOAA/NWS, RainViewer · Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></p>
-
-        <div class="imm-timeline">
-          <button class="play-button imm-play-button" id="immPlay" type="button" aria-label="Play radar animation" title="Play radar animation">
-            <svg class="imm-play-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M9 7.5v9l7-4.5-7-4.5z" fill="currentColor"></path>
-            </svg>
-            <svg class="imm-pause-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8 7h3v10H8zM13 7h3v10h-3z" fill="currentColor"></path>
-            </svg>
-          </button>
-          <input id="immSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
+        <div class="imm-bottom-hud">
+          <div class="map-legend" id="immersiveLegend" aria-label="Map legend"></div>
+          <div class="imm-timeline">
+            <button class="play-button imm-play-button" id="immPlay" type="button" aria-label="Play radar animation" title="Play radar animation">
+              <svg class="imm-play-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 7.5v9l7-4.5-7-4.5z" fill="currentColor"></path>
+              </svg>
+              <svg class="imm-pause-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 7h3v10H8zM13 7h3v10h-3z" fill="currentColor"></path>
+              </svg>
+            </button>
+            <input id="immSlider" type="range" min="0" max="0" value="0" aria-label="Radar time">
+            <strong class="imm-frame-time" id="immLabel" aria-live="polite">No frames</strong>
+          </div>
+          <p class="imm-credit">Radar NOAA/NWS, RainViewer · Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a></p>
         </div>
       </div>
     </main>
@@ -388,6 +389,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.90"></script>
+    <script src="app.js?v=1.10.93"></script>
   </body>
 </html>

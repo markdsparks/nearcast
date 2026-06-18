@@ -2221,25 +2221,19 @@ h2 {
   height: 16px;
 }
 
-/* Attribution lives on the immersive map (where the full experience is),
-   tucked just below the frame chip so it clears the crowded bottom rail. */
+/* Attribution stays in the immersive HUD so it remains available when the inline
+   map chrome is hidden. */
 .imm-credit {
-  position: absolute;
-  top: var(--imm-credit-top);
-  left: 18px;
-  z-index: 9;
-  max-width: min(440px, calc(100vw - 36px));
+  justify-self: end;
+  max-width: 100%;
   margin: 0;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(8, 12, 18, 0.5);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 0.64rem;
+  padding: 0 3px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  text-align: right;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.58);
 }
 .imm-credit a {
   color: inherit;
@@ -2254,13 +2248,13 @@ h2 {
   overflow: hidden;
   background: transparent;
   --imm-safe-top: env(safe-area-inset-top, 0px);
+  --imm-hud-x: 18px;
   --imm-hud-top: max(18px, calc(var(--imm-safe-top) + 14px));
-  --imm-chip-top: calc(var(--imm-hud-top) + 54px);
-  --imm-credit-top: calc(var(--imm-chip-top) + 38px);
   --imm-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --imm-bottom-x: 18px;
   --imm-rail-bottom: max(18px, calc(var(--imm-safe-bottom) + 18px));
-  --imm-rail-gap: 62px;
   --imm-control-bg: rgba(8, 12, 18, 0.68);
+  --imm-control-bg-strong: rgba(8, 12, 18, 0.78);
   --imm-control-border: rgba(255, 255, 255, 0.14);
 }
 
@@ -2282,7 +2276,7 @@ body.map-immersive-active #mapLegend {
 
 .immersive-map .map-loading {
   position: absolute;
-  top: var(--imm-chip-top);
+  top: calc(var(--imm-hud-top) + 62px);
   left: 50%;
   transform: translateX(-50%);
   background: rgba(10,14,24,0.72);
@@ -2298,28 +2292,90 @@ body.map-immersive-active #mapLegend {
 }
 
 .immersive-map .map-legend {
-  position: absolute;
-  left: auto;
-  right: 18px;
-  bottom: calc(var(--imm-rail-bottom) + var(--imm-rail-gap));
-  z-index: 10;
+  position: static;
+  width: min(540px, 100%);
+  padding: 8px 10px 9px;
+  border-radius: 13px;
+  border: 1px solid var(--imm-control-border);
+  background: var(--imm-control-bg);
+  color: #fff;
+  box-shadow: 0 14px 34px rgba(2, 6, 12, 0.22);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
 }
 
-.imm-hud-tr {
+.immersive-map .map-legend strong {
+  margin-bottom: 6px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+}
+
+.immersive-map .legend-scale {
+  height: 6px;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.immersive-map .legend-labels {
+  margin-top: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.62rem;
+}
+
+.imm-top-hud {
   position: absolute;
   top: var(--imm-hud-top);
-  right: 18px;
-  display: flex;
+  left: var(--imm-hud-x);
+  right: var(--imm-hud-x);
+  display: grid;
+  grid-template-columns: minmax(132px, 1fr) auto minmax(44px, 1fr);
+  align-items: start;
   gap: 8px;
-  z-index: 10;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.imm-top-hud > * {
+  pointer-events: auto;
+}
+
+.imm-mode-switch {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 42px;
+  padding: 4px;
+  border: 1px solid var(--imm-control-border);
+  border-radius: 15px;
+  background: var(--imm-control-bg);
+  box-shadow: 0 16px 38px rgba(2, 6, 12, 0.22);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.imm-zoom-stack {
+  position: absolute;
+  top: calc(var(--imm-hud-top) + 58px);
+  right: var(--imm-hud-x);
+  z-index: 20;
+  display: grid;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--imm-control-border);
+  border-radius: 16px;
+  background: var(--imm-control-bg);
+  box-shadow: 0 16px 38px rgba(2, 6, 12, 0.22);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
 }
 
 .imm-btn {
-  height: 36px;
+  height: 34px;
   padding: 0 14px;
-  border-radius: 8px;
+  border-radius: 11px;
   border: 1px solid rgba(255,255,255,0.18);
-  background: rgba(10,14,22,0.82);
+  background: rgba(10,14,22,0.56);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   color: rgba(255,255,255,0.92);
@@ -2332,20 +2388,34 @@ body.map-immersive-active #mapLegend {
 .imm-btn:hover { background: rgba(20,28,44,0.92); border-color: rgba(255,255,255,0.3); }
 .imm-btn.imm-active { background: rgba(255,255,255,0.92); border-color: rgba(255,255,255,0.92); color: #0a0e16; }
 .imm-btn.imm-close {
-  width: 36px;
+  justify-self: end;
+  width: 42px;
+  height: 42px;
   padding: 0;
   font-size: 1rem;
+  border-radius: 999px;
+  background: var(--imm-control-bg-strong);
+}
+
+.imm-zoom-stack .imm-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 12px;
+  font-size: 1.08rem;
+  font-weight: 850;
 }
 
 .imm-weather-pill {
-  position: absolute;
-  bottom: calc(var(--imm-rail-bottom) + var(--imm-rail-gap));
-  left: 18px;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: min(520px, calc(100vw - 36px));
-  background: rgba(10,14,22,0.78);
+  max-width: min(340px, 42vw);
+  min-height: 42px;
+  background: var(--imm-control-bg-strong);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255,255,255,0.12);
@@ -2355,7 +2425,7 @@ body.map-immersive-active #mapLegend {
   z-index: 10;
 }
 .imm-location {
-  max-width: 180px;
+  max-width: min(210px, 24vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2372,53 +2442,36 @@ body.map-immersive-active #mapLegend {
   white-space: nowrap;
 }
 .imm-condition {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgba(255,255,255,0.64);
-  font-size: 0.78rem;
-  font-weight: 700;
+  display: none;
 }
 .imm-icon { width: 22px; height: 22px; display: flex; flex-shrink: 0; }
 .imm-icon svg { width: 22px; height: 22px; }
 
-.imm-frame-chip {
+.imm-bottom-hud {
   position: absolute;
-  top: var(--imm-chip-top);
-  left: 18px;
-  z-index: 10;
-  max-width: min(420px, calc(100vw - 36px));
-  padding: 7px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  background: rgba(8, 12, 18, 0.58);
-  box-shadow: 0 14px 36px rgba(2, 6, 12, 0.18);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  color: rgba(255, 255, 255, 0.84);
-  font-size: 0.78rem;
-  font-weight: 850;
-  letter-spacing: 0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  left: var(--imm-bottom-x);
+  right: var(--imm-bottom-x);
+  bottom: var(--imm-rail-bottom);
+  z-index: 20;
+  display: grid;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.imm-bottom-hud > * {
+  pointer-events: auto;
 }
 
 .imm-timeline {
-  position: absolute;
-  bottom: var(--imm-rail-bottom);
-  left: 18px;
-  right: 18px;
-  z-index: 10;
+  position: relative;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
-  min-height: 62px;
-  padding: 8px 10px;
+  min-height: 58px;
+  padding: 7px 10px;
   border: 1px solid var(--imm-control-border);
-  border-radius: 20px;
+  border-radius: 18px;
   background: var(--imm-control-bg);
   box-shadow: 0 18px 42px rgba(2,6,12,0.26);
   backdrop-filter: blur(22px) saturate(1.08);
@@ -2437,10 +2490,10 @@ body.map-immersive-active #mapLegend {
   z-index: 1;
   display: inline-grid;
   place-items: center;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  min-height: 44px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
   padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.18);
@@ -2490,6 +2543,19 @@ body.map-immersive-active #mapLegend {
   --range-thumb-shadow:
     0 4px 12px rgba(0,0,0,0.34),
     0 0 0 7px rgba(255,255,255,0.16);
+}
+
+.imm-frame-time {
+  position: relative;
+  z-index: 1;
+  min-width: 10ch;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.1;
+  text-align: right;
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.42);
 }
 
 .map-actions {
@@ -2760,25 +2826,25 @@ body.map-immersive-active #mapLegend {
 }
 
 .imm-timeline input[type="range"]::-webkit-slider-runnable-track {
-  height: 10px;
+  height: 5px;
   box-shadow: inset 0 1px 1px rgba(255,255,255,0.10);
 }
 
 .imm-timeline input[type="range"]::-webkit-slider-thumb {
-  width: 26px;
-  height: 26px;
-  margin-top: -8px;
+  width: 18px;
+  height: 18px;
+  margin-top: -6.5px;
   border: 1px solid rgba(255,255,255,0.78);
 }
 
 .imm-timeline input[type="range"]::-moz-range-track,
 .imm-timeline input[type="range"]::-moz-range-progress {
-  height: 10px;
+  height: 5px;
 }
 
 .imm-timeline input[type="range"]::-moz-range-thumb {
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   border: 1px solid rgba(255,255,255,0.78);
 }
 
@@ -3045,48 +3111,111 @@ body.map-immersive-active #mapLegend {
 
 @media (max-width: 600px) {
   .immersive-map {
+    --imm-hud-x: 12px;
+    --imm-bottom-x: 12px;
     --imm-hud-top: max(56px, calc(var(--imm-safe-top) + 14px));
-    --imm-rail-bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
-    --imm-rail-gap: 78px;
+    --imm-rail-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
   }
 
-  .immersive-map .map-legend {
-    right: auto;
-    left: 18px;
-    bottom: calc(var(--imm-rail-bottom) + 126px);
-    width: min(310px, calc(100vw - 36px));
+  .imm-top-hud {
+    grid-template-columns: minmax(0, 1fr) 40px;
+    grid-template-areas:
+      "weather close"
+      "mode mode";
+    gap: 6px;
   }
 
-  .imm-frame-chip {
-    left: 12px;
-    max-width: min(320px, calc(100vw - 24px));
-    font-size: 0.74rem;
+  .imm-mode-switch {
+    grid-area: mode;
+    justify-self: center;
+    min-height: 40px;
+    border-radius: 14px;
   }
 
   .imm-weather-pill {
-    right: 18px;
-    max-width: none;
+    grid-area: weather;
+    width: auto;
+    min-height: 40px;
+    max-width: min(220px, calc(100vw - 84px));
+    gap: 6px;
+    padding: 7px 9px;
+  }
+
+  .imm-location {
+    max-width: min(128px, calc(100vw - 188px));
+    font-size: 0.76rem;
+  }
+
+  .imm-temp {
+    font-size: 0.9rem;
+  }
+
+  .imm-icon,
+  .imm-icon svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .imm-btn {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 0.8rem;
+  }
+
+  .imm-btn.imm-close {
+    grid-area: close;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+  }
+
+  .imm-zoom-stack {
+    top: calc(var(--imm-hud-top) + 106px);
+    right: var(--imm-hud-x);
+  }
+
+  .immersive-map .map-loading {
+    top: calc(var(--imm-hud-top) + 108px);
   }
 
   .imm-timeline {
-    left: 10px;
-    right: 10px;
+    grid-template-columns: 40px minmax(0, 1fr) minmax(72px, max-content);
     gap: 8px;
     padding: 8px;
   }
 
   .imm-timeline .imm-play-button {
-    width: 44px;
-    min-width: 44px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
     padding: 0;
   }
 
-  .imm-location {
-    max-width: 125px;
+  .imm-frame-time {
+    min-width: 7ch;
+    font-size: 0.68rem;
   }
 
-  .imm-condition {
-    display: none;
+  .immersive-map .map-legend {
+    width: 100%;
+    padding: 7px 9px 8px;
+  }
+
+  .immersive-map .legend-labels {
+    gap: 4px;
+    font-size: 0.56rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .imm-btn {
+    padding: 0 8px;
+    font-size: 0.76rem;
+  }
+
+  .imm-frame-time {
+    min-width: 6ch;
   }
 }
 

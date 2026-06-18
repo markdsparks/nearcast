@@ -1,4 +1,4 @@
-const VERSION = "1.10.90";
+const VERSION = "1.10.93";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5616,7 +5616,7 @@ function updateImmersiveHUD() {
   const icon = document.getElementById("immIcon");
   const condition = document.getElementById("immCondition");
   const currentCode = state.forecast?.current ? effectiveCurrentCode(state.forecast.current) : null;
-  if (loc)  loc.textContent  = placeLabel(state.activePlace);
+  if (loc)  loc.textContent  = (state.activePlace.name || placeLabel(state.activePlace)).split(",")[0].trim();
   if (temp) temp.textContent = document.getElementById("nowTemp").textContent;
   if (icon) icon.innerHTML   = document.getElementById("heroIcon").innerHTML;
   if (condition) condition.textContent = weatherCodes[currentCode] || document.getElementById("nowSummary").textContent || "Current";
