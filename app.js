@@ -1,4 +1,4 @@
-const VERSION = "1.10.89";
+const VERSION = "1.10.90";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5016,14 +5016,22 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
     }
   }
 
-  // Drop same-zoom tiles that scrolled out of view right away (panning already has
-  // the buffer to cover it). Tiles from a PREVIOUS zoom level stay under the new
-  // ones until the new set has painted — otherwise an integer zoom step purges
-  // everything at once and the map blanks for a frame.
+  // Same-zoom tiles that scrolled out of view are dropped immediately (panning has
+  // the buffer to cover it). Tiles from the immediately previous zoom level are kept
+  // under the new ones until the new set paints (so the map never blanks on zoom) —
+  // but REALIGNED to the current zoom so they track it as a soft stand-in instead of
+  // looking "stuck" at the old position. Older zoom levels are dropped outright.
   layer._wantedTiles = wanted;
   layer.querySelectorAll(":scope > img").forEach((img) => {
     if (wanted.has(img.dataset.tile)) return;
-    if (Number((img.dataset.tile || "").split("/")[0]) === z) img.remove();
+    const parts = (img.dataset.tile || "").split("/");
+    const tz = Number(parts[0]);
+    if (tz === z || Math.abs(tz - z) > 1) { img.remove(); return; }
+    const ts = tileSize * 2 ** (mapState.zoom - tz);
+    img.style.width = `${Math.ceil(ts)}px`;
+    img.style.height = `${Math.ceil(ts)}px`;
+    img.style.left = `${Math.round(Number(parts[1]) * ts - topLeft.x)}px`;
+    img.style.top = `${Math.round(Number(parts[2]) * ts - topLeft.y)}px`;
   });
   maybePurgeStaleTiles(layer);
 }
