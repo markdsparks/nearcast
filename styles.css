@@ -2916,6 +2916,68 @@ body.map-immersive-active #mapLegend {
   box-shadow: 0 0 0 1px rgba(8, 12, 18, 0.24);
 }
 
+.imm-time-bubble {
+  position: absolute;
+  left: clamp(72px, var(--time-bubble-left, 100%), calc(100% - 72px));
+  top: -49px;
+  z-index: 4;
+  display: grid;
+  gap: 2px;
+  min-width: 112px;
+  max-width: min(218px, calc(100vw - 34px));
+  padding: 8px 11px 9px;
+  transform: translateX(-50%) translateY(5px) scale(0.98);
+  transform-origin: 50% 100%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-top: 2px solid rgba(86, 172, 235, 0.82);
+  border-radius: 12px;
+  background: rgba(8, 12, 18, 0.78);
+  color: #fff;
+  box-shadow: 0 14px 36px rgba(2, 6, 12, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  visibility: hidden;
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+}
+
+.imm-time-bubble[data-source="forecast"] {
+  border-top-color: rgba(239, 183, 74, 0.86);
+}
+
+.imm-time-bubble[hidden] {
+  display: none;
+}
+
+.imm-time-bubble.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  visibility: visible;
+}
+
+.imm-time-bubble strong,
+.imm-time-bubble span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imm-time-bubble strong {
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.imm-time-bubble span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
 .imm-frame-time {
   position: absolute;
   right: 2px;

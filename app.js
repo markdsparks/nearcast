@@ -1,4 +1,4 @@
-const VERSION = "1.10.128";
+const VERSION = "1.10.129";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6320,6 +6320,8 @@ function getNoaaRegion() {
   return null;
 }
 
+let timelineBubbleHideTimer = null;
+
 function showFrame(index) {
   if (!mapState.frames.length) return;
   const nextIndex = Math.min(Math.max(index, 0), mapState.frames.length - 1);
@@ -6370,6 +6372,79 @@ function updateTimelineEraVisuals() {
     marker.hidden = !showMarker;
     marker.style.left = `${nowProgress}%`;
   }
+  renderTimelineTimeBubble();
+}
+
+function renderTimelineTimeBubble(options = {}) {
+  const bubble = document.getElementById("immTimeBubble");
+  const slider = els.frameSlider;
+  const frame = mapState.frames[mapState.frameIndex];
+  if (!bubble || !slider || !mapState.immersive || !frame) {
+    hideTimelineTimeBubble(true);
+    return;
+  }
+
+  const copy = timelineBubbleCopy(frame);
+  bubble.querySelector("strong").textContent = copy.title;
+  bubble.querySelector("span").textContent = copy.meta;
+  const min = Number(slider.min || 0);
+  const max = Number(slider.max || 0);
+  const value = Number(slider.value || 0);
+  const progress = max > min ? ((value - min) / (max - min)) * 100 : 100;
+  bubble.style.setProperty("--time-bubble-left", `${Math.min(Math.max(progress, 0), 100)}%`);
+  bubble.dataset.source = activeMapSource(frame);
+
+  if (options.show || mapState.playing) {
+    bubble.hidden = false;
+    requestAnimationFrame(() => bubble.classList.add("is-visible"));
+  }
+}
+
+function showTimelineTimeBubble(durationMs = 1600) {
+  clearTimelineBubbleTimer();
+  renderTimelineTimeBubble({ show: true });
+  if (mapState.playing) return;
+  timelineBubbleHideTimer = setTimeout(() => hideTimelineTimeBubble(), durationMs);
+}
+
+function scheduleTimelineBubbleHide(durationMs = 900) {
+  clearTimelineBubbleTimer();
+  timelineBubbleHideTimer = setTimeout(() => hideTimelineTimeBubble(), durationMs);
+}
+
+function hideTimelineTimeBubble(force = false) {
+  const bubble = document.getElementById("immTimeBubble");
+  if (!bubble) return;
+  if (!force && mapState.playing) return;
+  clearTimelineBubbleTimer();
+  bubble.classList.remove("is-visible");
+  setTimeout(() => {
+    if (!bubble.classList.contains("is-visible")) bubble.hidden = true;
+  }, 180);
+}
+
+function clearTimelineBubbleTimer() {
+  if (!timelineBubbleHideTimer) return;
+  clearTimeout(timelineBubbleHideTimer);
+  timelineBubbleHideTimer = null;
+}
+
+function timelineBubbleCopy(frame) {
+  if (frame?.isNow) {
+    return {
+      title: "Now",
+      meta: formatTimelineTime(frame.timestamp, { showMinutes: true, dayStyle: "none" })
+    };
+  }
+
+  const source = activeMapSource(frame);
+  return {
+    title: `${source === "forecast" ? "Forecast" : "Radar"} · ${formatTimelineTime(frame.timestamp, {
+      showMinutes: source !== "forecast",
+      dayStyle: "compact"
+    })}`,
+    meta: formatTimelineRelative(frame.timestamp)
+  };
 }
 
 function updateRangeProgress(slider) {
@@ -6408,6 +6483,7 @@ function scrubToFrame(index) {
     stopRadarPlayback();
   }
   showFrame(index);
+  showTimelineTimeBubble();
 }
 
 // Playback timing. The NWS MRMS frames are dense (≈2-min cadence, up to 30 of
@@ -6538,6 +6614,7 @@ function startRadarPlayback(options = {}) {
   }
   mapState.playing = true;
   setPlaybackButtonState();
+  showTimelineTimeBubble();
   mapState.playAccum = 0;
   mapState.playClock = performance.now();
   mapState.frameWaitIndex = null;
@@ -6653,6 +6730,7 @@ function stopRadarPlayback(options = {}) {
   mapState.xfadeFrames = [null, null];
   mapState.frameWaitIndex = null;
   mapState.frameWaitStart = 0;
+  if (wasPlaying || mapState.immersive) scheduleTimelineBubbleHide();
   // Settle on the current frame as a clean, accurate static render.
   if (renderStatic && wasPlaying && mapState.frames.length) showFrame(mapState.frameIndex);
 }
@@ -7503,16 +7581,57 @@ function dayShortLabel(value) {
   return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(value));
 }
 
+function timelineLocalParts(ms, data = state.forecast) {
+  const local = new Date(ms + forecastOffsetMs(data));
+  return {
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth() + 1,
+    day: local.getUTCDate(),
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes()
+  };
+}
+
+function timelineDayNumber(parts) {
+  return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / (24 * 60 * 60 * 1000));
+}
+
+function timelineWeekday(parts) {
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" })
+    .format(new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12)));
+}
+
 function formatTimelineTime(ms, options = {}) {
-  const date = new Date(ms);
-  const sameDay = date.toDateString() === new Date().toDateString();
-  const minute = date.getMinutes();
-  const showMinutes = options.showMinutes ?? minute !== 0;
-  return new Intl.DateTimeFormat(undefined, {
-    ...(sameDay ? {} : { weekday: "short" }),
-    hour: "numeric",
-    ...(showMinutes ? { minute: "2-digit" } : {})
-  }).format(date);
+  const parts = timelineLocalParts(ms);
+  const nowParts = timelineLocalParts(Date.now());
+  const dayDiff = timelineDayNumber(parts) - timelineDayNumber(nowParts);
+  const showMinutes = options.showMinutes ?? parts.minute !== 0;
+  let dayLabel = "";
+
+  if (options.dayStyle !== "none") {
+    if (dayDiff === 1) dayLabel = "Tomorrow";
+    else if (dayDiff === -1) dayLabel = "Yesterday";
+    else if (dayDiff !== 0) dayLabel = timelineWeekday(parts);
+  }
+
+  return `${dayLabel ? `${dayLabel} ` : ""}${formatClock(parts.hour, parts.minute, false, showMinutes)}`;
+}
+
+function formatTimelineRelative(ms) {
+  const delta = ms - Date.now();
+  const abs = Math.abs(delta);
+  if (abs < 45 * 1000) return "right now";
+  const value = formatRelativeDuration(abs);
+  return delta < 0 ? `${value} ago` : `in ${value}`;
+}
+
+function formatRelativeDuration(ms) {
+  const minutes = Math.max(1, Math.round(ms / (60 * 1000)));
+  if (minutes < 90) return `${minutes} min`;
+  const hours = Math.max(1, Math.round(minutes / 60));
+  if (hours < 36) return `${hours} hr`;
+  const days = Math.max(1, Math.round(hours / 24));
+  return `${days} day${days === 1 ? "" : "s"}`;
 }
 
 function radarTimelineLabel(ms) {
@@ -7646,7 +7765,13 @@ function bindImmersiveModeButtons() {
   bindTapAction(document.getElementById("collapseMap"), exitImmersiveMap);
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
-  document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
+  const slider = document.getElementById("immSlider");
+  slider.oninput = (e) => scrubToFrame(Number(e.target.value));
+  slider.onpointerdown = () => showTimelineTimeBubble(2400);
+  slider.onpointerup = () => showTimelineTimeBubble();
+  slider.onpointercancel = () => scheduleTimelineBubbleHide();
+  slider.onblur = () => scheduleTimelineBubbleHide(300);
+  slider.onkeydown = () => showTimelineTimeBubble(1400);
 }
 
 function bindImmersiveDrag() {

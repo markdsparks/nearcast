@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.128">
+    <link rel="stylesheet" href="styles.css?v=1.10.129">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -307,6 +307,10 @@
             <div class="imm-slider-wrap">
               <input id="immSlider" type="range" min="0" max="0" value="0" aria-label="Precipitation timeline">
               <span class="imm-now-marker" id="immNowMarker" hidden aria-hidden="true"><span>Now</span></span>
+              <span class="imm-time-bubble" id="immTimeBubble" hidden aria-hidden="true">
+                <strong>Now</strong>
+                <span>--</span>
+              </span>
             </div>
             <strong class="imm-frame-time" id="immLabel" aria-live="polite">No frames</strong>
           </div>
@@ -401,6 +405,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.128"></script>
+    <script src="app.js?v=1.10.129"></script>
   </body>
 </html>

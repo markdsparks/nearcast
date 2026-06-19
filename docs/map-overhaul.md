@@ -49,6 +49,8 @@ Shipped notes:
 - v1.10.128 precipitation timeline pass: retire the immersive Nowcast/Forecast toggle, land on Now
   when entering immersive mode, show radar history left of Now and forecast guidance right of Now,
   loop radar playback into Now, and stop/hold forecast playback at the final guidance frame.
+- v1.10.129 time-indicator pass: add a thumb-attached timeline bubble while scrubbing or playing,
+  showing source, selected-place local time, and relative timing without adding persistent chrome.
 
 **Keep in mind for #5:** the basemap will likely move to CARTO with a **theme-matched dark base in
 immersive**. Design the HUD glass to read well over BOTH a light and a dark basemap (dark glass +
