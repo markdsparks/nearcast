@@ -1,4 +1,4 @@
-const VERSION = "1.10.112";
+const VERSION = "1.10.113";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -886,18 +886,19 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  els.aiAsk.addEventListener("click", (event) => {
-    const show = event.target.closest("[data-ask-show]");
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-q]", (event, target) => {
+    event.preventDefault();
+    const show = target.closest("[data-ask-show]");
     if (show) {
       showPlannerEvent(Number(show.dataset.askShow));
       return;
     }
-    const clarify = event.target.closest("[data-ask-clarify]");
+    const clarify = target.closest("[data-ask-clarify]");
     if (clarify) {
       runPlannerClarification(Number(clarify.dataset.askClarify));
       return;
     }
-    const chip = event.target.closest("[data-ask-q]");
+    const chip = target.closest("[data-ask-q]");
     if (chip) runAsk(chip.dataset.askQ, chip.dataset.askIntent);
   });
   els.aiAsk.addEventListener("submit", (event) => {
