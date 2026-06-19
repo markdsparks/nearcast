@@ -1,4 +1,4 @@
-const VERSION = "2.1";
+const VERSION = "2.1.3";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -237,6 +237,8 @@ let searchSuggestTimer = null;
 let searchRequestSeq = 0;
 
 const els = {
+  themeColorMeta: document.querySelector("meta[name='theme-color']"),
+  statusBarMeta: document.querySelector("meta[name='apple-mobile-web-app-status-bar-style']"),
   shell: document.querySelector(".shell"),
   appMenuToggle: document.querySelector("#appMenuToggle"),
   appMenu: document.querySelector("#appMenu"),
@@ -1057,8 +1059,9 @@ function applyTheme() {
 
   if (state.skyCode !== null) {
     updateSkyCanvas(state.skyCode, state.skyIsDay);
-  } else if (state.theme !== "auto") {
-    clearSkyCanvas();
+  } else {
+    if (state.theme !== "auto") clearSkyCanvas();
+    else updateSkyChrome(null, null);
   }
 
   if (mapState.initialized && state.activePlace) {
@@ -7562,6 +7565,7 @@ function setStatus(message, isError = false) {
   els.status.hidden = !showCard;
   els.status.textContent = showCard ? text : "";
   els.status.classList.toggle("error", isError);
+  els.shell.classList.toggle("has-status", showCard);
 }
 
 function isTransientStatus(message) {
@@ -7976,6 +7980,7 @@ function updateSkyCanvas(weatherCode, isDay) {
 
   const condition = skyCondition(weatherCode);
   document.documentElement.dataset.sky = condition + "-" + (isDay ? "day" : "night");
+  updateSkyChrome(condition, isDay);
   renderSkyScene(el, condition, isDay);
 }
 
@@ -7985,6 +7990,35 @@ function clearSkyCanvas() {
   el.style.background = "";
   el.innerHTML = "";
   document.documentElement.removeAttribute("data-sky");
+  updateSkyChrome(null, null);
+}
+
+function updateSkyChrome(condition, isDay) {
+  if (condition) {
+    setThemeChromeColor(skyChromeColor(condition, isDay));
+    return;
+  }
+  setThemeChromeColor(defaultChromeColor());
+}
+
+function skyChromeColor(condition, isDay) {
+  const tod = isDay ? "day" : "night";
+  const cfg = SKY_CFG[tod]?.[condition] || SKY_CFG[tod]?.overcast;
+  return firstHexColor(cfg?.bg) || defaultChromeColor();
+}
+
+function firstHexColor(value) {
+  const match = String(value || "").match(/#[0-9a-f]{6}\b/i);
+  return match ? match[0] : "";
+}
+
+function defaultChromeColor() {
+  return document.documentElement.dataset.theme === "dark" ? "#04080f" : "#edf4f8";
+}
+
+function setThemeChromeColor(color) {
+  if (els.themeColorMeta) els.themeColorMeta.setAttribute("content", color);
+  if (els.statusBarMeta) els.statusBarMeta.setAttribute("content", "black-translucent");
 }
 
 function renderSkyScene(el, condition, isDay) {
