@@ -1,4 +1,4 @@
-const VERSION = "1.10.120";
+const VERSION = "1.10.121";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6516,6 +6516,7 @@ function renderTileMap() {
   if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.frameIndex, viewport);
   else renderWeatherTiles(viewport);
   renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
+  if (mapState.immersive) updateImmersiveHUD();
   renderMapMarkers();
 }
 
@@ -6744,11 +6745,24 @@ function renderMapMarker(place) {
   if (left < -80 || left > viewport.width + 80 || top < -80 || top > viewport.height + 80) return;
 
   const marker = document.createElement("div");
-  marker.className = "map-marker";
-  marker.textContent = place.name;
+  const isActive = isActiveMapPlace(place);
+  const tempText = document.getElementById("nowTemp")?.textContent || "";
+  marker.className = `map-marker${mapState.immersive && isActive ? " is-active-place" : ""}`;
+  if (mapState.immersive && isActive && tempText) {
+    marker.innerHTML = `<span>${escapeHtml(place.name)}</span><strong>${escapeHtml(tempText)}</strong>`;
+  } else {
+    marker.textContent = place.name;
+  }
   marker.style.left = `${left}px`;
   marker.style.top = `${top}px`;
   els.markerLayer.appendChild(marker);
+}
+
+function isActiveMapPlace(place) {
+  if (!place || !state.activePlace) return false;
+  if (place.id && state.activePlace.id && place.id === state.activePlace.id) return true;
+  return Math.abs(Number(place.latitude) - Number(state.activePlace.latitude)) < 0.0001 &&
+    Math.abs(Number(place.longitude) - Number(state.activePlace.longitude)) < 0.0001;
 }
 
 function projectLatLon(latitude, longitude, zoom) {
@@ -7280,18 +7294,13 @@ function onImmersiveKey(e) {
 function updateImmersiveHUD() {
   if (!state.activePlace) return;
   const card = document.getElementById("immWeatherCard");
-  const loc  = document.getElementById("immLocation");
-  const temp = document.getElementById("immTemp");
-  const icon = document.getElementById("immIcon");
-  const condition = document.getElementById("immCondition");
-  const currentCode = state.forecast?.current ? effectiveCurrentCode(state.forecast.current) : null;
   const placeName = (state.activePlace.name || placeLabel(state.activePlace)).split(",")[0].trim();
   const savedCount = state.savedPlaces.length;
-  if (card) card.setAttribute("aria-label", `Open saved places for ${placeName}${savedCount ? `, ${savedCount} saved` : ""}`);
-  if (loc)  loc.textContent  = placeName;
-  if (temp) temp.textContent = document.getElementById("nowTemp").textContent;
-  if (icon) icon.innerHTML   = document.getElementById("heroIcon").innerHTML;
-  if (condition) condition.textContent = weatherCodes[currentCode] || document.getElementById("nowSummary").textContent || "Current";
+  if (card) {
+    const label = `Switch place from ${placeName}${savedCount ? `, ${savedCount} saved` : ""}`;
+    card.setAttribute("aria-label", label);
+    card.setAttribute("title", "Switch place");
+  }
 }
 
 function bindImmersiveModeButtons() {

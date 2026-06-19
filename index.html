@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.120">
+    <link rel="stylesheet" href="styles.css?v=1.10.121">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -272,13 +272,16 @@
         <div class="map-loading" id="immersiveLoading" hidden>Loading map data...</div>
 
         <div class="imm-top-hud">
-          <button class="imm-btn imm-close" id="collapseMap" aria-label="Exit immersive mode" title="Exit immersive mode">✕</button>
-          <button class="imm-weather-pill" id="immWeatherCard" type="button" aria-label="Open saved places">
-            <span class="imm-location" id="immLocation">—</span>
-            <span class="imm-temp" id="immTemp">—</span>
-            <span class="imm-icon" id="immIcon" aria-hidden="true"></span>
-            <span class="imm-condition" id="immCondition">—</span>
-          </button>
+          <div class="imm-control-stack">
+            <button class="imm-btn imm-close" id="collapseMap" aria-label="Exit immersive mode" title="Exit immersive mode">✕</button>
+            <button class="imm-btn imm-place-switch" id="immWeatherCard" type="button" aria-label="Open saved places" title="Switch place">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 21s6-5.3 6-10.4a6 6 0 1 0-12 0C6 15.7 12 21 12 21Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                <circle cx="12" cy="10.5" r="2.1" fill="currentColor"/>
+                <path d="M17.5 4.5h1.2A3.3 3.3 0 0 1 22 7.8v7.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
           <div class="imm-mode-switch" role="group" aria-label="Map mode">
             <button class="imm-btn imm-active" id="immRadar" type="button">Nowcast</button>
             <button class="imm-btn" id="immFuture" type="button">Forecast</button>
@@ -391,6 +394,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.120"></script>
+    <script src="app.js?v=1.10.121"></script>
   </body>
 </html>
