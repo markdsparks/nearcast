@@ -1,4 +1,4 @@
-const VERSION = "2.0.4";
+const VERSION = "2.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -7922,6 +7922,36 @@ const SKY_CFG = {
   }
 };
 
+const SKY_SCENE_VERSION = "sky-v2";
+
+function skySceneSeed(condition, isDay) {
+  const place = state.activePlace
+    ? `${state.activePlace.id || state.activePlace.name || "place"}:${Number(state.activePlace.latitude || 0).toFixed(2)}:${Number(state.activePlace.longitude || 0).toFixed(2)}`
+    : "no-place";
+  const day = datePart(state.forecast?.current?.time) || datePart(new Date()) || "today";
+  return skyHash(`${SKY_SCENE_VERSION}|${place}|${day}|${condition}|${isDay ? "day" : "night"}`);
+}
+
+function skyHash(value) {
+  let h = 2166136261;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0 || 1;
+}
+
+function seededSkyRandom(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function skyCondition(code) {
   if (code <= 1) return "clear";
   if (code === 2) return "partly-cloudy";
@@ -7962,27 +7992,28 @@ function renderSkyScene(el, condition, isDay) {
   const vh = window.innerHeight;
   const tod = isDay ? "day" : "night";
   const cfg = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
+  const sceneSeed = skySceneSeed(condition, isDay);
+  const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
 
   el.style.background = cfg.bg;
 
   const parts = [skyFilterDefs()];
-  if (cfg.stars)     parts.push(skyStars(vw, vh, cfg.stars));
-  if (cfg.moon)      parts.push(skyMoon(vw, vh));
-  if (cfg.moonGlow)  parts.push(skyMoonGlow(vw, vh));
-  if (cfg.sun)       parts.push(skySun(vw, vh));
-  if (cfg.clouds)    parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition));
-  if (cfg.rain)      parts.push(skyRain(vw, vh, cfg.lightning));
-  if (cfg.snow)      parts.push(skySnow(vw, vh));
-  if (cfg.lightning) parts.push(skyLightning(vw, vh));
+  if (cfg.stars)     parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars")));
+  if (cfg.moon)      parts.push(skyMoon(vw, vh, rngFor("moon")));
+  if (cfg.moonGlow)  parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow")));
+  if (cfg.sun)       parts.push(skySun(vw, vh, rngFor("sun")));
+  if (cfg.clouds)    parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds")));
+  if (cfg.rain)      parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain")));
+  if (cfg.snow)      parts.push(skySnow(vw, vh, rngFor("snow")));
+  if (cfg.lightning) parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
 }
 
 function skyFilterDefs() {
   return `<defs>
-    <filter id="sky-cloud-f" x="-30%" y="-40%" width="160%" height="180%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="13" result="b"/>
-      <feColorMatrix in="b" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"/>
+    <filter id="sky-cloud-f" x="-18%" y="-45%" width="136%" height="190%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
     </filter>
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
@@ -7990,101 +8021,98 @@ function skyFilterDefs() {
   </defs>`;
 }
 
-function skyStars(vw, vh, count) {
+function skyStars(vw, vh, count, rng) {
   let s = "";
   for (let i = 0; i < count; i++) {
-    const x = (Math.random() * vw).toFixed(1);
-    const y = (Math.random() * vh * 0.82).toFixed(1);
-    const r = (Math.random() * 1.2 + 0.4).toFixed(1);
-    const op = (Math.random() * 0.5 + 0.25).toFixed(2);
-    const dur = (Math.random() * 3 + 2).toFixed(1);
-    const delay = (Math.random() * 6).toFixed(1);
+    const x = (rng() * vw).toFixed(1);
+    const y = (rng() * vh * 0.82).toFixed(1);
+    const r = (rng() * 1.2 + 0.4).toFixed(1);
+    const op = (rng() * 0.5 + 0.25).toFixed(2);
+    const dur = (rng() * 3 + 2).toFixed(1);
+    const delay = (rng() * 6).toFixed(1);
     s += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star" style="--op:${op};animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
   }
   return s;
 }
 
-function skyMoon(vw, vh) {
-  const x = Math.round(vw * (0.58 + Math.random() * 0.26));
-  const y = Math.round(vh * (0.06 + Math.random() * 0.13));
-  const r = Math.round(36 + Math.random() * 18);
-  const cr = Math.round(r * 0.18);
+function skyMoon(vw, vh, rng) {
+  const x = Math.round(vw * (0.60 + rng() * 0.24));
+  const y = Math.round(vh * (0.06 + rng() * 0.12));
+  const r = Math.round(40 + rng() * 14);
   return `
-    <circle cx="${x}" cy="${y}" r="${r * 5}" fill="#5060a8" opacity="0.08" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
-    <circle cx="${x}" cy="${y}" r="${r * 2.2}" fill="none" stroke="#a8c0f0" stroke-width="1" opacity="0.13" class="sky-moon-glow"/>
-    <circle cx="${x}" cy="${y}" r="${r}" fill="#d8e8fa"/>
-    <circle cx="${x}" cy="${y}" r="${r - 1}" fill="none" stroke="#b8ccee" stroke-width="0.5" opacity="0.4"/>
-    <circle cx="${x + Math.round(r * 0.25)}" cy="${y - Math.round(r * 0.1)}" r="${cr}" fill="#c0d0e8" opacity="0.5"/>
-    <circle cx="${x - Math.round(r * 0.32)}" cy="${y + Math.round(r * 0.28)}" r="${Math.round(cr * 0.75)}" fill="#c0d0e8" opacity="0.4"/>
-    <circle cx="${x + Math.round(r * 0.05)}" cy="${y + Math.round(r * 0.35)}" r="${Math.round(cr * 0.55)}" fill="#c8d8ec" opacity="0.35"/>
+    <circle cx="${x}" cy="${y}" r="${r * 4.6}" fill="#6f7fb2" opacity="0.075" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
+    <circle cx="${x}" cy="${y}" r="${r * 2.0}" fill="none" stroke="#afc5ed" stroke-width="1" opacity="0.11" class="sky-moon-glow"/>
+    <circle cx="${x}" cy="${y}" r="${r}" fill="#dce9f7" opacity="0.94"/>
+    <circle cx="${x - Math.round(r * 0.18)}" cy="${y - Math.round(r * 0.14)}" r="${Math.round(r * 0.82)}" fill="#f3f7ff" opacity="0.18"/>
   `;
 }
 
-function skyMoonGlow(vw, vh) {
-  const x = Math.round(vw * (0.52 + Math.random() * 0.3));
-  const y = Math.round(vh * (0.05 + Math.random() * 0.18));
+function skyMoonGlow(vw, vh, rng) {
+  const x = Math.round(vw * (0.52 + rng() * 0.3));
+  const y = Math.round(vh * (0.05 + rng() * 0.18));
   return `<circle cx="${x}" cy="${y}" r="90" fill="#7080b0" opacity="0.24" filter="url(#sky-glow-f)" class="sky-moon-glow"/>`;
 }
 
-function skySun(vw, vh) {
-  const x = Math.round(vw * (0.12 + Math.random() * 0.28));
-  const y = Math.round(vh * (0.06 + Math.random() * 0.12));
+function skySun(vw, vh, rng) {
+  const x = Math.round(vw * (0.13 + rng() * 0.24));
+  const y = Math.round(vh * (0.07 + rng() * 0.11));
   const r = 46;
-  let rays = "";
-  for (let i = 0; i < 12; i++) {
-    const rad = (i * 30) * Math.PI / 180;
-    const cos = Math.cos(rad), sin = Math.sin(rad);
-    const r1 = r + 10, r2 = r + 26;
-    rays += `<line x1="${(x + cos * r1).toFixed(1)}" y1="${(y + sin * r1).toFixed(1)}" x2="${(x + cos * r2).toFixed(1)}" y2="${(y + sin * r2).toFixed(1)}" stroke="#ffe060" stroke-width="2.5" stroke-linecap="round"/>`;
-  }
   return `
-    <circle cx="${x}" cy="${y}" r="${r * 3.2}" fill="#ffcc30" opacity="0.15" filter="url(#sky-glow-f)"/>
-    <circle cx="${x}" cy="${y}" r="${r}" fill="#ffe060"/>
-    <circle cx="${x}" cy="${y}" r="${r - 5}" fill="#fff590" opacity="0.45"/>
-    <g class="sky-sun-rays" style="transform-origin:${x}px ${y}px">${rays}</g>
+    <circle cx="${x}" cy="${y}" r="${r * 3.9}" fill="#ffd34f" opacity="0.16" filter="url(#sky-glow-f)"/>
+    <circle cx="${x}" cy="${y}" r="${r * 2.0}" fill="#fff0a8" opacity="0.16" filter="url(#sky-glow-f)"/>
+    <circle cx="${x}" cy="${y}" r="${r}" fill="#ffdf67" opacity="0.94"/>
+    <circle cx="${x - Math.round(r * 0.28)}" cy="${y - Math.round(r * 0.28)}" r="${Math.round(r * 0.54)}" fill="#fff7b6" opacity="0.24"/>
   `;
 }
 
-function skyClouds(vw, vh, count, isDay, condition) {
+function skyClouds(vw, vh, count, isDay, condition, rng) {
   const isRainy = condition === "rain" || condition === "thunder";
   const isOvercast = condition === "overcast";
   let out = "";
   for (let c = 0; c < count; c++) {
-    const bx = Math.random() * vw * 1.3 - vw * 0.15;
-    const by = vh * (isRainy ? 0.04 + Math.random() * 0.18 : 0.04 + Math.random() * 0.38);
-    const scale = 0.65 + Math.random() * 0.9;
-    const dur = (70 + Math.random() * 70).toFixed(0);
-    const delay = (Math.random() * 70).toFixed(0);
-    const dir = Math.random() > 0.5 ? "normal" : "reverse";
+    const bx = rng() * vw * 1.26 - vw * 0.13;
+    const by = vh * (isRainy ? 0.06 + rng() * 0.17 : isOvercast ? 0.05 + rng() * 0.24 : 0.08 + rng() * 0.30);
+    const scale = 0.78 + rng() * 0.82;
+    const dur = (105 + rng() * 80).toFixed(0);
+    const delay = (rng() * 90).toFixed(0);
+    const dir = rng() > 0.5 ? "normal" : "reverse";
 
     let fill;
-    if (!isDay) fill = isRainy ? "#14182a" : (isOvercast ? "#1c2434" : "#243050");
-    else        fill = isRainy ? "#485060" : (isOvercast ? "#788490" : "#dce8f4");
-    const op = (isOvercast || isRainy ? 0.9 + Math.random() * 0.09 : 0.7 + Math.random() * 0.24).toFixed(2);
+    if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : "#2d3b55");
+    else        fill = isRainy ? "#55606a" : (isOvercast ? "#8d98a2" : "#eef5fb");
+    const op = (isOvercast || isRainy ? 0.62 + rng() * 0.20 : 0.40 + rng() * 0.20).toFixed(2);
 
-    const puffs = Math.floor(3 + Math.random() * 3);
-    let ellipses = "";
-    for (let p = 0; p < puffs; p++) {
-      const px = bx + (p - puffs / 2) * 70 * scale;
-      const py = by + Math.sin(p * 1.2) * 20 * scale + (Math.random() - 0.5) * 12 * scale;
-      const rx = (36 + Math.random() * 26) * scale;
-      const ry = (22 + Math.random() * 16) * scale;
-      ellipses += `<ellipse cx="${px.toFixed(0)}" cy="${py.toFixed(0)}" rx="${rx.toFixed(0)}" ry="${ry.toFixed(0)}" fill="${fill}"/>`;
-    }
-    out += `<g class="sky-cloud" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}" filter="url(#sky-cloud-f)" opacity="${op}">${ellipses}</g>`;
+    const bodyWidth = (280 + rng() * 260) * scale;
+    const bodyHeight = (42 + rng() * 36) * scale;
+    const shear = (rng() - 0.5) * 54 * scale;
+    const topY = by - bodyHeight * (0.38 + rng() * 0.24);
+    const midY = by + (rng() - 0.5) * 12 * scale;
+    const baseY = by + bodyHeight * (0.34 + rng() * 0.22);
+    const x0 = bx - bodyWidth * 0.52;
+    const x1 = bx + bodyWidth * 0.52;
+    const d = [
+      `M ${x0.toFixed(0)} ${baseY.toFixed(0)}`,
+      `C ${(x0 + bodyWidth * 0.16).toFixed(0)} ${(midY - bodyHeight * 0.45).toFixed(0)}, ${(x0 + bodyWidth * 0.32).toFixed(0)} ${(topY - bodyHeight * 0.15).toFixed(0)}, ${(bx + shear * 0.18).toFixed(0)} ${topY.toFixed(0)}`,
+      `C ${(bx + bodyWidth * 0.18).toFixed(0)} ${(topY + bodyHeight * 0.10).toFixed(0)}, ${(x1 - bodyWidth * 0.18).toFixed(0)} ${(midY - bodyHeight * 0.38).toFixed(0)}, ${x1.toFixed(0)} ${midY.toFixed(0)}`,
+      `C ${(x1 - bodyWidth * 0.12).toFixed(0)} ${(baseY + bodyHeight * 0.10).toFixed(0)}, ${(x0 + bodyWidth * 0.18).toFixed(0)} ${(baseY + bodyHeight * 0.12).toFixed(0)}, ${x0.toFixed(0)} ${baseY.toFixed(0)}`,
+      "Z"
+    ].join(" ");
+    const lowBandY = baseY + bodyHeight * (0.10 + rng() * 0.20);
+    const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.34"}"/>`;
+    out += `<g class="sky-cloud" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}" filter="url(#sky-cloud-f)" opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
   }
   return out;
 }
 
-function skyRain(vw, vh, heavy = false) {
+function skyRain(vw, vh, heavy = false, rng) {
   let out = "";
   const count = heavy ? 90 : 60;
   for (let i = 0; i < count; i++) {
-    const x = (Math.random() * vw * 1.4).toFixed(0);
-    const dur = ((heavy ? 0.9 : 1.1) + Math.random() * 0.5).toFixed(2);
-    const delay = (Math.random() * 2.5).toFixed(2);
-    const op = ((heavy ? 0.45 : 0.35) + Math.random() * 0.3).toFixed(2);
-    const len = Math.round((heavy ? 22 : 14) + Math.random() * (heavy ? 20 : 12));
+    const x = (rng() * vw * 1.4).toFixed(0);
+    const dur = ((heavy ? 0.9 : 1.1) + rng() * 0.5).toFixed(2);
+    const delay = (rng() * 2.5).toFixed(2);
+    const op = ((heavy ? 0.45 : 0.35) + rng() * 0.3).toFixed(2);
+    const len = Math.round((heavy ? 22 : 14) + rng() * (heavy ? 20 : 12));
     const dx = heavy ? 22 : 16;
     const w = heavy ? 1.6 : 1.3;
     out += `<line x1="${x}" y1="0" x2="${Number(x) + dx}" y2="${len}" class="sky-rain" style="animation-delay:-${delay}s;animation-duration:${dur}s" stroke="rgba(160,185,215,${op})" stroke-width="${w}" stroke-linecap="round"/>`;
@@ -8092,38 +8120,38 @@ function skyRain(vw, vh, heavy = false) {
   return out;
 }
 
-function skySnow(vw, vh) {
+function skySnow(vw, vh, rng) {
   let out = "";
   for (let i = 0; i < 42; i++) {
-    const x = (Math.random() * vw).toFixed(0);
-    const r = (1.5 + Math.random() * 2.5).toFixed(1);
-    const dur = (4 + Math.random() * 6).toFixed(1);
-    const delay = (Math.random() * 8).toFixed(1);
-    const drift = ((Math.random() * 50) - 25).toFixed(0);
+    const x = (rng() * vw).toFixed(0);
+    const r = (1.5 + rng() * 2.5).toFixed(1);
+    const dur = (4 + rng() * 6).toFixed(1);
+    const delay = (rng() * 8).toFixed(1);
+    const drift = ((rng() * 50) - 25).toFixed(0);
     out += `<circle cx="${x}" cy="-5" r="${r}" fill="white" opacity="0.8" class="sky-snow" style="--drift:${drift}px;animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
   }
   return out;
 }
 
-function skyLightningBolt(vw, vh) {
-  let x = vw * (0.2 + Math.random() * 0.6);
-  let y = vh * (0.05 + Math.random() * 0.08);
-  const segs = 5 + Math.floor(Math.random() * 4);
+function skyLightningBolt(vw, vh, rng) {
+  let x = vw * (0.2 + rng() * 0.6);
+  let y = vh * (0.05 + rng() * 0.08);
+  const segs = 5 + Math.floor(rng() * 4);
   let d = `M ${x.toFixed(0)} ${y.toFixed(0)}`;
   for (let i = 0; i < segs; i++) {
-    x += (Math.random() - 0.45) * (vw * 0.1);
-    y += vh * (0.1 + Math.random() * 0.07);
+    x += (rng() - 0.45) * (vw * 0.1);
+    y += vh * (0.1 + rng() * 0.07);
     if (y > vh * 0.88) break;
     d += ` L ${x.toFixed(0)} ${y.toFixed(0)}`;
   }
   return d;
 }
 
-function skyLightning(vw, vh) {
-  const d1 = (Math.random() * 5).toFixed(1);
-  const d2 = (Number(d1) + 5 + Math.random() * 7).toFixed(1);
-  const bolt1 = skyLightningBolt(vw, vh);
-  const bolt2 = skyLightningBolt(vw, vh);
+function skyLightning(vw, vh, rng) {
+  const d1 = (rng() * 5).toFixed(1);
+  const d2 = (Number(d1) + 5 + rng() * 7).toFixed(1);
+  const bolt1 = skyLightningBolt(vw, vh, rng);
+  const bolt2 = skyLightningBolt(vw, vh, rng);
   return `
     <rect x="0" y="0" width="${vw}" height="${vh}" fill="#c0d0ff" opacity="0" class="sky-lightning" style="animation-delay:${d1}s"/>
     <path d="${bolt1}" stroke="#ffe080" stroke-width="3" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d1}s;filter:blur(3px)"/>

@@ -249,16 +249,8 @@ html[data-sky] body {
 }
 
 @keyframes sky-cloud-drift {
-  from { transform: translateX(-55px); }
-  to   { transform: translateX(55px); }
-}
-
-.sky-sun-rays {
-  animation: sky-sun-spin 60s linear infinite;
-}
-
-@keyframes sky-sun-spin {
-  to { transform: rotate(360deg); }
+  from { transform: translateX(-32px); }
+  to   { transform: translateX(32px); }
 }
 
 .sky-rain {
