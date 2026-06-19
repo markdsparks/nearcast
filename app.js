@@ -1,4 +1,4 @@
-const VERSION = "1.10.110";
+const VERSION = "1.10.111";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -4739,7 +4739,7 @@ async function answerPresetIntent(intent, question) {
       plannerClarification = result.clarification;
       return result.clarification.prompt;
     }
-    return result?.answer || answerFreeform(question);
+    return result || answerFreeform(question);
   }
 
   const s = askText(question);
