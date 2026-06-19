@@ -1,4 +1,4 @@
-const VERSION = "1.10.127";
+const VERSION = "1.10.128";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -32,7 +32,10 @@ const mapState = {
   frameWaitIndex: null,
   frameWaitStart: 0,
   xfadeFrames: [null, null],
-  _normalEls: null
+  _normalEls: null,
+  timelineKind: "radar",
+  nowIndex: 0,
+  forecastUnavailable: false
 };
 
 const MAP_MIN_ZOOM = 4;
@@ -5855,7 +5858,7 @@ function refreshInlineMap(forceFrames = false) {
   if (!state.activePlace || !els.weatherMap) return;
   initMap();
   syncMapToPlace();
-  loadMapFrames(forceFrames);
+  loadMapFrames(forceFrames, { timelineKind: "radar", focusLatest: true });
 }
 
 function renderMapMarkers() {
@@ -5885,15 +5888,18 @@ async function setMapMode(mode) {
   const shouldResumePlayback = mapState.playing;
   mapState.mode = mode;
   stopRadarPlayback({ renderStatic: false });
-  els.radarMode.classList.toggle("active", mode === "radar");
-  els.futureMode.classList.toggle("active", mode === "future");
+  updateMapModeButtons();
   renderMapLegend();
-  await loadMapFrames(true, { resumePlayback: shouldResumePlayback });
+  await loadMapFrames(true, {
+    timelineKind: mode === "future" ? "forecast" : "radar",
+    resumePlayback: shouldResumePlayback
+  });
 }
 
 async function loadMapFrames(force = false, options = {}) {
   if (!mapState.initialized || !state.activePlace) return;
-  if (!force && mapState.frames.length) {
+  const timelineKind = options.timelineKind || (mapState.immersive ? "precip" : mapState.timelineKind || "radar");
+  if (!force && mapState.frames.length && mapState.timelineKind === timelineKind) {
     showFrame(mapState.frameIndex);
     return;
   }
@@ -5901,35 +5907,135 @@ async function loadMapFrames(force = false, options = {}) {
   const shouldResumePlayback = Boolean(options.resumePlayback || mapState.playing);
   setMapLoading(true);
   clearMapLayers({ renderStatic: false });
+  mapState.timelineKind = timelineKind;
 
   try {
-    mapState.frames = mapState.mode === "future" ? await fetchNoaaFutureRainFrames() : await fetchRadarFrames();
+    const timeline = await fetchMapTimeline(timelineKind);
+    mapState.frames = timeline.frames;
+    mapState.nowIndex = timeline.nowIndex;
+    mapState.forecastUnavailable = timeline.forecastUnavailable;
 
     if (!mapState.frames.length) {
-      setFrameLabel(mapState.mode === "future" ? "No NWS forecast frames" : "No radar frames");
+      setFrameLabel(timeline.emptyLabel || "No frames");
+      updateTimelineEraVisuals();
       return;
     }
 
-    mapState.frameIndex = shouldResumePlayback || mapState.mode === "future" ? 0 : mapState.frames.length - 1;
+    mapState.frameIndex = initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayback);
     els.frameSlider.max = String(mapState.frames.length - 1);
+    updateTimelineEraVisuals();
     showFrame(mapState.frameIndex);
     if (shouldResumePlayback) startRadarPlayback();
     else maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
   } catch (error) {
     setFrameLabel("Map data unavailable");
+    updateTimelineEraVisuals();
   } finally {
     setMapLoading(false);
   }
 }
 
+async function fetchMapTimeline(timelineKind) {
+  if (timelineKind === "precip") return fetchPrecipTimelineFrames();
+  if (timelineKind === "forecast") {
+    const frames = await fetchNoaaFutureRainFrames();
+    return {
+      frames,
+      nowIndex: 0,
+      forecastUnavailable: !frames.length && !getNoaaRegion(),
+      emptyLabel: getNoaaRegion() ? "No NWS forecast frames" : "Forecast map unavailable here"
+    };
+  }
+
+  const frames = await fetchRadarFrames();
+  return {
+    frames,
+    nowIndex: Math.max(0, frames.length - 1),
+    forecastUnavailable: false,
+    emptyLabel: "No radar frames"
+  };
+}
+
+function initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayback) {
+  const last = Math.max(0, timeline.frames.length - 1);
+  if (options.focusNow && Number.isFinite(timeline.nowIndex)) return clamp(timeline.nowIndex, 0, last);
+  if (options.focusLatest || timelineKind === "radar") return last;
+  if (shouldResumePlayback || timelineKind === "forecast") return 0;
+  if (timelineKind === "precip" && Number.isFinite(timeline.nowIndex)) return clamp(timeline.nowIndex, 0, last);
+  return last;
+}
+
+async function fetchPrecipTimelineFrames() {
+  const [radarResult, forecastResult] = await Promise.allSettled([
+    fetchRadarFrames(),
+    fetchNoaaFutureRainFrames()
+  ]);
+
+  const radarFrames = radarResult.status === "fulfilled" ? radarResult.value : [];
+  const forecastFrames = forecastResult.status === "fulfilled" ? forecastResult.value : [];
+  const timeline = buildPrecipTimelineFrames(radarFrames, forecastFrames);
+  const forecastUnavailable = !getNoaaRegion();
+
+  return {
+    ...timeline,
+    forecastUnavailable,
+    emptyLabel: forecastUnavailable ? "Forecast map unavailable here" : "No precipitation frames"
+  };
+}
+
+function buildPrecipTimelineFrames(radarFrames, forecastFrames) {
+  const now = Date.now();
+  const radarCutoff = now + 2 * 60 * 1000;
+  const radar = [...(radarFrames || [])]
+    .filter((frame) => Number.isFinite(frame.timestamp) && frame.timestamp <= radarCutoff)
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((frame) => ({
+      ...frame,
+      source: "radar",
+      sourceLabel: "Radar",
+      label: radarTimelineLabel(frame.timestamp)
+    }));
+
+  const forecast = [...(forecastFrames || [])]
+    .filter((frame) => Number.isFinite(frame.timestamp) && frame.timestamp > now)
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((frame) => ({
+      ...frame,
+      source: "forecast",
+      sourceLabel: "Forecast guidance",
+      label: forecastTimelineLabel(frame.timestamp)
+    }));
+
+  let frames = radar;
+  let nowIndex = Math.max(0, radar.length - 1);
+  if (radar.length) {
+    nowIndex = radar.length - 1;
+    frames = [
+      ...radar.slice(0, -1),
+      {
+        ...radar[radar.length - 1],
+        timestamp: now,
+        label: "Now",
+        isNow: true
+      }
+    ];
+  }
+
+  frames = [...frames, ...forecast];
+  if (!radar.length && forecast.length) nowIndex = 0;
+  return { frames, nowIndex, forecastUnavailable: false };
+}
+
 async function fetchRainViewerFrames() {
   const data = await fetchRainViewerData();
-  const nowcast = data.radar?.nowcast || [];
-  const frames = [...(data.radar?.past || []), ...nowcast];
+  const frames = data.radar?.past || [];
   return frames.map((frame) => ({
-    label: `${nowcast.some((item) => item.time === frame.time) ? "Nowcast" : "Radar"} ${formatFrameTime(frame.time)}`,
+    label: radarTimelineLabel(frame.time * 1000),
     time: frame.time,
+    timestamp: frame.time * 1000,
     url: rainViewerTileUrl(data, frame),
+    source: "radar",
+    sourceLabel: "Radar",
     attribution: "RainViewer",
     maxZoom: 7
   }));
@@ -6010,6 +6116,7 @@ function selectNwsRadarTimes(times) {
 }
 
 function buildNwsRadarFrame(config, time) {
+  const timestamp = new Date(time).getTime();
   const params = new URLSearchParams({
     SERVICE: "WMS",
     VERSION: "1.3.0",
@@ -6027,10 +6134,12 @@ function buildNwsRadarFrame(config, time) {
   });
 
   return {
-    label: `${config.label} ${formatDateTime(time)}`,
+    label: radarTimelineLabel(timestamp),
     time,
-    timestamp: new Date(time).getTime(),
+    timestamp,
     url: `${config.endpoint}?${params.toString()}`,
+    source: "radar",
+    sourceLabel: "Radar",
     attribution: "NOAA/NWS MRMS",
     // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser bilinear-smooths
     // them) instead of the WMS server rendering MRMS's ~1km grid as hard blocks
@@ -6041,6 +6150,7 @@ function buildNwsRadarFrame(config, time) {
 
 async function fetchNoaaFutureRainFrames() {
   const region = getNoaaRegion();
+  if (!region) return [];
   const layer = `${region}_6hr_precipitation_amount`;
   const style = "precipitation_amount";
   const capabilities = await fetchNoaaPrecipCapabilities();
@@ -6051,6 +6161,7 @@ async function fetchNoaaFutureRainFrames() {
 }
 
 function buildNoaaFrame(layer, style, time) {
+  const timestamp = new Date(time).getTime();
   const params = new URLSearchParams({
     SERVICE: "WMS",
     VERSION: "1.3.0",
@@ -6067,10 +6178,12 @@ function buildNoaaFrame(layer, style, time) {
   });
 
   return {
-    label: `NWS rain ${formatDateTime(time)}`,
+    label: forecastTimelineLabel(timestamp),
     time,
-    timestamp: new Date(time).getTime(),
+    timestamp,
     url: `https://nowcoast.noaa.gov/geoserver/forecasts/ndfd_precipitation/ows?${params.toString()}`,
+    source: "forecast",
+    sourceLabel: "Forecast guidance",
     attribution: "NOAA/NWS",
     maxZoom: 7
   };
@@ -6084,12 +6197,10 @@ function buildForecastTimelineFrames(noaaFrames) {
   const hour = 60 * 60 * 1000;
   const start = Math.ceil(now / hour) * hour;
 
-  frames.push(asForecastFrame(noaaFrames, "Now", now));
-
   for (let timestamp = start; timestamp <= lastNoaa.timestamp; timestamp += hour) {
     frames.push(asForecastFrame(
       noaaFrames,
-      `Forecast ${formatDateTime(timestamp)}`,
+      forecastTimelineLabel(timestamp),
       timestamp
     ));
   }
@@ -6197,14 +6308,16 @@ function normalizeMapLongitude(value) {
 
 function getNoaaRegion() {
   const place = state.activePlace;
-  if (!place) return "conus";
+  if (!place) return null;
   const latitude = Number(place.latitude);
   const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
   if (latitude >= 18 && latitude <= 23 && longitude >= -161 && longitude <= -154) return "hawaii";
   if (latitude >= 51 && latitude <= 72 && longitude >= -170 && longitude <= -129) return "alaska";
   if (latitude >= 17 && latitude <= 19 && longitude >= -68 && longitude <= -65) return "puerto_rico";
-  return "conus";
+  if (latitude >= 20 && latitude <= 55 && longitude >= -130 && longitude <= -60) return "conus";
+  return null;
 }
 
 function showFrame(index) {
@@ -6213,9 +6326,50 @@ function showFrame(index) {
   mapState.frameIndex = nextIndex;
   els.frameSlider.value = String(nextIndex);
   updateRangeProgress(els.frameSlider);
+  const frame = mapState.frames[nextIndex];
 
-  setFrameLabel(mapState.frames[nextIndex].label);
+  syncMapSourceFromFrame(frame);
+  setFrameLabel(frame.label);
+  updateTimelineEraVisuals();
   renderWeatherTiles();
+}
+
+function activeMapSource(frame = mapState.frames[mapState.frameIndex]) {
+  return frame?.source === "forecast" ? "forecast" : "radar";
+}
+
+function syncMapSourceFromFrame(frame) {
+  const source = activeMapSource(frame);
+  const mode = source === "forecast" ? "future" : "radar";
+  if (mapState.mode !== mode) {
+    mapState.mode = mode;
+    updateMapModeButtons();
+  }
+  renderMapLegend();
+  setPlaybackButtonState();
+}
+
+function updateMapModeButtons() {
+  if (els.radarMode) els.radarMode.classList.toggle("active", mapState.mode === "radar");
+  if (els.futureMode) els.futureMode.classList.toggle("active", mapState.mode === "future");
+}
+
+function updateTimelineEraVisuals() {
+  const slider = els.frameSlider;
+  if (!slider) return;
+  const max = Math.max(0, mapState.frames.length - 1);
+  const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, max) : max;
+  const nowProgress = max > 0 ? (nowIndex / max) * 100 : 100;
+  slider.style.setProperty("--timeline-now", `${nowProgress}%`);
+  slider.dataset.timelineKind = mapState.timelineKind;
+  slider.dataset.source = activeMapSource();
+
+  const marker = document.getElementById("immNowMarker");
+  if (marker) {
+    const showMarker = mapState.immersive && mapState.timelineKind === "precip" && mapState.frames.length > 1;
+    marker.hidden = !showMarker;
+    marker.style.left = `${nowProgress}%`;
+  }
 }
 
 function updateRangeProgress(slider) {
@@ -6229,7 +6383,12 @@ function updateRangeProgress(slider) {
 
 function setPlaybackButtonState(button = els.playRadar, playing = mapState.playing) {
   if (!button) return;
-  const label = playing ? "Pause radar animation" : "Play radar animation";
+  const noun = mapState.timelineKind === "precip"
+    ? "precipitation timeline"
+    : activeMapSource() === "forecast"
+      ? "forecast animation"
+      : "radar animation";
+  const label = playing ? `Pause ${noun}` : `Play ${noun}`;
   button.setAttribute("aria-label", label);
   button.title = label;
 
@@ -6268,6 +6427,35 @@ function frameUrl(frame) {
   return frame && (frame.url || (frame.layers && frame.layers[0] && frame.layers[0].url));
 }
 
+function playbackBounds() {
+  const last = Math.max(0, mapState.frames.length - 1);
+  if (mapState.timelineKind === "precip") {
+    const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, last) : last;
+    if (mapState.frameIndex > nowIndex) {
+      return { start: Math.min(nowIndex + 1, last), end: last, loop: false };
+    }
+    return { start: 0, end: nowIndex, loop: true };
+  }
+  if (mapState.timelineKind === "forecast" || activeMapSource() === "forecast") {
+    return { start: 0, end: last, loop: false };
+  }
+  return { start: 0, end: last, loop: true };
+}
+
+function nextPlaybackIndexFrom(index, bounds = playbackBounds()) {
+  if (index >= bounds.end) return bounds.loop ? bounds.start : bounds.end;
+  return Math.min(index + 1, bounds.end);
+}
+
+function shouldBufferRadarPlayback(index = mapState.frameIndex) {
+  if (!mapState.playing || !mapState.frames.length) return false;
+  const bounds = playbackBounds();
+  if (bounds.end <= bounds.start) return false;
+  const current = mapState.frames[index];
+  const next = mapState.frames[nextPlaybackIndexFrom(index, bounds)];
+  return activeMapSource(current) === "radar" && activeMapSource(next) === "radar";
+}
+
 // Hard-cut radar render with a two-pane double-buffer: the current frame shows
 // at full opacity while the NEXT frame preloads on the hidden pane (opacity 0),
 // so advancing is an instant swap with no load flash and — crucially — no
@@ -6276,7 +6464,7 @@ function renderXfade(index, viewport = null) {
   const N = mapState.frames.length;
   if (!N || !els.weatherTileLayer) return;
   const cur = ((index % N) + N) % N;
-  const next = N > 1 ? (cur + 1) % N : cur;
+  const next = shouldBufferRadarPlayback(cur) ? nextPlaybackIndexFrom(cur) : cur;
 
   // Keep the two panes covering {cur, next}; reassign only the stale pane (which
   // is at opacity 0, so its reload is invisible).
@@ -6343,11 +6531,10 @@ function waitForBufferedRadarFrame(frameIndex, now) {
 function startRadarPlayback(options = {}) {
   if (mapState.playing || !mapState.frames.length) return;
   const { restartIfAtEnd = false } = options;
-  if (restartIfAtEnd && mapState.frameIndex >= mapState.frames.length - 1 && mapState.frames.length > 1) {
-    mapState.frameIndex = 0;
-    els.frameSlider.value = "0";
-    updateRangeProgress(els.frameSlider);
-    setFrameLabel(mapState.frames[0].label);
+  const bounds = playbackBounds();
+  if (bounds.end <= bounds.start) return;
+  if (restartIfAtEnd && mapState.frameIndex >= bounds.end && bounds.end > bounds.start) {
+    showFrame(bounds.start);
   }
   mapState.playing = true;
   setPlaybackButtonState();
@@ -6356,7 +6543,7 @@ function startRadarPlayback(options = {}) {
   mapState.frameWaitIndex = null;
   mapState.frameWaitStart = 0;
   mapState.xfadeFrames = [null, null];
-  if (mapState.mode === "radar" && els.weatherTileLayer) {
+  if (shouldBufferRadarPlayback(mapState.frameIndex) && els.weatherTileLayer) {
     els.weatherTileLayer.innerHTML = "";
     renderXfade(mapState.frameIndex); // show current + preload next immediately
   }
@@ -6372,13 +6559,22 @@ function playbackTick(now) {
   mapState.playClock = now;
   mapState.playAccum += dt;
 
-  const stepMs = radarStepMs(N);
+  const bounds = playbackBounds();
+  if (bounds.end <= bounds.start) { stopRadarPlayback(); return; }
+  const rangeLength = bounds.end - bounds.start + 1;
+  const stepMs = radarStepMs(rangeLength);
   // Hold an extra beat on the most recent frame before looping back to the start.
-  const interval = mapState.frameIndex >= N - 1 ? stepMs + LAST_FRAME_HOLD_MS : stepMs;
+  const atEnd = mapState.frameIndex >= bounds.end;
+  const interval = atEnd && bounds.loop ? stepMs + LAST_FRAME_HOLD_MS : stepMs;
   if (mapState.playAccum >= interval) {
     mapState.playAccum -= interval;
-    const idx = (mapState.frameIndex + 1) % N;
-    if (mapState.mode === "radar" && N > 1) {
+    if (atEnd && !bounds.loop) {
+      showFrame(bounds.end);
+      stopRadarPlayback({ renderStatic: false });
+      return;
+    }
+    const idx = nextPlaybackIndexFrom(mapState.frameIndex, bounds);
+    if (shouldBufferRadarPlayback(mapState.frameIndex)) {
       renderXfade(mapState.frameIndex); // keep the upcoming hidden pane warming
       if (!waitForBufferedRadarFrame(idx, now)) {
         mapState.playAccum = interval;
@@ -6389,7 +6585,9 @@ function playbackTick(now) {
       renderXfade(idx); // hard swap to idx, preload idx+1
       els.frameSlider.value = String(idx);
       updateRangeProgress(els.frameSlider);
+      syncMapSourceFromFrame(mapState.frames[idx]);
       setFrameLabel(mapState.frames[idx].label);
+      updateTimelineEraVisuals();
     } else {
       showFrame(idx); // forecast frames are already interpolated — step discretely
     }
@@ -6416,6 +6614,7 @@ let mapViewObserver = null;
 
 function maybeAutoPlayRadar() {
   if (mapState.immersive || !mapInView) return;
+  if (mapState.timelineKind !== "radar") return;
   if (mapState.userPausedRadar || !mapState.frames.length) return;
   startRadarPlayback({ restartIfAtEnd: true });
 }
@@ -6462,11 +6661,14 @@ function clearMapLayers(options = {}) {
   stopRadarPlayback(options);
   mapState.frames = [];
   mapState.frameIndex = 0;
+  mapState.nowIndex = 0;
+  mapState.forecastUnavailable = false;
   els.frameSlider.max = "0";
   els.frameSlider.value = "0";
   updateRangeProgress(els.frameSlider);
   els.weatherTileLayer.innerHTML = "";
   setFrameLabel("No frames");
+  updateTimelineEraVisuals();
 }
 
 function setMapLoading(isLoading) {
@@ -6479,7 +6681,9 @@ function setFrameLabel(label) {
 
 function renderMapLegend() {
   if (!els.mapLegend) return;
-  const isForecast = mapState.mode === "future";
+  const isForecast = activeMapSource() === "forecast";
+  const sourceLabel = isForecast ? "Forecast guidance" : (mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Radar only" : "Radar");
+  const sourceNote = mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Forecast map unavailable here" : "";
   const legend = isForecast
     ? {
         title: "Forecast precipitation",
@@ -6493,13 +6697,17 @@ function renderMapLegend() {
       };
 
   els.mapLegend.innerHTML = `
-    <strong>${escapeHtml(legend.title)}</strong>
+    <div class="legend-header">
+      <strong>${escapeHtml(legend.title)}</strong>
+      <span class="legend-source-pill">${escapeHtml(sourceLabel)}</span>
+    </div>
     <div class="legend-scale" aria-hidden="true">
       ${legend.colors.map((color) => `<i style="background: ${color}"></i>`).join("")}
     </div>
     <div class="legend-labels">
       ${legend.labels.map((label) => `<span>${escapeHtml(label)}</span>`).join("")}
     </div>
+    ${sourceNote ? `<span class="legend-note">${escapeHtml(sourceNote)}</span>` : ""}
   `;
 }
 
@@ -6568,7 +6776,7 @@ function renderTileMap() {
   const style = mapTileStyle();
   setMapTileTheme(style);
   renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
-  if (mapState.playing && mapState.mode === "radar") renderXfade(mapState.frameIndex, viewport);
+  if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex, viewport);
   else renderWeatherTiles(viewport);
   renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.immersive) updateImmersiveHUD();
@@ -6773,7 +6981,7 @@ function onTileError(img, layer) {
 }
 
 function handleWeatherTileError(layer) {
-  if (mapState.mode !== "future") return;
+  if (activeMapSource() !== "forecast") return;
   if (!els.weatherTileLayer || !els.weatherTileLayer.contains(layer)) return;
   setFrameLabel("Forecast unavailable");
 }
@@ -7295,20 +7503,24 @@ function dayShortLabel(value) {
   return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(value));
 }
 
-function formatFrameTime(seconds) {
+function formatTimelineTime(ms, options = {}) {
+  const date = new Date(ms);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  const minute = date.getMinutes();
+  const showMinutes = options.showMinutes ?? minute !== 0;
   return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
+    ...(sameDay ? {} : { weekday: "short" }),
     hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(seconds * 1000));
+    ...(showMinutes ? { minute: "2-digit" } : {})
+  }).format(date);
 }
 
-function formatDateTime(value) {
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(value));
+function radarTimelineLabel(ms) {
+  return `Radar · ${formatTimelineTime(ms, { showMinutes: true })}`;
+}
+
+function forecastTimelineLabel(ms) {
+  return `Forecast · ${formatTimelineTime(ms)}`;
 }
 
 function formatAmount(value) {
@@ -7336,6 +7548,7 @@ let immersiveDragAbort = null;
 
 function enterImmersiveMap() {
   if (mapState.immersive) return;
+  stopRadarPlayback({ renderStatic: false });
   mapState.immersive = true;
   document.body.classList.add("map-immersive-active");
 
@@ -7381,6 +7594,7 @@ function enterImmersiveMap() {
   };
   requestAnimationFrame(() => requestAnimationFrame(renderImmersiveFrame));
   setTimeout(renderImmersiveFrame, 140);
+  loadMapFrames(true, { timelineKind: "precip", focusNow: true });
 
   updateImmersiveHUD();
   bindImmersiveModeButtons();
@@ -7406,7 +7620,10 @@ function exitImmersiveMap() {
   if (immersiveDragAbort) { immersiveDragAbort.abort(); immersiveDragAbort = null; }
   document.removeEventListener("keydown", onImmersiveKey);
 
-  setTimeout(() => { renderTileMap(); renderMapLegend(); maybeAutoPlayRadar(); }, 40);
+  setTimeout(() => {
+    loadMapFrames(true, { timelineKind: "radar", focusLatest: true });
+    renderMapLegend();
+  }, 40);
 }
 
 function onImmersiveKey(e) {
@@ -7426,25 +7643,10 @@ function updateImmersiveHUD() {
 }
 
 function bindImmersiveModeButtons() {
-  const immRadar  = document.getElementById("immRadar");
-  const immFuture = document.getElementById("immFuture");
-  immRadar.classList.toggle("imm-active", mapState.mode === "radar");
-  immFuture.classList.toggle("imm-active", mapState.mode === "future");
-
   bindTapAction(document.getElementById("collapseMap"), exitImmersiveMap);
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   document.getElementById("immSlider").oninput    = (e) => scrubToFrame(Number(e.target.value));
-  bindTapAction(immRadar, () => {
-    setMapMode("radar");
-    immRadar.classList.add("imm-active");
-    immFuture.classList.remove("imm-active");
-  });
-  bindTapAction(immFuture, () => {
-    setMapMode("future");
-    immFuture.classList.add("imm-active");
-    immRadar.classList.remove("imm-active");
-  });
 }
 
 function bindImmersiveDrag() {

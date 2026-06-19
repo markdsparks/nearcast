@@ -11,7 +11,7 @@ zoom flicker, scattered HUD, city labels hidden under storms.
 | 1 | Radar animation "pulses" | 1 — engine | ✅ shipped v1.10.89 (hard-cut, retimed loop) |
 | 2 | Precip pixelated on zoom-in | 1 — engine | ✅ shipped v1.10.89 (z8 cap + proportional blur) |
 | 3 | Immersive zoom flicker / blank | 1 — engine | ✅ v1.10.89 deferred-purge; v1.10.90 realign kept tiles |
-| 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.99 (simplified immersive HUD + interaction fixes) |
+| 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.99 (simplified immersive HUD + interaction fixes); refined v1.10.128 (one precipitation timeline) |
 | 5 | City names hidden under storms | 3 — basemap/labels | ✅ spiked v1.10.103 (CARTO no-label base + labels layer) |
 
 ## Phase 2 — HUD redesign (#4) — SHIPPED v1.10.99
@@ -19,17 +19,19 @@ zoom flicker, scattered HUD, city labels hidden under storms.
 Target: a cohesive **two-zone** immersive HUD instead of independently-placed chips.
 
 **Top zone**
-- Top-left cluster: close (✕), current place/temp/condition pill, Nowcast / Forecast segmented control.
-- Place pill is a button that opens saved places, making location switching available without extra chrome.
+- Top-left cluster: close (✕) and the place switcher icon.
+- Place icon is a button that opens saved places, making location switching available without extra chrome.
 - No explicit zoom controls; mouse wheel, pinch, and chosen default zoom carry that interaction.
 
 **Bottom zone** — one cohesive control rail
-- Play/pause + a **slim** scrubber (thin track, small thumb, big hitbox via padding — NOT a heavy
+- Play/pause + one **slim** precipitation timeline (thin track, small thumb, big hitbox via padding — NOT a heavy
   bordered card) + the current frame time (replaces the floating top-left frame chip).
+- Timeline is one mental model with two truthful eras: radar history up to Now, forecast guidance after Now.
+- Crossing Now hard-switches source/legend instead of blending radar and forecast.
 - Legend: a compact vertical radar-intensity strip near the lower-left, not a big card.
 
-Current immersive elements (index.html `#immersiveMap`): `imm-top-hud`, `imm-mode-switch`,
-`imm-bottom-hud`, `imm-credit`, `imm-weather-pill`, `immersiveLegend`, `imm-timeline`.
+Current immersive elements (index.html `#immersiveMap`): `imm-top-hud`,
+`imm-bottom-hud`, `imm-credit`, `immWeatherCard`, `immersiveLegend`, `imm-timeline`.
 CSS lives in styles.css under the `/* Immersive map */` section + `.imm-*` rules.
 Inline map stays a clean preview (controls already hidden) — redesign targets immersive only.
 
@@ -44,6 +46,9 @@ Shipped notes:
   immersive legend to a vertical strip.
 - v1.10.99 interaction pass: keep play/pause intent across place/mode changes, add more tolerant
   immersive taps, and avoid outrunning still-loading radar tiles on the first animation pass.
+- v1.10.128 precipitation timeline pass: retire the immersive Nowcast/Forecast toggle, land on Now
+  when entering immersive mode, show radar history left of Now and forecast guidance right of Now,
+  loop radar playback into Now, and stop/hold forecast playback at the final guidance frame.
 
 **Keep in mind for #5:** the basemap will likely move to CARTO with a **theme-matched dark base in
 immersive**. Design the HUD glass to read well over BOTH a light and a dark basemap (dark glass +

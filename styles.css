@@ -2636,9 +2636,10 @@ body.map-immersive-active #mapLegend {
   grid-template-columns: 8px minmax(0, 1fr);
   grid-template-areas:
     "title title"
-    "scale labels";
+    "scale labels"
+    "note note";
   gap: 8px 9px;
-  width: 118px;
+  width: 154px;
   padding: 9px 10px 10px;
   border-radius: 14px;
   border: 0;
@@ -2650,11 +2651,34 @@ body.map-immersive-active #mapLegend {
 }
 
 .immersive-map .map-legend strong {
-  grid-area: title;
   margin-bottom: 0;
   color: rgba(255, 255, 255, 0.88);
   font-size: 0.72rem;
   letter-spacing: 0.01em;
+}
+
+.legend-header {
+  grid-area: title;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.legend-source-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  max-width: 100%;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.55rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .immersive-map .legend-scale {
@@ -2681,6 +2705,14 @@ body.map-immersive-active #mapLegend {
   font-size: 0.62rem;
 }
 
+.legend-note {
+  grid-area: note;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.58rem;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
 .imm-top-hud {
   position: absolute;
   top: var(--imm-hud-top);
@@ -2704,20 +2736,6 @@ body.map-immersive-active #mapLegend {
   flex: 0 0 auto;
 }
 
-.imm-mode-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  min-height: 42px;
-  padding: 4px;
-  border: 1px solid var(--imm-control-border);
-  border-radius: 15px;
-  background: var(--imm-control-bg);
-  box-shadow: 0 16px 38px rgba(2, 6, 12, 0.22);
-  backdrop-filter: blur(18px) saturate(1.08);
-  -webkit-backdrop-filter: blur(18px) saturate(1.08);
-}
-
 .imm-btn {
   height: 34px;
   padding: 0 14px;
@@ -2736,7 +2754,6 @@ body.map-immersive-active #mapLegend {
   transition: background 0.15s, border-color 0.15s;
 }
 .imm-btn:hover { background: rgba(20,28,44,0.92); border-color: rgba(255,255,255,0.3); }
-.imm-btn.imm-active { background: rgba(255,255,255,0.92); border-color: rgba(255,255,255,0.92); color: #0a0e16; }
 .imm-btn.imm-close {
   flex: 0 0 auto;
   width: 42px;
@@ -2792,6 +2809,15 @@ body.map-immersive-active #mapLegend {
 .imm-timeline::before {
   display: none;
 }
+.imm-slider-wrap {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 48px;
+}
+
 .imm-timeline .imm-play-button {
   position: relative;
   z-index: 1;
@@ -2848,9 +2874,46 @@ body.map-immersive-active #mapLegend {
   --range-track-bg: rgba(8, 12, 18, 0.22);
   --range-progress-color: rgba(255, 255, 255, 0.9);
   --range-thumb-bg: #fff;
+  --timeline-radar-bg: rgba(86, 172, 235, 0.42);
+  --timeline-forecast-bg: rgba(239, 183, 74, 0.34);
   --range-thumb-shadow:
     0 7px 18px rgba(2, 6, 12, 0.28),
     0 0 0 9px rgba(8, 12, 18, 0.14);
+}
+
+.imm-now-marker {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: rgba(255, 255, 255, 0.86);
+  pointer-events: none;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.58);
+}
+
+.imm-now-marker[hidden] {
+  display: none;
+}
+
+.imm-now-marker span {
+  padding: 1px 5px 2px;
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.46);
+  font-size: 0.54rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.imm-now-marker::after {
+  content: "";
+  display: block;
+  width: 2px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 0 0 1px rgba(8, 12, 18, 0.24);
 }
 
 .imm-frame-time {
@@ -3182,6 +3245,21 @@ body.map-immersive-active #mapLegend {
 .imm-timeline input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   box-shadow: none;
+  background:
+    linear-gradient(
+      90deg,
+      var(--range-progress-color) 0%,
+      var(--range-progress-color) var(--range-progress, 0%),
+      transparent var(--range-progress, 0%),
+      transparent 100%
+    ),
+    linear-gradient(
+      90deg,
+      var(--timeline-radar-bg) 0%,
+      var(--timeline-radar-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) 100%
+    );
 }
 
 .imm-timeline input[type="range"]::-webkit-slider-thumb {
@@ -3194,6 +3272,21 @@ body.map-immersive-active #mapLegend {
 .imm-timeline input[type="range"]::-moz-range-track,
 .imm-timeline input[type="range"]::-moz-range-progress {
   height: 4px;
+}
+
+.imm-timeline input[type="range"]::-moz-range-track {
+  background:
+    linear-gradient(
+      90deg,
+      var(--timeline-radar-bg) 0%,
+      var(--timeline-radar-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) 100%
+    );
+}
+
+.imm-timeline input[type="range"]::-moz-range-progress {
+  background: var(--range-progress-color);
 }
 
 .imm-timeline input[type="range"]::-moz-range-thumb {
@@ -3494,14 +3587,6 @@ body.map-immersive-active #mapLegend {
     gap: 6px;
   }
 
-  .imm-mode-switch {
-    flex: 0 0 auto;
-    min-height: 40px;
-    padding: 3px;
-    border-radius: 14px;
-    background: rgba(8, 12, 18, 0.58);
-  }
-
   .imm-btn {
     height: 32px;
     padding: 0 10px;
@@ -3541,7 +3626,7 @@ body.map-immersive-active #mapLegend {
   }
 
   .immersive-map .map-legend {
-    width: 108px;
+    width: 142px;
     padding: 8px 9px 9px;
     background: rgba(8, 12, 18, 0.48);
   }
@@ -3566,6 +3651,11 @@ body.map-immersive-active #mapLegend {
   .immersive-map .legend-labels {
     gap: 4px;
     font-size: 0.54rem;
+  }
+
+  .legend-source-pill,
+  .legend-note {
+    font-size: 0.52rem;
   }
 }
 
