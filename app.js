@@ -1,4 +1,4 @@
-const VERSION = "1.10.105";
+const VERSION = "1.10.106";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -2878,7 +2878,7 @@ let aiBriefAbort = null;
 let aiModule = null;
 
 function loadAIModule() {
-  if (!aiModule) aiModule = import("./ai.js");
+  if (!aiModule) aiModule = import(`./ai.js?v=${encodeURIComponent(VERSION)}`);
   return aiModule;
 }
 
@@ -2923,9 +2923,45 @@ function bytesToMB(bytes) {
   return Math.round(bytes / 1024 / 1024);
 }
 
+function errorDetail(err) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  if (err instanceof Error) {
+    const parts = [
+      err.name || "Error",
+      err.message || "",
+      err.cause ? `cause: ${errorDetail(err.cause)}` : ""
+    ].filter(Boolean);
+    return parts.join(": ");
+  }
+  if (typeof err === "object") {
+    const detail = {};
+    for (const key of Object.getOwnPropertyNames(err)) {
+      try {
+        const value = err[key];
+        detail[key] = typeof value === "object" && value !== null
+          ? JSON.stringify(value)
+          : value;
+      } catch (_) {
+        detail[key] = "[unreadable]";
+      }
+    }
+    if (Object.keys(detail).length) {
+      try {
+        return JSON.stringify(detail);
+      } catch (_) {}
+    }
+    const asText = String(err);
+    return asText && asText !== "[object Object]"
+      ? asText
+      : "Object error with no readable fields";
+  }
+  return String(err);
+}
+
 function cleanError(err) {
-  const text = err?.message || String(err || "");
-  return text.replace(/\s+/g, " ").trim().slice(0, 500);
+  const text = errorDetail(err);
+  return text.replace(/\s+/g, " ").trim().slice(0, 900);
 }
 
 function adapterSnapshot(adapter) {

@@ -1,9 +1,10 @@
 // On-device summary layer for Nearcast Planner. Dynamically imported only when
 // the user opts in, so the base PWA stays tiny. Runs Qwen2.5-0.5B in a WebGPU
 // worker, grounded entirely on the weather context the app hands it.
-import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
+import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.79";
 
 const MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+const AI_ASSET_VERSION = "1.10.106";
 
 let engine = null;
 let loading = null;
@@ -13,8 +14,10 @@ let loading = null;
 export function load(onProgress) {
   if (engine) return Promise.resolve(engine);
   if (loading) return loading;
+  const workerUrl = new URL("./ai-worker.js", import.meta.url);
+  workerUrl.searchParams.set("v", AI_ASSET_VERSION);
   loading = CreateWebWorkerMLCEngine(
-    new Worker(new URL("./ai-worker.js", import.meta.url), { type: "module" }),
+    new Worker(workerUrl, { type: "module" }),
     MODEL,
     { initProgressCallback: onProgress }
   ).then((e) => {

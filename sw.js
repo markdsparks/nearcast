@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v146";
-const ASSET_VERSION = "1.10.105";
+const CACHE = "nearcast-v147";
+const ASSET_VERSION = "1.10.106";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -8,6 +8,8 @@ const SHELL = [
   `${BASE}index.html`,
   `${BASE}styles.css?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
+  `${BASE}ai.js?v=${ASSET_VERSION}`,
+  `${BASE}ai-worker.js?v=${ASSET_VERSION}`,
   `${BASE}manifest.json`,
   `${BASE}icons/icon-192.png`,
   `${BASE}icons/icon-512.png`
