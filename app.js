@@ -1,4 +1,4 @@
-const VERSION = "1.10.108";
+const VERSION = "1.10.109";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -489,10 +489,113 @@ const iconSvgs = {
   </svg>`
 };
 
-function weatherIcon(code, isDay = true) {
+const denseIconSvgs = {
+  "clear-day": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="7" fill="var(--wx-sun)"/>
+    <g stroke="var(--wx-sun)" stroke-width="2.4" stroke-linecap="round">
+      <line x1="20" y1="4.5" x2="20" y2="8"/>
+      <line x1="20" y1="32" x2="20" y2="35.5"/>
+      <line x1="4.5" y1="20" x2="8" y2="20"/>
+      <line x1="32" y1="20" x2="35.5" y2="20"/>
+      <line x1="9.2" y1="9.2" x2="11.7" y2="11.7"/>
+      <line x1="28.3" y1="28.3" x2="30.8" y2="30.8"/>
+      <line x1="30.8" y1="9.2" x2="28.3" y2="11.7"/>
+      <line x1="11.7" y1="28.3" x2="9.2" y2="30.8"/>
+    </g>
+  </svg>`,
+  "clear-night": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M29.8 22.2A10.7 10.7 0 1 1 17.5 9.4 8.4 8.4 0 0 0 29.8 22.2Z" fill="var(--wx-moon)"/>
+  </svg>`,
+  "partly-cloudy": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="15" cy="15" r="6" fill="var(--wx-sun)"/>
+    <g stroke="var(--wx-sun)" stroke-width="2" stroke-linecap="round">
+      <line x1="15" y1="4" x2="15" y2="7"/>
+      <line x1="4" y1="15" x2="7" y2="15"/>
+      <line x1="23" y1="15" x2="26" y2="15"/>
+      <line x1="7.4" y1="7.4" x2="9.7" y2="9.7"/>
+      <line x1="22.6" y1="7.4" x2="20.3" y2="9.7"/>
+    </g>
+    <path d="M11.5 32h17.8a6.4 6.4 0 0 0 .5-12.8 8.4 8.4 0 0 0-15.8 2.2h-2.5A5.3 5.3 0 0 0 11.5 32Z" fill="var(--wx-cloud)"/>
+    <circle cx="27" cy="22" r="6" fill="var(--wx-cloud-soft)"/>
+  </svg>`,
+  "partly-cloudy-night": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M21.5 16.8a7.2 7.2 0 0 1-8.2-8.6 8.8 8.8 0 1 0 10 10.4 7 7 0 0 1-1.8-1.8Z" fill="var(--wx-moon)"/>
+    <path d="M11.5 32h17.8a6.4 6.4 0 0 0 .5-12.8 8.4 8.4 0 0 0-15.8 2.2h-2.5A5.3 5.3 0 0 0 11.5 32Z" fill="var(--wx-cloud)"/>
+    <circle cx="27" cy="22" r="6" fill="var(--wx-cloud-soft)"/>
+  </svg>`,
+  "cloudy": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9.6 31.5h20.7a7.1 7.1 0 0 0 .5-14.1 9.8 9.8 0 0 0-18.4 2.5H9.6a5.8 5.8 0 0 0 0 11.6Z" fill="var(--wx-cloud)"/>
+    <circle cx="28.4" cy="20.4" r="6.8" fill="var(--wx-cloud-soft)"/>
+  </svg>`,
+  "fog": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="var(--wx-fog)" stroke-width="3" stroke-linecap="round">
+      <line x1="6" y1="13" x2="34" y2="13"/>
+      <line x1="4" y1="20" x2="30" y2="20"/>
+      <line x1="10" y1="27" x2="36" y2="27"/>
+    </g>
+  </svg>`,
+  "drizzle": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M11.6 16.3h17.2a5.4 5.4 0 0 0 .4-10.8A7.7 7.7 0 0 0 14.7 7h-3.1a4.7 4.7 0 1 0 0 9.3Z" fill="var(--wx-cloud-soft)"/>
+    <g stroke="var(--wx-drizzle)" stroke-width="2.1" stroke-linecap="round">
+      <line x1="12" y1="22" x2="10.5" y2="27"/>
+      <line x1="19" y1="21" x2="17.5" y2="26"/>
+      <line x1="26" y1="22" x2="24.5" y2="27"/>
+      <line x1="16" y1="30" x2="14.7" y2="34"/>
+      <line x1="23" y1="30" x2="21.7" y2="34"/>
+    </g>
+  </svg>`,
+  "rain": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M11.6 15.4h17.2a5.4 5.4 0 0 0 .4-10.8A7.7 7.7 0 0 0 14.7 6h-3.1a4.7 4.7 0 1 0 0 9.4Z" fill="var(--wx-cloud)"/>
+    <g stroke="var(--wx-rain)" stroke-width="2.9" stroke-linecap="round">
+      <line x1="13" y1="21" x2="10" y2="32"/>
+      <line x1="21" y1="19" x2="18" y2="31"/>
+      <line x1="29" y1="21" x2="26" y2="33"/>
+    </g>
+  </svg>`,
+  "rain-heavy": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.2 14.8h20.4a5.6 5.6 0 0 0 .4-11.2 8.8 8.8 0 0 0-16.4 1.8h-4.4a4.7 4.7 0 1 0 0 9.4Z" fill="var(--wx-cloud)"/>
+    <g stroke="var(--wx-rain-heavy)" stroke-width="3.5" stroke-linecap="round">
+      <line x1="10" y1="21" x2="7" y2="34"/>
+      <line x1="17" y1="19" x2="14" y2="33"/>
+      <line x1="24" y1="20" x2="21" y2="34"/>
+      <line x1="31" y1="19" x2="28" y2="33"/>
+    </g>
+  </svg>`,
+  "snow": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M11.6 15.4h17.2a5.4 5.4 0 0 0 .4-10.8A7.7 7.7 0 0 0 14.7 6h-3.1a4.7 4.7 0 1 0 0 9.4Z" fill="var(--wx-cloud)"/>
+    <g fill="var(--wx-snow)">
+      <circle cx="12" cy="25" r="2.5"/>
+      <circle cx="20" cy="22" r="2.5"/>
+      <circle cx="28" cy="25" r="2.5"/>
+      <circle cx="16" cy="33" r="2.2"/>
+      <circle cx="24" cy="33" r="2.2"/>
+    </g>
+  </svg>`,
+  "snow-heavy": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.2 14.8h20.4a5.6 5.6 0 0 0 .4-11.2 8.8 8.8 0 0 0-16.4 1.8h-4.4a4.7 4.7 0 1 0 0 9.4Z" fill="var(--wx-cloud)"/>
+    <g fill="var(--wx-snow)">
+      <circle cx="9.5" cy="24" r="2.7"/>
+      <circle cx="17" cy="21" r="2.7"/>
+      <circle cx="24.5" cy="24" r="2.7"/>
+      <circle cx="31" cy="21" r="2.7"/>
+      <circle cx="14" cy="33" r="2.4"/>
+      <circle cx="22" cy="31" r="2.4"/>
+      <circle cx="30" cy="34" r="2.4"/>
+    </g>
+  </svg>`,
+  "thunder": `<svg class="wx-icon wx-icon-dense" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M10.6 15.4H29a5.4 5.4 0 0 0 .4-10.8A8 8 0 0 0 14.3 6h-3.7a4.7 4.7 0 1 0 0 9.4Z" fill="var(--wx-cloud)"/>
+    <path d="M23.4 13 13.8 26h6.3l-3.7 12 10.9-15.5h-6.4L23.4 13Z" fill="var(--wx-bolt)" stroke="var(--wx-storm-edge)" stroke-width="1.2" stroke-linejoin="round"/>
+  </svg>`
+};
+
+function weatherIcon(code, isDay = true, options = {}) {
+  const density = typeof options === "string" ? options : options.density;
+  const set = density === "dense" ? denseIconSvgs : iconSvgs;
   let key = weatherIcons[code] || "cloudy";
   if (key === "clear-day" && !isDay) key = "clear-night";
-  return iconSvgs[key] || iconSvgs["cloudy"];
+  if (density === "dense" && key === "partly-cloudy" && !isDay) key = "partly-cloudy-night";
+  return set[key] || set["cloudy"];
 }
 
 // Open-Meteo's weather_code reports the most significant *possible* condition,
@@ -1433,7 +1536,7 @@ function renderSavedPlaces() {
     item.dataset.placeId = place.id;
     item.innerHTML = `
       <button class="place-item-main" type="button" aria-label="Load ${placeName}">
-        <span class="place-item-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay) : ""}</span>
+        <span class="place-item-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay, { density: "dense" }) : ""}</span>
         <span class="place-item-copy">
           <strong>${placeName}</strong>
           <span>${escapeHtml(formatPlaceResultMeta(place) || (isActive ? "Current place" : "Saved place"))}</span>
@@ -1489,7 +1592,7 @@ function updatePlaceGlance(placeId) {
   if (!g) return;
   const icon = chip?.querySelector(".place-item-icon");
   const temp = chip?.querySelector(".place-item-temp");
-  if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay);
+  if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay, { density: "dense" });
   if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
   updatePlaceSwitcher();
 }
@@ -5121,7 +5224,7 @@ function renderHourly(data, tempUnit) {
     return `
       <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" title="${escapeHtml(title)}">
         <span class="hour-label">${label}</span>
-        <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay)}${stormPotential ? thunderBadgeHtml() : ""}</div>
+        <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
         <span class="hour-rain${rain >= 20 ? " wet" : ""}">${rain >= 20 ? `${rain}%` : ""}</span>
         <div class="rain-bar" aria-hidden="true"><i style="width:${rain}%"></i></div>
@@ -5213,7 +5316,7 @@ function renderDaily(data, tempUnit, precipUnit) {
     return `
       <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
-          <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true)}${stormPotential ? thunderBadgeHtml() : ""}</div>
+          <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
           <div>
             <div class="day-name">${formatDay(time, index)}</div>
             <div class="day-meta">${escapeHtml(code)}</div>
@@ -7539,7 +7642,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${hour.inEvent ? `<span class="sheet-plan-badge">Plan</span>` : ""}</div>
-        <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
+        <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>
         </div>
