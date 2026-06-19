@@ -1,4 +1,4 @@
-const VERSION = "1.10.124";
+const VERSION = "1.10.125";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -920,8 +920,7 @@ function bindEvents() {
   els.aiAsk.addEventListener("submit", (event) => {
     if (event.target.id !== "askForm") return;
     event.preventDefault();
-    const input = document.getElementById("askInput");
-    runAsk(input.value);
+    submitAskForm();
   });
   bindTapAction(els.aiLauncher, openAISheet);
   bindTapAction(els.aiBackdrop, closeAISheet);
@@ -5185,6 +5184,18 @@ function scrollAskIntoView() {
   });
 }
 
+function submitAskForm() {
+  const input = document.getElementById("askInput");
+  if (!input || input.disabled) return;
+  runAsk(input.value);
+}
+
+function bindAskSendButton() {
+  const send = document.querySelector("#askForm .ask-send");
+  if (!send) return;
+  bindTapAction(send, submitAskForm);
+}
+
 function renderAsk() {
   const panel = els.aiAsk;
   if (!panel) return;
@@ -5258,6 +5269,7 @@ function renderAsk() {
         `placeholder="golf Saturday morning in Silvis"${dis}>` +
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
+  bindAskSendButton();
 }
 
 function showPlannerEvent(rowIndex) {

@@ -1719,6 +1719,7 @@ h2 {
 }
 .ask-send {
   width: 42px;
+  min-height: 44px;
   border: 0;
   border-radius: 10px;
   background: var(--btn-bg);
@@ -1726,6 +1727,15 @@ h2 {
   font-size: 1.05rem;
   font-weight: 800;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.ask-send:focus {
+  outline: none;
+}
+.ask-send:focus-visible {
+  outline: 3px solid rgba(91, 141, 220, 0.36);
+  outline-offset: 2px;
 }
 .ask-send:disabled {
   opacity: 0.5;
