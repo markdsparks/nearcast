@@ -2628,8 +2628,12 @@ body.map-immersive-active #mapLegend {
 }
 
 .immersive-map .map-legend {
-  position: static;
-  z-index: 1;
+  position: absolute;
+  top: var(--imm-hud-top);
+  right: var(--imm-hud-x);
+  bottom: auto;
+  left: auto;
+  z-index: 20;
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
   grid-template-areas:
@@ -2638,7 +2642,7 @@ body.map-immersive-active #mapLegend {
     "note note";
   gap: 7px 8px;
   width: 144px;
-  max-width: calc(100vw - (var(--imm-hud-x) * 2));
+  max-width: calc(100vw - (var(--imm-hud-x) * 2) - 58px);
   padding: 8px 9px 9px;
   border-radius: 14px;
   border: 0;
