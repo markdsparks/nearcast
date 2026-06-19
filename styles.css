@@ -1597,6 +1597,10 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
+.ask-form.is-drafting input {
+  border-color: rgba(91, 141, 220, 0.72);
+  box-shadow: 0 0 0 3px rgba(91, 141, 220, 0.16);
+}
 .ask-form input {
   min-width: 0;
   border: 1px solid var(--line);

@@ -1,4 +1,4 @@
-const VERSION = "1.10.114";
+const VERSION = "1.10.115";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -887,7 +887,6 @@ function bindEvents() {
     else if (action === "copy-report") copySupportReport();
   });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q]", (event, target) => {
-    event.preventDefault();
     const show = target.closest("[data-ask-show]");
     if (show) {
       showPlannerEvent(Number(show.dataset.askShow));
@@ -905,7 +904,7 @@ function bindEvents() {
     }
     const chip = target.closest("[data-ask-q]");
     if (chip) runAsk(chip.dataset.askQ, chip.dataset.askIntent);
-  });
+  }, { preventDefault: false });
   els.aiAsk.addEventListener("submit", (event) => {
     if (event.target.id !== "askForm") return;
     event.preventDefault();
@@ -3483,11 +3482,21 @@ let askStreaming = false;
 let askError = "";
 let askAbort = null;
 let plannerClarification = null;
+let plannerReturnAfterDayDetail = null;
 
 function fillPlannerTemplate(template) {
   const input = document.getElementById("askInput");
   if (!input) return;
+  const form = document.getElementById("askForm");
+  const helper = document.querySelector(".ask-helper");
   input.value = template || "";
+  if (form) {
+    form.classList.add("is-drafting");
+    form.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  if (helper) {
+    helper.textContent = "Finish the thought: add the day, time, and place if it is away from here.";
+  }
   try {
     input.focus({ preventScroll: true });
   } catch {
@@ -3495,7 +3504,9 @@ function fillPlannerTemplate(template) {
   }
   const end = input.value.length;
   try { input.setSelectionRange(end, end); } catch { /* selection can fail on some mobile inputs */ }
-  scrollAskIntoView();
+  input.addEventListener("input", () => {
+    form?.classList.remove("is-drafting");
+  }, { once: true });
 }
 
 async function runAsk(question, intent) {
@@ -5054,20 +5065,28 @@ function renderAsk() {
 function showPlannerEvent(rowIndex) {
   const event = askThread[rowIndex]?.event;
   if (!event?.data || !event.place) return;
+  plannerReturnAfterDayDetail = {
+    scrollTop: els.aiSheet?.scrollTop || 0
+  };
   closeAISheet();
-  openPlannerEventDetail(event);
+  const opened = openPlannerEventDetail(event);
+  if (!opened) {
+    const returnState = plannerReturnAfterDayDetail;
+    plannerReturnAfterDayDetail = null;
+    openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+  }
 }
 
 function openPlannerEventDetail(event) {
   const data = event.data;
   const dayIndex = event.dayIndex ?? 0;
   const dayStr = data?.daily?.time?.[dayIndex];
-  if (!dayStr || !data?.hourly?.time?.length) return;
+  if (!dayStr || !data?.hourly?.time?.length) return false;
   const indices = [];
   data.hourly.time.forEach((time, index) => {
     if (time.startsWith(dayStr)) indices.push(index);
   });
-  if (!indices.length) return;
+  if (!indices.length) return false;
 
   const code = representativeDailyCode(data, dayIndex);
   openDayDetail({
@@ -5093,6 +5112,7 @@ function openPlannerEventDetail(event) {
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   });
+  return true;
 }
 
 function plannerEventSheetTitle(event, dayStr, dayIndex) {
@@ -5123,13 +5143,19 @@ function renderAILauncher() {
   }
 }
 
-function openAISheet() {
+function openAISheet(options = {}) {
+  const { restoreScroll = null, autoBrief = true } = options;
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
   showSheet(els.aiBackdrop, els.aiSheet);
   document.body.style.overflow = "hidden";
+  if (restoreScroll !== null && restoreScroll !== undefined) {
+    requestAnimationFrame(() => {
+      els.aiSheet.scrollTop = restoreScroll;
+    });
+  }
   // Auto-generate the briefing the first time it's opened for a place.
-  if (aiState.phase === "ready" && !aiState.text) runBrief();
+  if (autoBrief && aiState.phase === "ready" && !aiState.text) runBrief();
 }
 
 function closeAISheet() {
@@ -7544,12 +7570,17 @@ function openDayDetail({
 function closeDayDetail() {
   const backdrop = document.getElementById("dayDetailBackdrop");
   const sheet = document.getElementById("dayDetail");
+  const returnToPlanner = plannerReturnAfterDayDetail;
+  plannerReturnAfterDayDetail = null;
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
-  document.body.style.overflow = "";
+  document.body.style.overflow = returnToPlanner ? "hidden" : "";
   setTimeout(() => {
     backdrop.hidden = true;
     sheet.hidden = true;
+    if (returnToPlanner) {
+      openAISheet({ restoreScroll: returnToPlanner.scrollTop, autoBrief: false });
+    }
   }, 260);
 }
 
