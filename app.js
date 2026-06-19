@@ -1,4 +1,4 @@
-const VERSION = "2.1.3";
+const VERSION = "2.1.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -669,6 +669,36 @@ function effectiveCurrentCode(current) {
   return skyCodeFromCloud(current.cloud_cover);
 }
 
+function currentDisplayCondition(data = state.forecast) {
+  const current = data?.current || {};
+  const fallbackIsDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
+  const currentIndex = currentHourlyIndex(data);
+  const hourly = data?.hourly || {};
+
+  if (currentIndex >= 0 && hourly.weather_code?.[currentIndex] != null) {
+    const rawCode = hourly.weather_code[currentIndex];
+    const pop = hourly.precipitation_probability ? (hourly.precipitation_probability[currentIndex] || 0) : null;
+    const cloud = hourly.cloud_cover ? hourly.cloud_cover[currentIndex] : current.cloud_cover;
+    return {
+      code: effectiveWeatherCode(rawCode, pop, cloud),
+      rawCode,
+      pop,
+      cloud,
+      isDay: hourly.is_day ? Boolean(hourly.is_day[currentIndex]) : fallbackIsDay,
+      hourlyIndex: currentIndex
+    };
+  }
+
+  return {
+    code: effectiveCurrentCode(current),
+    rawCode: current.weather_code,
+    pop: null,
+    cloud: current.cloud_cover,
+    isDay: fallbackIsDay,
+    hourlyIndex: -1
+  };
+}
+
 // Rough severity ranking so a daily headline can feature the most significant
 // precipitation, not just the lightest/likeliest one.
 function precipRank(code) {
@@ -1175,9 +1205,19 @@ function forecastCurrentHour(data = state.forecast) {
   return Math.floor(forecastLocalHour(data?.current?.time));
 }
 
+function currentHourlyIndex(data = state.forecast) {
+  const now = forecastNowMs(data);
+  const times = data?.hourly?.time || [];
+  for (let i = 0; i < times.length; i += 1) {
+    const ms = parseForecastTimestamp(times[i], data);
+    if (ms !== null && ms >= now - 60 * 60 * 1000) return i;
+  }
+  return nearestHourlyIndexAt(data, now, 90 * 60 * 1000);
+}
+
 function currentRainChance(data = state.forecast) {
   const chances = data?.hourly?.precipitation_probability || [];
-  const currentIndex = nearestHourlyIndexAt(data, forecastNowMs(data), 90 * 60 * 1000);
+  const currentIndex = currentHourlyIndex(data);
   if (currentIndex >= 0) return chances[currentIndex] ?? 0;
   const hour = forecastCurrentHour(data);
   return chances[hour] ?? chances[0] ?? data?.daily?.precipitation_probability_max?.[forecastDailyIndex(data)] ?? 0;
@@ -1873,7 +1913,8 @@ function renderForecast(data, place) {
   const todayCode = weatherCodes[current.weather_code] || "Weather";
   const todayIndex = forecastDailyIndex(data);
 
-  const isDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
+  const displayCondition = currentDisplayCondition(data);
+  const isDay = displayCondition.isDay;
   state.locationIsDay = isDay;
   state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[todayIndex], data);
   state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
@@ -1891,7 +1932,7 @@ function renderForecast(data, place) {
   els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
 
-  const nowCode = effectiveCurrentCode(current);
+  const nowCode = displayCondition.code;
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
 
@@ -8238,13 +8279,14 @@ function openNext24Detail(options = {}) {
     const ms = parseForecastTimestamp(t, data);
     if (ms !== null && ms >= now - 3600000 && indices.length < 24) indices.push(h);
   });
-  const code = effectiveCurrentCode(data.current);
+  const displayCondition = currentDisplayCondition(data);
+  const code = displayCondition.code;
   openDayDetail({
     indices,
     title: "Next 24 Hours",
     code,
     stormPotential: hasThunderPotentialForIndices(data, indices, code),
-    isDay: data.current.is_day !== undefined ? Boolean(data.current.is_day) : true,
+    isDay: displayCondition.isDay,
     sunriseISO: data.daily.sunrise[0],
     sunsetISO: data.daily.sunset[0],
     dayIndex: 0,
