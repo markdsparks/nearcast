@@ -67,6 +67,9 @@ Spike notes:
 - The renderer now uses `baseTileLayer`, `weatherTileLayer`, `labelTileLayer`, then
   `markerLayer`, so place names stay above radar while saved-place markers remain topmost.
 - Attribution was updated to CARTO + OpenStreetMap contributors.
+- v1.10.104 follow-up: dark app mode now keeps Voyager no-label/label tiles
+  instead of the full Dark Matter basemap; the app chrome can stay dark while
+  the map keeps road/park/city detail and radar contrast.
 - Remaining decision after mobile testing: keep CARTO long-term, or preserve this layer
   abstraction and swap providers if public-launch terms require it.
 

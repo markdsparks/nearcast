@@ -1516,6 +1516,31 @@ h2 {
   opacity: 0.5;
   cursor: default;
 }
+.ask-clarify {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+.ask-clarify-chip {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 750;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ask-clarify-chip:hover {
+  border-color: var(--blue);
+}
+.ask-clarify-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 .ask-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
