@@ -1,4 +1,4 @@
-const VERSION = "1.10.122";
+const VERSION = "1.10.123";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -986,7 +986,16 @@ function bindEvents() {
   bindTapDelegate(els.nowSummary, "[data-summary-index]", (event, target) => {
     openLaunchSummaryDetail(Number(target.dataset.summaryIndex));
   }, { preventDefault: false });
-  bindTapAction(els.hourly, openNext24Detail, { moveTolerance: 12 });
+  bindTapDelegate(els.hourly, ".hour-card", (event, card) => {
+    openHourlyStripDetail(Number(card.dataset.hourIndex));
+  }, { moveTolerance: 14 });
+  els.hourly.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".hour-card");
+    if (!card) return;
+    event.preventDefault();
+    openHourlyStripDetail(Number(card.dataset.hourIndex));
+  });
   bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
   bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
@@ -5498,9 +5507,7 @@ function renderHourly(data, tempUnit) {
     .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
     .slice(0, 24);
 
-  // Compact, scannable columns — hour, icon, color-coded temp, and a rain tick.
-  // The full condition word, feels-like, wind, etc. live one tap away in the
-  // day sheet (tapping the strip opens it), so the strip stays glanceable.
+  // Compact, scannable columns — tap any hour to open that hour expanded.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
     const rain = data.hourly.precipitation_probability[index] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[index] : null;
@@ -5512,8 +5519,9 @@ function renderHourly(data, tempUnit) {
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
     const title = stormPotential ? `${code}; thunder possible` : code;
+    const cardLabel = `${label}: ${code}, ${temp} degrees${rain >= 20 ? `, ${rain}% rain` : ""}. Show hourly details.`;
     return `
-      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" title="${escapeHtml(title)}">
+      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(title)}">
         <span class="hour-label">${label}</span>
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
@@ -7721,6 +7729,33 @@ function openNext24Detail(options = {}) {
     contextLabel
   });
   if (eventWindow) scrollFocusedSheetHour();
+}
+
+function openHourlyStripDetail(hourIndex) {
+  const data = state.forecast;
+  const index = Number(hourIndex);
+  if (!data || !Number.isInteger(index) || !data.hourly?.time?.[index]) {
+    openNext24Detail();
+    return;
+  }
+  const startMs = parseForecastTimestamp(data.hourly.time[index], data);
+  if (startMs === null) {
+    openNext24Detail();
+    return;
+  }
+  const nextMs = data.hourly.time[index + 1]
+    ? parseForecastTimestamp(data.hourly.time[index + 1], data)
+    : null;
+  const label = isCurrentHour(data.hourly.time[index], data) ? "Now" : formatHour(data.hourly.time[index]);
+  openNext24Detail({
+    eventWindow: {
+      startMs,
+      endMs: nextMs && nextMs > startMs ? nextMs : startMs + 60 * 60 * 1000,
+      badgeLabel: label,
+      label: `${label} detail`
+    },
+    contextLabel: `Next 24 Hours · ${label}`
+  });
 }
 
 function getDayDetailMode() {

@@ -2122,6 +2122,15 @@ h2 {
   background: transparent;
   box-shadow: none;
   text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.14s ease;
+}
+
+.hour-card:focus-visible {
+  outline: 3px solid rgba(74, 127, 205, 0.36);
+  outline-offset: -2px;
 }
 
 .hour-card .rain-bar {
