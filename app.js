@@ -1,4 +1,4 @@
-const VERSION = "2.0";
+const VERSION = "2.0.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5938,7 +5938,11 @@ function refreshInlineMap(forceFrames = false) {
   if (!state.activePlace || !els.weatherMap) return;
   initMap();
   syncMapToPlace();
-  loadMapFrames(forceFrames, { timelineKind: "radar", focusLatest: true });
+  if (mapState.immersive) {
+    loadMapFrames(forceFrames, { timelineKind: "precip", focusNow: true });
+  } else {
+    loadMapFrames(forceFrames, { timelineKind: "radar", focusLatest: true });
+  }
 }
 
 function renderMapMarkers() {
