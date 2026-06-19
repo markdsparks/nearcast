@@ -1,4 +1,4 @@
-const VERSION = "1.10.119";
+const VERSION = "1.10.120";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -323,6 +323,8 @@ const els = {
   frameLabel: document.querySelector("#frameLabel")
 };
 
+const RAIN_LIKELY_CODE = 10001;
+
 const weatherCodes = {
   0: "Clear",
   1: "Mostly clear",
@@ -351,7 +353,8 @@ const weatherCodes = {
   86: "Heavy snow showers",
   95: "Thunderstorms",
   96: "Thunderstorms, hail",
-  99: "Thunderstorms, hail"
+  99: "Thunderstorms, hail",
+  [RAIN_LIKELY_CODE]: "Rain likely"
 };
 
 const weatherIcons = {
@@ -382,7 +385,8 @@ const weatherIcons = {
   86: "snow-heavy",
   95: "thunder",
   96: "thunder",
-  99: "thunder"
+  99: "thunder",
+  [RAIN_LIKELY_CODE]: "rain"
 };
 
 const iconSvgs = {
@@ -603,6 +607,7 @@ function weatherIcon(code, isDay = true, options = {}) {
 // afternoon still coded "thunderstorms". Gate precipitation codes by probability
 // and fall back to the actual sky, so the icon/label match what's likely.
 const PRECIP_FEATURE_POP = 30; // POP% at/above which precipitation is featured
+const RAIN_LIKELY_POP = 60; // High POP can outrank a plain sky/cloud code
 const THUNDER_POTENTIAL_POP = 20; // Lower-confidence thunder gets a badge, not the main icon
 
 function skyCodeFromCloud(cloudPct) {
@@ -615,7 +620,10 @@ function skyCodeFromCloud(cloudPct) {
 
 // code: WMO weather code; pop: precip probability %; cloudPct: cloud cover %.
 function effectiveWeatherCode(code, pop, cloudPct) {
-  if (code == null || code < 51) return code;                // sky/fog — keep
+  if (code == null) return code;
+  if (code < 51) {
+    return (pop || 0) >= RAIN_LIKELY_POP ? RAIN_LIKELY_CODE : code;
+  }
   if (pop == null || pop >= PRECIP_FEATURE_POP) return code; // precip likely → keep
   return skyCodeFromCloud(cloudPct);                         // unlikely → show sky
 }
@@ -625,7 +633,7 @@ function isThunderCode(code) {
 }
 
 function isPrecipCode(code) {
-  return code >= 51 && code <= 86;
+  return code === RAIN_LIKELY_CODE || (code >= 51 && code <= 86);
 }
 
 function hasThunderPotential(rawCode, pop, shownCode) {
