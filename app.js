@@ -1,4 +1,4 @@
-const VERSION = "1.10.126";
+const VERSION = "1.10.127";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1109,6 +1109,15 @@ function forecastNowMs(data = state.forecast) {
   return parseForecastTimestamp(data?.current?.time, data) ?? Date.now();
 }
 
+function forecastDailyIndex(data = state.forecast, offsetDays = 0) {
+  const target = forecastLocalDate(data, offsetDays);
+  const times = data?.daily?.time || [];
+  const found = times.findIndex((time) => datePart(time) === target);
+  if (found >= 0) return found;
+  if (!times.length) return Math.max(0, offsetDays);
+  return clamp(offsetDays, 0, times.length - 1);
+}
+
 function datePart(value) {
   if (typeof value === "string") {
     const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -1162,8 +1171,10 @@ function forecastCurrentHour(data = state.forecast) {
 
 function currentRainChance(data = state.forecast) {
   const chances = data?.hourly?.precipitation_probability || [];
+  const currentIndex = nearestHourlyIndexAt(data, forecastNowMs(data), 90 * 60 * 1000);
+  if (currentIndex >= 0) return chances[currentIndex] ?? 0;
   const hour = forecastCurrentHour(data);
-  return chances[hour] ?? chances[0] ?? data?.daily?.precipitation_probability_max?.[0] ?? 0;
+  return chances[hour] ?? chances[0] ?? data?.daily?.precipitation_probability_max?.[forecastDailyIndex(data)] ?? 0;
 }
 
 function daysFromForecastToday(value, data = state.forecast) {
@@ -1854,11 +1865,12 @@ function renderForecast(data, place) {
   const current = data.current;
   const firstRainChance = currentRainChance(data);
   const todayCode = weatherCodes[current.weather_code] || "Weather";
+  const todayIndex = forecastDailyIndex(data);
 
   const isDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
   state.locationIsDay = isDay;
-  state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[0], data);
-  state.sunsetMs = parseForecastTimestamp(data.daily.sunset[0], data);
+  state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[todayIndex], data);
+  state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
   if (state.theme === "auto") applyTheme();
 
   els.locationName.textContent = placeLabel(place);
@@ -1867,17 +1879,17 @@ function renderForecast(data, place) {
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = `${firstRainChance || 0}%`;
   els.wind.textContent = `${Math.round(current.wind_speed_10m)} ${windUnit}`;
-  els.uv.textContent = Math.round(data.daily.uv_index_max[0] || 0);
+  els.uv.textContent = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   els.humidity.textContent = `${current.relative_humidity_2m ?? "--"}%`;
-  els.sunrise.textContent = data.daily.sunrise[0] ? formatTime(data.daily.sunrise[0]) : "--";
-  els.sunset.textContent = data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : "--";
+  els.sunrise.textContent = data.daily.sunrise[todayIndex] ? formatTime(data.daily.sunrise[todayIndex]) : "--";
+  els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
 
   const nowCode = effectiveCurrentCode(current);
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
 
-  renderTodayGlance(data, tempUnit, windUnit);
+  renderTodayGlance(data, tempUnit, windUnit, todayIndex);
   renderNowcast(data);
   renderInsights(data, windUnit);
   resetBriefing();
@@ -1889,7 +1901,7 @@ function renderForecast(data, place) {
   updateSkyCanvas(nowCode, isDay);
 }
 
-function renderTodayGlance(data, tempUnit, windUnit) {
+function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data)) {
   const current = data.current;
   const feelsVal = Math.round(current.apparent_temperature);
   const actualVal = Math.round(current.temperature_2m);
@@ -1897,7 +1909,7 @@ function renderTodayGlance(data, tempUnit, windUnit) {
   const rainVal = currentRainChance(data);
   const windVal = Math.round(current.wind_speed_10m);
   const humidityVal = current.relative_humidity_2m ?? 0;
-  const uvVal = Math.round(data.daily.uv_index_max[0] || 0);
+  const uvVal = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   const comfort = comfortGlance(actualVal, feelsVal, humidityVal, tempUnit);
   const rain = rainGlance(data, rainVal);
   const wind = windGlance(windVal, windUnit);
@@ -1913,7 +1925,7 @@ function renderTodayGlance(data, tempUnit, windUnit) {
   if (els.humiditySignal) els.humiditySignal.classList.toggle("is-visible", showHumidity);
   if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", showHumidity);
 
-  renderDaylightGlance(data, uvVal);
+  renderDaylightGlance(data, uvVal, todayIndex);
 }
 
 function comfortGlance(actual, feels, humidity, tempUnit) {
@@ -1982,10 +1994,11 @@ function humidityContext(value) {
   return "In the background";
 }
 
-function renderDaylightGlance(data, uvVal) {
-  const sunriseISO = data.daily.sunrise[0];
-  const sunsetISO = data.daily.sunset[0];
-  const tomorrowSunriseISO = data.daily.sunrise[1];
+function renderDaylightGlance(data, uvVal, dayIndex = forecastDailyIndex(data)) {
+  const tomorrowIndex = forecastDailyIndex(data, 1);
+  const sunriseISO = data.daily.sunrise[dayIndex];
+  const sunsetISO = data.daily.sunset[dayIndex];
+  const tomorrowSunriseISO = data.daily.sunrise[tomorrowIndex];
   const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
   const tomorrowSunriseMs = tomorrowSunriseISO ? parseForecastTimestamp(tomorrowSunriseISO, data) : null;
@@ -2212,8 +2225,9 @@ function sunExposureMode(data, sunriseMs, sunsetMs, offsetDays = 0) {
 }
 
 function todaySunMode(data) {
-  const sunriseMs = data?.daily?.sunrise?.[0] ? parseForecastTimestamp(data.daily.sunrise[0], data) : null;
-  const sunsetMs = data?.daily?.sunset?.[0] ? parseForecastTimestamp(data.daily.sunset[0], data) : null;
+  const dayIndex = forecastDailyIndex(data);
+  const sunriseMs = data?.daily?.sunrise?.[dayIndex] ? parseForecastTimestamp(data.daily.sunrise[dayIndex], data) : null;
+  const sunsetMs = data?.daily?.sunset?.[dayIndex] ? parseForecastTimestamp(data.daily.sunset[dayIndex], data) : null;
   return sunExposureMode(data, sunriseMs, sunsetMs);
 }
 
@@ -2282,8 +2296,19 @@ function buildDaylightScrubPoints(data, chart) {
 }
 
 function nearestHourlyAt(data, ms) {
+  const bestIndex = nearestHourlyIndexAt(data, ms);
+  if (bestIndex < 0) return null;
+  return {
+    uv: data.hourly.uv_index?.[bestIndex],
+    temp: data.hourly.temperature_2m?.[bestIndex],
+    rain: data.hourly.precipitation_probability?.[bestIndex],
+    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[bestIndex]) : null
+  };
+}
+
+function nearestHourlyIndexAt(data, ms, maxDistanceMs = Infinity) {
   const times = data?.hourly?.time || [];
-  if (!times.length) return null;
+  if (!times.length || ms === null || ms === undefined) return -1;
   let bestIndex = -1;
   let bestDistance = Infinity;
   times.forEach((time, index) => {
@@ -2295,13 +2320,7 @@ function nearestHourlyAt(data, ms) {
       bestIndex = index;
     }
   });
-  if (bestIndex < 0) return null;
-  return {
-    uv: data.hourly.uv_index?.[bestIndex],
-    temp: data.hourly.temperature_2m?.[bestIndex],
-    rain: data.hourly.precipitation_probability?.[bestIndex],
-    isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[bestIndex]) : null
-  };
+  return bestDistance <= maxDistanceMs ? bestIndex : -1;
 }
 
 function sunPointIsDay(chart, ms) {
@@ -2707,11 +2726,12 @@ function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
   }
 
   const daily = data.daily;
+  const todayIndex = forecastDailyIndex(data);
   const gustThreshold = windUnit === "mph" ? 25 : 40;
   const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 24);
   const gust = gustIndex >= 0
     ? Math.round(data.hourly.wind_gusts_10m[gustIndex] || 0)
-    : Math.round(daily.wind_gusts_10m_max?.[0] || data.current.wind_gusts_10m || data.current.wind_speed_10m || 0);
+    : Math.round(daily.wind_gusts_10m_max?.[todayIndex] || data.current.wind_gusts_10m || data.current.wind_speed_10m || 0);
   if (gust >= gustThreshold) {
     const value = `Gusts ${gust} ${windUnit}`;
     return {
@@ -2724,9 +2744,10 @@ function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
 
   const now = forecastNowMs(data);
   const sunMode = todaySunMode(data);
-  const sunsetMs = state.sunsetMs || (daily.sunset?.[0] ? parseForecastTimestamp(daily.sunset[0], data) : null);
-  if (sunMode === "normal" && sunsetMs && now < sunsetMs && daily.sunset?.[0]) {
-    const value = `Sunset ${formatTime(daily.sunset[0])}`;
+  const sunsetISO = daily.sunset?.[todayIndex];
+  const sunsetMs = state.sunsetMs || (sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null);
+  if (sunMode === "normal" && sunsetMs && now < sunsetMs && sunsetISO) {
+    const value = `Sunset ${formatTime(sunsetISO)}`;
     return {
       label: "Later",
       value,
@@ -2736,7 +2757,7 @@ function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
   }
 
   const lowIndex = futureMinHourlyIndex(data, "temperature_2m", 18);
-  const value = `Low ${Math.round(daily.temperature_2m_min[0])}${degree(tempUnit)} overnight`;
+  const value = `Low ${Math.round(daily.temperature_2m_min[todayIndex])}${degree(tempUnit)} overnight`;
   return {
     label: "Later",
     value,
@@ -5406,15 +5427,16 @@ function buildMorningInsights(data, windUnit) {
   const noonMs = forecastLocalBoundaryMs(data, 12) ?? new Date().setHours(12, 0, 0, 0);
   const sixPmMs = forecastLocalBoundaryMs(data, 18) ?? new Date().setHours(18, 0, 0, 0);
   const sunMode = todaySunMode(data);
-  const sunsetTime = sunMode === "normal" && data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
-  const low0 = Math.round(data.daily.temperature_2m_min[0]);
+  const todayIndex = forecastDailyIndex(data);
+  const sunsetTime = sunMode === "normal" && data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : null;
+  const low0 = Math.round(data.daily.temperature_2m_min[todayIndex]);
 
   const morningRain = maxRainInRange(data, now, noonMs);
   const afternoonHours = hoursInRange(data, noonMs, sixPmMs);
   const afternoonRain = maxRainInRange(data, noonMs, sixPmMs);
   const afternoonHigh = afternoonHours.length
     ? Math.max(...afternoonHours.map(({ i }) => Math.round(data.hourly.temperature_2m[i])))
-    : Math.round(data.daily.temperature_2m_max[0]);
+    : Math.round(data.daily.temperature_2m_max[todayIndex]);
   let tonightValue = `Overnight low drops to ${low0}°.`;
   if (sunMode === "polar-day") {
     tonightValue = `Sun stays up tonight. Overnight low drops to ${low0}°.`;
@@ -5447,13 +5469,15 @@ function buildAfternoonInsights(data, windUnit) {
   const sunsetMs = state.sunsetMs;
   const midnightMs = forecastLocalBoundaryMs(data, 24) ?? new Date().setHours(24, 0, 0, 0);
   const sunMode = todaySunMode(data);
-  const low0 = Math.round(data.daily.temperature_2m_min[0]);
-  const high1 = Math.round(data.daily.temperature_2m_max[1]);
-  const rain1 = data.daily.precipitation_probability_max[1] || 0;
+  const todayIndex = forecastDailyIndex(data);
+  const tomorrowIndex = forecastDailyIndex(data, 1);
+  const low0 = Math.round(data.daily.temperature_2m_min[todayIndex]);
+  const high1 = Math.round(data.daily.temperature_2m_max[tomorrowIndex]);
+  const rain1 = data.daily.precipitation_probability_max[tomorrowIndex] || 0;
 
   const remainingRain = maxRainInRange(data, now, sunsetMs || midnightMs);
   const overnightRain = maxRainInRange(data, sunsetMs || now, midnightMs);
-  const sunsetTime = sunMode === "normal" && data.daily.sunset[0] ? formatTime(data.daily.sunset[0]) : null;
+  const sunsetTime = sunMode === "normal" && data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : null;
 
   return [
     {
@@ -5476,12 +5500,14 @@ function buildAfternoonInsights(data, windUnit) {
 function buildEveningInsights(data, windUnit) {
   const now = forecastNowMs(data);
   const sixAmMs = forecastLocalBoundaryMs(data, 6, 1) ?? new Date(now + 86400000).setHours(6, 0, 0, 0);
-  const low0 = Math.round(data.daily.temperature_2m_min[0]);
-  const high1 = Math.round(data.daily.temperature_2m_max[1]);
-  const rain1 = data.daily.precipitation_probability_max[1] || 0;
-  const uv1 = Math.round(data.daily.uv_index_max[1] || 0);
-  const gust1 = Math.round(data.daily.wind_gusts_10m_max[1] || 0);
-  const code1 = weatherCodes[data.daily.weather_code[1]] || "Mixed";
+  const todayIndex = forecastDailyIndex(data);
+  const tomorrowIndex = forecastDailyIndex(data, 1);
+  const low0 = Math.round(data.daily.temperature_2m_min[todayIndex]);
+  const high1 = Math.round(data.daily.temperature_2m_max[tomorrowIndex]);
+  const rain1 = data.daily.precipitation_probability_max[tomorrowIndex] || 0;
+  const uv1 = Math.round(data.daily.uv_index_max[tomorrowIndex] || 0);
+  const gust1 = Math.round(data.daily.wind_gusts_10m_max[tomorrowIndex] || 0);
+  const code1 = weatherCodes[data.daily.weather_code[tomorrowIndex]] || "Mixed";
 
   const overnightRain = maxRainInRange(data, now, sixAmMs);
 
