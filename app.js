@@ -1,4 +1,4 @@
-const VERSION = "1.10.130";
+const VERSION = "1.10.131";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6437,12 +6437,11 @@ function timelineBubbleCopy(frame) {
     };
   }
 
-  const source = activeMapSource(frame);
   return {
-    title: `${source === "forecast" ? "Forecast" : "Radar"} · ${formatTimelineTime(frame.timestamp, {
-      showMinutes: source !== "forecast",
+    title: formatTimelineTime(frame.timestamp, {
+      showMinutes: activeMapSource(frame) !== "forecast",
       dayStyle: "compact"
-    })}`,
+    }),
     meta: formatTimelineRelative(frame.timestamp)
   };
 }

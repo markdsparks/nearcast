@@ -53,6 +53,8 @@ Shipped notes:
   showing source, selected-place local time, and relative timing without adding persistent chrome.
 - v1.10.130 playback-control pass: keep the immersive play button visually stable on tap and start
   playback from the current timeline position without clearing/rebuilding the visible weather pane.
+- v1.10.131 time-bubble copy pass: make the thumb bubble a time-first readout, omitting source
+  wording there and widening the bubble so the primary time is not ellipsized on mobile.
 
 **Keep in mind for #5:** the basemap will likely move to CARTO with a **theme-matched dark base in
 immersive**. Design the HUD glass to read well over BOTH a light and a dark basemap (dark glass +
