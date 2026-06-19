@@ -1,4 +1,4 @@
-const VERSION = "1.10.118";
+const VERSION = "1.10.119";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -7829,14 +7829,15 @@ function hourlyDetailNote(hour, tempUnit, windUnit) {
   if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
-    weatherNote = `Thunderstorms possible. Watch for lightning and quick downpours.${hail}`;
+    weatherNote = isThunderCode(hour.code)
+      ? `Watch for lightning and quick downpours.${hail}`
+      : `Thunder possible. Watch for lightning and quick downpours.${hail}`;
   } else if (isPrecipCode(hour.code)) {
-    const condition = weatherCodes[hour.code] || "Precipitation";
-    const likelihood = hour.pop >= 50 ? "likely" : "possible";
+    const likelihood = hour.pop >= 50 ? "Likely" : "Possible";
     const burst = hour.code === 65 || hour.code === 67 || hour.code === 82 || hour.code === 86
       ? " Brief heavier bursts are possible."
       : "";
-    weatherNote = `${condition} ${likelihood} through this hour.${burst}`;
+    weatherNote = `${likelihood} through this hour.${burst}`;
   } else if (hour.pop >= 50) {
     weatherNote = "Rain likely through this hour.";
   } else if (hour.gust >= 25) {
