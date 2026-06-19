@@ -1,4 +1,4 @@
-const VERSION = "1.10.129";
+const VERSION = "1.10.130";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6619,9 +6619,9 @@ function startRadarPlayback(options = {}) {
   mapState.playClock = performance.now();
   mapState.frameWaitIndex = null;
   mapState.frameWaitStart = 0;
-  mapState.xfadeFrames = [null, null];
-  if (shouldBufferRadarPlayback(mapState.frameIndex) && els.weatherTileLayer) {
-    els.weatherTileLayer.innerHTML = "";
+  const shouldBuffer = shouldBufferRadarPlayback(mapState.frameIndex);
+  mapState.xfadeFrames = shouldBuffer ? [mapState.frameIndex, null] : [null, null];
+  if (shouldBuffer && els.weatherTileLayer) {
     renderXfade(mapState.frameIndex); // show current + preload next immediately
   }
   mapState.timer = requestAnimationFrame(playbackTick);
@@ -6679,7 +6679,7 @@ function toggleRadarPlayback() {
     stopRadarPlayback();
   } else {
     mapState.userPausedRadar = false;
-    startRadarPlayback({ restartIfAtEnd: true });
+    startRadarPlayback({ restartIfAtEnd: !mapState.immersive });
   }
 }
 

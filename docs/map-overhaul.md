@@ -51,6 +51,8 @@ Shipped notes:
   loop radar playback into Now, and stop/hold forecast playback at the final guidance frame.
 - v1.10.129 time-indicator pass: add a thumb-attached timeline bubble while scrubbing or playing,
   showing source, selected-place local time, and relative timing without adding persistent chrome.
+- v1.10.130 playback-control pass: keep the immersive play button visually stable on tap and start
+  playback from the current timeline position without clearing/rebuilding the visible weather pane.
 
 **Keep in mind for #5:** the basemap will likely move to CARTO with a **theme-matched dark base in
 immersive**. Design the HUD glass to read well over BOTH a light and a dark basemap (dark glass +

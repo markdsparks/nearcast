@@ -2838,10 +2838,17 @@ body.map-immersive-active #mapLegend {
     inset 0 1px 0 rgba(255,255,255,0.12);
   transition: background 0.15s, border-color 0.15s, transform 0.15s;
 }
-.imm-timeline .imm-play-button:hover {
-  background: rgba(255,255,255,0.22);
-  border-color: rgba(255,255,255,0.28);
+
+@media (hover: hover) and (pointer: fine) {
+  .imm-timeline .imm-play-button:hover {
+    background: rgba(8, 12, 18, 0.68);
+  }
 }
+
+.imm-timeline .imm-play-button.is-playing {
+  background: rgba(8, 12, 18, 0.64);
+}
+
 .imm-timeline .imm-play-button:active {
   transform: scale(0.96);
 }
