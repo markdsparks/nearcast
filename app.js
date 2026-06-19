@@ -1,4 +1,4 @@
-const VERSION = "1.10.116";
+const VERSION = "1.10.117";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -971,6 +971,9 @@ function bindEvents() {
       openDayFromIndex(Number(row.dataset.index));
     }
   });
+  bindTapDelegate(els.nowSummary, "[data-summary-index]", (event, target) => {
+    openLaunchSummaryDetail(Number(target.dataset.summaryIndex));
+  }, { preventDefault: false });
   bindTapAction(els.hourly, openNext24Detail, { moveTolerance: 12 });
   bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
@@ -2557,14 +2560,16 @@ function uvRisk(value) {
 function renderLaunchSummaryStrip(data, tempUnit, windUnit) {
   if (!els.nowSummary) return;
   const items = launchSummaryItems(data, tempUnit, windUnit);
+  launchSummaryTargets = items.map((item) => item.target || null);
   els.nowSummary.classList.add("summary-strip");
-  els.nowSummary.innerHTML = items.map((item) => (
-    `<span class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}">` +
+  els.nowSummary.innerHTML = items.map((item, index) => (
+    `<button class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}" type="button" data-summary-index="${index}" aria-label="${escapeHtml(`Show hourly details for ${item.label}: ${item.value}`)}">` +
       `<b>${escapeHtml(item.label)}</b>` +
       `<strong>${escapeHtml(item.value)}</strong>` +
-    `</span>`
+      `<span class="summary-strip-cue" aria-hidden="true">›</span>` +
+    `</button>`
   )).join("");
-  els.nowSummary.setAttribute("aria-label", items.map((item) => `${item.label}: ${item.value}`).join(". "));
+  els.nowSummary.setAttribute("aria-label", `${items.map((item) => `${item.label}: ${item.value}`).join(". ")}. Tap a chip for hourly details.`);
 }
 
 function launchSummaryItems(data, tempUnit, windUnit) {
@@ -2576,11 +2581,35 @@ function launchSummaryItems(data, tempUnit, windUnit) {
   const now = {
     label: "Now",
     value: `${comfort} - feels ${feels}${degree(tempUnit)}`,
-    tone: "now"
+    tone: "now",
+    target: launchDetailTarget(data, "Now", `${comfort} - feels ${feels}${degree(tempUnit)}`, forecastNowMs(data), { hours: 1 })
   };
   const next = launchNextItem(data);
   const later = launchLaterItem(data, tempUnit, windUnit, Boolean(next.rainSoon));
   return [now, next, later].filter(Boolean).slice(0, 3);
+}
+
+function launchDetailTarget(data, label, value, startMs, options = {}) {
+  if (startMs === null || startMs === undefined) return null;
+  const ms = Number(startMs);
+  if (!Number.isFinite(ms)) return null;
+  const hours = options.hours || 1;
+  const endMs = options.endMs || (ms + hours * 60 * 60 * 1000);
+  return {
+    startMs: ms,
+    endMs: Math.max(endMs, ms + 30 * 60 * 1000),
+    badgeLabel: label,
+    label: `${label}: ${value}`
+  };
+}
+
+function forecastHourWindowTarget(data, label, value, index, hours = 1) {
+  if (index < 0 || !data?.hourly?.time?.[index]) return null;
+  const startMs = parseForecastTimestamp(data.hourly.time[index], data);
+  const endMs = data.hourly.time[index + hours]
+    ? parseForecastTimestamp(data.hourly.time[index + hours], data)
+    : startMs !== null ? startMs + hours * 60 * 60 * 1000 : null;
+  return launchDetailTarget(data, label, value, startMs, { endMs, hours });
 }
 
 function compactNowcastDetail(detail) {
@@ -2594,60 +2623,81 @@ function compactNowcastDetail(detail) {
 function launchNextItem(data) {
   const nowcast = analyzeNowcast(data);
   if (nowcast) {
+    const wetIndex = nowcast.wet.findIndex(Boolean);
+    const targetMs = nowcast.wet[0]
+      ? forecastNowMs(data)
+      : wetIndex >= 0 ? nowcast.slots[wetIndex]?.t : forecastNowMs(data);
+    const value = `${nowcast.title} ${compactNowcastDetail(nowcast.detail)}`;
     return {
       label: "Next",
-      value: `${nowcast.title} ${compactNowcastDetail(nowcast.detail)}`,
+      value,
       tone: nowcast.isSnow ? "snow" : "rain",
-      rainSoon: true
+      rainSoon: true,
+      target: launchDetailTarget(data, "Next", value, targetMs, { hours: 1.5 })
     };
   }
 
   const currentChance = currentRainChance(data);
   if (currentChance >= 35) {
+    const value = `${currentChance}% rain nearby`;
     return {
       label: "Next",
-      value: `${currentChance}% rain nearby`,
+      value,
       tone: "rain",
-      rainSoon: true
+      rainSoon: true,
+      target: launchDetailTarget(data, "Next", value, forecastNowMs(data), { hours: 1 })
     };
   }
 
   const nextRain = nextRainChance(data, 12, 35);
   if (nextRain) {
+    const value = `Rain near ${formatTime(nextRain.time)}`;
+    const targetMs = parseForecastTimestamp(nextRain.time, data);
     return {
       label: "Next",
-      value: `Rain near ${formatTime(nextRain.time)}`,
+      value,
       tone: "rain",
-      rainSoon: true
+      rainSoon: true,
+      target: launchDetailTarget(data, "Next", value, targetMs, { hours: 1 })
     };
   }
 
+  const value = "Dry next 2 hours";
   return {
     label: "Next",
-    value: "Dry next 2 hours",
+    value,
     tone: "dry",
-    rainSoon: false
+    rainSoon: false,
+    target: launchDetailTarget(data, "Next", value, forecastNowMs(data), { hours: 2 })
   };
 }
 
 function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
   const laterRain = !rainAlreadyCovered ? nextRainChance(data, 24, 35) : null;
   if (laterRain) {
+    const value = `Rain near ${formatTime(laterRain.time)}`;
+    const targetMs = parseForecastTimestamp(laterRain.time, data);
     return {
       label: "Later",
-      value: `Rain near ${formatTime(laterRain.time)}`,
-      tone: "rain"
+      value,
+      tone: "rain",
+      target: launchDetailTarget(data, "Later", value, targetMs, { hours: 1 })
     };
   }
 
   const daily = data.daily;
-  const gust = Math.round(daily.wind_gusts_10m_max?.[0] || data.current.wind_gusts_10m || data.current.wind_speed_10m || 0);
   const gustThreshold = windUnit === "mph" ? 25 : 40;
+  const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 24);
+  const gust = gustIndex >= 0
+    ? Math.round(data.hourly.wind_gusts_10m[gustIndex] || 0)
+    : Math.round(daily.wind_gusts_10m_max?.[0] || data.current.wind_gusts_10m || data.current.wind_speed_10m || 0);
   if (gust >= gustThreshold) {
+    const value = `Gusts ${gust} ${windUnit}`;
     return {
       label: "Later",
-      value: `Gusts ${gust} ${windUnit}`,
-      tone: "wind"
+      value,
+      tone: "wind",
+      target: forecastHourWindowTarget(data, "Later", value, gustIndex, 1)
     };
   }
 
@@ -2655,18 +2705,67 @@ function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
   const sunMode = todaySunMode(data);
   const sunsetMs = state.sunsetMs || (daily.sunset?.[0] ? parseForecastTimestamp(daily.sunset[0], data) : null);
   if (sunMode === "normal" && sunsetMs && now < sunsetMs && daily.sunset?.[0]) {
+    const value = `Sunset ${formatTime(daily.sunset[0])}`;
     return {
       label: "Later",
-      value: `Sunset ${formatTime(daily.sunset[0])}`,
-      tone: "sun"
+      value,
+      tone: "sun",
+      target: launchDetailTarget(data, "Later", value, sunsetMs - 30 * 60 * 1000, { hours: 1 })
     };
   }
 
+  const lowIndex = futureMinHourlyIndex(data, "temperature_2m", 18);
+  const value = `Low ${Math.round(daily.temperature_2m_min[0])}${degree(tempUnit)} overnight`;
   return {
     label: "Later",
-    value: `Low ${Math.round(daily.temperature_2m_min[0])}${degree(tempUnit)} overnight`,
-    tone: "temp"
+    value,
+    tone: "temp",
+    target: forecastHourWindowTarget(data, "Later", value, lowIndex, 1)
   };
+}
+
+function futureHourlyIndexes(data, hoursAhead = 24) {
+  const now = forecastNowMs(data);
+  const end = now + hoursAhead * 60 * 60 * 1000;
+  return (data?.hourly?.time || [])
+    .map((time, index) => ({ index, ms: parseForecastTimestamp(time, data) }))
+    .filter(({ ms }) => ms !== null && ms >= now - 30 * 60 * 1000 && ms <= end)
+    .map(({ index }) => index);
+}
+
+function futureMaxHourlyIndex(data, key, hoursAhead = 24) {
+  let best = -1;
+  let bestValue = -Infinity;
+  futureHourlyIndexes(data, hoursAhead).forEach((index) => {
+    const value = Number(data?.hourly?.[key]?.[index]);
+    if (Number.isFinite(value) && value > bestValue) {
+      bestValue = value;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function futureMinHourlyIndex(data, key, hoursAhead = 24) {
+  let best = -1;
+  let bestValue = Infinity;
+  futureHourlyIndexes(data, hoursAhead).forEach((index) => {
+    const value = Number(data?.hourly?.[key]?.[index]);
+    if (Number.isFinite(value) && value < bestValue) {
+      bestValue = value;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function openLaunchSummaryDetail(index) {
+  const target = launchSummaryTargets[index];
+  if (!target) return;
+  openNext24Detail({
+    eventWindow: target,
+    contextLabel: `Launch summary · ${target.label}`
+  });
 }
 
 function capitalize(str) {
@@ -3560,6 +3659,7 @@ let askError = "";
 let askAbort = null;
 let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
+let launchSummaryTargets = [];
 
 function fillPlannerTemplate(template) {
   const input = document.getElementById("askInput");
@@ -5183,13 +5283,17 @@ function openPlannerEventDetail(event) {
     alerts: event.alerts || [],
     eventWindow: event
   });
+  scrollFocusedSheetHour();
+  return true;
+}
+
+function scrollFocusedSheetHour() {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       document.querySelector("#sheetHourlyList .sheet-hour-row.is-plan-window")
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   });
-  return true;
 }
 
 function plannerEventSheetTitle(event, dayStr, dayIndex) {
@@ -7511,9 +7615,10 @@ function openDayFromIndex(i) {
 }
 
 // Rolling next-24-hours window from "now".
-function openNext24Detail() {
+function openNext24Detail(options = {}) {
   const data = state.forecast;
   if (!data) return;
+  const { eventWindow = null, contextLabel = "" } = options || {};
   const now = forecastNowMs(data);
   const indices = [];
   data.hourly.time.forEach((t, h) => {
@@ -7532,8 +7637,11 @@ function openNext24Detail() {
     dayIndex: 0,
     initialMode: "hourly",
     persistInitialMode: false,
-    showNow: true
+    showNow: true,
+    eventWindow,
+    contextLabel
   });
+  if (eventWindow) scrollFocusedSheetHour();
 }
 
 function getDayDetailMode() {
@@ -7592,6 +7700,9 @@ function openDayDetail({
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
       : ms !== null ? ms + 60 * 60 * 1000 : null;
+    const inEvent = eventWindow && ms !== null && nextMs !== null
+      ? ms < eventWindow.endMs && nextMs > eventWindow.startMs
+      : false;
     return {
       time: data.hourly.time[h],
       ms,
@@ -7607,9 +7718,8 @@ function openDayDetail({
       code,
       stormPotential: hasThunderPotential(rawCode, pop, code),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
-      inEvent: eventWindow && ms !== null && nextMs !== null
-        ? ms < eventWindow.endMs && nextMs > eventWindow.startMs
-        : false,
+      inEvent,
+      eventLabel: inEvent ? (eventWindow.badgeLabel || "Plan") : "",
       isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
     };
   });
@@ -7736,6 +7846,20 @@ function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
   return `${alertNote} ${weatherNote}`;
 }
 
+function hourlyConditionMeta(hour, windUnit, precipUnit) {
+  const parts = [];
+  if (hour.stormPotential) parts.push("Thunder possible");
+  if (hour.pop >= 20) parts.push(`${hour.pop}% rain`);
+  if (hour.precip > 0.02) parts.push(`${formatAmount(hour.precip)} ${precipUnit}`);
+  if (hour.gust >= 20 && hour.gust >= hour.wind + 5) {
+    parts.push(`gusts ${Math.round(hour.gust)} ${windUnit}`);
+  } else if (parts.length < 2) {
+    parts.push(`${Math.round(hour.wind)} ${windUnit} wind`);
+  }
+  if (hour.uv >= 6 && parts.length < 3) parts.push(`UV ${Math.round(hour.uv)}`);
+  return parts.slice(0, 3).join(" · ");
+}
+
 function hourlyAlertDetailNote(alert) {
   const tone = alertTone(alert);
   const event = alert?.event || alertToneLabel(tone);
@@ -7812,6 +7936,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
     const condition = weatherCodes[hour.code] || "Weather";
     const signals = hourlyRowSignals(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit, precipUnit);
+    const detailMeta = hourlyConditionMeta(hour, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time, data);
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
@@ -7822,12 +7947,13 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
     const nowClass = now ? " is-now" : "";
     const eventClass = hour.inEvent ? " is-plan-window" : "";
     const expanded = rowIndex === defaultExpandedIndex;
+    const eventBadge = hour.inEvent ? escapeHtml(hour.eventLabel || "Plan") : "";
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
-        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${hour.inEvent ? `<span class="sheet-plan-badge">Plan</span>` : ""}</div>
+        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${hour.inEvent ? `<span class="sheet-plan-badge">${eventBadge}</span>` : ""}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>
@@ -7837,6 +7963,13 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}"${expanded ? "" : " hidden"}>
+          <div class="sheet-hour-detail-condition">
+            <span class="sheet-hour-detail-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</span>
+            <span class="sheet-hour-detail-copy">
+              <strong>${escapeHtml(condition)}</strong>
+              <small>${escapeHtml(detailMeta)}</small>
+            </span>
+          </div>
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>

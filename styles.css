@@ -875,7 +875,18 @@ h2 {
   border-radius: 999px;
   background: var(--summary-chip-bg);
   box-shadow: 0 12px 34px rgba(27, 45, 62, 0.08);
+  appearance: none;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
   backdrop-filter: blur(14px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.summary-strip-item:focus-visible {
+  outline: 3px solid rgba(74, 127, 205, 0.34);
+  outline-offset: 3px;
 }
 .summary-strip-item b {
   flex-shrink: 0;
@@ -902,6 +913,13 @@ h2 {
 .summary-strip-item.is-dry {
   border-color: var(--summary-dry-border);
   background: var(--summary-dry-bg);
+}
+.summary-strip-cue {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .today-glance {
@@ -4139,6 +4157,42 @@ body.map-immersive-active .day-sheet.show {
 }
 .sheet-hour-detail[hidden] {
   display: none;
+}
+.sheet-hour-detail-condition {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 12px;
+}
+.sheet-hour-detail-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+}
+.sheet-hour-detail-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.sheet-hour-detail-icon .storm-potential-badge {
+  right: -8px;
+  bottom: -4px;
+}
+.sheet-hour-detail-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.sheet-hour-detail-copy strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+.sheet-hour-detail-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 .sheet-hour-detail p {
   margin: 0 0 13px;
