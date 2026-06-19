@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.125">
+    <link rel="stylesheet" href="styles.css?v=1.10.126">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -71,6 +71,10 @@
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         Use my location
       </button>
+      <div class="loading-chip welcome-loading" data-loading-status hidden role="status" aria-live="polite" aria-atomic="true">
+        <span class="loading-chip-dot" aria-hidden="true"></span>
+        <span class="loading-chip-text" data-loading-message></span>
+      </div>
 
       <section class="status" id="status" hidden></section>
 
@@ -92,6 +96,10 @@
             <div class="hero-icon" id="heroIcon" aria-hidden="true"></div>
           </div>
           <p class="summary" id="nowSummary">Search for a city to load a clean forecast.</p>
+          <div class="loading-chip launch-loading" data-loading-status hidden role="status" aria-live="polite" aria-atomic="true">
+            <span class="loading-chip-dot" aria-hidden="true"></span>
+            <span class="loading-chip-text" data-loading-message></span>
+          </div>
           <button class="alert-bar launch-alert" id="alertBar" type="button" hidden>
             <span class="alert-bar-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none"><path d="M10 3.2 18 16.4H2L10 3.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 7.8v4.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="0.9" fill="currentColor"/></svg>
@@ -394,6 +402,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.125"></script>
+    <script src="app.js?v=1.10.126"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-const VERSION = "1.10.125";
+const VERSION = "1.10.126";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -250,6 +250,7 @@ const els = {
   searchResults: document.querySelector("#searchResults"),
   savedPlaces: document.querySelector("#savedPlaces"),
   status: document.querySelector("#status"),
+  loadingStatuses: document.querySelectorAll("[data-loading-status]"),
   locationName: document.querySelector("#locationName"),
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
@@ -1662,7 +1663,7 @@ async function loadPlace(place, force = false) {
   updateMapPlace();
   syncMapToPlace();
   renderAlerts([]); // clear prior place's alerts until this one resolves
-  setStatus(`Loading ${state.activePlace.name}...`);
+  setStatus(`Updating ${state.activePlace.name}...`);
 
   try {
     const data = await fetchForecast(state.activePlace, force);
@@ -7160,9 +7161,26 @@ function initMetricTipListeners() {
 }
 
 function setStatus(message, isError = false) {
-  els.status.hidden = !message;
-  els.status.textContent = message;
+  const text = message || "";
+  const showLoading = Boolean(text) && !isError && isTransientStatus(text);
+  setLoadingStatus(showLoading ? text : "");
+
+  const showCard = Boolean(text) && !showLoading;
+  els.status.hidden = !showCard;
+  els.status.textContent = showCard ? text : "";
   els.status.classList.toggle("error", isError);
+}
+
+function isTransientStatus(message) {
+  return /^(Loading|Updating|Searching|Waiting|Naming)\b/.test(message);
+}
+
+function setLoadingStatus(message) {
+  els.loadingStatuses.forEach((status) => {
+    const text = status.querySelector("[data-loading-message]");
+    if (text) text.textContent = message;
+    status.hidden = !message;
+  });
 }
 
 function normalizePlace(place) {
