@@ -1,4 +1,4 @@
-const VERSION = "1.10.132";
+const VERSION = "2.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3673,9 +3673,77 @@ const ACTIVITY_CHIPS = [
   { label: "What to wear", template: "What should I wear " }
 ];
 
+const PLANNER_TERM_ALIASES = {
+  morn: "morning",
+  mornin: "morning",
+  tmr: "tomorrow",
+  tmrw: "tomorrow",
+  tonite: "tonight",
+  nite: "night",
+  tue: "tuesday",
+  tues: "tuesday",
+  wed: "wednesday",
+  weds: "wednesday",
+  thu: "thursday",
+  thur: "thursday",
+  thurs: "thursday",
+  sat: "saturday",
+  sun: "sunday"
+};
+
+const PLANNER_CANONICAL_TERMS = [
+  "today", "tomorrow", "tonight", "morning", "afternoon", "evening", "night",
+  "overnight", "midday", "weekend", "daytime", "sunday", "monday", "tuesday",
+  "wednesday", "thursday", "friday", "saturday"
+];
+
+function plannerParseText(value) {
+  return askText(value).replace(/\b[a-z]{3,}\b/g, (token) => plannerCanonicalTerm(token) || token);
+}
+
+function plannerCanonicalTerm(token) {
+  const word = String(token || "").toLowerCase();
+  if (PLANNER_TERM_ALIASES[word]) return PLANNER_TERM_ALIASES[word];
+  if (PLANNER_CANONICAL_TERMS.includes(word)) return word;
+  let best = null;
+  let bestDistance = Infinity;
+  for (const term of PLANNER_CANONICAL_TERMS) {
+    const distance = plannerEditDistance(word, term);
+    if (distance < bestDistance) {
+      best = term;
+      bestDistance = distance;
+    }
+  }
+  const limit = word.length >= 7 ? 2 : word.length >= 5 ? 1 : 0;
+  return bestDistance <= limit ? best : "";
+}
+
+function plannerEditDistance(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from({ length: rows }, () => Array(cols).fill(0));
+  for (let i = 0; i < rows; i++) dp[i][0] = i;
+  for (let j = 0; j < cols; j++) dp[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return dp[a.length][b.length];
+}
+
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
 // weekday names or relative phrases. Returns null when no day is referenced.
 function resolveDayIndex(s, c) {
+  s = plannerParseText(s);
   const days = c.daily;
   if (!days || !days.length) return null;
   if (/\bday after tomorrow\b/.test(s)) return Math.min(2, days.length - 1);
@@ -3780,10 +3848,10 @@ function shouldUseAsClarification(text) {
   const pending = plannerClarification;
   if (!pending) return false;
   const raw = String(text || "").trim();
-  const s = askText(raw);
+  const s = plannerParseText(raw);
   if (!raw || raw.length > 48 || raw.includes("?")) return false;
   if (pending.type === "time") {
-    return /^(morning|afternoon|evening|tonight|night|overnight)$/i.test(raw) ||
+    return /\b(morning|afternoon|evening|tonight|night|overnight)\b/.test(s) ||
       /^(?:at|around|about)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw) ||
       /^(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to|-)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw);
   }
@@ -3909,10 +3977,6 @@ const PLAN_LOCATION_STOP_WORDS = [
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
   "on", "for", "at", "from", "between", "before", "after", "around", "about"
 ];
-const PLAN_LOCATION_STOP_RE = new RegExp(
-  `\\s+(?:${PLAN_LOCATION_STOP_WORDS.join("|")})\\b|[?.!]|$`,
-  "i"
-);
 const PLAN_LOCATION_IGNORE = new Set([
   "the morning", "morning", "the afternoon", "afternoon", "the evening", "evening",
   "the", "tonight", "night", "the rain", "rain", "weather", "the weather"
@@ -3928,7 +3992,7 @@ function answerPlanRequest(question) {
 }
 
 function parsePlanRequest(question, c) {
-  const s = askText(question);
+  const s = plannerParseText(question);
   const activityKey = detectAskActivity(question) || detectPlanActivity(question);
   const dayIdx = resolveDayIndex(s, c);
   const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
@@ -3957,7 +4021,7 @@ function parsePlanRequest(question, c) {
 }
 
 function detectPlanActivity(question) {
-  const s = askText(question);
+  const s = plannerParseText(question);
   if (hasAny(s, [" ballgame ", " ball game ", " baseball ", " softball "])) return "sports";
   if (hasAny(s, [" tee time ", " tee ", " round of golf "])) return "golf";
   if (hasAny(s, [" practice ", " tournament ", " match ", " game "])) return "sports";
@@ -3970,7 +4034,7 @@ function planTargetDate(dayIdx) {
 }
 
 function inferPlanTiming(question, c, activityKey) {
-  const s = askText(question);
+  const s = plannerParseText(question);
   const period = inferPlanPeriod(s);
   const between = s.match(/\b(?:from|between)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(?:and|to|-)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
   if (between) {
@@ -4030,6 +4094,7 @@ function inferPlanTiming(question, c, activityKey) {
 }
 
 function inferPlanPeriod(s) {
+  s = plannerParseText(s);
   if (/\bovernight\b/.test(s)) return "overnight";
   if (/\bmorning\b|\bbefore noon\b/.test(s)) return "morning";
   if (/\bafternoon\b|\bmidday\b/.test(s)) return "afternoon";
@@ -4111,17 +4176,31 @@ function extractPlanLocationQuery(question) {
 
 function isTemporalLocationPhrase(value) {
   const key = normalizeQualifierKey(value);
+  const s = plannerParseText(value).trim();
   if (!key || /^\d/.test(key)) return true;
-  return /^(the )?(morning|afternoon|evening|night|weekend|today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(key);
+  return /^(the )?(morning|afternoon|evening|night|weekend|today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(key) ||
+    /^(the )?(morning|afternoon|evening|night|weekend|today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(s);
 }
 
 function cleanPlanLocation(value) {
   let text = String(value || "").trim().replace(/^the\s+/i, "");
-  const stop = text.search(PLAN_LOCATION_STOP_RE);
-  if (stop > 0) text = text.slice(0, stop).trim();
+  const stop = findPlanLocationStopIndex(text);
+  if (stop >= 0) text = text.slice(0, stop).trim();
   text = text.replace(/[,.\s]+$/g, "").trim();
   const key = normalizeQualifierKey(text);
   return key && !PLAN_LOCATION_IGNORE.has(key) ? text : "";
+}
+
+function findPlanLocationStopIndex(text) {
+  const re = /\b[a-z]{2,}\b/gi;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const raw = match[0].toLowerCase();
+    const token = plannerCanonicalTerm(raw) || raw;
+    if (PLAN_LOCATION_STOP_WORDS.includes(token)) return match.index;
+  }
+  const punct = text.search(/[?.!]/);
+  return punct >= 0 ? punct : -1;
 }
 
 function mergeLocationClarification(original, detail) {
@@ -4561,7 +4640,7 @@ function currentAskWindow() {
 }
 
 function resolveAskWindow(q, c) {
-  const s = askText(q);
+  const s = plannerParseText(q);
   let dayIdx = resolveDayIndex(s, c);
   if (dayIdx == null) dayIdx = 0;
 
@@ -4780,6 +4859,7 @@ function cardMeta(prefix, reasons) {
 }
 
 function bestWindowOptionsFromText(s, c) {
+  s = plannerParseText(s);
   const options = {};
   const dayIdx = resolveDayIndex(s, c);
   if (dayIdx != null) options.dayIdx = dayIdx;
@@ -5111,7 +5191,7 @@ function metricAskAnswer(q, stats, c) {
 }
 
 function comparisonDayIndexes(q, c) {
-  const s = askText(q);
+  const s = plannerParseText(q);
   const days = [];
   const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   if (s.includes("today")) days.push(0);
@@ -5160,7 +5240,7 @@ function compareAskDays(q, c) {
 function answerFreeform(q) {
   const c = buildAIContext();
   if (!c) return null;
-  const s = askText(q);
+  const s = plannerParseText(q);
   const stats = askWindowStats(resolveAskWindow(q, c));
   if (!stats) return null;
 
