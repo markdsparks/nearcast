@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v154";
-const ASSET_VERSION = "1.10.113";
+const CACHE = "nearcast-v155";
+const ASSET_VERSION = "1.10.114";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;

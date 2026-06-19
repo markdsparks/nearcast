@@ -1,4 +1,4 @@
-const VERSION = "1.10.113";
+const VERSION = "1.10.114";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -886,7 +886,7 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-q]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q]", (event, target) => {
     event.preventDefault();
     const show = target.closest("[data-ask-show]");
     if (show) {
@@ -896,6 +896,11 @@ function bindEvents() {
     const clarify = target.closest("[data-ask-clarify]");
     if (clarify) {
       runPlannerClarification(Number(clarify.dataset.askClarify));
+      return;
+    }
+    const template = target.closest("[data-ask-template]");
+    if (template) {
+      fillPlannerTemplate(template.dataset.askTemplate);
       return;
     }
     const chip = target.closest("[data-ask-q]");
@@ -3438,15 +3443,14 @@ function lockGlyph() {
     `<path d="M5.3 7V5.2a2.7 2.7 0 0 1 5.4 0V7" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>`;
 }
 
-/* ---------- Ask the forecast (Q&A + activity chips) ---------- */
+/* ---------- Ask the forecast (Q&A + planner templates) ---------- */
 // Chips and typed questions are answered by local deterministic forecast logic.
 // The tiny model stays focused on summaries; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
-  { label: "Dry window", q: "What is the best dry window?", intent: "best-dry" },
-  { label: "Ballgame", q: "I have a ballgame Tuesday night.", intent: "plan" },
-  { label: "Golf", q: "I'm golfing Saturday morning.", intent: "plan" },
-  { label: "Dinner outside", q: "What is a good dinner outside window?", intent: "best-dinner" },
-  { label: "What to wear", q: "What should I wear tonight?", intent: "wear" }
+  { label: "Ballgame", template: "I have a ballgame " },
+  { label: "Golf", template: "I'm golfing " },
+  { label: "Dinner outside", template: "Dinner outside " },
+  { label: "What to wear", template: "What should I wear " }
 ];
 
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
@@ -3479,6 +3483,20 @@ let askStreaming = false;
 let askError = "";
 let askAbort = null;
 let plannerClarification = null;
+
+function fillPlannerTemplate(template) {
+  const input = document.getElementById("askInput");
+  if (!input) return;
+  input.value = template || "";
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  const end = input.value.length;
+  try { input.setSelectionRange(end, end); } catch { /* selection can fail on some mobile inputs */ }
+  scrollAskIntoView();
+}
 
 async function runAsk(question, intent) {
   question = (question || "").trim();
@@ -3535,6 +3553,10 @@ function shouldUseAsClarification(text) {
     return /^(morning|afternoon|evening|tonight|night|overnight)$/i.test(raw) ||
       /^(?:at|around|about)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw) ||
       /^(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to|-)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw);
+  }
+  if (pending.type === "day") {
+    const c = buildAIContext();
+    return c ? resolveDayIndex(s, c) != null : false;
   }
   if (pending.type === "location") {
     if (hasAny(s, [" what ", " when ", " should ", " best ", " weather ", " forecast ", " rain ", " wind "])) return false;
@@ -3603,6 +3625,8 @@ async function continuePlannerClarificationWithText(text) {
     const option = { label: text };
     if (pending.type === "location") {
       option.locationQuery = mergeLocationClarification(pending.plan.locationQuery, text);
+    } else if (pending.type === "day") {
+      option.dayText = text;
     } else if (pending.type === "time") {
       option.timeText = text;
     }
@@ -3674,7 +3698,7 @@ function parsePlanRequest(question, c) {
   const s = askText(question);
   const activityKey = detectAskActivity(question) || detectPlanActivity(question);
   const dayIdx = resolveDayIndex(s, c);
-  const targetDate = planTargetDate(dayIdx);
+  const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
   const locationQuery = extractPlanLocationQuery(question);
   const timing = inferPlanTiming(question, c, activityKey);
   const planish = hasAny(s, [
@@ -3690,7 +3714,8 @@ function parsePlanRequest(question, c) {
   return {
     original: question,
     activityKey: activityKey || "walk",
-    dayIdx: dayIdx == null ? 0 : dayIdx,
+    dayIdx,
+    dayExplicit: dayIdx != null,
     targetDate,
     locationQuery,
     locationExplicit: Boolean(locationQuery),
@@ -3725,6 +3750,7 @@ function inferPlanTiming(question, c, activityKey) {
       startHour: start.hour,
       endHour: Math.min(endHour, 24),
       hasTime: true,
+      explicit: true,
       period,
       assumption: ""
     };
@@ -3739,6 +3765,7 @@ function inferPlanTiming(question, c, activityKey) {
       startHour: start.hour,
       endHour: Math.min(start.hour + duration, 24),
       hasTime: true,
+      explicit: true,
       period,
       assumption: `I used ${formatHourFloat(start.hour)}-${formatHourFloat(Math.min(start.hour + duration, 24))}.`
     };
@@ -3749,6 +3776,7 @@ function inferPlanTiming(question, c, activityKey) {
     return {
       ...window,
       hasTime: true,
+      explicit: true,
       period: window.period || period,
       assumption: window.assumption
     };
@@ -3759,6 +3787,7 @@ function inferPlanTiming(question, c, activityKey) {
     return {
       ...activityWindow,
       hasTime: true,
+      explicit: false,
       period: activityWindow.period,
       assumption: activityWindow.assumption
     };
@@ -3829,7 +3858,6 @@ function planPeriodWindow(period, activityKey) {
 }
 
 function defaultActivityWindow(activityKey) {
-  if (activityKey === "golf") return { startHour: 7, endHour: 12, period: "morning", assumption: "I used 7 AM-noon for golf." };
   if (activityKey === "dinner" || activityKey === "grill") return { startHour: 17, endHour: 21, period: "evening", assumption: "I used 5-9 PM for dinner hours." };
   return null;
 }
@@ -3879,8 +3907,25 @@ async function completePlanRequest(plan, override = {}) {
     nextPlan.locationQuery = override.locationQuery;
     nextPlan.locationExplicit = true;
   }
+  if (override.dayIdx != null) {
+    nextPlan.dayIdx = override.dayIdx;
+    nextPlan.dayExplicit = true;
+    nextPlan.targetDate = null;
+  }
+  if (override.dayText) {
+    const dayIdx = resolveDayIndex(askText(override.dayText), baseContext);
+    if (dayIdx != null) {
+      nextPlan.dayIdx = dayIdx;
+      nextPlan.dayExplicit = true;
+      nextPlan.targetDate = null;
+    }
+  }
   if (override.timeText) {
     nextPlan.timing = inferPlanTiming(`${nextPlan.original} ${normalizePlanTimeClarification(override.timeText)}`, baseContext, nextPlan.activityKey);
+  }
+
+  if (!nextPlan.dayExplicit) {
+    return { clarification: buildDayClarification(nextPlan, baseContext) };
   }
 
   if (nextPlan.timing?.needsClarification || !nextPlan.timing?.hasTime) {
@@ -3967,8 +4012,22 @@ function resolvePlanDayIndex(plan, data, c) {
     const idx = data?.daily?.time?.indexOf(plan.targetDate);
     return idx >= 0 ? idx : null;
   }
-  const idx = plan.dayIdx ?? 0;
+  const idx = plan.dayIdx;
   return idx >= 0 && idx < c.daily.length ? idx : null;
+}
+
+function buildDayClarification(plan, c = buildAIContext()) {
+  const label = planDisplayName(plan).toLowerCase();
+  const days = (c?.daily || []).slice(0, 5).map((day, index) => ({
+    label: day.label || (index === 0 ? "Today" : index === 1 ? "Tomorrow" : `Day ${index + 1}`),
+    dayIdx: index
+  }));
+  return {
+    type: "day",
+    plan,
+    prompt: `Which day should I use for ${label}?`,
+    options: days
+  };
 }
 
 function buildTimeClarification(plan) {
@@ -4945,10 +5004,14 @@ function renderAsk() {
     `</button>`
   ).join("");
 
-  const chips = ACTIVITY_CHIPS.map((c) =>
-    `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}"` +
-    `${c.intent ? ` data-ask-intent="${escapeHtml(c.intent)}"` : ""}${dis}>${escapeHtml(c.label)}</button>`
-  ).join("");
+  const chips = ACTIVITY_CHIPS.map((c) => {
+    if (c.template) {
+      return `<button class="ask-chip ask-template-chip" type="button" ` +
+        `data-ask-template="${escapeHtml(c.template)}"${dis}>${escapeHtml(c.label)}</button>`;
+    }
+    return `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}"` +
+      `${c.intent ? ` data-ask-intent="${escapeHtml(c.intent)}"` : ""}${dis}>${escapeHtml(c.label)}</button>`;
+  }).join("");
 
   const thread = askThread.map((ex, i) => {
     const streaming = askStreaming && i === askThread.length - 1;
@@ -4972,17 +5035,18 @@ function renderAsk() {
 
   panel.innerHTML =
     (bestCards ? `<section class="best-windows" aria-label="Weather windows">` +
-      `<div class="ai-section-title"><strong>Weather windows</strong><span>Weather only</span></div>` +
+      `<div class="ai-section-title"><strong>Weather windows</strong><span>Forecast-grounded</span></div>` +
       `<div class="best-window-grid">${bestCards}</div>` +
     `</section>` : "") +
     `<section class="plan-presets" aria-label="Plan presets">` +
-      `<div class="ai-section-title"><strong>Plan something</strong><span>Useful defaults</span></div>` +
+      `<div class="ai-section-title"><strong>Plan something</strong><span>Templates, no guesses</span></div>` +
       `<div class="ask-chips">${chips}</div>` +
+      `<p class="ask-helper">Tap a template, then add the day, time, and place if it is away from here.</p>` +
     `</section>` +
     (thread ? `<div class="ask-thread">${thread}${errLine}${clarification}</div>` : clarification) +
     `<form class="ask-form" id="askForm">` +
       `<input id="askInput" type="text" autocomplete="off" ` +
-        `placeholder="Plan something... golf Saturday morning in Fillmore"${dis}>` +
+        `placeholder="golf Saturday morning in Silvis"${dis}>` +
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
 }
@@ -5052,10 +5116,10 @@ function renderAILauncher() {
   btn.hidden = !show;
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
-      aiState.phase === "idle" ? "Plans + optional private summary"
-      : aiState.phase === "unsupported" ? "Best windows & plans"
+      aiState.phase === "idle" ? "Local AI available · optional summary"
+      : aiState.phase === "unsupported" ? "Forecast-grounded planning"
       : aiState.phase === "error" ? "Planner works · summary needs attention"
-      : "Best windows, plans & private summary";
+      : "Local AI · forecast-grounded";
   }
 }
 

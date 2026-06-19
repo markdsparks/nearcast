@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=1.10.113">
+    <link rel="stylesheet" href="styles.css?v=1.10.114">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -202,8 +202,8 @@
           <button class="ai-launcher" id="aiLauncher" type="button" hidden>
             <span class="ai-launcher-spark" aria-hidden="true">✦</span>
             <span class="ai-launcher-copy">
-              <strong>Planner</strong>
-              <small id="aiLauncherSub">Best windows, plans & private summary</small>
+              <strong>NearAI Planner</strong>
+              <small id="aiLauncherSub">Local AI · forecast-grounded</small>
             </span>
             <span class="ai-launcher-chev" aria-hidden="true">›</span>
           </button>
@@ -374,20 +374,23 @@
     </aside>
 
     <div class="sheet-backdrop" id="aiBackdrop" hidden></div>
-    <aside class="day-sheet ai-sheet" id="aiSheet" hidden aria-label="Nearcast Planner" role="dialog" aria-modal="true">
+    <aside class="day-sheet ai-sheet" id="aiSheet" hidden aria-label="NearAI Planner" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Planner">✕</button>
+      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close NearAI Planner">✕</button>
       <header class="sheet-head ai-sheet-head">
         <span class="ai-sheet-spark" aria-hidden="true">✦</span>
         <div class="sheet-head-text">
-          <h2>Planner</h2>
-          <p class="ai-sheet-sub">Weather windows, plans & private AI summary</p>
+          <h2>NearAI Planner</h2>
+          <p class="ai-sheet-sub">Local AI · forecast-grounded planning</p>
         </div>
       </header>
+      <p class="ai-trust-note">
+        Planner text is handled on this device. Weather and place lookups still use forecast services.
+      </p>
       <div class="briefing" id="briefing" hidden></div>
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=1.10.113"></script>
+    <script src="app.js?v=1.10.114"></script>
   </body>
 </html>

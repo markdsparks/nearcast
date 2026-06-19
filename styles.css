@@ -1533,6 +1533,9 @@ h2 {
   margin-bottom: 12px;
 }
 .ask-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
   padding: 7px 13px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1541,13 +1544,28 @@ h2 {
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .ask-chip:hover {
   border-color: var(--blue);
 }
+.ask-template-chip::before {
+  content: "+";
+  margin-right: 6px;
+  color: var(--blue);
+  font-weight: 950;
+}
 .ask-chip:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.ask-helper {
+  margin: -2px 0 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.35;
 }
 .ask-clarify {
   display: flex;
@@ -1740,6 +1758,17 @@ h2 {
   margin: 2px 0 0;
   font-size: 0.8rem;
   color: var(--muted);
+}
+.ai-trust-note {
+  margin: 8px 0 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(91, 141, 220, 0.2);
+  border-radius: 10px;
+  background: rgba(91, 141, 220, 0.08);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.35;
 }
 /* Inside the sheet the briefing/ask sit flush — no card chrome competition */
 .ai-sheet .briefing {
