@@ -1595,6 +1595,29 @@ h2 {
   line-height: 1.45;
   color: var(--ink);
 }
+.ask-show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px solid rgba(91, 141, 220, 0.32);
+  border-radius: 999px;
+  background: rgba(91, 141, 220, 0.14);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.ask-show:hover,
+.ask-show:focus-visible {
+  background: rgba(91, 141, 220, 0.22);
+  outline: none;
+}
 .ask-exchange.answering .ask-a::after {
   content: "";
   display: inline-block;
@@ -3746,6 +3769,19 @@ body.map-immersive-active .day-sheet.show {
 .sheet-hour-row.is-now {
   box-shadow: none;
 }
+.sheet-hour-row.is-plan-window {
+  background:
+    linear-gradient(90deg, rgba(91, 141, 220, 0.16), rgba(91, 141, 220, 0.05) 58%, transparent);
+}
+.sheet-hour-row.is-plan-window:hover,
+.sheet-hour-row.is-plan-window:focus-visible,
+.sheet-hour-row.is-plan-window.is-expanded {
+  background:
+    linear-gradient(90deg, rgba(91, 141, 220, 0.22), rgba(91, 141, 220, 0.08) 62%, transparent);
+}
+.sheet-hour-row.is-plan-window::before {
+  background: var(--blue);
+}
 .sheet-hour-row.is-now::before {
   background: var(--blue);
 }
@@ -3819,6 +3855,15 @@ body.map-immersive-active .day-sheet.show {
   padding: 2px 0;
   border-radius: 999px;
   background: transparent;
+  color: var(--blue);
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.sheet-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
   color: var(--blue);
   font-size: 0.62rem;
   font-weight: 900;

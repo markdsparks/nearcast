@@ -1,4 +1,4 @@
-const VERSION = "1.10.107";
+const VERSION = "1.10.108";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -784,6 +784,11 @@ function bindEvents() {
     else if (action === "copy-report") copySupportReport();
   });
   els.aiAsk.addEventListener("click", (event) => {
+    const show = event.target.closest("[data-ask-show]");
+    if (show) {
+      showPlannerEvent(Number(show.dataset.askShow));
+      return;
+    }
     const clarify = event.target.closest("[data-ask-clarify]");
     if (clarify) {
       runPlannerClarification(Number(clarify.dataset.askClarify));
@@ -3390,8 +3395,7 @@ async function runAsk(question, intent) {
   if (intent) {
     const row = beginAskResponse(question);
     try {
-      const answer = await answerPresetIntent(intent, question);
-      finishAskResponse(row, answer || AI_FALLBACK_MSG);
+      finishAskResponse(row, await answerPresetIntent(intent, question));
     } catch {
       finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
     }
@@ -3411,7 +3415,7 @@ async function runAsk(question, intent) {
       return;
     }
     const direct = plan?.answer || answerFreeform(question);
-    finishAskResponse(row, direct || AI_FALLBACK_MSG);
+    finishAskResponse(row, plan?.answer ? plan : direct);
   } catch (error) {
     finishAskResponse(row, "I hit a snag checking that plan. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
   }
@@ -3443,11 +3447,28 @@ function beginAskResponse(question) {
   return askThread.length - 1;
 }
 
-function finishAskResponse(row, answer) {
-  if (askThread[row]) askThread[row].a = answer;
+function finishAskResponse(row, result) {
+  const normalized = normalizeAskResult(result);
+  if (askThread[row]) {
+    askThread[row].a = normalized.answer;
+    askThread[row].event = normalized.event || null;
+  }
   askStreaming = false;
   renderAsk();
   scrollAskIntoView();
+}
+
+function normalizeAskResult(result) {
+  if (result && typeof result === "object") {
+    return {
+      answer: result.answer || AI_FALLBACK_MSG,
+      event: result.event || null
+    };
+  }
+  return {
+    answer: result || AI_FALLBACK_MSG,
+    event: null
+  };
 }
 
 async function runPlannerClarification(index) {
@@ -3464,7 +3485,7 @@ async function runPlannerClarification(index) {
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
-    finishAskResponse(row, result?.answer || AI_FALLBACK_MSG);
+    finishAskResponse(row, result);
   } catch {
     finishAskResponse(row, "I could not check that plan. Try adding the city/state and a time window.");
   }
@@ -3487,7 +3508,7 @@ async function continuePlannerClarificationWithText(text) {
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
-    finishAskResponse(row, result?.answer || AI_FALLBACK_MSG);
+    finishAskResponse(row, result);
   } catch {
     finishAskResponse(row, "I could not use that detail. Try something like \"6 PM\" or \"Fillmore, IL.\"");
   }
@@ -3792,7 +3813,35 @@ async function completePlanRequest(plan, override = {}) {
   const startMs = planBoundaryMs(data, window.startHour, dayIdx);
   const endMs = planBoundaryMs(data, window.endHour, dayIdx);
   const alert = topAlertForPlanRange(alerts, startMs, endMs);
-  return { answer: planAnswer(nextPlan, place, c, stats, alert) };
+  return {
+    answer: planAnswer(nextPlan, place, c, stats, alert),
+    event: plannerShowEvent({
+      title: `${planDisplayName(nextPlan)} ${stats.label}`,
+      place,
+      data,
+      alerts,
+      window,
+      stats
+    })
+  };
+}
+
+function plannerShowEvent({ title, place, data, alerts, window, stats }) {
+  const startMs = planBoundaryMs(data, window.startHour, window.dayIdx);
+  const endMs = planBoundaryMs(data, window.endHour, window.dayIdx);
+  if (!data || !place || startMs === null || endMs === null || endMs <= startMs) return null;
+  return {
+    title,
+    place: normalizePlace(place),
+    data,
+    alerts: alerts || [],
+    dayIndex: window.dayIdx,
+    startHour: window.startHour,
+    endHour: window.endHour,
+    startMs,
+    endMs,
+    label: stats?.label || "plan window"
+  };
 }
 
 function normalizePlanTimeClarification(value) {
@@ -4422,14 +4471,40 @@ function bestDryWindow(options = {}) {
 }
 
 function bestWindowAnswer(activityKey, options = {}) {
+  return bestWindowResult(activityKey, options)?.answer || null;
+}
+
+function bestWindowResult(activityKey, options = {}) {
   const c = buildAIContext();
   if (!c) return null;
-  if (activityKey === "dry") return bestDryWindow(options)?.answer || null;
-  const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
-  const result = bestWindowForRule(rule, options);
-  if (result) return result.answer;
-  if (options.allowTomorrow === false) return `I do not see a useful ${rule.label} window left tonight.`;
-  return null;
+  let result;
+  let title;
+  if (activityKey === "dry") {
+    result = bestDryWindow(options);
+    title = "Dry window";
+  } else {
+    const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
+    result = bestWindowForRule(rule, options);
+    title = `Best for ${rule.label}`;
+  }
+  if (!result) {
+    if (options.allowTomorrow === false) {
+      const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
+      return { answer: `I do not see a useful ${rule.label} window left tonight.` };
+    }
+    return null;
+  }
+  return {
+    answer: result.answer,
+    event: plannerShowEvent({
+      title,
+      place: state.activePlace,
+      data: state.forecast,
+      alerts: activeAlerts,
+      window: result.stats.window,
+      stats: result.stats
+    })
+  };
 }
 
 function buildBestWindowCards() {
@@ -4567,12 +4642,12 @@ async function answerPresetIntent(intent, question) {
   const s = askText(question);
   const options = bestWindowOptionsFromText(s, c);
   if (intent === "best-dry") {
-    return bestWindowAnswer("dry", options) ||
-      bestWindowAnswer("dry", { dayIdx: 1, earliestHour: 7, limitHour: 22 });
+    return bestWindowResult("dry", options) ||
+      bestWindowResult("dry", { dayIdx: 1, earliestHour: 7, limitHour: 22 });
   }
-  if (intent === "best-walk") return bestWindowAnswer("walk", options);
-  if (intent === "best-dinner") return bestWindowAnswer("dinner", options);
-  if (intent === "best-patio") return bestWindowAnswer("picnic", options);
+  if (intent === "best-walk") return bestWindowResult("walk", options);
+  if (intent === "best-dinner") return bestWindowResult("dinner", options);
+  if (intent === "best-patio") return bestWindowResult("picnic", options);
 
   const stats = askWindowStats(resolveAskWindow(question, c));
   if (!stats) return null;
@@ -4773,9 +4848,13 @@ function renderAsk() {
 
   const thread = askThread.map((ex, i) => {
     const streaming = askStreaming && i === askThread.length - 1;
+    const showAction = ex.event && !streaming
+      ? `<button class="ask-show" type="button" data-ask-show="${i}">Show me</button>`
+      : "";
     return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
       `<p class="ask-q">${escapeHtml(ex.q)}</p>` +
       `<p class="ask-a">${escapeHtml(ex.a)}</p>` +
+      showAction +
     `</div>`;
   }).join("");
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
@@ -4802,6 +4881,55 @@ function renderAsk() {
         `placeholder="Plan something... golf Saturday morning in Fillmore"${dis}>` +
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
+}
+
+function showPlannerEvent(rowIndex) {
+  const event = askThread[rowIndex]?.event;
+  if (!event?.data || !event.place) return;
+  closeAISheet();
+  openPlannerEventDetail(event);
+}
+
+function openPlannerEventDetail(event) {
+  const data = event.data;
+  const dayIndex = event.dayIndex ?? 0;
+  const dayStr = data?.daily?.time?.[dayIndex];
+  if (!dayStr || !data?.hourly?.time?.length) return;
+  const indices = [];
+  data.hourly.time.forEach((time, index) => {
+    if (time.startsWith(dayStr)) indices.push(index);
+  });
+  if (!indices.length) return;
+
+  const code = representativeDailyCode(data, dayIndex);
+  openDayDetail({
+    indices,
+    title: plannerEventSheetTitle(event, dayStr, dayIndex),
+    code,
+    stormPotential: hasThunderPotentialForDay(data, dayIndex, code),
+    isDay: true,
+    sunriseISO: data.daily.sunrise?.[dayIndex],
+    sunsetISO: data.daily.sunset?.[dayIndex],
+    dayIndex,
+    initialMode: "hourly",
+    persistInitialMode: false,
+    showNow: dayIndex === 0,
+    data,
+    alerts: event.alerts || [],
+    eventWindow: event
+  });
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.querySelector("#sheetHourlyList .sheet-hour-row.is-plan-window")
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  });
+}
+
+function plannerEventSheetTitle(event, dayStr, dayIndex) {
+  const label = String(event.label || "").trim();
+  if (label && label !== "custom" && label.length <= 28) return capitalize(label);
+  return formatDay(dayStr, dayIndex);
 }
 
 /* ---------- Planner launcher + sheet ---------- */
@@ -7155,8 +7283,22 @@ function setDayDetailMode(mode, persist = true) {
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
-function openDayDetail({ indices, title, code, stormPotential = false, isDay, sunriseISO, sunsetISO, dayIndex = 0, initialMode = getDayDetailMode(), persistInitialMode = false, showNow = false }) {
-  const data = state.forecast;
+function openDayDetail({
+  indices,
+  title,
+  code,
+  stormPotential = false,
+  isDay,
+  sunriseISO,
+  sunsetISO,
+  dayIndex = 0,
+  initialMode = getDayDetailMode(),
+  persistInitialMode = false,
+  showNow = false,
+  data = state.forecast,
+  alerts = activeAlerts,
+  eventWindow = null
+}) {
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
@@ -7185,7 +7327,10 @@ function openDayDetail({ indices, title, code, stormPotential = false, isDay, su
       rawCode,
       code,
       stormPotential: hasThunderPotential(rawCode, pop, code),
-      alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs) : null,
+      alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
+      inEvent: eventWindow && ms !== null && nextMs !== null
+        ? ms < eventWindow.endMs && nextMs > eventWindow.startMs
+        : false,
       isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
     };
   });
@@ -7202,8 +7347,8 @@ function openDayDetail({ indices, title, code, stormPotential = false, isDay, su
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
-  buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO });
-  renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow);
+  buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
+  renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
 
@@ -7327,23 +7472,46 @@ function setSheetHourRowExpanded(row, expanded) {
   if (detail) detail.hidden = !expanded;
 }
 
-function isCurrentHour(time) {
+function isCurrentHour(time, data = state.forecast) {
   const target = localDateTimeParts(time);
-  const current = localDateTimeParts(state.forecast?.current?.time);
+  const current = localDateTimeParts(data?.current?.time);
   if (target && current) {
     return target.year === current.year &&
       target.month === current.month &&
       target.day === current.day &&
       target.hour === current.hour;
   }
-  const targetMs = parseForecastTimestamp(time, state.forecast);
-  const now = forecastNowMs(state.forecast);
+  const targetMs = parseForecastTimestamp(time, data);
+  const now = forecastNowMs(data);
   return targetMs !== null && Math.abs(targetMs - now) < 1800000;
 }
 
-function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) {
+function plannerEventFocusIndex(hrs) {
+  let best = -1;
+  let bestScore = -Infinity;
+  hrs.forEach((hour, index) => {
+    if (!hour.inEvent) return;
+    const score =
+      (hour.alert ? 500 + alertPriority(hour.alert) : 0) +
+      (hour.stormPotential ? 260 : 0) +
+      (hour.pop || 0) * 2 +
+      Math.max(0, (hour.gust || 0) - 18) * 8 +
+      Math.max(0, (hour.uv || 0) - 5) * 14 +
+      (hour.precip || 0) * 80;
+    if (score > bestScore) {
+      bestScore = score;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
+  const opts = typeof options === "boolean" ? { showNow: options } : (options || {});
+  const { showNow = false, data = state.forecast, eventWindow = null } = opts;
   const deg = degree(tempUnit);
   const list = document.getElementById("sheetHourlyList");
+  const defaultExpandedIndex = eventWindow ? plannerEventFocusIndex(hrs) : -1;
   let prevDay = null;
   list.innerHTML = hrs.map((hour, rowIndex) => {
     // Mark where the day rolls over (the list runs from "now" into tomorrow).
@@ -7356,19 +7524,21 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
     const signals = hourlyRowSignals(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit, precipUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
-    const now = showNow && isCurrentHour(hour.time);
+    const now = showNow && isCurrentHour(hour.time, data);
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const stormClass = hour.stormPotential ? " is-stormy" : "";
     const alertClass = hour.alert ? ` has-alert is-alert-${alertTone(hour.alert)}` : "";
     const nowClass = now ? " is-now" : "";
+    const eventClass = hour.inEvent ? " is-plan-window" : "";
+    const expanded = rowIndex === defaultExpandedIndex;
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
     return `${divider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="false" aria-controls="${detailId}">
-        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}</div>
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
+        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${hour.inEvent ? `<span class="sheet-plan-badge">Plan</span>` : ""}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay)}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>
@@ -7377,7 +7547,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, showNow = false) 
           ${signalChips}
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
-        <div class="sheet-hour-detail" id="${detailId}" hidden>
+        <div class="sheet-hour-detail" id="${detailId}"${expanded ? "" : " hidden"}>
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
@@ -7452,7 +7622,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false, options = {}
 
 function drawHourlyGraph() {
   if (!graphCtx) return;
-  const { hrs, tempUnit, windUnit, showNow } = graphCtx;
+  const { hrs, tempUnit, windUnit, showNow, data = state.forecast } = graphCtx;
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
 
@@ -7579,9 +7749,9 @@ function drawHourlyGraph() {
       `<text x="${tx.toFixed(1)}" y="${(tempTop + 9).toFixed(1)}" text-anchor="${anchor}" class="graph-day-label">${escapeHtml(dayShortLabel(h.time))}</text>`;
   }).join("");
 
-  const firstMs = parseForecastTimestamp(hrs[0].time, state.forecast);
-  const lastMs = parseForecastTimestamp(hrs[n - 1].time, state.forecast);
-  const nowMs = forecastNowMs(state.forecast);
+  const firstMs = parseForecastTimestamp(hrs[0].time, data);
+  const lastMs = parseForecastTimestamp(hrs[n - 1].time, data);
+  const nowMs = forecastNowMs(data);
   const nowX = firstMs !== null && lastMs !== null && firstMs < lastMs
     ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW
     : null;
@@ -7666,9 +7836,9 @@ function drawHourlyGraph() {
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
 
   // Default readout: the hour nearest "now" if present, else the first point.
-  const now = forecastNowMs(state.forecast);
+  const now = forecastNowMs(data);
   let def = hrs.findIndex((h) => {
-    const ms = parseForecastTimestamp(h.time, state.forecast);
+    const ms = parseForecastTimestamp(h.time, data);
     return ms !== null && Math.abs(ms - now) < 1800000;
   });
   if (def < 0) def = 0;
@@ -7680,8 +7850,7 @@ function drawHourlyGraph() {
 
 function drawSunGraph() {
   if (!graphCtx) return;
-  const { hrs, dayIndex = 0, sunriseISO, sunsetISO, showNow } = graphCtx;
-  const data = state.forecast;
+  const { hrs, dayIndex = 0, sunriseISO, sunsetISO, showNow, data = state.forecast } = graphCtx;
   const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
   const tomorrowSunriseISO = data?.daily?.sunrise?.[dayIndex + 1];
@@ -7940,8 +8109,8 @@ function alertOverlapsRange(alert, startMs, endMs) {
   return startsBeforeEnd && endsAfterStart;
 }
 
-function topAlertForRange(startMs, endMs) {
-  return activeAlerts
+function topAlertForRange(startMs, endMs, alertsSource = activeAlerts) {
+  return (alertsSource || [])
     .filter((alert) => alertOverlapsRange(alert, startMs, endMs))
     .sort((a, b) => alertPriority(b) - alertPriority(a))[0] || null;
 }
