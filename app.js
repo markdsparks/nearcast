@@ -1,4 +1,4 @@
-const VERSION = "1.10.121";
+const VERSION = "1.10.122";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5814,15 +5814,23 @@ function refreshInlineMap(forceFrames = false) {
 function renderMapMarkers() {
   if (!mapState.initialized || !els.markerLayer) return;
   els.markerLayer.innerHTML = "";
+  if (!state.activePlace) return;
 
-  const places = state.savedPlaces.length ? state.savedPlaces : state.activePlace ? [state.activePlace] : [];
-  places.forEach((place) => {
-    renderMapMarker(place);
-  });
+  const viewport = getMapViewport();
+  const placedBounds = [];
+  const activeMarker = renderMapMarker(state.activePlace, { viewport });
+  if (activeMarker?.bounds) placedBounds.push(activeMarker.bounds);
 
-  if (state.activePlace && !places.some((place) => place.id === state.activePlace.id)) {
-    renderMapMarker(state.activePlace);
-  }
+  if (!mapState.immersive) return;
+
+  state.savedPlaces
+    .filter((place) => !isActiveMapPlace(place))
+    .forEach((place) => {
+      const layout = mapMarkerLayout(place, viewport);
+      if (!layout || mapBoundsOverlapAny(layout.bounds, placedBounds)) return;
+      const marker = renderMapMarker(place, { viewport, layout });
+      if (marker?.bounds) placedBounds.push(marker.bounds);
+    });
 }
 
 async function setMapMode(mode) {
@@ -6735,27 +6743,77 @@ function tileBbox3857(z, x, y) {
   return [minX, minY, maxX, maxY].join(",");
 }
 
-function renderMapMarker(place) {
+function renderMapMarker(place, options = {}) {
   if (!state.activePlace) return;
-  const viewport = getMapViewport();
+  const viewport = options.viewport || getMapViewport();
+  const layout = options.layout || mapMarkerLayout(place, viewport);
+  if (!layout) return null;
+
+  const { left, top } = layout;
+  const marker = document.createElement("div");
+  const isActive = isActiveMapPlace(place);
+  const name = mapMarkerName(place);
+  const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
+  marker.className = `map-marker${mapState.immersive && isActive ? " is-active-place" : ""}`;
+  if (tempText) {
+    marker.innerHTML = `<span>${escapeHtml(name)}</span><strong>${escapeHtml(tempText)}</strong>`;
+  } else {
+    marker.textContent = name;
+  }
+  marker.style.left = `${left}px`;
+  marker.style.top = `${top}px`;
+  els.markerLayer.appendChild(marker);
+  return layout;
+}
+
+function mapMarkerLayout(place, viewport = getMapViewport()) {
+  if (!state.activePlace || !place) return null;
   const point = projectLatLon(place.latitude, place.longitude, mapState.zoom);
   const left = point.x - (viewport.center.x - viewport.width / 2);
   const top = point.y - (viewport.center.y - viewport.height / 2);
 
   if (left < -80 || left > viewport.width + 80 || top < -80 || top > viewport.height + 80) return;
 
-  const marker = document.createElement("div");
   const isActive = isActiveMapPlace(place);
-  const tempText = document.getElementById("nowTemp")?.textContent || "";
-  marker.className = `map-marker${mapState.immersive && isActive ? " is-active-place" : ""}`;
-  if (mapState.immersive && isActive && tempText) {
-    marker.innerHTML = `<span>${escapeHtml(place.name)}</span><strong>${escapeHtml(tempText)}</strong>`;
-  } else {
-    marker.textContent = place.name;
-  }
-  marker.style.left = `${left}px`;
-  marker.style.top = `${top}px`;
-  els.markerLayer.appendChild(marker);
+  const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
+  const name = mapMarkerName(place);
+  return {
+    left,
+    top,
+    bounds: mapMarkerBounds(left, top, estimateMapMarkerWidth(name, tempText), tempText ? 31 : 29)
+  };
+}
+
+function mapMarkerName(place) {
+  return place?.name || placeLabel(place);
+}
+
+function activeMapMarkerTemp() {
+  return document.getElementById("nowTemp")?.textContent || "";
+}
+
+function estimateMapMarkerWidth(name, tempText = "") {
+  const nameWidth = Math.min(112, String(name || "").length * 7.2);
+  const tempWidth = tempText ? 10 + String(tempText).length * 8.4 : 0;
+  const width = 18 + nameWidth + tempWidth;
+  return Math.max(tempText ? 92 : 74, Math.min(tempText ? 178 : 130, width));
+}
+
+function mapMarkerBounds(left, top, width, height) {
+  return {
+    left: left - width / 2 - 8,
+    right: left + width / 2 + 8,
+    top: top - height - 12,
+    bottom: top + 12
+  };
+}
+
+function mapBoundsOverlapAny(bounds, placedBounds) {
+  return placedBounds.some((placed) => mapBoundsOverlap(bounds, placed));
+}
+
+function mapBoundsOverlap(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
 function isActiveMapPlace(place) {
