@@ -1,4 +1,4 @@
-const VERSION = "1.10.106";
+const VERSION = "1.10.107";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3333,11 +3333,11 @@ function lockGlyph() {
 // Chips and typed questions are answered by local deterministic forecast logic.
 // The tiny model stays focused on summaries; it never owns weather verdicts.
 const ACTIVITY_CHIPS = [
-  { label: "Dry window", q: "What is the best dry window today?" },
-  { label: "Ballgame", q: "I have a ballgame Tuesday night." },
-  { label: "Golf", q: "I'm golfing Saturday morning." },
-  { label: "Dinner outside", q: "Is dinner outside tonight a good idea?" },
-  { label: "What to wear", q: "What should I wear tonight?" }
+  { label: "Dry window", q: "What is the best dry window?", intent: "best-dry" },
+  { label: "Ballgame", q: "I have a ballgame Tuesday night.", intent: "plan" },
+  { label: "Golf", q: "I'm golfing Saturday morning.", intent: "plan" },
+  { label: "Dinner outside", q: "What is a good dinner outside window?", intent: "best-dinner" },
+  { label: "What to wear", q: "What should I wear tonight?", intent: "wear" }
 ];
 
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
@@ -3378,7 +3378,7 @@ async function runAsk(question, intent) {
   if (aiState.phase === "generating" || askStreaming) return;
   askError = "";
 
-  if (plannerClarification && !intent) {
+  if (plannerClarification && !intent && shouldUseAsClarification(question)) {
     await continuePlannerClarificationWithText(question);
     return;
   }
@@ -3388,11 +3388,13 @@ async function runAsk(question, intent) {
   // a tiny model can't reliably reason about this, and even handed the correct
   // verdict it sometimes mangles or flips it. Deterministic = always correct.
   if (intent) {
-    const assessment = assessActivity(intent);
-    if (!assessment) return;
-    askThread.push({ q: question, a: assessment });
-    renderAsk();
-    scrollAskIntoView();
+    const row = beginAskResponse(question);
+    try {
+      const answer = await answerPresetIntent(intent, question);
+      finishAskResponse(row, answer || AI_FALLBACK_MSG);
+    } catch {
+      finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
+    }
     return;
   }
 
@@ -3413,6 +3415,24 @@ async function runAsk(question, intent) {
   } catch (error) {
     finishAskResponse(row, "I hit a snag checking that plan. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
   }
+}
+
+function shouldUseAsClarification(text) {
+  const pending = plannerClarification;
+  if (!pending) return false;
+  const raw = String(text || "").trim();
+  const s = askText(raw);
+  if (!raw || raw.length > 48 || raw.includes("?")) return false;
+  if (pending.type === "time") {
+    return /^(morning|afternoon|evening|tonight|night|overnight)$/i.test(raw) ||
+      /^(?:at|around|about)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw) ||
+      /^(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to|-)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(raw);
+  }
+  if (pending.type === "location") {
+    if (hasAny(s, [" what ", " when ", " should ", " best ", " weather ", " forecast ", " rain ", " wind "])) return false;
+    return true;
+  }
+  return false;
 }
 
 function beginAskResponse(question) {
@@ -4429,6 +4449,7 @@ function buildBestWindowCards() {
     if (rain < 25) {
       return {
         ...dry,
+        intent: "best-dry",
         badge: "Dry",
         title: "Driest stretch",
         q: "What is the best dry window today?",
@@ -4439,6 +4460,7 @@ function buildBestWindowCards() {
     if (rain < 60) {
       return {
         ...dry,
+        intent: "best-dry",
         badge: "Maybe",
         title: "Least wet stretch",
         q: "What is the least wet window today?",
@@ -4448,6 +4470,7 @@ function buildBestWindowCards() {
     }
     return {
       ...dry,
+      intent: "best-dry",
       badge: "Wet",
       title: "Rainy day",
       q: "Is there any useful dry window today?",
@@ -4461,6 +4484,7 @@ function buildBestWindowCards() {
     const tomorrow = walk.stats.window.dayIdx > 0;
     return {
       ...walk,
+      intent: "best-walk",
       badge: quality === "show" ? windowVerdict(walk.score) : quality === "caution" ? "Iffy" : "Brief",
       title: quality === "show" ? "Comfortable walk" : quality === "caution" ? "Walk check" : "Quick walk only",
       q: tomorrow ? "When is a comfortable time for a walk tomorrow?" : "When is a comfortable time for a walk today?",
@@ -4474,6 +4498,7 @@ function buildBestWindowCards() {
     const tomorrow = dinner.stats.window.dayIdx > 0;
     return {
       ...dinner,
+      intent: "best-dinner",
       badge: quality === "show" ? windowVerdict(dinner.score) : quality === "caution" ? "Iffy" : "Indoor",
       title: quality === "show" ? (tomorrow ? "Tomorrow dinner outside" : "Dinner outside")
         : quality === "caution" ? "Dinner check" : "Indoor dinner weather",
@@ -4488,6 +4513,7 @@ function buildBestWindowCards() {
     const tomorrow = afterWork.stats.window.dayIdx > 0;
     return {
       ...afterWork,
+      intent: "best-patio",
       badge: quality === "show" ? windowVerdict(afterWork.score) : quality === "caution" ? "Iffy" : "Skip",
       title: quality === "show" ? "After work outside" : quality === "caution" ? "After-work check" : "After-work indoor weather",
       q: tomorrow ? "What is the best patio window after work tomorrow?" : "What is the best patio window after work today?",
@@ -4507,6 +4533,7 @@ function buildBestWindowCards() {
     const score = Math.max(0, Math.min(100, item.score));
     return {
       q: item.q,
+      intent: item.intent,
       badge: item.badge || windowVerdict(score),
       title: item.title,
       window: item.window || capitalize(item.stats.label),
@@ -4524,12 +4551,38 @@ function detectAskActivity(q) {
   return null;
 }
 
-function assessActivity(intent) {
+async function answerPresetIntent(intent, question) {
   const c = buildAIContext();
   if (!c) return null;
-  const stats = askWindowStats(currentAskWindow());
-  const rule = ACTIVITY_RULES[intent] || ACTIVITY_RULES.walk;
-  return stats ? activityAnswer(rule, stats, c.units) : null;
+
+  if (intent === "plan") {
+    const result = await answerPlanRequest(question);
+    if (result?.clarification) {
+      plannerClarification = result.clarification;
+      return result.clarification.prompt;
+    }
+    return result?.answer || answerFreeform(question);
+  }
+
+  const s = askText(question);
+  const options = bestWindowOptionsFromText(s, c);
+  if (intent === "best-dry") {
+    return bestWindowAnswer("dry", options) ||
+      bestWindowAnswer("dry", { dayIdx: 1, earliestHour: 7, limitHour: 22 });
+  }
+  if (intent === "best-walk") return bestWindowAnswer("walk", options);
+  if (intent === "best-dinner") return bestWindowAnswer("dinner", options);
+  if (intent === "best-patio") return bestWindowAnswer("picnic", options);
+
+  const stats = askWindowStats(resolveAskWindow(question, c));
+  if (!stats) return null;
+  if (intent === "wear") return outfitAnswer(stats, c.units);
+  if (intent.startsWith("activity-")) {
+    const key = intent.replace(/^activity-/, "");
+    const rule = ACTIVITY_RULES[key] || ACTIVITY_RULES.walk;
+    return activityAnswer(rule, stats, c.units);
+  }
+  return answerFreeform(question);
 }
 
 function outfitAnswer(stats, units) {
@@ -4700,7 +4753,8 @@ function renderAsk() {
   const dis = busy ? " disabled" : "";
 
   const bestCards = buildBestWindowCards().map((card) =>
-    `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"${dis}>` +
+    `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"` +
+      `${card.intent ? ` data-ask-intent="${escapeHtml(card.intent)}"` : ""}${dis}>` +
       `<span class="best-window-copy">` +
         `<span class="best-window-top">` +
           `<strong>${escapeHtml(card.title)}</strong>` +
