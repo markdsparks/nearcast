@@ -1,4 +1,4 @@
-const VERSION = "1.10.117";
+const VERSION = "1.10.118";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -622,6 +622,10 @@ function effectiveWeatherCode(code, pop, cloudPct) {
 
 function isThunderCode(code) {
   return code === 95 || code === 96 || code === 99;
+}
+
+function isPrecipCode(code) {
+  return code >= 51 && code <= 86;
 }
 
 function hasThunderPotential(rawCode, pop, shownCode) {
@@ -7819,17 +7823,22 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   return signals.slice(0, 2);
 }
 
-function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
+function hourlyDetailNote(hour, tempUnit, windUnit) {
   const alertNote = hour.alert ? hourlyAlertDetailNote(hour.alert) : "";
   let weatherNote = "";
   if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
-    const amount = hour.precip > 0.02 ? ` Around ${formatAmount(hour.precip)} ${precipUnit} could fall.` : "";
-    weatherNote = `Thunderstorms possible. Watch for lightning and quick downpours.${hail}${amount}`;
+    weatherNote = `Thunderstorms possible. Watch for lightning and quick downpours.${hail}`;
+  } else if (isPrecipCode(hour.code)) {
+    const condition = weatherCodes[hour.code] || "Precipitation";
+    const likelihood = hour.pop >= 50 ? "likely" : "possible";
+    const burst = hour.code === 65 || hour.code === 67 || hour.code === 82 || hour.code === 86
+      ? " Brief heavier bursts are possible."
+      : "";
+    weatherNote = `${condition} ${likelihood} through this hour.${burst}`;
   } else if (hour.pop >= 50) {
-    const amount = hour.precip > 0.02 ? `; ${formatAmount(hour.precip)} ${precipUnit} possible` : "";
-    weatherNote = `Rain likely${amount}.`;
+    weatherNote = "Rain likely through this hour.";
   } else if (hour.gust >= 25) {
     weatherNote = `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
   } else if (hour.uv >= 6) {
@@ -7844,20 +7853,6 @@ function hourlyDetailNote(hour, tempUnit, windUnit, precipUnit) {
   if (!alertNote) return weatherNote;
   if (weatherNote === "No major weather flags.") return alertNote;
   return `${alertNote} ${weatherNote}`;
-}
-
-function hourlyConditionMeta(hour, windUnit, precipUnit) {
-  const parts = [];
-  if (hour.stormPotential) parts.push("Thunder possible");
-  if (hour.pop >= 20) parts.push(`${hour.pop}% rain`);
-  if (hour.precip > 0.02) parts.push(`${formatAmount(hour.precip)} ${precipUnit}`);
-  if (hour.gust >= 20 && hour.gust >= hour.wind + 5) {
-    parts.push(`gusts ${Math.round(hour.gust)} ${windUnit}`);
-  } else if (parts.length < 2) {
-    parts.push(`${Math.round(hour.wind)} ${windUnit} wind`);
-  }
-  if (hour.uv >= 6 && parts.length < 3) parts.push(`UV ${Math.round(hour.uv)}`);
-  return parts.slice(0, 3).join(" · ");
 }
 
 function hourlyAlertDetailNote(alert) {
@@ -7935,8 +7930,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
     prevDay = dayKey;
     const condition = weatherCodes[hour.code] || "Weather";
     const signals = hourlyRowSignals(hour, tempUnit, windUnit, precipUnit);
-    const detailNote = hourlyDetailNote(hour, tempUnit, windUnit, precipUnit);
-    const detailMeta = hourlyConditionMeta(hour, windUnit, precipUnit);
+    const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time, data);
     const rainClass = hour.pop >= 40 ? " is-rainy" : "";
@@ -7963,13 +7957,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}"${expanded ? "" : " hidden"}>
-          <div class="sheet-hour-detail-condition">
-            <span class="sheet-hour-detail-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</span>
-            <span class="sheet-hour-detail-copy">
-              <strong>${escapeHtml(condition)}</strong>
-              <small>${escapeHtml(detailMeta)}</small>
-            </span>
-          </div>
+          <h3 class="sheet-hour-detail-condition">${escapeHtml(condition)}</h3>
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
