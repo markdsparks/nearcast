@@ -2636,15 +2636,15 @@ body.map-immersive-active #mapLegend {
     "title title"
     "scale labels"
     "note note";
-  gap: 8px 9px;
-  width: 154px;
+  gap: 7px 8px;
+  width: 144px;
   max-width: calc(100vw - (var(--imm-hud-x) * 2));
-  padding: 9px 10px 10px;
+  padding: 8px 9px 9px;
   border-radius: 14px;
   border: 0;
-  background: rgba(8, 12, 18, 0.52);
+  background: rgba(8, 12, 18, 0.40);
   color: #fff;
-  box-shadow: 0 14px 34px rgba(2, 6, 12, 0.20);
+  box-shadow: 0 12px 30px rgba(2, 6, 12, 0.16);
   backdrop-filter: blur(18px) saturate(1.08);
   -webkit-backdrop-filter: blur(18px) saturate(1.08);
 }
@@ -2661,24 +2661,7 @@ body.map-immersive-active #mapLegend {
   grid-area: title;
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   min-width: 0;
-}
-
-.legend-source-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 18px;
-  max-width: 100%;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 0.55rem;
-  font-weight: 850;
-  line-height: 1;
-  white-space: nowrap;
 }
 
 .immersive-map .legend-scale {
@@ -2756,24 +2739,29 @@ body.map-immersive-active #mapLegend {
 .imm-btn:hover { background: rgba(20,28,44,0.92); border-color: rgba(255,255,255,0.3); }
 .imm-btn.imm-close {
   flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
   padding: 0;
-  font-size: 1rem;
+  font-size: 1.16rem;
+  line-height: 1;
   border-radius: 999px;
   background: var(--imm-control-bg-strong);
 }
 
 .imm-btn.imm-place-switch {
-  width: 42px;
-  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
   padding: 0;
   border-radius: 999px;
   background: var(--imm-control-bg-strong);
 }
 .imm-place-switch svg {
-  width: 21px;
-  height: 21px;
+  width: 24px;
+  height: 24px;
 }
 
 .imm-bottom-hud {
@@ -3669,15 +3657,20 @@ body.map-immersive-active #mapLegend {
 
   .imm-btn.imm-close {
     flex: 0 0 auto;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     padding: 0;
   }
 
   .imm-btn.imm-place-switch {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     padding: 0;
+  }
+
+  .imm-place-switch svg {
+    width: 23px;
+    height: 23px;
   }
 
   .immersive-map .map-loading {
@@ -3699,9 +3692,9 @@ body.map-immersive-active #mapLegend {
   }
 
   .immersive-map .map-legend {
-    width: 142px;
-    padding: 8px 9px 9px;
-    background: rgba(8, 12, 18, 0.48);
+    width: 134px;
+    padding: 8px 8px 9px;
+    background: rgba(8, 12, 18, 0.36);
   }
 
   .immersive-map .map-legend strong {
@@ -3726,7 +3719,6 @@ body.map-immersive-active #mapLegend {
     font-size: 0.54rem;
   }
 
-  .legend-source-pill,
   .legend-note {
     font-size: 0.52rem;
   }

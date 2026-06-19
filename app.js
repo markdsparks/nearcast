@@ -1,4 +1,4 @@
-const VERSION = "2.0.1";
+const VERSION = "2.0.2";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -6843,7 +6843,6 @@ function setFrameLabel(label) {
 function renderMapLegend() {
   if (!els.mapLegend) return;
   const isForecast = activeMapSource() === "forecast";
-  const sourceLabel = isForecast ? "Forecast guidance" : (mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Radar only" : "Radar");
   const sourceNote = mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Forecast map unavailable here" : "";
   const legend = isForecast
     ? {
@@ -6860,7 +6859,6 @@ function renderMapLegend() {
   els.mapLegend.innerHTML = `
     <div class="legend-header">
       <strong>${escapeHtml(legend.title)}</strong>
-      <span class="legend-source-pill">${escapeHtml(sourceLabel)}</span>
     </div>
     <div class="legend-scale" aria-hidden="true">
       ${legend.colors.map((color) => `<i style="background: ${color}"></i>`).join("")}
