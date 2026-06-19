@@ -1,4 +1,4 @@
-const VERSION = "1.10.104";
+const VERSION = "1.10.105";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3469,7 +3469,7 @@ const ASK_PERIODS = {
 const PLAN_LOCATION_STOP_WORDS = [
   "today", "tomorrow", "tonight", "morning", "afternoon", "evening", "night",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "at", "from", "between", "before", "after", "around", "about"
+  "on", "for", "at", "from", "between", "before", "after", "around", "about"
 ];
 const PLAN_LOCATION_STOP_RE = new RegExp(
   `\\s+(?:${PLAN_LOCATION_STOP_WORDS.join("|")})\\b|[?.!]|$`,
@@ -3477,8 +3477,9 @@ const PLAN_LOCATION_STOP_RE = new RegExp(
 );
 const PLAN_LOCATION_IGNORE = new Set([
   "the morning", "morning", "the afternoon", "afternoon", "the evening", "evening",
-  "tonight", "night", "the rain", "rain", "weather", "the weather"
+  "the", "tonight", "night", "the rain", "rain", "weather", "the weather"
 ]);
+const PLAN_LOCATION_PREPOSITION_RE = /\b(?:in|near|around|at)\s+/gi;
 
 function answerPlanRequest(question) {
   const c = buildAIContext();
@@ -3492,6 +3493,7 @@ function parsePlanRequest(question, c) {
   const s = askText(question);
   const activityKey = detectAskActivity(question) || detectPlanActivity(question);
   const dayIdx = resolveDayIndex(s, c);
+  const targetDate = planTargetDate(dayIdx);
   const locationQuery = extractPlanLocationQuery(question);
   const timing = inferPlanTiming(question, c, activityKey);
   const planish = hasAny(s, [
@@ -3508,6 +3510,7 @@ function parsePlanRequest(question, c) {
     original: question,
     activityKey: activityKey || "walk",
     dayIdx: dayIdx == null ? 0 : dayIdx,
+    targetDate,
     locationQuery,
     locationExplicit: Boolean(locationQuery),
     timing
@@ -3520,6 +3523,11 @@ function detectPlanActivity(question) {
   if (hasAny(s, [" tee time ", " tee ", " round of golf "])) return "golf";
   if (hasAny(s, [" practice ", " tournament ", " match ", " game "])) return "sports";
   return null;
+}
+
+function planTargetDate(dayIdx) {
+  const idx = dayIdx == null ? 0 : dayIdx;
+  return state.forecast?.daily?.time?.[idx] || forecastLocalDate(state.forecast, idx);
 }
 
 function inferPlanTiming(question, c, activityKey) {
@@ -3647,17 +3655,22 @@ function defaultActivityWindow(activityKey) {
 
 function extractPlanLocationQuery(question) {
   const raw = String(question || "").trim();
-  const patterns = [
-    /\b(?:in|near|around)\s+([A-Za-z][A-Za-z0-9\s.'",-]*?)(?=\s+(?:today|tomorrow|tonight|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at|from|between|before|after)\b|[?.!]|$)/i,
-    /\bat\s+([A-Za-z][A-Za-z0-9\s.'",-]*?)(?=\s+(?:today|tomorrow|tonight|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|from|between|before|after)\b|[?.!]|$)/i
-  ];
-  for (const pattern of patterns) {
-    const match = raw.match(pattern);
-    if (!match) continue;
-    const value = cleanPlanLocation(match[1]);
-    if (value) return value;
+  const candidates = [];
+  let match;
+  PLAN_LOCATION_PREPOSITION_RE.lastIndex = 0;
+  while ((match = PLAN_LOCATION_PREPOSITION_RE.exec(raw)) !== null) {
+    const rest = raw.slice(match.index + match[0].length);
+    if (isTemporalLocationPhrase(rest)) continue;
+    const value = cleanPlanLocation(rest);
+    if (value) candidates.push(value);
   }
-  return "";
+  return candidates[candidates.length - 1] || "";
+}
+
+function isTemporalLocationPhrase(value) {
+  const key = normalizeQualifierKey(value);
+  if (!key || /^\d/.test(key)) return true;
+  return /^(the )?(morning|afternoon|evening|night|weekend|today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(key);
 }
 
 function cleanPlanLocation(value) {
@@ -3705,8 +3718,8 @@ async function completePlanRequest(plan, override = {}) {
   const c = buildAIContext(data, place, alerts);
   if (!c) return { answer: "I need a loaded forecast before I can check that plan." };
 
-  const dayIdx = Math.max(0, Math.min(nextPlan.dayIdx ?? 0, c.daily.length - 1));
-  if (dayIdx >= c.daily.length) {
+  const dayIdx = resolvePlanDayIndex(nextPlan, data, c);
+  if (dayIdx === null) {
     return { answer: "I can only check plans inside the next 10 days right now." };
   }
 
@@ -3738,6 +3751,15 @@ function samePlanPlace(a, b) {
   if (!a || !b) return false;
   if (a.id && b.id && a.id === b.id) return true;
   return distanceKm(a, b) < 1;
+}
+
+function resolvePlanDayIndex(plan, data, c) {
+  if (plan.targetDate) {
+    const idx = data?.daily?.time?.indexOf(plan.targetDate);
+    return idx >= 0 ? idx : null;
+  }
+  const idx = plan.dayIdx ?? 0;
+  return idx >= 0 && idx < c.daily.length ? idx : null;
 }
 
 function buildTimeClarification(plan) {
