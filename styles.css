@@ -3472,6 +3472,16 @@ body.map-immersive-active .day-sheet.show {
   font-size: 1.22rem;
   margin: 0;
 }
+.sheet-context {
+  margin: 2px 0 0;
+  color: var(--ink-faint);
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+.sheet-context[hidden] {
+  display: none;
+}
 .sheet-range {
   margin: 3px 0 0;
   font-weight: 800;

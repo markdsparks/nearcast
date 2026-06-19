@@ -1,4 +1,4 @@
-const VERSION = "1.10.111";
+const VERSION = "1.10.112";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -5008,6 +5008,7 @@ function openPlannerEventDetail(event) {
   openDayDetail({
     indices,
     title: plannerEventSheetTitle(event, dayStr, dayIndex),
+    contextLabel: plannerEventContextLabel(event),
     code,
     stormPotential: hasThunderPotentialForDay(data, dayIndex, code),
     isDay: true,
@@ -5033,6 +5034,12 @@ function plannerEventSheetTitle(event, dayStr, dayIndex) {
   const label = String(event.label || "").trim();
   if (label && label !== "custom" && label.length <= 28) return capitalize(label);
   return formatDay(dayStr, dayIndex);
+}
+
+function plannerEventContextLabel(event) {
+  const place = event?.place ? placeLabel(event.place) : "";
+  const title = String(event?.title || "").trim();
+  return ["Planner", place, title].filter(Boolean).join(" · ");
 }
 
 /* ---------- Planner launcher + sheet ---------- */
@@ -7400,7 +7407,8 @@ function openDayDetail({
   showNow = false,
   data = state.forecast,
   alerts = activeAlerts,
-  eventWindow = null
+  eventWindow = null,
+  contextLabel = ""
 }) {
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -7443,6 +7451,11 @@ function openDayDetail({
   const low = Math.round(Math.min(...temps));
 
   document.getElementById("sheetTitle").textContent = title;
+  const sheetContext = document.getElementById("sheetContext");
+  if (sheetContext) {
+    sheetContext.textContent = contextLabel || "";
+    sheetContext.hidden = !contextLabel;
+  }
   document.getElementById("sheetIcon").classList.toggle("weather-icon-with-badge", stormPotential);
   document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay) + (stormPotential ? thunderBadgeHtml() : "");
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
