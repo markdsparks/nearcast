@@ -1,4 +1,4 @@
-const VERSION = "1.10.115";
+const VERSION = "1.10.116";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -1839,7 +1839,7 @@ function renderForecast(data, place) {
 
   els.locationName.textContent = placeLabel(place);
   els.nowTemp.textContent = `${Math.round(current.temperature_2m)}${degree(tempUnit)}`;
-  els.nowSummary.textContent = buildSummary(data);
+  renderLaunchSummaryStrip(data, tempUnit, windUnit);
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = `${firstRainChance || 0}%`;
   els.wind.textContent = `${Math.round(current.wind_speed_10m)} ${windUnit}`;
@@ -2554,42 +2554,119 @@ function uvRisk(value) {
   return { label: "Low", severity: "low" };
 }
 
-function buildSummary(data) {
+function renderLaunchSummaryStrip(data, tempUnit, windUnit) {
+  if (!els.nowSummary) return;
+  const items = launchSummaryItems(data, tempUnit, windUnit);
+  els.nowSummary.classList.add("summary-strip");
+  els.nowSummary.innerHTML = items.map((item) => (
+    `<span class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}">` +
+      `<b>${escapeHtml(item.label)}</b>` +
+      `<strong>${escapeHtml(item.value)}</strong>` +
+    `</span>`
+  )).join("");
+  els.nowSummary.setAttribute("aria-label", items.map((item) => `${item.label}: ${item.value}`).join(". "));
+}
+
+function launchSummaryItems(data, tempUnit, windUnit) {
+  const current = data.current;
+  const actual = Math.round(current.temperature_2m);
+  const feels = Math.round(current.apparent_temperature);
+  const humidity = current.relative_humidity_2m ?? 0;
+  const comfort = comfortGlance(actual, feels, humidity, tempUnit).headline;
+  const now = {
+    label: "Now",
+    value: `${comfort} - feels ${feels}${degree(tempUnit)}`,
+    tone: "now"
+  };
+  const next = launchNextItem(data);
+  const later = launchLaterItem(data, tempUnit, windUnit, Boolean(next.rainSoon));
+  return [now, next, later].filter(Boolean).slice(0, 3);
+}
+
+function compactNowcastDetail(detail) {
+  return String(detail || "")
+    .replace(/^Starting in about /i, "in ")
+    .replace(/^Likely for /i, "for ")
+    .replace(/^Easing around /i, "eases ")
+    .replace(/, lasting about /i, " for ");
+}
+
+function launchNextItem(data) {
+  const nowcast = analyzeNowcast(data);
+  if (nowcast) {
+    return {
+      label: "Next",
+      value: `${nowcast.title} ${compactNowcastDetail(nowcast.detail)}`,
+      tone: nowcast.isSnow ? "snow" : "rain",
+      rainSoon: true
+    };
+  }
+
+  const currentChance = currentRainChance(data);
+  if (currentChance >= 35) {
+    return {
+      label: "Next",
+      value: `${currentChance}% rain nearby`,
+      tone: "rain",
+      rainSoon: true
+    };
+  }
+
+  const nextRain = nextRainChance(data, 12, 35);
+  if (nextRain) {
+    return {
+      label: "Next",
+      value: `Rain near ${formatTime(nextRain.time)}`,
+      tone: "rain",
+      rainSoon: true
+    };
+  }
+
+  return {
+    label: "Next",
+    value: "Dry next 2 hours",
+    tone: "dry",
+    rainSoon: false
+  };
+}
+
+function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
+  const laterRain = !rainAlreadyCovered ? nextRainChance(data, 24, 35) : null;
+  if (laterRain) {
+    return {
+      label: "Later",
+      value: `Rain near ${formatTime(laterRain.time)}`,
+      tone: "rain"
+    };
+  }
+
   const daily = data.daily;
+  const gust = Math.round(daily.wind_gusts_10m_max?.[0] || data.current.wind_gusts_10m || data.current.wind_speed_10m || 0);
+  const gustThreshold = windUnit === "mph" ? 25 : 40;
+  if (gust >= gustThreshold) {
+    return {
+      label: "Later",
+      value: `Gusts ${gust} ${windUnit}`,
+      tone: "wind"
+    };
+  }
+
   const now = forecastNowMs(data);
-  const sunriseMs = state.sunriseMs || parseForecastTimestamp(daily.sunrise[0], data);
-  const sunsetMs = state.sunsetMs || parseForecastTimestamp(daily.sunset[0], data);
-  const twoHoursMs = 2 * 60 * 60 * 1000;
-
-  const high0 = Math.round(daily.temperature_2m_max[0]);
-  const low0 = Math.round(daily.temperature_2m_min[0]);
-  const rain0 = daily.precipitation_probability_max[0] || 0;
-  const gust0 = Math.round(daily.wind_gusts_10m_max[0] || data.current.wind_gusts_10m || 0);
-
-  const high1 = Math.round(daily.temperature_2m_max[1]);
-  const rain1 = daily.precipitation_probability_max[1] || 0;
-  const gust1 = Math.round(daily.wind_gusts_10m_max[1] || 0);
-
-  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const rainPhrase = (pct) =>
-    pct >= 70 ? "rain is likely" : pct >= 40 ? "rain is possible" : "rain chances stay low";
-  const gustPhrase = (g) =>
-    g > 0 ? `Gusts may reach ${g} ${windUnit}.` : "";
-
-  const isEvening = sunsetMs && now >= sunsetMs - twoHoursMs;
-  const isMorning = sunriseMs && now < sunriseMs + twoHoursMs;
-
-  if (isEvening) {
-    const tomorrowRain = rainPhrase(rain1);
-    const gusts = gustPhrase(gust1 || gust0);
-    return `Overnight low of ${low0}°. Tomorrow: high of ${high1}°, ${tomorrowRain}. ${gusts}`.trim();
+  const sunMode = todaySunMode(data);
+  const sunsetMs = state.sunsetMs || (daily.sunset?.[0] ? parseForecastTimestamp(daily.sunset[0], data) : null);
+  if (sunMode === "normal" && sunsetMs && now < sunsetMs && daily.sunset?.[0]) {
+    return {
+      label: "Later",
+      value: `Sunset ${formatTime(daily.sunset[0])}`,
+      tone: "sun"
+    };
   }
 
-  if (isMorning || !sunriseMs) {
-    return `Today will reach a high of ${high0}°, low of ${low0}°. ${capitalize(rainPhrase(rain0))} this afternoon. ${gustPhrase(gust0)}`.trim();
-  }
-
-  return `Afternoon high near ${high0}°, dropping to ${low0}° overnight. ${capitalize(rainPhrase(rain0))} later. ${gustPhrase(gust0)}`.trim();
+  return {
+    label: "Later",
+    value: `Low ${Math.round(daily.temperature_2m_min[0])}${degree(tempUnit)} overnight`,
+    tone: "temp"
+  };
 }
 
 function capitalize(str) {
