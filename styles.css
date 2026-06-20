@@ -29,9 +29,6 @@
   --glass-heavy: rgba(250, 253, 255, 0.9);
   --glass-mid: rgba(250, 253, 255, 0.82);
   --glass-light: rgba(250, 253, 255, 0.76);
-  /* Translucent frosted fill behind the data lists so muted text reads over a
-     bright sky, while the sky still tints through and shines at the hero/edges. */
-  --content-card: rgba(250, 253, 255, 0.55);
   --glass-search: rgba(250, 253, 255, 0.82);
   --glass-result: rgba(250, 253, 255, 0.94);
   --stage-ribbon-bg: rgba(250, 253, 255, 0.78);
@@ -102,7 +99,6 @@
     --glass-heavy: rgba(22, 32, 40, 0.92);
     --glass-mid: rgba(22, 32, 40, 0.82);
     --glass-light: rgba(18, 28, 36, 0.80);
-    --content-card: rgba(20, 30, 40, 0.34);
     --glass-search: rgba(20, 30, 38, 0.88);
     --glass-result: rgba(24, 36, 44, 0.95);
     --stage-ribbon-bg: rgba(22, 32, 40, 0.54);
@@ -153,7 +149,6 @@
   --glass-heavy: rgba(22, 32, 40, 0.92);
   --glass-mid: rgba(22, 32, 40, 0.82);
   --glass-light: rgba(18, 28, 36, 0.80);
-  --content-card: rgba(20, 30, 40, 0.34);
   --glass-search: rgba(20, 30, 38, 0.88);
   --glass-result: rgba(24, 36, 44, 0.95);
   --stage-ribbon-bg: rgba(22, 32, 40, 0.54);
@@ -2374,18 +2369,16 @@ h2 {
 }
 
 .hourly-panel {
-  padding: 8px 10px 8px;
+  padding: 0 8px 10px;
   border: 0;
-  border-radius: 18px;
-  background: var(--content-card);
+  background: transparent;
   box-shadow: none;
 }
 
 .daily-panel {
-  padding: 8px 12px 10px;
+  padding: 0 8px 12px;
   border: 0;
-  border-radius: 18px;
-  background: var(--content-card);
+  background: transparent;
   box-shadow: none;
 }
 
