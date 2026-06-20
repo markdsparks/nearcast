@@ -1,4 +1,4 @@
-const VERSION = "2.2.4";
+const VERSION = "2.3.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -11,6 +11,7 @@ const state = {
   searchResults: [],
   skyCode: null,
   skyIsDay: null,
+  skyState: null,
   locationIsDay: null,
   forecastUnit: null
 };
@@ -1767,8 +1768,10 @@ function refreshOnForeground() {
   loadPlace(state.activePlace, true);
 }
 
+const FORECAST_CACHE_VERSION = "v3";
+
 async function fetchForecast(place, force = false) {
-  const cacheKey = `forecast:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+  const cacheKey = `forecast:${FORECAST_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
   const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
   const maxCacheAge = 15 * 60 * 1000;
 
@@ -1786,6 +1789,13 @@ async function fetchForecast(place, force = false) {
       "precipitation",
       "weather_code",
       "cloud_cover",
+      "cloud_cover_low",
+      "cloud_cover_mid",
+      "cloud_cover_high",
+      "visibility",
+      "shortwave_radiation",
+      "direct_radiation",
+      "diffuse_radiation",
       "wind_speed_10m",
       "wind_direction_10m",
       "wind_gusts_10m",
@@ -1798,6 +1808,13 @@ async function fetchForecast(place, force = false) {
       "precipitation",
       "weather_code",
       "cloud_cover",
+      "cloud_cover_low",
+      "cloud_cover_mid",
+      "cloud_cover_high",
+      "visibility",
+      "shortwave_radiation",
+      "direct_radiation",
+      "diffuse_radiation",
       "wind_speed_10m",
       "wind_gusts_10m",
       "uv_index",
@@ -1814,6 +1831,10 @@ async function fetchForecast(place, force = false) {
       "wind_speed_10m_max",
       "wind_gusts_10m_max",
       "uv_index_max",
+      "uv_index_clear_sky_max",
+      "daylight_duration",
+      "sunshine_duration",
+      "shortwave_radiation_sum",
       "sunrise",
       "sunset"
     ].join(","),
@@ -1930,9 +1951,11 @@ function renderForecast(data, place) {
 
   const displayCondition = currentDisplayCondition(data);
   const isDay = displayCondition.isDay;
-  state.locationIsDay = isDay;
   state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[todayIndex], data);
   state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
+  const nowCode = displayCondition.code;
+  state.skyState = deriveSkyState(nowCode, isDay, data, displayCondition);
+  state.locationIsDay = state.skyState.isDay;
   if (state.theme === "auto") applyTheme();
 
   els.locationName.textContent = placeLabel(place);
@@ -1947,7 +1970,6 @@ function renderForecast(data, place) {
   els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
 
-  const nowCode = displayCondition.code;
   const heroIcon = document.getElementById("heroIcon");
   if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
 
@@ -1960,7 +1982,7 @@ function renderForecast(data, place) {
   updateMapPlace();
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
-  updateSkyCanvas(nowCode, isDay);
+  updateSkyCanvas(nowCode, isDay, data, displayCondition);
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data)) {
@@ -8109,13 +8131,13 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v2";
+const SKY_SCENE_VERSION = "sky-v3";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
     ? `${state.activePlace.id || state.activePlace.name || "place"}:${Number(state.activePlace.latitude || 0).toFixed(2)}:${Number(state.activePlace.longitude || 0).toFixed(2)}`
     : "no-place";
-  const day = datePart(state.forecast?.current?.time) || datePart(new Date()) || "today";
+  const day = state.skyState?.dayKey || datePart(state.forecast?.current?.time) || datePart(new Date()) || "today";
   return skyHash(`${SKY_SCENE_VERSION}|${place}|${day}|${condition}|${isDay ? "day" : "night"}`);
 }
 
@@ -8149,43 +8171,274 @@ function skyCondition(code) {
   return "overcast";
 }
 
-// ---- Living sky: real sun/moon arc + time-of-day color ----
+// ---- Immersive sky: live solar light + weather texture ----------------------
 
-function skyNow() {
-  const t = state.forecast?.current?.time;
-  const ms = t ? new Date(t).getTime() : NaN;
-  return Number.isFinite(ms) ? ms : Date.now();
+const SKY_FORECAST_EDGE_MS = 60 * 60 * 1000;
+
+function skyNow(data = state.forecast) {
+  return skyNowMs(data);
 }
 
-// Sun/moon position (as viewport fractions) plus golden-hour and twilight
-// factors, derived from the selected place's ACTUAL sunrise/sunset — so the
-// light in the sky matches the light outside the window.
-function skyPhase() {
+function skyNowMs(data = state.forecast) {
+  const live = Date.now();
+  const times = data?.hourly?.time || [];
+  const first = parseForecastTimestamp(times[0], data);
+  const last = parseForecastTimestamp(times[times.length - 1], data);
+
+  if (
+    Number.isFinite(live) &&
+    first !== null &&
+    last !== null &&
+    live >= first - SKY_FORECAST_EDGE_MS &&
+    live <= last + SKY_FORECAST_EDGE_MS
+  ) {
+    return live;
+  }
+
+  const forecastNow = forecastNowMs(data);
+  return Number.isFinite(forecastNow) ? forecastNow : live;
+}
+
+function skyNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function skySeriesValue(series, index, fallback = null) {
+  if (!series || index < 0 || series[index] === undefined || series[index] === null) return fallback;
+  return skyNumber(series[index], fallback);
+}
+
+function clamp01(value) {
+  return clamp(value, 0, 1);
+}
+
+function smoothstep(edge0, edge1, value) {
+  if (edge0 === edge1) return value >= edge1 ? 1 : 0;
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+function forecastLocalDateFromMs(ms, data = state.forecast) {
+  if (!Number.isFinite(ms)) return datePart(data?.current?.time) || datePart(Date.now());
+  const d = new Date(ms + forecastOffsetMs(data));
+  return [
+    d.getUTCFullYear(),
+    String(d.getUTCMonth() + 1).padStart(2, "0"),
+    String(d.getUTCDate()).padStart(2, "0")
+  ].join("-");
+}
+
+function forecastLocalHourFromMs(ms, data = state.forecast) {
+  const d = new Date(ms + forecastOffsetMs(data));
+  return d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+}
+
+function skySolarPosition(ms, place = state.activePlace) {
+  const lat = Number(place?.latitude);
+  const lon = Number(place?.longitude);
+  if (!Number.isFinite(ms) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  const d = new Date(ms);
+  const dayStart = Date.UTC(d.getUTCFullYear(), 0, 0);
+  const dayOfYear = Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dayStart) / 86400000);
+  const minutesUtc = d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60;
+  const gamma = (2 * Math.PI / 365) * (dayOfYear - 1 + (minutesUtc / 60 - 12) / 24);
+  const eqTime = 229.18 * (
+    0.000075 +
+    0.001868 * Math.cos(gamma) -
+    0.032077 * Math.sin(gamma) -
+    0.014615 * Math.cos(2 * gamma) -
+    0.040849 * Math.sin(2 * gamma)
+  );
+  const decl = (
+    0.006918 -
+    0.399912 * Math.cos(gamma) +
+    0.070257 * Math.sin(gamma) -
+    0.006758 * Math.cos(2 * gamma) +
+    0.000907 * Math.sin(2 * gamma) -
+    0.002697 * Math.cos(3 * gamma) +
+    0.00148 * Math.sin(3 * gamma)
+  );
+  const trueSolarTime = ((minutesUtc + eqTime + 4 * lon) % 1440 + 1440) % 1440;
+  const hourAngleDeg = trueSolarTime / 4 < 0 ? trueSolarTime / 4 + 180 : trueSolarTime / 4 - 180;
+  const hourAngle = hourAngleDeg * Math.PI / 180;
+  const latRad = lat * Math.PI / 180;
+  const cosZenith = clamp(
+    Math.sin(latRad) * Math.sin(decl) +
+    Math.cos(latRad) * Math.cos(decl) * Math.cos(hourAngle),
+    -1,
+    1
+  );
+  const elevation = 90 - Math.acos(cosZenith) * 180 / Math.PI;
+  const azRad = Math.atan2(
+    Math.sin(hourAngle),
+    Math.cos(hourAngle) * Math.sin(latRad) - Math.tan(decl) * Math.cos(latRad)
+  );
+  const azimuth = (azRad * 180 / Math.PI + 180 + 360) % 360;
+  return { elevation, azimuth };
+}
+
+function skyHourlySample(data, ms, displayCondition = {}) {
+  const current = data?.current || {};
+  const idx = nearestHourlyIndexAt(data, ms, 90 * 60 * 1000);
+  const h = data?.hourly || {};
+  return {
+    index: idx,
+    cloud: skySeriesValue(h.cloud_cover, idx, displayCondition.cloud ?? current.cloud_cover),
+    lowCloud: skySeriesValue(h.cloud_cover_low, idx, current.cloud_cover_low),
+    midCloud: skySeriesValue(h.cloud_cover_mid, idx, current.cloud_cover_mid),
+    highCloud: skySeriesValue(h.cloud_cover_high, idx, current.cloud_cover_high),
+    visibility: skySeriesValue(h.visibility, idx, current.visibility),
+    precipitation: skySeriesValue(h.precipitation, idx, current.precipitation),
+    pop: skySeriesValue(h.precipitation_probability, idx, displayCondition.pop),
+    shortwave: skySeriesValue(h.shortwave_radiation, idx, current.shortwave_radiation),
+    direct: skySeriesValue(h.direct_radiation, idx, current.direct_radiation),
+    diffuse: skySeriesValue(h.diffuse_radiation, idx, current.diffuse_radiation),
+    uv: skySeriesValue(h.uv_index, idx, null),
+    isDay: h.is_day && idx >= 0 ? Boolean(h.is_day[idx]) : current.is_day !== undefined ? Boolean(current.is_day) : null
+  };
+}
+
+function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondition = {}) {
+  const now = skyNowMs(data);
+  const condition = skyCondition(weatherCode ?? displayCondition.code ?? data?.current?.weather_code ?? 3);
+  const dayIndex = forecastDailyIndex(data);
+  const sunriseMs = state.sunriseMs ?? parseForecastTimestamp(data?.daily?.sunrise?.[dayIndex], data);
+  const sunsetMs = state.sunsetMs ?? parseForecastTimestamp(data?.daily?.sunset?.[dayIndex], data);
+  const sample = skyHourlySample(data, now, displayCondition);
+  const solar = skySolarPosition(now);
+  const span = sunriseMs !== null && sunsetMs !== null && sunsetMs > sunriseMs ? sunsetMs - sunriseMs : null;
+  const dayProgress = span ? clamp01((now - sunriseMs) / span) : clamp01((forecastLocalHourFromMs(now, data) - 6) / 12);
+  const liveIsDay = span ? now >= sunriseMs && now <= sunsetMs : (solar?.elevation ?? 0) > -0.8;
+  const effectiveIsDay = liveIsDay || (isDay === true && (solar?.elevation ?? 0) > -4);
+  const fallbackElevation = span ? Math.sin(dayProgress * Math.PI) * 66 - 3 : (effectiveIsDay ? 38 : -14);
+  const elevation = solar?.elevation ?? fallbackElevation;
+  const solarLift = smoothstep(-5, 58, elevation);
+  const lowSun = effectiveIsDay ? 1 - smoothstep(7, 28, elevation) : 0;
+  const twilight = effectiveIsDay ? 0 : smoothstep(-18, -4, elevation) * (1 - smoothstep(-4, 1, elevation));
+  const golden = effectiveIsDay ? clamp01(lowSun * (0.85 + Math.max(0, 1 - dayProgress) * 0.06)) : 0;
+  const cloud = clamp(skyNumber(sample.cloud, displayCondition.cloud ?? data?.current?.cloud_cover ?? 0), 0, 100);
+  const lowCloud = clamp(skyNumber(sample.lowCloud, cloud * 0.55), 0, 100);
+  const midCloud = clamp(skyNumber(sample.midCloud, cloud * 0.45), 0, 100);
+  const highCloud = clamp(skyNumber(sample.highCloud, cloud * 0.35), 0, 100);
+  const visibilityKm = sample.visibility !== null ? Math.max(0, sample.visibility / 1000) : null;
+  const visibilityHaze = visibilityKm === null ? 0 : clamp01((18 - visibilityKm) / 14);
+  const humidity = skyNumber(data?.current?.relative_humidity_2m, null);
+  const humidityHaze = humidity === null ? 0 : clamp01((humidity - 72) / 24) * 0.32;
+  const haze = clamp01(visibilityHaze + (condition === "rain" || condition === "thunder" ? 0 : humidityHaze) + highCloud / 360);
+  const shortwave = skyNumber(sample.shortwave, null);
+  const direct = skyNumber(sample.direct, null);
+  const diffuse = skyNumber(sample.diffuse, null);
+  const radiation = shortwave !== null ? clamp01(shortwave / 860) : null;
+  const directness = shortwave && shortwave > 20 ? clamp01((direct ?? 0) / shortwave) : solarLift * (1 - cloud / 130);
+  const cloudShade = clamp01((cloud - 18) / 82);
+  const wetness = condition === "rain" || condition === "thunder"
+    ? clamp01((skyNumber(sample.pop, displayCondition.pop ?? 0) - 20) / 70 + skyNumber(sample.precipitation, 0) * 0.7)
+    : 0;
+  const diffuseGlow = diffuse !== null ? clamp01(diffuse / 300) : clamp01(cloud / 140);
+  const daytimeBrightness = clamp01(
+    0.24 +
+    (radiation ?? solarLift) * 0.64 * (1 - cloudShade * 0.58) +
+    diffuseGlow * 0.14 -
+    wetness * 0.14
+  );
+  const nightBrightness = clamp(0.06 + twilight * 0.26 + (condition === "clear" ? 0.05 : 0) - cloudShade * 0.025, 0.04, 0.34);
+  const brightness = effectiveIsDay ? daytimeBrightness : nightBrightness;
+  const warmth = effectiveIsDay
+    ? clamp01(golden * (0.88 - cloudShade * 0.20) + haze * 0.18)
+    : clamp01(twilight * 0.78 + haze * 0.08);
+  const localHour = forecastLocalHourFromMs(now, data);
+  const nightProgress = clamp01(localHour >= 18 ? (localHour - 18) / 12 : (localHour + 6) / 12);
+  const x = effectiveIsDay ? 0.14 + dayProgress * 0.72 : 0.52 + nightProgress * 0.32;
+  const y = effectiveIsDay
+    ? clamp(0.285 - solarLift * 0.235 + haze * 0.018, 0.055, 0.305)
+    : 0.085 - Math.sin(nightProgress * Math.PI) * 0.04 + twilight * 0.035;
+
+  return {
+    nowMs: now,
+    dayKey: forecastLocalDateFromMs(now, data),
+    condition,
+    isDay: effectiveIsDay,
+    sourceIsDay: isDay,
+    hourIndex: sample.index,
+    sunriseMs,
+    sunsetMs,
+    dayProgress,
+    localHour,
+    elevation,
+    azimuth: solar?.azimuth ?? null,
+    x,
+    y,
+    golden,
+    twilight,
+    brightness,
+    warmth,
+    haze,
+    cloud,
+    lowCloud,
+    midCloud,
+    highCloud,
+    directness,
+    wetness,
+    precipitation: skyNumber(sample.precipitation, 0),
+    pop: skyNumber(sample.pop, displayCondition.pop ?? 0)
+  };
+}
+
+function skyPhase(skyState = state.skyState) {
+  if (skyState) {
+    return {
+      isDay: skyState.isDay,
+      golden: skyState.golden,
+      twilight: skyState.twilight,
+      x: skyState.x,
+      y: skyState.y,
+      brightness: skyState.brightness,
+      warmth: skyState.warmth,
+      haze: skyState.haze,
+      cloud: skyState.cloud,
+      directness: skyState.directness
+    };
+  }
+
   const now = skyNow();
   const sr = state.sunriseMs, ss = state.sunsetMs;
   const isDay = state.skyIsDay !== false;
   if (!sr || !ss || ss <= sr) {
-    return { isDay, golden: 0, twilight: 0, x: isDay ? 0.3 : 0.66, y: 0.12 };
+    return { isDay, golden: 0, twilight: 0, x: isDay ? 0.3 : 0.66, y: 0.12, brightness: isDay ? 0.62 : 0.12, warmth: 0, haze: 0, cloud: 0, directness: 0.8 };
   }
-  const GOLDEN = 60 * 60 * 1000;    // warm window each side of a horizon
-  const TWILIGHT = 80 * 60 * 1000;  // afterglow window past dusk / before dawn
   const span = ss - sr;
   if (now >= sr && now <= ss) {
-    const p = (now - sr) / span;             // 0 sunrise → 1 sunset
-    const altitude = Math.sin(p * Math.PI);  // 0 at the horizons, 1 at noon
+    const p = (now - sr) / span;
+    const altitude = Math.sin(p * Math.PI);
     const edge = Math.min(now - sr, ss - now);
-    // Keep the sun above the hero text: horizons ~0.26, noon ~0.06.
     return {
-      isDay: true, golden: Math.max(0, 1 - edge / GOLDEN), twilight: 0,
-      x: 0.14 + p * 0.72, y: 0.26 - altitude * 0.20
+      isDay: true,
+      golden: Math.max(0, 1 - edge / (60 * 60 * 1000)),
+      twilight: 0,
+      x: 0.14 + p * 0.72,
+      y: 0.26 - altitude * 0.20,
+      brightness: 0.34 + altitude * 0.48,
+      warmth: Math.max(0, 1 - edge / (60 * 60 * 1000)),
+      haze: 0,
+      cloud: 0,
+      directness: 0.8
     };
   }
   const edge = now > ss ? now - ss : sr - now;
   const np = now > ss ? Math.min((now - ss) / span, 1) : 1 - Math.min((sr - now) / span, 1);
-  // Moon: upper-right band, clear of the top-left menu button and the hero text.
   return {
-    isDay: false, golden: 0, twilight: Math.max(0, 1 - edge / TWILIGHT),
-    x: 0.52 + np * 0.32, y: 0.085 - Math.sin(Math.max(np, 0) * Math.PI) * 0.04
+    isDay: false,
+    golden: 0,
+    twilight: Math.max(0, 1 - edge / (80 * 60 * 1000)),
+    x: 0.52 + np * 0.32,
+    y: 0.085 - Math.sin(Math.max(np, 0) * Math.PI) * 0.04,
+    brightness: 0.1,
+    warmth: Math.max(0, 1 - edge / (80 * 60 * 1000)) * 0.7,
+    haze: 0,
+    cloud: 0,
+    directness: 0
   };
 }
 
@@ -8199,23 +8452,69 @@ function lerpHex(a, b, t) {
   return `#${(0x1000000 + (ch(16) << 16) + (ch(8) << 8) + ch(0)).toString(16).slice(1)}`;
 }
 
-// Time-aware gradient for clear / partly-cloudy skies (warm at golden hour,
-// mauve at twilight, deep at night). Other conditions keep their static cfg.bg.
-function skyGradientStops(condition, phase) {
-  if (condition !== "clear" && condition !== "partly-cloudy") return null;
-  if (phase.isDay) {
-    const day    = ["#5d92d8", "#9fc4e8", "#d4e6f4"];
-    const golden = ["#3a5e9c", "#cf7e57", "#f4b06a"];
-    return { angle: 180, positions: [0, 52, 100], stops: day.map((c, i) => lerpHex(c, golden[i], phase.golden)) };
-  }
-  const night    = ["#04080f", "#091428", "#0d1c3c"];
-  const twilight = ["#0c1430", "#2c2f59", "#6f4f68"];
-  return { angle: 160, positions: [0, 55, 100], stops: night.map((c, i) => lerpHex(c, twilight[i], phase.twilight)) };
+function blendStopSet(stops, target, t) {
+  return stops.map((c, i) => lerpHex(c, target[i] || target[target.length - 1] || c, t));
 }
 
-function skyBackgroundCss(condition) {
-  const phase = skyPhase();
-  const g = skyGradientStops(condition, phase);
+function skyGradientStops(condition, phase, skyState = state.skyState) {
+  if (phase.isDay) {
+    const base = {
+      clear: ["#5f96db", "#a7ccea", "#e2f0f7"],
+      "partly-cloudy": ["#78a7d7", "#b8d3e6", "#e5eff5"],
+      overcast: ["#879ba8", "#bac7cf", "#dde5ea"],
+      rain: ["#627887", "#a3b3bf", "#d2dbe1"],
+      snow: ["#a5b8c7", "#cbd8e1", "#eef4f7"],
+      thunder: ["#455461", "#7b8994", "#b5c0ca"]
+    }[condition] || ["#879ba8", "#bac7cf", "#dde5ea"];
+    const bright = {
+      clear: ["#6ca8ec", "#bee0f6", "#f6fcff"],
+      "partly-cloudy": ["#82b2e2", "#c5e0f1", "#f2f8fb"],
+      overcast: ["#9eafbb", "#ccd7de", "#edf2f5"],
+      rain: ["#748d9f", "#b4c3cd", "#e0e7eb"],
+      snow: ["#b7ccdc", "#dbe8ef", "#fbfdff"],
+      thunder: ["#566878", "#8f9fa9", "#c9d3dc"]
+    }[condition] || base;
+    const warm = {
+      clear: ["#446ca6", "#d98b62", "#f7bf77"],
+      "partly-cloudy": ["#607faf", "#d5a078", "#f4c992"],
+      overcast: ["#7c8790", "#c6aa92", "#e5d1bd"],
+      rain: ["#5f7180", "#aa9787", "#d6c2b0"],
+      snow: ["#9caebe", "#d8c7b7", "#f4e3d4"],
+      thunder: ["#424957", "#7b6f6c", "#b49a86"]
+    }[condition] || base;
+    const haze = ["#8aa7bc", "#c7d4db", "#eef2f1"];
+    const brightness = skyState ? skyState.brightness : 0.62;
+    const cloud = skyState ? skyState.cloud / 100 : phase.cloud / 100;
+    let stops = blendStopSet(base, bright, clamp01((brightness - 0.55) / 0.35) * 0.62);
+    stops = blendStopSet(stops, warm, clamp01(phase.warmth ?? phase.golden) * (condition === "clear" || condition === "partly-cloudy" ? 0.88 : 0.46));
+    stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.75 + cloud * 0.18));
+    return { angle: 180, positions: [0, 54, 100], stops };
+  }
+  const nightBase = {
+    clear: ["#04080f", "#091428", "#0d1c3c"],
+    "partly-cloudy": ["#070b16", "#0c1630", "#14213d"],
+    overcast: ["#090b11", "#141922", "#202837"],
+    rain: ["#050709", "#0b0f17", "#15202c"],
+    snow: ["#090d18", "#121a2b", "#233149"],
+    thunder: ["#040406", "#09090e", "#151520"]
+  }[condition] || ["#090b11", "#141922", "#202837"];
+  const twilight = {
+    clear: ["#0c1430", "#2c2f59", "#6f4f68"],
+    "partly-cloudy": ["#10172f", "#313554", "#6b596d"],
+    overcast: ["#161a25", "#353948", "#675c68"],
+    rain: ["#0d1119", "#252d3d", "#4f5364"],
+    snow: ["#111a2d", "#2b3b58", "#65708a"],
+    thunder: ["#08090f", "#1b1d29", "#45424d"]
+  }[condition] || nightBase;
+  const haze = ["#111827", "#273343", "#505b6a"];
+  let stops = blendStopSet(nightBase, twilight, clamp01(phase.twilight));
+  stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.45 + (phase.cloud ?? 0) / 220));
+  return { angle: 160, positions: [0, 55, 100], stops };
+}
+
+function skyBackgroundCss(condition, skyState = state.skyState) {
+  const phase = skyPhase(skyState);
+  const g = skyGradientStops(condition, phase, skyState);
   if (g) {
     const css = `linear-gradient(${g.angle}deg, ${g.stops.map((c, i) => `${c} ${g.positions[i]}%`).join(", ")})`;
     return { css, top: g.stops[0], phase };
@@ -8236,7 +8535,25 @@ function moonPhase(ms) {
 
 let skyMaskCounter = 0;
 
-function updateSkyCanvas(weatherCode, isDay) {
+function applySkyAtmosphereTokens(skyState) {
+  const root = document.documentElement;
+  if (!skyState) {
+    root.removeAttribute("data-sky-tone");
+    root.style.removeProperty("--sky-veil-opacity");
+    return;
+  }
+
+  const tone = skyState.isDay
+    ? skyState.warmth > 0.48 ? "warm" : skyState.brightness > 0.68 ? "bright" : skyState.haze > 0.38 ? "hazy" : "soft"
+    : skyState.twilight > 0.35 ? "twilight" : "night";
+  const veil = skyState.isDay
+    ? clamp(0.42 + skyState.brightness * 0.26 + skyState.haze * 0.10 - skyState.warmth * 0.16, 0.30, 0.78)
+    : clamp(0.02 + skyState.twilight * 0.18 + skyState.haze * 0.04, 0, 0.22);
+  root.dataset.skyTone = tone;
+  root.style.setProperty("--sky-veil-opacity", veil.toFixed(2));
+}
+
+function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondition = null) {
   const el = document.getElementById("skyCanvas");
   if (!el) return;
 
@@ -8244,14 +8561,21 @@ function updateSkyCanvas(weatherCode, isDay) {
   state.skyIsDay = isDay;
 
   if (state.theme !== "auto") {
+    state.skyState = null;
     clearSkyCanvas();
     return;
   }
 
-  const condition = skyCondition(weatherCode);
-  document.documentElement.dataset.sky = condition + "-" + (isDay ? "day" : "night");
-  updateSkyChrome(condition, isDay);
-  renderSkyScene(el, condition, isDay);
+  const display = displayCondition || currentDisplayCondition(data);
+  const skyState = deriveSkyState(weatherCode, isDay, data, display);
+  state.skyState = skyState;
+  state.locationIsDay = skyState.isDay;
+
+  const condition = skyState.condition;
+  document.documentElement.dataset.sky = condition + "-" + (skyState.isDay ? "day" : "night");
+  applySkyAtmosphereTokens(skyState);
+  updateSkyChrome(condition, skyState.isDay, skyState);
+  renderSkyScene(el, condition, skyState.isDay, skyState);
 }
 
 function clearSkyCanvas() {
@@ -8260,19 +8584,20 @@ function clearSkyCanvas() {
   el.style.background = "";
   el.innerHTML = "";
   document.documentElement.removeAttribute("data-sky");
+  applySkyAtmosphereTokens(null);
   updateSkyChrome(null, null);
 }
 
-function updateSkyChrome(condition, isDay) {
+function updateSkyChrome(condition, isDay, skyState = state.skyState) {
   if (condition) {
-    setThemeChromeColor(skyChromeColor(condition, isDay));
+    setThemeChromeColor(skyChromeColor(condition, isDay, skyState));
     return;
   }
   setThemeChromeColor(defaultChromeColor());
 }
 
-function skyChromeColor(condition, isDay) {
-  return skyBackgroundCss(condition).top || defaultChromeColor();
+function skyChromeColor(condition, isDay, skyState = state.skyState) {
+  return skyBackgroundCss(condition, skyState).top || defaultChromeColor();
 }
 
 function firstHexColor(value) {
@@ -8289,14 +8614,48 @@ function setThemeChromeColor(color) {
   if (els.statusBarMeta) els.statusBarMeta.setAttribute("content", "black-translucent");
 }
 
-function renderSkyScene(el, condition, isDay) {
+function skySceneConfig(condition, isDay, skyState = state.skyState) {
+  const tod = isDay ? "day" : "night";
+  const base = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
+  if (!skyState) return base;
+
+  const cloudPct = clamp(skyState.cloud, 0, 100);
+  const lowCloud = clamp01(skyState.lowCloud / 100);
+  const highCloud = clamp01(skyState.highCloud / 100);
+  const precipCloudBonus = condition === "rain" || condition === "snow" || condition === "thunder" ? 1 : 0;
+  const clouds = Math.round(clamp(
+    cloudPct / 18 + lowCloud * 1.2 + highCloud * 0.4 + precipCloudBonus,
+    condition === "clear" ? 0 : 1,
+    condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
+  ));
+  const moonVisible = !isDay && cloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
+  const sunVisible = isDay &&
+    condition !== "thunder" &&
+    (condition === "clear" || condition === "partly-cloudy" || skyState.directness > 0.23 || cloudPct < 72);
+  const stars = !isDay
+    ? Math.round((base.stars || 0) * (1 - skyState.twilight * 0.85) * (1 - cloudPct / 130) * (1 - skyState.haze * 0.55))
+    : 0;
+
+  return {
+    ...base,
+    stars: Math.max(0, stars),
+    moon: moonVisible && (base.moon || condition === "overcast"),
+    moonGlow: !moonVisible && !isDay && cloudPct < 92 && condition !== "thunder",
+    sun: sunVisible,
+    clouds,
+    rain: base.rain,
+    snow: base.snow,
+    lightning: base.lightning
+  };
+}
+
+function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const tod = isDay ? "day" : "night";
-  const cfg = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
+  const cfg = skySceneConfig(condition, isDay, skyState);
   const sceneSeed = skySceneSeed(condition, isDay);
   const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
-  const bg = skyBackgroundCss(condition);
+  const bg = skyBackgroundCss(condition, skyState);
   const phase = bg.phase;
 
   el.style.background = bg.css;
@@ -8308,9 +8667,10 @@ function renderSkyScene(el, condition, isDay) {
   if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow")));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
   if (cfg.sun)          parts.push(skySun(vw, vh, phase));
-  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds")));
-  if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain")));
-  if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow")));
+  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds"), skyState));
+  if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
+  if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain"), skyState));
+  if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState));
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
@@ -8343,7 +8703,7 @@ function skyStars(vw, vh, count, rng) {
 
 function skyMoon(vw, vh, phase) {
   const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 42;
-  const { illum, waxing } = moonPhase(skyNow());
+  const { illum, waxing } = moonPhase(state.skyState?.nowMs ?? skyNow());
   // Carve the phase: white disc minus an offset black disc → crescent → gibbous.
   const sep = illum * 2 * r;
   const sx = (cx + (waxing ? -sep : sep)).toFixed(1);
@@ -8366,32 +8726,36 @@ function skyMoonGlow(vw, vh, rng) {
 
 function skySun(vw, vh, phase) {
   const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 46;
-  const warm = phase.golden;
+  const warm = phase.warmth ?? phase.golden;
+  const brightness = phase.brightness ?? 0.68;
+  const directness = phase.directness ?? 0.7;
+  const haze = phase.haze ?? 0;
   const core = lerpHex("#ffdf67", "#ff9a3c", warm);
-  const halo = lerpHex("#ffd34f", "#ff8a4a", warm);
+  const halo = lerpHex(lerpHex("#ffe56f", "#fff3a6", clamp01((brightness - 0.55) / 0.32)), "#ff8a4a", warm);
   return `
-    <circle cx="${cx}" cy="${cy}" r="${r * 4.0}" fill="${halo}" opacity="${(0.14 + warm * 0.16).toFixed(2)}" filter="url(#sky-glow-f)"/>
-    <circle cx="${cx}" cy="${cy}" r="${r * 2.0}" fill="#fff0a8" opacity="0.15" filter="url(#sky-glow-f)"/>
-    <g transform="translate(${cx} ${cy})">${skySunRays(r, warm)}</g>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${core}" opacity="0.95"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * (4.1 + haze * 1.3)}" fill="${halo}" opacity="${(0.13 + warm * 0.18 + haze * 0.10).toFixed(2)}" filter="url(#sky-glow-f)"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * (1.9 + brightness * 0.65)}" fill="#fff5b4" opacity="${(0.12 + brightness * 0.11).toFixed(2)}" filter="url(#sky-glow-f)"/>
+    <g transform="translate(${cx} ${cy})">${skySunRays(r, warm, directness)}</g>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${core}" opacity="${(0.74 + directness * 0.23).toFixed(2)}"/>
     <circle cx="${cx - 13}" cy="${cy - 13}" r="${Math.round(r * 0.52)}" fill="#fff7b6" opacity="0.22"/>
   `;
 }
 
-function skySunRays(r, warm) {
+function skySunRays(r, warm, directness = 0.7) {
   let lines = "";
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
     lines += `<line x1="${(Math.cos(a) * r * 1.45).toFixed(0)}" y1="${(Math.sin(a) * r * 1.45).toFixed(0)}" x2="${(Math.cos(a) * r * 2.6).toFixed(0)}" y2="${(Math.sin(a) * r * 2.6).toFixed(0)}" stroke="#fff0b0" stroke-width="2.4" stroke-linecap="round"/>`;
   }
-  return `<g class="sky-sun-rays" opacity="${(0.10 + warm * 0.10).toFixed(2)}">${lines}</g>`;
+  return `<g class="sky-sun-rays" opacity="${(0.05 + directness * 0.13 + warm * 0.08).toFixed(2)}">${lines}</g>`;
 }
 
 // Warm bloom around a low sun during golden hour.
 function skyHorizonGlow(vw, vh, phase) {
   const gx = Math.round(vw * phase.x);
   const gy = Math.round(vh * (phase.y + 0.05));
-  return `<ellipse cx="${gx}" cy="${gy}" rx="${Math.round(vw * 0.62)}" ry="${Math.round(vh * 0.2)}" fill="#ff9d5a" opacity="${(phase.golden * 0.42).toFixed(2)}" filter="url(#sky-glow-f)"/>`;
+  const warm = phase.warmth ?? phase.golden;
+  return `<ellipse cx="${gx}" cy="${gy}" rx="${Math.round(vw * 0.62)}" ry="${Math.round(vh * 0.2)}" fill="#ff9d5a" opacity="${(warm * 0.42).toFixed(2)}" filter="url(#sky-glow-f)"/>`;
 }
 
 // One rare meteor streak on clear nights — a small surprise, not a feature.
@@ -8403,22 +8767,33 @@ function skyShootingStar(vw, vh, rng) {
   return `<line x1="${x}" y1="${y}" x2="${(Number(x) - len * 0.92).toFixed(0)}" y2="${(Number(y) + len * 0.4).toFixed(0)}" class="sky-shoot" stroke="#ffffff" stroke-width="2" stroke-linecap="round" style="animation-delay:${delay}s"/>`;
 }
 
-function skyClouds(vw, vh, count, isDay, condition, rng) {
+function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
   const isRainy = condition === "rain" || condition === "thunder";
   const isOvercast = condition === "overcast";
+  const cloudDepth = skyState ? clamp01(skyState.cloud / 100) : (isOvercast || isRainy ? 0.82 : 0.35);
+  const lowLayer = skyState ? clamp01(skyState.lowCloud / 100) : 0.5;
+  const highLayer = skyState ? clamp01(skyState.highCloud / 100) : 0.3;
+  const haze = skyState?.haze ?? 0;
   let out = "";
   for (let c = 0; c < count; c++) {
     const bx = rng() * vw * 1.26 - vw * 0.13;
-    const by = vh * (isRainy ? 0.06 + rng() * 0.17 : isOvercast ? 0.05 + rng() * 0.24 : 0.08 + rng() * 0.30);
-    const scale = 0.78 + rng() * 0.82;
+    const layerLift = highLayer * 0.045 - lowLayer * 0.035;
+    const by = vh * (
+      isRainy ? 0.06 + rng() * 0.17 + layerLift :
+      isOvercast ? 0.05 + rng() * 0.24 + layerLift :
+      0.08 + rng() * 0.30 + layerLift
+    );
+    const scale = 0.72 + rng() * 0.84 + cloudDepth * 0.22;
     const dur = (105 + rng() * 80).toFixed(0);
     const delay = (rng() * 90).toFixed(0);
     const dir = rng() > 0.5 ? "normal" : "reverse";
 
     let fill;
-    if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : "#2d3b55");
-    else        fill = isRainy ? "#55606a" : (isOvercast ? "#8d98a2" : "#eef5fb");
-    const op = (isOvercast || isRainy ? 0.62 + rng() * 0.20 : 0.40 + rng() * 0.20).toFixed(2);
+    if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : lerpHex("#2d3b55", "#46546b", haze));
+    else if (isRainy) fill = lerpHex("#55606a", "#6f7c86", haze * 0.45);
+    else if (isOvercast) fill = lerpHex("#8d98a2", "#a8b3bc", haze * 0.5);
+    else fill = lerpHex("#f4f9fd", "#c5d0d8", cloudDepth * 0.34 + haze * 0.28);
+    const op = clamp((isOvercast || isRainy ? 0.58 : 0.34) + cloudDepth * 0.28 + rng() * 0.14, 0.22, 0.88).toFixed(2);
 
     const bodyWidth = (280 + rng() * 260) * scale;
     const bodyHeight = (42 + rng() * 36) * scale;
@@ -8442,28 +8817,44 @@ function skyClouds(vw, vh, count, isDay, condition, rng) {
   return out;
 }
 
-function skyRain(vw, vh, heavy = false, rng) {
+function skyHaze(vw, vh, skyState) {
+  const haze = clamp01(skyState?.haze ?? 0);
+  const warm = clamp01(skyState?.warmth ?? 0);
+  const cloud = clamp01((skyState?.cloud ?? 0) / 100);
+  const topOpacity = clamp(haze * 0.20 + warm * 0.08 + cloud * 0.04, 0.02, 0.26);
+  const horizonOpacity = clamp(haze * 0.30 + warm * 0.18, 0.03, 0.36);
+  const fill = lerpHex("#dcebf4", "#ffd0a0", warm);
+  return `
+    <rect x="0" y="0" width="${vw}" height="${vh}" fill="${fill}" opacity="${topOpacity.toFixed(2)}"/>
+    <ellipse cx="${Math.round(vw * 0.5)}" cy="${Math.round(vh * 0.78)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.28)}" fill="${fill}" opacity="${horizonOpacity.toFixed(2)}" filter="url(#sky-glow-f)"/>
+  `;
+}
+
+function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   let out = "";
-  const count = heavy ? 90 : 60;
+  const intensity = skyState ? clamp01((skyState.wetness || 0) + (skyState.precipitation || 0) * 0.35) : (heavy ? 1 : 0.55);
+  const count = Math.round((heavy ? 74 : 42) + intensity * 46);
   for (let i = 0; i < count; i++) {
     const x = (rng() * vw * 1.4).toFixed(0);
-    const dur = ((heavy ? 0.9 : 1.1) + rng() * 0.5).toFixed(2);
+    const dur = ((heavy ? 0.82 : 1.04) - intensity * 0.16 + rng() * 0.5).toFixed(2);
     const delay = (rng() * 2.5).toFixed(2);
-    const op = ((heavy ? 0.45 : 0.35) + rng() * 0.3).toFixed(2);
-    const len = Math.round((heavy ? 22 : 14) + rng() * (heavy ? 20 : 12));
-    const dx = heavy ? 22 : 16;
-    const w = heavy ? 1.6 : 1.3;
+    const op = ((heavy ? 0.42 : 0.28) + intensity * 0.22 + rng() * 0.22).toFixed(2);
+    const len = Math.round((heavy ? 22 : 14) + intensity * 14 + rng() * (heavy ? 20 : 12));
+    const dx = heavy ? 22 + intensity * 7 : 16 + intensity * 5;
+    const w = heavy ? 1.55 + intensity * 0.35 : 1.18 + intensity * 0.28;
     out += `<line x1="${x}" y1="0" x2="${Number(x) + dx}" y2="${len}" class="sky-rain" style="animation-delay:-${delay}s;animation-duration:${dur}s" stroke="rgba(160,185,215,${op})" stroke-width="${w}" stroke-linecap="round"/>`;
   }
   return out;
 }
 
-function skySnow(vw, vh, rng) {
+function skySnow(vw, vh, rng, skyState = null) {
   let out = "";
-  for (let i = 0; i < 42; i++) {
+  const intensity = skyState ? clamp01((skyState.pop - 20) / 70 + (skyState.precipitation || 0) * 0.5) : 0.45;
+  const count = Math.round(34 + intensity * 30);
+  for (let i = 0; i < count; i++) {
     const x = (rng() * vw).toFixed(0);
-    const r = (1.5 + rng() * 2.5).toFixed(1);
-    const dur = (4 + rng() * 6).toFixed(1);
+    const r = (1.4 + intensity * 0.8 + rng() * 2.5).toFixed(1);
+    const dur = (3.8 + rng() * 6 - intensity * 0.7).toFixed(1);
     const delay = (rng() * 8).toFixed(1);
     const drift = ((rng() * 50) - 25).toFixed(0);
     out += `<circle cx="${x}" cy="-5" r="${r}" fill="white" opacity="0.8" class="sky-snow" style="--drift:${drift}px;animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
@@ -8503,9 +8894,25 @@ function skyLightning(vw, vh, rng) {
 window.addEventListener("resize", () => {
   if (state.skyCode !== null && state.theme === "auto") {
     const el = document.getElementById("skyCanvas");
-    if (el) renderSkyScene(el, skyCondition(state.skyCode), state.skyIsDay);
+    if (el) renderSkyScene(el, state.skyState?.condition || skyCondition(state.skyCode), state.skyState?.isDay ?? state.skyIsDay, state.skyState);
   }
 });
+
+function refreshSkyForLiveTime() {
+  if (state.skyCode === null || state.theme !== "auto" || !state.forecast) return;
+  const display = currentDisplayCondition(state.forecast);
+  const nextSkyState = deriveSkyState(state.skyCode, state.skyIsDay, state.forecast, display);
+  const dayChanged = state.locationIsDay !== nextSkyState.isDay;
+  state.skyState = nextSkyState;
+  state.locationIsDay = nextSkyState.isDay;
+  if (dayChanged) {
+    applyTheme();
+    return;
+  }
+  updateSkyCanvas(state.skyCode, state.skyIsDay, state.forecast, display);
+}
+
+window.setInterval(refreshSkyForLiveTime, 60 * 1000);
 
 /* ---------- Day-detail bottom sheet ---------- */
 

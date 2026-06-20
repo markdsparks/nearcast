@@ -351,6 +351,58 @@
   --loading-chip-bg: linear-gradient(135deg, rgba(18, 21, 31, 0.76), rgba(8, 9, 15, 0.60));
 }
 
+:root[data-theme="light"][data-sky-tone="bright"] {
+  --hero-card-bg:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(218, 240, 252, 0.62));
+  --hero-card-overlay:
+    radial-gradient(circle at 18% 13%, rgba(255, 239, 142, 0.30), transparent 31%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(75, 127, 170, 0.12));
+  --hero-panel-bg: rgba(255, 255, 255, 0.64);
+  --status-card-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.90), rgba(225, 243, 253, 0.76));
+  --status-card-border: rgba(51, 113, 187, 0.78);
+  --loading-chip-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(225, 243, 253, 0.58));
+}
+
+:root[data-theme="light"][data-sky-tone="warm"] {
+  --hero-card-bg:
+    linear-gradient(145deg, rgba(255, 245, 229, 0.28), rgba(255, 255, 255, 0.05)),
+    linear-gradient(135deg, rgba(255, 250, 239, 0.80), rgba(238, 215, 196, 0.60));
+  --hero-card-overlay:
+    radial-gradient(circle at 20% 13%, rgba(255, 171, 84, 0.30), transparent 32%),
+    linear-gradient(180deg, rgba(255, 239, 210, 0.10), rgba(145, 91, 69, 0.13));
+  --hero-panel-bg: rgba(255, 250, 239, 0.62);
+  --status-card-bg: linear-gradient(135deg, rgba(255, 250, 241, 0.88), rgba(238, 218, 201, 0.74));
+  --status-card-border: rgba(181, 105, 42, 0.78);
+  --loading-chip-bg: linear-gradient(135deg, rgba(255, 250, 241, 0.70), rgba(238, 218, 201, 0.54));
+}
+
+:root[data-theme="light"][data-sky-tone="hazy"] {
+  --hero-card-bg:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.05)),
+    linear-gradient(135deg, rgba(250, 253, 253, 0.78), rgba(218, 228, 232, 0.62));
+  --hero-card-overlay:
+    radial-gradient(circle at 20% 14%, rgba(255, 255, 255, 0.22), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(92, 112, 124, 0.13));
+  --hero-panel-bg: rgba(250, 253, 253, 0.60);
+  --status-card-bg: linear-gradient(135deg, rgba(250, 253, 253, 0.86), rgba(218, 228, 232, 0.74));
+  --status-card-border: rgba(91, 120, 138, 0.70);
+  --loading-chip-bg: linear-gradient(135deg, rgba(250, 253, 253, 0.68), rgba(218, 228, 232, 0.54));
+}
+
+:root[data-theme="dark"][data-sky-tone="twilight"] {
+  --hero-card-bg:
+    linear-gradient(145deg, rgba(210, 150, 170, 0.12), rgba(255, 255, 255, 0.02)),
+    linear-gradient(135deg, rgba(24, 29, 50, 0.80), rgba(35, 31, 49, 0.62));
+  --hero-card-overlay:
+    radial-gradient(circle at 21% 14%, rgba(250, 168, 117, 0.14), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.18));
+  --hero-panel-bg: rgba(27, 31, 51, 0.56);
+  --status-card-bg: linear-gradient(135deg, rgba(27, 31, 51, 0.84), rgba(35, 31, 49, 0.70));
+  --status-card-border: rgba(190, 126, 153, 0.62);
+  --loading-chip-bg: linear-gradient(135deg, rgba(27, 31, 51, 0.72), rgba(35, 31, 49, 0.56));
+}
+
 * {
   box-sizing: border-box;
 }
@@ -411,7 +463,11 @@ html[data-sky] body {
 }
 
 :root[data-theme="light"][data-sky$="-day"] #skyCanvas::after {
-  opacity: 1;
+  opacity: var(--sky-veil-opacity, 0.62);
+}
+
+:root[data-theme="dark"][data-sky$="-night"] #skyCanvas::after {
+  opacity: var(--sky-veil-opacity, 0.08);
 }
 
 #skyCanvas svg {
