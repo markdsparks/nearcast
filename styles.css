@@ -2580,6 +2580,8 @@ h2 {
 .daily {
   display: grid;
   gap: 0;
+  --daily-label-col: 176px;
+  --daily-rain-col: 72px;
 }
 
 .day-label {
@@ -2612,7 +2614,7 @@ h2 {
 .day-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(148px, 176px) minmax(220px, 1fr) minmax(72px, auto);
+  grid-template-columns: var(--daily-label-col) minmax(0, 1fr) var(--daily-rain-col);
   gap: 18px;
   align-items: center;
   min-height: 66px;
@@ -2641,6 +2643,8 @@ h2 {
 
 .day-name {
   font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2660,6 +2664,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .day-low,
@@ -2668,7 +2673,7 @@ h2 {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  min-width: 2.4ch;
+  width: 2.6ch;
 }
 
 .day-low {
@@ -2682,6 +2687,7 @@ h2 {
 
 .temp-track {
   flex: 1;
+  min-width: 0;
   height: 6px;
   border-radius: 999px;
   background: var(--border-glass);
@@ -2699,7 +2705,8 @@ h2 {
   flex-direction: column;
   gap: 2px;
   justify-self: end;
-  min-width: 72px;
+  width: var(--daily-rain-col);
+  min-width: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -3810,9 +3817,13 @@ body.map-immersive-active #mapLegend {
 
   /* Keep the 10-day rows on a single tight line (no wrapping the temp track
      to a second row) so all 10 days are scannable with minimal scrolling. */
+  .daily {
+    --daily-label-col: clamp(118px, 34vw, 142px);
+    --daily-rain-col: 58px;
+  }
+
   .day-row {
-    grid-template-columns: minmax(0, auto) minmax(84px, 1fr) auto;
-    gap: 10px;
+    gap: 8px;
     min-height: 50px;
     padding: 8px 0 8px 12px;
   }
