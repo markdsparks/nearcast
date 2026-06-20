@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.3.1">
+    <link rel="stylesheet" href="styles.css?v=2.3.2">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -221,7 +221,10 @@
         <section class="panel hourly-panel">
           <div class="section-head">
             <h2>Next 24 Hours</h2>
-            <span id="updatedAt">Not loaded</span>
+            <div class="section-meta">
+              <span id="updatedAt">Not loaded</span>
+              <small class="truth-receipt" id="weatherTruthReceipt" hidden></small>
+            </div>
           </div>
           <div class="hourly" id="hourly"></div>
         </section>
@@ -405,6 +408,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=2.3.1"></script>
+    <script src="app.js?v=2.3.2"></script>
   </body>
 </html>
