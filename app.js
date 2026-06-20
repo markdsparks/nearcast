@@ -1,4 +1,4 @@
-const VERSION = "2.3.5";
+const VERSION = "2.3.7";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -2405,6 +2405,15 @@ function aqiBand(value) {
   return { label: "Hazardous", short: "Hazardous", mood: "Hazardous air", severity: "hazardous", rank: 5, color: "#8d3150", glow: "rgba(141, 49, 80, 0.48)", advice: "Stay inside if possible" };
 }
 
+const AQI_SCALE = [
+  { range: "0-50", label: "Good", severity: "good", color: "#24b46b", note: "Little or no risk." },
+  { range: "51-100", label: "Moderate", severity: "moderate", color: "#e3b72f", note: "Fine for most; sensitive people may notice it." },
+  { range: "101-150", label: "Sensitive groups", severity: "sensitive", color: "#ef8a2f", note: "Sensitive groups should ease up." },
+  { range: "151-200", label: "Unhealthy", severity: "unhealthy", color: "#df4f55", note: "Everyone may feel effects." },
+  { range: "201-300", label: "Very unhealthy", severity: "very-unhealthy", color: "#9a62d0", note: "Limit outdoor time." },
+  { range: "301+", label: "Hazardous", severity: "hazardous", color: "#8d3150", note: "Emergency conditions." }
+];
+
 function pollenBand(value) {
   const grains = finiteValue(value);
   if (grains === null) return null;
@@ -2552,6 +2561,45 @@ function airQualityVisualHtml(air) {
     </span>`;
 }
 
+function airQualityTipHtml(air) {
+  if (!air) return "";
+  const currentRows = [
+    air.aqi !== null ? ["AQI", `${air.aqi}`, air.band?.label || ""] : null,
+    air.pm25 !== null ? ["PM2.5", `${Math.round(air.pm25)} ug/m3`, "Fine particles"] : null,
+    air.pm10 !== null ? ["PM10", `${Math.round(air.pm10)} ug/m3`, "Coarse particles"] : null,
+    air.pollen ? ["Pollen", `${capitalize(air.pollen.label)} ${air.pollen.levelLabel}`, "Outdoor allergens"] : null
+  ].filter(Boolean);
+  const scaleRows = AQI_SCALE.map((item) => `
+    <li class="aqi-scale-row aqi-${escapeHtml(item.severity)}">
+      <span class="aqi-scale-dot" style="--aqi-color:${escapeHtml(item.color)}" aria-hidden="true"></span>
+      <strong>${escapeHtml(item.range)}</strong>
+      <b>${escapeHtml(item.label)}</b>
+      <em>${escapeHtml(item.note)}</em>
+    </li>
+  `).join("");
+  const currentHtml = currentRows.map(([label, value, detail]) => `
+    <div class="air-tip-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${detail ? `<em>${escapeHtml(detail)}</em>` : ""}
+    </div>
+  `).join("");
+  return `
+    <section class="air-tip">
+      <header class="air-tip-head">
+        <span class="air-tip-kicker">Air Quality Index</span>
+        <strong>${escapeHtml(air.visualLabel || air.display || "Air")}</strong>
+        <small>${escapeHtml(air.band?.advice || air.context || "Air data nearby.")}</small>
+      </header>
+      <div class="air-tip-stats">${currentHtml}</div>
+      <div class="air-tip-scale">
+        <span class="air-tip-scale-title">AQI ranges</span>
+        <ol>${scaleRows}</ol>
+      </div>
+    </section>
+  `;
+}
+
 function airGlance(data, humidityValue) {
   const air = airQualitySummary(data);
   if (air) {
@@ -2565,6 +2613,7 @@ function airGlance(data, humidityValue) {
       label: "Air",
       value: air.visualLabel,
       html: airQualityVisualHtml(air),
+      tipHtml: airQualityTipHtml(air),
       context: `${air.aqi !== null ? `AQI ${air.aqi}` : air.context}${pollenNote ? ` · ${pollenNote}` : peakNote}`.trim(),
       visible: true,
       summary: air
@@ -8276,6 +8325,10 @@ function bindMetricTips(data, tempUnit, windUnit) {
   document.querySelectorAll(".today-glance .has-tip").forEach((card) => {
     card.classList.remove("has-tip");
     delete card.dataset.tip;
+    delete card.dataset.tipHtml;
+    card.removeAttribute("tabindex");
+    card.removeAttribute("role");
+    card.removeAttribute("aria-label");
   });
   const current = data.current;
   const isFahrenheit = tempUnit === "F";
@@ -8285,20 +8338,25 @@ function bindMetricTips(data, tempUnit, windUnit) {
   const rainVal = currentRainChance(data);
   const windVal = Math.round(current.wind_speed_10m);
   const humidityVal = current.relative_humidity_2m ?? 0;
+  const air = airGlance(data, humidityVal);
 
   const tips = {
     feelsLike: metricTipFeels(diff, feelsVal, tempUnit),
     rainChance: metricTipRain(rainVal),
     wind: metricTipWind(windVal, windUnit),
-    humidity: metricTipHumidity(humidityVal)
+    humidity: air.tipHtml || metricTipHumidity(humidityVal)
   };
 
   Object.entries(tips).forEach(([id, tip]) => {
     if (!tip) return;
     const card = document.getElementById(id)?.closest(".glance-signal");
     if (!card) return;
-    card.dataset.tip = tip;
+    if (id === "humidity" && air.tipHtml) card.dataset.tipHtml = tip;
+    else card.dataset.tip = tip;
     card.classList.add("has-tip");
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", id === "humidity" && air.tipHtml ? "Show AQI scale and air details" : "Show weather detail");
   });
 }
 
@@ -8337,9 +8395,12 @@ function metricTipHumidity(pct) {
 let activeTipCard = null;
 
 function showMetricTip(card) {
+  const tipHtml = card.dataset.tipHtml;
   const tip = card.dataset.tip;
-  if (!tip) return;
-  els.metricTip.textContent = tip;
+  if (!tip && !tipHtml) return;
+  els.metricTip.classList.toggle("metric-tip-rich", Boolean(tipHtml));
+  if (tipHtml) els.metricTip.innerHTML = tipHtml;
+  else els.metricTip.textContent = tip;
   els.metricTip.hidden = false;
 
   const rect = card.getBoundingClientRect();
@@ -8348,6 +8409,7 @@ function showMetricTip(card) {
   let top = rect.bottom + 10;
   // If the tip would be clipped at the bottom, flip it above the card instead
   if (top + tipRect.height > window.innerHeight - 8) top = rect.top - tipRect.height - 10;
+  top = Math.max(8, Math.min(top, window.innerHeight - tipRect.height - 8));
   let left = rect.left + rect.width / 2 - tipRect.width / 2;
   left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
   els.metricTip.style.top = `${top}px`;
@@ -8357,6 +8419,7 @@ function showMetricTip(card) {
 
 function hideMetricTip() {
   els.metricTip.hidden = true;
+  els.metricTip.classList.remove("metric-tip-rich");
   activeTipCard = null;
 }
 
@@ -8467,6 +8530,21 @@ function initMetricTipListeners() {
     if (activeTipCard === touch.card) hideMetricTip();
     else showMetricTip(touch.card);
   }, { passive: false });
+
+  metricsEl.addEventListener("click", (event) => {
+    const card = event.target.closest(".has-tip");
+    if (!card) return;
+    showMetricTip(card);
+  });
+
+  metricsEl.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".has-tip");
+    if (!card) return;
+    event.preventDefault();
+    if (activeTipCard === card) hideMetricTip();
+    else showMetricTip(card);
+  });
 
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".today-glance") && !event.target.closest("#metricTip")) {
