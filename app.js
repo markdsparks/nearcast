@@ -1,4 +1,4 @@
-const VERSION = "2.3.4";
+const VERSION = "2.3.5";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -2289,9 +2289,19 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   if (els.rainContext) els.rainContext.textContent = rain.context;
   if (els.windContext) els.windContext.textContent = wind.context;
   if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
-  if (els.humidity) els.humidity.textContent = air.value;
+  if (els.humidity) {
+    if (air.html) els.humidity.innerHTML = air.html;
+    else els.humidity.textContent = air.value;
+  }
   if (els.humidityContext) els.humidityContext.textContent = air.context;
-  if (els.humiditySignal) els.humiditySignal.classList.toggle("is-visible", air.visible);
+  if (els.humiditySignal) {
+    els.humiditySignal.classList.toggle("is-visible", air.visible);
+    els.humiditySignal.classList.toggle("air-quality-card", Boolean(air.summary));
+    ["air-good", "air-moderate", "air-sensitive", "air-unhealthy", "air-very-unhealthy", "air-hazardous"].forEach((className) => {
+      els.humiditySignal.classList.remove(className);
+    });
+    if (air.summary?.band?.severity) els.humiditySignal.classList.add(`air-${air.summary.band.severity}`);
+  }
   if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", air.visible);
 
   renderDaylightGlance(data, uvVal, todayIndex);
@@ -2387,12 +2397,12 @@ function finiteValue(value) {
 
 function aqiBand(value) {
   const aqi = Math.round(Number(value || 0));
-  if (aqi <= 50) return { label: "Good", short: "Good", severity: "good", rank: 0, advice: "Air looks good" };
-  if (aqi <= 100) return { label: "Moderate", short: "Moderate", severity: "moderate", rank: 1, advice: "Fine for most people" };
-  if (aqi <= 150) return { label: "Unhealthy for sensitive groups", short: "Sensitive groups", severity: "sensitive", rank: 2, advice: "Sensitive folks should ease up" };
-  if (aqi <= 200) return { label: "Unhealthy", short: "Unhealthy", severity: "unhealthy", rank: 3, advice: "Keep hard efforts short" };
-  if (aqi <= 300) return { label: "Very unhealthy", short: "Very unhealthy", severity: "very-unhealthy", rank: 4, advice: "Limit outdoor time" };
-  return { label: "Hazardous", short: "Hazardous", severity: "hazardous", rank: 5, advice: "Stay inside if possible" };
+  if (aqi <= 50) return { label: "Good", short: "Good", mood: "Good air", severity: "good", rank: 0, color: "#24b46b", glow: "rgba(36, 180, 107, 0.38)", advice: "Air looks good" };
+  if (aqi <= 100) return { label: "Moderate", short: "Moderate", mood: "Moderate air", severity: "moderate", rank: 1, color: "#e3b72f", glow: "rgba(227, 183, 47, 0.38)", advice: "Fine for most people" };
+  if (aqi <= 150) return { label: "Unhealthy for sensitive groups", short: "Sensitive groups", mood: "Sensitive air", severity: "sensitive", rank: 2, color: "#ef8a2f", glow: "rgba(239, 138, 47, 0.42)", advice: "Sensitive folks should ease up" };
+  if (aqi <= 200) return { label: "Unhealthy", short: "Unhealthy", mood: "Unhealthy air", severity: "unhealthy", rank: 3, color: "#df4f55", glow: "rgba(223, 79, 85, 0.44)", advice: "Keep hard efforts short" };
+  if (aqi <= 300) return { label: "Very unhealthy", short: "Very unhealthy", mood: "Very unhealthy", severity: "very-unhealthy", rank: 4, color: "#9a62d0", glow: "rgba(154, 98, 208, 0.46)", advice: "Limit outdoor time" };
+  return { label: "Hazardous", short: "Hazardous", mood: "Hazardous air", severity: "hazardous", rank: 5, color: "#8d3150", glow: "rgba(141, 49, 80, 0.48)", advice: "Stay inside if possible" };
 }
 
 function pollenBand(value) {
@@ -2489,7 +2499,7 @@ function airQualitySummary(data = state.forecast) {
   const band = aqi !== null ? aqiBand(aqi) : null;
   const peakAqi = peak?.value !== null && peak?.value !== undefined ? Math.round(peak.value) : null;
   const aqiRounded = aqi !== null ? Math.round(aqi) : null;
-  const display = aqiRounded !== null ? `AQI ${aqiRounded}` : pollen ? `${capitalize(pollen.label)} pollen` : "Air";
+  const display = band?.mood || (pollen ? `${capitalize(pollen.label)} pollen` : "Air");
   const context = band
     ? `${band.short}${pollen && pollen.rank >= 2 ? ` · ${capitalize(pollen.label)} pollen ${pollen.levelLabel}` : ""}`
     : pollen
@@ -2512,10 +2522,34 @@ function airQualitySummary(data = state.forecast) {
     band,
     pollen,
     display,
+    visualLabel: display,
     context,
     headline,
     source: "Open-Meteo/CAMS"
   };
+}
+
+function airQualityVisualHtml(air) {
+  const band = air?.band;
+  const aqi = air?.aqi;
+  const level = aqi !== null && aqi !== undefined
+    ? `${clamp(Math.round((Math.min(aqi, 300) / 300) * 100), 4, 100)}%`
+    : "18%";
+  const color = band?.color || "#7ca7ff";
+  const glow = band?.glow || "rgba(124, 167, 255, 0.36)";
+  const label = air?.visualLabel || "Air";
+  const sub = aqi !== null && aqi !== undefined ? `AQI ${aqi}` : air?.context || "Air data";
+  return `
+    <span class="air-visual" aria-label="${escapeHtml(`${label}${aqi !== null && aqi !== undefined ? `, AQI ${aqi}` : ""}`)}">
+      <span class="air-orb" style="--air-accent:${escapeHtml(color)};--air-glow:${escapeHtml(glow)};--air-level:${level};" aria-hidden="true">
+        <span class="air-orb-core"></span>
+        <span class="air-orb-mist"></span>
+      </span>
+      <span class="air-visual-copy">
+        <b>${escapeHtml(label)}</b>
+        <em>${escapeHtml(sub)}</em>
+      </span>
+    </span>`;
 }
 
 function airGlance(data, humidityValue) {
@@ -2524,10 +2558,14 @@ function airGlance(data, humidityValue) {
     const pollenNote = air.pollen && air.pollen.rank >= 2
       ? `${capitalize(air.pollen.label)} pollen ${air.pollen.levelLabel}`
       : "";
+    const peakNote = air.peakAqi !== null && air.aqi !== null && air.peakAqi >= air.aqi + 20
+      ? ` · peaks ${air.peakAqi}${air.peakTime ? ` near ${formatTime(air.peakTime)}` : ""}`
+      : "";
     return {
       label: "Air",
-      value: air.display,
-      context: pollenNote || air.context,
+      value: air.visualLabel,
+      html: airQualityVisualHtml(air),
+      context: `${air.aqi !== null ? `AQI ${air.aqi}` : air.context}${pollenNote ? ` · ${pollenNote}` : peakNote}`.trim(),
       visible: true,
       summary: air
     };
