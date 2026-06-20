@@ -1,4 +1,4 @@
-const VERSION = "2.1.4";
+const VERSION = "2.1.5";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -789,6 +789,19 @@ function init() {
 }
 
 const TAP_MOVE_TOLERANCE = 22;
+let clickThroughGuardUntil = 0;
+
+function guardNextClickThrough(durationMs = 450) {
+  clickThroughGuardUntil = Math.max(clickThroughGuardUntil, Date.now() + durationMs);
+}
+
+function blockGuardedClickThrough(event) {
+  if (Date.now() > clickThroughGuardUntil) return;
+  clickThroughGuardUntil = 0;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+}
 
 function bindTapAction(element, action, options = {}) {
   if (!element) return;
@@ -871,6 +884,8 @@ function bindTapDelegate(container, selector, action, options = {}) {
 }
 
 function bindEvents() {
+  document.addEventListener("click", blockGuardedClickThrough, true);
+
   els.searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const query = els.placeSearch.value.trim();
@@ -7888,7 +7903,10 @@ function updateImmersiveHUD() {
 }
 
 function bindImmersiveModeButtons() {
-  bindTapAction(document.getElementById("collapseMap"), exitImmersiveMap);
+  bindTapAction(document.getElementById("collapseMap"), () => {
+    guardNextClickThrough();
+    exitImmersiveMap();
+  });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   const slider = document.getElementById("immSlider");
