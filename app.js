@@ -1,4 +1,4 @@
-const VERSION = "2.3.0";
+const VERSION = "2.3.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -617,6 +617,62 @@ const PRECIP_FEATURE_POP = 30; // POP% at/above which precipitation is featured
 const RAIN_LIKELY_POP = 60; // High POP can outrank a plain sky/cloud code
 const THUNDER_POTENTIAL_POP = 20; // Lower-confidence thunder gets a badge, not the main icon
 
+function forecastUsesInches(data = state.forecast) {
+  const unit = data?.current_units?.precipitation ||
+    data?.hourly_units?.precipitation ||
+    data?.minutely_15_units?.precipitation ||
+    "";
+  if (unit) return /inch|in\b/i.test(unit);
+  return state.unit === "fahrenheit";
+}
+
+function precipRateThresholds(data = state.forecast) {
+  return forecastUsesInches(data)
+    ? { measurable: 0.008, moderate: 0.1, heavy: 0.3 }
+    : { measurable: 0.2, moderate: 2.5, heavy: 7.6 };
+}
+
+function precipRateFromAmount(amount, intervalSeconds = 3600) {
+  const value = Number(amount || 0);
+  const seconds = Number(intervalSeconds) > 0 ? Number(intervalSeconds) : 3600;
+  return value > 0 ? value * 3600 / seconds : 0;
+}
+
+function isSnowCode(code) {
+  return (code >= 71 && code <= 77) || code === 85 || code === 86;
+}
+
+function precipCodeFromRate(rate, baseCode = null, data = state.forecast) {
+  const value = Number(rate || 0);
+  const thresholds = precipRateThresholds(data);
+  if (value < thresholds.measurable) return null;
+  if (isThunderCode(baseCode)) return baseCode;
+  if (isSnowCode(baseCode)) {
+    if (value >= thresholds.heavy) return 75;
+    if (value >= thresholds.moderate) return 73;
+    return 71;
+  }
+  if (value >= thresholds.heavy) return 65;
+  if (value >= thresholds.moderate) return 63;
+  return 61;
+}
+
+function precipCodeWeight(code) {
+  if (isThunderCode(code)) return 70;
+  if (code === 65 || code === 67 || code === 75 || code === 82 || code === 86) return 60;
+  if (code === 63 || code === 73 || code === 80 || code === 81 || code === 85) return 50;
+  if (code === 61 || code === 66 || code === 71 || code === 77) return 40;
+  if (code >= 51 && code <= 57) return 30;
+  if (code === RAIN_LIKELY_CODE) return 20;
+  return 0;
+}
+
+function strongerPrecipCode(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return precipCodeWeight(b) > precipCodeWeight(a) ? b : a;
+}
+
 function skyCodeFromCloud(cloudPct) {
   if (cloudPct == null) return 2; // unknown → partly cloudy
   if (cloudPct < 15) return 0;    // clear
@@ -626,11 +682,17 @@ function skyCodeFromCloud(cloudPct) {
 }
 
 // code: WMO weather code; pop: precip probability %; cloudPct: cloud cover %.
-function effectiveWeatherCode(code, pop, cloudPct) {
-  if (code == null) return code;
+function effectiveWeatherCode(code, pop, cloudPct, precipAmount = 0, options = {}) {
+  const rate = Number.isFinite(options.precipRate)
+    ? options.precipRate
+    : precipRateFromAmount(precipAmount, options.intervalSeconds || 3600);
+  const measuredCode = precipCodeFromRate(rate, code, options.data);
+  if (code == null) return measuredCode ?? code;
   if (code < 51) {
+    if (measuredCode) return measuredCode;
     return (pop || 0) >= RAIN_LIKELY_POP ? RAIN_LIKELY_CODE : code;
   }
+  if (measuredCode) return strongerPrecipCode(code, measuredCode);
   if (pop == null || pop >= PRECIP_FEATURE_POP) return code; // precip likely → keep
   return skyCodeFromCloud(cloudPct);                         // unlikely → show sky
 }
@@ -643,10 +705,11 @@ function isPrecipCode(code) {
   return code === RAIN_LIKELY_CODE || (code >= 51 && code <= 86);
 }
 
-function hasThunderPotential(rawCode, pop, shownCode) {
+function hasThunderPotential(rawCode, pop, shownCode, precipAmount = 0, data = state.forecast) {
+  const measured = precipCodeFromRate(precipRateFromAmount(precipAmount), rawCode, data);
   return isThunderCode(rawCode) &&
     !isThunderCode(shownCode) &&
-    (pop || 0) >= THUNDER_POTENTIAL_POP;
+    ((pop || 0) >= THUNDER_POTENTIAL_POP || Boolean(measured));
 }
 
 function dailyConditionLabel(code) {
@@ -670,33 +733,106 @@ function effectiveCurrentCode(current) {
   return skyCodeFromCloud(current.cloud_cover);
 }
 
+function nowPrecipSignal(data = state.forecast) {
+  const current = data?.current || {};
+  const hourly = data?.hourly || {};
+  const currentIndex = currentHourlyIndex(data);
+  const hourlyPop = currentIndex >= 0 ? (hourly.precipitation_probability?.[currentIndex] || 0) : 0;
+  const signal = {
+    isWetNow: false,
+    isSnow: false,
+    rate: 0,
+    amount: 0,
+    code: null,
+    chance: hourlyPop,
+    label: "",
+    detail: "",
+    nowcast: null
+  };
+  const consider = (amount, intervalSeconds, code, chance = 0, isSnow = false) => {
+    const rate = precipRateFromAmount(amount, intervalSeconds);
+    const measuredCode = precipCodeFromRate(rate, isSnow ? 71 : code, data);
+    if (!measuredCode) return;
+    if (rate >= signal.rate) {
+      signal.rate = rate;
+      signal.amount = Number(amount || 0);
+      signal.code = strongerPrecipCode(signal.code, measuredCode);
+      signal.isSnow = isSnow || isSnowCode(measuredCode);
+    }
+    signal.chance = Math.max(signal.chance, chance || 0, 100);
+  };
+
+  consider(current.precipitation, current.interval || 3600, current.weather_code, 0);
+  if (currentIndex >= 0) {
+    consider(
+      hourly.precipitation?.[currentIndex],
+      3600,
+      hourly.weather_code?.[currentIndex],
+      hourlyPop
+    );
+  }
+
+  const nowcast = analyzeNowcast(data);
+  if (nowcast?.wet?.[0]) {
+    const slot = nowcast.slots?.[0];
+    consider(slot?.precip, 15 * 60, nowcast.isSnow ? 71 : signal.code, slot?.prob, nowcast.isSnow);
+    signal.nowcast = nowcast;
+    signal.detail = nowcast.detail;
+    signal.label = nowcast.title.replace(/\s+now$/i, "");
+  }
+
+  signal.isWetNow = signal.rate >= precipRateThresholds(data).measurable;
+  if (signal.isWetNow && !signal.label) {
+    signal.label = weatherCodes[signal.code] || (signal.isSnow ? "Snow" : "Rain");
+  }
+  return signal;
+}
+
 function currentDisplayCondition(data = state.forecast) {
   const current = data?.current || {};
   const fallbackIsDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
   const currentIndex = currentHourlyIndex(data);
   const hourly = data?.hourly || {};
+  const nowPrecip = nowPrecipSignal(data);
 
   if (currentIndex >= 0 && hourly.weather_code?.[currentIndex] != null) {
     const rawCode = hourly.weather_code[currentIndex];
     const pop = hourly.precipitation_probability ? (hourly.precipitation_probability[currentIndex] || 0) : null;
     const cloud = hourly.cloud_cover ? hourly.cloud_cover[currentIndex] : current.cloud_cover;
+    const precip = hourly.precipitation?.[currentIndex] || 0;
+    const hourlyCode = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
+    const currentRate = precipRateFromAmount(current.precipitation, current.interval || 3600);
+    const currentCode = effectiveWeatherCode(current.weather_code, null, current.cloud_cover, current.precipitation, {
+      data,
+      precipRate: currentRate
+    });
+    const measuredCode = nowPrecip.isWetNow ? strongerPrecipCode(currentCode, nowPrecip.code) : null;
+    const code = measuredCode ? strongerPrecipCode(hourlyCode, measuredCode) : hourlyCode;
     return {
-      code: effectiveWeatherCode(rawCode, pop, cloud),
+      code,
       rawCode,
-      pop,
+      pop: nowPrecip.isWetNow ? Math.max(pop || 0, nowPrecip.chance) : pop,
       cloud,
       isDay: hourly.is_day ? Boolean(hourly.is_day[currentIndex]) : fallbackIsDay,
-      hourlyIndex: currentIndex
+      hourlyIndex: currentIndex,
+      precip: Math.max(precip, nowPrecip.amount || 0, current.precipitation || 0),
+      nowPrecip,
+      stormPotential: hasThunderPotential(rawCode, pop, code, precip, data)
     };
   }
 
+  const fallbackCode = effectiveCurrentCode(current);
+  const code = nowPrecip.isWetNow ? strongerPrecipCode(fallbackCode, nowPrecip.code) : fallbackCode;
   return {
-    code: effectiveCurrentCode(current),
+    code,
     rawCode: current.weather_code,
-    pop: null,
+    pop: nowPrecip.isWetNow ? nowPrecip.chance : null,
     cloud: current.cloud_cover,
     isDay: fallbackIsDay,
-    hourlyIndex: -1
+    hourlyIndex: -1,
+    precip: Math.max(nowPrecip.amount || 0, current.precipitation || 0),
+    nowPrecip,
+    stormPotential: false
   };
 }
 
@@ -727,7 +863,8 @@ function representativeDailyCode(data, dayIndex) {
     if (!h.time[i].startsWith(dayStr)) continue;
     const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
     const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
+    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
     if (eff >= 51) {
       const score = precipRank(eff) * 1000 + pop; // severity first, likelihood breaks ties
       if (score > precipScore) { precipScore = score; precipCode = eff; }
@@ -750,8 +887,9 @@ function hasThunderPotentialForDay(data, dayIndex, shownCode) {
     if (!time.startsWith(dayStr)) return false;
     const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
     const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
-    return hasThunderPotential(h.weather_code[i], pop, eff);
+    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
+    return hasThunderPotential(h.weather_code[i], pop, eff, precip, data);
   });
 }
 
@@ -762,8 +900,9 @@ function hasThunderPotentialForIndices(data, indices, shownCode) {
   return indices.some((i) => {
     const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
     const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud);
-    return hasThunderPotential(h.weather_code[i], pop, eff);
+    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
+    return hasThunderPotential(h.weather_code[i], pop, eff, precip, data);
   });
 }
 
@@ -1232,6 +1371,8 @@ function currentHourlyIndex(data = state.forecast) {
 }
 
 function currentRainChance(data = state.forecast) {
+  const nowPrecip = nowPrecipSignal(data);
+  if (nowPrecip.isWetNow) return nowPrecip.chance;
   const chances = data?.hourly?.precipitation_probability || [];
   const currentIndex = currentHourlyIndex(data);
   if (currentIndex >= 0) return chances[currentIndex] ?? 0;
@@ -1962,7 +2103,7 @@ function renderForecast(data, place) {
   els.nowTemp.textContent = `${Math.round(current.temperature_2m)}${degree(tempUnit)}`;
   renderLaunchSummaryStrip(data, tempUnit, windUnit);
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
-  els.rainChance.textContent = `${firstRainChance || 0}%`;
+  els.rainChance.textContent = displayCondition.nowPrecip?.isWetNow ? "Now" : `${firstRainChance || 0}%`;
   els.wind.textContent = `${Math.round(current.wind_speed_10m)} ${windUnit}`;
   els.uv.textContent = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   els.humidity.textContent = `${current.relative_humidity_2m ?? "--"}%`;
@@ -2031,6 +2172,14 @@ function feelsContext(diff, tempUnit) {
 }
 
 function rainGlance(data, currentChance) {
+  const nowPrecip = nowPrecipSignal(data);
+  if (nowPrecip.isWetNow) {
+    return {
+      headline: `${nowPrecip.label.toLowerCase()} now`,
+      context: nowPrecip.detail || "Happening now"
+    };
+  }
+
   if (currentChance >= 60) return { headline: "rain likely now", context: `${currentChance}% now` };
   if (currentChance >= 30) return { headline: "rain possible now", context: `${currentChance}% now` };
 
@@ -2702,13 +2851,20 @@ function launchSummaryItems(data, tempUnit, windUnit) {
   const feels = Math.round(current.apparent_temperature);
   const humidity = current.relative_humidity_2m ?? 0;
   const comfort = comfortGlance(actual, feels, humidity, tempUnit).headline;
+  const nowPrecip = nowPrecipSignal(data);
   const now = {
     label: "Now",
-    value: `${comfort} - feels ${feels}${degree(tempUnit)}`,
-    tone: "now",
-    target: launchDetailTarget(data, "Now", `${comfort} - feels ${feels}${degree(tempUnit)}`, forecastNowMs(data), { hours: 1 })
+    value: nowPrecip.isWetNow ? `${nowPrecip.label} now` : `${comfort} - feels ${feels}${degree(tempUnit)}`,
+    tone: nowPrecip.isWetNow ? (nowPrecip.isSnow ? "snow" : "rain") : "now",
+    target: launchDetailTarget(
+      data,
+      "Now",
+      nowPrecip.isWetNow ? `${nowPrecip.label} now` : `${comfort} - feels ${feels}${degree(tempUnit)}`,
+      forecastNowMs(data),
+      { hours: 1 }
+    )
   };
-  const next = launchNextItem(data);
+  const next = launchNextItem(data, { nowPrecipCovered: nowPrecip.isWetNow });
   const later = launchLaterItem(data, tempUnit, windUnit, Boolean(next.rainSoon));
   return [now, next, later].filter(Boolean).slice(0, 3);
 }
@@ -2744,14 +2900,16 @@ function compactNowcastDetail(detail) {
     .replace(/, lasting about /i, " for ");
 }
 
-function launchNextItem(data) {
+function launchNextItem(data, options = {}) {
   const nowcast = analyzeNowcast(data);
   if (nowcast) {
     const wetIndex = nowcast.wet.findIndex(Boolean);
     const targetMs = nowcast.wet[0]
       ? forecastNowMs(data)
       : wetIndex >= 0 ? nowcast.slots[wetIndex]?.t : forecastNowMs(data);
-    const value = `${nowcast.title} ${compactNowcastDetail(nowcast.detail)}`;
+    const value = options.nowPrecipCovered && nowcast.wet[0]
+      ? compactNowcastDetail(nowcast.detail).replace(/^eases /i, "Eases ")
+      : `${nowcast.title} ${compactNowcastDetail(nowcast.detail)}`;
     return {
       label: "Next",
       value,
@@ -5836,24 +5994,37 @@ function renderHourly(data, tempUnit) {
 
   // Compact, scannable columns — tap any hour to open that hour expanded.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
-    const rain = data.hourly.precipitation_probability[index] || 0;
+    let rain = data.hourly.precipitation_probability[index] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[index] : null;
-    const rawCode = data.hourly.weather_code[index];
-    const wcode = effectiveWeatherCode(rawCode, rain, cloud);
+    let rawCode = data.hourly.weather_code[index];
+    let precip = data.hourly.precipitation?.[index] || 0;
+    let wcode = effectiveWeatherCode(rawCode, rain, cloud, precip, { data });
+    let stormPotential = hasThunderPotential(rawCode, rain, wcode, precip, data);
+    if (position === 0) {
+      const display = currentDisplayCondition(data);
+      rawCode = display.rawCode;
+      wcode = display.code;
+      rain = display.nowPrecip?.isWetNow ? display.nowPrecip.chance : Math.max(rain, display.pop || 0);
+      precip = Math.max(precip, display.precip || 0);
+      stormPotential = display.stormPotential || hasThunderPotential(rawCode, display.pop, wcode, precip, data);
+    }
+    const measuredRate = precipRateFromAmount(precip);
+    const measuredWet = measuredRate >= precipRateThresholds(data).measurable || (position === 0 && currentDisplayCondition(data).nowPrecip?.isWetNow);
     const code = weatherCodes[wcode] || "Weather";
-    const stormPotential = hasThunderPotential(rawCode, rain, wcode);
     const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
     const title = stormPotential ? `${code}; thunder possible` : code;
-    const cardLabel = `${label}: ${code}, ${temp} degrees${rain >= 20 ? `, ${rain}% rain` : ""}. Show hourly details.`;
+    const rainLabel = measuredWet ? "Rain" : rain >= 20 ? `${rain}%` : "";
+    const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rain)) : rain;
+    const cardLabel = `${label}: ${code}, ${temp} degrees${measuredWet ? ", rain" : rain >= 20 ? `, ${rain}% rain` : ""}. Show hourly details.`;
     return `
       <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(title)}">
         <span class="hour-label">${label}</span>
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
-        <span class="hour-rain${rain >= 20 ? " wet" : ""}">${rain >= 20 ? `${rain}%` : ""}</span>
-        <div class="rain-bar" aria-hidden="true"><i style="width:${rain}%"></i></div>
+        <span class="hour-rain${rainLabel ? " wet" : ""}">${rainLabel}</span>
+        <div class="rain-bar" aria-hidden="true"><i style="width:${rainBarWidth}%"></i></div>
       </article>
     `;
   }).join("");
@@ -9047,7 +9218,8 @@ function openDayDetail({
     const rawCode = data.hourly.weather_code[h];
     const pop = data.hourly.precipitation_probability[h] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
-    const code = effectiveWeatherCode(rawCode, pop, cloud);
+    const precip = data.hourly.precipitation[h] || 0;
+    const code = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
     const ms = parseForecastTimestamp(data.hourly.time[h], data);
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
@@ -9062,13 +9234,13 @@ function openDayDetail({
       temp: data.hourly.temperature_2m[h],
       feels: data.hourly.apparent_temperature[h],
       pop,
-      precip: data.hourly.precipitation[h] || 0,
+      precip,
       wind: data.hourly.wind_speed_10m[h],
       gust: data.hourly.wind_gusts_10m[h],
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
       code,
-      stormPotential: hasThunderPotential(rawCode, pop, code),
+      stormPotential: hasThunderPotential(rawCode, pop, code, precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
       eventLabel: inEvent ? (eventWindow.badgeLabel || "Plan") : "",
