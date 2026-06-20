@@ -1,4 +1,4 @@
-const VERSION = "2.1.5";
+const VERSION = "2.1.6";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -4041,6 +4041,18 @@ const PLAN_LOCATION_IGNORE = new Set([
   "the", "tonight", "night", "the rain", "rain", "weather", "the weather"
 ]);
 const PLAN_LOCATION_PREPOSITION_RE = /\b(?:in|near|around|at)\s+/gi;
+const PLAN_IMPLICIT_LOCATION_DROP_WORDS = new Set([
+  "i", "me", "my", "m", "we", "us", "our", "re", "ve", "you", "your",
+  "can", "could", "should", "would", "will", "do", "does", "did",
+  "am", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "got", "get", "need", "want", "maybe", "please", "pls",
+  "a", "an", "the", "this", "that", "these", "those",
+  "to", "for", "of", "on", "at", "from", "between", "before", "after", "around", "about", "by",
+  "go", "going", "planning", "plan", "plans", "check", "checking",
+  "look", "looks", "looking", "weather", "forecast", "conditions",
+  "outside", "outdoors", "outdoor", "inside"
+]);
+let planActivityLocationWordCache = null;
 
 function answerPlanRequest(question) {
   const c = buildAIContext();
@@ -4250,6 +4262,103 @@ function cleanPlanLocation(value) {
   return key && !PLAN_LOCATION_IGNORE.has(key) ? text : "";
 }
 
+async function inferImplicitPlanLocation(plan) {
+  const candidates = implicitPlanLocationCandidates(plan);
+  for (const query of candidates) {
+    try {
+      const options = await fetchPlannerPlaceOptions(query);
+      if (isLikelyImplicitPlanLocation(query, options)) return { query, options };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function implicitPlanLocationCandidates(plan) {
+  const s = plannerParseText(plan?.original || "").trim();
+  if (!s) return [];
+  const activityWords = planActivityLocationWords();
+  const tokens = s
+    .split(/\s+/)
+    .map((token) => plannerCanonicalTerm(token) || token)
+    .filter((token) => !shouldDropImplicitLocationToken(token, activityWords));
+  const candidates = [];
+  const add = (value) => {
+    const query = cleanImplicitPlanLocation(value);
+    const key = normalizeQualifierKey(query);
+    if (!isViableImplicitLocationQuery(query) || candidates.some((item) => normalizeQualifierKey(item) === key)) return;
+    candidates.push(query);
+  };
+
+  add(tokens.join(" "));
+  for (let count = Math.min(5, tokens.length - 1); count >= 1; count -= 1) {
+    add(tokens.slice(-count).join(" "));
+  }
+  return candidates.slice(0, 5);
+}
+
+function shouldDropImplicitLocationToken(token, activityWords) {
+  if (!token) return true;
+  if (/^\d{1,2}(?::\d{2})?$/.test(token) || /^(?:am|pm)$/.test(token)) return true;
+  if (PLAN_LOCATION_STOP_WORDS.includes(token) || PLANNER_CANONICAL_TERMS.includes(token)) return true;
+  if (PLAN_IMPLICIT_LOCATION_DROP_WORDS.has(token) || activityWords.has(token)) return true;
+  return false;
+}
+
+function cleanImplicitPlanLocation(value) {
+  return normalizeQualifierKey(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isViableImplicitLocationQuery(query) {
+  const key = normalizeQualifierKey(query);
+  if (!key || PLAN_LOCATION_IGNORE.has(key)) return false;
+  const words = key.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 6) return false;
+  if (words.length === 1 && words[0].length < 3) return false;
+  if (words.every((word) =>
+    PLAN_IMPLICIT_LOCATION_DROP_WORDS.has(word) ||
+    PLAN_LOCATION_STOP_WORDS.includes(word) ||
+    PLANNER_CANONICAL_TERMS.includes(word) ||
+    planActivityLocationWords().has(word)
+  )) return false;
+  return true;
+}
+
+function isLikelyImplicitPlanLocation(query, { parsed, matches }) {
+  if (!matches?.length) return false;
+  const words = normalizeQualifierKey(query).split(/\s+/).filter(Boolean);
+  const [top, second] = matches;
+  const topName = normalizeQualifierKey(top.place?.name || "");
+  const primary = normalizeQualifierKey(parsed?.primary || query);
+  const hasQualifier = Boolean(parsed?.stateName || parsed?.countryCode || parsed?.region);
+  const exactName = topName === primary;
+  const closeToActive = state.activePlace && distanceKm(state.activePlace, top.place) < 250;
+  const clearGap = !second || top.score >= second.score + 12;
+
+  if (hasQualifier && top.score >= 45) return true;
+  if (words.length >= 2 && top.score >= 42 && (exactName || clearGap || closeToActive)) return true;
+  if (words.length === 1 && words[0].length >= 4 && exactName && top.score >= 45) return true;
+  if (closeToActive && top.score >= 60) return true;
+  return false;
+}
+
+function planActivityLocationWords() {
+  if (planActivityLocationWordCache) return planActivityLocationWordCache;
+  const words = new Set(["event", "game", "practice", "match", "tournament", "tee", "time", "round"]);
+  Object.values(ACTIVITY_RULES).forEach((rule) => {
+    [rule.label, ...(rule.aliases || [])].forEach((term) => {
+      normalizeQualifierKey(term).split(/\s+/).forEach((word) => {
+        if (word) words.add(word);
+      });
+    });
+  });
+  planActivityLocationWordCache = words;
+  return words;
+}
+
 function findPlanLocationStopIndex(text) {
   const re = /\b[a-z]{2,}\b/gi;
   let match;
@@ -4303,9 +4412,20 @@ async function completePlanRequest(plan, override = {}) {
     return { clarification: buildTimeClarification(nextPlan) };
   }
 
+  const inferredLocation = !override.place && !nextPlan.locationQuery
+    ? await inferImplicitPlanLocation(nextPlan)
+    : null;
+  if (inferredLocation) {
+    nextPlan.locationQuery = inferredLocation.query;
+    nextPlan.locationExplicit = true;
+    nextPlan.locationImplicit = true;
+  }
+
   const placeResult = override.place
     ? { place: normalizePlace(override.place), data: override.data || null, alerts: override.alerts || null }
-    : await resolvePlanPlace(nextPlan);
+    : inferredLocation
+      ? resolvePlanPlaceOptions(nextPlan, inferredLocation.options)
+      : await resolvePlanPlace(nextPlan);
   if (placeResult.clarification) return placeResult;
 
   const place = normalizePlace(placeResult.place);
@@ -4420,6 +4540,10 @@ async function resolvePlanPlace(plan) {
     return { place: state.activePlace, data: state.forecast, alerts: activeAlerts };
   }
   const options = await fetchPlannerPlaceOptions(plan.locationQuery);
+  return resolvePlanPlaceOptions(plan, options);
+}
+
+function resolvePlanPlaceOptions(plan, options) {
   if (!options.matches.length) {
     return {
       clarification: {
