@@ -1,4 +1,4 @@
-const VERSION = "2.1.6";
+const VERSION = "2.2.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -8149,6 +8149,93 @@ function skyCondition(code) {
   return "overcast";
 }
 
+// ---- Living sky: real sun/moon arc + time-of-day color ----
+
+function skyNow() {
+  const t = state.forecast?.current?.time;
+  const ms = t ? new Date(t).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+// Sun/moon position (as viewport fractions) plus golden-hour and twilight
+// factors, derived from the selected place's ACTUAL sunrise/sunset — so the
+// light in the sky matches the light outside the window.
+function skyPhase() {
+  const now = skyNow();
+  const sr = state.sunriseMs, ss = state.sunsetMs;
+  const isDay = state.skyIsDay !== false;
+  if (!sr || !ss || ss <= sr) {
+    return { isDay, golden: 0, twilight: 0, x: isDay ? 0.3 : 0.66, y: 0.12 };
+  }
+  const GOLDEN = 60 * 60 * 1000;    // warm window each side of a horizon
+  const TWILIGHT = 80 * 60 * 1000;  // afterglow window past dusk / before dawn
+  const span = ss - sr;
+  if (now >= sr && now <= ss) {
+    const p = (now - sr) / span;             // 0 sunrise → 1 sunset
+    const altitude = Math.sin(p * Math.PI);  // 0 at the horizons, 1 at noon
+    const edge = Math.min(now - sr, ss - now);
+    // Keep the sun above the hero text: horizons ~0.26, noon ~0.06.
+    return {
+      isDay: true, golden: Math.max(0, 1 - edge / GOLDEN), twilight: 0,
+      x: 0.14 + p * 0.72, y: 0.26 - altitude * 0.20
+    };
+  }
+  const edge = now > ss ? now - ss : sr - now;
+  const np = now > ss ? Math.min((now - ss) / span, 1) : 1 - Math.min((sr - now) / span, 1);
+  // Moon: upper-right band, clear of the top-left menu button and the hero text.
+  return {
+    isDay: false, golden: 0, twilight: Math.max(0, 1 - edge / TWILIGHT),
+    x: 0.52 + np * 0.32, y: 0.085 - Math.sin(Math.max(np, 0) * Math.PI) * 0.04
+  };
+}
+
+function lerpHex(a, b, t) {
+  t = Math.min(Math.max(t, 0), 1);
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = (sh) => {
+    const x = (pa >> sh) & 255, y = (pb >> sh) & 255;
+    return Math.round(x + (y - x) * t);
+  };
+  return `#${(0x1000000 + (ch(16) << 16) + (ch(8) << 8) + ch(0)).toString(16).slice(1)}`;
+}
+
+// Time-aware gradient for clear / partly-cloudy skies (warm at golden hour,
+// mauve at twilight, deep at night). Other conditions keep their static cfg.bg.
+function skyGradientStops(condition, phase) {
+  if (condition !== "clear" && condition !== "partly-cloudy") return null;
+  if (phase.isDay) {
+    const day    = ["#5d92d8", "#9fc4e8", "#d4e6f4"];
+    const golden = ["#3a5e9c", "#cf7e57", "#f4b06a"];
+    return { angle: 180, positions: [0, 52, 100], stops: day.map((c, i) => lerpHex(c, golden[i], phase.golden)) };
+  }
+  const night    = ["#04080f", "#091428", "#0d1c3c"];
+  const twilight = ["#0c1430", "#2c2f59", "#6f4f68"];
+  return { angle: 160, positions: [0, 55, 100], stops: night.map((c, i) => lerpHex(c, twilight[i], phase.twilight)) };
+}
+
+function skyBackgroundCss(condition) {
+  const phase = skyPhase();
+  const g = skyGradientStops(condition, phase);
+  if (g) {
+    const css = `linear-gradient(${g.angle}deg, ${g.stops.map((c, i) => `${c} ${g.positions[i]}%`).join(", ")})`;
+    return { css, top: g.stops[0], phase };
+  }
+  const tod = phase.isDay ? "day" : "night";
+  const cfg = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
+  return { css: cfg.bg, top: firstHexColor(cfg.bg), phase };
+}
+
+// Moon illuminated fraction (0 new → 1 full) and waxing flag for a timestamp.
+function moonPhase(ms) {
+  const synodic = 29.530588853;
+  const ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;
+  let p = ((ms / 86400000 - ref) % synodic) / synodic;
+  if (p < 0) p += 1;
+  return { illum: (1 - Math.cos(p * 2 * Math.PI)) / 2, waxing: p < 0.5 };
+}
+
+let skyMaskCounter = 0;
+
 function updateSkyCanvas(weatherCode, isDay) {
   const el = document.getElementById("skyCanvas");
   if (!el) return;
@@ -8185,9 +8272,7 @@ function updateSkyChrome(condition, isDay) {
 }
 
 function skyChromeColor(condition, isDay) {
-  const tod = isDay ? "day" : "night";
-  const cfg = SKY_CFG[tod]?.[condition] || SKY_CFG[tod]?.overcast;
-  return firstHexColor(cfg?.bg) || defaultChromeColor();
+  return skyBackgroundCss(condition).top || defaultChromeColor();
 }
 
 function firstHexColor(value) {
@@ -8211,18 +8296,22 @@ function renderSkyScene(el, condition, isDay) {
   const cfg = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
   const sceneSeed = skySceneSeed(condition, isDay);
   const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
+  const bg = skyBackgroundCss(condition);
+  const phase = bg.phase;
 
-  el.style.background = cfg.bg;
+  el.style.background = bg.css;
 
   const parts = [skyFilterDefs()];
-  if (cfg.stars)     parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars")));
-  if (cfg.moon)      parts.push(skyMoon(vw, vh, rngFor("moon")));
-  if (cfg.moonGlow)  parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow")));
-  if (cfg.sun)       parts.push(skySun(vw, vh, rngFor("sun")));
-  if (cfg.clouds)    parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds")));
-  if (cfg.rain)      parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain")));
-  if (cfg.snow)      parts.push(skySnow(vw, vh, rngFor("snow")));
-  if (cfg.lightning) parts.push(skyLightning(vw, vh, rngFor("lightning")));
+  if (cfg.stars)        parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars")));
+  if (cfg.stars >= 60)  parts.push(skyShootingStar(vw, vh, rngFor("shoot")));
+  if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
+  if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow")));
+  if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
+  if (cfg.sun)          parts.push(skySun(vw, vh, phase));
+  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds")));
+  if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain")));
+  if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow")));
+  if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
 }
@@ -8252,15 +8341,20 @@ function skyStars(vw, vh, count, rng) {
   return s;
 }
 
-function skyMoon(vw, vh, rng) {
-  const x = Math.round(vw * (0.60 + rng() * 0.24));
-  const y = Math.round(vh * (0.06 + rng() * 0.12));
-  const r = Math.round(40 + rng() * 14);
+function skyMoon(vw, vh, phase) {
+  const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 42;
+  const { illum, waxing } = moonPhase(skyNow());
+  // Carve the phase: white disc minus an offset black disc → crescent → gibbous.
+  const sep = illum * 2 * r;
+  const sx = (cx + (waxing ? -sep : sep)).toFixed(1);
+  const id = `sky-moon-${++skyMaskCounter}`;
   return `
-    <circle cx="${x}" cy="${y}" r="${r * 4.6}" fill="#6f7fb2" opacity="0.075" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
-    <circle cx="${x}" cy="${y}" r="${r * 2.0}" fill="none" stroke="#afc5ed" stroke-width="1" opacity="0.11" class="sky-moon-glow"/>
-    <circle cx="${x}" cy="${y}" r="${r}" fill="#dce9f7" opacity="0.94"/>
-    <circle cx="${x - Math.round(r * 0.18)}" cy="${y - Math.round(r * 0.14)}" r="${Math.round(r * 0.82)}" fill="#f3f7ff" opacity="0.18"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 4.6}" fill="#6f7fb2" opacity="0.075" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 2.0}" fill="none" stroke="#afc5ed" stroke-width="1" opacity="0.11" class="sky-moon-glow"/>
+    <defs><mask id="${id}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff"/><circle cx="${sx}" cy="${cy}" r="${r}" fill="#000"/></mask></defs>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#cfe0f3" opacity="0.14"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#eef4ff" opacity="0.95" mask="url(#${id})"/>
+    <circle cx="${cx - Math.round(r * 0.18)}" cy="${cy - Math.round(r * 0.14)}" r="${Math.round(r * 0.7)}" fill="#fff" opacity="0.12" mask="url(#${id})"/>
   `;
 }
 
@@ -8270,16 +8364,43 @@ function skyMoonGlow(vw, vh, rng) {
   return `<circle cx="${x}" cy="${y}" r="90" fill="#7080b0" opacity="0.24" filter="url(#sky-glow-f)" class="sky-moon-glow"/>`;
 }
 
-function skySun(vw, vh, rng) {
-  const x = Math.round(vw * (0.13 + rng() * 0.24));
-  const y = Math.round(vh * (0.07 + rng() * 0.11));
-  const r = 46;
+function skySun(vw, vh, phase) {
+  const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 46;
+  const warm = phase.golden;
+  const core = lerpHex("#ffdf67", "#ff9a3c", warm);
+  const halo = lerpHex("#ffd34f", "#ff8a4a", warm);
   return `
-    <circle cx="${x}" cy="${y}" r="${r * 3.9}" fill="#ffd34f" opacity="0.16" filter="url(#sky-glow-f)"/>
-    <circle cx="${x}" cy="${y}" r="${r * 2.0}" fill="#fff0a8" opacity="0.16" filter="url(#sky-glow-f)"/>
-    <circle cx="${x}" cy="${y}" r="${r}" fill="#ffdf67" opacity="0.94"/>
-    <circle cx="${x - Math.round(r * 0.28)}" cy="${y - Math.round(r * 0.28)}" r="${Math.round(r * 0.54)}" fill="#fff7b6" opacity="0.24"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 4.0}" fill="${halo}" opacity="${(0.14 + warm * 0.16).toFixed(2)}" filter="url(#sky-glow-f)"/>
+    <circle cx="${cx}" cy="${cy}" r="${r * 2.0}" fill="#fff0a8" opacity="0.15" filter="url(#sky-glow-f)"/>
+    <g transform="translate(${cx} ${cy})">${skySunRays(r, warm)}</g>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="${core}" opacity="0.95"/>
+    <circle cx="${cx - 13}" cy="${cy - 13}" r="${Math.round(r * 0.52)}" fill="#fff7b6" opacity="0.22"/>
   `;
+}
+
+function skySunRays(r, warm) {
+  let lines = "";
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    lines += `<line x1="${(Math.cos(a) * r * 1.45).toFixed(0)}" y1="${(Math.sin(a) * r * 1.45).toFixed(0)}" x2="${(Math.cos(a) * r * 2.6).toFixed(0)}" y2="${(Math.sin(a) * r * 2.6).toFixed(0)}" stroke="#fff0b0" stroke-width="2.4" stroke-linecap="round"/>`;
+  }
+  return `<g class="sky-sun-rays" opacity="${(0.10 + warm * 0.10).toFixed(2)}">${lines}</g>`;
+}
+
+// Warm bloom around a low sun during golden hour.
+function skyHorizonGlow(vw, vh, phase) {
+  const gx = Math.round(vw * phase.x);
+  const gy = Math.round(vh * (phase.y + 0.05));
+  return `<ellipse cx="${gx}" cy="${gy}" rx="${Math.round(vw * 0.62)}" ry="${Math.round(vh * 0.2)}" fill="#ff9d5a" opacity="${(phase.golden * 0.42).toFixed(2)}" filter="url(#sky-glow-f)"/>`;
+}
+
+// One rare meteor streak on clear nights — a small surprise, not a feature.
+function skyShootingStar(vw, vh, rng) {
+  const x = ((0.32 + rng() * 0.5) * vw).toFixed(0);
+  const y = ((0.06 + rng() * 0.18) * vh).toFixed(0);
+  const len = 110 + rng() * 80;
+  const delay = (6 + rng() * 26).toFixed(1);
+  return `<line x1="${x}" y1="${y}" x2="${(Number(x) - len * 0.92).toFixed(0)}" y2="${(Number(y) + len * 0.4).toFixed(0)}" class="sky-shoot" stroke="#ffffff" stroke-width="2" stroke-linecap="round" style="animation-delay:${delay}s"/>`;
 }
 
 function skyClouds(vw, vh, count, isDay, condition, rng) {

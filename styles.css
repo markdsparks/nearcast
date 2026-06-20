@@ -429,6 +429,27 @@ html[data-sky] body {
   50% { opacity: calc(var(--op, 0.5) * 0.2); }
 }
 
+.sky-sun-rays {
+  transform-origin: 0 0;
+  animation: sky-rays 150s linear infinite;
+}
+
+@keyframes sky-rays {
+  to { transform: rotate(360deg); }
+}
+
+.sky-shoot {
+  opacity: 0;
+  animation: sky-shoot 16s ease-in infinite;
+}
+
+@keyframes sky-shoot {
+  0% { opacity: 0; transform: translate(64px, -28px); }
+  2.5% { opacity: 0.9; }
+  6% { opacity: 0; transform: translate(0, 0); }
+  100% { opacity: 0; transform: translate(0, 0); }
+}
+
 .sky-moon-glow {
   animation: sky-moon-pulse 5s ease-in-out infinite;
 }
