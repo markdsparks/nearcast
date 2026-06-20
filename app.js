@@ -1,4 +1,4 @@
-const VERSION = "2.3.2";
+const VERSION = "2.3.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -274,6 +274,7 @@ const els = {
   humidity: document.querySelector("#humidity"),
   humiditySignal: document.querySelector("#humiditySignal"),
   humidityContext: document.querySelector("#humidityContext"),
+  airSignalLabel: document.querySelector("#airSignalLabel"),
   sunrise: document.querySelector("#sunrise"),
   sunset: document.querySelector("#sunset"),
   daylightCard: document.querySelector("#daylightCard"),
@@ -1991,7 +1992,19 @@ function refreshOnForeground() {
   loadPlace(state.activePlace, true);
 }
 
-const FORECAST_CACHE_VERSION = "v3";
+const FORECAST_CACHE_VERSION = "v4";
+const AIR_QUALITY_CACHE_VERSION = "v1";
+const AIR_QUALITY_FIELDS = [
+  "us_aqi",
+  "pm2_5",
+  "pm10",
+  "grass_pollen",
+  "ragweed_pollen",
+  "birch_pollen",
+  "alder_pollen",
+  "mugwort_pollen",
+  "olive_pollen"
+];
 
 async function fetchForecast(place, force = false) {
   const cacheKey = `forecast:${FORECAST_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
@@ -2070,8 +2083,33 @@ async function fetchForecast(place, force = false) {
     forecast_days: "10"
   });
 
-  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-  if (!response.ok) throw new Error("Forecast failed.");
+  const forecastPromise = fetch(`https://api.open-meteo.com/v1/forecast?${params}`).then(async (response) => {
+    if (!response.ok) throw new Error("Forecast failed.");
+    return response.json();
+  });
+  const airQualityPromise = fetchAirQuality(place, force).catch(() => null);
+  const data = await forecastPromise;
+  data.airQuality = await airQualityPromise;
+  localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
+  return data;
+}
+
+async function fetchAirQuality(place, force = false) {
+  const cacheKey = `air-quality:${AIR_QUALITY_CACHE_VERSION}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+  const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+  const maxCacheAge = 30 * 60 * 1000;
+  if (!force && cached && Date.now() - cached.savedAt < maxCacheAge) return cached.data;
+
+  const params = new URLSearchParams({
+    latitude: place.latitude,
+    longitude: place.longitude,
+    current: AIR_QUALITY_FIELDS.join(","),
+    hourly: AIR_QUALITY_FIELDS.join(","),
+    forecast_days: "2",
+    timezone: "auto"
+  });
+  const response = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?${params}`);
+  if (!response.ok) throw new Error("Air quality failed.");
   const data = await response.json();
   localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
   return data;
@@ -2239,17 +2277,22 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   const comfort = comfortGlance(actualVal, feelsVal, humidityVal, tempUnit);
   const rain = rainGlance(data, rainVal, truth);
   const wind = windGlance(windVal, windUnit);
-  const showHumidity = humidityVal >= 70 || humidityVal <= 30 || Math.abs(diff) >= 5;
+  const air = airGlance(data, humidityVal);
+  const airHeadline = air.summary && (air.summary.band?.rank >= 2 || air.summary.pollen?.rank >= 3)
+    ? `, ${air.summary.headline.toLowerCase()}`
+    : "";
 
   if (els.glanceTitle) {
-    els.glanceTitle.textContent = `${comfort.headline}, ${rain.headline.toLowerCase()}, ${wind.headline.toLowerCase()}.`;
+    els.glanceTitle.textContent = `${comfort.headline}, ${rain.headline.toLowerCase()}, ${wind.headline.toLowerCase()}${airHeadline}.`;
   }
   if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
   if (els.rainContext) els.rainContext.textContent = rain.context;
   if (els.windContext) els.windContext.textContent = wind.context;
-  if (els.humidityContext) els.humidityContext.textContent = humidityContext(humidityVal);
-  if (els.humiditySignal) els.humiditySignal.classList.toggle("is-visible", showHumidity);
-  if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", showHumidity);
+  if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
+  if (els.humidity) els.humidity.textContent = air.value;
+  if (els.humidityContext) els.humidityContext.textContent = air.context;
+  if (els.humiditySignal) els.humiditySignal.classList.toggle("is-visible", air.visible);
+  if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", air.visible);
 
   renderDaylightGlance(data, uvVal, todayIndex);
 }
@@ -2326,6 +2369,266 @@ function humidityContext(value) {
   if (value <= 25) return "Very dry";
   if (value <= 35) return "Dry air";
   return "In the background";
+}
+
+const POLLEN_FIELDS = [
+  { key: "grass_pollen", label: "grass" },
+  { key: "ragweed_pollen", label: "ragweed" },
+  { key: "birch_pollen", label: "birch" },
+  { key: "alder_pollen", label: "alder" },
+  { key: "mugwort_pollen", label: "mugwort" },
+  { key: "olive_pollen", label: "olive" }
+];
+
+function finiteValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function aqiBand(value) {
+  const aqi = Math.round(Number(value || 0));
+  if (aqi <= 50) return { label: "Good", short: "Good", severity: "good", rank: 0, advice: "Air looks good" };
+  if (aqi <= 100) return { label: "Moderate", short: "Moderate", severity: "moderate", rank: 1, advice: "Fine for most people" };
+  if (aqi <= 150) return { label: "Unhealthy for sensitive groups", short: "Sensitive groups", severity: "sensitive", rank: 2, advice: "Sensitive folks should ease up" };
+  if (aqi <= 200) return { label: "Unhealthy", short: "Unhealthy", severity: "unhealthy", rank: 3, advice: "Keep hard efforts short" };
+  if (aqi <= 300) return { label: "Very unhealthy", short: "Very unhealthy", severity: "very-unhealthy", rank: 4, advice: "Limit outdoor time" };
+  return { label: "Hazardous", short: "Hazardous", severity: "hazardous", rank: 5, advice: "Stay inside if possible" };
+}
+
+function pollenBand(value) {
+  const grains = finiteValue(value);
+  if (grains === null) return null;
+  if (grains < 1) return { label: "low", rank: 0 };
+  if (grains < 10) return { label: "low", rank: 1 };
+  if (grains < 50) return { label: "moderate", rank: 2 };
+  if (grains < 100) return { label: "high", rank: 3 };
+  return { label: "very high", rank: 4 };
+}
+
+function airQualityIndexAt(data, airQuality = data?.airQuality) {
+  const hourly = airQuality?.hourly || {};
+  const times = hourly.time || [];
+  if (!times.length) return -1;
+  const now = forecastNowMs(data);
+  let best = -1;
+  let bestDelta = Infinity;
+  times.forEach((time, index) => {
+    const ms = parseForecastTimestamp(time, airQuality);
+    if (ms === null) return;
+    const delta = Math.abs(ms - now);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = index;
+    }
+  });
+  return bestDelta <= 90 * 60 * 1000 ? best : -1;
+}
+
+function airValueAt(data, key, airQuality = data?.airQuality) {
+  const currentValue = finiteValue(airQuality?.current?.[key]);
+  if (currentValue !== null) return currentValue;
+  const index = airQualityIndexAt(data, airQuality);
+  return index >= 0 ? finiteValue(airQuality?.hourly?.[key]?.[index]) : null;
+}
+
+function airPeakValue(data, key, hoursAhead = 12, airQuality = data?.airQuality) {
+  const hourly = airQuality?.hourly || {};
+  const times = hourly.time || [];
+  const values = hourly[key] || [];
+  const now = forecastNowMs(data);
+  const end = now + hoursAhead * 60 * 60 * 1000;
+  let peak = null;
+  let peakTime = null;
+  times.forEach((time, index) => {
+    const ms = parseForecastTimestamp(time, airQuality);
+    if (ms === null || ms < now - 30 * 60 * 1000 || ms > end) return;
+    const value = finiteValue(values[index]);
+    if (value === null) return;
+    if (peak === null || value > peak) {
+      peak = value;
+      peakTime = time;
+    }
+  });
+  return peak === null ? null : { value: peak, time: peakTime };
+}
+
+function pollenSummary(data, airQuality = data?.airQuality) {
+  if (!airQuality) return null;
+  const entries = POLLEN_FIELDS.map((field) => {
+    const current = airValueAt(data, field.key, airQuality);
+    const peak = airPeakValue(data, field.key, 24, airQuality);
+    const value = Math.max(current ?? -Infinity, peak?.value ?? -Infinity);
+    const band = pollenBand(value);
+    return band ? { key: field.key, name: field.label, value, current, peak, levelLabel: band.label, rank: band.rank } : null;
+  }).filter(Boolean);
+  if (!entries.length) return null;
+  entries.sort((a, b) => b.rank - a.rank || b.value - a.value);
+  const top = entries[0];
+  const displayLabel = top.rank > 0 ? top.name : "pollen";
+  return {
+    label: displayLabel,
+    type: top.name,
+    value: top.value,
+    level: top.levelLabel,
+    levelLabel: top.levelLabel,
+    rank: top.rank,
+    peakTime: top.peak?.time || null
+  };
+}
+
+function airQualitySummary(data = state.forecast) {
+  const airQuality = data?.airQuality;
+  if (!airQuality) return null;
+  const aqi = airValueAt(data, "us_aqi", airQuality);
+  const pm25 = airValueAt(data, "pm2_5", airQuality);
+  const pm10 = airValueAt(data, "pm10", airQuality);
+  const peak = airPeakValue(data, "us_aqi", 12, airQuality);
+  const pollen = pollenSummary(data, airQuality);
+  if (aqi === null && pm25 === null && pm10 === null && !pollen) return null;
+
+  const band = aqi !== null ? aqiBand(aqi) : null;
+  const peakAqi = peak?.value !== null && peak?.value !== undefined ? Math.round(peak.value) : null;
+  const aqiRounded = aqi !== null ? Math.round(aqi) : null;
+  const display = aqiRounded !== null ? `AQI ${aqiRounded}` : pollen ? `${capitalize(pollen.label)} pollen` : "Air";
+  const context = band
+    ? `${band.short}${pollen && pollen.rank >= 2 ? ` · ${capitalize(pollen.label)} pollen ${pollen.levelLabel}` : ""}`
+    : pollen
+      ? `${capitalize(pollen.label)} pollen ${pollen.levelLabel}`
+      : "Air data nearby";
+  const headline = band && band.rank >= 2
+    ? band.rank === 2 ? "air sensitive for some" : `${band.label.toLowerCase()} air`
+    : pollen && pollen.rank >= 3
+      ? `${pollen.label} pollen ${pollen.levelLabel}`
+      : band && band.rank === 1
+        ? "moderate air"
+        : "air looks good";
+
+  return {
+    aqi: aqiRounded,
+    pm25,
+    pm10,
+    peakAqi,
+    peakTime: peak?.time || null,
+    band,
+    pollen,
+    display,
+    context,
+    headline,
+    source: "Open-Meteo/CAMS"
+  };
+}
+
+function airGlance(data, humidityValue) {
+  const air = airQualitySummary(data);
+  if (air) {
+    const pollenNote = air.pollen && air.pollen.rank >= 2
+      ? `${capitalize(air.pollen.label)} pollen ${air.pollen.levelLabel}`
+      : "";
+    return {
+      label: "Air",
+      value: air.display,
+      context: pollenNote || air.context,
+      visible: true,
+      summary: air
+    };
+  }
+  return {
+    label: "Air",
+    value: `${humidityValue}%`,
+    context: humidityContext(humidityValue),
+    visible: humidityValue >= 70 || humidityValue <= 30,
+    summary: null
+  };
+}
+
+function weatherTrendSummary(data = state.forecast) {
+  const todayIndex = forecastDailyIndex(data);
+  const tomorrowIndex = forecastDailyIndex(data, 1);
+  const highs = data?.daily?.temperature_2m_max || [];
+  const lows = data?.daily?.temperature_2m_min || [];
+  const rain = data?.daily?.precipitation_probability_max || [];
+  if (!highs.length) return null;
+
+  const todayHigh = Math.round(highs[todayIndex] ?? highs[0]);
+  const tomorrowHigh = Math.round(highs[tomorrowIndex] ?? highs[todayIndex] ?? highs[0]);
+  const delta = tomorrowHigh - todayHigh;
+  if (Math.abs(delta) >= 5) {
+    return {
+      label: "Trend",
+      short: `Tomorrow ${delta > 0 ? "warms" : "cools"} ${Math.abs(delta)}°`,
+      detail: `Tomorrow's high is ${tomorrowHigh}°, ${Math.abs(delta)}° ${delta > 0 ? "warmer" : "cooler"} than today.`
+    };
+  }
+
+  const horizon = Math.min(7, highs.length);
+  const startIndex = Math.min(Math.max(tomorrowIndex, 0), Math.max(0, horizon - 1));
+  let wettest = startIndex;
+  let hottest = startIndex;
+  let coolest = startIndex;
+  for (let i = startIndex + 1; i < horizon; i += 1) {
+    if ((rain[i] || 0) > (rain[wettest] || 0)) wettest = i;
+    if ((highs[i] || -Infinity) > (highs[hottest] || -Infinity)) hottest = i;
+    if ((lows[i] || Infinity) < (lows[coolest] || Infinity)) coolest = i;
+  }
+  const wetChance = rain[wettest] || 0;
+  if (wetChance >= 50) {
+    return {
+      label: "Trend",
+      short: `${forecastDayShortLabel(data, wettest)} looks wettest`,
+      detail: `${forecastDayShortLabel(data, wettest)} has the highest rain chance nearby at ${wetChance}%.`
+    };
+  }
+  if (hottest !== todayIndex && highs[hottest] - todayHigh >= 4) {
+    return {
+      label: "Trend",
+      short: `${forecastDayShortLabel(data, hottest)} looks warmest`,
+      detail: `${forecastDayShortLabel(data, hottest)} has the warmest high nearby at ${Math.round(highs[hottest])}°.`
+    };
+  }
+  if (coolest !== todayIndex && todayHigh - lows[coolest] >= 18) {
+    return {
+      label: "Trend",
+      short: `${forecastDayShortLabel(data, coolest)} starts coolest`,
+      detail: `${forecastDayShortLabel(data, coolest)} has the coolest low nearby at ${Math.round(lows[coolest])}°.`
+    };
+  }
+  return {
+    label: "Trend",
+    short: "No big swing ahead",
+    detail: "Temperatures and rain chances stay fairly steady nearby."
+  };
+}
+
+function forecastDayShortLabel(data, index) {
+  if (index === forecastDailyIndex(data)) return "Today";
+  if (index === forecastDailyIndex(data, 1)) return "Tomorrow";
+  const value = data?.daily?.time?.[index];
+  if (!value) return "Later";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(`${value}T12:00:00`));
+}
+
+function outdoorInsight(data) {
+  const air = airQualitySummary(data);
+  const trend = weatherTrendSummary(data);
+  if (!air && !trend) return null;
+
+  if (!air) return { label: "Trend", value: trend.detail };
+
+  const airLead = air.band && air.band.rank >= 2
+    ? air.band.rank === 2 ? `Air sensitive for some (AQI ${air.aqi})` : `${air.band.label} air (AQI ${air.aqi})`
+    : air.pollen && air.pollen.rank >= 3
+      ? `${capitalize(air.pollen.label)} pollen ${air.pollen.levelLabel}`
+      : air.aqi !== null
+        ? `${air.band.label} air (AQI ${air.aqi})`
+        : air.context;
+  const peakNote = air.peakAqi !== null && air.aqi !== null && air.peakAqi >= air.aqi + 20
+    ? `, peaks ${air.peakAqi}${air.peakTime ? ` near ${formatTime(air.peakTime)}` : ""}`
+    : "";
+  const trendNote = trend ? ` ${trend.short}.` : "";
+  return {
+    label: "Air & trend",
+    value: `${airLead}${peakNote}.${trendNote}`.trim()
+  };
 }
 
 function renderDaylightGlance(data, uvVal, dayIndex = forecastDailyIndex(data)) {
@@ -3359,6 +3662,8 @@ function renderInsights(data, windUnit) {
     : isMorning
       ? buildMorningInsights(data, windUnit)
       : buildAfternoonInsights(data, windUnit);
+  const outdoor = outdoorInsight(data);
+  if (outdoor) cards.push(outdoor);
 
   els.insightCards.innerHTML = cards.map(({ label, value }) => `
     <article class="insight">
@@ -3389,6 +3694,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
   // Reuse the existing nowcast analysis; headline or an explicit "dry".
   const nc = analyzeNowcast(data);
   const nowcast = nc ? nc.headline : "Dry for the next 2 hours";
+  const air = airQualitySummary(data);
 
   // Sparse hourly points (~every 3h) so the model can answer "later today".
   let start = hourly.time.findIndex((t) => {
@@ -3463,6 +3769,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
     },
     next12h,
     daily: dailyArr,
+    air,
     alerts
   };
 }
@@ -3492,6 +3799,16 @@ function buildAIFactSheet() {
   );
 
   lines.push(`${c.nowcast.replace(/\.$/, "")}.`);
+
+  if (c.air) {
+    const airParts = [];
+    if (c.air.aqi !== null) airParts.push(`air ${c.air.band.label.toLowerCase()}, US AQI ${c.air.aqi}`);
+    if (c.air.pm25 !== null) airParts.push(`PM2.5 ${Math.round(c.air.pm25)} micrograms per cubic meter`);
+    if (c.air.pollen) {
+      airParts.push(`${c.air.pollen.label} pollen ${c.air.pollen.levelLabel}`);
+    }
+    if (airParts.length) lines.push(`Air quality: ${airParts.join(", ")}.`);
+  }
 
   if (c.now.isDay) {
     // Daytime: the day's high/low and UV still lie ahead.
@@ -5193,6 +5510,7 @@ function askWindowStats(w) {
   const gust = idxs.length ? values("wind_gusts_10m", c.now.gust) : [c.now.gust];
   const uv = idxs.length ? values("uv_index", 0) : [w.dayIdx === 0 ? c.today.uvPeak : 0];
   const codes = idxs.length ? idxs.map((i) => data.hourly.weather_code[i]) : [data.daily.weather_code[w.dayIdx] || data.current.weather_code];
+  const air = airStatsForHours(data, hours, c.air);
 
   return {
     window: w,
@@ -5207,6 +5525,11 @@ function askWindowStats(w) {
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
     uvMax: Math.round(Math.max(...uv)),
+    aqiMax: air.aqiMax,
+    aqiLabel: air.aqiLabel,
+    pollenRank: air.pollenRank,
+    pollenLabel: air.pollenLabel,
+    pollenLevel: air.pollenLevel,
     sky: weatherCodes[mostCommon(codes)] || day.sky || "Weather"
   };
 }
@@ -5274,6 +5597,23 @@ function scoreActivityWindow(rule, stats, units) {
     reasons.push(`UV peaks at ${stats.uvMax}`);
   }
 
+  if (stats.aqiMax !== null && stats.aqiMax !== undefined) {
+    if (stats.aqiMax >= 151) {
+      score = Math.min(score, 0);
+      reasons.push(`AQI ${stats.aqiMax} (${stats.aqiLabel.toLowerCase()})`);
+    } else if (stats.aqiMax >= 101) {
+      score = Math.min(score, 1);
+      reasons.push(`AQI ${stats.aqiMax} (${stats.aqiLabel.toLowerCase()})`);
+    } else if (stats.aqiMax >= 51) {
+      reasons.push(`moderate air (AQI ${stats.aqiMax})`);
+    }
+  }
+
+  if (stats.pollenRank >= 3) {
+    score = Math.min(score, 2);
+    reasons.push(`${stats.pollenLabel} pollen ${stats.pollenLevel}`);
+  }
+
   const verdict = score >= 3 ? "Good conditions" : score === 2 ? "Pretty good" : score === 1 ? "Doable, with caveats" : "Not ideal";
   return { score, verdict, reasons };
 }
@@ -5285,7 +5625,9 @@ function numericWindowScore(rule, stats) {
   const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80;
   const windPenalty = Math.max(0, stats.windMax - rule.wind) * 2 + Math.max(0, stats.gustMax - rule.wind - 8) * 2;
   const uvPenalty = rule.uv < 99 ? Math.max(0, stats.uvMax - rule.uv + 1) * 5 : 0;
-  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
+  const airPenalty = stats.aqiMax ? Math.max(0, stats.aqiMax - 80) * 0.8 : 0;
+  const pollenPenalty = stats.pollenRank >= 3 ? stats.pollenRank * 4 : 0;
+  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty - airPenalty - pollenPenalty);
 }
 
 function currentHourFloat() {
@@ -5648,6 +5990,18 @@ function metricAskAnswer(q, stats, c) {
   if (hasAny(s, [" uv ", "sunburn", "sunscreen", "sun strong", "strong is the sun"])) {
     return `UV ${stats.label} peaks at ${stats.uvMax}.`;
   }
+  if (hasAny(s, ["air quality", "aqi", "pollution", "polluted", "pm2", "pm 2", "smoke", "hazy air"])) {
+    if (!c.air || c.air.aqi === null) return "I do not have air quality data for this place right now.";
+    const peak = stats.aqiMax && stats.aqiMax > c.air.aqi + 10
+      ? ` It may peak near ${stats.aqiMax} during ${stats.label}.`
+      : "";
+    return `Air quality is ${c.air.band.label.toLowerCase()} right now: US AQI ${c.air.aqi}${c.air.pm25 !== null ? `, PM2.5 ${Math.round(c.air.pm25)} micrograms per cubic meter` : ""}.${peak}`;
+  }
+  if (hasAny(s, ["pollen", "allergy", "allergies", "hay fever"])) {
+    if (!c.air?.pollen) return "I do not have pollen data for this place right now.";
+    const pollen = c.air.pollen;
+    return `${capitalize(pollen.label)} pollen is ${pollen.levelLabel}${Number.isFinite(pollen.value) ? `, around ${Math.round(pollen.value)} grains per cubic meter` : ""}.`;
+  }
   if (hasAny(s, ["humid", "muggy", "sticky", "dry air"])) {
     return `Humidity is ${c.now.humidity}% right now. I only have detailed humidity for current conditions.`;
   }
@@ -5699,6 +6053,62 @@ function compareAskDays(q, c) {
     ? `temps look more comfortable (${better.lo}${c.units.temp}-${better.hi}${c.units.temp})`
     : `lower rain chance (${better.rainChance}% vs ${other.rainChance}%)`;
   return `${better.label} looks better: ${reason}. ${a.label}: ${a.sky.toLowerCase()}, ${a.lo}${c.units.temp}-${a.hi}${c.units.temp}, ${a.rainChance}% rain. ${b.label}: ${b.sky.toLowerCase()}, ${b.lo}${c.units.temp}-${b.hi}${c.units.temp}, ${b.rainChance}% rain.`;
+}
+
+function airStatsForHours(data, hours, fallback = null) {
+  const airQuality = data?.airQuality;
+  if (!airQuality) {
+    return {
+      aqiMax: fallback?.aqi ?? null,
+      aqiLabel: fallback?.band?.label || "",
+      pollenRank: fallback?.pollen?.rank ?? 0,
+      pollenLabel: fallback?.pollen?.label || "",
+      pollenLevel: fallback?.pollen?.levelLabel || ""
+    };
+  }
+
+  const hourTimes = hours
+    .map(({ index }) => parseForecastTimestamp(data?.hourly?.time?.[index], data))
+    .filter((ms) => ms !== null);
+  const start = hourTimes.length ? Math.min(...hourTimes) - 30 * 60 * 1000 : forecastNowMs(data);
+  const end = hourTimes.length ? Math.max(...hourTimes) + 90 * 60 * 1000 : start + 3 * 60 * 60 * 1000;
+  const aqTimes = airQuality.hourly?.time || [];
+
+  let aqiMax = null;
+  let pollen = null;
+  aqTimes.forEach((time, index) => {
+    const ms = parseForecastTimestamp(time, airQuality);
+    if (ms === null || ms < start || ms > end) return;
+    const aqi = finiteValue(airQuality.hourly?.us_aqi?.[index]);
+    if (aqi !== null) aqiMax = aqiMax === null ? aqi : Math.max(aqiMax, aqi);
+    POLLEN_FIELDS.forEach((field) => {
+      const value = finiteValue(airQuality.hourly?.[field.key]?.[index]);
+      const band = pollenBand(value);
+      if (!band) return;
+      const candidate = { label: field.label, value, rank: band.rank, level: band.label };
+      if (!pollen || candidate.rank > pollen.rank || (candidate.rank === pollen.rank && candidate.value > pollen.value)) {
+        pollen = candidate;
+      }
+    });
+  });
+
+  if (aqiMax === null) aqiMax = fallback?.aqi ?? null;
+  if (!pollen && fallback?.pollen) {
+    pollen = {
+      label: fallback.pollen.label,
+      value: fallback.pollen.value,
+      rank: fallback.pollen.rank,
+      level: fallback.pollen.levelLabel
+    };
+  }
+  const band = aqiMax !== null ? aqiBand(aqiMax) : null;
+  return {
+    aqiMax: aqiMax !== null ? Math.round(aqiMax) : null,
+    aqiLabel: band?.label || "",
+    pollenRank: pollen?.rank ?? 0,
+    pollenLabel: pollen?.label || "",
+    pollenLevel: pollen?.level || ""
+  };
 }
 
 function answerFreeform(q) {

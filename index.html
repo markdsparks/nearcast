@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.3.2">
+    <link rel="stylesheet" href="styles.css?v=2.3.4">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -151,7 +151,7 @@
               <div class="glance-signal glance-signal-optional" id="humiditySignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2 C8 2 4.5 6.5 4.5 9.5 a3.5 3.5 0 0 0 7 0 C11.5 6.5 8 2 8 2z" stroke="currentColor" stroke-width="1.2" fill="currentColor" opacity="0.25"/><line x1="6" y1="9.5" x2="10" y2="9.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/></svg>
-                  Air
+                  <span id="airSignalLabel">Air</span>
                 </span>
                 <strong id="humidity">--</strong>
                 <small id="humidityContext">--</small>
@@ -267,7 +267,7 @@
         <section class="panel daily-panel">
           <div class="section-head">
             <h2>10-Day Outlook</h2>
-            <span>Open-Meteo</span>
+            <span>Open-Meteo · CAMS</span>
           </div>
           <div class="daily" id="daily"></div>
         </section>
@@ -408,6 +408,6 @@
       <div class="ai-ask" id="aiAsk" hidden></div>
     </aside>
 
-    <script src="app.js?v=2.3.2"></script>
+    <script src="app.js?v=2.3.4"></script>
   </body>
 </html>

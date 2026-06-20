@@ -2383,7 +2383,7 @@ h2 {
 
 .insight-band {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
 }
 
@@ -3873,15 +3873,19 @@ body.map-immersive-active #mapLegend {
   }
 
   .insight:nth-child(2)::after,
-  .insight:nth-child(3)::after {
+  .insight:nth-child(4)::after {
     display: none;
   }
 
-  .insight:nth-child(3) {
-    grid-column: 1 / -1;
+  .insight:nth-child(3),
+  .insight:nth-child(4) {
     padding-left: 0;
     padding-top: 14px;
     border-top: 1px solid var(--border-glass);
+  }
+
+  .insight:nth-child(4) {
+    padding-left: 18px;
   }
 
   .hourly-panel {
@@ -3928,6 +3932,10 @@ body.map-immersive-active #mapLegend {
 
   .insight:nth-child(3) {
     grid-column: auto;
+  }
+
+  .insight:nth-child(4) {
+    padding-left: 0;
   }
 
   .insight:not(:last-child)::after {
