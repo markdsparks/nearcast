@@ -30,6 +30,10 @@ export function load(onProgress) {
   return loading;
 }
 
+export function isLoaded() {
+  return Boolean(engine);
+}
+
 const BRIEF_SYSTEM =
   "You are Nearcast's friendly weather assistant. You are given FACTS about the user's " +
   "local weather. Write a warm, natural summary of exactly two sentences: the first says " +
@@ -49,6 +53,15 @@ const EXAMPLE_FACTS =
 const EXAMPLE_SUMMARY =
   "A cool, partly cloudy start near 58° warms fast to a summery high of 88°, staying mostly dry. " +
   "Get outdoor plans in early — the midday UV hits an 8, so keep sunscreen handy this afternoon.";
+
+const INTENT_SYSTEM =
+  "Extract an outdoor plan from the user's message. Return only compact JSON with " +
+  "keys activity, day, time, location. Use only words present in the message; do not " +
+  "answer weather questions, infer forecasts, or invent missing details. Empty string for unknown.";
+
+const INTENT_EXAMPLE_USER = "Ballgame sat morning Fairview heights";
+const INTENT_EXAMPLE_JSON =
+  "{\"activity\":\"Ballgame\",\"day\":\"sat\",\"time\":\"morning\",\"location\":\"Fairview heights\"}";
 
 // Async generator of token deltas for the single-shot private summary.
 export async function* brief(factSheet, signal) {
@@ -75,7 +88,32 @@ export async function* brief(factSheet, signal) {
   }
 }
 
+export async function extractPlanIntent(question, signal) {
+  const eng = await load();
+  const stream = await eng.chat.completions.create({
+    stream: true,
+    temperature: 0,
+    max_tokens: 90,
+    messages: [
+      { role: "system", content: INTENT_SYSTEM },
+      { role: "user", content: INTENT_EXAMPLE_USER },
+      { role: "assistant", content: INTENT_EXAMPLE_JSON },
+      { role: "user", content: String(question || "").slice(0, 220) }
+    ]
+  });
+  let text = "";
+  for await (const chunk of stream) {
+    if (signal && signal.aborted) {
+      try { await eng.interruptGenerate(); } catch (_) {}
+      break;
+    }
+    text += chunk.choices[0]?.delta?.content || "";
+  }
+  return text;
+}
+
 // Note: free-text Q&A is intentionally NOT handled by the model. A 0.5B can't
 // reliably reason about weather (it hallucinates day-specific forecasts, etc.),
-// so app code answers questions deterministically from the data. The model is
-// used only for the summary above, where summarization plays to its strength.
+// so app code answers questions deterministically from the data. The only other
+// model job is extracting plan fields; every field is revalidated by app code
+// before any weather answer is computed.

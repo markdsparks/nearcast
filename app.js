@@ -1,4 +1,4 @@
-const VERSION = "2.3.7";
+const VERSION = "2.3.8";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -3960,6 +3960,12 @@ function loadAIModule() {
   return aiModule;
 }
 
+function localAIIntentReady(ai) {
+  return aiState.phase === "ready" &&
+    typeof ai?.extractPlanIntent === "function" &&
+    (typeof ai.isLoaded !== "function" || ai.isLoaded());
+}
+
 function detectBrowserName(ua) {
   if (/Edg\//.test(ua)) return "Edge";
   if (/CriOS\//.test(ua)) return "Chrome iOS";
@@ -4422,8 +4428,10 @@ const PLANNER_TERM_ALIASES = {
   mornin: "morning",
   tmr: "tomorrow",
   tmrw: "tomorrow",
+  tmrrow: "tomorrow",
   tonite: "tonight",
   nite: "night",
+  eve: "evening",
   tue: "tuesday",
   tues: "tuesday",
   wed: "wednesday",
@@ -4432,7 +4440,8 @@ const PLANNER_TERM_ALIASES = {
   thur: "thursday",
   thurs: "thursday",
   sat: "saturday",
-  sun: "sunday"
+  sun: "sunday",
+  hts: "heights"
 };
 
 const PLANNER_CANONICAL_TERMS = [
@@ -4703,9 +4712,19 @@ const ACTIVITY_RULES = {
   golf: { label: "golf", hot: 92, cold: 40, rain: 35, wind: 22, uv: 9, aliases: ["golf", "golfing"] },
   hike: { label: "a hike", hot: 84, cold: 32, rain: 30, wind: 25, uv: 8, aliases: ["hike", "hiking", "trail"] },
   sports: { label: "outdoor sports", hot: 88, cold: 35, rain: 35, wind: 25, uv: 9, aliases: ["soccer", "baseball", "softball", "football", "tennis", "sports", "game", "practice", "ballgame", "ball game"] },
+  event: { label: "an outdoor event", hot: 88, cold: 40, rain: 35, wind: 24, uv: 9, aliases: ["event", "party", "birthday", "wedding", "concert", "festival", "parade", "camp", "camping", "recital", "meetup", "meet up"] },
   pool: { label: "the pool", hot: 95, cold: 75, rain: 25, wind: 22, uv: 9, aliases: ["pool", "swim", "swimming", "beach"] },
   commute: { label: "the commute", hot: 100, cold: 15, rain: 55, wind: 35, uv: 99, aliases: ["commute", "drive", "driving", "school pickup", "errands", "travel"] }
 };
+
+const PLAN_SIGNAL_PHRASES = [
+  " i have ", " we have ", " i've got ", " we got ", " going ", " planning ",
+  " plan ", " plans ", " tee ", " game ", " practice ", " tournament ", " event ",
+  " party ", " birthday ", " wedding ", " concert ", " festival ", " parade ",
+  " camp ", " camping ", " recital ", " meetup ", " meet up "
+];
+const PLAN_FLEXIBLE_ASK_PHRASES = ["best", "best time", "best window", "when should", "when can", "window"];
+const PLAN_LOCAL_AI_TIMEOUT_MS = 2200;
 
 const ASK_PERIODS = {
   morning: { start: 6, end: 12, label: "morning" },
@@ -4735,34 +4754,43 @@ const PLAN_IMPLICIT_LOCATION_DROP_WORDS = new Set([
   "to", "for", "of", "on", "at", "from", "between", "before", "after", "around", "about", "by",
   "go", "going", "planning", "plan", "plans", "check", "checking",
   "look", "looks", "looking", "weather", "forecast", "conditions",
-  "outside", "outdoors", "outdoor", "inside"
+  "outside", "outdoors", "outdoor", "inside", "party", "birthday", "wedding",
+  "concert", "festival", "parade", "camp", "camping", "recital", "meetup"
 ]);
 let planActivityLocationWordCache = null;
 
-function answerPlanRequest(question) {
+async function answerPlanRequest(question) {
   const c = buildAIContext();
   if (!c) return null;
-  const plan = parsePlanRequest(question, c);
+  const plan = await buildPlannerIntent(question, c);
   if (!plan) return null;
   return completePlanRequest(plan);
 }
 
-function parsePlanRequest(question, c) {
+async function buildPlannerIntent(question, c) {
+  const deterministic = parsePlanRequest(question, c);
+  if (deterministic) return deterministic;
+  const repaired = repairPlanIntent(question, c);
+  if (repaired) return repaired;
+  return localAIPlanIntent(question, c);
+}
+
+function parsePlanRequest(question, c, options = {}) {
   const s = plannerParseText(question);
   const activityKey = detectAskActivity(question) || detectPlanActivity(question);
   const dayIdx = resolveDayIndex(s, c);
   const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
   const locationQuery = extractPlanLocationQuery(question);
   const timing = inferPlanTiming(question, c, activityKey);
-  const planish = hasAny(s, [
-    " i have ", " we have ", " i've got ", " we got ", " going ", " planning ",
-    " plan ", " plans ", " tee ", " game ", " practice ", " tournament ", " event "
-  ]);
-  const flexibleAsk = hasAny(s, ["best", "best time", "best window", "when should", "when can", "window"]);
+  const implicitCandidates = locationQuery ? [] : implicitPlanLocationCandidates({ original: question });
+  const planish = hasAny(s, PLAN_SIGNAL_PHRASES);
+  const flexibleAsk = hasAny(s, PLAN_FLEXIBLE_ASK_PHRASES);
+  const signalCount = [activityKey, dayIdx != null, locationQuery, timing.hasTime, implicitCandidates.length].filter(Boolean).length;
 
   if (flexibleAsk) return null;
   if (!activityKey && !planish) return null;
-  if (!activityKey && dayIdx == null && !locationQuery && !timing.hasTime) return null;
+  if (!activityKey && signalCount < 2) return null;
+  if (activityKey && signalCount < 1 && !planish) return null;
 
   return {
     original: question,
@@ -4772,7 +4800,12 @@ function parsePlanRequest(question, c) {
     targetDate,
     locationQuery,
     locationExplicit: Boolean(locationQuery),
-    timing
+    timing,
+    intent: plannerIntentReceipt({
+      source: options.source || "rules",
+      confidence: plannerIntentConfidence({ activityKey, dayIdx, locationQuery, timing, implicitCandidates, planish }),
+      implicitLocationCandidates: implicitCandidates
+    })
   };
 }
 
@@ -4781,7 +4814,169 @@ function detectPlanActivity(question) {
   if (hasAny(s, [" ballgame ", " ball game ", " baseball ", " softball "])) return "sports";
   if (hasAny(s, [" tee time ", " tee ", " round of golf "])) return "golf";
   if (hasAny(s, [" practice ", " tournament ", " match ", " game "])) return "sports";
+  if (hasAny(s, [" event ", " party ", " birthday ", " wedding ", " concert ", " festival ", " parade ", " camp ", " camping ", " recital ", " meetup ", " meet up "])) return "event";
   return null;
+}
+
+function plannerIntentConfidence({ activityKey, dayIdx, locationQuery, timing, implicitCandidates, planish }) {
+  let score = 0.15;
+  if (activityKey) score += 0.35;
+  if (dayIdx != null) score += 0.18;
+  if (timing?.hasTime) score += timing.explicit ? 0.16 : 0.08;
+  if (locationQuery) score += 0.18;
+  else if (implicitCandidates?.length) score += 0.08;
+  if (planish) score += 0.07;
+  return Math.min(0.98, Math.round(score * 100) / 100);
+}
+
+function plannerIntentReceipt(meta = {}) {
+  return {
+    source: meta.source || "rules",
+    confidence: meta.confidence || 0,
+    implicitLocationCandidates: meta.implicitLocationCandidates || [],
+    notes: meta.notes || []
+  };
+}
+
+function repairPlanIntent(question, c) {
+  const s = plannerParseText(question);
+  if (hasAny(s, PLAN_FLEXIBLE_ASK_PHRASES)) return null;
+  const fragments = compactPlannerFragments({
+    activity: likelyPlannerActivityText(question),
+    day: likelyPlannerDayText(question, c),
+    time: likelyPlannerTimeText(question),
+    location: implicitPlanLocationCandidates({ original: question })[0] || ""
+  });
+  if (!fragments.activity && !hasAny(s, PLAN_SIGNAL_PHRASES)) return null;
+  if (![fragments.day, fragments.time, fragments.location].filter(Boolean).length) return null;
+  return planFromIntentFragments(question, c, fragments, "repair");
+}
+
+function likelyPlannerActivityText(question) {
+  const s = plannerParseText(question);
+  const key = detectAskActivity(question) || detectPlanActivity(question);
+  if (key) return ACTIVITY_RULES[key]?.aliases?.[0] || ACTIVITY_RULES[key]?.label || key;
+  if (hasAny(s, PLAN_SIGNAL_PHRASES)) return "event";
+  return "";
+}
+
+function likelyPlannerDayText(question, c) {
+  const s = plannerParseText(question);
+  const idx = resolveDayIndex(s, c);
+  if (idx == null) return "";
+  return c.daily?.[idx]?.label || "";
+}
+
+function likelyPlannerTimeText(question) {
+  const s = plannerParseText(question);
+  const period = inferPlanPeriod(s);
+  if (period) return period;
+  const at = s.match(/\b(?:at|around|about)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  if (at) return at[0];
+  const between = s.match(/\b(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to|-)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/);
+  return between?.[0] || "";
+}
+
+function compactPlannerFragments(values) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
+    key,
+    String(value || "").trim().replace(/\s+/g, " ").slice(0, 90)
+  ]));
+}
+
+function planFromIntentFragments(original, c, fragments, source) {
+  const activityText = fragments.activity || "";
+  const activityKey = detectAskActivity(activityText) || detectPlanActivity(activityText) ||
+    detectAskActivity(original) || detectPlanActivity(original) ||
+    (activityText ? "event" : null);
+  if (!activityKey) return null;
+
+  const dayIdx = resolveDayIndex(fragments.day || original, c);
+  const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
+  const locationQuery = cleanPlanLocation(fragments.location || "");
+  const timingText = fragments.time
+    ? normalizePlanTimeClarification(fragments.time)
+    : original;
+  const timing = inferPlanTiming(timingText, c, activityKey);
+  const confidence = plannerIntentConfidence({
+    activityKey,
+    dayIdx,
+    locationQuery,
+    timing,
+    implicitCandidates: locationQuery ? [] : implicitPlanLocationCandidates({ original }),
+    planish: true
+  });
+  if (dayIdx == null && !locationQuery && !timing.hasTime) return null;
+
+  return {
+    original,
+    activityKey,
+    dayIdx,
+    dayExplicit: dayIdx != null,
+    targetDate,
+    locationQuery,
+    locationExplicit: Boolean(locationQuery),
+    locationImplicit: Boolean(locationQuery && !extractPlanLocationQuery(original)),
+    timing,
+    intent: plannerIntentReceipt({
+      source,
+      confidence,
+      notes: source === "local-ai" ? ["local intent extraction"] : ["repaired loose phrasing"]
+    })
+  };
+}
+
+async function localAIPlanIntent(question, c) {
+  if (!shouldTryLocalAIPlanIntent(question, c)) return null;
+  try {
+    const ai = await loadAIModule();
+    if (!localAIIntentReady(ai)) return null;
+    const abort = { aborted: false };
+    const raw = await withPlannerTimeout(ai.extractPlanIntent(question, abort), PLAN_LOCAL_AI_TIMEOUT_MS, abort);
+    const fragments = parseLocalAIIntent(raw);
+    if (!fragments) return null;
+    return planFromIntentFragments(question, c, fragments, "local-ai");
+  } catch (_) {
+    return null;
+  }
+}
+
+function shouldTryLocalAIPlanIntent(question, c) {
+  if (aiState.phase !== "ready") return false;
+  const s = plannerParseText(question);
+  if (hasAny(s, [" umbrella ", " what to wear ", " wear ", " aqi ", " air quality ", " pollen ", " sunrise ", " sunset "])) return false;
+  const day = resolveDayIndex(s, c) != null;
+  const period = Boolean(inferPlanPeriod(s));
+  const activityish = Boolean(detectAskActivity(question) || detectPlanActivity(question) || hasAny(s, PLAN_SIGNAL_PHRASES));
+  return activityish || (day && period);
+}
+
+function withPlannerTimeout(promise, ms, abort = null) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (abort) abort.aborted = true;
+      reject(new Error("Planner intent timed out."));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function parseLocalAIIntent(raw) {
+  const text = String(raw || "").trim();
+  const json = text.match(/\{[\s\S]*\}/)?.[0];
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return compactPlannerFragments({
+      activity: parsed.activity,
+      day: parsed.day,
+      time: parsed.time,
+      location: parsed.location
+    });
+  } catch (_) {
+    return null;
+  }
 }
 
 function planTargetDate(dayIdx) {
@@ -5341,6 +5536,7 @@ function planWindowStats(data, c, w) {
   const gust = values("wind_gusts_10m", c.now.gust);
   const uv = values("uv_index", 0);
   const codes = idxs.map((i) => data.hourly.weather_code[i]);
+  const air = airStatsForHours(data, hours, c.air);
 
   return {
     window: w,
@@ -5355,6 +5551,11 @@ function planWindowStats(data, c, w) {
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
     uvMax: Math.round(Math.max(...uv)),
+    aqiMax: air.aqiMax,
+    aqiLabel: air.aqiLabel,
+    pollenRank: air.pollenRank,
+    pollenLabel: air.pollenLabel,
+    pollenLevel: air.pollenLevel,
     sky: weatherCodes[mostCommon(codes)] || day.sky || "Weather",
     stormPotential: codes.some((code) => [95, 96, 99].includes(Number(code)))
   };
@@ -5396,10 +5597,9 @@ function planAnswer(plan, place, c, stats, alert) {
   const verdict = planVerdict(score, tone);
   const activity = planDisplayName(plan);
   const location = plan.locationExplicit ? ` in ${placeLabel(place)}` : "";
-  const reasons = planReasons(stats, c.units, alert).slice(0, 3);
-  const assumption = plan.timing.assumption ? ` ${plan.timing.assumption}` : "";
+  const why = planWhy(plan, place, stats, c.units, alert);
   const advice = planAdvice(stats, alert, score);
-  return `${activity} ${stats.label}${location}: ${verdict}. ${reasons.join(", ")}.${assumption} ${advice}`.replace(/\s+/g, " ").trim();
+  return `${activity} ${stats.label}${location}: ${verdict}. Why: ${why}. ${advice}`.replace(/\s+/g, " ").trim();
 }
 
 function planDisplayName(plan) {
@@ -5407,6 +5607,7 @@ function planDisplayName(plan) {
   if (hasAny(s, [" ballgame ", " ball game ", " baseball ", " softball "])) return "Ballgame";
   if (plan.activityKey === "golf") return "Golf";
   if (plan.activityKey === "sports") return "Game/practice";
+  if (plan.activityKey === "event") return "Event";
   const label = ACTIVITY_RULES[plan.activityKey]?.label || "Plan";
   return capitalize(label.replace(/^a\s+/, "").replace(/^the\s+/, ""));
 }
@@ -5429,10 +5630,23 @@ function planReasons(stats, units, alert) {
   else reasons.push(`rain looks low (${stats.rainChance}%)`);
   if (stats.gustMax >= stats.windMax + 8 && stats.gustMax >= 22) reasons.push(`gusts near ${stats.gustMax} ${units.wind}`);
   else reasons.push(`wind near ${stats.windMax} ${units.wind}`);
+  if (stats.aqiMax !== null && stats.aqiMax !== undefined) {
+    if (stats.aqiMax >= 101) reasons.push(`AQI ${stats.aqiMax} (${stats.aqiLabel.toLowerCase()})`);
+    else if (stats.aqiMax >= 51) reasons.push(`moderate air (AQI ${stats.aqiMax})`);
+  }
+  if (stats.pollenRank >= 3) reasons.push(`${stats.pollenLabel} pollen ${stats.pollenLevel}`);
   if (stats.uvMax >= 8) reasons.push(`UV up to ${stats.uvMax}`);
   if (stats.feelsAvg >= 88 || stats.feelsAvg <= 40) reasons.push(`feels around ${stats.feelsAvg}${units.temp}`);
   else reasons.push(`${stats.tempMin}${units.temp}-${stats.tempMax}${units.temp}`);
   return reasons;
+}
+
+function planWhy(plan, place, stats, units, alert) {
+  const reasons = planReasons(stats, units, alert).slice(0, 4);
+  if (plan.timing?.assumption) reasons.push(plan.timing.assumption.replace(/\.$/, ""));
+  if (plan.locationImplicit) reasons.push(`read ${placeLabel(place)} as the place`);
+  if (plan.intent?.source === "local-ai") reasons.push("read the plan details from your wording");
+  return reasons.join(", ");
 }
 
 function planAdvice(stats, alert, score) {
@@ -5444,6 +5658,9 @@ function planAdvice(stats, alert, score) {
   }
   if (stats.stormPotential) return "Have a delay or indoor fallback.";
   if (stats.rainChance >= 55) return "Bring rain gear and expect interruptions.";
+  if (stats.aqiMax >= 151) return "Air quality is rough enough to consider moving it indoors.";
+  if (stats.aqiMax >= 101) return "Sensitive folks may want a shorter window or an indoor backup.";
+  if (stats.pollenRank >= 4) return "Allergy-sensitive people should plan ahead.";
   if (stats.uvMax >= 8) return "Sunscreen earns its spot in the bag.";
   if (score >= 70) return "Weather is mostly behaving for this one.";
   return "I would keep a backup option handy.";
@@ -5492,7 +5709,11 @@ function askDayLabel(c, dayIdx) {
 function askWindowLabel(c, w) {
   if (w.label === "right now" || w.label === "rest of today") return w.label;
   const day = askDayLabel(c, w.dayIdx);
-  if (w.period && w.dayIdx === 0 && w.period === "night") return "tonight";
+  if (w.period && w.dayIdx === 0) {
+    if (w.period === "night") return "tonight";
+    if (w.period === "overnight") return "overnight";
+    return `this ${ASK_PERIODS[w.period]?.label || w.period}`;
+  }
   if (w.period) return `${day} ${ASK_PERIODS[w.period]?.label || w.period}`;
   return `${day} from ${hourText(w.startHour)} to ${hourText(w.endHour)}`;
 }
@@ -5990,7 +6211,10 @@ function buildBestWindowCards() {
 function detectAskActivity(q) {
   const s = askText(q);
   for (const [key, rule] of Object.entries(ACTIVITY_RULES)) {
-    if (rule.aliases.some((alias) => s.includes(` ${alias} `) || s.includes(alias))) return key;
+    if (rule.aliases.some((alias) => {
+      const phrase = askText(alias).trim();
+      return phrase && s.includes(` ${phrase} `);
+    })) return key;
   }
   return null;
 }
