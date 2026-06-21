@@ -1,4 +1,4 @@
-const VERSION = "2.5.8";
+const VERSION = "2.5.9";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -3551,7 +3551,7 @@ function compactNowcastDetail(detail) {
 
 function launchNextItem(data, options = {}) {
   const nowcast = options.truth?.nowPrecip?.nowcast || analyzeNowcast(data);
-  if (nowcast) {
+  if (nowcast && !nowcastConflictsWithActivePrecip(nowcast, options.truth)) {
     const wetIndex = nowcast.wet.findIndex(Boolean);
     const targetMs = nowcast.wet[0]
       ? forecastNowMs(data)
@@ -3783,10 +3783,14 @@ function analyzeNowcast(data) {
   return { headline, title, detail, slots, wet, peak, peakFrac, isSnow };
 }
 
+function nowcastConflictsWithActivePrecip(analysis, truth = weatherTruth()) {
+  return Boolean(truth?.nowPrecip?.isWetNow && analysis && !analysis.wet?.[0]);
+}
+
 function renderNowcast(data, truth = weatherTruth(data)) {
   const el = document.getElementById("nowcast");
   const analysis = analyzeNowcast(data);
-  if (!analysis) {
+  if (!analysis || nowcastConflictsWithActivePrecip(analysis, truth)) {
     el.hidden = true;
     return;
   }
