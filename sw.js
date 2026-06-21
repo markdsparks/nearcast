@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v256";
-const ASSET_VERSION = "2.5.6";
+const CACHE = "nearcast-v257";
+const ASSET_VERSION = "2.5.7";
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -33,11 +33,31 @@ self.addEventListener("activate", e => {
   self.clients.claim();
 });
 
+function navigationFallback() {
+  return caches.match(`${BASE}index.html`).then(cached =>
+    cached || caches.match(BASE) || Response.error()
+  );
+}
+
+function freshNavigation(request) {
+  return fetch(request).then(response => {
+    if (response && response.ok) {
+      const copy = response.clone();
+      caches.open(CACHE).then(cache => {
+        cache.put(`${BASE}index.html`, copy).catch(() => {});
+      }).catch(() => {});
+    }
+    return response;
+  }).catch(() => navigationFallback());
+}
+
 // Fetch strategy:
 //  - API calls (Open-Meteo, RainViewer, NWS/NOAA) → network-first, no caching
 //  - Map tiles (OSM, radar/forecast tiles) → network-only (too large to cache)
-//  - Everything else (shell) → cache-first, fall back to network
+//  - HTML navigations → network-first, so users do not get trapped on old app versions
+//  - Versioned shell assets → cache-first, fall back to network
 self.addEventListener("fetch", e => {
+  if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
 
   // External API / tile requests — always go to network
@@ -60,7 +80,12 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // App shell — cache-first
+  if (e.request.mode === "navigate" || e.request.headers.get("accept")?.includes("text/html")) {
+    e.respondWith(freshNavigation(e.request));
+    return;
+  }
+
+  // Versioned app shell assets — cache-first
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );

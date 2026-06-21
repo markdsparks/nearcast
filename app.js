@@ -1,4 +1,4 @@
-const VERSION = "2.5.6";
+const VERSION = "2.5.7";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -11968,7 +11968,16 @@ function closeAlertSheet() {
 // Register service worker for PWA / offline support
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(new URL("sw.js", window.location.href).pathname).catch(() => {});
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloadingForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || reloadingForUpdate) return;
+      reloadingForUpdate = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register(new URL("sw.js", window.location.href).pathname)
+      .then(registration => registration.update().catch(() => {}))
+      .catch(() => {});
   });
 }
 
