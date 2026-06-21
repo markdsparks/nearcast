@@ -1,4 +1,4 @@
-const VERSION = "2.5.1";
+const VERSION = "2.5.2";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -1262,11 +1262,15 @@ function bindEvents() {
     }
     const template = target.closest("[data-ask-template]");
     if (template) {
+      clearPlannerMemoryEdit();
       fillPlannerTemplate(template.dataset.askTemplate);
       return;
     }
     const chip = target.closest("[data-ask-q]");
-    if (chip) runAsk(chip.dataset.askQ, chip.dataset.askIntent);
+    if (chip) {
+      clearPlannerMemoryEdit();
+      runAsk(chip.dataset.askQ, chip.dataset.askIntent);
+    }
   }, { preventDefault: false });
   els.aiAsk.addEventListener("submit", (event) => {
     if (event.target.id !== "askForm") return;
@@ -4622,11 +4626,14 @@ let askError = "";
 let askAbort = null;
 let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
+let plannerEditingMemoryId = "";
+let plannerEditingMemoryDraft = "";
 let launchSummaryTargets = [];
 
-function fillPlannerTemplate(template) {
+function fillPlannerTemplate(template, options = {}) {
   const input = document.getElementById("askInput");
   if (!input) return;
+  const { helperText = "Finish the thought: add the day, time, and place if it is away from here." } = options || {};
   const form = document.getElementById("askForm");
   const helper = document.querySelector(".ask-helper");
   input.value = template || "";
@@ -4635,7 +4642,7 @@ function fillPlannerTemplate(template) {
     form.scrollIntoView({ block: "center", behavior: "smooth" });
   }
   if (helper) {
-    helper.textContent = "Finish the thought: add the day, time, and place if it is away from here.";
+    helper.textContent = helperText;
   }
   try {
     input.focus({ preventScroll: true });
@@ -4661,6 +4668,7 @@ async function runAsk(question, intent) {
     return;
   }
   plannerClarification = null;
+  if (intent) clearPlannerMemoryEdit();
 
   // Activity chips: answer instantly from a code-computed verdict. No model —
   // a tiny model can't reliably reason about this, and even handed the correct
@@ -4672,6 +4680,11 @@ async function runAsk(question, intent) {
     } catch {
       finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
     }
+    return;
+  }
+
+  if (plannerEditingMemoryId) {
+    await runMemoryEdit(question, plannerEditingMemoryId);
     return;
   }
 
@@ -4691,6 +4704,25 @@ async function runAsk(question, intent) {
     finishAskResponse(row, plan?.answer ? plan : direct);
   } catch (error) {
     finishAskResponse(row, "I hit a snag checking that plan. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
+  }
+}
+
+async function runMemoryEdit(question, memoryId) {
+  plannerEditingMemoryDraft = question;
+  const row = beginAskResponse(question);
+  try {
+    const result = await answerPlanRequest(question);
+    if (result?.clarification) {
+      plannerClarification = result.clarification;
+      finishAskResponse(row, result.clarification.prompt);
+      return;
+    }
+    finishAskResponse(row, result?.answer ? result : (answerFreeform(question) || result), {
+      updateMemoryId: memoryId,
+      original: question
+    });
+  } catch {
+    finishAskResponse(row, "I hit a snag updating that memory. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
   }
 }
 
@@ -4724,11 +4756,20 @@ function beginAskResponse(question) {
   return askThread.length - 1;
 }
 
-function finishAskResponse(row, result) {
+function finishAskResponse(row, result, options = {}) {
   const normalized = normalizeAskResult(result);
   if (askThread[row]) {
     askThread[row].a = normalized.answer;
     askThread[row].event = normalized.event || null;
+  }
+  if (options.updateMemoryId) {
+    const updated = applyPlanMemoryEdit(options.updateMemoryId, normalized, {
+      row,
+      original: options.original || plannerEditingMemoryDraft || askThread[row]?.q || ""
+    });
+    if (!updated) {
+      askError = "I could not turn that edit into a saved plan. Try including the day, time, and place.";
+    }
   }
   askStreaming = false;
   renderAsk();
@@ -4753,6 +4794,7 @@ async function runPlannerClarification(index) {
   const option = plannerClarification.options[index];
   if (!option) return;
   const pending = plannerClarification;
+  const editingMemoryId = plannerEditingMemoryId;
   plannerClarification = null;
   const row = beginAskResponse(option.label);
   try {
@@ -4762,7 +4804,10 @@ async function runPlannerClarification(index) {
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
-    finishAskResponse(row, result);
+    finishAskResponse(row, result, editingMemoryId ? {
+      updateMemoryId: editingMemoryId,
+      original: plannerEditingMemoryDraft || pending.plan?.original || option.label
+    } : {});
   } catch {
     finishAskResponse(row, "I could not check that plan. Try adding the city/state and a time window.");
   }
@@ -4770,6 +4815,7 @@ async function runPlannerClarification(index) {
 
 async function continuePlannerClarificationWithText(text) {
   const pending = plannerClarification;
+  const editingMemoryId = plannerEditingMemoryId;
   plannerClarification = null;
   const row = beginAskResponse(text);
   try {
@@ -4787,7 +4833,10 @@ async function continuePlannerClarificationWithText(text) {
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
-    finishAskResponse(row, result);
+    finishAskResponse(row, result, editingMemoryId ? {
+      updateMemoryId: editingMemoryId,
+      original: plannerEditingMemoryDraft || pending.plan?.original || text
+    } : {});
   } catch {
     finishAskResponse(row, "I could not use that detail. Try something like \"6 PM\" or \"Fillmore, IL.\"");
   }
@@ -5563,12 +5612,48 @@ function rememberPlanFromThread(rowIndex) {
   renderForecastMemorySurfaces();
 }
 
+function clearPlannerMemoryEdit() {
+  plannerEditingMemoryId = "";
+  plannerEditingMemoryDraft = "";
+}
+
+function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
+  const existing = state.planMemories.find((memory) => memory.id === memoryId);
+  const event = normalized?.event;
+  if (!existing || !event) return false;
+  const next = planMemoryFromEvent(event, {
+    q: options.original || existing.original || planMemoryDraft(existing),
+    a: normalized.answer || existing.answer || ""
+  });
+  if (!next) return false;
+  const updated = {
+    ...next,
+    id: existing.id,
+    createdAt: existing.createdAt,
+    updatedAt: Date.now()
+  };
+  state.planMemories = state.planMemories.map((memory) =>
+    memory.id === existing.id ? updated : memory
+  );
+  askThread.forEach((exchange) => {
+    if (exchange.memoryId === existing.id) exchange.memoryId = "";
+  });
+  if (Number.isInteger(options.row) && askThread[options.row]) {
+    askThread[options.row].memoryId = existing.id;
+  }
+  savePlanMemories();
+  clearPlannerMemoryEdit();
+  renderForecastMemorySurfaces();
+  return true;
+}
+
 function forgetPlanMemory(id) {
   const before = state.planMemories.length;
   state.planMemories = state.planMemories.filter((memory) => memory.id !== id);
   askThread.forEach((exchange) => {
     if (exchange.memoryId === id) exchange.memoryId = "";
   });
+  if (plannerEditingMemoryId === id) clearPlannerMemoryEdit();
   if (state.planMemories.length !== before) savePlanMemories();
   renderAsk();
   renderForecastMemorySurfaces();
@@ -5579,17 +5664,44 @@ function editPlanMemory(idOrRow) {
   const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
   const memory = exchange ? null : state.planMemories.find((item) => item.id === idOrRow);
   const draft = exchange?.q || memory?.original || planMemoryDraft(memory);
-  fillPlannerTemplate(draft);
+  if (memory) {
+    plannerEditingMemoryId = memory.id;
+    plannerEditingMemoryDraft = draft;
+  } else {
+    clearPlannerMemoryEdit();
+  }
+  fillPlannerTemplate(draft, {
+    helperText: memory
+      ? "Editing remembered plan. Submit to replace this memory."
+      : "Adjust the plan, then submit it again."
+  });
 }
 
-function showPlanMemory(id) {
+async function showPlanMemory(id) {
   const memory = state.planMemories.find((item) => item.id === id);
-  const event = memory ? planMemoryEvent(memory) : null;
-  if (!event) return;
+  if (!memory) return;
   plannerReturnAfterDayDetail = {
     scrollTop: els.aiSheet?.scrollTop || 0
   };
   closeAISheet();
+  const switchingPlaces = !samePlanPlace(memory.place, state.activePlace);
+  const previousForecast = state.forecast;
+  if (switchingPlaces) {
+    await loadPlace(memory.place);
+    if (state.forecast === previousForecast) {
+      const returnState = plannerReturnAfterDayDetail;
+      plannerReturnAfterDayDetail = null;
+      openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+      return;
+    }
+  }
+  const event = planMemoryEvent(memory);
+  if (!event) {
+    const returnState = plannerReturnAfterDayDetail;
+    plannerReturnAfterDayDetail = null;
+    openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+    return;
+  }
   const opened = openPlannerEventDetail(event);
   if (!opened) {
     const returnState = plannerReturnAfterDayDetail;
@@ -5649,8 +5761,31 @@ function activePlanMemoryEventsForDay(dayIndex, data = state.forecast, place = s
   return planMemoryEventsForPlace(data, place).filter(({ event }) => event.dayIndex === index);
 }
 
-function primaryPlanMemoryForDay(dayIndex, data = state.forecast, place = state.activePlace) {
-  return activePlanMemoryEventsForDay(dayIndex, data, place)[0] || null;
+function planMemoryDetailEventForDay(items, data = state.forecast, place = state.activePlace) {
+  if (!items?.length) return null;
+  if (items.length === 1) return items[0].event;
+  const windows = items
+    .map(({ event }) => event)
+    .filter((event) => event && Number.isFinite(event.startMs) && Number.isFinite(event.endMs))
+    .sort((a, b) => a.startMs - b.startMs);
+  if (!windows.length) return null;
+  const first = windows[0];
+  const last = windows.reduce((best, event) => event.endMs > best.endMs ? event : best, first);
+  return {
+    title: `${items.length} plans`,
+    place: normalizePlace(place),
+    data,
+    alerts: activeAlerts || [],
+    dayIndex: first.dayIndex,
+    startHour: Math.min(...windows.map((event) => event.startHour)),
+    endHour: Math.max(...windows.map((event) => event.endHour)),
+    startMs: first.startMs,
+    endMs: last.endMs,
+    label: "remembered plans",
+    badgeLabel: "Memory",
+    memoryIds: items.map(({ memory }) => memory.id),
+    windows
+  };
 }
 
 function hourlyPlanMemoryContext(rows, data = state.forecast) {
@@ -5685,6 +5820,15 @@ function planMemoryDayCue(items) {
   if (items.length > 1) return `${items.length} plans`;
   const { memory } = items[0];
   return `${planMemoryTitle(memory)} ${planMemoryTimeText(memory)}`;
+}
+
+function planMemoryDayRangeText(items) {
+  if (!items?.length) return "";
+  if (items.length === 1) return planMemoryTimeText(items[0].memory);
+  const starts = items.map(({ memory }) => memory.startHour).filter(Number.isFinite);
+  const ends = items.map(({ memory }) => memory.endHour).filter(Number.isFinite);
+  if (!starts.length || !ends.length) return "";
+  return `${hourText(Math.min(...starts))}-${hourText(Math.max(...ends))}`;
 }
 
 function planMemoryDraft(memory) {
@@ -5723,6 +5867,24 @@ function planMemoryMeta(memory, event = null) {
   return `${when} · ${stats.rainChance}% rain · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
 }
 
+function planMemoryListItems(data = state.forecast, place = state.activePlace) {
+  const today = forecastLocalDate(data) || new Date().toISOString().slice(0, 10);
+  const now = forecastNowMs(data);
+  return state.planMemories
+    .map((memory) => {
+      const isHere = Boolean(place && samePlanPlace(memory.place, place));
+      const event = isHere ? planMemoryEvent(memory, data, place) : null;
+      const isPast = event ? event.endMs < now - 60 * 60 * 1000 : memory.targetDate < today;
+      return { memory, event, isHere, isPast };
+    })
+    .filter((item) => !item.isPast)
+    .sort((a, b) =>
+      a.memory.targetDate.localeCompare(b.memory.targetDate) ||
+      a.memory.startHour - b.memory.startHour ||
+      a.memory.createdAt - b.memory.createdAt
+    );
+}
+
 function planMemoryEventContextLabel(memory, event) {
   const place = event?.place ? placeLabel(event.place) : "";
   const title = memory ? planMemoryTitle(memory) : String(event?.title || "").trim();
@@ -5730,15 +5892,40 @@ function planMemoryEventContextLabel(memory, event) {
   return ["Memory", place, [title, when].filter(Boolean).join(" · ")].filter(Boolean).join(" · ");
 }
 
-function renderPlanMemorySection() {
-  const items = activePlanMemoryEvents().slice(0, 4);
+function planMemoryDayContextLabel(items, event) {
+  if (!items?.length) return "";
+  if (items.length === 1) return planMemoryEventContextLabel(items[0].memory, event);
+  const place = event?.place ? placeLabel(event.place) : "";
+  return ["Memory", place, `${items.length} plans`, planMemoryDayRangeText(items)].filter(Boolean).join(" · ");
+}
+
+function detailEventWindows(eventWindow) {
+  if (!eventWindow) return [];
+  if (Array.isArray(eventWindow)) return eventWindow.filter(Boolean);
+  if (Array.isArray(eventWindow.windows) && eventWindow.windows.length) {
+    return eventWindow.windows.filter(Boolean);
+  }
+  return [eventWindow];
+}
+
+function matchingDetailEventWindow(windows, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  return windows.find((window) =>
+    Number.isFinite(window?.startMs) &&
+    Number.isFinite(window?.endMs) &&
+    startMs < window.endMs &&
+    endMs > window.startMs
+  ) || null;
+}
+
+function renderPlanMemoryGroup(label, items) {
   if (!items.length) return "";
-  return `<section class="memory-section" aria-label="Nearcast memory">` +
-    `<div class="ai-section-title"><strong>Memory</strong><span>Local · under your control</span></div>` +
+  return `<div class="memory-group">` +
+    `<div class="memory-group-title">${escapeHtml(label)}</div>` +
     `<div class="memory-list">` +
-      items.map(({ memory, event }) => `
+      items.map(({ memory, event, isHere }) => `
         <article class="memory-card">
-          <button class="memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Show ${memory.title}`)}">
+          <button class="memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`${isHere ? "Show" : "Load"} ${memory.title}`)}">
             <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
             <span>${escapeHtml(planMemoryMeta(memory, event))}</span>
           </button>
@@ -5749,12 +5936,28 @@ function renderPlanMemorySection() {
         </article>
       `).join("") +
     `</div>` +
+  `</div>`;
+}
+
+function renderPlanMemorySection() {
+  const items = planMemoryListItems().slice(0, 8);
+  if (!items.length) return "";
+  const here = items.filter((item) => item.isHere);
+  const elsewhere = items.filter((item) => !item.isHere);
+  const summary = elsewhere.length ? `${here.length} here · ${elsewhere.length} elsewhere` : "Here · local";
+  return `<section class="memory-section" aria-label="Nearcast memory">` +
+    `<div class="ai-section-title"><strong>Memory</strong><span>${escapeHtml(summary)}</span></div>` +
+    renderPlanMemoryGroup("Here", here) +
+    renderPlanMemoryGroup("Elsewhere", elsewhere) +
   `</section>`;
 }
 
 function renderForecastMemorySurfaces() {
   if (!state.forecast) return;
-  renderHourly(state.forecast, state.unit === "fahrenheit" ? "F" : "C", state.weatherTruth || weatherTruth(state.forecast));
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  renderHourly(state.forecast, tempUnit, state.weatherTruth || weatherTruth(state.forecast));
+  renderDaily(state.forecast, tempUnit, precipUnit);
 }
 
 function normalizePlanTimeClarification(value) {
@@ -10385,12 +10588,12 @@ function openDayFromIndex(i) {
   const indices = [];
   data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
   const code = representativeDailyCode(data, i);
-  const memoryItem = primaryPlanMemoryForDay(i, data);
-  const memoryEvent = memoryItem?.event || null;
+  const memoryItems = activePlanMemoryEventsForDay(i, data);
+  const memoryEvent = planMemoryDetailEventForDay(memoryItems, data);
   openDayDetail({
     indices,
     title: formatDay(data.daily.time[i], i),
-    contextLabel: memoryItem ? planMemoryEventContextLabel(memoryItem.memory, memoryEvent) : "",
+    contextLabel: planMemoryDayContextLabel(memoryItems, memoryEvent),
     code,
     stormPotential: hasThunderPotentialForDay(data, i, code),
     isDay: true,
@@ -10509,6 +10712,7 @@ function openDayDetail({
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const eventWindows = detailEventWindows(eventWindow);
 
   const hrs = indices.map((h) => {
     const rawCode = data.hourly.weather_code[h];
@@ -10520,9 +10724,8 @@ function openDayDetail({
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
       : ms !== null ? ms + 60 * 60 * 1000 : null;
-    const inEvent = eventWindow && ms !== null && nextMs !== null
-      ? ms < eventWindow.endMs && nextMs > eventWindow.startMs
-      : false;
+    const matchedEventWindow = matchingDetailEventWindow(eventWindows, ms, nextMs);
+    const inEvent = Boolean(matchedEventWindow);
     const hourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true;
     const isNowHour = showNow && isCurrentHour(data.hourly.time[h], data);
     return {
@@ -10541,7 +10744,7 @@ function openDayDetail({
       stormPotential: hasThunderPotential(rawCode, pop, code, precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
-      eventLabel: inEvent ? (eventWindow.badgeLabel || "Plan") : "",
+      eventLabel: inEvent ? (matchedEventWindow.badgeLabel || eventWindow?.badgeLabel || "Plan") : "",
       isDay: isNowHour ? (state.weatherTruth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
     };
   });

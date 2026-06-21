@@ -2092,6 +2092,14 @@ h2 {
   gap: 8px;
   margin-bottom: 12px;
 }
+.memory-group-title {
+  margin: 3px 0 6px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .memory-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
