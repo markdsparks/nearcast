@@ -1,4 +1,4 @@
-const VERSION = "2.5.0";
+const VERSION = "2.5.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -5621,18 +5621,36 @@ function planMemoryEvent(memory, data = state.forecast, place = state.activePlac
     stats,
     label: memory.label
   });
-  if (event) event.memoryId = memory.id;
+  if (event) {
+    event.memoryId = memory.id;
+    event.badgeLabel = "Memory";
+  }
   return event;
 }
 
-function activePlanMemoryEvents(data = state.forecast, place = state.activePlace) {
+function planMemoryEventsForPlace(data = state.forecast, place = state.activePlace, options = {}) {
   if (!data || !place) return [];
+  const { upcomingOnly = true, limit = Infinity } = options || {};
   const now = forecastNowMs(data);
-  return state.planMemories
+  const items = state.planMemories
     .map((memory) => ({ memory, event: planMemoryEvent(memory, data, place) }))
-    .filter(({ event }) => event && event.endMs >= now - 60 * 60 * 1000)
-    .sort((a, b) => a.event.startMs - b.event.startMs)
-    .slice(0, 6);
+    .filter(({ event }) => event && (!upcomingOnly || event.endMs >= now - 60 * 60 * 1000))
+    .sort((a, b) => a.event.startMs - b.event.startMs);
+  return Number.isFinite(limit) ? items.slice(0, Math.max(0, limit)) : items;
+}
+
+function activePlanMemoryEvents(data = state.forecast, place = state.activePlace) {
+  return planMemoryEventsForPlace(data, place, { limit: 6 });
+}
+
+function activePlanMemoryEventsForDay(dayIndex, data = state.forecast, place = state.activePlace) {
+  const index = Number(dayIndex);
+  if (!Number.isInteger(index)) return [];
+  return planMemoryEventsForPlace(data, place).filter(({ event }) => event.dayIndex === index);
+}
+
+function primaryPlanMemoryForDay(dayIndex, data = state.forecast, place = state.activePlace) {
+  return activePlanMemoryEventsForDay(dayIndex, data, place)[0] || null;
 }
 
 function hourlyPlanMemoryContext(rows, data = state.forecast) {
@@ -5660,6 +5678,13 @@ function hourlyPlanMemoryLabel(items) {
   if (!items?.length) return "";
   if (items.length > 1) return `${items.length} plans`;
   return planMemoryTitle(items[0].memory);
+}
+
+function planMemoryDayCue(items) {
+  if (!items?.length) return "";
+  if (items.length > 1) return `${items.length} plans`;
+  const { memory } = items[0];
+  return `${planMemoryTitle(memory)} ${planMemoryTimeText(memory)}`;
 }
 
 function planMemoryDraft(memory) {
@@ -5696,6 +5721,13 @@ function planMemoryMeta(memory, event = null) {
   });
   if (!stats) return `${when} · ${where}`;
   return `${when} · ${stats.rainChance}% rain · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
+}
+
+function planMemoryEventContextLabel(memory, event) {
+  const place = event?.place ? placeLabel(event.place) : "";
+  const title = memory ? planMemoryTitle(memory) : String(event?.title || "").trim();
+  const when = memory ? planMemoryTimeText(memory) : "";
+  return ["Memory", place, [title, when].filter(Boolean).join(" · ")].filter(Boolean).join(" · ");
 }
 
 function renderPlanMemorySection() {
@@ -6974,10 +7006,11 @@ function openPlannerEventDetail(event) {
   if (!indices.length) return false;
 
   const code = representativeDailyCode(data, dayIndex);
+  const memory = event.memoryId ? state.planMemories.find((item) => item.id === event.memoryId) : null;
   openDayDetail({
     indices,
     title: plannerEventSheetTitle(event, dayStr, dayIndex),
-    contextLabel: plannerEventContextLabel(event),
+    contextLabel: memory ? planMemoryEventContextLabel(memory, event) : plannerEventContextLabel(event),
     code,
     stormPotential: hasThunderPotentialForDay(data, dayIndex, code),
     isDay: true,
@@ -7322,14 +7355,19 @@ function renderDaily(data, tempUnit, precipUnit) {
     const wcode = representativeDailyCode(data, index);
     const code = dailyConditionLabel(wcode);
     const stormPotential = hasThunderPotentialForDay(data, index, wcode);
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}`;
+    const memoryItems = activePlanMemoryEventsForDay(index, data);
+    const memoryCue = planMemoryDayCue(memoryItems);
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${memoryCue ? `, remembered ${memoryCue}` : ""}`;
     return `
-      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
+      <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${memoryCue ? " has-plan-memory" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
           <div class="day-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, true, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
           <div>
             <div class="day-name">${formatDay(time, index)}</div>
-            <div class="day-meta">${escapeHtml(code)}</div>
+            <div class="day-meta">
+              <span class="day-condition">${escapeHtml(code)}</span>
+              ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
+            </div>
           </div>
         </div>
         <div class="day-temps">
@@ -10347,18 +10385,24 @@ function openDayFromIndex(i) {
   const indices = [];
   data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
   const code = representativeDailyCode(data, i);
+  const memoryItem = primaryPlanMemoryForDay(i, data);
+  const memoryEvent = memoryItem?.event || null;
   openDayDetail({
     indices,
     title: formatDay(data.daily.time[i], i),
+    contextLabel: memoryItem ? planMemoryEventContextLabel(memoryItem.memory, memoryEvent) : "",
     code,
     stormPotential: hasThunderPotentialForDay(data, i, code),
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
     dayIndex: i,
-    initialMode: getDayDetailMode(),
-    showNow: i === 0
+    initialMode: memoryEvent ? "hourly" : getDayDetailMode(),
+    persistInitialMode: false,
+    showNow: i === 0,
+    eventWindow: memoryEvent
   });
+  if (memoryEvent) scrollFocusedSheetHour();
 }
 
 // Rolling next-24-hours window from "now".

@@ -2932,15 +2932,33 @@ h2 {
 }
 
 .day-meta {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* The icon already carries the condition, so keep the repeated word quiet. */
 .day-row .day-meta {
   font-size: 0.76rem;
+}
+
+.day-condition,
+.day-memory {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-condition {
   opacity: 0.78;
+}
+
+.day-memory {
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-weight: 900;
+  opacity: 1;
 }
 
 .day-temps {
