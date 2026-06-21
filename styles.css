@@ -1283,6 +1283,24 @@ h2 {
   line-height: 1;
 }
 
+.hero-truth-receipt {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: min(520px, 92vw);
+  margin-top: 8px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-glass);
+  border-radius: 999px;
+  background: var(--glass-light);
+  box-shadow: 0 10px 26px rgba(27, 45, 62, 0.08);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  opacity: 0.92;
+  backdrop-filter: blur(12px);
+}
+
 .today-glance {
   display: grid;
   gap: 18px;
@@ -3607,6 +3625,27 @@ body.map-immersive-active #mapLegend {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 850;
+}
+
+.map-legend .legend-note {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 760;
+  line-height: 1.18;
+}
+
+.map-legend .legend-truth {
+  color: var(--ink-faint);
+}
+
+.immersive-map .map-legend .legend-note {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.immersive-map .map-legend .legend-truth {
+  color: rgba(255, 255, 255, 0.54);
 }
 
 .timeline {

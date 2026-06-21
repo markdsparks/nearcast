@@ -1,4 +1,4 @@
-const VERSION = "2.3.9";
+const VERSION = "2.4.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -262,10 +262,12 @@ const els = {
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
   nowSummary: document.querySelector("#nowSummary"),
+  heroTruthReceipt: document.querySelector("#heroTruthReceipt"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
   feelsContext: document.querySelector("#feelsContext"),
+  rainSignal: document.querySelector("#rainSignal"),
   rainChance: document.querySelector("#rainChance"),
   rainContext: document.querySelector("#rainContext"),
   wind: document.querySelector("#wind"),
@@ -849,6 +851,37 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast) {
   };
 }
 
+function weatherTruthSourceLabel(truth) {
+  const source = truth?.source || "";
+  if (source === "minutely-current") return "current + 15-min";
+  if (source === "current") return "current";
+  if (source === "hourly-pop") return "hourly chance";
+  if (source === "gated-hourly") return "checked hourly";
+  if (source === "hourly") return "hourly";
+  return "forecast";
+}
+
+function weatherTruthConfidenceLabel(truth) {
+  const confidence = truth?.confidence || "";
+  if (confidence === "observed") return "observed";
+  if (confidence === "likely") return "likely";
+  if (confidence === "mixed") return "mixed";
+  return "forecast";
+}
+
+function weatherTruthSurfaceLabel(truth) {
+  if (!truth) return "";
+  const label = truth.label || "Weather";
+  const confidence = weatherTruthConfidenceLabel(truth);
+  const source = weatherTruthSourceLabel(truth);
+  return `${label} · ${confidence} · ${source}`;
+}
+
+function weatherTruthSurfaceDetail(truth) {
+  if (!truth) return "";
+  return truth.receiptDetail || truth.receipt || weatherTruthSurfaceLabel(truth);
+}
+
 function buildWeatherTruth(data = state.forecast) {
   const current = data?.current || {};
   const fallbackIsDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
@@ -898,7 +931,7 @@ function buildWeatherTruth(data = state.forecast) {
   }
 
   const receipt = weatherTruthReceipt(display, nowPrecip, data);
-  return {
+  const truth = {
     data,
     display,
     code: display.code,
@@ -909,8 +942,13 @@ function buildWeatherTruth(data = state.forecast) {
     confidence: receipt.confidence,
     source: receipt.source,
     receipt: receipt.short,
-    receiptDetail: receipt.detail
+    receiptDetail: receipt.detail,
+    surfaceLabel: "",
+    surfaceDetail: ""
   };
+  truth.surfaceLabel = weatherTruthSurfaceLabel(truth);
+  truth.surfaceDetail = weatherTruthSurfaceDetail(truth);
+  return truth;
 }
 
 function currentDisplayCondition(data = state.forecast) {
@@ -2199,20 +2237,28 @@ function updateForecastUnitLabels(data, unit) {
   });
 }
 
+function renderTruthReceipt(el, truth, options = {}) {
+  if (!el) return;
+  const text = options.surface ? truth?.surfaceLabel : truth?.receipt;
+  const detail = truth?.surfaceDetail || truth?.receiptDetail || text || "";
+  el.textContent = text || "";
+  el.title = detail;
+  el.setAttribute("aria-label", detail);
+  el.hidden = !text;
+}
+
 function updateWeatherTruthReceipt(truth) {
   if (!truth) {
     if (els.weatherTruthReceipt) els.weatherTruthReceipt.hidden = true;
+    if (els.heroTruthReceipt) els.heroTruthReceipt.hidden = true;
     document.documentElement.removeAttribute("data-weather-confidence");
     document.documentElement.removeAttribute("data-weather-source");
     return;
   }
   document.documentElement.dataset.weatherConfidence = truth.confidence || "forecast";
   document.documentElement.dataset.weatherSource = truth.source || "forecast";
-  if (!els.weatherTruthReceipt) return;
-  els.weatherTruthReceipt.textContent = truth.receipt || "";
-  els.weatherTruthReceipt.title = truth.receiptDetail || truth.receipt || "";
-  els.weatherTruthReceipt.setAttribute("aria-label", truth.receiptDetail || truth.receipt || "");
-  els.weatherTruthReceipt.hidden = !truth.receipt;
+  renderTruthReceipt(els.weatherTruthReceipt, truth);
+  renderTruthReceipt(els.heroTruthReceipt, truth, { surface: true });
 }
 
 function renderForecast(data, place) {
@@ -2254,7 +2300,7 @@ function renderForecast(data, place) {
   if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
 
   renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
-  renderNowcast(data);
+  renderNowcast(data, truth);
   renderInsights(data, windUnit);
   resetBriefing();
   renderHourly(data, tempUnit, truth);
@@ -2287,6 +2333,11 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   }
   if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
   if (els.rainContext) els.rainContext.textContent = rain.context;
+  if (els.rainSignal) {
+    const detail = truth.surfaceDetail || truth.receiptDetail || "";
+    els.rainSignal.title = detail;
+    els.rainSignal.setAttribute("aria-label", detail ? `Rain. ${rain.context}. ${detail}` : `Rain. ${rain.context}`);
+  }
   if (els.windContext) els.windContext.textContent = wind.context;
   if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
   if (els.humidity) {
@@ -3327,13 +3378,18 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
   launchSummaryTargets = items.map((item) => item.target || null);
   els.nowSummary.classList.add("summary-strip");
   els.nowSummary.innerHTML = items.map((item, index) => (
-    `<button class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}" type="button" data-summary-index="${index}" aria-label="${escapeHtml(`Show hourly details for ${item.label}: ${item.value}`)}">` +
+    `<button class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}" type="button" data-summary-index="${index}" aria-label="${escapeHtml(summaryItemAria(item))}" title="${escapeHtml(item.receipt || item.value)}">` +
       `<b>${escapeHtml(item.label)}</b>` +
       `<strong>${escapeHtml(item.value)}</strong>` +
       `<span class="summary-strip-cue" aria-hidden="true">›</span>` +
     `</button>`
   )).join("");
   els.nowSummary.setAttribute("aria-label", `${items.map((item) => `${item.label}: ${item.value}`).join(". ")}. Tap a chip for hourly details.`);
+}
+
+function summaryItemAria(item) {
+  const base = `Show hourly details for ${item.label}: ${item.value}`;
+  return item.receipt ? `${base}. ${item.receipt}` : base;
 }
 
 function launchSummaryItems(data, tempUnit, windUnit, truth = weatherTruth(data)) {
@@ -3347,6 +3403,7 @@ function launchSummaryItems(data, tempUnit, windUnit, truth = weatherTruth(data)
     label: "Now",
     value: nowPrecip.isWetNow ? `${nowPrecip.label} now` : `${comfort} - feels ${feels}${degree(tempUnit)}`,
     tone: nowPrecip.isWetNow ? (nowPrecip.isSnow ? "snow" : "rain") : "now",
+    receipt: truth.surfaceDetail || truth.receiptDetail || truth.receipt,
     target: launchDetailTarget(
       data,
       "Now",
@@ -3625,7 +3682,7 @@ function analyzeNowcast(data) {
   return { headline, title, detail, slots, wet, peak, peakFrac, isSnow };
 }
 
-function renderNowcast(data) {
+function renderNowcast(data, truth = weatherTruth(data)) {
   const el = document.getElementById("nowcast");
   const analysis = analyzeNowcast(data);
   if (!analysis) {
@@ -3639,7 +3696,9 @@ function renderNowcast(data) {
   document.getElementById("nowcastGraph").innerHTML = buildNowcastGraph(analysis);
   el.style.setProperty("--nowcast-accent", nowcastIntensityColor(analysis.peakFrac));
   el.style.setProperty("--nowcast-glow", nowcastIntensityRgba(analysis.peakFrac, analysis.isSnow ? 0.18 : 0.22));
-  el.setAttribute("aria-label", `${analysis.headline}. Open hourly details.`);
+  const receipt = truth.surfaceDetail || truth.receiptDetail || "";
+  el.title = receipt;
+  el.setAttribute("aria-label", `${analysis.headline}. ${receipt ? `${receipt}. ` : ""}Open hourly details.`);
   el.hidden = false;
 }
 
@@ -6878,9 +6937,10 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const title = stormPotential ? `${code}; thunder possible` : code;
     const rainLabel = measuredWet ? "Rain" : rain >= 20 ? `${rain}%` : "";
     const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rain)) : rain;
-    const cardLabel = `${label}: ${code}, ${temp} degrees${measuredWet ? ", rain" : rain >= 20 ? `, ${rain}% rain` : ""}. Show hourly details.`;
+    const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
+    const cardLabel = `${label}: ${code}, ${temp} degrees${measuredWet ? ", rain" : rain >= 20 ? `, ${rain}% rain` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
     return `
-      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(title)}">
+      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
         <span class="hour-label">${label}</span>
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
@@ -8081,16 +8141,20 @@ function renderMapLegend() {
   if (!els.mapLegend) return;
   const isForecast = activeMapSource() === "forecast";
   const sourceNote = mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Forecast map unavailable here" : "";
+  const truth = state.weatherTruth;
+  const truthNote = truth?.surfaceLabel ? `Current: ${truth.surfaceLabel}` : "";
   const legend = isForecast
     ? {
         title: "Forecast precipitation",
         colors: ["#d8f0ff", "#8fd07e", "#f2df5a", "#e99446", "#c74767"],
-        labels: ["Trace", "0.10 in", "0.25 in", "0.50 in", "1.00+ in"]
+        labels: ["Trace", "0.10 in", "0.25 in", "0.50 in", "1.00+ in"],
+        note: "Map source: future precipitation forecast."
       }
     : {
         title: "Radar intensity",
         colors: ["#7ec8ff", "#36b16a", "#f0d846", "#f08a30", "#c83f6b"],
-        labels: ["Light", "Moderate", "Steady", "Heavy", "Severe"]
+        labels: ["Light", "Moderate", "Steady", "Heavy", "Severe"],
+        note: "Map source: live/near-real-time radar."
       };
 
   els.mapLegend.innerHTML = `
@@ -8103,7 +8167,8 @@ function renderMapLegend() {
     <div class="legend-labels">
       ${legend.labels.map((label) => `<span>${escapeHtml(label)}</span>`).join("")}
     </div>
-    ${sourceNote ? `<span class="legend-note">${escapeHtml(sourceNote)}</span>` : ""}
+    <span class="legend-note">${escapeHtml(sourceNote || legend.note)}</span>
+    ${truthNote ? `<span class="legend-note legend-truth">${escapeHtml(truthNote)}</span>` : ""}
   `;
 }
 
@@ -9971,6 +10036,7 @@ function refreshSkyForLiveTime() {
   state.skyState = nextSkyState;
   state.locationIsDay = nextSkyState.isDay;
   updateWeatherTruthReceipt(truth);
+  renderMapLegend();
   if (dayChanged) {
     applyTheme();
     return;
