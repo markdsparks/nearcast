@@ -1,4 +1,4 @@
-const VERSION = "2.6.10";
+const VERSION = "2.6.11";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -278,6 +278,7 @@ const els = {
   appMenu: document.querySelector("#appMenu"),
   searchToggle: document.querySelector("#searchToggle"),
   welcome: document.querySelector("#welcome"),
+  welcomeAmbientLabel: document.querySelector("#welcomeAmbientLabel"),
   welcomeLocate: document.querySelector("#welcomeLocate"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
@@ -2316,9 +2317,11 @@ function updateMode() {
   if (!hasContext) {
     els.shell.classList.remove("search-open");
     closeAppMenu();
+    setWelcomeAmbientLabel("");
     updateWelcomeWeatherMark(null, browserApproximateIsDay());
     initWelcomeAmbience();
   } else {
+    setWelcomeAmbientLabel("");
     cancelWelcomeAmbience();
   }
 }
@@ -2341,6 +2344,20 @@ function updateWelcomeWeatherMark(code = null, isDay = browserApproximateIsDay()
   const condition = ["rain", "snow", "thunder", "clear"].includes(sky) ? sky : "cloud";
   mark.dataset.condition = condition;
   mark.dataset.day = isDay ? "day" : "night";
+}
+
+function setWelcomeAmbientLabel(text) {
+  if (!els.welcomeAmbientLabel) return;
+  const copy = String(text || "").trim();
+  els.welcomeAmbientLabel.textContent = copy;
+  els.welcomeAmbientLabel.hidden = !copy;
+}
+
+function welcomeAmbientCopy(data, place, truth) {
+  const placeName = String(place?.name || "").trim();
+  if (!placeName) return "";
+  const condition = dailyConditionLabel(truth?.code ?? data?.current?.weather_code ?? 3);
+  return `Near ${placeName} now · ${condition}`;
 }
 
 function cancelWelcomeAmbience() {
@@ -2406,6 +2423,7 @@ function applyWelcomeAmbience(data, place) {
   const truth = buildWeatherTruth(data);
   updateWelcomeWeatherMark(truth.code, truth.isDay);
   updateSkyCanvas(truth.code, truth.isDay, data, truth.display);
+  setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth));
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs, signal = null) {

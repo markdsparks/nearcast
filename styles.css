@@ -462,6 +462,9 @@ html[data-sky] body {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  background: var(--sky-page-bg);
+  background-size: cover;
+  background-color: var(--sky-page-bg-color);
   transition: background 1.5s;
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
@@ -5996,6 +5999,21 @@ button.sheet-plan-badge:focus-visible {
   width: min(238px, 64vw);
   height: 126px;
   margin-bottom: 2px;
+}
+.welcome-ambient-label {
+  max-width: min(100%, 34ch);
+  margin: -6px auto 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: 999px;
+  background: var(--glass-light);
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.1;
+  box-shadow: 0 10px 24px rgba(29, 48, 58, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .welcome-sun {
   position: absolute;
