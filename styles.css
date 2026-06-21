@@ -6109,8 +6109,23 @@ button.sheet-plan-badge:focus-visible {
   animation-delay: 0.36s;
 }
 .welcome-weather-mark[data-condition="clear"] .welcome-cloud,
+.welcome-weather-mark[data-condition="clear"] .welcome-rain,
 .welcome-weather-mark[data-condition="fog"] .welcome-rain,
 .welcome-weather-mark[data-condition="cloud"] .welcome-rain {
+  opacity: 0;
+}
+.welcome-weather-mark[data-condition="clear"][data-day="day"] {
+  height: 104px;
+}
+.welcome-weather-mark[data-condition="clear"][data-day="day"] .welcome-sun {
+  top: 28px;
+  left: 88px;
+  width: 42px;
+  height: 42px;
+  opacity: 0.36;
+  box-shadow: 0 0 22px rgba(247, 189, 80, 0.24);
+}
+.welcome-weather-mark[data-condition="clear"][data-day="day"] .welcome-sun::before {
   opacity: 0;
 }
 .welcome-weather-mark[data-condition="clear"] .welcome-cloud-back {
