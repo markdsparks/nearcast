@@ -1,4 +1,4 @@
-const VERSION = "2.3.8";
+const VERSION = "2.3.9";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -4449,6 +4449,7 @@ const PLANNER_CANONICAL_TERMS = [
   "overnight", "midday", "weekend", "daytime", "sunday", "monday", "tuesday",
   "wednesday", "thursday", "friday", "saturday"
 ];
+const PLANNER_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 function plannerParseText(value) {
   return askText(value).replace(/\b[a-z]{3,}\b/g, (token) => plannerCanonicalTerm(token) || token);
@@ -4504,9 +4505,8 @@ function resolveDayIndex(s, c) {
   const inN = s.match(/\bin (\d+) days?\b/);
   if (inN) { const n = +inN[1]; if (n >= 0 && n < days.length) return n; }
   // Weekday names → next occurrence (today counts if it matches).
-  const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   for (let wd = 0; wd < 7; wd++) {
-    if (s.includes(names[wd])) {
+    if (s.includes(PLANNER_WEEKDAY_NAMES[wd])) {
       for (let i = 0; i < days.length; i++) if (days[i].dow === wd) return i;
     }
   }
@@ -4514,6 +4514,24 @@ function resolveDayIndex(s, c) {
     for (let i = 0; i < days.length; i++) if (days[i].dow === 6) return i; // next Saturday
   }
   if (/\btonight\b|\bovernight\b|\btoday\b|\bright now\b|\bthis afternoon\b/.test(s)) return 0;
+  return null;
+}
+
+function plannerWeekdayMention(value) {
+  const rawWords = String(value || "").match(/[A-Za-z]{3,}/g) || [];
+  for (const raw of rawWords) {
+    const word = raw.toLowerCase();
+    const alias = PLANNER_TERM_ALIASES[word] || "";
+    const canonical = alias || plannerCanonicalTerm(word);
+    const index = PLANNER_WEEKDAY_NAMES.indexOf(canonical);
+    if (index < 0) continue;
+    return {
+      index,
+      label: capitalize(canonical),
+      raw,
+      corrected: Boolean(!alias && canonical !== word)
+    };
+  }
   return null;
 }
 
@@ -4779,6 +4797,7 @@ function parsePlanRequest(question, c, options = {}) {
   const s = plannerParseText(question);
   const activityKey = detectAskActivity(question) || detectPlanActivity(question);
   const dayIdx = resolveDayIndex(s, c);
+  const dayMention = plannerWeekdayMention(question);
   const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
   const locationQuery = extractPlanLocationQuery(question);
   const timing = inferPlanTiming(question, c, activityKey);
@@ -4797,6 +4816,8 @@ function parsePlanRequest(question, c, options = {}) {
     activityKey: activityKey || "walk",
     dayIdx,
     dayExplicit: dayIdx != null,
+    dayDisplay: dayMention && dayIdx != null ? dayMention.label : "",
+    dayCorrection: dayMention?.corrected ? { from: dayMention.raw, to: dayMention.label } : null,
     targetDate,
     locationQuery,
     locationExplicit: Boolean(locationQuery),
@@ -4892,6 +4913,7 @@ function planFromIntentFragments(original, c, fragments, source) {
   if (!activityKey) return null;
 
   const dayIdx = resolveDayIndex(fragments.day || original, c);
+  const dayMention = plannerWeekdayMention(fragments.day || original);
   const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
   const locationQuery = cleanPlanLocation(fragments.location || "");
   const timingText = fragments.time
@@ -4913,6 +4935,8 @@ function planFromIntentFragments(original, c, fragments, source) {
     activityKey,
     dayIdx,
     dayExplicit: dayIdx != null,
+    dayDisplay: dayMention && dayIdx != null ? dayMention.label : "",
+    dayCorrection: dayMention?.corrected ? { from: dayMention.raw, to: dayMention.label } : null,
     targetDate,
     locationQuery,
     locationExplicit: Boolean(locationQuery),
@@ -5333,20 +5357,22 @@ async function completePlanRequest(plan, override = {}) {
   const startMs = planBoundaryMs(data, window.startHour, dayIdx);
   const endMs = planBoundaryMs(data, window.endHour, dayIdx);
   const alert = topAlertForPlanRange(alerts, startMs, endMs);
+  const displayLabel = planWindowDisplayLabel(nextPlan, stats);
   return {
     answer: planAnswer(nextPlan, place, c, stats, alert),
     event: plannerShowEvent({
-      title: `${planDisplayName(nextPlan)} ${stats.label}`,
+      title: `${planDisplayName(nextPlan)} ${displayLabel}`,
       place,
       data,
       alerts,
       window,
-      stats
+      stats,
+      label: displayLabel
     })
   };
 }
 
-function plannerShowEvent({ title, place, data, alerts, window, stats }) {
+function plannerShowEvent({ title, place, data, alerts, window, stats, label }) {
   const startMs = planBoundaryMs(data, window.startHour, window.dayIdx);
   const endMs = planBoundaryMs(data, window.endHour, window.dayIdx);
   if (!data || !place || startMs === null || endMs === null || endMs <= startMs) return null;
@@ -5360,7 +5386,7 @@ function plannerShowEvent({ title, place, data, alerts, window, stats }) {
     endHour: window.endHour,
     startMs,
     endMs,
-    label: stats?.label || "plan window"
+    label: label || stats?.label || "plan window"
   };
 }
 
@@ -5596,10 +5622,22 @@ function planAnswer(plan, place, c, stats, alert) {
   const tone = alert ? alertTone(alert) : "";
   const verdict = planVerdict(score, tone);
   const activity = planDisplayName(plan);
+  const displayLabel = planWindowDisplayLabel(plan, stats);
   const location = plan.locationExplicit ? ` in ${placeLabel(place)}` : "";
   const why = planWhy(plan, place, stats, c.units, alert);
   const advice = planAdvice(stats, alert, score);
-  return `${activity} ${stats.label}${location}: ${verdict}. Why: ${why}. ${advice}`.replace(/\s+/g, " ").trim();
+  return `${activity} ${displayLabel}${location}: ${verdict}. Why: ${why}. ${advice}`.replace(/\s+/g, " ").trim();
+}
+
+function planWindowDisplayLabel(plan, stats) {
+  const day = String(plan?.dayDisplay || "").trim();
+  const w = stats?.window || {};
+  if (!day) return stats?.label || "plan window";
+  if (w.period) return `${day} ${ASK_PERIODS[w.period]?.label || w.period}`;
+  if (Number.isFinite(w.startHour) && Number.isFinite(w.endHour)) {
+    return `${day} from ${hourText(w.startHour)} to ${hourText(w.endHour)}`;
+  }
+  return stats?.label || "plan window";
 }
 
 function planDisplayName(plan) {
@@ -5644,6 +5682,7 @@ function planReasons(stats, units, alert) {
 function planWhy(plan, place, stats, units, alert) {
   const reasons = planReasons(stats, units, alert).slice(0, 4);
   if (plan.timing?.assumption) reasons.push(plan.timing.assumption.replace(/\.$/, ""));
+  if (plan.dayCorrection) reasons.push(`read "${plan.dayCorrection.from}" as ${plan.dayCorrection.to}`);
   if (plan.locationImplicit) reasons.push(`read ${placeLabel(place)} as the place`);
   if (plan.intent?.source === "local-ai") reasons.push("read the plan details from your wording");
   return reasons.join(", ");
