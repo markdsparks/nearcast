@@ -1,4 +1,4 @@
-const VERSION = "2.6.9";
+const VERSION = "2.6.10";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -12401,7 +12401,7 @@ function drawHourlyGraph() {
   const memoryBands = renderGraphMemoryBands(memoryWindows, xForMs, {
     top: tempTop,
     bottom: precipBottom,
-    labelY: tempTop + 12,
+    labelY: precipTop - 6,
     data
   });
   graphPts = pPts; // scrubbing tracks the primary curve
