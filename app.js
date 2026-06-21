@@ -1,5 +1,6 @@
-const VERSION = "2.4.2";
+const VERSION = "2.5.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
+const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -14,7 +15,8 @@ const state = {
   skyState: null,
   weatherTruth: null,
   locationIsDay: null,
-  forecastUnit: null
+  forecastUnit: null,
+  planMemories: loadPlanMemories()
 };
 
 const mapState = {
@@ -1227,7 +1229,27 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-remember], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+    const remember = target.closest("[data-memory-remember]");
+    if (remember) {
+      rememberPlanFromThread(Number(remember.dataset.memoryRemember));
+      return;
+    }
+    const memoryShow = target.closest("[data-memory-show]");
+    if (memoryShow) {
+      showPlanMemory(memoryShow.dataset.memoryShow);
+      return;
+    }
+    const memoryForget = target.closest("[data-memory-forget]");
+    if (memoryForget) {
+      forgetPlanMemory(memoryForget.dataset.memoryForget);
+      return;
+    }
+    const memoryEdit = target.closest("[data-memory-edit]");
+    if (memoryEdit) {
+      editPlanMemory(memoryEdit.dataset.memoryEdit);
+      return;
+    }
     const show = target.closest("[data-ask-show]");
     if (show) {
       showPlannerEvent(Number(show.dataset.askShow));
@@ -5447,6 +5469,262 @@ function plannerShowEvent({ title, place, data, alerts, window, stats, label }) 
   };
 }
 
+function loadPlanMemories() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PLAN_MEMORY_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.map(normalizePlanMemory).filter(Boolean).slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
+function savePlanMemories() {
+  try {
+    localStorage.setItem(PLAN_MEMORY_KEY, JSON.stringify(state.planMemories.slice(0, 60)));
+  } catch {
+    /* localStorage can be full or unavailable; keep the in-memory session copy. */
+  }
+}
+
+function normalizePlanMemory(memory) {
+  if (!memory || memory.kind !== "plan") return null;
+  const place = normalizePlace(memory.place || {});
+  if (!Number.isFinite(Number(place?.latitude)) || !Number.isFinite(Number(place?.longitude))) return null;
+  const startHour = Number(memory.startHour);
+  const endHour = Number(memory.endHour);
+  if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || endHour <= startHour) return null;
+  const targetDate = String(memory.targetDate || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return null;
+  return {
+    id: String(memory.id || `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+    kind: "plan",
+    title: String(memory.title || "Plan").slice(0, 80),
+    label: String(memory.label || "Plan window").slice(0, 80),
+    original: String(memory.original || "").slice(0, 220),
+    answer: String(memory.answer || "").slice(0, 280),
+    place,
+    targetDate,
+    startHour,
+    endHour,
+    createdAt: Number(memory.createdAt) || Date.now(),
+    updatedAt: Number(memory.updatedAt) || Date.now()
+  };
+}
+
+function planMemoryFromEvent(event, exchange = {}) {
+  if (!event?.data || !event.place) return null;
+  const targetDate = event.data.daily?.time?.[event.dayIndex];
+  if (!targetDate) return null;
+  return normalizePlanMemory({
+    id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: "plan",
+    title: event.title || event.label || "Plan",
+    label: event.label || "Plan window",
+    original: exchange.q || "",
+    answer: exchange.a || "",
+    place: event.place,
+    targetDate,
+    startHour: event.startHour,
+    endHour: event.endHour,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+}
+
+function planMemoryMatchesEvent(memory, event) {
+  if (!memory || !event?.data || !event.place) return false;
+  const targetDate = event.data.daily?.time?.[event.dayIndex];
+  return targetDate === memory.targetDate &&
+    samePlanPlace(memory.place, event.place) &&
+    Math.abs(memory.startHour - event.startHour) < 0.01 &&
+    Math.abs(memory.endHour - event.endHour) < 0.01;
+}
+
+function rememberedPlanIdForEvent(event) {
+  return state.planMemories.find((memory) => planMemoryMatchesEvent(memory, event))?.id || "";
+}
+
+function rememberPlanFromThread(rowIndex) {
+  const exchange = askThread[rowIndex];
+  if (!exchange?.event) return;
+  const existing = rememberedPlanIdForEvent(exchange.event);
+  if (existing) {
+    exchange.memoryId = existing;
+    renderAsk();
+    return;
+  }
+  const memory = planMemoryFromEvent(exchange.event, exchange);
+  if (!memory) return;
+  state.planMemories = [memory, ...state.planMemories].slice(0, 60);
+  exchange.memoryId = memory.id;
+  savePlanMemories();
+  renderAsk();
+  renderForecastMemorySurfaces();
+}
+
+function forgetPlanMemory(id) {
+  const before = state.planMemories.length;
+  state.planMemories = state.planMemories.filter((memory) => memory.id !== id);
+  askThread.forEach((exchange) => {
+    if (exchange.memoryId === id) exchange.memoryId = "";
+  });
+  if (state.planMemories.length !== before) savePlanMemories();
+  renderAsk();
+  renderForecastMemorySurfaces();
+}
+
+function editPlanMemory(idOrRow) {
+  const rowIndex = Number(idOrRow);
+  const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
+  const memory = exchange ? null : state.planMemories.find((item) => item.id === idOrRow);
+  const draft = exchange?.q || memory?.original || planMemoryDraft(memory);
+  fillPlannerTemplate(draft);
+}
+
+function showPlanMemory(id) {
+  const memory = state.planMemories.find((item) => item.id === id);
+  const event = memory ? planMemoryEvent(memory) : null;
+  if (!event) return;
+  plannerReturnAfterDayDetail = {
+    scrollTop: els.aiSheet?.scrollTop || 0
+  };
+  closeAISheet();
+  const opened = openPlannerEventDetail(event);
+  if (!opened) {
+    const returnState = plannerReturnAfterDayDetail;
+    plannerReturnAfterDayDetail = null;
+    openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+  }
+}
+
+function planMemoryEvent(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
+  if (!memory || !data || !place || !samePlanPlace(memory.place, place)) return null;
+  const dayIdx = data.daily?.time?.indexOf(memory.targetDate);
+  if (dayIdx === undefined || dayIdx < 0) return null;
+  const c = buildAIContext(data, place, alerts);
+  if (!c) return null;
+  const window = {
+    dayIdx,
+    startHour: memory.startHour,
+    endHour: memory.endHour,
+    label: "custom"
+  };
+  const stats = planWindowStats(data, c, window);
+  if (!stats) return null;
+  const event = plannerShowEvent({
+    title: memory.title,
+    place,
+    data,
+    alerts,
+    window,
+    stats,
+    label: memory.label
+  });
+  if (event) event.memoryId = memory.id;
+  return event;
+}
+
+function activePlanMemoryEvents(data = state.forecast, place = state.activePlace) {
+  if (!data || !place) return [];
+  const now = forecastNowMs(data);
+  return state.planMemories
+    .map((memory) => ({ memory, event: planMemoryEvent(memory, data, place) }))
+    .filter(({ event }) => event && event.endMs >= now - 60 * 60 * 1000)
+    .sort((a, b) => a.event.startMs - b.event.startMs)
+    .slice(0, 6);
+}
+
+function hourlyPlanMemoryContext(rows, data = state.forecast) {
+  const markers = new Map();
+  const overlaps = new Set();
+  const items = activePlanMemoryEvents(data, state.activePlace);
+  items.forEach(({ memory, event }) => {
+    const touched = rows.filter((row, rowIndex) => {
+      const start = row.ms;
+      const next = rows[rowIndex + 1]?.ms;
+      const end = next && next > start ? next : start + 60 * 60 * 1000;
+      return start < event.endMs && end > event.startMs;
+    });
+    touched.forEach((row) => overlaps.add(row.index));
+    const first = touched[0];
+    if (!first) return;
+    const list = markers.get(first.index) || [];
+    list.push({ memory, event });
+    markers.set(first.index, list);
+  });
+  return { markers, overlaps };
+}
+
+function hourlyPlanMemoryLabel(items) {
+  if (!items?.length) return "";
+  if (items.length > 1) return `${items.length} plans`;
+  return planMemoryTitle(items[0].memory);
+}
+
+function planMemoryDraft(memory) {
+  if (!memory) return "";
+  return `${memory.title} ${planMemoryTimeText(memory)} in ${placeLabel(memory.place)}`.replace(/\s+/g, " ").trim();
+}
+
+function planMemoryTitle(memory) {
+  const raw = String(memory?.title || "Plan").trim();
+  return raw.replace(/\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*$/i, "").slice(0, 34) || raw;
+}
+
+function planMemoryTimeText(memory) {
+  return `${hourText(memory.startHour)}-${hourText(memory.endHour)}`;
+}
+
+function planMemoryDayLabel(memory, data = state.forecast) {
+  const idx = data?.daily?.time?.indexOf(memory.targetDate) ?? -1;
+  if (idx >= 0) return formatDay(memory.targetDate, idx);
+  return memory.targetDate;
+}
+
+function planMemoryMeta(memory, event = null) {
+  const where = placeLabel(memory.place);
+  const when = `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
+  if (!event) return `${when} · ${where}`;
+  const c = buildAIContext(event.data, event.place, event.alerts);
+  if (!c) return `${when} · ${where}`;
+  const stats = planWindowStats(event.data, c, {
+    dayIdx: event.dayIndex,
+    startHour: event.startHour,
+    endHour: event.endHour,
+    label: "custom"
+  });
+  if (!stats) return `${when} · ${where}`;
+  return `${when} · ${stats.rainChance}% rain · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
+}
+
+function renderPlanMemorySection() {
+  const items = activePlanMemoryEvents().slice(0, 4);
+  if (!items.length) return "";
+  return `<section class="memory-section" aria-label="Nearcast memory">` +
+    `<div class="ai-section-title"><strong>Memory</strong><span>Local · under your control</span></div>` +
+    `<div class="memory-list">` +
+      items.map(({ memory, event }) => `
+        <article class="memory-card">
+          <button class="memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Show ${memory.title}`)}">
+            <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+            <span>${escapeHtml(planMemoryMeta(memory, event))}</span>
+          </button>
+          <div class="memory-actions">
+            <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
+            <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
+          </div>
+        </article>
+      `).join("") +
+    `</div>` +
+  `</section>`;
+}
+
+function renderForecastMemorySurfaces() {
+  if (!state.forecast) return;
+  renderHourly(state.forecast, state.unit === "fahrenheit" ? "F" : "C", state.weatherTruth || weatherTruth(state.forecast));
+}
+
 function normalizePlanTimeClarification(value) {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -6596,6 +6874,7 @@ function renderAsk() {
   const busy = aiState.phase === "generating" || askStreaming;
   const dis = busy ? " disabled" : "";
 
+  const memorySection = renderPlanMemorySection();
   const bestCards = buildBestWindowCards().map((card) =>
     `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"` +
       `${card.intent ? ` data-ask-intent="${escapeHtml(card.intent)}"` : ""}${dis}>` +
@@ -6624,10 +6903,19 @@ function renderAsk() {
     const showAction = ex.event && !streaming
       ? `<button class="ask-show" type="button" data-ask-show="${i}">Show me</button>`
       : "";
+    const rememberedId = ex.event && !streaming ? (ex.memoryId || rememberedPlanIdForEvent(ex.event)) : "";
+    const memoryAction = ex.event && !streaming
+      ? rememberedId
+        ? `<span class="ask-memory-state">Remembered</span>` +
+          `<button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(rememberedId)}">Edit</button>` +
+          `<button class="ask-memory-btn" type="button" data-memory-forget="${escapeHtml(rememberedId)}">Forget</button>`
+        : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${i}">Remember</button>` +
+          `<button class="ask-memory-btn" type="button" data-memory-edit="${i}">Edit</button>`
+      : "";
     return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
       `<p class="ask-q">${escapeHtml(ex.q)}</p>` +
       `<p class="ask-a">${escapeHtml(ex.a)}</p>` +
-      showAction +
+      ((showAction || memoryAction) ? `<div class="ask-exchange-actions">${showAction}${memoryAction}</div>` : "") +
     `</div>`;
   }).join("");
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
@@ -6640,6 +6928,7 @@ function renderAsk() {
     : "";
 
   panel.innerHTML =
+    memorySection +
     (bestCards ? `<section class="best-windows" aria-label="Weather windows">` +
       `<div class="ai-section-title"><strong>Weather windows</strong><span>Forecast-grounded</span></div>` +
       `<div class="best-window-grid">${bestCards}</div>` +
@@ -6909,6 +7198,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
     .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
     .slice(0, 24);
+  const planMemory = hourlyPlanMemoryContext(rows, data);
 
   // Compact, scannable columns — tap any hour to open that hour expanded.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
@@ -6936,10 +7226,14 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const rainLabel = measuredWet ? "Rain" : rain >= 20 ? `${rain}%` : "";
     const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rain)) : rain;
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
-    const cardLabel = `${label}: ${code}, ${temp} degrees${measuredWet ? ", rain" : rain >= 20 ? `, ${rain}% rain` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
+    const memoryItems = planMemory.markers.get(index) || [];
+    const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
+    const hasPlanMemory = planMemory.overlaps.has(index);
+    const cardLabel = `${label}: ${code}, ${temp} degrees${measuredWet ? ", rain" : rain >= 20 ? `, ${rain}% rain` : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
     return `
-      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
+      <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
         <span class="hour-label">${label}</span>
+        ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
         <span class="hour-rain${rainLabel ? " wet" : ""}">${rainLabel}</span>
