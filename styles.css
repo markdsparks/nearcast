@@ -4717,6 +4717,51 @@ body.map-immersive-active .day-sheet.show {
   box-shadow: inset 0 -2px 0 var(--blue);
 }
 
+.sheet-day-nav {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
+.sheet-day-nav[hidden] {
+  display: none;
+}
+.sheet-day-nav-btn {
+  width: 38px;
+  min-height: 34px;
+  border: 1px solid var(--border-glass);
+  border-radius: 9px;
+  background: var(--glass-light);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.28rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-day-nav-btn:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+.sheet-day-nav-btn:not(:disabled):hover,
+.sheet-day-nav-btn:not(:disabled):focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
+.sheet-day-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graph-metric {
   display: flex;
   align-items: center;

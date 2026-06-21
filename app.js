@@ -1,4 +1,4 @@
-const VERSION = "2.5.3";
+const VERSION = "2.5.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -1383,6 +1383,8 @@ function bindEvents() {
   });
   bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
+  bindTapAction(document.getElementById("sheetPrevDay"), () => navigateSheetDay(-1));
+  bindTapAction(document.getElementById("sheetNextDay"), () => navigateSheetDay(1));
   bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
     const memoryDetail = event.target.closest("[data-memory-detail]");
     if (memoryDetail) {
@@ -10738,10 +10740,13 @@ window.setInterval(refreshSkyForLiveTime, 60 * 1000);
 
 /* ---------- Day-detail bottom sheet ---------- */
 
+let dayDetailNavState = null;
+
 // Collect a single day's hours from the retained forecast and open the sheet.
-function openDayFromIndex(i) {
+function openDayFromIndex(i, options = {}) {
   const data = state.forecast;
   if (!data) return;
+  if (!Number.isInteger(i) || i < 0 || i >= (data.daily?.time?.length || 0)) return;
   const dayStr = data.daily.time[i];
   const indices = [];
   data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
@@ -10758,10 +10763,11 @@ function openDayFromIndex(i) {
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
     dayIndex: i,
-    initialMode: memoryEvent ? "hourly" : getDayDetailMode(),
-    persistInitialMode: false,
+    initialMode: options.initialMode || (memoryEvent ? "hourly" : getDayDetailMode()),
+    persistInitialMode: options.persistInitialMode ?? false,
     showNow: i === 0,
-    eventWindow: memoryEvent
+    eventWindow: memoryEvent,
+    source: "day"
   });
   if (memoryEvent) scrollFocusedSheetHour();
 }
@@ -10792,7 +10798,8 @@ function openNext24Detail(options = {}) {
     persistInitialMode: false,
     showNow: true,
     eventWindow,
-    contextLabel
+    contextLabel,
+    source: "rolling"
   });
   if (eventWindow) scrollFocusedSheetHour();
 }
@@ -10844,9 +10851,50 @@ function setDayDetailMode(mode, persist = true) {
   hourlyList.hidden = !isHourly;
   const metricToggle = document.getElementById("graphMetricToggle");
   if (metricToggle) metricToggle.hidden = isHourly; // Temp/Wind only applies to the graph
+  updateSheetDayNav(normalized);
 
   if (!isHourly) scheduleGraphCalloutReflow();
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
+}
+
+function updateSheetDayNav(mode = getDayDetailMode()) {
+  const nav = document.getElementById("sheetDayNav");
+  if (!nav) return;
+  const prev = document.getElementById("sheetPrevDay");
+  const next = document.getElementById("sheetNextDay");
+  const label = document.getElementById("sheetDayNavLabel");
+  const data = dayDetailNavState?.data || state.forecast;
+  const dayIndex = dayDetailNavState?.dayIndex;
+  const dayCount = data?.daily?.time?.length || 0;
+  const canPage = dayDetailNavState?.source === "day" &&
+    Number.isInteger(dayIndex) &&
+    dayCount > 1;
+  const isHourly = mode === "hourly";
+  nav.hidden = !(isHourly && canPage);
+  if (!canPage) return;
+  const canPrev = dayIndex > 0;
+  const canNext = dayIndex < dayCount - 1;
+  if (prev) {
+    prev.disabled = !canPrev;
+    prev.setAttribute("aria-disabled", String(!canPrev));
+  }
+  if (next) {
+    next.disabled = !canNext;
+    next.setAttribute("aria-disabled", String(!canNext));
+  }
+  if (label) label.textContent = formatDay(data.daily.time[dayIndex], dayIndex);
+}
+
+function navigateSheetDay(delta) {
+  const stateForNav = dayDetailNavState;
+  if (!stateForNav || stateForNav.source !== "day") return;
+  const nextIndex = stateForNav.dayIndex + delta;
+  const dayCount = stateForNav.data?.daily?.time?.length || 0;
+  if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= dayCount) return;
+  openDayFromIndex(nextIndex, {
+    initialMode: "hourly",
+    persistInitialMode: false
+  });
 }
 
 function openDayDetail({
@@ -10864,7 +10912,8 @@ function openDayDetail({
   data = state.forecast,
   alerts = activeAlerts,
   eventWindow = null,
-  contextLabel = ""
+  contextLabel = "",
+  source = "day"
 }) {
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -10926,6 +10975,7 @@ function openDayDetail({
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
+  dayDetailNavState = { source, dayIndex, data };
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
   renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
@@ -10944,6 +10994,7 @@ function closeDayDetail() {
   const sheet = document.getElementById("dayDetail");
   const returnToPlanner = plannerReturnAfterDayDetail;
   plannerReturnAfterDayDetail = null;
+  dayDetailNavState = null;
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
   document.body.style.overflow = returnToPlanner ? "hidden" : "";

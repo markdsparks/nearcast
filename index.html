@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.5.3">
+    <link rel="stylesheet" href="styles.css?v=2.5.4">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -356,6 +356,11 @@
         <button class="sheet-mode-btn active" id="sheetGraphMode" type="button" aria-pressed="true" aria-controls="sheetGraphWrap">Graph</button>
         <button class="sheet-mode-btn" id="sheetHourlyMode" type="button" aria-pressed="false" aria-controls="sheetHourlyList">Hourly</button>
       </div>
+      <div class="sheet-day-nav" id="sheetDayNav" hidden aria-label="Hourly day navigation">
+        <button class="sheet-day-nav-btn" id="sheetPrevDay" type="button" aria-label="Previous day">‹</button>
+        <span class="sheet-day-nav-label" id="sheetDayNavLabel">Day</span>
+        <button class="sheet-day-nav-btn" id="sheetNextDay" type="button" aria-label="Next day">›</button>
+      </div>
       <div class="graph-metric" id="graphMetricToggle" role="group" aria-label="Graph metric">
         <div class="graph-metric-tabs">
           <button class="graph-metric-btn active" id="graphTempBtn" type="button" aria-pressed="true">Temp</button>
@@ -420,6 +425,6 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="app.js?v=2.5.3"></script>
+    <script src="app.js?v=2.5.4"></script>
   </body>
 </html>
