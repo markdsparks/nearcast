@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skyMask" x1="40" y1="6" x2="160" y2="194" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8fc3e2"/>
+      <stop offset="0.42" stop-color="#cfe9ee"/>
+      <stop offset="0.74" stop-color="#f3ecd6"/>
+      <stop offset="1" stop-color="#f6d79c"/>
+    </linearGradient>
+    <radialGradient id="bloomMask" cx="50%" cy="42%" r="58%">
+      <stop offset="0" stop-color="#fff3c9" stop-opacity="0.9"/>
+      <stop offset="0.55" stop-color="#ffe6a8" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#ffe6a8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pinGlass" x1="28" y1="12" x2="92" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="0.56" stop-color="#d8eef7" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#8bc6d7" stop-opacity="0.66"/>
+    </linearGradient>
+    <linearGradient id="pinStroke" x1="28" y1="14" x2="92" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2f927c" stop-opacity="0.62"/>
+    </linearGradient>
+    <radialGradient id="sunWarm" cx="38%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#fff7d2"/>
+      <stop offset="0.5" stop-color="#ffce6b"/>
+      <stop offset="1" stop-color="#e9a23c"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#skyMask)"/>
+  <circle cx="100" cy="84" r="58" fill="url(#bloomMask)"/>
+  <g transform="translate(50 38) scale(0.833333)">
+    <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)" filter="blur(1px)"/>
+    <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
+    <circle cx="60" cy="48" r="15" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.88)" stroke-width="2.2"/>
+    <path d="M33 64 L87 64" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>

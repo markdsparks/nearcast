@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skyLight" x1="40" y1="6" x2="160" y2="194" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8fc3e2"/>
+      <stop offset="0.42" stop-color="#cfe9ee"/>
+      <stop offset="0.74" stop-color="#f3ecd6"/>
+      <stop offset="1" stop-color="#f6d79c"/>
+    </linearGradient>
+    <radialGradient id="bloomLight" cx="50%" cy="40%" r="60%">
+      <stop offset="0" stop-color="#fff3c9" stop-opacity="0.92"/>
+      <stop offset="0.55" stop-color="#ffe6a8" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#ffe6a8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pinGlassLt" x1="60" y1="40" x2="140" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.96"/>
+      <stop offset="0.55" stop-color="#eaf6fb" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#a9d6e3" stop-opacity="0.7"/>
+    </linearGradient>
+    <linearGradient id="pinStrokeLt" x1="60" y1="42" x2="140" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#2f927c" stop-opacity="0.6"/>
+    </linearGradient>
+    <radialGradient id="sunLt" cx="40%" cy="32%" r="72%">
+      <stop offset="0" stop-color="#fff7d2"/>
+      <stop offset="0.5" stop-color="#ffce6b"/>
+      <stop offset="1" stop-color="#ec9f37"/>
+    </radialGradient>
+    <linearGradient id="topLight" x1="100" y1="8" x2="100" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#skyLight)"/>
+  <path d="M100 8 C150 8 160 8 174 22 C192 40 192 50 192 100 C192 150 192 160 178 174 C160 192 150 192 100 192 C50 192 40 192 26 178 C8 160 8 150 8 100 C8 50 8 40 22 26 C40 8 50 8 100 8 Z" fill="rgba(255,255,255,0.10)"/>
+  <path d="M100 8 C150 8 160 8 174 22 C192 40 192 50 192 100 C192 150 192 160 178 174 C160 192 150 192 100 192 C50 192 40 192 26 178 C8 160 8 150 8 100 C8 50 8 40 22 26 C40 8 50 8 100 8 Z" fill="url(#topLight)"/>
+  <circle cx="100" cy="84" r="56" fill="url(#bloomLight)"/>
+  <ellipse cx="100" cy="178" rx="30" ry="6" fill="rgba(20,40,52,0.18)"/>
+  <path d="M100 176 C100 176 56 138 56 104 C56 76 76 60 100 60 C124 60 144 76 144 104 C144 138 100 176 100 176Z" fill="url(#pinGlassLt)" stroke="url(#pinStrokeLt)" stroke-width="2"/>
+  <circle cx="100" cy="100" r="20" fill="url(#sunLt)" stroke="rgba(255,255,255,0.9)" stroke-width="2.6"/>
+  <path d="M66 120 L134 120" fill="none" stroke="rgba(255,255,255,0.96)" stroke-width="9" stroke-linecap="round"/>
+</svg>

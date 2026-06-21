@@ -4,14 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.6.14">
+    <link rel="stylesheet" href="styles.css?v=2.6.16">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.16">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.16">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -24,8 +25,11 @@
         </button>
         <div class="app-menu" id="appMenu" hidden>
           <div class="brand-lockup">
-            <p class="eyebrow">Weather for the places that matter</p>
-            <h1>Nearcast <span id="appVersion" class="app-version"></span></h1>
+            <span class="brand-lockup-mark" aria-hidden="true"><img src="icons/nearcast-mark.svg" alt=""></span>
+            <span class="brand-lockup-copy">
+              <p class="eyebrow">Weather for the places that matter</p>
+              <h1><span class="brand-wordmark"><span class="brand-near">Near</span><span class="brand-cast">cast</span></span> <span id="appVersion" class="app-version"></span></h1>
+            </span>
           </div>
           <section class="saved-row" aria-label="Saved places">
             <button class="place-switcher" id="placeSwitcher" type="button" aria-label="Open saved places">
@@ -51,43 +55,7 @@
 
       <section class="welcome" id="welcome">
         <div class="welcome-brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 180 132" role="img">
-            <defs>
-              <linearGradient id="nearcastPinGlass" x1="42" y1="12" x2="132" y2="116" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stop-color="#ffffff" stop-opacity="0.92"/>
-                <stop offset="0.58" stop-color="#d8eef7" stop-opacity="0.74"/>
-                <stop offset="1" stop-color="#8bc6d7" stop-opacity="0.62"/>
-              </linearGradient>
-              <linearGradient id="nearcastPinStroke" x1="42" y1="14" x2="132" y2="116" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stop-color="#ffffff" stop-opacity="0.86"/>
-                <stop offset="1" stop-color="#2f927c" stop-opacity="0.58"/>
-              </linearGradient>
-              <radialGradient id="nearcastDot" cx="35%" cy="28%" r="74%">
-                <stop offset="0" stop-color="#fff7c8"/>
-                <stop offset="0.56" stop-color="#78c9b1"/>
-                <stop offset="1" stop-color="#2e7d62"/>
-              </radialGradient>
-              <filter id="nearcastMarkSoft" x="-30%" y="-30%" width="160%" height="170%">
-                <feGaussianBlur in="SourceAlpha" stdDeviation="5"/>
-                <feOffset dy="9"/>
-                <feComponentTransfer>
-                  <feFuncA type="linear" slope="0.22"/>
-                </feComponentTransfer>
-                <feMerge>
-                  <feMergeNode/>
-                  <feMergeNode in="SourceGraphic"/>
-                </feMerge>
-              </filter>
-            </defs>
-            <ellipse class="brand-mark-shadow" cx="90" cy="116" rx="44" ry="8"/>
-            <g filter="url(#nearcastMarkSoft)">
-              <path class="brand-mark-pin" d="M90 116C90 116 49 80.8 49 51.8C49 26.8 67.2 13 90 13C112.8 13 131 26.8 131 51.8C131 80.8 90 116 90 116Z"/>
-              <path class="brand-mark-ridge" d="M62 67.5C73 57.7 84.8 57.5 95.3 67.5C105.8 77.5 119.6 75.4 130 64"/>
-              <circle class="brand-mark-dot" cx="90" cy="48" r="10"/>
-              <path class="brand-mark-orbit brand-mark-orbit-a" d="M68 49C75.8 32.2 104.2 32.2 112 49"/>
-              <path class="brand-mark-orbit brand-mark-orbit-b" d="M66 50C58.2 65.6 70.5 82.5 90 82.5C109.5 82.5 121.8 65.6 114 50"/>
-            </g>
-          </svg>
+          <img src="icons/nearcast-mark.svg" alt="">
         </div>
         <p class="welcome-ambient-label" id="welcomeAmbientLabel" hidden></p>
         <p class="welcome-kicker">Nearcast</p>
@@ -467,6 +435,6 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="app.js?v=2.6.14"></script>
+    <script src="app.js?v=2.6.16"></script>
   </body>
 </html>
