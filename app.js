@@ -1,4 +1,4 @@
-const VERSION = "2.6.7";
+const VERSION = "2.6.8";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -12407,7 +12407,7 @@ function drawSunGraph() {
     top: 12,
     bottom: 122,
     labelY: 25,
-    minLabelWidth: 54,
+    minLabelWidth: 42,
     data
   });
 
