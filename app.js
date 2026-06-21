@@ -1,4 +1,4 @@
-const VERSION = "2.4.0";
+const VERSION = "2.4.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -262,7 +262,6 @@ const els = {
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
   nowSummary: document.querySelector("#nowSummary"),
-  heroTruthReceipt: document.querySelector("#heroTruthReceipt"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
@@ -315,7 +314,6 @@ const els = {
   hourly: document.querySelector("#hourly"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
-  weatherTruthReceipt: document.querySelector("#weatherTruthReceipt"),
   metricTip: document.querySelector("#metricTip"),
   savePlace: document.querySelector("#savePlace"),
   weatherMap: document.querySelector("#weatherMap"),
@@ -851,35 +849,9 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast) {
   };
 }
 
-function weatherTruthSourceLabel(truth) {
-  const source = truth?.source || "";
-  if (source === "minutely-current") return "current + 15-min";
-  if (source === "current") return "current";
-  if (source === "hourly-pop") return "hourly chance";
-  if (source === "gated-hourly") return "checked hourly";
-  if (source === "hourly") return "hourly";
-  return "forecast";
-}
-
-function weatherTruthConfidenceLabel(truth) {
-  const confidence = truth?.confidence || "";
-  if (confidence === "observed") return "observed";
-  if (confidence === "likely") return "likely";
-  if (confidence === "mixed") return "mixed";
-  return "forecast";
-}
-
-function weatherTruthSurfaceLabel(truth) {
-  if (!truth) return "";
-  const label = truth.label || "Weather";
-  const confidence = weatherTruthConfidenceLabel(truth);
-  const source = weatherTruthSourceLabel(truth);
-  return `${label} · ${confidence} · ${source}`;
-}
-
 function weatherTruthSurfaceDetail(truth) {
   if (!truth) return "";
-  return truth.receiptDetail || truth.receipt || weatherTruthSurfaceLabel(truth);
+  return truth.receiptDetail || truth.receipt || "";
 }
 
 function buildWeatherTruth(data = state.forecast) {
@@ -943,10 +915,8 @@ function buildWeatherTruth(data = state.forecast) {
     source: receipt.source,
     receipt: receipt.short,
     receiptDetail: receipt.detail,
-    surfaceLabel: "",
     surfaceDetail: ""
   };
-  truth.surfaceLabel = weatherTruthSurfaceLabel(truth);
   truth.surfaceDetail = weatherTruthSurfaceDetail(truth);
   return truth;
 }
@@ -2237,28 +2207,14 @@ function updateForecastUnitLabels(data, unit) {
   });
 }
 
-function renderTruthReceipt(el, truth, options = {}) {
-  if (!el) return;
-  const text = options.surface ? truth?.surfaceLabel : truth?.receipt;
-  const detail = truth?.surfaceDetail || truth?.receiptDetail || text || "";
-  el.textContent = text || "";
-  el.title = detail;
-  el.setAttribute("aria-label", detail);
-  el.hidden = !text;
-}
-
 function updateWeatherTruthReceipt(truth) {
   if (!truth) {
-    if (els.weatherTruthReceipt) els.weatherTruthReceipt.hidden = true;
-    if (els.heroTruthReceipt) els.heroTruthReceipt.hidden = true;
     document.documentElement.removeAttribute("data-weather-confidence");
     document.documentElement.removeAttribute("data-weather-source");
     return;
   }
   document.documentElement.dataset.weatherConfidence = truth.confidence || "forecast";
   document.documentElement.dataset.weatherSource = truth.source || "forecast";
-  renderTruthReceipt(els.weatherTruthReceipt, truth);
-  renderTruthReceipt(els.heroTruthReceipt, truth, { surface: true });
 }
 
 function renderForecast(data, place) {
@@ -8141,20 +8097,16 @@ function renderMapLegend() {
   if (!els.mapLegend) return;
   const isForecast = activeMapSource() === "forecast";
   const sourceNote = mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Forecast map unavailable here" : "";
-  const truth = state.weatherTruth;
-  const truthNote = truth?.surfaceLabel ? `Current: ${truth.surfaceLabel}` : "";
   const legend = isForecast
     ? {
         title: "Forecast precipitation",
         colors: ["#d8f0ff", "#8fd07e", "#f2df5a", "#e99446", "#c74767"],
-        labels: ["Trace", "0.10 in", "0.25 in", "0.50 in", "1.00+ in"],
-        note: "Map source: future precipitation forecast."
+        labels: ["Trace", "0.10 in", "0.25 in", "0.50 in", "1.00+ in"]
       }
     : {
         title: "Radar intensity",
         colors: ["#7ec8ff", "#36b16a", "#f0d846", "#f08a30", "#c83f6b"],
-        labels: ["Light", "Moderate", "Steady", "Heavy", "Severe"],
-        note: "Map source: live/near-real-time radar."
+        labels: ["Light", "Moderate", "Steady", "Heavy", "Severe"]
       };
 
   els.mapLegend.innerHTML = `
@@ -8167,8 +8119,7 @@ function renderMapLegend() {
     <div class="legend-labels">
       ${legend.labels.map((label) => `<span>${escapeHtml(label)}</span>`).join("")}
     </div>
-    <span class="legend-note">${escapeHtml(sourceNote || legend.note)}</span>
-    ${truthNote ? `<span class="legend-note legend-truth">${escapeHtml(truthNote)}</span>` : ""}
+    ${sourceNote ? `<span class="legend-note">${escapeHtml(sourceNote)}</span>` : ""}
   `;
 }
 
