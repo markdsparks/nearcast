@@ -5883,6 +5883,8 @@ button.sheet-plan-badge:focus-visible {
   display: grid;
   justify-items: center;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   text-align: center;
   margin: 0 auto clamp(18px, 4svh, 30px);
 }
@@ -6054,12 +6056,16 @@ button.sheet-plan-badge:focus-visible {
   text-transform: uppercase;
 }
 .mode-welcome .welcome-brand {
-  max-width: 11ch;
+  width: min(100%, 12.8ch);
+  max-width: calc(100vw - 32px);
   color: var(--ink);
-  font-size: clamp(2.45rem, 11vw, 5.6rem);
+  font-size: clamp(2.25rem, 9.7vw, 5.35rem);
   font-weight: 950;
-  line-height: 0.92;
+  line-height: 0.94;
   letter-spacing: 0;
+  overflow-wrap: normal;
+  text-wrap: balance;
+  white-space: normal;
 }
 .welcome-sub {
   color: var(--muted);
@@ -6112,6 +6118,11 @@ button.sheet-plan-badge:focus-visible {
 @media (max-width: 460px) {
   .shell.mode-welcome {
     width: min(100% - 24px, 720px);
+  }
+  .mode-welcome .welcome-brand {
+    width: min(100%, 11.8ch);
+    max-width: calc(100vw - 36px);
+    font-size: clamp(2.05rem, 9.2vw, 2.55rem);
   }
   .welcome-moments {
     font-size: 0.74rem;
