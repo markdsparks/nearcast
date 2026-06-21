@@ -1,4 +1,4 @@
-const VERSION = "2.6.11";
+const VERSION = "2.6.12";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -10977,6 +10977,7 @@ function skyCondition(code) {
 // ---- Immersive sky: live solar light + weather texture ----------------------
 
 const SKY_FORECAST_EDGE_MS = 60 * 60 * 1000;
+const SKY_RENDER_OVERSCAN_PX = 260;
 
 function skyNow(data = state.forecast) {
   return skyNowMs(data);
@@ -11462,8 +11463,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
 
 function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const perf = perfStart();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const { width: vw, height: vh } = skyViewportSize();
   const cfg = skySceneConfig(condition, isDay, skyState);
   const sceneSeed = skySceneSeed(condition, isDay);
   const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
@@ -11489,6 +11489,15 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
   perfEnd("renderSkyScene", perf);
+}
+
+function skyViewportSize() {
+  const root = document.documentElement;
+  const visual = window.visualViewport;
+  return {
+    width: Math.ceil(Math.max(window.innerWidth || 0, root?.clientWidth || 0, visual?.width || 0, 320)),
+    height: Math.ceil(Math.max(window.innerHeight || 0, root?.clientHeight || 0, visual?.height || 0, 640) + SKY_RENDER_OVERSCAN_PX)
+  };
 }
 
 function skyFilterDefs() {

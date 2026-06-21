@@ -68,6 +68,9 @@
     radial-gradient(ellipse 62% 42% at 50% 18%, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.34) 45%, transparent 78%),
     radial-gradient(ellipse 58% 36% at 50% 50%, rgba(245, 250, 254, 0.42), rgba(245, 250, 254, 0.18) 52%, transparent 82%),
     radial-gradient(ellipse 54% 28% at 50% 82%, rgba(245, 250, 254, 0.30), rgba(245, 250, 254, 0.10) 50%, transparent 80%);
+  --welcome-stage-wash:
+    linear-gradient(180deg, rgba(246, 251, 254, 0.30), rgba(246, 251, 254, 0.20) 48%, rgba(232, 242, 248, 0.28) 100%),
+    radial-gradient(ellipse 74% 58% at 50% 38%, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.26) 48%, rgba(255, 255, 255, 0.10) 78%, transparent 100%);
   --sky-veil:
     radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.34), transparent 36%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(235, 243, 249, 0.28));
@@ -120,6 +123,9 @@
     --border-glass: rgba(255, 255, 255, 0.08);
     --border-glass-md: rgba(255, 255, 255, 0.10);
     --content-wash: transparent;
+    --welcome-stage-wash:
+      linear-gradient(180deg, rgba(4, 8, 15, 0.20), rgba(4, 8, 15, 0.12) 48%, rgba(4, 8, 15, 0.18) 100%),
+      radial-gradient(ellipse 74% 58% at 50% 38%, rgba(8, 12, 20, 0.44), rgba(8, 12, 20, 0.22) 54%, rgba(8, 12, 20, 0.10) 82%, transparent 100%);
     --sky-veil: transparent;
     --scroll-track: rgba(255, 255, 255, 0.10);
     --scroll-thumb: rgba(255, 255, 255, 0.28);
@@ -170,6 +176,9 @@
   --border-glass: rgba(255, 255, 255, 0.08);
   --border-glass-md: rgba(255, 255, 255, 0.10);
   --content-wash: transparent;
+  --welcome-stage-wash:
+    linear-gradient(180deg, rgba(4, 8, 15, 0.20), rgba(4, 8, 15, 0.12) 48%, rgba(4, 8, 15, 0.18) 100%),
+    radial-gradient(ellipse 74% 58% at 50% 38%, rgba(8, 12, 20, 0.44), rgba(8, 12, 20, 0.22) 54%, rgba(8, 12, 20, 0.10) 82%, transparent 100%);
   --sky-veil: transparent;
   --scroll-track: rgba(255, 255, 255, 0.10);
   --scroll-thumb: rgba(255, 255, 255, 0.28);
@@ -455,10 +464,10 @@ html[data-sky] body {
   position: fixed;
   top: calc(-1 * env(safe-area-inset-top, 0px));
   right: 0;
-  bottom: calc(-1 * env(safe-area-inset-bottom, 0px));
+  bottom: calc(-260px - env(safe-area-inset-bottom, 0px));
   left: 0;
   min-height: calc(100vh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
-  min-height: calc(100dvh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  min-height: calc(100dvh + 260px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
@@ -5950,9 +5959,12 @@ button.sheet-plan-badge:focus-visible {
   padding: max(30px, env(safe-area-inset-top, 0px)) 0 max(32px, env(safe-area-inset-bottom, 0px));
 }
 .shell.mode-welcome::before {
-  width: min(820px, 96vw);
-  -webkit-mask-image: radial-gradient(ellipse 70% 62% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.74) 42%, rgba(0, 0, 0, 0.22) 72%, transparent 100%);
-  mask-image: radial-gradient(ellipse 70% 62% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.74) 42%, rgba(0, 0, 0, 0.22) 72%, transparent 100%);
+  top: -16vh;
+  bottom: -22vh;
+  width: 100vw;
+  background: var(--welcome-stage-wash);
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 .mode-welcome .welcome {
   display: grid;
