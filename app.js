@@ -1,8 +1,23 @@
-const VERSION = "2.6.8";
+const VERSION = "2.6.9";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 1800;
+const PERF_STORAGE_KEY = "nearcast-perf";
+const PERF_RENDER_WARN_MS = 50;
+const PERF_INPUT_WARN_MS = 80;
+const PERF_LONG_TASK_WARN_MS = 120;
+const PERF_MAX_ENTRIES = 80;
+
+const perfQueryFlag = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get("perf");
+  } catch {
+    return null;
+  }
+})();
+if (perfQueryFlag === "1") localStorage.setItem(PERF_STORAGE_KEY, "1");
+else if (perfQueryFlag === "0") localStorage.removeItem(PERF_STORAGE_KEY);
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -42,6 +57,17 @@ const mapState = {
   timelineKind: "radar",
   nowIndex: 0,
   forecastUnavailable: false
+};
+
+const perfState = {
+  enabled: localStorage.getItem(PERF_STORAGE_KEY) === "1",
+  initialized: false,
+  entries: [],
+  inputFocusCount: 0,
+  playbackPausedForInput: false,
+  longTaskObserver: null,
+  lastBriefingRenderAt: 0,
+  briefingRenderQueued: false
 };
 
 const MAP_MIN_ZOOM = 4;
@@ -1321,7 +1347,143 @@ function representativeHourlyCodeForIndices(data, indices) {
   return modalSky != null ? Number(modalSky) : skyCodeFromCloud(cloudN ? cloudSum / cloudN : null);
 }
 
+function initPerfDiagnostics() {
+  if (perfState.initialized) return;
+  perfState.initialized = true;
+  window.nearcastPerf = {
+    get enabled() { return perfState.enabled; },
+    get entries() { return perfState.entries.slice(); },
+    enable() { setPerfEnabled(true); },
+    disable() { setPerfEnabled(false); },
+    clear() { perfState.entries = []; },
+    mark(name, detail = {}) {
+      perfRecord("mark", name, 0, detail, 0);
+    },
+    measure(name, fn, threshold = PERF_RENDER_WARN_MS) {
+      return perfMeasure(name, fn, threshold);
+    }
+  };
+  if (perfState.enabled) {
+    installLongTaskObserver();
+    console.info("[Nearcast perf] Diagnostics enabled. Use window.nearcastPerf.entries to inspect recent events.");
+  }
+}
+
+function setPerfEnabled(enabled) {
+  perfState.enabled = Boolean(enabled);
+  if (perfState.enabled) {
+    localStorage.setItem(PERF_STORAGE_KEY, "1");
+    installLongTaskObserver();
+    console.info("[Nearcast perf] Enabled.");
+  } else {
+    localStorage.removeItem(PERF_STORAGE_KEY);
+    console.info("[Nearcast perf] Disabled.");
+  }
+}
+
+function installLongTaskObserver() {
+  if (!perfState.enabled || perfState.longTaskObserver || !("PerformanceObserver" in window)) return;
+  try {
+    if (PerformanceObserver.supportedEntryTypes &&
+        !PerformanceObserver.supportedEntryTypes.includes("longtask")) return;
+    perfState.longTaskObserver = new PerformanceObserver((list) => {
+      list.getEntries().forEach((entry) => {
+        perfRecord("longtask", "main-thread", entry.duration, {
+          start: Math.round(entry.startTime)
+        }, PERF_LONG_TASK_WARN_MS);
+      });
+    });
+    perfState.longTaskObserver.observe({ entryTypes: ["longtask"] });
+  } catch {
+    perfState.longTaskObserver = null;
+  }
+}
+
+function perfRecord(kind, name, duration, detail = {}, threshold = PERF_RENDER_WARN_MS) {
+  if (!perfState.enabled) return;
+  const entry = {
+    at: Math.round(performance.now()),
+    kind,
+    name,
+    duration: Number(duration.toFixed ? duration.toFixed(1) : duration),
+    detail
+  };
+  perfState.entries.push(entry);
+  if (perfState.entries.length > PERF_MAX_ENTRIES) perfState.entries.shift();
+  if (duration >= threshold) {
+    console.warn(`[Nearcast perf] ${name} ${duration.toFixed ? duration.toFixed(1) : duration}ms`, detail);
+  }
+}
+
+function perfStart() {
+  return perfState.enabled && performance?.now ? performance.now() : 0;
+}
+
+function perfEnd(name, start, threshold = PERF_RENDER_WARN_MS, detail = {}) {
+  if (!start) return;
+  perfRecord("measure", name, performance.now() - start, detail, threshold);
+}
+
+function perfMeasure(name, fn, threshold = PERF_RENDER_WARN_MS) {
+  const start = perfStart();
+  try {
+    return fn();
+  } finally {
+    perfEnd(name, start, threshold);
+  }
+}
+
+function textInputIsActive() {
+  const el = document.activeElement;
+  return Boolean(el?.matches?.("input, textarea, [contenteditable='true']"));
+}
+
+function pauseBackgroundMotionForInput() {
+  if (mapState.playing && !mapState.immersive) {
+    perfState.playbackPausedForInput = true;
+    stopRadarPlayback({ renderStatic: false });
+  }
+}
+
+function resumeBackgroundMotionAfterInput() {
+  if (textInputIsActive() || !perfState.playbackPausedForInput) return;
+  perfState.inputFocusCount = 0;
+  perfState.playbackPausedForInput = false;
+  setTimeout(() => maybeAutoPlayRadar(), 140);
+}
+
+function recordInputLatency(name, start, valueLength) {
+  if (!perfState.enabled) return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      perfRecord("input", name, performance.now() - start, {
+        valueLength
+      }, PERF_INPUT_WARN_MS);
+    });
+  });
+}
+
+function bindInputResponsiveness(input, name) {
+  if (!input || input.dataset.perfResponsive === "1") return;
+  input.dataset.perfResponsive = "1";
+  input.addEventListener("focus", () => {
+    perfState.inputFocusCount = 1;
+    pauseBackgroundMotionForInput();
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      perfState.inputFocusCount = textInputIsActive() ? 1 : 0;
+      resumeBackgroundMotionAfterInput();
+    }, 0);
+  });
+  input.addEventListener("keydown", () => {
+    if (!perfState.enabled) return;
+    recordInputLatency(name, performance.now(), input.value.length);
+  });
+}
+
 function init() {
+  initPerfDiagnostics();
   document.getElementById("appVersion").textContent = `v${VERSION}`;
   applyTheme();
   renderSavedPlaces();
@@ -1451,6 +1613,7 @@ function bindEvents() {
   els.placeSearch.addEventListener("keydown", (event) => {
     if (event.key === "Escape") clearSearchResults();
   });
+  bindInputResponsiveness(els.placeSearch, "place-search");
   els.placeSearch.addEventListener("input", () => {
     const query = els.placeSearch.value.trim();
     clearTimeout(searchSuggestTimer);
@@ -2903,6 +3066,7 @@ function updateWeatherTruthReceipt(truth) {
 }
 
 function renderForecast(data, place) {
+  const perf = perfStart();
   state.forecast = data; // retained for the day-detail sheet
   state.forecastUnit = state.unit;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -2953,6 +3117,7 @@ function renderForecast(data, place) {
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(nowCode, truth.isDay, data, displayCondition);
+  perfEnd("renderForecast", perf);
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data), truth = weatherTruth(data)) {
@@ -4696,6 +4861,8 @@ const aiState = {
 };
 let aiBriefAbort = null;
 let aiModule = null;
+let aiWarmQueued = false;
+let aiWarmLoading = false;
 
 function loadAIModule() {
   if (!aiModule) aiModule = import(`./ai.js?v=${encodeURIComponent(VERSION)}`);
@@ -4965,11 +5132,36 @@ async function detectAI() {
 }
 
 function warmAI() {
+  if (aiWarmQueued || aiWarmLoading) return;
+  aiWarmQueued = true;
   const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1200));
   idle(() => {
+    aiWarmQueued = false;
+    if (textInputIsActive()) {
+      setTimeout(warmAI, 2200);
+      return;
+    }
+    aiWarmLoading = true;
     loadAIModule()
       .then((ai) => ai.load())
-      .catch(() => {}); // a failed warm just means the first tap pays the load
+      .catch(() => {}) // a failed warm just means the first tap pays the load
+      .finally(() => { aiWarmLoading = false; });
+  });
+}
+
+function renderBriefingSoon() {
+  const now = performance.now();
+  if (now - perfState.lastBriefingRenderAt > 90) {
+    perfState.lastBriefingRenderAt = now;
+    renderBriefing();
+    return;
+  }
+  if (perfState.briefingRenderQueued) return;
+  perfState.briefingRenderQueued = true;
+  requestAnimationFrame(() => {
+    perfState.briefingRenderQueued = false;
+    perfState.lastBriefingRenderAt = performance.now();
+    renderBriefing();
   });
 }
 
@@ -5030,7 +5222,7 @@ async function runBrief() {
     for await (const delta of ai.brief(factSheet, mine)) {
       if (mine.aborted) break;
       aiState.text += delta;
-      renderBriefing();
+      renderBriefingSoon();
     }
     aiState.phase = "ready"; // text retained → shows regenerate control
     renderBriefing();
@@ -8008,12 +8200,17 @@ function bindAskSendButton() {
 }
 
 function renderAsk() {
+  const perf = perfStart();
   const panel = els.aiAsk;
-  if (!panel) return;
+  if (!panel) {
+    perfEnd("renderAsk", perf);
+    return;
+  }
   const available = state.forecast && state.activePlace &&
     aiState.phase !== "unknown";
   if (!available) {
     panel.hidden = true;
+    perfEnd("renderAsk", perf);
     return;
   }
   panel.hidden = false;
@@ -8092,6 +8289,8 @@ function renderAsk() {
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
   bindAskSendButton();
+  bindInputResponsiveness(document.getElementById("askInput"), "planner-input");
+  perfEnd("renderAsk", perf);
 }
 
 function showPlannerEvent(rowIndex) {
@@ -8341,6 +8540,7 @@ function buildHeadsUp(data, uv1, gust1, rain1, high1, low0, windUnit) {
 }
 
 function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
+  const perf = perfStart();
   const now = forecastNowMs(data);
   const rows = data.hourly.time
     .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
@@ -8393,6 +8593,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
       </article>
     `;
   }).join("");
+  perfEnd("renderHourly", perf);
 }
 
 // Absolute temperature → color, anchored to real-world warm/cold norms (°F).
@@ -8456,6 +8657,7 @@ function tempOklchHue(value, unit = state.unit) {
 }
 
 function renderDaily(data, tempUnit, precipUnit) {
+  const perf = perfStart();
   const highs = data.daily.temperature_2m_max;
   const lows = data.daily.temperature_2m_min;
   const minTemp = Math.min(...lows);
@@ -8503,6 +8705,7 @@ function renderDaily(data, tempUnit, precipUnit) {
       </article>
     `;
   }).join("");
+  perfEnd("renderDaily", perf);
 }
 
 function initMap() {
@@ -9154,6 +9357,7 @@ let timelineBubbleHideTimer = null;
 
 function showFrame(index) {
   if (!mapState.frames.length) return;
+  const perf = perfStart();
   const nextIndex = Math.min(Math.max(index, 0), mapState.frames.length - 1);
   mapState.frameIndex = nextIndex;
   els.frameSlider.value = String(nextIndex);
@@ -9164,6 +9368,7 @@ function showFrame(index) {
   setFrameLabel(frame.label);
   updateTimelineEraVisuals();
   renderWeatherTiles();
+  perfEnd("showFrame", perf);
 }
 
 function activeMapSource(frame = mapState.frames[mapState.frameIndex]) {
@@ -9368,6 +9573,7 @@ function shouldBufferRadarPlayback(index = mapState.frameIndex) {
 function renderXfade(index, viewport = null) {
   const N = mapState.frames.length;
   if (!N || !els.weatherTileLayer) return;
+  const perf = perfStart();
   const cur = ((index % N) + N) % N;
   const next = shouldBufferRadarPlayback(cur) ? nextPlaybackIndexFrom(cur) : cur;
 
@@ -9402,6 +9608,7 @@ function renderXfade(index, viewport = null) {
   while (els.weatherTileLayer.children.length > 2) {
     els.weatherTileLayer.lastElementChild.remove();
   }
+  perfEnd("renderXfade", perf);
 }
 
 function radarFramePane(frameIndex) {
@@ -9676,6 +9883,7 @@ function renderTileMap() {
   if (!mapState.initialized || !state.activePlace) return;
   const rect = els.weatherMap.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  const perf = perfStart();
 
   const viewport = getMapViewport();
   const style = mapTileStyle();
@@ -9686,6 +9894,7 @@ function renderTileMap() {
   renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.immersive) updateImmersiveHUD();
   renderMapMarkers();
+  perfEnd("renderTileMap", perf);
 }
 
 function mapTileStyle() {
@@ -9774,6 +9983,7 @@ const TILE_BUFFER = 1;
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   if (!layer) return;
+  const perf = perfStart();
   const z = mapTileSourceZoom(options.sourceZoom || MAP_MAX_ZOOM);
   const tileSize = 256;
   const sourceScale = 2 ** (mapState.zoom - z);
@@ -9849,6 +10059,10 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
     img.style.top = `${Math.round(Number(parts[2]) * ts - topLeft.y)}px`;
   });
   maybePurgeStaleTiles(layer);
+  perfEnd("renderTileLayer", perf, PERF_RENDER_WARN_MS, {
+    tiles: wanted.size,
+    zoom: z
+  });
 }
 
 // Remove leftover tiles (typically the previous zoom level) once every currently
@@ -11229,6 +11443,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
 }
 
 function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
+  const perf = perfStart();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const cfg = skySceneConfig(condition, isDay, skyState);
@@ -11255,6 +11470,7 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
+  perfEnd("renderSkyScene", perf);
 }
 
 function skyFilterDefs() {
@@ -12118,6 +12334,7 @@ function buildHourlyGraph(hrs, tempUnit, windUnit, showNow = false, options = {}
 
 function drawHourlyGraph() {
   if (!graphCtx) return;
+  const perf = perfStart();
   const { hrs, tempUnit, windUnit, showNow, data = state.forecast } = graphCtx;
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
@@ -12138,6 +12355,7 @@ function drawHourlyGraph() {
   if (hint) hint.textContent = isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : "dashed = feels like";
   if (isSun) {
     drawSunGraph();
+    perfEnd("drawHourlyGraph", perf);
     return;
   }
   document.getElementById("sheetReadout")?.classList.remove("is-sun");
@@ -12359,10 +12577,12 @@ function drawHourlyGraph() {
   // measured/positioned correctly (it's still hidden when this runs).
   graphActiveIndex = def;
   scheduleGraphCalloutReflow();
+  perfEnd("drawHourlyGraph", perf);
 }
 
 function drawSunGraph() {
   if (!graphCtx) return;
+  const perf = perfStart();
   const { hrs, dayIndex = 0, sunriseISO, sunsetISO, showNow, data = state.forecast } = graphCtx;
   const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
@@ -12378,6 +12598,7 @@ function drawSunGraph() {
     graph.innerHTML = `<div class="sheet-empty">Sun data unavailable.</div>`;
     callout.innerHTML = "";
     callout.classList.remove("is-sun");
+    perfEnd("drawSunGraph", perf);
     return;
   }
 
@@ -12481,6 +12702,7 @@ function drawSunGraph() {
   svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
   scheduleGraphCalloutReflow();
+  perfEnd("drawSunGraph", perf);
 }
 
 function nearestGraphSunIndexByMs(ms) {
