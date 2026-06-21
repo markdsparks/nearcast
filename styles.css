@@ -4909,6 +4909,57 @@ body.map-immersive-active .day-sheet.show {
   font-size: 8px;
   font-weight: 850;
 }
+.graph-memory-window {
+  color: var(--blue);
+  cursor: pointer;
+  outline: none;
+}
+.graph-memory-band {
+  fill: currentColor;
+  opacity: 0.13;
+  stroke: currentColor;
+  stroke-width: 0.8;
+  stroke-opacity: 0.42;
+}
+.graph-memory-edge {
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  opacity: 0.68;
+}
+.graph-memory-label {
+  fill: currentColor;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 2.2px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.graph-memory-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+.graph-memory-window:focus-visible .graph-memory-band,
+.graph-memory-window:hover .graph-memory-band {
+  opacity: 0.20;
+  stroke-opacity: 0.72;
+}
+.graph-memory-window:focus-visible .graph-memory-label,
+.graph-memory-window:hover .graph-memory-label {
+  fill: var(--ink);
+}
+.graph-memory-window-1 {
+  color: #6aa2e8;
+}
+.graph-memory-window-2 {
+  color: #7f8df6;
+}
+.graph-memory-window-3 {
+  color: #4fa8bc;
+}
 
 .graph-callout {
   position: absolute;

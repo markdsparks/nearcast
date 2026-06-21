@@ -1,4 +1,4 @@
-const VERSION = "2.6.6";
+const VERSION = "2.6.7";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1675,6 +1675,16 @@ function bindEvents() {
     if (!row) return;
     event.preventDefault();
     toggleSheetHourRow(row);
+  });
+  bindTapDelegate(document.getElementById("sheetGraph"), "[data-memory-detail]", (event, target) => {
+    openMemoryDetail(target.dataset.memoryDetail);
+  }, { moveTolerance: 10 });
+  document.getElementById("sheetGraph").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const memoryDetail = event.target.closest("[data-memory-detail]");
+    if (!memoryDetail) return;
+    event.preventDefault();
+    openMemoryDetail(memoryDetail.dataset.memoryDetail);
   });
   bindTapAction(document.getElementById("graphTempBtn"), () => setGraphMetric("temp"));
   bindTapAction(document.getElementById("graphWindBtn"), () => setGraphMetric("wind"));
@@ -6703,6 +6713,120 @@ function detailEventBadgeLabel(windows, eventWindow = null) {
   if (memoryWindows.length === 1) return planMemoryTitle(memoryWindows[0]);
   if (windows.length > 1) return eventWindow?.badgeLabel || `${windows.length} plans`;
   return windows[0].badgeLabel || eventWindow?.badgeLabel || "Plan";
+}
+
+function graphMemoryWindowIds(window) {
+  return [...new Set([
+    window?.memoryId,
+    ...(Array.isArray(window?.memoryIds) ? window.memoryIds : [])
+  ].filter(Boolean).map(String))];
+}
+
+function graphMemoryWindowLabel(ids, fallback = "Memory") {
+  if (!ids?.length) return fallback;
+  if (ids.length > 1) return `${ids.length} memories`;
+  const memory = state.planMemories.find((item) => item.id === ids[0]);
+  return memory ? planMemoryTitle(memory) : fallback;
+}
+
+function normalizeGraphMemoryWindow(window, visibleStartMs, visibleEndMs) {
+  if (!Number.isFinite(window?.startMs) || !Number.isFinite(window?.endMs)) return null;
+  if (window.endMs <= visibleStartMs || window.startMs >= visibleEndMs) return null;
+  const memoryIds = graphMemoryWindowIds(window);
+  if (!memoryIds.length) return null;
+  const startMs = Math.max(window.startMs, visibleStartMs);
+  const endMs = Math.min(window.endMs, visibleEndMs);
+  if (endMs <= startMs) return null;
+  return {
+    startMs,
+    endMs,
+    memoryIds,
+    sourceWindows: [window]
+  };
+}
+
+function graphMemoryWindows(hrs, data = state.forecast, eventWindow = null) {
+  if (!hrs?.length || !data || !state.activePlace) return [];
+  const startMs = hrs[0].ms ?? parseForecastTimestamp(hrs[0].time, data);
+  const lastMs = hrs[hrs.length - 1].ms ?? parseForecastTimestamp(hrs[hrs.length - 1].time, data);
+  if (!Number.isFinite(startMs) || !Number.isFinite(lastMs)) return [];
+  const visibleEndMs = Math.max(lastMs + 60 * 60 * 1000, startMs + 60 * 60 * 1000);
+  const seen = new Set();
+  const raw = [];
+
+  const pushWindow = (window) => {
+    const normalized = normalizeGraphMemoryWindow(window, startMs, visibleEndMs);
+    if (!normalized) return;
+    const key = normalized.memoryIds.length
+      ? `ids:${normalized.memoryIds.sort().join(",")}:${Math.round(normalized.startMs / 60000)}:${Math.round(normalized.endMs / 60000)}`
+      : `time:${Math.round(normalized.startMs / 60000)}:${Math.round(normalized.endMs / 60000)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    raw.push(normalized);
+  };
+
+  detailEventWindows(eventWindow).forEach(pushWindow);
+  planMemoryEventsForPlace(data, state.activePlace, { limit: 12 }).forEach(({ event }) => pushWindow(event));
+  raw.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+
+  return raw.reduce((merged, item) => {
+    const prev = merged[merged.length - 1];
+    if (prev && item.startMs <= prev.endMs) {
+      prev.endMs = Math.max(prev.endMs, item.endMs);
+      prev.memoryIds = [...new Set(prev.memoryIds.concat(item.memoryIds))];
+      prev.sourceWindows.push(...item.sourceWindows);
+      prev.label = graphMemoryWindowLabel(prev.memoryIds);
+      return merged;
+    }
+    merged.push({
+      ...item,
+      label: graphMemoryWindowLabel(item.memoryIds)
+    });
+    return merged;
+  }, []);
+}
+
+function graphMemoryAtMs(ms, windows) {
+  if (!Number.isFinite(ms) || !windows?.length) return null;
+  return windows.find((window) => ms >= window.startMs && ms < window.endMs) || null;
+}
+
+function graphMemoryAriaLabel(window, data = state.forecast) {
+  const start = formatForecastMs(window.startMs, data);
+  const end = formatForecastMs(window.endMs, data);
+  return `${window.label}, ${start} to ${end}. Show memory details.`;
+}
+
+function renderGraphMemoryBands(windows, xForMs, options = {}) {
+  if (!windows?.length || typeof xForMs !== "function") return "";
+  const {
+    top = 18,
+    bottom = 136,
+    labelY = top + 13,
+    minLabelWidth = 48,
+    data = state.forecast
+  } = options;
+  const h = Math.max(1, bottom - top);
+  return windows.map((window, index) => {
+    const x1 = xForMs(window.startMs);
+    const x2 = xForMs(window.endMs);
+    if (!Number.isFinite(x1) || !Number.isFinite(x2)) return "";
+    const left = Math.min(x1, x2);
+    const width = Math.max(3, Math.abs(x2 - x1));
+    const center = left + width / 2;
+    const ids = window.memoryIds.join(",");
+    const label = width >= minLabelWidth ? window.label : "";
+    const labelText = label.length > 18 ? `${label.slice(0, 17)}…` : label;
+    const aria = graphMemoryAriaLabel(window, data);
+    return `<g class="graph-memory-window graph-memory-window-${index % 4}" data-memory-detail="${escapeHtml(ids)}" tabindex="0" role="button" aria-label="${escapeHtml(aria)}">` +
+      `<title>${escapeHtml(aria)}</title>` +
+      `<rect class="graph-memory-band" x="${left.toFixed(1)}" y="${top}" width="${width.toFixed(1)}" height="${h}" rx="5"/>` +
+      `<line class="graph-memory-edge" x1="${left.toFixed(1)}" y1="${top}" x2="${left.toFixed(1)}" y2="${bottom}"/>` +
+      `<line class="graph-memory-edge" x1="${(left + width).toFixed(1)}" y1="${top}" x2="${(left + width).toFixed(1)}" y2="${bottom}"/>` +
+      (labelText ? `<text class="graph-memory-label" x="${center.toFixed(1)}" y="${labelY}" text-anchor="middle">${escapeHtml(labelText)}</text>` : "") +
+      `<rect class="graph-memory-hit" x="${left.toFixed(1)}" y="${Math.max(0, top - 12)}" width="${width.toFixed(1)}" height="${h + 24}" rx="8"/>` +
+    `</g>`;
+  }).join("");
 }
 
 function renderPlanMemoryGroup(label, items) {
@@ -12046,6 +12170,22 @@ function drawHourlyGraph() {
 
   const pPts = hrs.map((h, i) => ({ ...h, x: x(i), y: yv(h[primaryKey]) }));
   const sPts = hrs.map((h, i) => ({ x: x(i), y: yv(h[secondaryKey]) }));
+  const firstMs = parseForecastTimestamp(hrs[0].time, data);
+  const lastMs = parseForecastTimestamp(hrs[n - 1].time, data);
+  const graphEndMs = firstMs !== null && lastMs !== null && lastMs > firstMs
+    ? lastMs
+    : firstMs !== null ? firstMs + 60 * 60 * 1000 : null;
+  const xForMs = (ms) => {
+    if (firstMs === null || graphEndMs === null || graphEndMs <= firstMs) return padL + plotW / 2;
+    return padL + ((clamp(ms, firstMs, graphEndMs) - firstMs) / (graphEndMs - firstMs)) * plotW;
+  };
+  const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
+  const memoryBands = renderGraphMemoryBands(memoryWindows, xForMs, {
+    top: tempTop,
+    bottom: precipBottom,
+    labelY: tempTop + 12,
+    data
+  });
   graphPts = pPts; // scrubbing tracks the primary curve
   graphActiveIndex = 0;
   graphUpdateActive = null;
@@ -12121,8 +12261,6 @@ function drawHourlyGraph() {
       `<text x="${tx.toFixed(1)}" y="${(tempTop + 9).toFixed(1)}" text-anchor="${anchor}" class="graph-day-label">${escapeHtml(dayShortLabel(h.time))}</text>`;
   }).join("");
 
-  const firstMs = parseForecastTimestamp(hrs[0].time, data);
-  const lastMs = parseForecastTimestamp(hrs[n - 1].time, data);
   const nowMs = forecastNowMs(data);
   const nowX = firstMs !== null && lastMs !== null && firstMs < lastMs
     ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW
@@ -12147,6 +12285,7 @@ function drawHourlyGraph() {
       <line id="graphGuide" x1="0" y1="${tempTop}" x2="0" y2="${precipBottom}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
       <circle id="graphDot" r="4" fill="var(--ink)" style="display:none"/>
       <rect id="graphHit" x="0" y="0" width="${VW}" height="${precipBottom}" fill="transparent" style="cursor:crosshair"/>
+      ${memoryBands}
     </svg>
   `;
 
@@ -12174,8 +12313,10 @@ function drawHourlyGraph() {
     const sub = isWind
       ? `gust ${Math.round(p.gust)} ${windUnit} · ${p.pop}% rain`
       : `feels ${Math.round(p.feels)}${degree(tempUnit)} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}`;
+    const activeMemory = graphMemoryAtMs(p.ms ?? parseForecastTimestamp(p.time, data), memoryWindows);
+    const subText = activeMemory ? `During ${activeMemory.label} · ${sub}` : sub;
     callout.innerHTML =
-      `<span class="callout-main">${main}</span><span class="callout-sub">${sub}</span>`;
+      `<span class="callout-main">${escapeHtml(main)}</span><span class="callout-sub">${escapeHtml(subText)}</span>`;
 
     // Slide the callout to ride above the active point, clamped to the chart edges.
     // The vertical guide line marks the exact column; the callout pointer tracks it too.
@@ -12260,6 +12401,15 @@ function drawSunGraph() {
     <circle cx="${roundSvg(peakPoint.x)}" cy="${roundSvg(peakPoint.y)}" r="3.2" class="sun-uv-dot"/>
   ` : "";
   const activeMs = showNow ? nowMs : parseForecastTimestamp(hrs[0]?.time, data) ?? chart.daylightStartMs;
+  const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
+  const sunXForMs = (ms) => sunPathPoint(chart, clamp(ms, chart.dayStartMs, chart.dayEndMs)).x;
+  const memoryBands = renderGraphMemoryBands(memoryWindows, sunXForMs, {
+    top: 12,
+    bottom: 122,
+    labelY: 25,
+    minLabelWidth: 54,
+    data
+  });
 
   graphPts = buildDaylightScrubPoints(data, chart);
   graphActiveIndex = nearestGraphSunIndexByMs(activeMs);
@@ -12278,6 +12428,7 @@ function drawSunGraph() {
       <line id="graphGuide" x1="0" y1="12" x2="0" y2="122" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
       <circle id="graphDot" r="4.5" fill="var(--ink)" style="display:none"/>
       <rect id="graphHit" x="0" y="0" width="${VW}" height="136" fill="transparent" style="cursor:crosshair"/>
+      ${memoryBands}
     </svg>
   `;
 
@@ -12297,9 +12448,11 @@ function drawSunGraph() {
     dot.style.display = "";
 
     const copy = daylightReadoutCopy(p, data, chart, uv);
+    const activeMemory = graphMemoryAtMs(p.ms, memoryWindows);
+    const meta = activeMemory ? `During ${activeMemory.label} · ${copy.meta}` : copy.meta;
     callout.classList.add("is-sun");
     callout.innerHTML =
-      `<span class="callout-main">${escapeHtml(copy.time)} · ${escapeHtml(copy.title)}</span><span class="callout-sub">${escapeHtml(copy.meta)}</span>`;
+      `<span class="callout-main">${escapeHtml(copy.time)} · ${escapeHtml(copy.title)}</span><span class="callout-sub">${escapeHtml(meta)}</span>`;
 
     const wrapWidth = wrap.clientWidth;
     const cw = callout.offsetWidth;
