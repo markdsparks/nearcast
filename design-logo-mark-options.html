@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nearcast Mark — Interior Options</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #121a24;
+        --muted: #526375;
+        --green: #2e7d62;
+        --line: rgba(27, 48, 63, 0.14);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(ellipse 70% 48% at 50% 4%, rgba(255,255,255,0.85), transparent 66%),
+          linear-gradient(168deg, #dcecf1 0%, #f4f3ec 52%, #dcedf1 100%);
+        -webkit-font-smoothing: antialiased;
+      }
+      main { width: min(1080px, calc(100% - 36px)); margin: 0 auto; padding: 50px 0 80px; }
+      .kicker { margin: 0 0 12px; color: var(--green); font-size: 0.76rem; font-weight: 900; letter-spacing: 0.16em; text-transform: uppercase; }
+      h1.title { margin: 0 0 14px; font-size: clamp(2rem, 5vw, 3.2rem); line-height: 0.98; letter-spacing: -0.01em; font-weight: 950; }
+      .lede { max-width: 62ch; margin: 0 0 38px; color: var(--muted); font-size: 1.02rem; font-weight: 600; line-height: 1.5; }
+      .lede b { color: var(--ink); font-weight: 800; }
+
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 20px; }
+      .card {
+        position: relative;
+        display: flex; flex-direction: column; align-items: center; gap: 18px;
+        padding: 26px 20px 22px;
+        border: 1px solid var(--line); border-radius: 20px;
+        background: linear-gradient(150deg, rgba(255,255,255,0.74), rgba(255,255,255,0.44));
+        box-shadow: 0 24px 54px rgba(24, 44, 60, 0.12);
+      }
+      .card.pick { border-color: rgba(46,125,98,0.55); box-shadow: 0 26px 60px rgba(30, 90, 70, 0.20); }
+      .badge {
+        position: absolute; top: 14px; right: 14px;
+        padding: 5px 10px; border-radius: 999px;
+        background: var(--green); color: #fff;
+        font-size: 0.64rem; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase;
+      }
+
+      .big { width: 150px; height: 165px; filter: drop-shadow(0 16px 26px rgba(20,42,52,0.18)); }
+      .big svg { width: 100%; height: 100%; display: block; }
+
+      .small-row { display: flex; align-items: flex-end; gap: 16px; color: var(--green); }
+      .small-row .s { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .small-row .s small { color: var(--muted); font-size: 0.66rem; font-weight: 750; }
+      .small-row svg { display: block; }
+
+      .card h3 { margin: 0; font-size: 1.04rem; font-weight: 850; }
+      .card p { margin: 0; text-align: center; max-width: 26ch; color: var(--muted); font-size: 0.83rem; font-weight: 620; line-height: 1.42; }
+
+      .m-sun { transform-box: fill-box; transform-origin: center; animation: sun-breathe 6.5s ease-in-out infinite; }
+      @keyframes sun-breathe { 0%,100% { transform: scale(1);} 50% { transform: scale(1.06);} }
+
+      footer { margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; font-weight: 620; line-height: 1.6; }
+      footer b { color: var(--ink); font-weight: 800; }
+      @media (prefers-reduced-motion: reduce) { .m-sun { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <!-- shared gradients + symbols (all in one svg so refs resolve) -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+      <linearGradient id="pinGlass" x1="28" y1="12" x2="92" y2="118" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+        <stop offset="0.56" stop-color="#d8eef7" stop-opacity="0.78"/>
+        <stop offset="1" stop-color="#8bc6d7" stop-opacity="0.66"/>
+      </linearGradient>
+      <linearGradient id="pinStroke" x1="28" y1="14" x2="92" y2="118" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+        <stop offset="1" stop-color="#2f927c" stop-opacity="0.62"/>
+      </linearGradient>
+      <radialGradient id="sunWarm" cx="38%" cy="30%" r="72%">
+        <stop offset="0" stop-color="#fff7d2"/><stop offset="0.5" stop-color="#ffce6b"/><stop offset="1" stop-color="#e9a23c"/>
+      </radialGradient>
+
+      <!-- pin body reused -->
+      <symbol id="pinA" viewBox="0 0 120 132">
+        <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)"/>
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
+        <circle class="m-sun" cx="60" cy="50" r="16" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.9)" stroke-width="2.2"/>
+      </symbol>
+
+      <symbol id="pinB" viewBox="0 0 120 132">
+        <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)"/>
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
+        <circle class="m-sun" cx="60" cy="48" r="15" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.9)" stroke-width="2.2"/>
+        <path d="M33 64 L87 64" stroke="rgba(255,255,255,0.95)" stroke-width="7" stroke-linecap="round"/>
+      </symbol>
+
+      <symbol id="pinC" viewBox="0 0 120 132">
+        <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)"/>
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
+        <circle class="m-sun" cx="60" cy="47" r="15" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.9)" stroke-width="2.2"/>
+        <path d="M32 66 Q60 56 88 66" fill="none" stroke="#2e7d62" stroke-width="6.5" stroke-linecap="round"/>
+      </symbol>
+
+      <symbol id="pinD" viewBox="0 0 120 132">
+        <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)"/>
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
+        <circle class="m-sun" cx="58" cy="42" r="12" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.9)" stroke-width="2"/>
+        <path d="M43 80 C35 80 32 71 39 67 C39 57 52 55 56 64 C61 56 74 58 73 67 C81 67 84 80 75 80 Z" fill="rgba(255,255,255,0.95)"/>
+      </symbol>
+
+      <!-- mono glyphs (currentColor) -->
+      <symbol id="monoA" viewBox="0 0 120 132">
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="none" stroke="currentColor" stroke-width="6"/>
+        <circle cx="60" cy="50" r="12" fill="currentColor"/>
+      </symbol>
+      <symbol id="monoB" viewBox="0 0 120 132">
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="none" stroke="currentColor" stroke-width="6"/>
+        <circle cx="60" cy="47" r="11" fill="currentColor"/>
+        <path d="M34 65 L86 65" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="monoC" viewBox="0 0 120 132">
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="none" stroke="currentColor" stroke-width="6"/>
+        <circle cx="60" cy="46" r="11" fill="currentColor"/>
+        <path d="M33 67 Q60 57 87 67" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+      </symbol>
+      <symbol id="monoD" viewBox="0 0 120 132">
+        <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="none" stroke="currentColor" stroke-width="6"/>
+        <circle cx="58" cy="42" r="9" fill="currentColor"/>
+        <path d="M43 80 C35 80 32 71 39 67 C39 57 52 55 56 64 C61 56 74 58 73 67 C81 67 84 80 75 80 Z" fill="currentColor"/>
+      </symbol>
+    </defs></svg>
+
+    <main>
+      <p class="kicker">Nearcast mark · interior decision</p>
+      <h1 class="title">What goes inside the pin?</h1>
+      <p class="lede">
+        Same glass place-pin and warm sun as the round-3 hero — we're only deciding the element under the sun.
+        The old wavy ridge read as a scribble, not a horizon. Here are the cleaner candidates, each shown big and at
+        favicon size. My pick is <b>B — sun over a straight horizon</b>: it's the universal sunrise read and survives down to 16px.
+      </p>
+
+      <div class="grid">
+        <div class="card">
+          <div class="big"><svg viewBox="0 0 120 132"><use href="#pinA"/></svg></div>
+          <div class="small-row">
+            <div class="s"><svg width="32" height="35" viewBox="0 0 120 132"><use href="#monoA"/></svg><small>32</small></div>
+            <div class="s"><svg width="20" height="22" viewBox="0 0 120 132"><use href="#monoA"/></svg><small>20</small></div>
+            <div class="s"><svg width="16" height="18" viewBox="0 0 120 132"><use href="#monoA"/></svg><small>16</small></div>
+          </div>
+          <h3>A · Sun only</h3>
+          <p>Cleanest possible. Risk: a filled dot in a pin can read as a generic map marker, not weather.</p>
+        </div>
+
+        <div class="card pick">
+          <span class="badge">Recommended</span>
+          <div class="big"><svg viewBox="0 0 120 132"><use href="#pinB"/></svg></div>
+          <div class="small-row">
+            <div class="s"><svg width="32" height="35" viewBox="0 0 120 132"><use href="#monoB"/></svg><small>32</small></div>
+            <div class="s"><svg width="20" height="22" viewBox="0 0 120 132"><use href="#monoB"/></svg><small>20</small></div>
+            <div class="s"><svg width="16" height="18" viewBox="0 0 120 132"><use href="#monoB"/></svg><small>16</small></div>
+          </div>
+          <h3>B · Sun + horizon</h3>
+          <p>A straight line flanking the sun = instant sunrise. Reads as weather + a place, and holds tiny.</p>
+        </div>
+
+        <div class="card">
+          <div class="big"><svg viewBox="0 0 120 132"><use href="#pinC"/></svg></div>
+          <div class="small-row">
+            <div class="s"><svg width="32" height="35" viewBox="0 0 120 132"><use href="#monoC"/></svg><small>32</small></div>
+            <div class="s"><svg width="20" height="22" viewBox="0 0 120 132"><use href="#monoC"/></svg><small>20</small></div>
+            <div class="s"><svg width="16" height="18" viewBox="0 0 120 132"><use href="#monoC"/></svg><small>16</small></div>
+          </div>
+          <h3>C · Sun + hill</h3>
+          <p>Green horizon curve = the land/place. Warmer and more “local,” a touch less literal than B.</p>
+        </div>
+
+        <div class="card">
+          <div class="big"><svg viewBox="0 0 120 132"><use href="#pinD"/></svg></div>
+          <div class="small-row">
+            <div class="s"><svg width="32" height="35" viewBox="0 0 120 132"><use href="#monoD"/></svg><small>32</small></div>
+            <div class="s"><svg width="20" height="22" viewBox="0 0 120 132"><use href="#monoD"/></svg><small>20</small></div>
+            <div class="s"><svg width="16" height="18" viewBox="0 0 120 132"><use href="#monoD"/></svg><small>16</small></div>
+          </div>
+          <h3>D · Sun + cloud</h3>
+          <p>A real cloud silhouette instead of the squiggle. Clearest “weather,” but the most mass / busiest.</p>
+        </div>
+      </div>
+
+      <footer>
+        <b>My call:</b> go with <b>B</b>. It fixes exactly what you flagged — the straight line plainly reads as a horizon,
+        the sun stays the hero, and it's the simplest of the “says-weather” options. <b>C</b> is the close runner-up if you
+        want it to feel more like “your place” than “the sky.” Tell me which and I'll roll it through the round-3 system + the icon exports.
+      </footer>
+    </main>
+  </body>
+</html>
