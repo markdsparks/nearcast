@@ -1,4 +1,4 @@
-const VERSION = "2.5.5";
+const VERSION = "2.5.6";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -1285,7 +1285,7 @@ function bindEvents() {
     }
     const memoryEdit = target.closest("[data-memory-edit]");
     if (memoryEdit) {
-      editPlanMemory(memoryEdit.dataset.memoryEdit);
+      startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
       return;
     }
     const show = target.closest("[data-ask-show]");
@@ -1335,10 +1335,7 @@ function bindEvents() {
     }
     const memoryEdit = target.closest("[data-memory-edit]");
     if (memoryEdit) {
-      const id = memoryEdit.dataset.memoryEdit;
-      closeMemoryDetail();
-      openAISheet({ autoBrief: false });
-      requestAnimationFrame(() => editPlanMemory(id));
+      startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
     }
   });
   bindTapAction(els.appMenuToggle, () => toggleAppMenu());
@@ -5740,6 +5737,35 @@ function forgetPlanMemory(id) {
   renderForecastMemorySurfaces();
 }
 
+function startPlanMemoryEdit(idOrRow) {
+  const rowIndex = Number(idOrRow);
+  const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
+  const memory = exchange ? null : state.planMemories.find((item) => item.id === idOrRow);
+  if (!memory) {
+    editPlanMemory(idOrRow);
+    return;
+  }
+
+  const restoreScroll = !els.aiSheet?.hidden
+    ? els.aiSheet.scrollTop
+    : plannerReturnAfterDayDetail?.scrollTop ?? null;
+  if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
+
+  const dayDetail = document.getElementById("dayDetail");
+  if (dayDetail && !dayDetail.hidden) {
+    plannerReturnAfterDayDetail = null;
+    closeDayDetail();
+  }
+
+  if (els.aiSheet?.hidden) {
+    openAISheet({ restoreScroll, autoBrief: false });
+  } else if (restoreScroll !== null && restoreScroll !== undefined) {
+    els.aiSheet.scrollTop = restoreScroll;
+  }
+  renderAsk();
+  requestAnimationFrame(() => editPlanMemory(memory.id));
+}
+
 function editPlanMemory(idOrRow) {
   const rowIndex = Number(idOrRow);
   const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
@@ -5813,7 +5839,7 @@ function openMemoryDetail(idsOrValue) {
   document.getElementById("memoryDetailSub").textContent = memories.length === 1
     ? "Local context · under your control"
     : "Overlapping local context";
-  els.memoryDetailBody.innerHTML = memories.map(renderMemoryDetailCard).join("");
+  els.memoryDetailBody.innerHTML = memories.map(renderMemoryDetailPanel).join("");
   els.memoryDetailBackdrop.hidden = false;
   els.memoryDetailSheet.hidden = false;
   showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet);
@@ -5846,7 +5872,7 @@ function closeMemoryDetail() {
   }, 260);
 }
 
-function renderMemoryDetailCard(memory) {
+function renderMemoryDetailPanel(memory) {
   const event = samePlanPlace(memory.place, state.activePlace)
     ? planMemoryEvent(memory)
     : null;
@@ -5859,7 +5885,7 @@ function renderMemoryDetailCard(memory) {
     : "";
   const weatherLine = event ? planMemoryMeta(memory, event) : `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
   return `
-    <article class="memory-detail-card">
+    <article class="memory-detail-panel">
       <div class="memory-detail-title">
         <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
         <span>${escapeHtml(placeLabel(memory.place))}</span>
@@ -5872,8 +5898,8 @@ function renderMemoryDetailCard(memory) {
         <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
       </dl>
       <div class="memory-detail-actions">
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit in Planner</button>
         <button type="button" data-memory-show="${escapeHtml(memory.id)}">Show forecast</button>
-        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
     </article>
