@@ -1,4 +1,4 @@
-const VERSION = "2.4.1";
+const VERSION = "2.4.2";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 
 const state = {
@@ -854,6 +854,45 @@ function weatherTruthSurfaceDetail(truth) {
   return truth.receiptDetail || truth.receipt || "";
 }
 
+function currentLocalDaylightIsDay(data = state.forecast, fallback = true) {
+  const dayIndex = forecastDailyIndex(data);
+  const sunriseMs = data?.daily?.sunrise?.[dayIndex]
+    ? parseForecastTimestamp(data.daily.sunrise[dayIndex], data)
+    : null;
+  const sunsetMs = data?.daily?.sunset?.[dayIndex]
+    ? parseForecastTimestamp(data.daily.sunset[dayIndex], data)
+    : null;
+  const now = forecastNowMs(data);
+  if (sunriseMs !== null && sunsetMs !== null && sunsetMs > sunriseMs) {
+    return now >= sunriseMs && now <= sunsetMs;
+  }
+  const mode = sunExposureMode(data, sunriseMs, sunsetMs);
+  if (mode === "polar-day") return true;
+  if (mode === "polar-night") return false;
+  return Boolean(fallback);
+}
+
+function syncWeatherTruthDaylight(truth, isDay) {
+  if (!truth) return truth;
+  const liveIsDay = Boolean(isDay);
+  truth.isDay = liveIsDay;
+  if (truth.display) truth.display.isDay = liveIsDay;
+  return truth;
+}
+
+function updateHeroWeatherIcon(code, isDay) {
+  const heroIcon = document.getElementById("heroIcon");
+  if (heroIcon) heroIcon.innerHTML = weatherIcon(code, isDay);
+}
+
+function updateCurrentHourlyWeatherIcon(truth = state.weatherTruth) {
+  const icon = els.hourly?.querySelector(".hour-card.current .hour-icon");
+  if (!icon || !truth) return;
+  const stormPotential = truth.display?.stormPotential;
+  icon.innerHTML = weatherIcon(truth.code, truth.isDay, { density: "dense" }) +
+    (stormPotential ? thunderBadgeHtml() : "");
+}
+
 function buildWeatherTruth(data = state.forecast) {
   const current = data?.current || {};
   const fallbackIsDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
@@ -901,6 +940,8 @@ function buildWeatherTruth(data = state.forecast) {
       stormPotential: false
     };
   }
+
+  display.isDay = currentLocalDaylightIsDay(data, display.isDay);
 
   const receipt = weatherTruthReceipt(display, nowPrecip, data);
   const truth = {
@@ -2236,7 +2277,9 @@ function renderForecast(data, place) {
   state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
   const nowCode = truth.code;
   state.skyState = deriveSkyState(nowCode, isDay, data, displayCondition);
-  state.locationIsDay = state.skyState.isDay;
+  syncWeatherTruthDaylight(truth, state.skyState.isDay);
+  state.skyIsDay = truth.isDay;
+  state.locationIsDay = truth.isDay;
   if (state.theme === "auto") applyTheme();
 
   els.locationName.textContent = placeLabel(place);
@@ -2252,8 +2295,7 @@ function renderForecast(data, place) {
   els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
   updateWeatherTruthReceipt(truth);
 
-  const heroIcon = document.getElementById("heroIcon");
-  if (heroIcon) heroIcon.innerHTML = weatherIcon(nowCode, isDay);
+  updateHeroWeatherIcon(nowCode, truth.isDay);
 
   renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
   renderNowcast(data, truth);
@@ -2264,7 +2306,7 @@ function renderForecast(data, place) {
   updateMapPlace();
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
-  updateSkyCanvas(nowCode, isDay, data, displayCondition);
+  updateSkyCanvas(nowCode, truth.isDay, data, displayCondition);
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data), truth = weatherTruth(data)) {
@@ -6887,7 +6929,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const measuredRate = precipRateFromAmount(precip);
     const measuredWet = measuredRate >= precipRateThresholds(data).measurable || (position === 0 && truth.nowPrecip?.isWetNow);
     const code = weatherCodes[wcode] || "Weather";
-    const isHourDay = data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true;
+    const isHourDay = position === 0 ? truth.isDay : (data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true);
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
     const title = stormPotential ? `${code}; thunder possible` : code;
@@ -9635,9 +9677,9 @@ function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondi
   if (!el) return;
 
   state.skyCode = weatherCode;
-  state.skyIsDay = isDay;
 
   if (state.theme !== "auto") {
+    state.skyIsDay = isDay;
     state.skyState = null;
     clearSkyCanvas();
     return;
@@ -9646,6 +9688,7 @@ function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondi
   const display = displayCondition || currentDisplayCondition(data);
   const skyState = deriveSkyState(weatherCode, isDay, data, display);
   state.skyState = skyState;
+  state.skyIsDay = skyState.isDay;
   state.locationIsDay = skyState.isDay;
 
   const condition = skyState.condition;
@@ -9978,14 +10021,17 @@ window.addEventListener("resize", () => {
 function refreshSkyForLiveTime() {
   if (state.skyCode === null || state.theme !== "auto" || !state.forecast) return;
   const truth = buildWeatherTruth(state.forecast);
-  state.weatherTruth = truth;
   const display = truth.display;
   state.skyCode = truth.code;
-  state.skyIsDay = truth.isDay;
   const nextSkyState = deriveSkyState(truth.code, truth.isDay, state.forecast, display);
   const dayChanged = state.locationIsDay !== nextSkyState.isDay;
+  syncWeatherTruthDaylight(truth, nextSkyState.isDay);
+  state.weatherTruth = truth;
   state.skyState = nextSkyState;
-  state.locationIsDay = nextSkyState.isDay;
+  state.skyIsDay = truth.isDay;
+  state.locationIsDay = truth.isDay;
+  updateHeroWeatherIcon(truth.code, truth.isDay);
+  updateCurrentHourlyWeatherIcon(truth);
   updateWeatherTruthReceipt(truth);
   renderMapLegend();
   if (dayChanged) {
@@ -10139,6 +10185,8 @@ function openDayDetail({
     const inEvent = eventWindow && ms !== null && nextMs !== null
       ? ms < eventWindow.endMs && nextMs > eventWindow.startMs
       : false;
+    const hourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true;
+    const isNowHour = showNow && isCurrentHour(data.hourly.time[h], data);
     return {
       time: data.hourly.time[h],
       ms,
@@ -10156,7 +10204,7 @@ function openDayDetail({
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
       eventLabel: inEvent ? (eventWindow.badgeLabel || "Plan") : "",
-      isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true
+      isDay: isNowHour ? (state.weatherTruth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
     };
   });
 
