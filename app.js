@@ -1,4 +1,4 @@
-const VERSION = "2.6.5";
+const VERSION = "2.6.6";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1602,10 +1602,11 @@ function bindEvents() {
   });
   bindTapAction(document.getElementById("nowcast"), openNext24Detail);
 
-  // Refresh stale data when the app is reopened/foregrounded (esp. iOS PWA)
-  document.addEventListener("visibilitychange", refreshOnForeground);
-  window.addEventListener("pageshow", (event) => { if (event.persisted) refreshOnForeground(); });
-  window.addEventListener("focus", refreshOnForeground);
+  // Refresh stale data and reset stale drill-in views when reopened/foregrounded.
+  document.addEventListener("visibilitychange", handleVisibilityResume);
+  window.addEventListener("pagehide", noteBackgrounded);
+  window.addEventListener("pageshow", handleForegroundResume);
+  window.addEventListener("focus", handleForegroundResume);
   bindTapAction(els.savePlace, () => {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
@@ -2583,7 +2584,32 @@ async function loadPlace(place, force = false) {
 // When the PWA returns to the foreground after being idle (a common iOS case
 // where the frozen page is restored without re-running), pull fresh data.
 let lastLoadedAt = Date.now();
+let lastBackgroundedAt = null;
 const FOREGROUND_STALE_MS = 8 * 60 * 1000;
+const VIEW_RESET_IDLE_MS = 20 * 60 * 1000;
+
+function noteBackgrounded() {
+  lastBackgroundedAt = Date.now();
+}
+
+function handleVisibilityResume(event) {
+  if (document.visibilityState === "hidden") {
+    noteBackgrounded();
+    return;
+  }
+  handleForegroundResume(event);
+}
+
+function handleForegroundResume(event = {}) {
+  if (document.visibilityState === "hidden") return;
+  const now = Date.now();
+  const idleMs = lastBackgroundedAt !== null
+    ? now - lastBackgroundedAt
+    : event.persisted ? now - lastLoadedAt : 0;
+  if (idleMs >= VIEW_RESET_IDLE_MS) resetTransientViewToForecastTop();
+  lastBackgroundedAt = null;
+  refreshOnForeground();
+}
 
 function refreshOnForeground() {
   if (document.visibilityState === "hidden") return;
@@ -2591,6 +2617,62 @@ function refreshOnForeground() {
   if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
   for (const id in glanceData) delete glanceData[id]; // let chips re-pull too
   loadPlace(state.activePlace, true);
+}
+
+function plannerHasActiveDraft() {
+  const input = document.getElementById("askInput");
+  return Boolean(
+    askStreaming ||
+    plannerEditingMemoryId ||
+    plannerClarification ||
+    input?.value?.trim()
+  );
+}
+
+function scrollForecastToTop() {
+  const target = state.activePlace
+    ? document.querySelector(".launch-stage") || els.forecastView
+    : els.welcome || els.shell;
+  requestAnimationFrame(() => {
+    if (target?.scrollIntoView) {
+      try {
+        target.scrollIntoView({ block: "start", behavior: "auto" });
+      } catch {
+        target.scrollIntoView();
+      }
+    }
+    [document.scrollingElement, document.documentElement, document.body, els.shell, els.forecastView]
+      .filter(Boolean)
+      .forEach((el) => { el.scrollTop = 0; });
+    if (typeof window.scrollTo === "function") {
+      try {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      } catch {
+        window.scrollTo(0, 0);
+      }
+    }
+  });
+}
+
+function resetTransientViewToForecastTop() {
+  closeAppMenu();
+  toggleSearch(false);
+  plannerReturnAfterDayDetail = null;
+
+  const preservePlanner = !els.aiSheet?.hidden && plannerHasActiveDraft();
+  if (mapState.immersive) exitImmersiveMap();
+  if (!els.placeSheet?.hidden) closePlaceSheet();
+  if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
+
+  const alertSheet = document.getElementById("alertSheet");
+  if (alertSheet && !alertSheet.hidden) closeAlertSheet();
+
+  const dayDetail = document.getElementById("dayDetail");
+  if (dayDetail && !dayDetail.hidden) closeDayDetail();
+
+  if (!preservePlanner && !els.aiSheet?.hidden) closeAISheet();
+  document.body.style.overflow = preservePlanner ? "hidden" : "";
+  scrollForecastToTop();
 }
 
 const FORECAST_CACHE_VERSION = "v4";
