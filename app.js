@@ -1,4 +1,4 @@
-const VERSION = "2.6.13";
+const VERSION = "2.6.14";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -2314,11 +2314,12 @@ function hideSearchResults() {
 function updateMode() {
   const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
   els.shell.classList.toggle("mode-welcome", !hasContext);
+  document.documentElement.toggleAttribute("data-welcome", !hasContext);
   if (!hasContext) {
     els.shell.classList.remove("search-open");
     closeAppMenu();
     setWelcomeAmbientLabel("");
-    updateWelcomeWeatherMark(null, browserApproximateIsDay());
+    updateWelcomeBrandMark(null, browserApproximateIsDay());
     initWelcomeAmbience();
   } else {
     setWelcomeAmbientLabel("");
@@ -2337,12 +2338,10 @@ function welcomeIsActive() {
     !state.savedPlaces.length;
 }
 
-function updateWelcomeWeatherMark(code = null, isDay = browserApproximateIsDay()) {
-  const mark = document.querySelector(".welcome-weather-mark");
+function updateWelcomeBrandMark(code = null, isDay = browserApproximateIsDay()) {
+  const mark = document.querySelector(".welcome-brand-mark");
   if (!mark) return;
-  const sky = code === null || code === undefined ? "overcast" : skyCondition(code);
-  const condition = ["rain", "snow", "thunder", "clear"].includes(sky) ? sky : "cloud";
-  mark.dataset.condition = condition;
+  mark.dataset.source = code === null || code === undefined ? "ambient" : "local";
   mark.dataset.day = isDay ? "day" : "night";
 }
 
@@ -2421,7 +2420,7 @@ async function loadWelcomeAmbience() {
 function applyWelcomeAmbience(data, place) {
   if (!welcomeIsActive() || !data) return;
   const truth = buildWeatherTruth(data);
-  updateWelcomeWeatherMark(truth.code, truth.isDay);
+  updateWelcomeBrandMark(truth.code, truth.isDay);
   updateSkyCanvas(truth.code, truth.isDay, data, truth.display);
   setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth));
 }
@@ -10977,7 +10976,7 @@ function skyCondition(code) {
 // ---- Immersive sky: live solar light + weather texture ----------------------
 
 const SKY_FORECAST_EDGE_MS = 60 * 60 * 1000;
-const SKY_RENDER_OVERSCAN_PX = 260;
+const SKY_RENDER_OVERSCAN_PX = 360;
 
 function skyNow(data = state.forecast) {
   return skyNowMs(data);
@@ -11487,7 +11486,7 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState));
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
-  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}">${parts.join("")}</svg>`;
+  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>`;
   perfEnd("renderSkyScene", perf);
 }
 

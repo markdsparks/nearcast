@@ -464,10 +464,11 @@ html[data-sky] body {
   position: fixed;
   top: calc(-1 * env(safe-area-inset-top, 0px));
   right: 0;
-  bottom: calc(-260px - env(safe-area-inset-bottom, 0px));
+  bottom: auto;
   left: 0;
-  min-height: calc(100vh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
-  min-height: calc(100dvh + 260px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  height: calc(100vh + 360px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  height: calc(100lvh + 360px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  min-height: calc(100dvh + 360px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
@@ -480,15 +481,30 @@ html[data-sky] body {
   will-change: transform;
 }
 
-#skyCanvas::after {
+#skyCanvas::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 1;
   pointer-events: none;
+  background: var(--welcome-stage-wash);
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+
+#skyCanvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
   background: var(--sky-veil);
   opacity: 0;
   transition: opacity 1.5s;
+}
+
+:root[data-welcome] #skyCanvas::before {
+  opacity: 1;
 }
 
 :root[data-theme="light"][data-sky$="-day"] #skyCanvas::after {
@@ -503,6 +519,8 @@ html[data-sky] body {
   position: relative;
   z-index: 0;
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .sky-star {
@@ -5959,12 +5977,7 @@ button.sheet-plan-badge:focus-visible {
   padding: max(30px, env(safe-area-inset-top, 0px)) 0 max(32px, env(safe-area-inset-bottom, 0px));
 }
 .shell.mode-welcome::before {
-  top: -16vh;
-  bottom: -22vh;
-  width: 100vw;
-  background: var(--welcome-stage-wash);
-  -webkit-mask-image: none;
-  mask-image: none;
+  display: none;
 }
 .mode-welcome .welcome {
   display: grid;
@@ -6006,11 +6019,52 @@ button.sheet-plan-badge:focus-visible {
   padding: 0 18px;
 }
 
-.welcome-weather-mark {
-  position: relative;
-  width: min(238px, 64vw);
+.welcome-brand-mark {
+  width: min(168px, 44vw);
   height: 126px;
   margin-bottom: 2px;
+  color: var(--green);
+  filter: drop-shadow(0 18px 34px rgba(20, 42, 52, 0.16));
+}
+.welcome-brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.brand-mark-shadow {
+  fill: rgba(22, 36, 50, 0.12);
+  filter: blur(2px);
+}
+.brand-mark-pin {
+  fill: url(#nearcastPinGlass);
+  stroke: url(#nearcastPinStroke);
+  stroke-width: 1.7;
+}
+.brand-mark-ridge {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.86);
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.brand-mark-dot {
+  fill: url(#nearcastDot);
+  stroke: rgba(255, 255, 255, 0.82);
+  stroke-width: 2.4;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-dot-breathe 6.5s ease-in-out infinite;
+}
+.brand-mark-orbit {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  opacity: 0.38;
+}
+.brand-mark-orbit-b {
+  opacity: 0.26;
 }
 .welcome-ambient-label {
   max-width: min(100%, 34ch);
@@ -6026,144 +6080,6 @@ button.sheet-plan-badge:focus-visible {
   box-shadow: 0 10px 24px rgba(29, 48, 58, 0.08);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-}
-.welcome-sun {
-  position: absolute;
-  top: 10px;
-  left: 25px;
-  width: 62px;
-  height: 62px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 32%, #fff4bc 0%, #f7c85c 42%, #d88928 100%);
-  box-shadow: 0 0 36px rgba(247, 189, 80, 0.42);
-  animation: welcome-sun-breathe 7s ease-in-out infinite;
-}
-.welcome-sun::before {
-  content: "";
-  position: absolute;
-  inset: -14px;
-  border-radius: 50%;
-  background: repeating-conic-gradient(from 2deg, rgba(240, 177, 55, 0.62) 0deg 6deg, transparent 6deg 18deg);
-  -webkit-mask-image: radial-gradient(circle, transparent 0 55%, #000 57% 100%);
-  mask-image: radial-gradient(circle, transparent 0 55%, #000 57% 100%);
-}
-.welcome-cloud {
-  position: absolute;
-  display: block;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(211, 229, 238, 0.72));
-  box-shadow: 0 16px 34px rgba(42, 68, 90, 0.18);
-}
-.welcome-cloud::before,
-.welcome-cloud::after {
-  content: "";
-  position: absolute;
-  bottom: 12px;
-  border-radius: 50%;
-  background: inherit;
-}
-.welcome-cloud-back {
-  right: 20px;
-  top: 32px;
-  width: 126px;
-  height: 42px;
-  opacity: 0.56;
-  transform: scale(0.86);
-}
-.welcome-cloud-front {
-  right: 28px;
-  top: 50px;
-  width: 158px;
-  height: 50px;
-}
-.welcome-cloud::before {
-  left: 22px;
-  width: 54px;
-  height: 54px;
-}
-.welcome-cloud::after {
-  right: 22px;
-  width: 70px;
-  height: 70px;
-}
-.welcome-rain {
-  position: absolute;
-  right: 72px;
-  top: 96px;
-  display: flex;
-  gap: 11px;
-  transform: rotate(12deg);
-}
-.welcome-rain i {
-  display: block;
-  width: 2px;
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(72, 137, 196, 0.58);
-  animation: welcome-rain-fall 1.5s ease-in-out infinite;
-}
-.welcome-rain i:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.welcome-rain i:nth-child(3) {
-  animation-delay: 0.36s;
-}
-.welcome-weather-mark[data-condition="clear"] .welcome-cloud,
-.welcome-weather-mark[data-condition="clear"] .welcome-rain,
-.welcome-weather-mark[data-condition="fog"] .welcome-rain,
-.welcome-weather-mark[data-condition="cloud"] .welcome-rain {
-  opacity: 0;
-}
-.welcome-weather-mark[data-condition="clear"][data-day="day"] {
-  height: 104px;
-}
-.welcome-weather-mark[data-condition="clear"][data-day="day"] .welcome-sun {
-  top: 28px;
-  left: 88px;
-  width: 42px;
-  height: 42px;
-  opacity: 0.36;
-  box-shadow: 0 0 22px rgba(247, 189, 80, 0.24);
-}
-.welcome-weather-mark[data-condition="clear"][data-day="day"] .welcome-sun::before {
-  opacity: 0;
-}
-.welcome-weather-mark[data-condition="clear"] .welcome-cloud-back {
-  opacity: 0.16;
-}
-.welcome-weather-mark[data-condition="clear"] .welcome-cloud-front {
-  opacity: 0.08;
-}
-.welcome-weather-mark[data-condition="cloud"] .welcome-sun,
-.welcome-weather-mark[data-condition="fog"] .welcome-sun {
-  opacity: 0.42;
-}
-.welcome-weather-mark[data-condition="rain"] .welcome-rain,
-.welcome-weather-mark[data-condition="thunder"] .welcome-rain,
-.welcome-weather-mark[data-condition="snow"] .welcome-rain {
-  opacity: 1;
-}
-.welcome-weather-mark[data-condition="rain"] .welcome-sun,
-.welcome-weather-mark[data-condition="thunder"] .welcome-sun,
-.welcome-weather-mark[data-condition="snow"] .welcome-sun {
-  opacity: 0.34;
-}
-.welcome-weather-mark[data-condition="snow"] .welcome-rain i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: rgba(245, 250, 255, 0.82);
-  box-shadow: 0 0 10px rgba(190, 220, 255, 0.34);
-}
-.welcome-weather-mark[data-day="night"] .welcome-sun {
-  background: radial-gradient(circle at 35% 32%, #ffffff 0%, #dbe5f3 42%, #8fa2c0 100%);
-  box-shadow: 0 0 34px rgba(185, 213, 255, 0.26);
-}
-.welcome-weather-mark[data-day="night"] .welcome-sun::before {
-  opacity: 0;
-}
-.welcome-weather-mark[data-day="night"] .welcome-cloud {
-  background: linear-gradient(180deg, rgba(216, 228, 242, 0.74), rgba(105, 128, 155, 0.50));
 }
 .welcome-kicker {
   color: var(--green);
@@ -6222,14 +6138,9 @@ button.sheet-plan-badge:focus-visible {
   border-color: var(--blue);
 }
 
-@keyframes welcome-sun-breathe {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(4px) scale(1.03); }
-}
-
-@keyframes welcome-rain-fall {
-  0%, 100% { opacity: 0.28; transform: translateY(-2px); }
-  50% { opacity: 0.72; transform: translateY(4px); }
+@keyframes brand-dot-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.08); opacity: 1; }
 }
 
 @media (max-width: 460px) {
@@ -6250,7 +6161,7 @@ button.sheet-plan-badge:focus-visible {
   .welcome-moments {
     display: none;
   }
-  .welcome-weather-mark {
+  .welcome-brand-mark {
     height: 104px;
     transform: scale(0.88);
     transform-origin: bottom center;
@@ -6259,8 +6170,7 @@ button.sheet-plan-badge:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-sun,
-  .welcome-rain i {
+  .brand-mark-dot {
     animation: none;
   }
 }
