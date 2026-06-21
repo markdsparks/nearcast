@@ -5860,29 +5860,205 @@ button.sheet-plan-badge:focus-visible {
 .mode-welcome .brand-lockup {
   min-width: 0;
 }
-.mode-welcome h1 {
+.mode-welcome .app-menu h1 {
   font-size: clamp(2rem, 6vw, 4.5rem);
   line-height: 0.95;
 }
+.shell.mode-welcome {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  width: min(720px, calc(100% - 32px));
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: max(30px, env(safe-area-inset-top, 0px)) 0 max(32px, env(safe-area-inset-bottom, 0px));
+}
+.shell.mode-welcome::before {
+  width: min(820px, 96vw);
+  -webkit-mask-image: radial-gradient(ellipse 70% 62% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.74) 42%, rgba(0, 0, 0, 0.22) 72%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 62% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.74) 42%, rgba(0, 0, 0, 0.22) 72%, transparent 100%);
+}
 .mode-welcome .welcome {
-  display: block;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
   text-align: center;
-  margin: 32px 0 18px;
+  margin: 0 auto clamp(18px, 4svh, 30px);
 }
 .mode-welcome .welcome-locate {
   display: inline-flex;
+  align-self: center;
+}
+.mode-welcome .search-popover {
+  width: min(640px, 100%);
+  margin: 0 auto;
+}
+.mode-welcome .search {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 20px 54px rgba(16, 33, 52, 0.16);
+}
+.mode-welcome .search-locate,
+.mode-welcome .search-close {
+  display: none;
+}
+.mode-welcome .search input {
+  min-height: 50px;
+  font-size: 1rem;
+}
+.mode-welcome .search button[type="submit"] {
+  grid-column: auto;
+  min-height: 50px;
+  padding: 0 18px;
 }
 
-.welcome-title {
-  font-size: clamp(1.5rem, 5vw, 2.1rem);
-  line-height: 1.1;
-  margin-bottom: 8px;
+.welcome-weather-mark {
+  position: relative;
+  width: min(238px, 64vw);
+  height: 126px;
+  margin-bottom: 2px;
+}
+.welcome-sun {
+  position: absolute;
+  top: 10px;
+  left: 25px;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, #fff4bc 0%, #f7c85c 42%, #d88928 100%);
+  box-shadow: 0 0 36px rgba(247, 189, 80, 0.42);
+  animation: welcome-sun-breathe 7s ease-in-out infinite;
+}
+.welcome-sun::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 2deg, rgba(240, 177, 55, 0.62) 0deg 6deg, transparent 6deg 18deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 0 55%, #000 57% 100%);
+  mask-image: radial-gradient(circle, transparent 0 55%, #000 57% 100%);
+}
+.welcome-cloud {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(211, 229, 238, 0.72));
+  box-shadow: 0 16px 34px rgba(42, 68, 90, 0.18);
+}
+.welcome-cloud::before,
+.welcome-cloud::after {
+  content: "";
+  position: absolute;
+  bottom: 12px;
+  border-radius: 50%;
+  background: inherit;
+}
+.welcome-cloud-back {
+  right: 20px;
+  top: 32px;
+  width: 126px;
+  height: 42px;
+  opacity: 0.56;
+  transform: scale(0.86);
+}
+.welcome-cloud-front {
+  right: 28px;
+  top: 50px;
+  width: 158px;
+  height: 50px;
+}
+.welcome-cloud::before {
+  left: 22px;
+  width: 54px;
+  height: 54px;
+}
+.welcome-cloud::after {
+  right: 22px;
+  width: 70px;
+  height: 70px;
+}
+.welcome-rain {
+  position: absolute;
+  right: 72px;
+  top: 96px;
+  display: flex;
+  gap: 11px;
+  transform: rotate(12deg);
+}
+.welcome-rain i {
+  display: block;
+  width: 2px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(72, 137, 196, 0.58);
+  animation: welcome-rain-fall 1.5s ease-in-out infinite;
+}
+.welcome-rain i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.welcome-rain i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.welcome-kicker {
+  color: var(--green);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.mode-welcome .welcome-brand {
+  max-width: 11ch;
+  color: var(--ink);
+  font-size: clamp(2.45rem, 11vw, 5.6rem);
+  font-weight: 950;
+  line-height: 0.92;
+  letter-spacing: 0;
 }
 .welcome-sub {
   color: var(--muted);
-  font-size: 0.98rem;
-  max-width: 32ch;
+  font-size: clamp(1rem, 3vw, 1.18rem);
+  font-weight: 750;
+  max-width: 28ch;
   margin: 0 auto;
+}
+.welcome-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: min(480px, 100%);
+  margin-top: 10px;
+}
+.welcome-preview span {
+  display: grid;
+  gap: 2px;
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  background: var(--glass-light);
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(18, 33, 48, 0.09);
+}
+.welcome-preview strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.79rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-preview small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .welcome-locate {
@@ -5903,6 +6079,50 @@ button.sheet-plan-badge:focus-visible {
 }
 .welcome-locate:hover {
   border-color: var(--blue);
+}
+
+@keyframes welcome-sun-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(4px) scale(1.03); }
+}
+
+@keyframes welcome-rain-fall {
+  0%, 100% { opacity: 0.28; transform: translateY(-2px); }
+  50% { opacity: 0.72; transform: translateY(4px); }
+}
+
+@media (max-width: 460px) {
+  .shell.mode-welcome {
+    width: min(100% - 24px, 720px);
+  }
+  .welcome-preview {
+    grid-template-columns: 1fr;
+    width: min(320px, 100%);
+  }
+  .welcome-preview span {
+    min-height: 42px;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+}
+
+@media (max-height: 660px) {
+  .welcome-preview {
+    display: none;
+  }
+  .welcome-weather-mark {
+    height: 104px;
+    transform: scale(0.88);
+    transform-origin: bottom center;
+    margin-bottom: -8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-sun,
+  .welcome-rain i {
+    animation: none;
+  }
 }
 
 /* ---------- Precipitation nowcast ---------- */

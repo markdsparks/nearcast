@@ -1,4 +1,4 @@
-const VERSION = "2.5.7";
+const VERSION = "2.5.8";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 

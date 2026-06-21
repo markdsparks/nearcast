@@ -1,5 +1,6 @@
-const CACHE = "nearcast-v257";
-const ASSET_VERSION = "2.5.7";
+const CACHE = "nearcast-v258";
+const ASSET_VERSION = "2.5.8";
+const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
 const BASE = new URL("./", self.location.href).pathname;
@@ -39,8 +40,14 @@ function navigationFallback() {
   );
 }
 
+function navigationTimeout() {
+  return new Promise(resolve => {
+    setTimeout(() => resolve(null), NAVIGATION_TIMEOUT_MS);
+  });
+}
+
 function freshNavigation(request) {
-  return fetch(request).then(response => {
+  const network = fetch(request).then(response => {
     if (response && response.ok) {
       const copy = response.clone();
       caches.open(CACHE).then(cache => {
@@ -48,7 +55,10 @@ function freshNavigation(request) {
       }).catch(() => {});
     }
     return response;
-  }).catch(() => navigationFallback());
+  }).catch(() => null);
+  return Promise.race([network, navigationTimeout()]).then(response =>
+    response || navigationFallback()
+  );
 }
 
 // Fetch strategy:
