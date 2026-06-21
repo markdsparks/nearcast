@@ -1,4 +1,4 @@
-const VERSION = "2.6.3";
+const VERSION = "2.6.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -695,6 +695,7 @@ function skyCodeFromCloud(cloudPct) {
 
 // code: WMO weather code; pop: precip probability %; cloudPct: cloud cover %.
 function effectiveWeatherCode(code, pop, cloudPct, precipAmount = 0, options = {}) {
+  const featureByProbability = options.featureByProbability !== false;
   const rate = Number.isFinite(options.precipRate)
     ? options.precipRate
     : precipRateFromAmount(precipAmount, options.intervalSeconds || 3600);
@@ -702,9 +703,10 @@ function effectiveWeatherCode(code, pop, cloudPct, precipAmount = 0, options = {
   if (code == null) return measuredCode ?? code;
   if (code < 51) {
     if (measuredCode) return measuredCode;
-    return (pop || 0) >= RAIN_LIKELY_POP ? RAIN_LIKELY_CODE : code;
+    return featureByProbability && (pop || 0) >= RAIN_LIKELY_POP ? RAIN_LIKELY_CODE : code;
   }
   if (measuredCode) return strongerPrecipCode(code, measuredCode);
+  if (!featureByProbability) return skyCodeFromCloud(cloudPct);
   if (pop == null || pop >= PRECIP_FEATURE_POP) return code; // precip likely → keep
   return skyCodeFromCloud(cloudPct);                         // unlikely → show sky
 }
@@ -824,9 +826,10 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast) {
   }
 
   if ((display.pop || 0) >= RAIN_LIKELY_POP) {
+    const labelNow = label.toLowerCase();
     return {
-      short: `${label} · likely nearby`,
-      detail: `Showing ${label.toLowerCase()} because hourly rain chance is ${display.pop}%.`,
+      short: `Rain likely this hour · ${labelNow} now`,
+      detail: `Rain chance is ${display.pop}% this hour, but no active precipitation is measured yet, so the scene stays ${labelNow}.`,
       source: "hourly-pop",
       confidence: "likely"
     };
@@ -915,7 +918,10 @@ function buildWeatherTruth(data = state.forecast) {
     const pop = hourly.precipitation_probability ? (hourly.precipitation_probability[currentIndex] || 0) : null;
     const cloud = hourly.cloud_cover ? hourly.cloud_cover[currentIndex] : current.cloud_cover;
     const precip = hourly.precipitation?.[currentIndex] || 0;
-    const hourlyCode = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
+    const hourlyCode = effectiveWeatherCode(rawCode, pop, cloud, precip, {
+      data,
+      featureByProbability: nowPrecip.isWetNow
+    });
     const currentRate = precipRateFromAmount(current.precipitation, current.interval || 3600);
     const currentCode = effectiveWeatherCode(current.weather_code, null, current.cloud_cover, current.precipitation, {
       data,
@@ -2697,8 +2703,16 @@ function rainGlance(data, currentChance, truth = weatherTruth(data)) {
     };
   }
 
-  if (currentChance >= 60) return { headline: "rain likely now", context: `${currentChance}% now` };
-  if (currentChance >= 30) return { headline: "rain possible now", context: `${currentChance}% now` };
+  const nowcast = nowPrecip.nowcast || analyzeNowcast(data);
+  if (nowcast && !nowcast.wet?.[0]) {
+    return {
+      headline: `${nowcast.isSnow ? "snow" : "rain"} soon`,
+      context: nowcast.detail
+    };
+  }
+
+  if (currentChance >= 60) return { headline: "rain likely this hour", context: `${currentChance}% this hour` };
+  if (currentChance >= 30) return { headline: "rain possible this hour", context: `${currentChance}% this hour` };
 
   const next = nextRainChance(data, 12, 35);
   if (next) {
@@ -10247,6 +10261,7 @@ function seededSkyRandom(seed) {
 }
 
 function skyCondition(code) {
+  if (code === RAIN_LIKELY_CODE) return "overcast";
   if (code <= 1) return "clear";
   if (code === 2) return "partly-cloudy";
   if (code === 3 || code === 45 || code === 48) return "overcast";
