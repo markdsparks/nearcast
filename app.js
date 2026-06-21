@@ -1,4 +1,4 @@
-const VERSION = "2.5.2";
+const VERSION = "2.5.3";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -308,6 +308,9 @@ const els = {
   aiLauncherSub: document.querySelector("#aiLauncherSub"),
   aiSheet: document.querySelector("#aiSheet"),
   aiBackdrop: document.querySelector("#aiBackdrop"),
+  memoryDetailSheet: document.querySelector("#memoryDetailSheet"),
+  memoryDetailBackdrop: document.querySelector("#memoryDetailBackdrop"),
+  memoryDetailBody: document.querySelector("#memoryDetailBody"),
   placeSwitcher: document.querySelector("#placeSwitcher"),
   placeSwitcherName: document.querySelector("#placeSwitcherName"),
   placeSwitcherMeta: document.querySelector("#placeSwitcherMeta"),
@@ -1229,10 +1232,15 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-remember], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
     const remember = target.closest("[data-memory-remember]");
     if (remember) {
       rememberPlanFromThread(Number(remember.dataset.memoryRemember));
+      return;
+    }
+    const memoryDetail = target.closest("[data-memory-detail]");
+    if (memoryDetail) {
+      openMemoryDetail(memoryDetail.dataset.memoryDetail);
       return;
     }
     const memoryShow = target.closest("[data-memory-show]");
@@ -1280,6 +1288,29 @@ function bindEvents() {
   bindTapAction(els.aiLauncher, openAISheet);
   bindTapAction(els.aiBackdrop, closeAISheet);
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
+  bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
+  bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
+  bindTapDelegate(els.memoryDetailBody, "[data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+    const memoryShow = target.closest("[data-memory-show]");
+    if (memoryShow) {
+      closeMemoryDetail();
+      showPlanMemory(memoryShow.dataset.memoryShow);
+      return;
+    }
+    const memoryForget = target.closest("[data-memory-forget]");
+    if (memoryForget) {
+      forgetPlanMemory(memoryForget.dataset.memoryForget);
+      refreshOpenMemoryDetail();
+      return;
+    }
+    const memoryEdit = target.closest("[data-memory-edit]");
+    if (memoryEdit) {
+      const id = memoryEdit.dataset.memoryEdit;
+      closeMemoryDetail();
+      openAISheet({ autoBrief: false });
+      requestAnimationFrame(() => editPlanMemory(id));
+    }
+  });
   bindTapAction(els.appMenuToggle, () => toggleAppMenu());
   bindTapAction(els.searchToggle, () => {
     closeAppMenu();
@@ -1353,10 +1384,21 @@ function bindEvents() {
   bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
   bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
+    const memoryDetail = event.target.closest("[data-memory-detail]");
+    if (memoryDetail) {
+      openMemoryDetail(memoryDetail.dataset.memoryDetail);
+      return;
+    }
     toggleSheetHourRow(row);
   });
   document.getElementById("sheetHourlyList").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
+    const memoryDetail = event.target.closest("[data-memory-detail]");
+    if (memoryDetail) {
+      event.preventDefault();
+      openMemoryDetail(memoryDetail.dataset.memoryDetail);
+      return;
+    }
     const row = event.target.closest(".sheet-hour-row");
     if (!row) return;
     event.preventDefault();
@@ -1380,6 +1422,12 @@ function bindEvents() {
   bindTapAction(document.getElementById("alertBackdrop"), closeAlertSheet);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !document.getElementById("alertSheet").hidden) closeAlertSheet();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.memoryDetailSheet.hidden) {
+      event.stopImmediatePropagation();
+      closeMemoryDetail();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.aiSheet.hidden) closeAISheet();
@@ -4628,6 +4676,7 @@ let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
 let plannerEditingMemoryDraft = "";
+let memoryDetailIds = [];
 let launchSummaryTargets = [];
 
 function fillPlannerTemplate(template, options = {}) {
@@ -5677,13 +5726,14 @@ function editPlanMemory(idOrRow) {
   });
 }
 
-async function showPlanMemory(id) {
+async function showPlanMemory(id, options = {}) {
   const memory = state.planMemories.find((item) => item.id === id);
   if (!memory) return;
-  plannerReturnAfterDayDetail = {
-    scrollTop: els.aiSheet?.scrollTop || 0
-  };
-  closeAISheet();
+  const returnToPlanner = options.returnToPlanner ?? !els.aiSheet?.hidden;
+  plannerReturnAfterDayDetail = returnToPlanner
+    ? { scrollTop: els.aiSheet?.scrollTop || 0 }
+    : null;
+  if (!els.aiSheet?.hidden) closeAISheet();
   const switchingPlaces = !samePlanPlace(memory.place, state.activePlace);
   const previousForecast = state.forecast;
   if (switchingPlaces) {
@@ -5691,7 +5741,7 @@ async function showPlanMemory(id) {
     if (state.forecast === previousForecast) {
       const returnState = plannerReturnAfterDayDetail;
       plannerReturnAfterDayDetail = null;
-      openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+      if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
       return;
     }
   }
@@ -5699,15 +5749,113 @@ async function showPlanMemory(id) {
   if (!event) {
     const returnState = plannerReturnAfterDayDetail;
     plannerReturnAfterDayDetail = null;
-    openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+    if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
     return;
   }
   const opened = openPlannerEventDetail(event);
   if (!opened) {
     const returnState = plannerReturnAfterDayDetail;
     plannerReturnAfterDayDetail = null;
-    openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+    if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
   }
+}
+
+function memoryIdsFromValue(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  return String(value || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function openMemoryDetail(idsOrValue) {
+  const ids = [...new Set(memoryIdsFromValue(idsOrValue))];
+  const memories = ids
+    .map((id) => state.planMemories.find((memory) => memory.id === id))
+    .filter(Boolean);
+  if (!memories.length || !els.memoryDetailSheet || !els.memoryDetailBackdrop || !els.memoryDetailBody) return;
+  memoryDetailIds = memories.map((memory) => memory.id);
+  document.getElementById("memoryDetailTitle").textContent = memories.length === 1
+    ? planMemoryTitle(memories[0])
+    : `${memories.length} memories`;
+  document.getElementById("memoryDetailSub").textContent = memories.length === 1
+    ? "Local context · under your control"
+    : "Overlapping local context";
+  els.memoryDetailBody.innerHTML = memories.map(renderMemoryDetailCard).join("");
+  els.memoryDetailBackdrop.hidden = false;
+  els.memoryDetailSheet.hidden = false;
+  showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet);
+  document.body.style.overflow = "hidden";
+}
+
+function refreshOpenMemoryDetail() {
+  const ids = memoryDetailIds.filter((id) => state.planMemories.some((memory) => memory.id === id));
+  if (!ids.length) {
+    closeMemoryDetail();
+    return;
+  }
+  openMemoryDetail(ids);
+}
+
+function closeMemoryDetail() {
+  if (!els.memoryDetailSheet || !els.memoryDetailBackdrop || els.memoryDetailSheet.hidden) return;
+  els.memoryDetailBackdrop.classList.remove("show");
+  els.memoryDetailSheet.classList.remove("show");
+  const keepLocked =
+    !document.getElementById("dayDetail")?.hidden ||
+    !els.aiSheet?.hidden ||
+    !document.getElementById("alertSheet")?.hidden ||
+    !els.placeSheet?.hidden ||
+    mapState.immersive;
+  document.body.style.overflow = keepLocked ? "hidden" : "";
+  setTimeout(() => {
+    els.memoryDetailBackdrop.hidden = true;
+    els.memoryDetailSheet.hidden = true;
+  }, 260);
+}
+
+function renderMemoryDetailCard(memory) {
+  const event = samePlanPlace(memory.place, state.activePlace)
+    ? planMemoryEvent(memory)
+    : null;
+  const original = String(memory.original || "").trim();
+  const answer = String(memory.answer || "").trim();
+  const interpreted = `${planMemoryTitle(memory)} · ${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
+  const saved = memoryTimestamp(memory.createdAt);
+  const updated = memory.updatedAt && Math.abs(memory.updatedAt - memory.createdAt) > 1000
+    ? memoryTimestamp(memory.updatedAt)
+    : "";
+  const weatherLine = event ? planMemoryMeta(memory, event) : `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
+  return `
+    <article class="memory-detail-card">
+      <div class="memory-detail-title">
+        <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+        <span>${escapeHtml(placeLabel(memory.place))}</span>
+      </div>
+      <dl class="memory-detail-facts">
+        <div><dt>Original</dt><dd>${escapeHtml(original || planMemoryDraft(memory))}</dd></div>
+        <div><dt>Interpreted</dt><dd>${escapeHtml(interpreted)}</dd></div>
+        <div><dt>Weather window</dt><dd>${escapeHtml(weatherLine)}</dd></div>
+        ${answer ? `<div><dt>Last answer</dt><dd>${escapeHtml(answer)}</dd></div>` : ""}
+        <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
+      </dl>
+      <div class="memory-detail-actions">
+        <button type="button" data-memory-show="${escapeHtml(memory.id)}">Show forecast</button>
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
+        <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
+      </div>
+    </article>
+  `;
+}
+
+function memoryTimestamp(value) {
+  const date = new Date(Number(value) || Date.now());
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
 }
 
 function planMemoryEvent(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
@@ -5908,14 +6056,23 @@ function detailEventWindows(eventWindow) {
   return [eventWindow];
 }
 
-function matchingDetailEventWindow(windows, startMs, endMs) {
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-  return windows.find((window) =>
+function matchingDetailEventWindows(windows, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+  return windows.filter((window) =>
     Number.isFinite(window?.startMs) &&
     Number.isFinite(window?.endMs) &&
     startMs < window.endMs &&
     endMs > window.startMs
-  ) || null;
+  );
+}
+
+function detailEventBadgeLabel(windows, eventWindow = null) {
+  if (!windows?.length) return "";
+  const memoryWindows = windows.filter((window) => window.memoryId);
+  if (memoryWindows.length > 1) return `${memoryWindows.length} memories`;
+  if (memoryWindows.length === 1) return planMemoryTitle(memoryWindows[0]);
+  if (windows.length > 1) return eventWindow?.badgeLabel || `${windows.length} plans`;
+  return windows[0].badgeLabel || eventWindow?.badgeLabel || "Plan";
 }
 
 function renderPlanMemoryGroup(label, items) {
@@ -5925,11 +6082,12 @@ function renderPlanMemoryGroup(label, items) {
     `<div class="memory-list">` +
       items.map(({ memory, event, isHere }) => `
         <article class="memory-card">
-          <button class="memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`${isHere ? "Show" : "Load"} ${memory.title}`)}">
+          <button class="memory-main" type="button" data-memory-detail="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Inspect ${memory.title}`)}">
             <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
             <span>${escapeHtml(planMemoryMeta(memory, event))}</span>
           </button>
           <div class="memory-actions">
+            <button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>
             <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
             <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
           </div>
@@ -10724,8 +10882,9 @@ function openDayDetail({
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
       : ms !== null ? ms + 60 * 60 * 1000 : null;
-    const matchedEventWindow = matchingDetailEventWindow(eventWindows, ms, nextMs);
-    const inEvent = Boolean(matchedEventWindow);
+    const matchedEventWindows = matchingDetailEventWindows(eventWindows, ms, nextMs);
+    const inEvent = Boolean(matchedEventWindows.length);
+    const eventMemoryIds = matchedEventWindows.map((window) => window.memoryId).filter(Boolean);
     const hourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true;
     const isNowHour = showNow && isCurrentHour(data.hourly.time[h], data);
     return {
@@ -10744,7 +10903,8 @@ function openDayDetail({
       stormPotential: hasThunderPotential(rawCode, pop, code, precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
-      eventLabel: inEvent ? (matchedEventWindow.badgeLabel || eventWindow?.badgeLabel || "Plan") : "",
+      eventLabel: inEvent ? detailEventBadgeLabel(matchedEventWindows, eventWindow) : "",
+      eventMemoryIds,
       isDay: isNowHour ? (state.weatherTruth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
     };
   });
@@ -10964,12 +11124,17 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
     const eventClass = hour.inEvent ? " is-plan-window" : "";
     const expanded = rowIndex === defaultExpandedIndex;
     const eventBadge = hour.inEvent ? escapeHtml(hour.eventLabel || "Plan") : "";
+    const eventBadgeHtml = hour.inEvent
+      ? hour.eventMemoryIds?.length
+        ? `<button class="sheet-plan-badge" type="button" data-memory-detail="${escapeHtml(hour.eventMemoryIds.join(","))}" aria-label="${escapeHtml(`Show memory details for ${hour.eventLabel || "plan"}`)}">${eventBadge}</button>`
+        : `<span class="sheet-plan-badge">${eventBadge}</span>`
+      : "";
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
-    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
+    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
-        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${hour.inEvent ? `<span class="sheet-plan-badge">${eventBadge}</span>` : ""}</div>
+        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-main">
           <strong>${Math.round(hour.temp)}${deg}</strong>

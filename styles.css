@@ -2157,6 +2157,90 @@ h2 {
 .ask-memory-btn:hover {
   border-color: var(--blue);
 }
+#memoryDetailBackdrop {
+  z-index: 321;
+}
+.memory-detail-sheet {
+  z-index: 322;
+}
+.memory-detail-head {
+  margin-bottom: 12px;
+}
+.memory-detail-body {
+  display: grid;
+  gap: 11px;
+}
+.memory-detail-card {
+  padding: 13px;
+  border: 1px solid rgba(91, 141, 220, 0.24);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+.memory-detail-title {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.memory-detail-title strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+.memory-detail-title span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+.memory-detail-facts {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+.memory-detail-facts div {
+  display: grid;
+  gap: 2px;
+}
+.memory-detail-facts dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.memory-detail-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+.memory-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.memory-detail-actions button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+.memory-detail-actions button:first-child {
+  border-color: rgba(91, 141, 220, 0.34);
+  background: rgba(91, 141, 220, 0.14);
+}
+.memory-detail-actions button:hover,
+.memory-detail-actions button:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
 .ask-chips {
   display: flex;
   flex-wrap: wrap;
@@ -5000,10 +5084,22 @@ body.map-immersive-active .day-sheet.show {
   display: inline-flex;
   align-items: center;
   width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--blue);
+  font: inherit;
   font-size: 0.62rem;
   font-weight: 900;
   line-height: 1.2;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+button.sheet-plan-badge:hover,
+button.sheet-plan-badge:focus-visible {
+  color: var(--ink);
+  outline: none;
 }
 .sheet-hour-icon {
   width: 30px;
