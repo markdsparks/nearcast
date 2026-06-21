@@ -1,6 +1,8 @@
-const VERSION = "2.5.9";
+const VERSION = "2.6.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
+const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
+const WELCOME_AMBIENCE_TIMEOUT_MS = 1800;
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -239,6 +241,8 @@ const daylightScrub = {
 
 let searchSuggestTimer = null;
 let searchRequestSeq = 0;
+let welcomeAmbienceStarted = false;
+let welcomeAmbienceAbort = null;
 
 const els = {
   themeColorMeta: document.querySelector("meta[name='theme-color']"),
@@ -1900,7 +1904,214 @@ function updateMode() {
   if (!hasContext) {
     els.shell.classList.remove("search-open");
     closeAppMenu();
+    updateWelcomeWeatherMark(null, browserApproximateIsDay());
+    initWelcomeAmbience();
+  } else {
+    cancelWelcomeAmbience();
   }
+}
+
+function browserApproximateIsDay(date = new Date()) {
+  const hour = date.getHours();
+  return hour >= 6 && hour < 19;
+}
+
+function welcomeIsActive() {
+  return Boolean(els.shell?.classList.contains("mode-welcome")) &&
+    !state.activePlace &&
+    !state.savedPlaces.length;
+}
+
+function updateWelcomeWeatherMark(code = null, isDay = browserApproximateIsDay()) {
+  const mark = document.querySelector(".welcome-weather-mark");
+  if (!mark) return;
+  const sky = code === null || code === undefined ? "overcast" : skyCondition(code);
+  const condition = ["rain", "snow", "thunder", "clear"].includes(sky) ? sky : "cloud";
+  mark.dataset.condition = condition;
+  mark.dataset.day = isDay ? "day" : "night";
+}
+
+function cancelWelcomeAmbience() {
+  if (welcomeAmbienceAbort) {
+    welcomeAmbienceAbort.abort();
+    welcomeAmbienceAbort = null;
+  }
+}
+
+function readWelcomeAmbienceCache() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(WELCOME_AMBIENCE_CACHE_KEY) || "null");
+    if (!cached || cached.unit !== state.unit || Date.now() - cached.savedAt > 15 * 60 * 1000) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function writeWelcomeAmbienceCache(place, data) {
+  try {
+    sessionStorage.setItem(WELCOME_AMBIENCE_CACHE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      unit: state.unit,
+      place,
+      data
+    }));
+  } catch {
+    /* Ambience is optional; failing to cache it should not affect first run. */
+  }
+}
+
+function initWelcomeAmbience() {
+  if (welcomeAmbienceStarted || !welcomeIsActive()) return;
+  welcomeAmbienceStarted = true;
+  const cached = readWelcomeAmbienceCache();
+  if (cached?.data) applyWelcomeAmbience(cached.data, cached.place);
+  loadWelcomeAmbience();
+}
+
+async function loadWelcomeAmbience() {
+  const abort = new AbortController();
+  welcomeAmbienceAbort = abort;
+  let applied = false;
+  try {
+    const place = await fetchApproximateWelcomePlace(abort.signal);
+    if (!welcomeIsActive() || abort.signal.aborted) return;
+    const data = await fetchWelcomeAmbienceForecast(place, abort.signal);
+    if (!welcomeIsActive() || abort.signal.aborted) return;
+    writeWelcomeAmbienceCache(place, data);
+    applyWelcomeAmbience(data, place);
+    applied = true;
+  } catch {
+    /* Keep the designed default welcome sky when coarse lookup is unavailable. */
+  } finally {
+    if (!applied) welcomeAmbienceStarted = false;
+    if (welcomeAmbienceAbort === abort) welcomeAmbienceAbort = null;
+  }
+}
+
+function applyWelcomeAmbience(data, place) {
+  if (!welcomeIsActive() || !data) return;
+  const truth = buildWeatherTruth(data);
+  updateWelcomeWeatherMark(truth.code, truth.isDay);
+  updateSkyCanvas(truth.code, truth.isDay, data, truth.display);
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs, signal = null) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  if (signal) signal.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) controller.abort();
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error("Request failed.");
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", abort);
+  }
+}
+
+async function fetchApproximateWelcomePlace(signal = null) {
+  const providers = [
+    {
+      url: "https://ipapi.co/json/",
+      parse: (json) => approximatePlaceFromIpJson(json, {
+        lat: "latitude",
+        lon: "longitude",
+        region: "region",
+        country: "country_name",
+        countryCode: "country_code"
+      })
+    },
+    {
+      url: "https://ipwho.is/",
+      parse: (json) => json?.success === false ? null : approximatePlaceFromIpJson(json, {
+        lat: "latitude",
+        lon: "longitude",
+        region: "region",
+        country: "country",
+        countryCode: "country_code"
+      })
+    }
+  ];
+
+  for (const provider of providers) {
+    if (signal?.aborted) break;
+    try {
+      const place = provider.parse(await fetchJsonWithTimeout(provider.url, WELCOME_AMBIENCE_TIMEOUT_MS, signal));
+      if (place) return place;
+    } catch {
+      /* Try the next no-key coarse location provider. */
+    }
+  }
+  throw new Error("Approximate location unavailable.");
+}
+
+function approximatePlaceFromIpJson(json, fields) {
+  const latitude = Number(json?.[fields.lat]);
+  const longitude = Number(json?.[fields.lon]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const city = String(json?.city || "").trim();
+  const region = String(json?.[fields.region] || "").trim();
+  const country = String(json?.[fields.country] || "").trim();
+  const label = city || region || country || "Nearby";
+  return normalizePlace({
+    id: `ambient-${latitude.toFixed(2)}-${longitude.toFixed(2)}`,
+    name: label,
+    admin1: city && region ? region : "",
+    country,
+    countryCode: String(json?.[fields.countryCode] || "").toUpperCase(),
+    latitude,
+    longitude
+  });
+}
+
+async function fetchWelcomeAmbienceForecast(place, signal = null) {
+  const params = new URLSearchParams({
+    latitude: place.latitude,
+    longitude: place.longitude,
+    current: [
+      "temperature_2m",
+      "relative_humidity_2m",
+      "apparent_temperature",
+      "precipitation",
+      "weather_code",
+      "cloud_cover",
+      "cloud_cover_low",
+      "cloud_cover_mid",
+      "cloud_cover_high",
+      "visibility",
+      "shortwave_radiation",
+      "direct_radiation",
+      "diffuse_radiation",
+      "is_day"
+    ].join(","),
+    hourly: [
+      "precipitation_probability",
+      "precipitation",
+      "weather_code",
+      "cloud_cover",
+      "cloud_cover_low",
+      "cloud_cover_mid",
+      "cloud_cover_high",
+      "visibility",
+      "shortwave_radiation",
+      "direct_radiation",
+      "diffuse_radiation",
+      "uv_index",
+      "is_day"
+    ].join(","),
+    daily: "weather_code,sunrise,sunset",
+    minutely_15: "precipitation,precipitation_probability,snowfall",
+    forecast_minutely_15: "8",
+    temperature_unit: state.unit,
+    wind_speed_unit: state.unit === "fahrenheit" ? "mph" : "kmh",
+    precipitation_unit: state.unit === "fahrenheit" ? "inch" : "mm",
+    timezone: "auto",
+    forecast_days: "2"
+  });
+  return fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, 2600, signal);
 }
 
 function toggleAppMenu(open) {

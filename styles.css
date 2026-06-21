@@ -6004,6 +6004,48 @@ button.sheet-plan-badge:focus-visible {
 .welcome-rain i:nth-child(3) {
   animation-delay: 0.36s;
 }
+.welcome-weather-mark[data-condition="clear"] .welcome-cloud,
+.welcome-weather-mark[data-condition="fog"] .welcome-rain,
+.welcome-weather-mark[data-condition="cloud"] .welcome-rain {
+  opacity: 0;
+}
+.welcome-weather-mark[data-condition="clear"] .welcome-cloud-back {
+  opacity: 0.16;
+}
+.welcome-weather-mark[data-condition="clear"] .welcome-cloud-front {
+  opacity: 0.08;
+}
+.welcome-weather-mark[data-condition="cloud"] .welcome-sun,
+.welcome-weather-mark[data-condition="fog"] .welcome-sun {
+  opacity: 0.42;
+}
+.welcome-weather-mark[data-condition="rain"] .welcome-rain,
+.welcome-weather-mark[data-condition="thunder"] .welcome-rain,
+.welcome-weather-mark[data-condition="snow"] .welcome-rain {
+  opacity: 1;
+}
+.welcome-weather-mark[data-condition="rain"] .welcome-sun,
+.welcome-weather-mark[data-condition="thunder"] .welcome-sun,
+.welcome-weather-mark[data-condition="snow"] .welcome-sun {
+  opacity: 0.34;
+}
+.welcome-weather-mark[data-condition="snow"] .welcome-rain i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(245, 250, 255, 0.82);
+  box-shadow: 0 0 10px rgba(190, 220, 255, 0.34);
+}
+.welcome-weather-mark[data-day="night"] .welcome-sun {
+  background: radial-gradient(circle at 35% 32%, #ffffff 0%, #dbe5f3 42%, #8fa2c0 100%);
+  box-shadow: 0 0 34px rgba(185, 213, 255, 0.26);
+}
+.welcome-weather-mark[data-day="night"] .welcome-sun::before {
+  opacity: 0;
+}
+.welcome-weather-mark[data-day="night"] .welcome-cloud {
+  background: linear-gradient(180deg, rgba(216, 228, 242, 0.74), rgba(105, 128, 155, 0.50));
+}
 .welcome-kicker {
   color: var(--green);
   font-size: 0.76rem;
@@ -6026,38 +6068,14 @@ button.sheet-plan-badge:focus-visible {
   max-width: 28ch;
   margin: 0 auto;
 }
-.welcome-preview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  width: min(480px, 100%);
-  margin-top: 10px;
-}
-.welcome-preview span {
-  display: grid;
-  gap: 2px;
-  min-height: 52px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-glass);
-  border-radius: 8px;
-  background: var(--glass-light);
-  text-align: left;
-  box-shadow: 0 10px 28px rgba(18, 33, 48, 0.09);
-}
-.welcome-preview strong {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 0.79rem;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.welcome-preview small {
-  overflow: hidden;
+.welcome-moments {
+  max-width: 100%;
+  margin-top: 8px;
   color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 760;
-  text-overflow: ellipsis;
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  opacity: 0.82;
   white-space: nowrap;
 }
 
@@ -6095,19 +6113,13 @@ button.sheet-plan-badge:focus-visible {
   .shell.mode-welcome {
     width: min(100% - 24px, 720px);
   }
-  .welcome-preview {
-    grid-template-columns: 1fr;
-    width: min(320px, 100%);
-  }
-  .welcome-preview span {
-    min-height: 42px;
-    grid-template-columns: 1fr auto;
-    align-items: center;
+  .welcome-moments {
+    font-size: 0.74rem;
   }
 }
 
 @media (max-height: 660px) {
-  .welcome-preview {
+  .welcome-moments {
     display: none;
   }
   .welcome-weather-mark {

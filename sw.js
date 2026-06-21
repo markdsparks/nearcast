@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v259";
-const ASSET_VERSION = "2.5.9";
+const CACHE = "nearcast-v260";
+const ASSET_VERSION = "2.6.0";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -74,6 +74,8 @@ self.addEventListener("fetch", e => {
   if (
     url.hostname.includes("open-meteo.com") ||
     url.hostname.includes("rainviewer.com") ||
+    url.hostname.includes("ipapi.co") ||
+    url.hostname.includes("ipwho.is") ||
     url.hostname.includes("weather.gov") ||
     url.hostname.includes("nowcoast.noaa.gov") ||
     url.hostname.includes("opengeo.ncep.noaa.gov") ||
