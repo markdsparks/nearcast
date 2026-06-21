@@ -1,4 +1,4 @@
-const VERSION = "2.5.4";
+const VERSION = "2.5.5";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 
@@ -1047,6 +1047,36 @@ function hasThunderPotentialForIndices(data, indices, shownCode) {
     const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
     return hasThunderPotential(h.weather_code[i], pop, eff, precip, data);
   });
+}
+
+function representativeHourlyCodeForIndices(data, indices) {
+  const h = data?.hourly;
+  if (!h || !indices?.length) return data?.current?.weather_code ?? 0;
+  let precipCode = null, precipScore = -1;
+  const skyCounts = {};
+  let cloudSum = 0, cloudN = 0;
+  indices.forEach((i) => {
+    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
+    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
+    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
+    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
+    if (eff >= 51) {
+      const score = precipRank(eff) * 1000 + pop;
+      if (score > precipScore) {
+        precipScore = score;
+        precipCode = eff;
+      }
+    } else {
+      skyCounts[eff] = (skyCounts[eff] || 0) + 1;
+    }
+    if (Number.isFinite(cloud)) {
+      cloudSum += cloud;
+      cloudN++;
+    }
+  });
+  if (precipCode != null) return precipCode;
+  const modalSky = Object.keys(skyCounts).sort((a, b) => skyCounts[b] - skyCounts[a])[0];
+  return modalSky != null ? Number(modalSky) : skyCodeFromCloud(cloudN ? cloudSum / cloudN : null);
 }
 
 function init() {
@@ -10773,33 +10803,93 @@ function openDayFromIndex(i, options = {}) {
 }
 
 // Rolling next-24-hours window from "now".
+function rollingHourlyRows(data) {
+  const h = data?.hourly;
+  if (!h?.time?.length) return [];
+  const now = forecastNowMs(data);
+  return h.time
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000);
+}
+
+function rollingWindowTitle(block = 0) {
+  if (block <= 0) return "Next 24 Hours";
+  return `${block * 24}-${(block + 1) * 24} Hours Out`;
+}
+
+function rollingWindowNavLabel(block = 0) {
+  if (block <= 0) return "Next 24 hours";
+  return `${block * 24}-${(block + 1) * 24} hours out`;
+}
+
+function rollingWindowDayLabel(date, data) {
+  const diff = daysFromForecastToday(date, data);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(`${date}T12:00:00`));
+}
+
+function rollingWindowEndpoint(ms, data) {
+  const day = forecastLocalDateFromMs(ms, data);
+  return {
+    day,
+    dayLabel: rollingWindowDayLabel(day, data),
+    timeLabel: formatForecastMs(ms, data)
+  };
+}
+
+function rollingWindowRangeLabel(rows, allRows, data) {
+  if (!rows.length) return "";
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const allIndex = allRows.findIndex((row) => row.index === last.index);
+  const next = allIndex >= 0 ? allRows[allIndex + 1] : null;
+  const endMs = next?.ms ?? (last.ms + 60 * 60 * 1000);
+  const start = rollingWindowEndpoint(first.ms, data);
+  const end = rollingWindowEndpoint(endMs, data);
+  if (start.day === end.day) return `${start.dayLabel} ${start.timeLabel}-${end.timeLabel}`;
+  return `${start.dayLabel} ${start.timeLabel}-${end.dayLabel} ${end.timeLabel}`;
+}
+
 function openNext24Detail(options = {}) {
   const data = state.forecast;
   if (!data) return;
-  const { eventWindow = null, contextLabel = "" } = options || {};
-  const now = forecastNowMs(data);
-  const indices = [];
-  data.hourly.time.forEach((t, h) => {
-    const ms = parseForecastTimestamp(t, data);
-    if (ms !== null && ms >= now - 3600000 && indices.length < 24) indices.push(h);
-  });
+  const { eventWindow = null, contextLabel = "", block = 0 } = options || {};
+  const safeBlock = Math.max(0, Math.floor(Number(block) || 0));
+  const rows = rollingHourlyRows(data);
+  const start = safeBlock * 24;
+  const windowRows = rows.slice(start, start + 24);
+  if (!windowRows.length) return;
+  const indices = windowRows.map((row) => row.index);
+  const firstIndex = indices[0];
+  const firstDay = datePart(data.hourly.time[firstIndex]);
+  const firstDayIndex = Math.max(0, data.daily?.time?.findIndex((time) => datePart(time) === firstDay) ?? 0);
   const displayCondition = currentDisplayCondition(data);
-  const code = displayCondition.code;
+  const code = safeBlock === 0 ? displayCondition.code : representativeHourlyCodeForIndices(data, indices);
+  const firstHourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[firstIndex]) : displayCondition.isDay;
+  const rangeLabel = rollingWindowRangeLabel(windowRows, rows, data);
+  const detailContext = [rangeLabel, contextLabel].filter(Boolean).join(" · ");
   openDayDetail({
     indices,
-    title: "Next 24 Hours",
+    title: rollingWindowTitle(safeBlock),
     code,
     stormPotential: hasThunderPotentialForIndices(data, indices, code),
-    isDay: displayCondition.isDay,
-    sunriseISO: data.daily.sunrise[0],
-    sunsetISO: data.daily.sunset[0],
-    dayIndex: 0,
+    isDay: safeBlock === 0 ? displayCondition.isDay : firstHourIsDay,
+    sunriseISO: data.daily.sunrise[firstDayIndex],
+    sunsetISO: data.daily.sunset[firstDayIndex],
+    dayIndex: firstDayIndex,
     initialMode: "hourly",
     persistInitialMode: false,
-    showNow: true,
+    showNow: safeBlock === 0,
     eventWindow,
-    contextLabel,
-    source: "rolling"
+    contextLabel: detailContext,
+    source: "rolling",
+    navState: {
+      block: safeBlock,
+      canPrev: safeBlock > 0,
+      canNext: start + 24 < rows.length,
+      label: rollingWindowNavLabel(safeBlock)
+    }
   });
   if (eventWindow) scrollFocusedSheetHour();
 }
@@ -10827,7 +10917,7 @@ function openHourlyStripDetail(hourIndex) {
       badgeLabel: label,
       label: `${label} detail`
     },
-    contextLabel: `Next 24 Hours · ${label}`
+    contextLabel: `${label} focus`
   });
 }
 
@@ -10866,28 +10956,49 @@ function updateSheetDayNav(mode = getDayDetailMode()) {
   const data = dayDetailNavState?.data || state.forecast;
   const dayIndex = dayDetailNavState?.dayIndex;
   const dayCount = data?.daily?.time?.length || 0;
-  const canPage = dayDetailNavState?.source === "day" &&
-    Number.isInteger(dayIndex) &&
-    dayCount > 1;
   const isHourly = mode === "hourly";
+  const isRolling = dayDetailNavState?.source === "rolling";
+  const isDay = dayDetailNavState?.source === "day";
+  const canPageDay = isDay && Number.isInteger(dayIndex) && dayCount > 1;
+  const canPageRolling = isRolling && (dayDetailNavState.canPrev || dayDetailNavState.canNext);
+  const canPage = canPageDay || canPageRolling;
   nav.hidden = !(isHourly && canPage);
   if (!canPage) return;
-  const canPrev = dayIndex > 0;
-  const canNext = dayIndex < dayCount - 1;
+
+  nav.classList.toggle("is-rolling", isRolling);
+  const canPrev = isRolling ? Boolean(dayDetailNavState.canPrev) : dayIndex > 0;
+  const canNext = isRolling ? Boolean(dayDetailNavState.canNext) : dayIndex < dayCount - 1;
   if (prev) {
+    prev.textContent = isRolling ? "Earlier" : "‹";
     prev.disabled = !canPrev;
     prev.setAttribute("aria-disabled", String(!canPrev));
+    prev.setAttribute("aria-label", isRolling ? "Earlier 24-hour window" : "Previous day");
   }
   if (next) {
+    next.textContent = isRolling ? "Later" : "›";
     next.disabled = !canNext;
     next.setAttribute("aria-disabled", String(!canNext));
+    next.setAttribute("aria-label", isRolling ? "Later 24-hour window" : "Next day");
   }
-  if (label) label.textContent = formatDay(data.daily.time[dayIndex], dayIndex);
+  if (label) {
+    label.textContent = isRolling
+      ? (dayDetailNavState.label || "Next 24 hours")
+      : formatDay(data.daily.time[dayIndex], dayIndex);
+  }
 }
 
 function navigateSheetDay(delta) {
   const stateForNav = dayDetailNavState;
-  if (!stateForNav || stateForNav.source !== "day") return;
+  if (!stateForNav) return;
+  if (stateForNav.source === "rolling") {
+    const nextBlock = (stateForNav.block || 0) + delta;
+    if (nextBlock < 0) return;
+    if (delta < 0 && !stateForNav.canPrev) return;
+    if (delta > 0 && !stateForNav.canNext) return;
+    openNext24Detail({ block: nextBlock });
+    return;
+  }
+  if (stateForNav.source !== "day") return;
   const nextIndex = stateForNav.dayIndex + delta;
   const dayCount = stateForNav.data?.daily?.time?.length || 0;
   if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= dayCount) return;
@@ -10913,7 +11024,8 @@ function openDayDetail({
   alerts = activeAlerts,
   eventWindow = null,
   contextLabel = "",
-  source = "day"
+  source = "day",
+  navState = null
 }) {
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -10975,7 +11087,7 @@ function openDayDetail({
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
-  dayDetailNavState = { source, dayIndex, data };
+  dayDetailNavState = { source, dayIndex, data, ...(navState || {}) };
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
   renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });

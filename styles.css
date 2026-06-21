@@ -4724,6 +4724,9 @@ body.map-immersive-active .day-sheet.show {
   gap: 8px;
   margin: -2px 0 12px;
 }
+.sheet-day-nav.is-rolling {
+  grid-template-columns: minmax(68px, auto) minmax(0, 1fr) minmax(68px, auto);
+}
 .sheet-day-nav[hidden] {
   display: none;
 }
@@ -4741,6 +4744,11 @@ body.map-immersive-active .day-sheet.show {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+.sheet-day-nav.is-rolling .sheet-day-nav-btn {
+  width: auto;
+  padding: 0 11px;
+  font-size: 0.78rem;
 }
 .sheet-day-nav-btn:disabled {
   opacity: 0.34;
