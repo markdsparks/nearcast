@@ -1,4 +1,4 @@
-const VERSION = "2.6.18";
+const VERSION = "2.6.19";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -805,21 +805,16 @@ function nowPrecipSignal(data = state.forecast) {
   };
 
   consider(current.precipitation, current.interval || 3600, current.weather_code, 0);
-  if (currentIndex >= 0) {
-    consider(
-      hourly.precipitation?.[currentIndex],
-      3600,
-      hourly.weather_code?.[currentIndex],
-      hourlyPop
-    );
-  }
+  // Hourly precipitation is a forecast bucket for the whole hour, not proof
+  // that precipitation is happening at this exact moment.
 
   const nowcast = analyzeNowcast(data);
   if (nowcast) {
     signal.nowcast = nowcast;
     if (nowcast.wet?.[0]) {
       const slot = nowcast.slots?.[0];
-      consider(slot?.precip, 15 * 60, nowcast.isSnow ? 71 : signal.code, slot?.prob, nowcast.isSnow);
+      const nowcastBaseCode = nowcast.isSnow ? 71 : (isThunderCode(signal.code) ? signal.code : 61);
+      consider(slot?.precip, 15 * 60, nowcastBaseCode, slot?.prob, nowcast.isSnow);
       signal.detail = nowcast.detail;
       signal.label = nowcast.title.replace(/\s+now$/i, "");
     }
