@@ -1,4 +1,4 @@
-const VERSION = "2.6.1";
+const VERSION = "2.6.2";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -10602,11 +10602,11 @@ function skyBackgroundCss(condition, skyState = state.skyState) {
   const g = skyGradientStops(condition, phase, skyState);
   if (g) {
     const css = `linear-gradient(${g.angle}deg, ${g.stops.map((c, i) => `${c} ${g.positions[i]}%`).join(", ")})`;
-    return { css, top: g.stops[0], phase };
+    return { css, top: g.stops[0], bottom: g.stops[g.stops.length - 1], phase };
   }
   const tod = phase.isDay ? "day" : "night";
   const cfg = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
-  return { css: cfg.bg, top: firstHexColor(cfg.bg), phase };
+  return { css: cfg.bg, top: firstHexColor(cfg.bg), bottom: lastHexColor(cfg.bg), phase };
 }
 
 // Moon illuminated fraction (0 new → 1 full) and waxing flag for a timestamp.
@@ -10670,6 +10670,8 @@ function clearSkyCanvas() {
   el.style.background = "";
   el.innerHTML = "";
   document.documentElement.removeAttribute("data-sky");
+  document.documentElement.style.removeProperty("--sky-page-bg");
+  document.documentElement.style.removeProperty("--sky-page-bg-color");
   applySkyAtmosphereTokens(null);
   updateSkyChrome(null, null);
 }
@@ -10689,6 +10691,11 @@ function skyChromeColor(condition, isDay, skyState = state.skyState) {
 function firstHexColor(value) {
   const match = String(value || "").match(/#[0-9a-f]{6}\b/i);
   return match ? match[0] : "";
+}
+
+function lastHexColor(value) {
+  const matches = String(value || "").match(/#[0-9a-f]{6}\b/ig);
+  return matches?.length ? matches[matches.length - 1] : "";
 }
 
 function defaultChromeColor() {
@@ -10744,6 +10751,8 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const bg = skyBackgroundCss(condition, skyState);
   const phase = bg.phase;
 
+  document.documentElement.style.setProperty("--sky-page-bg", bg.css);
+  document.documentElement.style.setProperty("--sky-page-bg-color", bg.bottom || bg.top || defaultChromeColor());
   el.style.background = bg.css;
 
   const parts = [skyFilterDefs()];
