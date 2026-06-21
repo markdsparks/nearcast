@@ -1,37 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 200 200">
   <defs>
-    <linearGradient id="skyMask" x1="40" y1="6" x2="160" y2="194" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8fc3e2"/>
-      <stop offset="0.42" stop-color="#cfe9ee"/>
-      <stop offset="0.74" stop-color="#f3ecd6"/>
-      <stop offset="1" stop-color="#f6d79c"/>
+    <linearGradient id="skyMaskRich" x1="30" y1="4" x2="168" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#62a9d1"/>
+      <stop offset="0.38" stop-color="#b9dde8"/>
+      <stop offset="0.68" stop-color="#f0e5c5"/>
+      <stop offset="1" stop-color="#f2bd65"/>
     </linearGradient>
-    <radialGradient id="bloomMask" cx="50%" cy="42%" r="58%">
-      <stop offset="0" stop-color="#fff3c9" stop-opacity="0.9"/>
-      <stop offset="0.55" stop-color="#ffe6a8" stop-opacity="0.3"/>
-      <stop offset="1" stop-color="#ffe6a8" stop-opacity="0"/>
+    <radialGradient id="skyMaskBloom" cx="48%" cy="42%" r="62%">
+      <stop offset="0" stop-color="#ffe8a5" stop-opacity="0.72"/>
+      <stop offset="0.46" stop-color="#f4cc74" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#f4cc74" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="pinGlass" x1="28" y1="12" x2="92" y2="118" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
-      <stop offset="0.56" stop-color="#d8eef7" stop-opacity="0.78"/>
-      <stop offset="1" stop-color="#8bc6d7" stop-opacity="0.66"/>
+    <linearGradient id="pinMaskGlass" x1="60" y1="40" x2="140" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.98"/>
+      <stop offset="0.50" stop-color="#edf8fb" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#b5dde3" stop-opacity="0.84"/>
     </linearGradient>
-    <linearGradient id="pinStroke" x1="28" y1="14" x2="92" y2="118" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#2f927c" stop-opacity="0.62"/>
+    <linearGradient id="pinMaskStroke" x1="60" y1="42" x2="140" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.72" stop-color="#55aa97" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#2e7d62" stop-opacity="0.92"/>
     </linearGradient>
-    <radialGradient id="sunWarm" cx="38%" cy="30%" r="72%">
-      <stop offset="0" stop-color="#fff7d2"/>
-      <stop offset="0.5" stop-color="#ffce6b"/>
-      <stop offset="1" stop-color="#e9a23c"/>
+    <radialGradient id="sunMaskWarm" cx="38%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#fff6c9"/>
+      <stop offset="0.48" stop-color="#ffc452"/>
+      <stop offset="1" stop-color="#dc8b28"/>
     </radialGradient>
   </defs>
-  <rect width="200" height="200" fill="url(#skyMask)"/>
-  <circle cx="100" cy="84" r="58" fill="url(#bloomMask)"/>
-  <g transform="translate(50 38) scale(0.833333)">
-    <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)" filter="blur(1px)"/>
-    <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#pinGlass)" stroke="url(#pinStroke)" stroke-width="1.7"/>
-    <circle cx="60" cy="48" r="15" fill="url(#sunWarm)" stroke="rgba(255,255,255,0.88)" stroke-width="2.2"/>
-    <path d="M33 64 L87 64" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="7" stroke-linecap="round"/>
+  <rect width="200" height="200" fill="url(#skyMaskRich)"/>
+  <circle cx="97" cy="83" r="55" fill="url(#skyMaskBloom)"/>
+  <g transform="translate(100 112) scale(1.24) translate(-100 -112)">
+    <ellipse cx="100" cy="178" rx="31" ry="6.3" fill="#152a34" opacity="0.24"/>
+    <path d="M100 176 C100 176 56 138 56 104 C56 76 76 60 100 60 C124 60 144 76 144 104 C144 138 100 176 100 176Z" fill="url(#pinMaskGlass)" stroke="url(#pinMaskStroke)" stroke-width="2.55"/>
+    <circle cx="100" cy="100" r="22" fill="url(#sunMaskWarm)" stroke="#ffffff" stroke-opacity="0.92" stroke-width="2.8"/>
+    <path d="M66 120 L134 120" fill="none" stroke="#ffffff" stroke-opacity="0.98" stroke-width="10" stroke-linecap="round"/>
   </g>
 </svg>

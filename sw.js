@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v2616";
-const ASSET_VERSION = "2.6.16";
+const CACHE = "nearcast-v2617";
+const ASSET_VERSION = "2.6.17";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -12,13 +12,17 @@ const SHELL = [
   `${BASE}ai.js?v=${ASSET_VERSION}`,
   `${BASE}ai-worker.js?v=${ASSET_VERSION}`,
   `${BASE}manifest.json`,
+  `${BASE}manifest.json?v=${ASSET_VERSION}`,
   `${BASE}icons/nearcast-mark.svg`,
   `${BASE}icons/nearcast-glyph.svg`,
   `${BASE}icons/nearcast-icon.svg`,
   `${BASE}icons/nearcast-icon-maskable.svg`,
   `${BASE}icons/icon-192.png`,
+  `${BASE}icons/icon-192.png?v=${ASSET_VERSION}`,
   `${BASE}icons/icon-512.png`,
-  `${BASE}icons/icon-maskable-512.png`
+  `${BASE}icons/icon-512.png?v=${ASSET_VERSION}`,
+  `${BASE}icons/icon-maskable-512.png`,
+  `${BASE}icons/icon-maskable-512.png?v=${ASSET_VERSION}`
 ];
 
 // Install: cache the shell
