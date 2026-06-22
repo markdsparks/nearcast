@@ -52,6 +52,16 @@
   --summary-dry-border: rgba(76, 139, 104, 0.24);
   --border-glass: rgba(22, 36, 50, 0.15);
   --border-glass-md: rgba(22, 36, 50, 0.19);
+  --daily-secondary: var(--muted);
+  --daily-secondary-strong: var(--muted);
+  --daily-section-meta: var(--muted);
+  --daily-rain-detail: var(--muted);
+  --daily-low-color: var(--ink);
+  --daily-condition-opacity: 0.78;
+  --daily-low-opacity: 0.55;
+  --daily-row-border: var(--border-glass);
+  --daily-track-bg: var(--border-glass);
+  --daily-text-shadow: none;
   --launch-spotlight-bg: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.08) 42%, transparent 72%);
   --hero-card-bg:
     linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
@@ -336,6 +346,16 @@
   --status-card-border: rgba(116, 184, 255, 0.55);
   --status-error-bg: linear-gradient(135deg, rgba(45, 29, 32, 0.84), rgba(57, 23, 30, 0.70));
   --loading-chip-bg: linear-gradient(135deg, rgba(18, 28, 42, 0.74), rgba(9, 14, 24, 0.58));
+  --daily-secondary: rgba(222, 236, 244, 0.84);
+  --daily-secondary-strong: rgba(238, 247, 252, 0.92);
+  --daily-section-meta: rgba(198, 218, 230, 0.84);
+  --daily-rain-detail: rgba(178, 216, 232, 0.88);
+  --daily-low-color: rgba(238, 247, 252, 0.90);
+  --daily-condition-opacity: 1;
+  --daily-low-opacity: 0.78;
+  --daily-row-border: rgba(235, 246, 255, 0.13);
+  --daily-track-bg: rgba(235, 246, 255, 0.16);
+  --daily-text-shadow: 0 1px 12px rgba(0, 0, 0, 0.30);
 }
 
 :root[data-sky="snow-night"] {
@@ -366,6 +386,16 @@
   --status-card-border: rgba(255, 220, 76, 0.58);
   --status-error-bg: linear-gradient(135deg, rgba(47, 28, 30, 0.86), rgba(60, 21, 29, 0.72));
   --loading-chip-bg: linear-gradient(135deg, rgba(18, 21, 31, 0.76), rgba(8, 9, 15, 0.60));
+  --daily-secondary: rgba(226, 235, 242, 0.84);
+  --daily-secondary-strong: rgba(241, 246, 250, 0.93);
+  --daily-section-meta: rgba(201, 214, 224, 0.84);
+  --daily-rain-detail: rgba(183, 215, 228, 0.88);
+  --daily-low-color: rgba(241, 246, 250, 0.90);
+  --daily-condition-opacity: 1;
+  --daily-low-opacity: 0.80;
+  --daily-row-border: rgba(242, 247, 255, 0.13);
+  --daily-track-bg: rgba(242, 247, 255, 0.16);
+  --daily-text-shadow: 0 1px 12px rgba(0, 0, 0, 0.32);
 }
 
 :root[data-theme="light"][data-sky-tone="bright"] {
@@ -3850,7 +3880,12 @@ h2 {
 .daily-panel .section-head {
   margin-bottom: 0;
   padding: 0 0 12px;
-  border-bottom: 1px solid var(--border-glass);
+  border-bottom: 1px solid var(--daily-row-border);
+}
+
+.daily-panel .section-head span {
+  color: var(--daily-section-meta);
+  text-shadow: var(--daily-text-shadow);
 }
 
 .hourly {
@@ -4096,7 +4131,7 @@ h2 {
      gutter instead of shifting Today's content out of line with the others. */
   padding: 12px 0 12px 16px;
   border: 0;
-  border-bottom: 1px solid var(--border-glass);
+  border-bottom: 1px solid var(--daily-row-border);
   border-radius: 0;
   background: transparent;
   cursor: pointer;
@@ -4131,7 +4166,9 @@ h2 {
 
 /* The icon already carries the condition, so keep the repeated word quiet. */
 .day-row .day-meta {
+  color: var(--daily-secondary);
   font-size: 0.76rem;
+  text-shadow: var(--daily-text-shadow);
 }
 
 .day-condition,
@@ -4142,7 +4179,8 @@ h2 {
 }
 
 .day-condition {
-  opacity: 0.78;
+  color: var(--daily-secondary-strong);
+  opacity: var(--daily-condition-opacity);
 }
 
 .day-memory {
@@ -4169,8 +4207,10 @@ h2 {
 }
 
 .day-low {
+  color: var(--daily-low-color);
   text-align: right;
-  opacity: 0.55;
+  opacity: var(--daily-low-opacity);
+  text-shadow: var(--daily-text-shadow);
 }
 
 .day-high {
@@ -4182,7 +4222,7 @@ h2 {
   min-width: 0;
   height: 6px;
   border-radius: 999px;
-  background: var(--border-glass);
+  background: var(--daily-track-bg);
   overflow: hidden;
 }
 
@@ -4216,9 +4256,10 @@ h2 {
 }
 
 .day-rain small {
-  color: var(--muted);
+  color: var(--daily-rain-detail);
   font-size: 0.72rem;
   font-weight: 800;
+  text-shadow: var(--daily-text-shadow);
 }
 
 .map-panel {
