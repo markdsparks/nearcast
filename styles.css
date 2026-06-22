@@ -5220,11 +5220,18 @@ body.map-immersive-active .sheet-now-jump {
   background: transparent;
 }
 .sheet-day-divider {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0;
-  padding: 11px 0 6px;
+  padding: 10px 0 7px;
+  background:
+    linear-gradient(180deg, var(--glass-heavy), var(--glass-mid));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 900;

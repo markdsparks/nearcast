@@ -352,7 +352,12 @@ function openDayDetail({
   dayDetailNavState = { source, dayIndex, data, eventWindow, ...(navState || {}) };
   if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = null;
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
-  const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
+  const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
+    showNow,
+    data,
+    eventWindow,
+    showInitialDayDivider: source === "rolling"
+  });
   if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = listRender?.lastDay || null;
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
@@ -536,7 +541,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     eventWindow = null,
     startRowIndex = 0,
     previousDay = null,
-    allowEventFocus = true
+    allowEventFocus = true,
+    showInitialDayDivider = false
   } = opts;
   const deg = degree(tempUnit);
   const defaultExpandedIndex = allowEventFocus && eventWindow ? plannerEventFocusIndex(hrs) : -1;
@@ -544,7 +550,7 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
   const html = hrs.map((hour, rowOffset) => {
     const rowIndex = startRowIndex + rowOffset;
     const dayKey = hour.time.slice(0, 10);
-    const divider = prevDay && dayKey !== prevDay
+    const divider = (prevDay && dayKey !== prevDay) || (!prevDay && showInitialDayDivider)
       ? `<div class="sheet-day-divider"><span>${escapeHtml(dayDividerLabel(hour.time))}</span></div>`
       : "";
     prevDay = dayKey;
