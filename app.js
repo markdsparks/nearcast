@@ -1,4 +1,4 @@
-const VERSION = "2.6.31";
+const VERSION = "2.6.32";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -6059,6 +6059,166 @@ function alertWindow(a) {
   return parts.join(" ");
 }
 
+function normalizeAlertBlock(value) {
+  return String(value || "")
+    .replace(/\r/g, "\n")
+    .replace(/\t/g, " ")
+    .replace(/[ \u00a0]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function cleanAlertText(value) {
+  return normalizeAlertBlock(value).replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value, max = 170) {
+  const text = cleanAlertText(value);
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max + 1).lastIndexOf(" ");
+  return `${text.slice(0, cut > max * 0.55 ? cut : max).trim()}...`;
+}
+
+function firstAlertSentence(value, max = 170) {
+  const text = cleanAlertText(value);
+  if (!text) return "";
+  const sentence = text.match(/^(.+?[.!?])(?:\s|$)/)?.[1];
+  return truncateText(sentence && sentence.length <= max + 35 ? sentence : text, max);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function alertSectionText(alert, names, max = 170) {
+  const block = normalizeAlertBlock([alert?.description, alert?.instruction].filter(Boolean).join("\n"));
+  if (!block) return "";
+  const labels = names.map(escapeRegExp).join("|");
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*(?:\\*\\s*)?(?:${labels})\\s*\\.\\.\\.\\s*([\\s\\S]*?)(?=\\n\\s*(?:\\*\\s*)?[A-Z][A-Z /'-]{2,}\\s*\\.\\.\\.|$)`,
+    "i"
+  );
+  return truncateText(block.match(pattern)?.[1] || "", max);
+}
+
+function alertKind(alert) {
+  const text = `${alert?.event || ""} ${alert?.headline || ""} ${alert?.description || ""}`.toLowerCase();
+  if (text.includes("tornado")) return "tornado";
+  if (text.includes("flash flood")) return "flash-flood";
+  if (text.includes("flood")) return "flood";
+  if (text.includes("thunderstorm") || text.includes("hail") || text.includes("lightning")) return "storm";
+  if (text.includes("heat")) return "heat";
+  if (text.includes("winter") || text.includes("snow") || text.includes("ice") || text.includes("blizzard")) return "winter";
+  if (text.includes("wind")) return "wind";
+  if (text.includes("fog")) return "fog";
+  if (text.includes("fire") || text.includes("red flag")) return "fire";
+  if (text.includes("coastal") || text.includes("surf") || text.includes("rip current")) return "coastal";
+  return "weather";
+}
+
+function alertMeaningLine(alert, tone, kind) {
+  const what = alertSectionText(alert, ["WHAT"]);
+  if (what) return what;
+  if (kind === "tornado") {
+    return tone === "watch"
+      ? "Conditions could support tornadoes and severe storms."
+      : "A dangerous tornado threat is active or could develop quickly.";
+  }
+  if (kind === "flash-flood") return "Flash flooding can happen quickly, especially near low spots and drainage areas.";
+  if (kind === "flood") return tone === "watch"
+    ? "Flooding is possible if heavier rain develops or continues."
+    : "Flooding is happening or expected in parts of the alert area.";
+  if (kind === "storm") return tone === "watch"
+    ? "Conditions could support severe thunderstorms."
+    : "Severe storms may bring damaging wind, hail, lightning, or heavy rain.";
+  if (kind === "heat") return "Heat stress risk is elevated, especially during outdoor activity.";
+  if (kind === "winter") return "Snow, ice, or blowing snow may make travel slow or hazardous.";
+  if (kind === "wind") return "Strong wind may affect travel, loose items, trees, or power lines.";
+  if (kind === "fog") return "Visibility may drop quickly and make travel harder.";
+  if (kind === "fire") return "Fires could start or spread quickly.";
+  if (kind === "coastal") return "Coastal water or beach conditions may become hazardous.";
+  if (tone === "warning") return "Dangerous weather is happening or expected soon.";
+  if (tone === "watch") return "Conditions could support hazardous weather.";
+  if (tone === "advisory") return "Disruptive weather is expected.";
+  return "Weather conditions are worth monitoring.";
+}
+
+function alertTimingLine(alert) {
+  const when = alertSectionText(alert, ["WHEN"], 150);
+  if (when) return when;
+  return alertWindow(alert) || "Timing is listed in the official alert details.";
+}
+
+function alertImpactLine(alert, kind) {
+  const impacts = alertSectionText(alert, ["IMPACTS", "IMPACT"]);
+  if (impacts) return impacts;
+  if (kind === "tornado") return "A tornado threat can become life-threatening quickly.";
+  if (kind === "flash-flood" || kind === "flood") return "Low spots, poor-drainage roads, creeks, or streams may become risky.";
+  if (kind === "storm") return "Outdoor plans, trees, power lines, and travel may be affected.";
+  if (kind === "heat") return "Kids, older adults, pets, and people outside are more vulnerable.";
+  if (kind === "winter") return "Roads and sidewalks may become slick or difficult.";
+  if (kind === "wind") return "Loose outdoor items and high-profile travel may be affected.";
+  if (kind === "fog") return "Travel may require extra time and slower speeds.";
+  if (kind === "fire") return "Outdoor burning or sparks may be dangerous.";
+  if (kind === "coastal") return "Surf, currents, or water levels may be unsafe.";
+  return "Plans may need extra caution or a backup option.";
+}
+
+function alertActionLine(alert, tone) {
+  const instruction = firstAlertSentence(alert?.instruction, 170);
+  if (instruction) return instruction;
+  if (tone === "warning") return "Take protective action now and follow the official guidance below.";
+  if (tone === "watch") return "Review backup plans and keep checking for warnings.";
+  if (tone === "advisory") return "Use extra caution and adjust travel or outdoor plans.";
+  return "Stay weather-aware and check the official details below.";
+}
+
+function alertInsightHeadline(tone) {
+  if (tone === "warning") return "Take this seriously now";
+  if (tone === "watch") return "Use this as planning time";
+  if (tone === "advisory") return "Expect some disruption";
+  return "Keep an eye on conditions";
+}
+
+function alertInsightChips(alert, tone) {
+  return [
+    alertToneLabel(tone),
+    alert?.severity && alert.severity !== "Unknown" ? `${alert.severity} severity` : "",
+    alert?.urgency && alert.urgency !== "Unknown" ? alert.urgency : "",
+    alert?.certainty && alert.certainty !== "Unknown" ? `${alert.certainty} confidence` : ""
+  ].filter(Boolean).filter((item, index, arr) => arr.indexOf(item) === index).slice(0, 4);
+}
+
+function renderAlertInsight(alert) {
+  if (!alert) return "";
+  const tone = alertTone(alert);
+  const kind = alertKind(alert);
+  const facts = [
+    ["Means", alertMeaningLine(alert, tone, kind)],
+    ["Timing", alertTimingLine(alert)],
+    ["Impact", alertImpactLine(alert, kind)],
+    ["Action", alertActionLine(alert, tone)]
+  ];
+  const chips = alertInsightChips(alert, tone).map((chip) => `<span>${escapeHtml(chip)}</span>`).join("");
+  return `
+    <section class="alert-insight-panel" aria-label="Nearcast alert read">
+      <div class="alert-insight-head">
+        <span>Nearcast read</span>
+        <strong>${escapeHtml(alertInsightHeadline(tone))}</strong>
+      </div>
+      <div class="alert-insight-grid">
+        ${facts.map(([label, value]) => `
+          <div class="alert-insight-fact">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+      ${chips ? `<div class="alert-insight-chips">${chips}</div>` : ""}
+    </section>
+  `;
+}
+
 function alertStartMs(alert) {
   return parseForecastTimestamp(alert?.onset || alert?.effective);
 }
@@ -6101,6 +6261,8 @@ function openAlertSheet() {
     alertWindow(top),
     activeAlerts.length > 1 ? alertCountLabel(activeAlerts.length) : ""
   ].filter(Boolean).join(" · ");
+  const insight = document.getElementById("alertInsight");
+  if (insight) insight.innerHTML = renderAlertInsight(top);
   document.getElementById("alertList").innerHTML = activeAlerts.map((a) => `
     <article class="alert-item ${alertSeverityClass(a.severity)}">
       ${activeAlerts.length > 1 ? `
