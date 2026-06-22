@@ -1619,6 +1619,7 @@ function rememberPlanFromThread(rowIndex) {
   savePlanMemories();
   renderAsk();
   renderForecastMemorySurfaces();
+  refreshOpenGlobalMemorySheet();
 }
 
 function clearPlannerMemoryEdit() {
@@ -1653,6 +1654,7 @@ function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
   savePlanMemories();
   clearPlannerMemoryEdit();
   renderForecastMemorySurfaces();
+  refreshOpenGlobalMemorySheet();
   return true;
 }
 
@@ -1666,6 +1668,7 @@ function forgetPlanMemory(id) {
   if (state.planMemories.length !== before) savePlanMemories();
   renderAsk();
   renderForecastMemorySurfaces();
+  refreshOpenGlobalMemorySheet();
 }
 
 function startPlanMemoryEdit(idOrRow) {
@@ -1793,6 +1796,7 @@ function closeMemoryDetail() {
   els.memoryDetailSheet.classList.remove("show");
   const keepLocked =
     !document.getElementById("dayDetail")?.hidden ||
+    !els.memorySheet?.hidden ||
     !els.aiSheet?.hidden ||
     !document.getElementById("alertSheet")?.hidden ||
     !els.placeSheet?.hidden ||
@@ -2006,7 +2010,8 @@ function planMemoryMeta(memory, event = null) {
   return `${when} · ${stats.rainChance}% rain · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
 }
 
-function planMemoryListItems(data = state.forecast, place = state.activePlace) {
+function planMemoryListItems(data = state.forecast, place = state.activePlace, options = {}) {
+  const { includePast = false } = options || {};
   const today = forecastLocalDate(data) || new Date().toISOString().slice(0, 10);
   const now = forecastNowMs(data);
   return state.planMemories
@@ -2016,7 +2021,7 @@ function planMemoryListItems(data = state.forecast, place = state.activePlace) {
       const isPast = event ? event.endMs < now - 60 * 60 * 1000 : memory.targetDate < today;
       return { memory, event, isHere, isPast };
     })
-    .filter((item) => !item.isPast)
+    .filter((item) => includePast || !item.isPast)
     .sort((a, b) =>
       a.memory.targetDate.localeCompare(b.memory.targetDate) ||
       a.memory.startHour - b.memory.startHour ||
@@ -2203,16 +2208,169 @@ function renderPlanMemoryGroup(label, items) {
 }
 
 function renderPlanMemorySection() {
-  const items = planMemoryListItems().slice(0, 8);
-  if (!items.length) return "";
+  const allItems = planMemoryListItems(state.forecast, state.activePlace, { includePast: true });
+  if (!allItems.length) return "";
+  const upcoming = allItems.filter((item) => !item.isPast);
+  const items = upcoming.slice(0, 6);
   const here = items.filter((item) => item.isHere);
   const elsewhere = items.filter((item) => !item.isHere);
-  const summary = elsewhere.length ? `${here.length} here · ${elsewhere.length} elsewhere` : "Here · local";
+  const summaryParts = [
+    upcoming.length ? `${upcoming.length} upcoming` : "",
+    allItems.length - upcoming.length ? `${allItems.length - upcoming.length} past` : ""
+  ].filter(Boolean);
+  const summary = summaryParts.join(" · ") || `${allItems.length} remembered`;
   return `<section class="memory-section" aria-label="Nearcast memory">` +
-    `<div class="ai-section-title"><strong>Memory</strong><span>${escapeHtml(summary)}</span></div>` +
-    renderPlanMemoryGroup("Here", here) +
-    renderPlanMemoryGroup("Elsewhere", elsewhere) +
+    `<div class="ai-section-title memory-section-title">` +
+      `<strong>Memory</strong>` +
+      `<span>${escapeHtml(summary)}</span>` +
+      `<button class="memory-manage-btn" type="button" data-memory-open>Manage</button>` +
+    `</div>` +
+    (items.length
+      ? renderPlanMemoryGroup("Here", here) + renderPlanMemoryGroup("Elsewhere", elsewhere)
+      : `<p class="memory-empty-inline">No upcoming memories. Past memories are still in Manage.</p>`) +
   `</section>`;
+}
+
+function planMemoryPlaceKey(memory) {
+  const place = memory?.place || {};
+  return [
+    placeLabel(place),
+    Number(place.latitude || 0).toFixed(3),
+    Number(place.longitude || 0).toFixed(3)
+  ].join("|");
+}
+
+function groupPlanMemoryItemsByPlace(items) {
+  const groups = new Map();
+  items.forEach((item) => {
+    const key = planMemoryPlaceKey(item.memory);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label: placeLabel(item.memory.place),
+        items: []
+      });
+    }
+    groups.get(key).items.push(item);
+  });
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function renderGlobalMemoryCard({ memory, event, isHere, isPast }) {
+  const where = placeLabel(memory.place);
+  const when = `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
+  const meta = event
+    ? planMemoryMeta(memory, event)
+    : `${when} · ${where}`;
+  const original = String(memory.original || "").trim();
+  return `
+    <article class="memory-card global-memory-card${isPast ? " is-past" : ""}${isHere ? " is-here" : ""}">
+      <button class="memory-main global-memory-main" type="button" data-memory-detail="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Inspect ${planMemoryTitle(memory)}`)}">
+        <span class="global-memory-kicker">${escapeHtml(isHere ? "Current place" : where)}</span>
+        <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+        <span>${escapeHtml(meta)}</span>
+        ${original ? `<em>${escapeHtml(original)}</em>` : ""}
+      </button>
+      <div class="memory-actions global-memory-actions">
+        ${isPast ? "" : `<button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>`}
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
+        <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderGlobalMemoryGroup(label, items, options = {}) {
+  if (!items.length) return "";
+  const { sub = "" } = options;
+  return `
+    <section class="global-memory-group">
+      <div class="memory-group-title global-memory-group-title">
+        <span>${escapeHtml(label)}</span>
+        ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
+      </div>
+      <div class="memory-list global-memory-list">
+        ${items.map(renderGlobalMemoryCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderGlobalMemorySheet() {
+  if (!els.memorySheetBody || !els.memorySheetSummary) return;
+  const items = planMemoryListItems(state.forecast, state.activePlace, { includePast: true });
+  const upcoming = items.filter((item) => !item.isPast);
+  const past = items.filter((item) => item.isPast).sort((a, b) =>
+    b.memory.targetDate.localeCompare(a.memory.targetDate) ||
+    b.memory.startHour - a.memory.startHour ||
+    b.memory.updatedAt - a.memory.updatedAt
+  );
+  const here = upcoming.filter((item) => item.isHere);
+  const elsewhere = upcoming.filter((item) => !item.isHere);
+  const otherGroups = groupPlanMemoryItemsByPlace(elsewhere);
+  const placeCount = new Set(state.planMemories.map(planMemoryPlaceKey)).size;
+
+  els.memorySheetSummary.innerHTML = `
+    <div class="memory-summary-stat"><strong>${state.planMemories.length}</strong><span>remembered</span></div>
+    <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>upcoming</span></div>
+    <div class="memory-summary-stat"><strong>${placeCount}</strong><span>${placeCount === 1 ? "place" : "places"}</span></div>
+  `;
+
+  if (!state.planMemories.length) {
+    els.memorySheetBody.innerHTML = `
+      <section class="memory-empty-state">
+        <strong>No memories yet</strong>
+        <p>Ask the Planner about a real plan, then remember it when the answer looks right.</p>
+        <button type="button" data-memory-new>Open Planner</button>
+      </section>
+    `;
+    return;
+  }
+
+  const otherHtml = otherGroups.map((group) =>
+    renderGlobalMemoryGroup(group.label, group.items, { sub: `${group.items.length} upcoming` })
+  ).join("");
+
+  els.memorySheetBody.innerHTML =
+    renderGlobalMemoryGroup("Current place", here, {
+      sub: state.activePlace ? placeLabel(state.activePlace) : ""
+    }) +
+    otherHtml +
+    renderGlobalMemoryGroup("Past", past, { sub: "kept locally until you forget them" }) +
+    `<button class="memory-new-btn" type="button" data-memory-new>Plan something new</button>`;
+}
+
+function openGlobalMemorySheet() {
+  if (!els.memorySheet || !els.memoryBackdrop) return;
+  renderGlobalMemorySheet();
+  els.memoryBackdrop.hidden = false;
+  els.memorySheet.hidden = false;
+  document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
+  showSheet(els.memoryBackdrop, els.memorySheet);
+  document.body.style.overflow = "hidden";
+}
+
+function refreshOpenGlobalMemorySheet() {
+  if (!els.memorySheet || els.memorySheet.hidden) return;
+  renderGlobalMemorySheet();
+}
+
+function closeGlobalMemorySheet() {
+  if (!els.memorySheet || !els.memoryBackdrop || els.memorySheet.hidden) return;
+  els.memoryBackdrop.classList.remove("show");
+  els.memorySheet.classList.remove("show");
+  const keepLocked =
+    !document.getElementById("dayDetail")?.hidden ||
+    !els.memoryDetailSheet?.hidden ||
+    !els.aiSheet?.hidden ||
+    !document.getElementById("alertSheet")?.hidden ||
+    !els.placeSheet?.hidden ||
+    mapState.immersive;
+  document.body.style.overflow = keepLocked ? "hidden" : "";
+  setTimeout(() => {
+    els.memoryBackdrop.hidden = true;
+    els.memorySheet.hidden = true;
+    if (typeof updateSheetNowJump === "function") updateSheetNowJump();
+  }, 260);
 }
 
 function renderForecastMemorySurfaces() {

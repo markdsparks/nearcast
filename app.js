@@ -1,4 +1,4 @@
-const VERSION = "2.6.32";
+const VERSION = "2.6.33";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -352,6 +352,10 @@ const els = {
   aiLauncherSub: document.querySelector("#aiLauncherSub"),
   aiSheet: document.querySelector("#aiSheet"),
   aiBackdrop: document.querySelector("#aiBackdrop"),
+  memorySheet: document.querySelector("#memorySheet"),
+  memoryBackdrop: document.querySelector("#memoryBackdrop"),
+  memorySheetSummary: document.querySelector("#memorySheetSummary"),
+  memorySheetBody: document.querySelector("#memorySheetBody"),
   memoryDetailSheet: document.querySelector("#memoryDetailSheet"),
   memoryDetailBackdrop: document.querySelector("#memoryDetailBackdrop"),
   memoryDetailBody: document.querySelector("#memoryDetailBody"),
@@ -1903,7 +1907,12 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+    const memoryOpen = target.closest("[data-memory-open]");
+    if (memoryOpen) {
+      openGlobalMemorySheet();
+      return;
+    }
     const remember = target.closest("[data-memory-remember]");
     if (remember) {
       rememberPlanFromThread(Number(remember.dataset.memoryRemember));
@@ -1959,6 +1968,38 @@ function bindEvents() {
   bindTapAction(els.aiLauncher, openAISheet);
   bindTapAction(els.aiBackdrop, closeAISheet);
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
+  bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
+  bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new]", (event, target) => {
+    const memoryNew = target.closest("[data-memory-new]");
+    if (memoryNew) {
+      closeGlobalMemorySheet();
+      openAISheet({ autoBrief: false });
+      requestAnimationFrame(() => fillPlannerTemplate(""));
+      return;
+    }
+    const memoryDetail = target.closest("[data-memory-detail]");
+    if (memoryDetail) {
+      openMemoryDetail(memoryDetail.dataset.memoryDetail);
+      return;
+    }
+    const memoryShow = target.closest("[data-memory-show]");
+    if (memoryShow) {
+      closeGlobalMemorySheet();
+      showPlanMemory(memoryShow.dataset.memoryShow);
+      return;
+    }
+    const memoryForget = target.closest("[data-memory-forget]");
+    if (memoryForget) {
+      forgetPlanMemory(memoryForget.dataset.memoryForget);
+      return;
+    }
+    const memoryEdit = target.closest("[data-memory-edit]");
+    if (memoryEdit) {
+      closeGlobalMemorySheet();
+      startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
+    }
+  });
   bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
   bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
   bindTapDelegate(els.memoryDetailBody, "[data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
@@ -2111,6 +2152,12 @@ function bindEvents() {
     if (event.key === "Escape" && !els.memoryDetailSheet.hidden) {
       event.stopImmediatePropagation();
       closeMemoryDetail();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.memorySheet.hidden) {
+      event.stopImmediatePropagation();
+      closeGlobalMemorySheet();
     }
   });
   document.addEventListener("keydown", (event) => {
