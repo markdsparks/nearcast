@@ -361,7 +361,7 @@ function openDayDetail({
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
-  dayDetailNavState = { source, dayIndex, data, eventWindow, ...(navState || {}) };
+  dayDetailNavState = { source, dayIndex, data, eventWindow, showNow, sunriseISO, sunsetISO, contextLabel, ...(navState || {}) };
   if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = null;
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
   const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
@@ -383,6 +383,137 @@ function openDayDetail({
   showSheet(backdrop, sheet);
   document.body.style.overflow = "hidden";
   maybeExtendRollingTimeline();
+}
+
+function dayDetailRowsForState(nav = dayDetailNavState) {
+  const data = nav?.data || state.forecast;
+  if (!nav || !data?.hourly?.time?.length) return [];
+  if (nav.source === "rolling" && nav.timeline?.allRows?.length) {
+    return nav.timeline.allRows.slice(nav.timeline.start || 0, nav.timeline.renderedCount || 0);
+  }
+  const dayStr = data.daily?.time?.[nav.dayIndex];
+  if (!dayStr) return [];
+  return data.hourly.time
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.time.startsWith(dayStr));
+}
+
+function planMemoryItemsOverlappingRows(rows, data = state.forecast, place = state.activePlace) {
+  if (!rows?.length) return [];
+  return activePlanMemoryEvents(data, place).filter(({ event }) =>
+    rows.some((row, rowIndex) => {
+      const start = row.ms;
+      const next = rows[rowIndex + 1]?.ms;
+      const end = next && next > start ? next : start + 60 * 60 * 1000;
+      return start < event.endMs && end > event.startMs;
+    })
+  );
+}
+
+function refreshedDayDetailMemoryContext(rows, nav = dayDetailNavState) {
+  const data = nav?.data || state.forecast;
+  if (!nav || data !== state.forecast) {
+    return {
+      eventWindow: nav?.eventWindow || null,
+      contextLabel: nav?.contextLabel || document.getElementById("sheetContext")?.textContent || ""
+    };
+  }
+
+  if (nav.source === "day") {
+    const items = activePlanMemoryEventsForDay(nav.dayIndex, data);
+    const eventWindow = planMemoryDetailEventForDay(items, data);
+    return {
+      eventWindow,
+      contextLabel: planMemoryDayContextLabel(items, eventWindow)
+    };
+  }
+
+  if (nav.source === "rolling") {
+    const items = planMemoryItemsOverlappingRows(rows, data);
+    const existing = nav.eventWindow || null;
+    const existingIsMemory = Boolean(
+      existing?.memoryId ||
+      existing?.memoryIds?.length ||
+      existing?.badgeLabel === "Memory" ||
+      existing?.windows?.some((window) => window.memoryId)
+    );
+    const eventWindow = items.length || existingIsMemory
+      ? planMemoryDetailEventForDay(items, data)
+      : existing;
+    return {
+      eventWindow,
+      contextLabel: nav.contextLabel || document.getElementById("sheetContext")?.textContent || ""
+    };
+  }
+
+  return {
+    eventWindow: nav.eventWindow || null,
+    contextLabel: nav.contextLabel || document.getElementById("sheetContext")?.textContent || ""
+  };
+}
+
+function refreshOpenDayDetailMemorySurfaces() {
+  const sheet = document.getElementById("dayDetail");
+  if (!sheet || sheet.hidden || !dayDetailNavState) return;
+  const data = dayDetailNavState.data || state.forecast;
+  const rows = dayDetailRowsForState(dayDetailNavState);
+  if (!data || !rows.length) return;
+
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const scrollTop = sheet.scrollTop;
+  const expandedIds = new Set(
+    [...document.querySelectorAll("#sheetHourlyList .sheet-hour-row.is-expanded")]
+      .map((row) => row.getAttribute("aria-controls"))
+      .filter(Boolean)
+  );
+
+  const memoryContext = refreshedDayDetailMemoryContext(rows, dayDetailNavState);
+  dayDetailNavState.eventWindow = memoryContext.eventWindow;
+  dayDetailNavState.contextLabel = memoryContext.contextLabel;
+
+  const sheetContext = document.getElementById("sheetContext");
+  if (sheetContext) {
+    sheetContext.textContent = memoryContext.contextLabel || "";
+    sheetContext.hidden = !memoryContext.contextLabel;
+  }
+
+  const hrs = detailHoursForIndices(rows.map((row) => row.index), {
+    data,
+    alerts: activeAlerts,
+    eventWindow: memoryContext.eventWindow,
+    showNow: Boolean(dayDetailNavState.showNow)
+  });
+
+  buildHourlyGraph(hrs, tempUnit, windUnit, Boolean(dayDetailNavState.showNow), {
+    dayIndex: dayDetailNavState.dayIndex,
+    sunriseISO: dayDetailNavState.sunriseISO,
+    sunsetISO: dayDetailNavState.sunsetISO,
+    data,
+    eventWindow: memoryContext.eventWindow
+  });
+  const result = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
+    showNow: Boolean(dayDetailNavState.showNow),
+    data,
+    eventWindow: memoryContext.eventWindow,
+    showInitialDayDivider: dayDetailNavState.source === "rolling"
+  });
+  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = result?.lastDay || null;
+  renderSheetStats(hrs, {
+    sunriseISO: dayDetailNavState.sunriseISO,
+    sunsetISO: dayDetailNavState.sunsetISO,
+    windUnit,
+    precipUnit
+  });
+  expandedIds.forEach((id) => {
+    const row = [...document.querySelectorAll("#sheetHourlyList .sheet-hour-row")]
+      .find((candidate) => candidate.getAttribute("aria-controls") === id);
+    if (row) setSheetHourRowExpanded(row, true);
+  });
+  sheet.scrollTop = scrollTop;
+  renderRollingTimelineFooter();
+  updateSheetNowJump();
 }
 
 function closeDayDetail() {

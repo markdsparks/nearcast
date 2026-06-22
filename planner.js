@@ -1619,8 +1619,7 @@ function rememberPlanFromThread(rowIndex) {
   exchange.memoryId = memory.id;
   savePlanMemories();
   renderAsk();
-  renderForecastMemorySurfaces();
-  refreshOpenGlobalMemorySheet();
+  refreshPlanMemorySurfaces();
 }
 
 function clearPlannerMemoryEdit() {
@@ -1654,8 +1653,7 @@ function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
   }
   savePlanMemories();
   clearPlannerMemoryEdit();
-  renderForecastMemorySurfaces();
-  refreshOpenGlobalMemorySheet();
+  refreshPlanMemorySurfaces();
   return true;
 }
 
@@ -1668,8 +1666,7 @@ function forgetPlanMemory(id) {
   if (plannerEditingMemoryId === id) clearPlannerMemoryEdit();
   if (state.planMemories.length !== before) savePlanMemories();
   renderAsk();
-  renderForecastMemorySurfaces();
-  refreshOpenGlobalMemorySheet();
+  refreshPlanMemorySurfaces();
 }
 
 function startPlanMemoryEdit(idOrRow) {
@@ -2212,8 +2209,7 @@ async function saveStructuredMemoryEdit(event) {
     savePlanMemories();
     clearPlannerMemoryEdit();
     renderAsk();
-    renderForecastMemorySurfaces();
-    refreshOpenGlobalMemorySheet();
+    refreshPlanMemorySurfaces();
     closeMemoryEditSheet();
   } catch {
     if (memoryEditState) memoryEditState.saving = false;
@@ -2786,6 +2782,14 @@ function openGlobalMemorySheet() {
 function refreshOpenGlobalMemorySheet() {
   if (!els.memorySheet || els.memorySheet.hidden) return;
   renderGlobalMemorySheet();
+}
+
+function refreshPlanMemorySurfaces() {
+  renderForecastMemorySurfaces();
+  refreshOpenGlobalMemorySheet();
+  if (typeof refreshOpenDayDetailMemorySurfaces === "function") {
+    refreshOpenDayDetailMemorySurfaces();
+  }
 }
 
 function closeGlobalMemorySheet() {
