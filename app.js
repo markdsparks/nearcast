@@ -1,4 +1,4 @@
-const VERSION = "2.6.24";
+const VERSION = "2.6.25";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -75,6 +75,7 @@ const perfState = {
 
 let floatingChromeScrollY = 0;
 let floatingChromeRaf = 0;
+let floatingChromeUpTravel = 0;
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
@@ -1689,9 +1690,16 @@ function updateFloatingChrome(options = {}) {
   const menuOpen = els.shell.classList.contains("menu-open");
   const searchOpen = els.shell.classList.contains("search-open");
   const welcome = els.shell.classList.contains("mode-welcome");
-  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || delta < -4;
-  const shouldTuck = !shouldReveal && y > 320 && delta > 2;
-  els.shell.classList.toggle("chrome-tucked", shouldTuck);
+  if (delta < 0) floatingChromeUpTravel += Math.abs(delta);
+  else if (delta > 0) floatingChromeUpTravel = 0;
+
+  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || floatingChromeUpTravel > 24;
+  if (shouldReveal) {
+    els.shell.classList.remove("chrome-tucked");
+    floatingChromeUpTravel = 0;
+  } else if (y > 320 && delta > 2) {
+    els.shell.classList.add("chrome-tucked");
+  }
   floatingChromeScrollY = y;
 }
 
