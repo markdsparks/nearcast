@@ -700,6 +700,12 @@ function skyFilterDefs() {
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
     </filter>
+    <filter id="sky-rain-fine-f" x="-12%" y="-12%" width="124%" height="124%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.16"/>
+    </filter>
+    <filter id="sky-rain-near-f" x="-22%" y="-22%" width="144%" height="144%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.55"/>
+    </filter>
   </defs>`;
 }
 
@@ -881,20 +887,70 @@ function skyAirVeil(vw, vh, skyState) {
 }
 
 function skyRain(vw, vh, heavy = false, rng, skyState = null) {
-  let out = "";
-  const intensity = skyState ? clamp01((skyState.wetness || 0) + (skyState.precipitation || 0) * 0.35) : (heavy ? 1 : 0.55);
-  const count = Math.round((heavy ? 74 : 42) + intensity * 46);
-  for (let i = 0; i < count; i++) {
-    const x = (rng() * vw * 1.4).toFixed(0);
-    const dur = ((heavy ? 0.82 : 1.04) - intensity * 0.16 + rng() * 0.5).toFixed(2);
-    const delay = (rng() * 2.5).toFixed(2);
-    const op = ((heavy ? 0.42 : 0.28) + intensity * 0.22 + rng() * 0.22).toFixed(2);
-    const len = Math.round((heavy ? 22 : 14) + intensity * 14 + rng() * (heavy ? 20 : 12));
-    const dx = heavy ? 22 + intensity * 7 : 16 + intensity * 5;
-    const w = heavy ? 1.55 + intensity * 0.35 : 1.18 + intensity * 0.28;
-    out += `<line x1="${x}" y1="0" x2="${Number(x) + dx}" y2="${len}" class="sky-rain" style="animation-delay:-${delay}s;animation-duration:${dur}s" stroke="rgba(160,185,215,${op})" stroke-width="${w}" stroke-linecap="round"/>`;
+  const wetness = skyState ? skyState.wetness || 0 : heavy ? 1 : 0.55;
+  const pressure = skyState ? skyState.precipPressure || 0 : heavy ? 0.8 : 0.45;
+  const precipitation = skyState ? skyState.precipitation || 0 : heavy ? 0.8 : 0.3;
+  const intensity = clamp01(wetness * 0.68 + pressure * 0.30 + precipitation * 0.18 + (heavy ? 0.12 : 0));
+  const windMph = skyState ? skyState.windMph || 0 : heavy ? 18 : 10;
+  const windLean = clamp01(Math.max(windMph / 34, skyState?.windiness || 0));
+  const isDay = skyState?.isDay !== false;
+  const warmth = clamp01(skyState?.warmth || 0);
+  const drizzle = !heavy && intensity < 0.46;
+  const fineCount = Math.round((drizzle ? 58 : 76) + intensity * 92 + (heavy ? 26 : 0));
+  const nearCount = drizzle ? Math.round(intensity * 5) : Math.round(6 + intensity * 22 + (heavy ? 8 : 0));
+  const drift = 20 + windLean * 36 + intensity * 12;
+  const fineColor = isDay ? lerpHex("#d6e0e7", "#ead6bf", warmth * 0.55) : "#b8cadc";
+  const nearColor = isDay ? lerpHex("#eef4f7", "#f2dcc3", warmth * 0.48) : "#d8e6f4";
+  const veilColor = isDay ? lerpHex("#9caab4", "#b9a28f", warmth * 0.45) : "#18202d";
+  const glowColor = isDay ? lerpHex("#dce6ec", "#ead9c6", warmth * 0.5) : "#9fb1c4";
+  const veilOpacity = clamp(0.035 + intensity * 0.095 + pressure * 0.06, 0.04, heavy ? 0.22 : 0.16);
+  const horizonOpacity = clamp(0.04 + intensity * 0.11 + pressure * 0.05, 0.04, heavy ? 0.26 : 0.18);
+  const bandOpacity = clamp(0.018 + intensity * 0.055, 0.018, 0.09);
+  let fine = "";
+  let near = "";
+  let bands = "";
+
+  for (let i = 0; i < 4; i++) {
+    const x = Math.round(-vw * 0.25 + rng() * vw * 1.15);
+    const width = Math.round(vw * (0.18 + rng() * 0.16));
+    const lean = Math.round(drift * (2.4 + rng() * 1.4));
+    const op = (bandOpacity * (0.55 + rng() * 0.45)).toFixed(3);
+    bands += `<path class="sky-rain-sheet" d="M${x} 0 L${x + width} 0 L${x + width + lean} ${vh} L${x + lean} ${vh} Z" fill="${glowColor}" opacity="${op}" style="--rain-drift:${drift.toFixed(0)}px;animation-delay:-${(rng() * 8).toFixed(2)}s;animation-duration:${(10 + rng() * 8).toFixed(2)}s"/>`;
   }
-  return out;
+
+  for (let i = 0; i < fineCount; i++) {
+    const x = -vw * 0.25 + rng() * vw * 1.5;
+    const y = -vh * (0.58 + rng() * 0.48);
+    const len = 18 + intensity * 26 + rng() * (drizzle ? 16 : 34);
+    const dx = len * (0.20 + windLean * 0.46) + drift * 0.18;
+    const width = 0.52 + intensity * 0.34 + rng() * 0.38;
+    const op = clamp((drizzle ? 0.16 : 0.20) + intensity * 0.22 + rng() * 0.18, 0.12, heavy ? 0.56 : 0.46);
+    const dur = clamp((drizzle ? 1.8 : 1.18) - intensity * 0.34 - windLean * 0.22 + rng() * 0.62, 0.58, 2.25);
+    const delay = rng() * 3.4;
+    fine += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain sky-rain-fine" style="--rain-op:${op.toFixed(2)};--rain-drift:${drift.toFixed(0)}px;animation-delay:-${delay.toFixed(2)}s;animation-duration:${dur.toFixed(2)}s" stroke="${fineColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="butt" filter="url(#sky-rain-fine-f)"/>`;
+  }
+
+  for (let i = 0; i < nearCount; i++) {
+    const x = -vw * 0.18 + rng() * vw * 1.36;
+    const y = -vh * (0.62 + rng() * 0.52);
+    const len = 42 + intensity * 52 + rng() * 54;
+    const dx = len * (0.24 + windLean * 0.48) + drift * 0.24;
+    const width = 0.9 + intensity * 0.8 + rng() * 0.8;
+    const op = clamp(0.12 + intensity * 0.20 + rng() * 0.16, 0.12, 0.38);
+    const dur = clamp(0.72 - intensity * 0.18 - windLean * 0.10 + rng() * 0.36, 0.44, 1.06);
+    const delay = rng() * 2.4;
+    near += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain sky-rain-near" style="--rain-op:${op.toFixed(2)};--rain-drift:${(drift * 1.25).toFixed(0)}px;animation-delay:-${delay.toFixed(2)}s;animation-duration:${dur.toFixed(2)}s" stroke="${nearColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" filter="url(#sky-rain-near-f)"/>`;
+  }
+
+  return `
+    <g class="sky-rain-atmosphere">
+      <rect x="0" y="0" width="${vw}" height="${vh}" fill="${veilColor}" opacity="${veilOpacity.toFixed(3)}"/>
+      <ellipse cx="${Math.round(vw * 0.48)}" cy="${Math.round(vh * 0.74)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.30)}" fill="${glowColor}" opacity="${horizonOpacity.toFixed(3)}" filter="url(#sky-glow-f)"/>
+      ${bands}
+    </g>
+    <g class="sky-rain-curtain">${fine}</g>
+    <g class="sky-rain-foreground">${near}</g>
+  `;
 }
 
 function skySnow(vw, vh, rng, skyState = null) {

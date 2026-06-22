@@ -577,15 +577,43 @@ html[data-sky] body {
   to   { transform: translateX(32px); }
 }
 
+.sky-rain-atmosphere,
+.sky-rain-curtain,
+.sky-rain-foreground {
+  pointer-events: none;
+}
+
+.sky-rain-sheet {
+  animation: sky-rain-sheet-drift ease-in-out infinite alternate;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
 .sky-rain {
+  opacity: 0;
   animation: sky-rain-fall linear infinite;
+  will-change: transform, opacity;
+  mix-blend-mode: screen;
+}
+
+.sky-rain-fine {
+  filter: url(#sky-rain-fine-f);
+}
+
+.sky-rain-near {
+  filter: url(#sky-rain-near-f);
+}
+
+@keyframes sky-rain-sheet-drift {
+  from { transform: translateX(calc(var(--rain-drift, 24px) * -0.12)); }
+  to   { transform: translateX(calc(var(--rain-drift, 24px) * 0.22)); }
 }
 
 @keyframes sky-rain-fall {
-  from { transform: translateY(-80px) translateX(-15px); opacity: 0; }
-  6%   { opacity: 1; }
-  94%  { opacity: 0.75; }
-  to   { transform: translateY(105vh) translateX(25px); opacity: 0; }
+  from { transform: translateY(-18vh) translateX(calc(var(--rain-drift, 24px) * -0.26)); opacity: 0; }
+  8%   { opacity: var(--rain-op, 0.36); }
+  86%  { opacity: var(--rain-op, 0.36); }
+  to   { transform: translateY(118vh) translateX(var(--rain-drift, 24px)); opacity: 0; }
 }
 
 .sky-snow {
