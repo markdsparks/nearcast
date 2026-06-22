@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v5";
+const SKY_SCENE_VERSION = "sky-v6";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -545,8 +545,11 @@ function skyGradientStops(condition, phase, skyState = state.skyState) {
   const pressureSky = ["#090d14", "#1f2935", "#3d4652"];
   const airSky = ["#141820", "#30303a", "#5a514f"];
   const pollenSky = ["#101821", "#303842", "#665e54"];
-  let stops = blendStopSet(nightBase, twilight, clamp01(phase.twilight));
-  stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.45 + (phase.cloud ?? 0) / 220));
+  const nightCloud = skyVisualCloudDepth(condition, (phase.cloud ?? 0) / 100);
+  const twilightMix = condition === "partly-cloudy" ? 1.08 : 1;
+  const nightCloudWeight = condition === "partly-cloudy" ? 0.18 : 0.45;
+  let stops = blendStopSet(nightBase, twilight, clamp01(phase.twilight) * twilightMix);
+  stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.45 + nightCloud * nightCloudWeight));
   stops = blendStopSet(stops, pressureSky, (skyState?.precipPressure ?? 0) * 0.32);
   stops = blendStopSet(stops, airSky, (skyState?.airHaze ?? 0) * 0.32);
   stops = blendStopSet(stops, pollenSky, (skyState?.pollenVeil ?? 0) * 0.18);
@@ -684,20 +687,21 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
     condition === "clear" ? 0 : condition === "partly-cloudy" ? 2 : 1,
     condition === "partly-cloudy" ? 4 : condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
   ));
-  const moonVisible = !isDay && cloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
+  const skyObjectCloudPct = condition === "partly-cloudy" ? visualCloudPct : cloudPct;
+  const moonVisible = !isDay && skyObjectCloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
   const sunVisible = isDay &&
     !activePrecip &&
     condition !== "thunder" &&
     (condition === "clear" || condition === "partly-cloudy" || skyState.directness > 0.23 || cloudPct < 72);
   const stars = !isDay
-    ? Math.round((base.stars || 0) * (1 - skyState.twilight * 0.85) * (1 - cloudPct / 130) * (1 - skyState.haze * 0.55))
+    ? Math.round((base.stars || 0) * (1 - skyState.twilight * 0.85) * (1 - skyObjectCloudPct / 130) * (1 - skyState.haze * 0.55))
     : 0;
 
   return {
     ...base,
     stars: Math.max(0, stars),
     moon: moonVisible && (base.moon || condition === "overcast"),
-    moonGlow: !moonVisible && !isDay && cloudPct < 92 && condition !== "thunder",
+    moonGlow: !moonVisible && !isDay && skyObjectCloudPct < 92 && condition !== "thunder",
     sun: sunVisible,
     clouds,
     rain: base.rain,
