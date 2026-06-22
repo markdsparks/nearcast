@@ -733,6 +733,27 @@ function skyViewportSize() {
   };
 }
 
+function skyVisibleBox(vw, vh) {
+  const hasOverscan = vh > SKY_RENDER_OVERSCAN_PX * 2 + 240;
+  const verticalOverscan = hasOverscan ? SKY_RENDER_OVERSCAN_PX : 0;
+  return {
+    x: 0,
+    y: verticalOverscan,
+    width: vw,
+    height: Math.max(1, vh - verticalOverscan * 2)
+  };
+}
+
+function skyVisiblePoint(vw, vh, phase, options = {}) {
+  const box = skyVisibleBox(vw, vh);
+  const minY = options.minY ?? 0.10;
+  const maxY = options.maxY ?? 0.36;
+  return {
+    x: Math.round(box.x + box.width * clamp01(phase.x ?? 0.5)),
+    y: Math.round(box.y + box.height * clamp(phase.y ?? 0.16, minY, maxY))
+  };
+}
+
 function skyFilterDefs() {
   return `<defs>
     <filter id="sky-cloud-f" x="-18%" y="-45%" width="136%" height="190%">
@@ -759,7 +780,8 @@ function skyStars(vw, vh, count, rng) {
 }
 
 function skyMoon(vw, vh, phase) {
-  const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 42;
+  const point = skyVisiblePoint(vw, vh, phase, { minY: 0.10, maxY: 0.30 });
+  const cx = point.x, cy = point.y, r = 42;
   const { illum, waxing } = moonPhase(state.skyState?.nowMs ?? skyNow());
   // Carve the phase: white disc minus an offset black disc → crescent → gibbous.
   const sep = illum * 2 * r;
@@ -782,7 +804,8 @@ function skyMoonGlow(vw, vh, rng) {
 }
 
 function skySun(vw, vh, phase) {
-  const cx = Math.round(vw * phase.x), cy = Math.round(vh * phase.y), r = 46;
+  const point = skyVisiblePoint(vw, vh, phase, { minY: 0.11, maxY: 0.34 });
+  const cx = point.x, cy = point.y, r = 46;
   const warm = phase.warmth ?? phase.golden;
   const brightness = phase.brightness ?? 0.68;
   const directness = phase.directness ?? 0.7;
@@ -809,8 +832,9 @@ function skySunRays(r, warm, directness = 0.7) {
 
 // Warm bloom around a low sun during golden hour.
 function skyHorizonGlow(vw, vh, phase) {
-  const gx = Math.round(vw * phase.x);
-  const gy = Math.round(vh * (phase.y + 0.05));
+  const point = skyVisiblePoint(vw, vh, { ...phase, y: (phase.y ?? 0.16) + 0.05 }, { minY: 0.16, maxY: 0.42 });
+  const gx = point.x;
+  const gy = point.y;
   const warm = phase.warmth ?? phase.golden;
   return `<ellipse cx="${gx}" cy="${gy}" rx="${Math.round(vw * 0.62)}" ry="${Math.round(vh * 0.2)}" fill="#ff9d5a" opacity="${(warm * 0.42).toFixed(2)}" filter="url(#sky-glow-f)"/>`;
 }
