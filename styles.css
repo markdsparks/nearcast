@@ -637,8 +637,17 @@ html[data-sky] body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
+}
+
+/* iOS Safari zooms the viewport when focused text controls render below 16px. */
+input:not([type="range"]),
+select,
+textarea {
+  font-size: 1rem;
 }
 
 button {
@@ -2669,7 +2678,7 @@ h2 {
   background: var(--panel-soft);
   color: var(--ink);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 750;
   outline: 1px solid transparent;
 }
