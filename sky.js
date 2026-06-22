@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v4";
+const SKY_SCENE_VERSION = "sky-v5";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -407,6 +407,7 @@ function skyPhase(skyState = state.skyState) {
       isDay: skyState.isDay,
       golden: skyState.golden,
       twilight: skyState.twilight,
+      condition: skyState.condition,
       x: skyState.x,
       y: skyState.y,
       brightness: skyState.brightness,
@@ -471,6 +472,13 @@ function blendStopSet(stops, target, t) {
   return stops.map((c, i) => lerpHex(c, target[i] || target[target.length - 1] || c, t));
 }
 
+function skyVisualCloudDepth(condition, cloudFraction) {
+  const raw = clamp01(cloudFraction);
+  if (condition === "partly-cloudy") return clamp(raw, 0.30, 0.58);
+  if (condition === "overcast") return clamp(raw, 0.76, 1);
+  return raw;
+}
+
 function skyGradientStops(condition, phase, skyState = state.skyState) {
   if (phase.isDay) {
     const base = {
@@ -499,16 +507,19 @@ function skyGradientStops(condition, phase, skyState = state.skyState) {
     }[condition] || base;
     const haze = ["#8aa7bc", "#c7d4db", "#eef2f1"];
     const brightness = skyState ? skyState.brightness : 0.62;
-    const cloud = skyState ? skyState.cloud / 100 : phase.cloud / 100;
+    const cloud = skyVisualCloudDepth(condition, skyState ? skyState.cloud / 100 : phase.cloud / 100);
     const pressure = skyState?.precipPressure ?? 0;
     const airHaze = skyState?.airHaze ?? 0;
     const pollenVeil = skyState?.pollenVeil ?? 0;
     const pressureSky = ["#6f7f8c", "#adbac4", "#dce2e4"];
     const airSky = ["#8b98a0", "#c1c1ba", "#e4ded2"];
     const pollenSky = ["#7f9f9c", "#d6d2a5", "#f3e7bd"];
-    let stops = blendStopSet(base, bright, clamp01((brightness - 0.55) / 0.35) * 0.62);
+    const brightLift = condition === "partly-cloudy" ? 0.08 : 0;
+    const brightMix = condition === "partly-cloudy" ? 0.78 : 0.62;
+    const hazeCloudWeight = condition === "partly-cloudy" ? 0.08 : 0.18;
+    let stops = blendStopSet(base, bright, clamp01((brightness + brightLift - 0.55) / 0.35) * brightMix);
     stops = blendStopSet(stops, warm, clamp01(phase.warmth ?? phase.golden) * (condition === "clear" || condition === "partly-cloudy" ? 0.88 : 0.46));
-    stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.75 + cloud * 0.18));
+    stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.75 + cloud * hazeCloudWeight));
     stops = blendStopSet(stops, pressureSky, pressure * 0.38);
     stops = blendStopSet(stops, airSky, airHaze * 0.38);
     stops = blendStopSet(stops, pollenSky, pollenVeil * 0.25);
@@ -543,7 +554,7 @@ function skyGradientStops(condition, phase, skyState = state.skyState) {
 }
 
 function skyBackgroundCss(condition, skyState = state.skyState) {
-  const phase = skyPhase(skyState);
+  const phase = { ...skyPhase(skyState), condition };
   const g = skyGradientStops(condition, phase, skyState);
   if (g) {
     const css = `linear-gradient(${g.angle}deg, ${g.stops.map((c, i) => `${c} ${g.positions[i]}%`).join(", ")})`;
@@ -658,15 +669,20 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   if (!skyState) return base;
 
   const cloudPct = clamp(skyState.cloud, 0, 100);
+  const visualCloudPct = skyVisualCloudDepth(condition, cloudPct / 100) * 100;
   const lowCloud = clamp01(skyState.lowCloud / 100);
   const highCloud = clamp01(skyState.highCloud / 100);
   const precipPressure = skyState.precipPressure ?? 0;
   const activePrecip = skyState.activePrecip === true || skyState.precipPhase === "active";
   const precipCloudBonus = condition === "rain" || condition === "snow" || condition === "thunder" ? 1 : 0;
+  const layerCloud = condition === "partly-cloudy"
+    ? lowCloud * 0.55 + highCloud * 0.20
+    : lowCloud * 1.2 + highCloud * 0.4;
+  const cloudDivisor = condition === "partly-cloudy" ? 30 : 18;
   const clouds = Math.round(clamp(
-    cloudPct / 18 + lowCloud * 1.2 + highCloud * 0.4 + precipCloudBonus + precipPressure * 1.45,
-    condition === "clear" ? 0 : 1,
-    condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
+    visualCloudPct / cloudDivisor + layerCloud + precipCloudBonus + precipPressure * 1.45,
+    condition === "clear" ? 0 : condition === "partly-cloudy" ? 2 : 1,
+    condition === "partly-cloudy" ? 4 : condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
   ));
   const moonVisible = !isDay && cloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
   const sunVisible = isDay &&
@@ -804,11 +820,17 @@ function skyMoonGlow(vw, vh, rng) {
 }
 
 function skySun(vw, vh, phase) {
-  const point = skyVisiblePoint(vw, vh, phase, { minY: 0.11, maxY: 0.34 });
-  const cx = point.x, cy = point.y, r = 46;
+  const isPartly = phase.condition === "partly-cloudy";
+  const point = skyVisiblePoint(
+    vw,
+    vh,
+    isPartly ? { ...phase, y: Math.max(phase.y ?? 0.16, 0.16) } : phase,
+    { minY: isPartly ? 0.15 : 0.11, maxY: 0.34 }
+  );
+  const cx = point.x, cy = point.y, r = isPartly ? 50 : 46;
   const warm = phase.warmth ?? phase.golden;
-  const brightness = phase.brightness ?? 0.68;
-  const directness = phase.directness ?? 0.7;
+  const brightness = clamp01((phase.brightness ?? 0.68) + (isPartly ? 0.10 : 0));
+  const directness = clamp01((phase.directness ?? 0.7) + (isPartly ? 0.16 : 0));
   const haze = phase.haze ?? 0;
   const core = lerpHex("#ffdf67", "#ff9a3c", warm);
   const halo = lerpHex(lerpHex("#ffe56f", "#fff3a6", clamp01((brightness - 0.55) / 0.32)), "#ff8a4a", warm);
@@ -851,8 +873,10 @@ function skyShootingStar(vw, vh, rng) {
 function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
   const isRainy = condition === "rain" || condition === "thunder";
   const isOvercast = condition === "overcast";
+  const isPartly = condition === "partly-cloudy";
   const box = skyVisibleBox(vw, vh);
-  const cloudDepth = skyState ? clamp01(skyState.cloud / 100) : (isOvercast || isRainy ? 0.82 : 0.35);
+  const rawCloudDepth = skyState ? clamp01(skyState.cloud / 100) : (isOvercast || isRainy ? 0.82 : 0.35);
+  const cloudDepth = skyVisualCloudDepth(condition, rawCloudDepth);
   const lowLayer = skyState ? clamp01(skyState.lowCloud / 100) : 0.5;
   const highLayer = skyState ? clamp01(skyState.highCloud / 100) : 0.3;
   const haze = skyState?.haze ?? 0;
@@ -865,9 +889,12 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
     const by = box.y + box.height * (
       isRainy ? 0.06 + rng() * 0.17 + layerLift :
       isOvercast ? 0.05 + rng() * 0.24 + layerLift :
+      isPartly ? 0.11 + rng() * 0.22 + layerLift :
       0.08 + rng() * 0.30 + layerLift
     );
-    const scale = 0.72 + rng() * 0.84 + (cloudDepth + pressure * 0.34) * 0.22;
+    const scale = isPartly
+      ? 0.58 + rng() * 0.58 + cloudDepth * 0.12 + pressure * 0.06
+      : 0.72 + rng() * 0.84 + (cloudDepth + pressure * 0.34) * 0.22;
     const dur = ((105 + rng() * 80) * (1 - windiness * 0.34)).toFixed(0);
     const delay = (rng() * 90).toFixed(0);
     const dir = rng() > 0.5 ? "normal" : "reverse";
@@ -876,11 +903,19 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
     if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : lerpHex("#2d3b55", "#46546b", haze));
     else if (isRainy) fill = lerpHex("#55606a", "#6f7c86", haze * 0.45);
     else if (isOvercast) fill = lerpHex("#8d98a2", "#a8b3bc", haze * 0.5);
+    else if (isPartly) fill = lerpHex("#ffffff", "#d8e4eb", cloudDepth * 0.22 + haze * 0.16 + pressure * 0.08);
     else fill = lerpHex("#f4f9fd", "#c5d0d8", cloudDepth * 0.34 + haze * 0.28 + pressure * 0.16);
-    const op = clamp((isOvercast || isRainy ? 0.58 : 0.34) + cloudDepth * 0.28 + pressure * 0.12 + rng() * 0.14, 0.22, 0.9).toFixed(2);
+    const op = clamp(
+      (isOvercast || isRainy ? 0.58 : isPartly ? 0.40 : 0.34) +
+      cloudDepth * (isPartly ? 0.18 : 0.28) +
+      pressure * 0.12 +
+      rng() * 0.14,
+      isPartly ? 0.36 : 0.22,
+      isPartly ? 0.68 : 0.9
+    ).toFixed(2);
 
-    const bodyWidth = (280 + rng() * 260) * scale;
-    const bodyHeight = (42 + rng() * 36) * scale;
+    const bodyWidth = ((isPartly ? 220 : 280) + rng() * (isPartly ? 220 : 260)) * scale;
+    const bodyHeight = ((isPartly ? 36 : 42) + rng() * (isPartly ? 28 : 36)) * scale;
     const shear = (rng() - 0.5) * 54 * scale + windiness * 46 * scale;
     const topY = by - bodyHeight * (0.38 + rng() * 0.24);
     const midY = by + (rng() - 0.5) * 12 * scale;
