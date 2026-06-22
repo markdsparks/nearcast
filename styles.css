@@ -369,6 +369,10 @@
 }
 
 :root[data-theme="light"][data-sky-tone="bright"] {
+  --ink-faint: #465b6c;
+  --muted: #31495d;
+  --border-glass: rgba(21, 43, 64, 0.20);
+  --border-glass-md: rgba(21, 43, 64, 0.24);
   --hero-card-bg:
     linear-gradient(145deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08)),
     linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(218, 240, 252, 0.62));
@@ -379,6 +383,14 @@
   --status-card-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.90), rgba(225, 243, 253, 0.76));
   --status-card-border: rgba(51, 113, 187, 0.78);
   --loading-chip-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(225, 243, 253, 0.58));
+}
+
+:root[data-theme="light"][data-sky="clear-day"],
+:root[data-theme="light"][data-sky="partly-cloudy-day"] {
+  --ink-faint: #465b6c;
+  --muted: #31495d;
+  --border-glass: rgba(21, 43, 64, 0.20);
+  --border-glass-md: rgba(21, 43, 64, 0.24);
 }
 
 :root[data-theme="light"][data-sky-tone="warm"] {
@@ -659,6 +671,14 @@ button {
   display: block;
   padding: 0;
   pointer-events: none;
+  transition: opacity 180ms ease, transform 220ms ease;
+  will-change: transform, opacity;
+}
+
+.shell.chrome-tucked:not(.menu-open) .topbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-18px, calc(-100% - max(18px, env(safe-area-inset-top, 0px))), 0) scale(0.94);
 }
 
 .brand-lockup {
@@ -1552,14 +1572,14 @@ h2 {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .air-visual-copy b {
   color: var(--ink);
-  font-size: clamp(0.98rem, 2.2vw, 1.14rem);
+  font-size: clamp(0.92rem, 2vw, 1.08rem);
   font-weight: 900;
-  line-height: 1.05;
+  line-height: 1.08;
+  white-space: normal;
 }
 
 .air-visual-copy em {
@@ -1569,6 +1589,7 @@ h2 {
   font-style: normal;
   font-weight: 850;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
 .glance-signal small {
@@ -3166,6 +3187,12 @@ h2 {
   overflow: hidden;
 }
 
+:root[data-theme="light"][data-sky-tone="bright"] .temp-track,
+:root[data-theme="light"][data-sky="clear-day"] .temp-track,
+:root[data-theme="light"][data-sky="partly-cloudy-day"] .temp-track {
+  background: rgba(28, 58, 84, 0.20);
+}
+
 .temp-track i {
   display: block;
   height: 100%;
@@ -4455,20 +4482,22 @@ body.map-immersive-active #mapLegend {
   /* Keep the 10-day rows on a single tight line (no wrapping the temp track
      to a second row) so all 10 days are scannable with minimal scrolling. */
   .daily {
-    --daily-label-col: clamp(118px, 34vw, 142px);
-    --daily-rain-col: 58px;
+    --daily-label-col: clamp(136px, 40vw, 160px);
+    --daily-rain-col: 54px;
   }
 
   .day-row {
-    gap: 8px;
+    gap: 6px;
     min-height: 50px;
-    padding: 8px 0 8px 12px;
+    padding: 8px 0 8px 10px;
   }
 
   .day-row .day-icon { width: 26px; height: 26px; }
-  .day-row .day-temps { gap: 7px; }
+  .day-row .day-label { gap: 8px; }
+  .day-row .day-temps { gap: 6px; }
   .day-row .day-low,
   .day-row .day-high { font-size: 0.92rem; }
+  .day-row .day-name { font-size: 0.92rem; }
 }
 
 @media (max-width: 480px) {

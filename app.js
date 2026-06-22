@@ -1,4 +1,4 @@
-const VERSION = "2.6.23";
+const VERSION = "2.6.24";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -72,6 +72,9 @@ const perfState = {
   lastBriefingRenderAt: 0,
   briefingRenderQueued: false
 };
+
+let floatingChromeScrollY = 0;
+let floatingChromeRaf = 0;
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
@@ -1667,6 +1670,31 @@ function initViewportGeometrySync() {
   settleViewportGeometry();
 }
 
+function pageScrollY() {
+  return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+}
+
+function scheduleFloatingChromeUpdate() {
+  if (floatingChromeRaf) return;
+  floatingChromeRaf = requestAnimationFrame(() => {
+    floatingChromeRaf = 0;
+    updateFloatingChrome();
+  });
+}
+
+function updateFloatingChrome(options = {}) {
+  if (!els.shell) return;
+  const y = pageScrollY();
+  const delta = y - floatingChromeScrollY;
+  const menuOpen = els.shell.classList.contains("menu-open");
+  const searchOpen = els.shell.classList.contains("search-open");
+  const welcome = els.shell.classList.contains("mode-welcome");
+  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || delta < -4;
+  const shouldTuck = !shouldReveal && y > 320 && delta > 2;
+  els.shell.classList.toggle("chrome-tucked", shouldTuck);
+  floatingChromeScrollY = y;
+}
+
 function init() {
   initPerfDiagnostics();
   initViewportGeometrySync();
@@ -1956,6 +1984,7 @@ function bindEvents() {
   window.addEventListener("pagehide", noteBackgrounded);
   window.addEventListener("pageshow", handleForegroundResume);
   window.addEventListener("focus", handleForegroundResume);
+  window.addEventListener("scroll", scheduleFloatingChromeUpdate, { passive: true });
   bindTapAction(els.savePlace, () => {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
@@ -2734,6 +2763,7 @@ function toggleAppMenu(open) {
   els.appMenu.hidden = !next;
   els.appMenuToggle.setAttribute("aria-expanded", String(next));
   els.shell.classList.toggle("menu-open", next);
+  if (next) updateFloatingChrome({ forceReveal: true });
 }
 
 function closeAppMenu() {
@@ -2744,6 +2774,7 @@ function closeAppMenu() {
 function toggleSearch(open) {
   const next = open === undefined ? !els.shell.classList.contains("search-open") : open;
   els.shell.classList.toggle("search-open", next);
+  if (next) updateFloatingChrome({ forceReveal: true });
   if (next) {
     els.placeSearch.focus();
   } else {
@@ -2935,6 +2966,7 @@ async function loadPlace(place, force = false) {
   state.weatherTruth = null;
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
+  updateFloatingChrome({ forceReveal: true });
   updatePlaceSwitcher();
   mapState.panX = 0;
   mapState.panY = 0;
@@ -3032,6 +3064,7 @@ function scrollForecastToTop() {
         window.scrollTo(0, 0);
       }
     }
+    updateFloatingChrome({ forceReveal: true });
   });
 }
 
@@ -3710,14 +3743,19 @@ function airGlance(data, humidityValue) {
       ? `${capitalize(air.pollen.label)} pollen ${air.pollen.levelLabel}`
       : "";
     const peakNote = air.peakAqi !== null && air.aqi !== null && air.peakAqi >= air.aqi + 20
-      ? ` · peaks ${air.peakAqi}${air.peakTime ? ` near ${formatTime(air.peakTime)}` : ""}`
+      ? `Peaks ${air.peakAqi}${air.peakTime ? ` near ${formatTime(air.peakTime)}` : ""}`
       : "";
+    const context = [
+      air.band?.advice || air.context,
+      pollenNote,
+      peakNote
+    ].filter(Boolean).join(" · ");
     return {
       label: "Air",
       value: air.visualLabel,
       html: airQualityVisualHtml(air),
       tipHtml: airQualityTipHtml(air),
-      context: `${air.aqi !== null ? `AQI ${air.aqi}` : air.context}${pollenNote ? ` · ${pollenNote}` : peakNote}`.trim(),
+      context,
       visible: true,
       summary: air
     };
