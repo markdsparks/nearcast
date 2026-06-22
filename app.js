@@ -1,4 +1,4 @@
-const VERSION = "2.6.27";
+const VERSION = "2.6.28";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -2055,6 +2055,8 @@ function bindEvents() {
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
   bindTapAction(document.getElementById("sheetPrevDay"), () => navigateSheetDay(-1));
   bindTapAction(document.getElementById("sheetNextDay"), () => navigateSheetDay(1));
+  bindTapAction(document.getElementById("sheetNowJump"), scrollDayDetailToNow);
+  document.getElementById("dayDetail").addEventListener("scroll", handleDayDetailScroll, { passive: true });
   bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
     const memoryDetail = event.target.closest("[data-memory-detail]");
     if (memoryDetail) {

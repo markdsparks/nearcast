@@ -1773,6 +1773,7 @@ function openMemoryDetail(idsOrValue) {
   els.memoryDetailBody.innerHTML = memories.map(renderMemoryDetailPanel).join("");
   els.memoryDetailBackdrop.hidden = false;
   els.memoryDetailSheet.hidden = false;
+  document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet);
   document.body.style.overflow = "hidden";
 }
@@ -1800,6 +1801,7 @@ function closeMemoryDetail() {
   setTimeout(() => {
     els.memoryDetailBackdrop.hidden = true;
     els.memoryDetailSheet.hidden = true;
+    if (typeof updateSheetNowJump === "function") updateSheetNowJump();
   }, 260);
 }
 

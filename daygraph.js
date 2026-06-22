@@ -3,6 +3,8 @@
 /* ---------- Day-detail bottom sheet ---------- */
 
 let dayDetailNavState = null;
+const ROLLING_HOURLY_PAGE_SIZE = 24;
+const ROLLING_HOURLY_LOAD_AHEAD_PX = 420;
 
 // Collect a single day's hours from the retained forecast and open the sheet.
 function openDayFromIndex(i, options = {}) {
@@ -91,6 +93,7 @@ function openNext24Detail(options = {}) {
   const rows = rollingHourlyRows(data);
   const start = safeBlock * 24;
   const windowRows = rows.slice(start, start + 24);
+  const nextCount = Math.min(start + ROLLING_HOURLY_PAGE_SIZE, rows.length);
   if (!windowRows.length) return;
   const indices = windowRows.map((row) => row.index);
   const firstIndex = indices[0];
@@ -122,7 +125,14 @@ function openNext24Detail(options = {}) {
       block: safeBlock,
       canPrev: safeBlock > 0,
       canNext: start + 24 < rows.length,
-      label: rollingWindowNavLabel(safeBlock)
+      label: rollingWindowNavLabel(safeBlock),
+      timeline: {
+        allRows: rows,
+        start,
+        renderedCount: nextCount,
+        pageSize: ROLLING_HOURLY_PAGE_SIZE,
+        lastDay: null
+      }
     }
   });
   if (eventWindow) scrollFocusedSheetHour();
@@ -159,6 +169,12 @@ function getDayDetailMode() {
   return localStorage.getItem(DAY_DETAIL_MODE_KEY) === "hourly" ? "hourly" : "graph";
 }
 
+function isSheetHourlyModeActive() {
+  const list = document.getElementById("sheetHourlyList");
+  if (list) return !list.hidden;
+  return document.getElementById("sheetHourlyMode")?.classList.contains("active") || getDayDetailMode() === "hourly";
+}
+
 function setDayDetailMode(mode, persist = true) {
   const normalized = mode === "hourly" ? "hourly" : "graph";
   const graphBtn = document.getElementById("sheetGraphMode");
@@ -178,6 +194,9 @@ function setDayDetailMode(mode, persist = true) {
   updateSheetDayNav(normalized);
 
   if (!isHourly) scheduleGraphCalloutReflow();
+  renderRollingTimelineFooter();
+  updateSheetNowJump();
+  if (isHourly) maybeExtendRollingTimeline();
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
 }
 
@@ -242,32 +261,15 @@ function navigateSheetDay(delta) {
   });
 }
 
-function openDayDetail({
-  indices,
-  title,
-  code,
-  stormPotential = false,
-  isDay,
-  sunriseISO,
-  sunsetISO,
-  dayIndex = 0,
-  initialMode = getDayDetailMode(),
-  persistInitialMode = false,
-  showNow = false,
+function detailHoursForIndices(indices, {
   data = state.forecast,
   alerts = activeAlerts,
   eventWindow = null,
-  contextLabel = "",
-  source = "day",
-  navState = null
-}) {
-  if (!data || !indices.length) return;
-  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
-  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  showNow = false
+} = {}) {
+  if (!data || !indices.length) return [];
   const eventWindows = detailEventWindows(eventWindow);
-
-  const hrs = indices.map((h) => {
+  return indices.map((h) => {
     const rawCode = data.hourly.weather_code[h];
     const pop = data.hourly.precipitation_probability[h] || 0;
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
@@ -303,6 +305,32 @@ function openDayDetail({
       isDay: isNowHour ? (state.weatherTruth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
     };
   });
+}
+
+function openDayDetail({
+  indices,
+  title,
+  code,
+  stormPotential = false,
+  isDay,
+  sunriseISO,
+  sunsetISO,
+  dayIndex = 0,
+  initialMode = getDayDetailMode(),
+  persistInitialMode = false,
+  showNow = false,
+  data = state.forecast,
+  alerts = activeAlerts,
+  eventWindow = null,
+  contextLabel = "",
+  source = "day",
+  navState = null
+}) {
+  if (!data || !indices.length) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const hrs = detailHoursForIndices(indices, { data, alerts, eventWindow, showNow });
 
   const temps = hrs.map((h) => h.temp);
   const high = Math.round(Math.max(...temps));
@@ -321,11 +349,15 @@ function openDayDetail({
   document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
-  dayDetailNavState = { source, dayIndex, data, ...(navState || {}) };
+  dayDetailNavState = { source, dayIndex, data, eventWindow, ...(navState || {}) };
+  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = null;
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
-  renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
+  const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, { showNow, data, eventWindow });
+  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = listRender?.lastDay || null;
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
+  renderRollingTimelineFooter();
+  updateSheetNowJump();
 
   const backdrop = document.getElementById("dayDetailBackdrop");
   const sheet = document.getElementById("dayDetail");
@@ -333,6 +365,7 @@ function openDayDetail({
   sheet.hidden = false;
   showSheet(backdrop, sheet);
   document.body.style.overflow = "hidden";
+  maybeExtendRollingTimeline();
 }
 
 function closeDayDetail() {
@@ -341,6 +374,8 @@ function closeDayDetail() {
   const returnToPlanner = plannerReturnAfterDayDetail;
   plannerReturnAfterDayDetail = null;
   dayDetailNavState = null;
+  document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
+  document.getElementById("sheetTimelineFooter")?.setAttribute("hidden", "");
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
   document.body.style.overflow = returnToPlanner ? "hidden" : "";
@@ -493,15 +528,21 @@ function plannerEventFocusIndex(hrs) {
   return best;
 }
 
-function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
+function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {}) {
   const opts = typeof options === "boolean" ? { showNow: options } : (options || {});
-  const { showNow = false, data = state.forecast, eventWindow = null } = opts;
+  const {
+    showNow = false,
+    data = state.forecast,
+    eventWindow = null,
+    startRowIndex = 0,
+    previousDay = null,
+    allowEventFocus = true
+  } = opts;
   const deg = degree(tempUnit);
-  const list = document.getElementById("sheetHourlyList");
-  const defaultExpandedIndex = eventWindow ? plannerEventFocusIndex(hrs) : -1;
-  let prevDay = null;
-  list.innerHTML = hrs.map((hour, rowIndex) => {
-    // Mark where the day rolls over (the list runs from "now" into tomorrow).
+  const defaultExpandedIndex = allowEventFocus && eventWindow ? plannerEventFocusIndex(hrs) : -1;
+  let prevDay = previousDay;
+  const html = hrs.map((hour, rowOffset) => {
+    const rowIndex = startRowIndex + rowOffset;
     const dayKey = hour.time.slice(0, 10);
     const divider = prevDay && dayKey !== prevDay
       ? `<div class="sheet-day-divider"><span>${escapeHtml(dayDividerLabel(hour.time))}</span></div>`
@@ -555,6 +596,112 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
       </article>
     `;
   }).join("");
+  return { html, lastDay: prevDay };
+}
+
+function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
+  const list = document.getElementById("sheetHourlyList");
+  const result = renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options);
+  list.innerHTML = result.html;
+  return result;
+}
+
+function handleDayDetailScroll() {
+  maybeExtendRollingTimeline();
+  updateSheetNowJump();
+}
+
+function maybeExtendRollingTimeline(force = false) {
+  const sheet = document.getElementById("dayDetail");
+  const timeline = dayDetailNavState?.timeline;
+  if (!sheet || sheet.hidden || !timeline || dayDetailNavState?.source !== "rolling" || !isSheetHourlyModeActive()) {
+    renderRollingTimelineFooter();
+    updateSheetNowJump();
+    return false;
+  }
+  const remaining = sheet.scrollHeight - sheet.scrollTop - sheet.clientHeight;
+  if (!force && remaining > ROLLING_HOURLY_LOAD_AHEAD_PX) {
+    renderRollingTimelineFooter();
+    updateSheetNowJump();
+    return false;
+  }
+  const appended = appendRollingHourlyRows();
+  renderRollingTimelineFooter();
+  updateSheetNowJump();
+  return appended;
+}
+
+function appendRollingHourlyRows() {
+  const timeline = dayDetailNavState?.timeline;
+  const data = dayDetailNavState?.data || state.forecast;
+  if (!timeline || !data || timeline.renderedCount >= timeline.allRows.length) return false;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const nextCount = Math.min(timeline.renderedCount + timeline.pageSize, timeline.allRows.length);
+  const rows = timeline.allRows.slice(timeline.renderedCount, nextCount);
+  if (!rows.length) return false;
+  const hrs = detailHoursForIndices(rows.map((row) => row.index), {
+    data,
+    alerts: activeAlerts,
+    eventWindow: dayDetailNavState.eventWindow,
+    showNow: false
+  });
+  const rowStart = Math.max(0, timeline.renderedCount - timeline.start);
+  const result = renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, {
+    showNow: false,
+    data,
+    eventWindow: dayDetailNavState.eventWindow,
+    startRowIndex: rowStart,
+    previousDay: timeline.lastDay,
+    allowEventFocus: false
+  });
+  document.getElementById("sheetHourlyList")?.insertAdjacentHTML("beforeend", result.html);
+  timeline.renderedCount = nextCount;
+  timeline.lastDay = result.lastDay || timeline.lastDay || null;
+  return true;
+}
+
+function renderRollingTimelineFooter() {
+  const footer = document.getElementById("sheetTimelineFooter");
+  if (!footer) return;
+  const timeline = dayDetailNavState?.timeline;
+  const visible = Boolean(timeline && dayDetailNavState?.source === "rolling" && isSheetHourlyModeActive());
+  footer.hidden = !visible;
+  if (!visible) return;
+  const shown = Math.max(0, (timeline.renderedCount || 0) - (timeline.start || 0));
+  const total = Math.max(0, (timeline.allRows?.length || 0) - (timeline.start || 0));
+  footer.textContent = timeline.renderedCount < timeline.allRows.length
+    ? `${shown} of ${total} forecast hours`
+    : `End of hourly forecast · ${shown || total} hours shown`;
+}
+
+function updateSheetNowJump() {
+  const jump = document.getElementById("sheetNowJump");
+  const sheet = document.getElementById("dayDetail");
+  const memorySheet = document.getElementById("memoryDetailSheet");
+  const timeline = dayDetailNavState?.timeline;
+  if (!jump || !sheet) return;
+  const show = !sheet.hidden &&
+    Boolean(memorySheet?.hidden ?? true) &&
+    dayDetailNavState?.source === "rolling" &&
+    isSheetHourlyModeActive() &&
+    Boolean(timeline) &&
+    (sheet.scrollTop > 520 || (timeline.start || 0) > 0);
+  jump.hidden = !show;
+}
+
+function scrollDayDetailToNow() {
+  const timeline = dayDetailNavState?.timeline;
+  if (dayDetailNavState?.source === "rolling" && timeline && (timeline.start || 0) > 0) {
+    openNext24Detail();
+    return;
+  }
+  const sheet = document.getElementById("dayDetail");
+  if (!sheet) return;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  sheet.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+  updateSheetNowJump();
 }
 
 // Build a smooth cardinal-spline path through the points.

@@ -5139,6 +5139,44 @@ body.map-immersive-active .day-sheet.show {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
+.sheet-timeline-footer {
+  margin: -6px 0 18px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-align: center;
+}
+.sheet-timeline-footer[hidden] {
+  display: none;
+}
+.sheet-now-jump {
+  position: fixed;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 304;
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid rgba(91, 141, 220, 0.38);
+  border-radius: 999px;
+  background: rgba(17, 25, 36, 0.84);
+  color: #fff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-now-jump[hidden] {
+  display: none;
+}
+.sheet-now-jump:focus-visible {
+  outline: 2px solid rgba(91, 141, 220, 0.72);
+  outline-offset: 3px;
+}
 .sheet-hour-row {
   position: relative;
   display: grid;
