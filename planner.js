@@ -637,6 +637,7 @@ let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
 let plannerEditingMemoryDraft = "";
 let memoryDetailIds = [];
+let memoryEditState = null;
 let launchSummaryTargets = [];
 
 function fillPlannerTemplate(template, options = {}) {
@@ -1680,10 +1681,18 @@ function startPlanMemoryEdit(idOrRow) {
     return;
   }
 
+  openStructuredMemoryEdit(memory.id);
+}
+
+function startMemoryTextEdit(id) {
+  const memory = state.planMemories.find((item) => item.id === id);
+  if (!memory) return;
+
   const restoreScroll = !els.aiSheet?.hidden
     ? els.aiSheet.scrollTop
     : plannerReturnAfterDayDetail?.scrollTop ?? null;
   if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
+  if (!els.memoryEditSheet?.hidden) closeMemoryEditSheet();
 
   const dayDetail = document.getElementById("dayDetail");
   if (dayDetail && !dayDetail.hidden) {
@@ -1809,6 +1818,431 @@ function closeMemoryDetail() {
   }, 260);
 }
 
+function memoryEditDateLabel(iso, data = memoryEditState?.data) {
+  const idx = data?.daily?.time?.indexOf(iso) ?? -1;
+  const date = new Date(`${iso}T12:00:00`);
+  const dateLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+  if (idx === 0) return `Today, ${dateLabel}`;
+  if (idx === 1) return `Tomorrow, ${dateLabel}`;
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
+  return `${weekday}, ${dateLabel}`;
+}
+
+function memoryEditHourLabel(hour) {
+  const value = Number(hour);
+  if (value === 24) return "12 AM next day";
+  const h = ((value % 24) + 24) % 24;
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr} ${h < 12 ? "AM" : "PM"}`;
+}
+
+function memoryEditDateOptions(selectedDate = memoryEditState?.targetDate) {
+  const dates = [...(memoryEditState?.data?.daily?.time || [])].slice(0, 10);
+  if (selectedDate && !dates.includes(selectedDate)) dates.unshift(selectedDate);
+  return dates.map((date) =>
+    `<option value="${escapeHtml(date)}"${date === selectedDate ? " selected" : ""}>${escapeHtml(memoryEditDateLabel(date))}</option>`
+  ).join("");
+}
+
+function memoryEditTimeOptions(selected, min, max) {
+  const options = [];
+  for (let hour = min; hour <= max; hour++) {
+    options.push(`<option value="${hour}"${Number(selected) === hour ? " selected" : ""}>${escapeHtml(memoryEditHourLabel(hour))}</option>`);
+  }
+  return options.join("");
+}
+
+function memoryEditWindowText(state = memoryEditState) {
+  if (!state) return "";
+  return `${memoryEditDateLabel(state.targetDate, state.data)} · ${hourText(state.startHour)}-${hourText(state.endHour)}`;
+}
+
+function openStructuredMemoryEdit(id) {
+  const memory = state.planMemories.find((item) => item.id === id);
+  if (!memory || !els.memoryEditSheet || !els.memoryEditBackdrop || !els.memoryEditBody) {
+    startMemoryTextEdit(id);
+    return;
+  }
+  if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
+
+  const place = normalizePlace(memory.place);
+  const here = samePlanPlace(place, state.activePlace);
+  memoryEditState = {
+    memoryId: memory.id,
+    title: planMemoryTitle(memory),
+    original: memory.original || "",
+    place,
+    placeQuery: placeLabel(place),
+    targetDate: memory.targetDate,
+    startHour: Math.max(0, Math.min(23, Math.floor(Number(memory.startHour) || 0))),
+    endHour: Math.max(1, Math.min(24, Math.ceil(Number(memory.endHour) || 1))),
+    data: here ? state.forecast : null,
+    alerts: here ? activeAlerts : [],
+    results: [],
+    searchSeq: 0,
+    previewSeq: 0,
+    forecastKey: "",
+    error: "",
+    saving: false
+  };
+  if (memoryEditState.endHour <= memoryEditState.startHour) {
+    memoryEditState.endHour = Math.min(24, memoryEditState.startHour + 1);
+  }
+
+  renderMemoryEditSheet();
+  els.memoryEditBackdrop.hidden = false;
+  els.memoryEditSheet.hidden = false;
+  document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
+  showSheet(els.memoryEditBackdrop, els.memoryEditSheet);
+  document.body.style.overflow = "hidden";
+  updateMemoryEditPreview({ fetchIfNeeded: true });
+}
+
+function renderMemoryEditSheet() {
+  if (!memoryEditState || !els.memoryEditBody) return;
+  const placeValue = memoryEditState.placeQuery || placeLabel(memoryEditState.place);
+  els.memoryEditBody.innerHTML = `
+    <form class="memory-edit-form" id="memoryEditForm">
+      <label class="memory-edit-field">
+        <span>Plan</span>
+        <input id="memoryEditTitle" name="title" type="text" maxlength="80" value="${escapeHtml(memoryEditState.title)}" autocomplete="off">
+      </label>
+      <label class="memory-edit-field">
+        <span>Place</span>
+        <div class="memory-edit-place-row">
+          <input id="memoryEditPlace" name="place" type="text" value="${escapeHtml(placeValue)}" autocomplete="off">
+          <button type="button" data-memory-edit-search>Search</button>
+        </div>
+      </label>
+      <div class="memory-edit-place-results" id="memoryEditPlaceResults" hidden></div>
+      <div class="memory-edit-grid">
+        <label class="memory-edit-field">
+          <span>Date</span>
+          <select id="memoryEditDate" name="date">${memoryEditDateOptions(memoryEditState.targetDate)}</select>
+        </label>
+        <label class="memory-edit-field">
+          <span>Start</span>
+          <select id="memoryEditStart" name="startHour">${memoryEditTimeOptions(memoryEditState.startHour, 0, 23)}</select>
+        </label>
+        <label class="memory-edit-field">
+          <span>End</span>
+          <select id="memoryEditEnd" name="endHour">${memoryEditTimeOptions(memoryEditState.endHour, 1, 24)}</select>
+        </label>
+      </div>
+      <div class="memory-edit-preview" id="memoryEditPreview" role="status"></div>
+      <div class="memory-edit-actions">
+        <button class="memory-edit-save" type="submit"${memoryEditState.saving ? " disabled" : ""}>Save changes</button>
+        <button type="button" data-memory-edit-text>Edit with text</button>
+      </div>
+    </form>
+  `;
+  wireMemoryEditForm();
+  renderMemoryEditPlaceResults();
+}
+
+function wireMemoryEditForm() {
+  const form = document.getElementById("memoryEditForm");
+  if (!form) return;
+  form.addEventListener("submit", saveStructuredMemoryEdit);
+  ["memoryEditTitle", "memoryEditDate", "memoryEditStart", "memoryEditEnd"].forEach((id) => {
+    document.getElementById(id)?.addEventListener(id === "memoryEditTitle" ? "input" : "change", () => {
+      syncMemoryEditStateFromForm();
+      updateMemoryEditPreview({ fetchIfNeeded: true });
+    });
+  });
+  const placeInput = document.getElementById("memoryEditPlace");
+  placeInput?.addEventListener("input", () => {
+    memoryEditState.placeQuery = placeInput.value;
+  });
+  placeInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    searchMemoryEditPlaces();
+  });
+  form.querySelector("[data-memory-edit-search]")?.addEventListener("click", searchMemoryEditPlaces);
+  form.querySelector("[data-memory-edit-text]")?.addEventListener("click", () => {
+    const id = memoryEditState?.memoryId;
+    if (id) startMemoryTextEdit(id);
+  });
+  form.querySelectorAll("[data-memory-edit-place]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectMemoryEditPlace(Number(button.dataset.memoryEditPlace));
+    });
+  });
+}
+
+function syncMemoryEditStateFromForm() {
+  if (!memoryEditState) return;
+  const title = document.getElementById("memoryEditTitle")?.value || "";
+  const date = document.getElementById("memoryEditDate")?.value || memoryEditState.targetDate;
+  const start = Number(document.getElementById("memoryEditStart")?.value);
+  let end = Number(document.getElementById("memoryEditEnd")?.value);
+  memoryEditState.title = title.trim();
+  memoryEditState.targetDate = date;
+  memoryEditState.startHour = Number.isFinite(start) ? start : memoryEditState.startHour;
+  if (!Number.isFinite(end)) end = memoryEditState.endHour;
+  if (end <= memoryEditState.startHour) end = Math.min(24, memoryEditState.startHour + 1);
+  memoryEditState.endHour = end;
+  const endSelect = document.getElementById("memoryEditEnd");
+  if (endSelect && Number(endSelect.value) !== end) endSelect.value = String(end);
+}
+
+function renderMemoryEditPlaceResults(message = "") {
+  const box = document.getElementById("memoryEditPlaceResults");
+  if (!box || !memoryEditState) return;
+  if (message) {
+    box.hidden = false;
+    box.innerHTML = `<p>${escapeHtml(message)}</p>`;
+    return;
+  }
+  if (!memoryEditState.results?.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = memoryEditState.results.map((place, index) => `
+    <button type="button" data-memory-edit-place="${index}">
+      <strong>${escapeHtml(place.name)}</strong>
+      <span>${escapeHtml(formatPlaceResultMeta(place) || placeLabel(place))}</span>
+    </button>
+  `).join("");
+  wireMemoryEditPlaceResultButtons();
+}
+
+function wireMemoryEditPlaceResultButtons() {
+  document.querySelectorAll("#memoryEditPlaceResults [data-memory-edit-place]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectMemoryEditPlace(Number(button.dataset.memoryEditPlace));
+    });
+  });
+}
+
+async function searchMemoryEditPlaces() {
+  if (!memoryEditState) return;
+  const input = document.getElementById("memoryEditPlace");
+  const query = (input?.value || "").trim();
+  if (!query) {
+    renderMemoryEditPlaceResults("Enter a city, state, or country.");
+    return;
+  }
+  const seq = ++memoryEditState.searchSeq;
+  renderMemoryEditPlaceResults("Searching places...");
+  try {
+    const options = await fetchPlannerPlaceOptions(query);
+    if (!memoryEditState || seq !== memoryEditState.searchSeq) return;
+    memoryEditState.results = (options.matches || []).slice(0, 5).map(({ place }) => normalizePlace(place));
+    renderMemoryEditPlaceResults(memoryEditState.results.length ? "" : "No matching places found.");
+  } catch {
+    if (!memoryEditState || seq !== memoryEditState.searchSeq) return;
+    renderMemoryEditPlaceResults("Could not search places.");
+  }
+}
+
+function selectMemoryEditPlace(index) {
+  if (!memoryEditState) return;
+  const place = memoryEditState.results?.[index];
+  if (!place) return;
+  memoryEditState.place = normalizePlace(place);
+  memoryEditState.placeQuery = placeLabel(memoryEditState.place);
+  memoryEditState.data = samePlanPlace(memoryEditState.place, state.activePlace) ? state.forecast : null;
+  memoryEditState.alerts = samePlanPlace(memoryEditState.place, state.activePlace) ? activeAlerts : [];
+  memoryEditState.results = [];
+  memoryEditState.error = "";
+  renderMemoryEditSheet();
+  updateMemoryEditPreview({ fetchIfNeeded: true });
+}
+
+function memoryEditForecastKey() {
+  const place = memoryEditState?.place;
+  if (!place) return "";
+  return `${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}:${state.unit}`;
+}
+
+async function ensureMemoryEditForecast() {
+  if (!memoryEditState?.place) return null;
+  const key = memoryEditForecastKey();
+  if (memoryEditState.data && memoryEditState.forecastKey === key) return memoryEditState.data;
+  if (samePlanPlace(memoryEditState.place, state.activePlace) && state.forecast) {
+    memoryEditState.data = state.forecast;
+    memoryEditState.alerts = activeAlerts || [];
+    memoryEditState.forecastKey = key;
+    return memoryEditState.data;
+  }
+  const place = normalizePlace(memoryEditState.place);
+  const data = await fetchForecast(place);
+  if (!memoryEditState || memoryEditForecastKey() !== key) return null;
+  memoryEditState.data = data;
+  memoryEditState.alerts = await safeFetchPlanAlerts(place);
+  memoryEditState.forecastKey = key;
+  return data;
+}
+
+function refreshMemoryEditDateSelect() {
+  const select = document.getElementById("memoryEditDate");
+  if (!select || !memoryEditState) return;
+  const current = memoryEditState.targetDate;
+  select.innerHTML = memoryEditDateOptions(current);
+  select.value = current;
+}
+
+function setMemoryEditPreview(html, statusClass = "") {
+  const preview = document.getElementById("memoryEditPreview");
+  if (!preview) return;
+  preview.className = `memory-edit-preview${statusClass ? ` ${statusClass}` : ""}`;
+  preview.innerHTML = html;
+}
+
+async function updateMemoryEditPreview(options = {}) {
+  if (!memoryEditState) return;
+  syncMemoryEditStateFromForm();
+  const seq = ++memoryEditState.previewSeq;
+  const { fetchIfNeeded = false } = options;
+  if (!memoryEditState.title) {
+    setMemoryEditPreview("<p>Add a plan name before saving.</p>", "is-warning");
+    return;
+  }
+  let data = memoryEditState.data;
+  if (!data && fetchIfNeeded) {
+    setMemoryEditPreview("<p>Checking that place's forecast...</p>", "is-loading");
+    try {
+      data = await ensureMemoryEditForecast();
+      if (!memoryEditState || seq !== memoryEditState.previewSeq) return;
+      refreshMemoryEditDateSelect();
+    } catch {
+      setMemoryEditPreview("<p>Could not load the forecast for this place.</p>", "is-warning");
+      return;
+    }
+  }
+  if (!data) {
+    setMemoryEditPreview("<p>Search and choose a place to preview this plan.</p>", "is-warning");
+    return;
+  }
+  const dayIdx = data.daily?.time?.indexOf(memoryEditState.targetDate) ?? -1;
+  if (dayIdx < 0) {
+    setMemoryEditPreview("<p>This date is outside the available forecast window.</p>", "is-warning");
+    return;
+  }
+  const c = buildAIContext(data, memoryEditState.place, memoryEditState.alerts || []);
+  const stats = c ? planWindowStats(data, c, {
+    dayIdx,
+    startHour: memoryEditState.startHour,
+    endHour: memoryEditState.endHour,
+    label: "custom"
+  }) : null;
+  if (!stats) {
+    setMemoryEditPreview("<p>No hourly forecast data for that window.</p>", "is-warning");
+    return;
+  }
+  const startMs = planBoundaryMs(data, memoryEditState.startHour, dayIdx);
+  const endMs = planBoundaryMs(data, memoryEditState.endHour, dayIdx);
+  const alert = topAlertForPlanRange(memoryEditState.alerts || [], startMs, endMs);
+  setMemoryEditPreview(`
+    <div><span>Window</span><strong>${escapeHtml(memoryEditWindowText())}</strong></div>
+    <div><span>Weather</span><strong>${escapeHtml(stats.sky)}</strong></div>
+    <div><span>Rain</span><strong>${stats.rainChance}%</strong></div>
+    <div><span>Wind</span><strong>${stats.windMax} ${escapeHtml(c.units.wind)}</strong></div>
+    <div><span>Temp</span><strong>${stats.tempMin}${escapeHtml(c.units.temp)}-${stats.tempMax}${escapeHtml(c.units.temp)}</strong></div>
+    ${alert ? `<div><span>Alert</span><strong>${escapeHtml(alert.event)}</strong></div>` : ""}
+  `);
+}
+
+function structuredMemoryAnswer(draft, stats, c, alert) {
+  const text = `${draft.title} ${draft.original || ""}`;
+  const activityKey = detectAskActivity(text) || detectPlanActivity(text) || "walk";
+  const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.walk;
+  const score = numericWindowScore(rule, stats);
+  const tone = alert ? alertTone(alert) : "";
+  const verdict = planVerdict(score, tone);
+  const reasons = planReasons(stats, c.units, alert).slice(0, 4).join(", ");
+  return `${draft.title} ${memoryEditWindowText(draft)} in ${placeLabel(draft.place)}: ${verdict}. Why: ${reasons}. ${planAdvice(stats, alert, score)}`.replace(/\s+/g, " ").trim();
+}
+
+async function saveStructuredMemoryEdit(event) {
+  event?.preventDefault();
+  if (!memoryEditState || memoryEditState.saving) return;
+  syncMemoryEditStateFromForm();
+  if (!memoryEditState.title) {
+    setMemoryEditPreview("<p>Add a plan name before saving.</p>", "is-warning");
+    return;
+  }
+  memoryEditState.saving = true;
+  renderMemoryEditSheet();
+  setMemoryEditPreview("<p>Saving changes...</p>", "is-loading");
+  try {
+    const data = await ensureMemoryEditForecast();
+    refreshMemoryEditDateSelect();
+    const dayIdx = data?.daily?.time?.indexOf(memoryEditState.targetDate) ?? -1;
+    if (dayIdx < 0) throw new Error("Date outside forecast.");
+    const c = buildAIContext(data, memoryEditState.place, memoryEditState.alerts || []);
+    const window = {
+      dayIdx,
+      startHour: memoryEditState.startHour,
+      endHour: memoryEditState.endHour,
+      label: "custom"
+    };
+    const stats = c ? planWindowStats(data, c, window) : null;
+    if (!stats) throw new Error("No window stats.");
+    const startMs = planBoundaryMs(data, window.startHour, dayIdx);
+    const endMs = planBoundaryMs(data, window.endHour, dayIdx);
+    const alert = topAlertForPlanRange(memoryEditState.alerts || [], startMs, endMs);
+    const existing = state.planMemories.find((memory) => memory.id === memoryEditState.memoryId);
+    if (!existing) throw new Error("Memory missing.");
+    const draft = {
+      ...memoryEditState,
+      data,
+      label: memoryEditWindowText(memoryEditState)
+    };
+    const updated = normalizePlanMemory({
+      ...existing,
+      title: draft.title,
+      label: draft.label,
+      original: existing.original || `${draft.title} ${hourText(draft.startHour)}-${hourText(draft.endHour)} in ${placeLabel(draft.place)}`,
+      answer: structuredMemoryAnswer(draft, stats, c, alert),
+      place: draft.place,
+      targetDate: draft.targetDate,
+      startHour: draft.startHour,
+      endHour: draft.endHour,
+      updatedAt: Date.now()
+    });
+    if (!updated) throw new Error("Invalid memory.");
+    state.planMemories = state.planMemories.map((memory) =>
+      memory.id === updated.id ? updated : memory
+    );
+    savePlanMemories();
+    clearPlannerMemoryEdit();
+    renderAsk();
+    renderForecastMemorySurfaces();
+    refreshOpenGlobalMemorySheet();
+    closeMemoryEditSheet();
+  } catch {
+    if (memoryEditState) memoryEditState.saving = false;
+    renderMemoryEditSheet();
+    setMemoryEditPreview("<p>I could not save that edit. Check the date, time, and place.</p>", "is-warning");
+  }
+}
+
+function closeMemoryEditSheet() {
+  if (!els.memoryEditSheet || !els.memoryEditBackdrop || els.memoryEditSheet.hidden) return;
+  els.memoryEditBackdrop.classList.remove("show");
+  els.memoryEditSheet.classList.remove("show");
+  const keepLocked =
+    !document.getElementById("dayDetail")?.hidden ||
+    !els.memoryDetailSheet?.hidden ||
+    !els.memorySheet?.hidden ||
+    !els.aiSheet?.hidden ||
+    !document.getElementById("alertSheet")?.hidden ||
+    !els.placeSheet?.hidden ||
+    mapState.immersive;
+  document.body.style.overflow = keepLocked ? "hidden" : "";
+  setTimeout(() => {
+    els.memoryEditBackdrop.hidden = true;
+    els.memoryEditSheet.hidden = true;
+    memoryEditState = null;
+    if (typeof updateSheetNowJump === "function") updateSheetNowJump();
+  }, 260);
+}
+
 function renderMemoryDetailPanel(memory) {
   const event = samePlanPlace(memory.place, state.activePlace)
     ? planMemoryEvent(memory)
@@ -1835,7 +2269,7 @@ function renderMemoryDetailPanel(memory) {
         <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
       </dl>
       <div class="memory-detail-actions">
-        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit in Planner</button>
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit memory</button>
         <button type="button" data-memory-show="${escapeHtml(memory.id)}">Show forecast</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>

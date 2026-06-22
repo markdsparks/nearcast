@@ -1,4 +1,4 @@
-const VERSION = "2.6.33";
+const VERSION = "2.6.34";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -356,6 +356,9 @@ const els = {
   memoryBackdrop: document.querySelector("#memoryBackdrop"),
   memorySheetSummary: document.querySelector("#memorySheetSummary"),
   memorySheetBody: document.querySelector("#memorySheetBody"),
+  memoryEditSheet: document.querySelector("#memoryEditSheet"),
+  memoryEditBackdrop: document.querySelector("#memoryEditBackdrop"),
+  memoryEditBody: document.querySelector("#memoryEditBody"),
   memoryDetailSheet: document.querySelector("#memoryDetailSheet"),
   memoryDetailBackdrop: document.querySelector("#memoryDetailBackdrop"),
   memoryDetailBody: document.querySelector("#memoryDetailBody"),
@@ -2000,6 +2003,8 @@ function bindEvents() {
       startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
     }
   });
+  bindTapAction(document.getElementById("memoryEditClose"), closeMemoryEditSheet);
+  bindTapAction(els.memoryEditBackdrop, closeMemoryEditSheet);
   bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
   bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
   bindTapDelegate(els.memoryDetailBody, "[data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
@@ -2158,6 +2163,12 @@ function bindEvents() {
     if (event.key === "Escape" && !els.memorySheet.hidden) {
       event.stopImmediatePropagation();
       closeGlobalMemorySheet();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.memoryEditSheet.hidden) {
+      event.stopImmediatePropagation();
+      closeMemoryEditSheet();
     }
   });
   document.addEventListener("keydown", (event) => {
@@ -3148,6 +3159,8 @@ function resetTransientViewToForecastTop() {
   if (mapState.immersive) exitImmersiveMap();
   if (!els.placeSheet?.hidden) closePlaceSheet();
   if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
+  if (!els.memoryEditSheet?.hidden) closeMemoryEditSheet();
+  if (!els.memorySheet?.hidden) closeGlobalMemorySheet();
 
   const alertSheet = document.getElementById("alertSheet");
   if (alertSheet && !alertSheet.hidden) closeAlertSheet();

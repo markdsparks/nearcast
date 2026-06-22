@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.6.33">
-    <link rel="manifest" href="manifest.json?v=2.6.33">
+    <link rel="stylesheet" href="styles.css?v=2.6.34">
+    <link rel="manifest" href="manifest.json?v=2.6.34">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.33">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.33">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.34">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.34">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -442,6 +442,22 @@
       <div class="memory-sheet-body" id="memorySheetBody"></div>
     </aside>
 
+    <div class="sheet-backdrop memory-edit-backdrop" id="memoryEditBackdrop" hidden></div>
+    <aside class="day-sheet memory-edit-sheet" id="memoryEditSheet" hidden aria-label="Edit memory" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="memoryEditClose" type="button" aria-label="Close memory editor">✕</button>
+      <header class="sheet-head memory-edit-head">
+        <span class="memory-sheet-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M6 17.5 5.5 20l2.5-.5 9.6-9.6a1.8 1.8 0 0 0 0-2.5l-1-1a1.8 1.8 0 0 0-2.5 0L6 14.5v3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m13.8 6.7 3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </span>
+        <div class="sheet-head-text">
+          <h2>Edit memory</h2>
+          <p class="memory-sheet-sub">Adjust the plan fields directly</p>
+        </div>
+      </header>
+      <div class="memory-edit-body" id="memoryEditBody"></div>
+    </aside>
+
     <div class="sheet-backdrop" id="memoryDetailBackdrop" hidden></div>
     <aside class="day-sheet memory-detail-sheet" id="memoryDetailSheet" hidden aria-label="Memory details" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
@@ -455,11 +471,11 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="planner.js?v=2.6.33"></script>
-    <script src="app.js?v=2.6.33"></script>
-    <script src="map.js?v=2.6.33"></script>
-    <script src="sky.js?v=2.6.33"></script>
-    <script src="daygraph.js?v=2.6.33"></script>
-    <script src="boot.js?v=2.6.33"></script>
+    <script src="planner.js?v=2.6.34"></script>
+    <script src="app.js?v=2.6.34"></script>
+    <script src="map.js?v=2.6.34"></script>
+    <script src="sky.js?v=2.6.34"></script>
+    <script src="daygraph.js?v=2.6.34"></script>
+    <script src="boot.js?v=2.6.34"></script>
   </body>
 </html>
