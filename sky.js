@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v3";
+const SKY_SCENE_VERSION = "sky-v4";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -757,7 +757,7 @@ function skyVisiblePoint(vw, vh, phase, options = {}) {
 function skyFilterDefs() {
   return `<defs>
     <filter id="sky-cloud-f" x="-18%" y="-45%" width="136%" height="190%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12"/>
     </filter>
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
@@ -851,6 +851,7 @@ function skyShootingStar(vw, vh, rng) {
 function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
   const isRainy = condition === "rain" || condition === "thunder";
   const isOvercast = condition === "overcast";
+  const box = skyVisibleBox(vw, vh);
   const cloudDepth = skyState ? clamp01(skyState.cloud / 100) : (isOvercast || isRainy ? 0.82 : 0.35);
   const lowLayer = skyState ? clamp01(skyState.lowCloud / 100) : 0.5;
   const highLayer = skyState ? clamp01(skyState.highCloud / 100) : 0.3;
@@ -859,9 +860,9 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
   const windiness = skyState?.windiness ?? 0;
   let out = "";
   for (let c = 0; c < count; c++) {
-    const bx = rng() * vw * 1.26 - vw * 0.13;
+    const bx = box.x + rng() * box.width * 1.26 - box.width * 0.13;
     const layerLift = highLayer * 0.045 - lowLayer * 0.035;
-    const by = vh * (
+    const by = box.y + box.height * (
       isRainy ? 0.06 + rng() * 0.17 + layerLift :
       isOvercast ? 0.05 + rng() * 0.24 + layerLift :
       0.08 + rng() * 0.30 + layerLift
@@ -894,7 +895,7 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
       "Z"
     ].join(" ");
     const lowBandY = baseY + bodyHeight * (0.10 + rng() * 0.20);
-    const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.34"}"/>`;
+    const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.44"}"/>`;
     out += `<g class="sky-cloud" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}" filter="url(#sky-cloud-f)" opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
   }
   return out;
