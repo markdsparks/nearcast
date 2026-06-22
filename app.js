@@ -1,4 +1,4 @@
-const VERSION = "2.6.19";
+const VERSION = "2.6.20";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1132,7 +1132,7 @@ function updateCurrentHourlyWeatherIcon(truth = state.weatherTruth) {
   const icon = els.hourly?.querySelector(".hour-card.current .hour-icon");
   if (!icon || !truth) return;
   const stormPotential = truth.display?.stormPotential;
-  icon.innerHTML = weatherIcon(truth.code, truth.isDay, { density: "dense" }) +
+  icon.innerHTML = weatherIcon(truth.nowCode ?? truth.code, truth.isDay, { density: "dense" }) +
     (stormPotential ? thunderBadgeHtml() : "");
 }
 
@@ -1168,10 +1168,15 @@ function buildWeatherTruth(data = state.forecast) {
       precipRate: currentRate
     });
     const measuredCode = nowPrecip.isWetNow ? strongerPrecipCode(currentCode, nowPrecip.code) : null;
+    // Keep current-condition icons separate from the immersive scene: "rain soon"
+    // can tint the sky, but it must not become the Now icon.
+    const nowCode = measuredCode ?? currentCode ?? baseCode;
     const visualCode = precipTruth.visualWet ? strongerPrecipCode(baseCode, precipTruth.visualCode) : baseCode;
-    const code = measuredCode ? strongerPrecipCode(visualCode, measuredCode) : visualCode;
+    const sceneCode = measuredCode ? strongerPrecipCode(visualCode, measuredCode) : visualCode;
     display = {
-      code,
+      code: sceneCode,
+      sceneCode,
+      nowCode,
       rawCode,
       pop: Math.max(pop || 0, precipTruth.chance || 0),
       cloud,
@@ -1180,7 +1185,7 @@ function buildWeatherTruth(data = state.forecast) {
       precip: Math.max(precip, nowPrecip.amount || 0, current.precipitation || 0),
       nowPrecip,
       precipTruth,
-      stormPotential: hasThunderPotential(rawCode, pop, code, precip, data)
+      stormPotential: hasThunderPotential(rawCode, pop, nowCode, precip, data)
     };
   } else {
     const fallbackCode = effectiveCurrentCode(current);
@@ -1193,10 +1198,13 @@ function buildWeatherTruth(data = state.forecast) {
       baseCode: fallbackCode,
       hourlyIndex: -1
     });
+    const nowCode = nowPrecip.isWetNow ? strongerPrecipCode(fallbackCode, nowPrecip.code) : fallbackCode;
     const visualCode = precipTruth.visualWet ? strongerPrecipCode(fallbackCode, precipTruth.visualCode) : fallbackCode;
-    const code = nowPrecip.isWetNow ? strongerPrecipCode(visualCode, nowPrecip.code) : visualCode;
+    const sceneCode = nowPrecip.isWetNow ? strongerPrecipCode(visualCode, nowPrecip.code) : visualCode;
     display = {
-      code,
+      code: sceneCode,
+      sceneCode,
+      nowCode,
       rawCode: current.weather_code,
       pop: precipTruth.chance || null,
       cloud: current.cloud_cover,
@@ -1215,8 +1223,10 @@ function buildWeatherTruth(data = state.forecast) {
   const truth = {
     data,
     display,
-    code: display.code,
-    label: weatherCodes[display.code] || "Weather",
+    code: display.nowCode,
+    nowCode: display.nowCode,
+    sceneCode: display.sceneCode,
+    label: weatherCodes[display.nowCode] || "Weather",
     isDay: display.isDay,
     rainChance: display.precipTruth?.chance ?? (display.pop ?? currentRainChanceFromHourly(data)),
     nowPrecip,
@@ -2350,7 +2360,7 @@ function setWelcomeAmbientLabel(text) {
 function welcomeAmbientCopy(data, place, truth) {
   const placeName = String(place?.name || "").trim();
   if (!placeName) return "";
-  const condition = dailyConditionLabel(truth?.code ?? data?.current?.weather_code ?? 3);
+  const condition = dailyConditionLabel(truth?.sceneCode ?? truth?.code ?? data?.current?.weather_code ?? 3);
   return `Local sky near ${placeName} · ${condition}`;
 }
 
@@ -2415,8 +2425,9 @@ async function loadWelcomeAmbience() {
 function applyWelcomeAmbience(data, place) {
   if (!welcomeIsActive() || !data) return;
   const truth = buildWeatherTruth(data);
-  updateWelcomeBrandMark(truth.code, truth.isDay);
-  updateSkyCanvas(truth.code, truth.isDay, data, truth.display);
+  const sceneCode = truth.sceneCode ?? truth.code;
+  updateWelcomeBrandMark(truth.nowCode ?? truth.code, truth.isDay);
+  updateSkyCanvas(sceneCode, truth.isDay, data, truth.display);
   setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth));
 }
 
@@ -3095,8 +3106,9 @@ function renderForecast(data, place) {
   const isDay = displayCondition.isDay;
   state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[todayIndex], data);
   state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
-  const nowCode = truth.code;
-  state.skyState = deriveSkyState(nowCode, isDay, data, displayCondition);
+  const nowCode = truth.nowCode ?? truth.code;
+  const sceneCode = truth.sceneCode ?? nowCode;
+  state.skyState = deriveSkyState(sceneCode, isDay, data, displayCondition);
   syncWeatherTruthDaylight(truth, state.skyState.isDay);
   state.skyIsDay = truth.isDay;
   state.locationIsDay = truth.isDay;
@@ -3128,7 +3140,7 @@ function renderForecast(data, place) {
   updateMapPlace();
   refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
-  updateSkyCanvas(nowCode, truth.isDay, data, displayCondition);
+  updateSkyCanvas(sceneCode, truth.isDay, data, displayCondition);
   perfEnd("renderForecast", perf);
 }
 
@@ -8571,7 +8583,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     if (position === 0) {
       const display = truth.display;
       rawCode = display.rawCode;
-      wcode = display.code;
+      wcode = display.nowCode ?? truth.code;
       rain = display.nowPrecip?.isWetNow ? display.nowPrecip.chance : Math.max(rain, display.pop || 0);
       precip = Math.max(precip, display.precip || 0);
       stormPotential = display.stormPotential || hasThunderPotential(rawCode, display.pop, wcode, precip, data);
@@ -11720,15 +11732,16 @@ function refreshSkyForLiveTime() {
   if (state.skyCode === null || state.theme !== "auto" || !state.forecast) return;
   const truth = buildWeatherTruth(state.forecast);
   const display = truth.display;
-  state.skyCode = truth.code;
-  const nextSkyState = deriveSkyState(truth.code, truth.isDay, state.forecast, display);
+  const sceneCode = truth.sceneCode ?? truth.code;
+  state.skyCode = sceneCode;
+  const nextSkyState = deriveSkyState(sceneCode, truth.isDay, state.forecast, display);
   const dayChanged = state.locationIsDay !== nextSkyState.isDay;
   syncWeatherTruthDaylight(truth, nextSkyState.isDay);
   state.weatherTruth = truth;
   state.skyState = nextSkyState;
   state.skyIsDay = truth.isDay;
   state.locationIsDay = truth.isDay;
-  updateHeroWeatherIcon(truth.code, truth.isDay);
+  updateHeroWeatherIcon(truth.nowCode ?? truth.code, truth.isDay);
   updateCurrentHourlyWeatherIcon(truth);
   updateWeatherTruthReceipt(truth);
   renderMapLegend();
@@ -11736,7 +11749,7 @@ function refreshSkyForLiveTime() {
     applyTheme();
     return;
   }
-  updateSkyCanvas(truth.code, truth.isDay, state.forecast, display);
+  updateSkyCanvas(sceneCode, truth.isDay, state.forecast, display);
 }
 
 window.setInterval(refreshSkyForLiveTime, 60 * 1000);
@@ -11838,7 +11851,9 @@ function openNext24Detail(options = {}) {
   const firstDay = datePart(data.hourly.time[firstIndex]);
   const firstDayIndex = Math.max(0, data.daily?.time?.findIndex((time) => datePart(time) === firstDay) ?? 0);
   const displayCondition = currentDisplayCondition(data);
-  const code = safeBlock === 0 ? displayCondition.code : representativeHourlyCodeForIndices(data, indices);
+  const code = safeBlock === 0
+    ? (displayCondition.nowCode ?? state.weatherTruth?.nowCode ?? state.weatherTruth?.code ?? displayCondition.code)
+    : representativeHourlyCodeForIndices(data, indices);
   const firstHourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[firstIndex]) : displayCondition.isDay;
   const rangeLabel = rollingWindowRangeLabel(windowRows, rows, data);
   const detailContext = [rangeLabel, contextLabel].filter(Boolean).join(" · ");
@@ -12033,8 +12048,8 @@ function openDayDetail({
       gust: data.hourly.wind_gusts_10m[h],
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
-      code,
-      stormPotential: hasThunderPotential(rawCode, pop, code, precip, data),
+      code: isNowHour ? (state.weatherTruth?.nowCode ?? state.weatherTruth?.code ?? code) : code,
+      stormPotential: hasThunderPotential(rawCode, pop, isNowHour ? (state.weatherTruth?.nowCode ?? state.weatherTruth?.code ?? code) : code, precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
       eventLabel: inEvent ? detailEventBadgeLabel(matchedEventWindows, eventWindow) : "",
