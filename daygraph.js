@@ -275,6 +275,7 @@ function detailHoursForIndices(indices, {
     const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
     const precip = data.hourly.precipitation[h] || 0;
     const code = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
+    const truth = state.weatherTruth;
     const ms = parseForecastTimestamp(data.hourly.time[h], data);
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
@@ -284,6 +285,10 @@ function detailHoursForIndices(indices, {
     const eventMemoryIds = matchedEventWindows.map((window) => window.memoryId).filter(Boolean);
     const hourIsDay = data.hourly.is_day ? Boolean(data.hourly.is_day[h]) : true;
     const isNowHour = showNow && isCurrentHour(data.hourly.time[h], data);
+    const activePrecip = Boolean(isNowHour && truth?.precip?.phase === "active");
+    const truthCode = truth?.nowCode ?? truth?.code ?? code;
+    const truthPrecip = truth?.display?.precip ?? truth?.nowPrecip?.amount ?? precip;
+    const precipSource = truth?.precip?.source || truth?.source || "";
     return {
       time: data.hourly.time[h],
       ms,
@@ -291,18 +296,25 @@ function detailHoursForIndices(indices, {
       temp: data.hourly.temperature_2m[h],
       feels: data.hourly.apparent_temperature[h],
       pop,
-      precip,
+      precip: activePrecip ? Math.max(precip, truthPrecip || 0) : precip,
       wind: data.hourly.wind_speed_10m[h],
       gust: data.hourly.wind_gusts_10m[h],
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
-      code: isNowHour ? (state.weatherTruth?.nowCode ?? state.weatherTruth?.code ?? code) : code,
-      stormPotential: hasThunderPotential(rawCode, pop, isNowHour ? (state.weatherTruth?.nowCode ?? state.weatherTruth?.code ?? code) : code, precip, data),
+      code: isNowHour ? truthCode : code,
+      activePrecip,
+      rainText: activePrecip ? "Now" : "",
+      precipText: activePrecip
+        ? truthPrecip > 0 ? "" : precipSource === "radar-current" ? "On radar" : "Detected"
+        : "",
+      precipSource,
+      precipDetail: activePrecip ? (truth?.surfaceDetail || truth?.receiptDetail || truth?.receipt || "") : "",
+      stormPotential: hasThunderPotential(rawCode, pop, isNowHour ? truthCode : code, activePrecip ? Math.max(precip, truthPrecip || 0) : precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
       eventLabel: inEvent ? detailEventBadgeLabel(matchedEventWindows, eventWindow) : "",
       eventMemoryIds,
-      isDay: isNowHour ? (state.weatherTruth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
+      isDay: isNowHour ? (truth?.isDay ?? currentLocalDaylightIsDay(data, hourIsDay)) : hourIsDay
     };
   });
 }
@@ -420,11 +432,15 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
     signals.push({ label: "Thunder", tone: " is-storm" });
   }
 
-  if (hour.pop >= 20) {
+  if (hour.activePrecip) {
+    signals.push({ label: "Rain now", tone: " is-wet" });
+  } else if (hour.pop >= 20) {
     signals.push({ label: `${hour.pop}% rain`, tone: hour.pop >= 40 ? " is-wet" : "" });
   }
 
-  if (hour.precip > 0.02) {
+  if (hour.activePrecip && hour.precipText) {
+    signals.push({ label: hour.precipText, tone: " is-flag" });
+  } else if (hour.precip > 0.02) {
     signals.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
   } else if (windy) {
     signals.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
@@ -444,7 +460,14 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 function hourlyDetailNote(hour, tempUnit, windUnit) {
   const alertNote = hour.alert ? hourlyAlertDetailNote(hour.alert) : "";
   let weatherNote = "";
-  if (isThunderCode(hour.code) || hour.stormPotential) {
+  if (hour.activePrecip) {
+    const source = hour.precipSource === "radar-current"
+      ? "Radar shows precipitation over this place now."
+      : hour.precipSource === "minutely-current"
+        ? "The near-term forecast has precipitation in the current slot."
+        : "Precipitation is happening now.";
+    weatherNote = `${source} Hourly probability can lag observed conditions.`;
+  } else if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
     weatherNote = isThunderCode(hour.code)
@@ -559,7 +582,7 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time, data);
-    const rainClass = hour.pop >= 40 ? " is-rainy" : "";
+    const rainClass = hour.activePrecip || hour.pop >= 40 ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const stormClass = hour.stormPotential ? " is-stormy" : "";
@@ -576,6 +599,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rowLabel = `${formatHour(hour.time)} ${condition}${hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
+    const rainText = hour.rainText || `${hour.pop}%`;
+    const precipText = hour.precipText || (hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
@@ -592,8 +617,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
           <p>${escapeHtml(detailNote)}</p>
           <div class="sheet-hour-detail-grid">
             <span><small>Feels</small><strong>${Math.round(hour.feels)}${deg}</strong></span>
-            <span><small>Rain</small><strong>${hour.pop}%</strong></span>
-            <span><small>Precip</small><strong>${hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`}</strong></span>
+            <span><small>Rain</small><strong>${escapeHtml(rainText)}</strong></span>
+            <span><small>Precip</small><strong>${escapeHtml(precipText)}</strong></span>
             <span><small>Wind</small><strong>${Math.round(hour.wind)} ${windUnit}</strong></span>
             <span><small>Gust</small><strong>${Math.round(hour.gust)} ${windUnit}</strong></span>
             <span><small>UV</small><strong>${Math.round(hour.uv)}</strong></span>

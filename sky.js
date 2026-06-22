@@ -110,6 +110,9 @@ function skyWindMph(value) {
 function skyPrecipPressure(precipTruth = {}) {
   const phase = precipTruth?.phase;
   const chance = clamp01((precipTruth?.chance || 0) / 100);
+  if (phase === "active") {
+    return clamp01(0.56 + chance * 0.24);
+  }
   if (phase === "imminent") {
     const lead = Number.isFinite(precipTruth.startsInMin)
       ? clamp01(1 - precipTruth.startsInMin / IMMINENT_PRECIP_MINUTES)
@@ -239,10 +242,20 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
   const lowSun = effectiveIsDay ? 1 - smoothstep(7, 28, elevation) : 0;
   const twilight = effectiveIsDay ? 0 : smoothstep(-18, -4, elevation) * (1 - smoothstep(-4, 1, elevation));
   const golden = effectiveIsDay ? clamp01(lowSun * (0.85 + Math.max(0, 1 - dayProgress) * 0.06)) : 0;
-  const cloud = clamp(skyNumber(sample.cloud, displayCondition.cloud ?? data?.current?.cloud_cover ?? 0), 0, 100);
-  const lowCloud = clamp(skyNumber(sample.lowCloud, cloud * 0.55), 0, 100);
-  const midCloud = clamp(skyNumber(sample.midCloud, cloud * 0.45), 0, 100);
-  const highCloud = clamp(skyNumber(sample.highCloud, cloud * 0.35), 0, 100);
+  const precipTruth = displayCondition.precipTruth || {};
+  const activePrecip = precipTruth.phase === "active" || precipTruth.isWetNow === true;
+  let cloud = clamp(skyNumber(sample.cloud, displayCondition.cloud ?? data?.current?.cloud_cover ?? 0), 0, 100);
+  if (activePrecip && (condition === "rain" || condition === "snow" || condition === "thunder")) {
+    cloud = Math.max(cloud, condition === "thunder" ? 88 : condition === "rain" ? 82 : 76);
+  }
+  let lowCloud = clamp(skyNumber(sample.lowCloud, cloud * 0.55), 0, 100);
+  let midCloud = clamp(skyNumber(sample.midCloud, cloud * 0.45), 0, 100);
+  let highCloud = clamp(skyNumber(sample.highCloud, cloud * 0.35), 0, 100);
+  if (activePrecip && (condition === "rain" || condition === "snow" || condition === "thunder")) {
+    lowCloud = Math.max(lowCloud, cloud * 0.72);
+    midCloud = Math.max(midCloud, cloud * 0.48);
+    highCloud = Math.max(highCloud, cloud * 0.24);
+  }
   const visibilityKm = sample.visibility !== null ? Math.max(0, sample.visibility / 1000) : null;
   const visibilityHaze = visibilityKm === null ? 0 : clamp01((18 - visibilityKm) / 14);
   const humidity = skyNumber(data?.current?.relative_humidity_2m, null);
@@ -260,7 +273,7 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
   const windMph = skyWindMph(sample.wind);
   const gustMph = skyWindMph(sample.gust);
   const windiness = clamp01((Math.max(windMph, gustMph * 0.72) - 6) / 28);
-  const precipPressure = skyPrecipPressure(displayCondition.precipTruth);
+  const precipPressure = skyPrecipPressure(precipTruth);
   const haze = clamp01(
     visibilityHaze +
     (condition === "rain" || condition === "thunder" ? 0 : humidityHaze) +
@@ -273,10 +286,14 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
   const direct = skyNumber(sample.direct, null);
   const diffuse = skyNumber(sample.diffuse, null);
   const radiation = shortwave !== null ? clamp01(shortwave / 860) : null;
-  const directness = shortwave && shortwave > 20 ? clamp01((direct ?? 0) / shortwave) : solarLift * (1 - cloud / 130);
+  const directnessBase = shortwave && shortwave > 20 ? clamp01((direct ?? 0) / shortwave) : solarLift * (1 - cloud / 130);
+  const directness = activePrecip && (condition === "rain" || condition === "snow" || condition === "thunder")
+    ? directnessBase * 0.24
+    : directnessBase;
   const cloudShade = clamp01((cloud - 18) / 82);
+  const activeWetness = activePrecip ? Math.max(0.58, clamp01((precipTruth.chance || 0) / 100) * 0.82) : 0;
   const wetness = condition === "rain" || condition === "thunder"
-    ? clamp01((skyNumber(sample.pop, displayCondition.pop ?? 0) - 20) / 70 + skyNumber(sample.precipitation, 0) * 0.7)
+    ? clamp01((skyNumber(sample.pop, displayCondition.pop ?? 0) - 20) / 70 + skyNumber(sample.precipitation, 0) * 0.7 + activeWetness)
     : 0;
   const diffuseGlow = diffuse !== null ? clamp01(diffuse / 300) : clamp01(cloud / 140);
   const daytimeBrightness = clamp01(
@@ -334,6 +351,9 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     aqi,
     pollenVeil,
     pollenRank,
+    precipPhase: precipTruth.phase || "",
+    precipSource: precipTruth.source || "",
+    activePrecip,
     precipPressure,
     precipitation: skyNumber(sample.precipitation, 0),
     pop: skyNumber(sample.pop, displayCondition.pop ?? 0)
@@ -600,6 +620,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   const lowCloud = clamp01(skyState.lowCloud / 100);
   const highCloud = clamp01(skyState.highCloud / 100);
   const precipPressure = skyState.precipPressure ?? 0;
+  const activePrecip = skyState.activePrecip === true || skyState.precipPhase === "active";
   const precipCloudBonus = condition === "rain" || condition === "snow" || condition === "thunder" ? 1 : 0;
   const clouds = Math.round(clamp(
     cloudPct / 18 + lowCloud * 1.2 + highCloud * 0.4 + precipCloudBonus + precipPressure * 1.45,
@@ -608,6 +629,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   ));
   const moonVisible = !isDay && cloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
   const sunVisible = isDay &&
+    !activePrecip &&
     condition !== "thunder" &&
     (condition === "clear" || condition === "partly-cloudy" || skyState.directness > 0.23 || cloudPct < 72);
   const stars = !isDay
