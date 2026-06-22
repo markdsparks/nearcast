@@ -271,6 +271,129 @@ function renderSupportActions(includeRetry = false) {
   `</div>`;
 }
 
+const PLAN_BRIEFING_MAX_ITEMS = 3;
+
+function briefingPanel(html, className = "") {
+  const cls = ["briefing-panel", className].filter(Boolean).join(" ");
+  return `<section class="${cls}">${html}</section>`;
+}
+
+function planBriefingActivityKey(memory) {
+  const text = [memory?.title, memory?.original, memory?.label, memory?.answer]
+    .filter(Boolean)
+    .join(" ");
+  return detectAskActivity(text) || detectPlanActivity(text) || "event";
+}
+
+function planBriefingTone(item) {
+  if (item.alertTone === "warning" || item.alertTone === "watch") return "watch";
+  if (item.score < 45 || item.stats?.stormPotential) return "watch";
+  if (item.score < 65 || item.stats?.rainChance >= 35 || item.stats?.gustMax >= 25) return "caution";
+  return "good";
+}
+
+function planBriefingPriority(item) {
+  const alertWeight = item.alertTone === "warning" ? 80 :
+    item.alertTone === "watch" ? 65 :
+      item.alertTone === "advisory" ? 42 : 0;
+  const rainWeight = item.stats?.stormPotential ? 35 : Math.min(35, Math.max(0, item.stats?.rainChance || 0) / 2);
+  const windWeight = Math.max(0, (item.stats?.gustMax || 0) - 18);
+  const scoreWeight = Math.max(0, 75 - item.score);
+  return alertWeight + rainWeight + windWeight + scoreWeight;
+}
+
+function planBriefingReason(item) {
+  const reasons = item.reasons || [];
+  if (item.alert) return reasons[0] || `${item.alert.event} overlaps that window`;
+  if (item.stats?.stormPotential) return "thunderstorms are possible";
+  if (item.stats?.rainChance >= 35) return `${item.stats.rainChance}% rain chance`;
+  if (item.stats?.gustMax >= 25) return `gusts near ${item.stats.gustMax} ${item.units.wind}`;
+  if (item.stats?.uvMax >= 8) return `UV up to ${item.stats.uvMax}`;
+  if (item.stats?.aqiMax >= 101) return `AQI ${item.stats.aqiMax}`;
+  return reasons[0] || "weather looks manageable";
+}
+
+function planAwareBriefingItems(data = state.forecast, place = state.activePlace) {
+  if (!data || !place || !state.planMemories?.length) return [];
+  const todayIndex = typeof forecastDailyIndex === "function" ? forecastDailyIndex(data) : 0;
+  const c = buildAIContext(data, place, activeAlerts);
+  if (!c) return [];
+  return activePlanMemoryEventsForDay(todayIndex, data, place)
+    .map(({ memory, event }) => {
+      const stats = planWindowStats(data, c, {
+        dayIdx: event.dayIndex,
+        startHour: event.startHour,
+        endHour: event.endHour,
+        label: "custom"
+      });
+      if (!stats) return null;
+      const activityKey = planBriefingActivityKey(memory);
+      const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.event || ACTIVITY_RULES.walk;
+      const alert = topAlertForPlanRange(activeAlerts, event.startMs, event.endMs);
+      const alertSignal = alert ? alertTone(alert) : "";
+      const score = numericWindowScore(rule, stats);
+      const verdict = planVerdict(score, alertSignal);
+      const item = {
+        memory,
+        event,
+        stats,
+        alert,
+        alertTone: alertSignal,
+        score,
+        verdict,
+        units: c.units,
+        reasons: planReasons(stats, c.units, alert).slice(0, 3)
+      };
+      item.tone = planBriefingTone(item);
+      item.priority = planBriefingPriority(item);
+      item.primaryReason = planBriefingReason(item);
+      return item;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.priority - a.priority || a.event.startMs - b.event.startMs);
+}
+
+function renderPlanAwareBriefing() {
+  const items = planAwareBriefingItems();
+  if (!items.length) return "";
+  const visible = items.slice(0, PLAN_BRIEFING_MAX_ITEMS);
+  const top = visible[0];
+  const lead = items.length === 1
+    ? `Here's what matters today: ${planMemoryTitle(top.memory)} is ${top.verdict.toLowerCase()} - ${top.primaryReason}.`
+    : `Here's what matters today: ${planMemoryTitle(top.memory)} has the biggest weather signal - ${top.primaryReason}.`;
+  const rows = visible.map((item) => {
+    const title = planMemoryTitle(item.memory);
+    const reason = item.reasons.slice(0, 2).join(" · ");
+    return `
+      <button class="plan-briefing-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Open ${escapeHtml(title)} forecast">
+        <span class="plan-briefing-item-head">
+          <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(planMemoryTimeText(item.memory))}</small></span>
+          <em>${escapeHtml(item.verdict)}</em>
+        </span>
+        <span class="plan-briefing-item-reason">${escapeHtml(reason || item.primaryReason)}</span>
+      </button>
+    `;
+  }).join("");
+  const more = items.length > visible.length
+    ? `<button class="plan-briefing-more" type="button" data-memory-open>View memories</button>`
+    : "";
+
+  return `
+    <section class="plan-briefing" aria-label="Plan-aware briefing">
+      <div class="plan-briefing-head">
+        <span class="plan-briefing-spark" aria-hidden="true">✦</span>
+        <div>
+          <strong>What matters today</strong>
+          <small>Based on remembered plans</small>
+        </div>
+      </div>
+      <p class="plan-briefing-lead">${escapeHtml(lead)}</p>
+      <div class="plan-briefing-list">${rows}</div>
+      ${more}
+    </section>
+  `;
+}
+
 // One-time capability probe. Planner works everywhere; the private summary gets
 // enabled only when the current browser, host, GPU, worker, and storage path look viable.
 async function detectAI() {
@@ -417,10 +540,13 @@ function renderBriefing() {
   // Privacy is the headline feature: the model runs entirely on-device.
   const privateTag =
     `<span class="briefing-tag">${lockGlyph()}Private AI summary · runs on your device</span>`;
+  const planBriefing = renderPlanAwareBriefing();
 
   if (aiState.phase === "unsupported") {
-    slot.className = "briefing briefing-compat";
+    slot.className = "briefing briefing-stack briefing-compat";
     slot.innerHTML =
+      planBriefing +
+      briefingPanel(
       `<div class="briefing-row">` +
         `<span class="briefing-spark">${lockGlyph()}</span>` +
         `<div class="briefing-copy">` +
@@ -429,14 +555,15 @@ function renderBriefing() {
           `<small>Planner windows and planning answers still work on this device.</small>` +
         `</div>` +
       `</div>` +
-      renderSupportActions(false);
+      renderSupportActions(false));
     return;
   }
 
   if (aiState.phase === "idle") {
-    slot.className = "briefing briefing-cta";
+    slot.className = "briefing briefing-stack briefing-cta";
     const warning = aiState.support?.warnings?.[0];
     slot.innerHTML =
+      planBriefing +
       `<button class="briefing-enable" data-ai="enable" type="button">` +
         `<span class="briefing-spark">${lockGlyph()}</span>` +
         `<span class="briefing-enable-copy"><strong>Enable private AI summary</strong>` +
@@ -445,29 +572,35 @@ function renderBriefing() {
   }
 
   if (aiState.phase === "loading") {
-    slot.className = "briefing briefing-loading";
+    slot.className = "briefing briefing-stack briefing-loading";
     slot.innerHTML =
+      planBriefing +
+      briefingPanel(
       `<div class="briefing-progress-head"><span class="briefing-spark spin">✦</span>` +
       `<span>${escapeHtml(aiState.status || "Preparing local AI summary…")}</span>` +
       `<em>${aiState.progress}%</em></div>` +
       `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>` +
-      `<span class="briefing-tag">${lockGlyph()}One-time model download, then private on this device</span>`;
+      `<span class="briefing-tag">${lockGlyph()}One-time model download, then private on this device</span>`);
     return;
   }
 
   if (aiState.phase === "generating") {
-    slot.className = "briefing briefing-text generating";
+    slot.className = "briefing briefing-stack briefing-text generating";
     slot.innerHTML =
+      planBriefing +
+      briefingPanel(
       `<div class="briefing-row"><span class="briefing-spark">✦</span>` +
       `<p class="briefing-body">${escapeHtml(aiState.text)}<i class="briefing-caret"></i></p>` +
       `<button class="briefing-act" data-ai="stop" type="button" aria-label="Stop">■</button></div>` +
-      privateTag;
+      privateTag);
     return;
   }
 
   if (aiState.phase === "error") {
-    slot.className = "briefing briefing-compat";
+    slot.className = "briefing briefing-stack briefing-compat";
     slot.innerHTML =
+      planBriefing +
+      briefingPanel(
       `<div class="briefing-row">` +
         `<span class="briefing-spark">!</span>` +
         `<div class="briefing-copy">` +
@@ -476,21 +609,24 @@ function renderBriefing() {
           `<small>Planner windows and planning answers are still available.</small>` +
         `</div>` +
       `</div>` +
-      renderSupportActions(true);
+      renderSupportActions(true));
     return;
   }
 
   // ready
   if (aiState.text) {
-    slot.className = "briefing briefing-text";
+    slot.className = "briefing briefing-stack briefing-text";
     slot.innerHTML =
+      planBriefing +
+      briefingPanel(
       `<div class="briefing-row"><span class="briefing-spark">✦</span>` +
       `<p class="briefing-body">${escapeHtml(aiState.text)}</p>` +
       `<button class="briefing-act" data-ai="brief" type="button" aria-label="Regenerate">↻</button></div>` +
-      privateTag;
+      privateTag);
   } else {
-    slot.className = "briefing briefing-cta";
+    slot.className = "briefing briefing-stack briefing-cta";
     slot.innerHTML =
+      planBriefing +
       `<button class="briefing-enable" data-ai="brief" type="button">` +
       `<span class="briefing-spark">✦</span>` +
       `<span class="briefing-enable-copy"><strong>Generate private AI summary</strong>` +
@@ -2785,6 +2921,7 @@ function refreshOpenGlobalMemorySheet() {
 }
 
 function refreshPlanMemorySurfaces() {
+  renderBriefing();
   renderForecastMemorySurfaces();
   refreshOpenGlobalMemorySheet();
   if (typeof refreshOpenDayDetailMemorySurfaces === "function") {

@@ -1,4 +1,4 @@
-const VERSION = "2.6.36";
+const VERSION = "2.6.37";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1902,6 +1902,16 @@ function bindEvents() {
 
   bindTapAction(els.themeToggle, toggleTheme);
   els.briefing.addEventListener("click", (event) => {
+    const planShow = event.target.closest("[data-plan-brief-show]");
+    if (planShow) {
+      showPlanMemory(planShow.dataset.planBriefShow);
+      return;
+    }
+    const memoryOpen = event.target.closest("[data-memory-open]");
+    if (memoryOpen) {
+      openGlobalMemorySheet();
+      return;
+    }
     const btn = event.target.closest("[data-ai]");
     if (!btn) return;
     const action = btn.dataset.ai;

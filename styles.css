@@ -1881,6 +1881,20 @@ h2 {
   background: var(--panel-soft);
   border: 1px solid var(--line);
 }
+.briefing.briefing-stack {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.briefing-panel,
+.plan-briefing {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
 .briefing-spark {
   color: var(--blue);
   font-size: 0.95rem;
@@ -2086,6 +2100,121 @@ h2 {
   width: auto;
   padding: 0 12px;
   margin-left: auto;
+}
+.plan-briefing {
+  display: grid;
+  gap: 10px;
+  background:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.10), rgba(52, 125, 98, 0.08)),
+    var(--panel-soft);
+  border-color: rgba(53, 111, 183, 0.22);
+}
+.plan-briefing-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.plan-briefing-spark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(53, 111, 183, 0.12);
+  color: var(--blue);
+  font-size: 0.82rem;
+  flex: 0 0 auto;
+}
+.plan-briefing-head strong {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 850;
+}
+.plan-briefing-head small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 1px;
+}
+.plan-briefing-lead {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 750;
+  line-height: 1.32;
+}
+.plan-briefing-list {
+  display: grid;
+  gap: 8px;
+}
+.plan-briefing-item {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(54, 76, 98, 0.20);
+  border-left: 4px solid var(--blue);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.38);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.plan-briefing-item:hover {
+  border-color: rgba(53, 111, 183, 0.34);
+  transform: translateY(-1px);
+}
+.plan-briefing-item.is-good {
+  border-left-color: var(--green);
+}
+.plan-briefing-item.is-caution {
+  border-left-color: var(--gold);
+}
+.plan-briefing-item.is-watch {
+  border-left-color: var(--red);
+}
+.plan-briefing-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.plan-briefing-item-head strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+.plan-briefing-item-head small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 1px;
+}
+.plan-briefing-item-head em {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.plan-briefing-item-reason {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.plan-briefing-more {
+  justify-self: start;
+  padding: 5px 9px;
+  border: 1px solid rgba(53, 111, 183, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.38);
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 850;
+  cursor: pointer;
 }
 
 /* ---------- Ask the forecast (Q&A) ---------- */
