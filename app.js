@@ -1,4 +1,4 @@
-const VERSION = "2.6.26";
+const VERSION = "2.6.27";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1672,7 +1672,19 @@ function initViewportGeometrySync() {
 }
 
 function pageScrollY() {
-  return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  const raw = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  return clamp(raw, 0, maxPageScrollY());
+}
+
+function maxPageScrollY() {
+  const doc = document.documentElement;
+  const body = document.body;
+  const contentHeight = Math.max(
+    doc?.scrollHeight || 0,
+    body?.scrollHeight || 0
+  );
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || doc?.clientHeight || 0;
+  return Math.max(0, contentHeight - viewportHeight);
 }
 
 function scheduleFloatingChromeUpdate() {
@@ -1690,10 +1702,12 @@ function updateFloatingChrome(options = {}) {
   const menuOpen = els.shell.classList.contains("menu-open");
   const searchOpen = els.shell.classList.contains("search-open");
   const welcome = els.shell.classList.contains("mode-welcome");
-  if (delta < 0) floatingChromeUpTravel += Math.abs(delta);
+  const nearBottom = maxPageScrollY() - y < 96;
+  if (delta < 0 && !nearBottom) floatingChromeUpTravel += Math.abs(delta);
   else if (delta > 0) floatingChromeUpTravel = 0;
+  else if (nearBottom) floatingChromeUpTravel = 0;
 
-  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || floatingChromeUpTravel > 24;
+  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || (!nearBottom && floatingChromeUpTravel > 24);
   if (shouldReveal) {
     els.shell.classList.remove("chrome-tucked");
     floatingChromeUpTravel = 0;
