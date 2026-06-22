@@ -5177,6 +5177,9 @@ body.map-immersive-active .day-sheet.show {
   outline: 2px solid rgba(91, 141, 220, 0.72);
   outline-offset: 3px;
 }
+body.map-immersive-active .sheet-now-jump {
+  z-index: 1104;
+}
 .sheet-hour-row {
   position: relative;
   display: grid;
