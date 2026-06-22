@@ -593,7 +593,6 @@ html[data-sky] body {
   opacity: 0;
   animation: sky-rain-fall linear infinite;
   will-change: transform, opacity;
-  mix-blend-mode: screen;
 }
 
 .sky-rain-fine {
