@@ -131,6 +131,45 @@ function skyPrecipPressure(precipTruth = {}) {
   return 0;
 }
 
+function skyPrecipRateIntensity(rate, data = state.forecast) {
+  const value = Number(rate || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  const thresholds = typeof precipRateThresholds === "function"
+    ? precipRateThresholds(data)
+    : { measurable: 0.008, moderate: 0.1, heavy: 0.3 };
+  const measurable = Math.max(Number(thresholds.measurable) || 0.008, 0.0001);
+  const moderate = Math.max(Number(thresholds.moderate) || 0.1, measurable * 2);
+  const heavy = Math.max(Number(thresholds.heavy) || 0.3, moderate * 1.4);
+  if (value < measurable) return 0;
+  if (value < moderate) return 0.18 + smoothstep(measurable, moderate, value) * 0.22;
+  if (value < heavy) return 0.42 + smoothstep(moderate, heavy, value) * 0.28;
+  return clamp(0.74 + smoothstep(heavy, heavy * 2.2, value) * 0.22, 0.74, 0.96);
+}
+
+function skyPrecipCodeIntensity(code) {
+  const n = Number(code);
+  if (!Number.isFinite(n)) return 0;
+  if (n === 51 || n === 56) return 0.18;
+  if (n === 53 || n === 57) return 0.25;
+  if (n === 55) return 0.34;
+  if (n === 61 || n === 66 || n === 80) return 0.32;
+  if (n === 63 || n === 67 || n === 81) return 0.58;
+  if (n === 65 || n === 82) return 0.88;
+  if (isThunderCode(n)) return 0.78;
+  return 0;
+}
+
+function skyPrecipVisualIntensity(skyState = null, heavy = false) {
+  const codeIntensity = skyPrecipCodeIntensity(skyState?.precipCode);
+  const rateIntensity = skyPrecipRateIntensity(skyState?.precipRate);
+  const wetness = clamp01(skyState?.wetness || 0);
+  const pressure = clamp01(skyState?.precipPressure || 0);
+  const precipitation = clamp01(skyState?.precipitation || 0);
+  const active = skyState?.activePrecip === true || skyState?.precipPhase === "active";
+  const fallback = clamp01(wetness * 0.30 + pressure * 0.18 + precipitation * 0.20 + (active ? 0.08 : 0));
+  return clamp01(Math.max(codeIntensity, rateIntensity, fallback, heavy ? 0.82 : 0));
+}
+
 function clamp01(value) {
   return clamp(value, 0, 1);
 }
@@ -355,6 +394,8 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     precipSource: precipTruth.source || "",
     activePrecip,
     precipPressure,
+    precipCode: precipTruth.visualCode ?? precipTruth.textCode ?? displayCondition.nowPrecip?.code ?? weatherCode,
+    precipRate: displayCondition.nowPrecip?.rate ?? null,
     precipitation: skyNumber(sample.precipitation, 0),
     pop: skyNumber(sample.pop, displayCondition.pop ?? 0)
   };
@@ -885,33 +926,37 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   const pressure = skyState ? skyState.precipPressure || 0 : heavy ? 0.8 : 0.45;
   const precipitation = skyState ? skyState.precipitation || 0 : heavy ? 0.8 : 0.3;
   const active = skyState?.activePrecip === true || skyState?.precipPhase === "active";
-  const intensity = clamp01(wetness * 0.72 + pressure * 0.34 + precipitation * 0.20 + (heavy ? 0.16 : 0) + (active ? 0.12 : 0));
+  const intensity = skyPrecipVisualIntensity(skyState, heavy);
+  const atmosphereIntensity = clamp01(intensity * 0.72 + wetness * 0.14 + pressure * 0.16 + precipitation * 0.08 + (active ? 0.03 : 0));
   const windMph = skyState ? skyState.windMph || 0 : heavy ? 18 : 10;
   const windLean = clamp01(Math.max(windMph / 34, skyState?.windiness || 0));
   const isDay = skyState?.isDay !== false;
   const warmth = clamp01(skyState?.warmth || 0);
-  const drizzle = !heavy && intensity < 0.52;
-  const fineCount = Math.round((drizzle ? 112 : 138) + intensity * 164 + (heavy ? 46 : 0) + (active ? 38 : 0));
-  const nearCount = drizzle ? Math.round(8 + intensity * 20) : Math.round(16 + intensity * 44 + (heavy ? 18 : 0) + (active ? 14 : 0));
-  const drift = 20 + windLean * 36 + intensity * 12;
-  const fineColor = isDay ? lerpHex("#8da6b4", "#b89f8c", warmth * 0.45) : "#c9dceb";
-  const nearColor = isDay ? lerpHex("#f4fafc", "#f3dcc2", warmth * 0.48) : "#ecf5ff";
+  const lightRain = !heavy && intensity < 0.45;
+  const nightDensity = isDay ? 1 : clamp(0.58 + intensity * 0.28, 0.58, 0.84);
+  const nightOpacity = isDay ? 1 : clamp(0.52 + intensity * 0.22, 0.52, 0.76);
+  const fineCount = Math.round(((lightRain ? 70 : 112) + intensity * (lightRain ? 92 : 166) + (heavy ? 46 : 0) + (active ? intensity * 28 : 0)) * nightDensity);
+  const nearCount = Math.round((lightRain ? 4 + intensity * 14 : 12 + intensity * 42 + (heavy ? 16 : 0) + (active ? intensity * 10 : 0)) * nightDensity);
+  const drift = 18 + windLean * 34 + intensity * 10;
+  const fineColor = isDay ? lerpHex("#8da6b4", "#b89f8c", warmth * 0.45) : lerpHex("#8197a8", "#adbfcc", intensity * 0.55);
+  const nearColor = isDay ? lerpHex("#f4fafc", "#f3dcc2", warmth * 0.48) : lerpHex("#a7bac8", "#d4e0ea", intensity * 0.5);
   const veilColor = isDay ? lerpHex("#8797a2", "#ad9683", warmth * 0.45) : "#151d29";
   const glowColor = isDay ? lerpHex("#d5e1e7", "#ead5bf", warmth * 0.5) : "#a8bacd";
-  const veilOpacity = clamp(0.07 + intensity * 0.13 + pressure * 0.07 + (active ? 0.04 : 0), 0.08, heavy ? 0.32 : 0.24);
-  const horizonOpacity = clamp(0.07 + intensity * 0.14 + pressure * 0.06 + (active ? 0.03 : 0), 0.08, heavy ? 0.34 : 0.25);
-  const bandOpacity = clamp(0.035 + intensity * 0.075 + (active ? 0.018 : 0), 0.035, 0.14);
+  const veilOpacity = clamp(0.055 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.025 : 0), 0.06, heavy ? 0.29 : 0.21);
+  const horizonOpacity = clamp(0.06 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.02 : 0), 0.06, heavy ? 0.30 : 0.22);
+  const bandOpacity = clamp((0.022 + atmosphereIntensity * 0.055 + (active ? 0.012 : 0)) * nightOpacity, 0.018, 0.105);
   let fine = "";
   let near = "";
   let bands = "";
   const tileHeight = Math.round(vh * 1.08);
-  const fineDuration = clamp(2.15 - intensity * 0.82 - windLean * 0.28, 1.02, 2.25);
-  const nearDuration = clamp(1.26 - intensity * 0.42 - windLean * 0.18, 0.64, 1.34);
+  const fineDuration = clamp(2.55 - intensity * 0.86 - windLean * 0.24, 1.10, 2.65);
+  const nearDuration = clamp(1.72 - intensity * 0.48 - windLean * 0.16, 0.78, 1.78);
+  const bandCount = Math.max(2, Math.round((lightRain ? 3 : 4 + intensity * 3) * (isDay ? 1 : 0.72)));
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < bandCount; i++) {
     const x = Math.round(-vw * 0.25 + rng() * vw * 1.15);
-    const width = Math.round(vw * (0.18 + rng() * 0.16));
-    const lean = Math.round(drift * (2.4 + rng() * 1.4));
+    const width = Math.round(vw * ((lightRain ? 0.12 : 0.18) + rng() * 0.14));
+    const lean = Math.round(drift * (1.8 + rng() * 1.1));
     const op = (bandOpacity * (0.55 + rng() * 0.45)).toFixed(3);
     bands += `<path class="sky-rain-sheet" d="M${x} 0 L${x + width} 0 L${x + width + lean} ${vh} L${x + lean} ${vh} Z" fill="${glowColor}" opacity="${op}" style="--rain-drift:${drift.toFixed(0)}px;animation-delay:-${(rng() * 8).toFixed(2)}s;animation-duration:${(10 + rng() * 8).toFixed(2)}s"/>`;
   }
@@ -919,20 +964,20 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   for (let i = 0; i < fineCount; i++) {
     const x = -vw * 0.25 + rng() * vw * 1.5;
     const y = rng() * tileHeight;
-    const len = 28 + intensity * 38 + rng() * (drizzle ? 22 : 46);
+    const len = 22 + intensity * 30 + rng() * (lightRain ? 20 : 44);
     const dx = len * (0.20 + windLean * 0.46) + drift * 0.18;
-    const width = 0.82 + intensity * 0.54 + rng() * 0.44;
-    const op = clamp((drizzle ? 0.34 : 0.40) + intensity * 0.34 + rng() * 0.22 + (active ? 0.06 : 0), 0.32, heavy ? 0.82 : 0.74);
+    const width = 0.56 + intensity * 0.50 + rng() * (lightRain ? 0.24 : 0.34);
+    const op = clamp(((lightRain ? 0.20 : 0.30) + intensity * (lightRain ? 0.20 : 0.30) + rng() * 0.16 + (active ? 0.025 : 0)) * nightOpacity, 0.10, heavy ? 0.68 : 0.58);
     fine += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain-streak sky-rain-fine" opacity="${op.toFixed(2)}" stroke="${fineColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="butt"/>`;
   }
 
   for (let i = 0; i < nearCount; i++) {
     const x = -vw * 0.18 + rng() * vw * 1.36;
     const y = rng() * tileHeight;
-    const len = 58 + intensity * 72 + rng() * 68;
+    const len = 42 + intensity * 58 + rng() * (lightRain ? 36 : 64);
     const dx = len * (0.24 + windLean * 0.48) + drift * 0.24;
-    const width = 1.15 + intensity * 1.0 + rng() * 0.95;
-    const op = clamp(0.30 + intensity * 0.30 + rng() * 0.20 + (active ? 0.06 : 0), 0.30, heavy ? 0.72 : 0.62);
+    const width = 0.88 + intensity * 0.78 + rng() * (lightRain ? 0.42 : 0.68);
+    const op = clamp((0.18 + intensity * 0.25 + rng() * 0.14 + (active ? 0.025 : 0)) * nightOpacity, 0.10, heavy ? 0.62 : 0.52);
     near += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain-streak sky-rain-near" opacity="${op.toFixed(2)}" stroke="${nearColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="round"/>`;
   }
 
