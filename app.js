@@ -1,4 +1,4 @@
-const VERSION = "2.6.22";
+const VERSION = "2.6.23";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -31,6 +31,9 @@ const state = {
   skyIsDay: null,
   skyState: null,
   weatherTruth: null,
+  radarPrecipSignal: null,
+  radarPrecipPlaceId: null,
+  radarPrecipSeq: 0,
   locationIsDay: null,
   forecastUnit: null,
   planMemories: loadPlanMemories()
@@ -73,6 +76,12 @@ const perfState = {
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
 const RADAR_TILE_MAX_ZOOM = 8; // cap radar source tiles so they upscale smoothly past z8
+const RADAR_PRECIP_SAMPLE_ZOOM = 8;
+const RADAR_PRECIP_CENTER_RADIUS_PX = 4;
+const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;
+const RADAR_PRECIP_MAX_FRAME_AGE_MS = 14 * 60 * 1000;
+const RADAR_PRECIP_CACHE_MS = 3 * 60 * 1000;
+const RADAR_PRECIP_CACHE_VERSION = "v1";
 const MAP_TAP_MOVE_PX = 8;
 const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
 const CARTO_TILE_HOSTS = ["a", "b", "c", "d"];
@@ -827,6 +836,50 @@ function nowPrecipSignal(data = state.forecast) {
   return signal;
 }
 
+function applyRadarPrecipSignal(signal, data = state.forecast) {
+  const radar = currentRadarPrecipSignal();
+  if (!signal || !radar || radar.phase === "unavailable") return signal;
+  signal.radar = radar;
+
+  if (radar.phase !== "active") return signal;
+
+  const radarCode = radarPrecipCode(data, radar);
+  signal.isWetNow = true;
+  signal.rate = Math.max(signal.rate || 0, precipRateThresholds(data).measurable);
+  signal.code = strongerPrecipCode(signal.code, radarCode);
+  signal.isSnow = signal.isSnow || isSnowCode(radarCode);
+  signal.chance = Math.max(signal.chance || 0, 100);
+  signal.label = weatherCodes[signal.code] || (signal.isSnow ? "Snow" : "Rain");
+  signal.detail = radar.detail || `${signal.label} on radar over this place`;
+  signal.source = "radar-current";
+  return signal;
+}
+
+function radarPrecipCode(data = state.forecast, radar = currentRadarPrecipSignal()) {
+  const shouldShowSnow = radarShouldShowSnow(data);
+  const intensity = radar?.intensity || "light";
+  if (shouldShowSnow) {
+    if (intensity === "heavy") return 75;
+    if (intensity === "moderate") return 73;
+    return 71;
+  }
+  if (intensity === "heavy") return 65;
+  if (intensity === "moderate") return 63;
+  return 61;
+}
+
+function radarShouldShowSnow(data = state.forecast) {
+  const current = data?.current || {};
+  if (isSnowCode(current.weather_code)) return true;
+  const nowcast = analyzeNowcast(data);
+  if (nowcast?.isSnow) return true;
+  const temp = Number(current.temperature_2m);
+  if (!Number.isFinite(temp)) return false;
+  const unit = data?.current_units?.temperature_2m || "";
+  const tempF = /c/i.test(unit) ? (temp * 9 / 5 + 32) : temp;
+  return tempF <= 34;
+}
+
 function hasMinutelyPrecipData(data = state.forecast) {
   const m = data?.minutely_15;
   return Boolean(m?.time?.length && m?.precipitation?.length);
@@ -860,7 +913,9 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
   const hourlyPrecipRate = precipRateFromAmount(context.precip || 0, context.intervalSeconds || 3600);
   const hourlyPrecipCode = precipCodeFromRate(hourlyPrecipRate, context.rawCode, data);
   const hourlyPrecipLikely = Boolean(hourlyPrecipCode);
-  const probableWithoutNowcast = !hasMinuteData && (rawPrecipLikely || hourlyPrecipLikely || (currentPop || 0) >= RAIN_LIKELY_POP);
+  const radar = nowPrecip?.radar;
+  const radarClearNow = radar?.phase === "clear" && radar.confidence === "observed-clear";
+  const probableWithoutNowcast = !hasMinuteData && !radarClearNow && (rawPrecipLikely || hourlyPrecipLikely || (currentPop || 0) >= RAIN_LIKELY_POP);
   const baseSkyCode = context.baseCode ?? skyCodeFromCloud(context.cloud);
 
   if (nowPrecip?.isWetNow) {
@@ -880,7 +935,7 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
       chance,
       startsInMin: 0,
       nowcast,
-      source: nowPrecip.nowcast?.wet?.[0] ? "minutely-current" : "current",
+      source: nowPrecip.source || (nowPrecip.radar?.phase === "active" ? "radar-current" : nowPrecip.nowcast?.wet?.[0] ? "minutely-current" : "current"),
       confidence: "observed"
     };
   }
@@ -904,6 +959,28 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
       nowcast,
       source: "minutely-soon",
       confidence: "imminent"
+    };
+  }
+
+  if (radar?.phase === "nearby") {
+    const code = radarPrecipCode(data, radar);
+    const label = weatherCodes[code] || radar.label || "Rain";
+    return {
+      phase: "nearby",
+      isWetNow: false,
+      isImminent: false,
+      visualWet: false,
+      visualCode: baseSkyCode,
+      textCode: code,
+      label,
+      headline: `${label.toLowerCase()} nearby`,
+      context: radar.detail || `${label} on radar nearby`,
+      detail: `${label} is close by on radar, but not over this place yet.`,
+      chance,
+      startsInMin: null,
+      nowcast,
+      source: "radar-nearby",
+      confidence: "nearby"
     };
   }
 
@@ -1011,7 +1088,8 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
 }
 
 function weatherTruth(data = state.forecast) {
-  if (state.weatherTruth?.data === data) return state.weatherTruth;
+  const radarSignalKey = radarPrecipSignalKey(currentRadarPrecipSignal());
+  if (state.weatherTruth?.data === data && state.weatherTruth?.radarSignalKey === radarSignalKey) return state.weatherTruth;
   return buildWeatherTruth(data);
 }
 
@@ -1022,7 +1100,9 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
     : null;
   if (precipTruth?.phase === "active" || nowPrecip?.isWetNow) {
     const activeLabel = weatherCodes[precipTruth?.visualCode] || precipTruth?.label || label;
-    const source = precipTruth?.source === "minutely-current" ? "current + 15-min precip" : "current precip";
+    const source = precipTruth?.source === "radar-current"
+      ? "radar"
+      : precipTruth?.source === "minutely-current" ? "current + 15-min precip" : "current precip";
     const lowPopNote = Number.isFinite(hourlyPop) && hourlyPop < PRECIP_FEATURE_POP
       ? ` Hourly rain chance is only ${hourlyPop}%, so measured precip is taking priority.`
       : "";
@@ -1031,6 +1111,15 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
       detail: `Showing ${activeLabel.toLowerCase()} because precipitation is happening now.${lowPopNote}`,
       source: precipTruth?.source || (nowPrecip?.nowcast ? "minutely-current" : "current"),
       confidence: precipTruth?.confidence || "observed"
+    };
+  }
+
+  if (precipTruth?.phase === "nearby") {
+    return {
+      short: `${precipTruth.label || "Rain"} nearby · radar`,
+      detail: precipTruth.detail || `Radar shows ${String(precipTruth.label || "rain").toLowerCase()} nearby, but not over this place.`,
+      source: precipTruth.source,
+      confidence: precipTruth.confidence
     };
   }
 
@@ -1141,7 +1230,8 @@ function buildWeatherTruth(data = state.forecast) {
   const fallbackIsDay = current.is_day !== undefined ? Boolean(current.is_day) : true;
   const currentIndex = currentHourlyIndex(data);
   const hourly = data?.hourly || {};
-  const nowPrecip = nowPrecipSignal(data);
+  const nowPrecip = applyRadarPrecipSignal(nowPrecipSignal(data), data);
+  const radarSignalKey = radarPrecipSignalKey(currentRadarPrecipSignal());
   let display;
 
   if (currentIndex >= 0 && hourly.weather_code?.[currentIndex] != null) {
@@ -1235,6 +1325,8 @@ function buildWeatherTruth(data = state.forecast) {
     receiptDetail: receipt.detail,
     surfaceDetail: ""
   };
+  truth.radarPrecip = nowPrecip.radar || null;
+  truth.radarSignalKey = radarSignalKey;
   truth.surfaceDetail = weatherTruthSurfaceDetail(truth);
   return truth;
 }
@@ -2837,6 +2929,10 @@ function closePlaceSheet() {
 
 async function loadPlace(place, force = false) {
   state.activePlace = normalizePlace(place);
+  state.radarPrecipSeq += 1;
+  state.radarPrecipSignal = null;
+  state.radarPrecipPlaceId = state.activePlace.id;
+  state.weatherTruth = null;
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
   updatePlaceSwitcher();
@@ -2851,6 +2947,7 @@ async function loadPlace(place, force = false) {
   try {
     const data = await fetchForecast(state.activePlace, force);
     renderForecast(data, state.activePlace);
+    startRadarPrecipProbe(state.activePlace, data, force);
     setStatus("");
     lastLoadedAt = Date.now();
   } catch (error) {
@@ -3176,7 +3273,7 @@ function updateWeatherTruthReceipt(truth) {
   document.documentElement.dataset.weatherSource = truth.source || "forecast";
 }
 
-function renderForecast(data, place) {
+function renderForecast(data, place, options = {}) {
   const perf = perfStart();
   state.forecast = data; // retained for the day-detail sheet
   state.forecastUnit = state.unit;
@@ -3208,7 +3305,8 @@ function renderForecast(data, place) {
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = truth.precip?.phase === "active"
     ? "Now"
-    : truth.precip?.phase === "imminent" ? "Soon" : `${firstRainChance || 0}%`;
+    : truth.precip?.phase === "nearby" ? "Nearby"
+      : truth.precip?.phase === "imminent" ? "Soon" : `${firstRainChance || 0}%`;
   els.wind.textContent = `${Math.round(current.wind_speed_10m)} ${windUnit}`;
   els.uv.textContent = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   els.humidity.textContent = `${current.relative_humidity_2m ?? "--"}%`;
@@ -3226,7 +3324,7 @@ function renderForecast(data, place) {
   renderHourly(data, tempUnit, truth);
   renderDaily(data, tempUnit, precipUnit);
   updateMapPlace();
-  refreshInlineMap(true);
+  if (options.refreshMap !== false) refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(sceneCode, truth.isDay, data, displayCondition);
   perfEnd("renderForecast", perf);
@@ -3318,6 +3416,13 @@ function rainGlance(data, currentChance, truth = weatherTruth(data)) {
     return {
       headline: precip.headline,
       context: precip.context || "Starting soon"
+    };
+  }
+
+  if (precip.phase === "nearby") {
+    return {
+      headline: precip.headline,
+      context: precip.context || "Radar shows rain nearby"
     };
   }
 
@@ -4424,7 +4529,7 @@ function launchNextItem(data, options = {}) {
   }
 
   const currentChance = options.truth?.rainChance ?? currentRainChance(data);
-  if (currentChance >= 35) {
+  if (!options.nowPrecipCovered && currentChance >= 35) {
     const value = `${currentChance}% rain nearby`;
     return {
       label: "Next",
@@ -9214,6 +9319,308 @@ async function fetchRadarFrames() {
     /* RainViewer remains the global/fallback radar source for this spike. */
   }
   return fetchRainViewerFrames();
+}
+
+function radarPrecipSignalKey(signal) {
+  if (!signal) return "none";
+  return [
+    signal.placeId || "",
+    signal.phase || "",
+    signal.source || "",
+    signal.timestamp || 0,
+    signal.code || "",
+    signal.confidence || ""
+  ].join(":");
+}
+
+function currentRadarPrecipSignal(place = state.activePlace) {
+  const signal = state.radarPrecipSignal;
+  if (!signal || !place) return null;
+  if (state.radarPrecipPlaceId !== place.id || signal.placeId !== place.id) return null;
+  if (Date.now() - (signal.checkedAt || 0) > RADAR_PRECIP_CACHE_MS) return null;
+  return signal;
+}
+
+async function startRadarPrecipProbe(place, data, force = false) {
+  if (!place || !data) return;
+  const placeId = place.id;
+  const seq = ++state.radarPrecipSeq;
+  try {
+    const signal = await loadRadarPrecipSignal(place, { force });
+    if (seq !== state.radarPrecipSeq || !state.activePlace || state.activePlace.id !== placeId) return;
+    state.radarPrecipSignal = signal;
+    state.radarPrecipPlaceId = placeId;
+    if (state.forecast === data) renderForecast(data, state.activePlace, { refreshMap: false });
+  } catch {
+    if (seq !== state.radarPrecipSeq || !state.activePlace || state.activePlace.id !== placeId) return;
+    state.radarPrecipSignal = {
+      placeId,
+      phase: "unavailable",
+      confidence: "unavailable",
+      source: "radar",
+      timestamp: null,
+      checkedAt: Date.now()
+    };
+  }
+}
+
+async function loadRadarPrecipSignal(place, options = {}) {
+  const frames = await fetchRadarFrames();
+  const frame = latestObservedRadarFrame(frames);
+  const checkedAt = Date.now();
+  if (!frame) {
+    return {
+      placeId: place.id,
+      phase: "unavailable",
+      confidence: "unavailable",
+      source: "radar",
+      timestamp: null,
+      checkedAt
+    };
+  }
+
+  let sampleFrame = frame;
+  let z = Math.min(sampleFrame.maxZoom || RADAR_TILE_MAX_ZOOM, RADAR_PRECIP_SAMPLE_ZOOM);
+  let cacheKey = radarPrecipCacheKey(place, sampleFrame, z);
+  let cached = options.force ? null : readRadarPrecipCache(cacheKey);
+  if (cached) return cached;
+
+  let sample;
+  try {
+    sample = await sampleRadarFrameAtPlace(sampleFrame, place, z);
+  } catch (error) {
+    const fallbackFrame = await fallbackRainViewerRadarFrame(sampleFrame);
+    if (!fallbackFrame) throw error;
+    sampleFrame = fallbackFrame;
+    z = Math.min(sampleFrame.maxZoom || RADAR_TILE_MAX_ZOOM, RADAR_PRECIP_SAMPLE_ZOOM);
+    cacheKey = radarPrecipCacheKey(place, sampleFrame, z);
+    cached = options.force ? null : readRadarPrecipCache(cacheKey);
+    if (cached) return cached;
+    sample = await sampleRadarFrameAtPlace(sampleFrame, place, z);
+  }
+
+  const signal = {
+    placeId: place.id,
+    phase: sample.phase,
+    confidence: sample.confidence,
+    source: sampleFrame.attribution || sampleFrame.sourceLabel || "Radar",
+    timestamp: sampleFrame.timestamp,
+    ageMin: Math.max(0, Math.round((Date.now() - sampleFrame.timestamp) / 60000)),
+    code: sample.code,
+    label: sample.label,
+    detail: sample.detail,
+    intensity: sample.intensity,
+    stats: sample.stats,
+    checkedAt
+  };
+  writeRadarPrecipCache(cacheKey, signal);
+  return signal;
+}
+
+async function fallbackRainViewerRadarFrame(currentFrame) {
+  const source = `${currentFrame?.attribution || ""} ${currentFrame?.sourceLabel || ""}`;
+  if (/rainviewer/i.test(source)) return null;
+  try {
+    return latestObservedRadarFrame(await fetchRainViewerFrames());
+  } catch {
+    return null;
+  }
+}
+
+function latestObservedRadarFrame(frames) {
+  const now = Date.now();
+  const observed = (frames || [])
+    .filter((frame) => frame?.url && Number.isFinite(frame.timestamp))
+    .filter((frame) => frame.timestamp <= now + 2 * 60 * 1000)
+    .filter((frame) => now - frame.timestamp <= RADAR_PRECIP_MAX_FRAME_AGE_MS)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  return observed.length ? observed[observed.length - 1] : null;
+}
+
+function radarPrecipCacheKey(place, frame, z) {
+  const lat = Number(place.latitude || 0).toFixed(3);
+  const lon = Number(place.longitude || 0).toFixed(3);
+  return `radar-precip:${RADAR_PRECIP_CACHE_VERSION}:${place.id || `${lat},${lon}`}:${lat}:${lon}:${frame.source || "radar"}:${frame.timestamp}:${z}`;
+}
+
+function readRadarPrecipCache(cacheKey) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+    if (cached && Date.now() - cached.checkedAt < RADAR_PRECIP_CACHE_MS) return cached;
+  } catch {
+    /* Ignore corrupt probe cache. */
+  }
+  return null;
+}
+
+function writeRadarPrecipCache(cacheKey, signal) {
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(signal));
+  } catch {
+    /* The probe is opportunistic; storage pressure should not block weather. */
+  }
+}
+
+async function sampleRadarFrameAtPlace(frame, place, z) {
+  const worldTiles = 2 ** z;
+  const point = projectLatLon(place.latitude, place.longitude, z);
+  const tileX = Math.floor(point.x / 256);
+  const tileY = Math.floor(point.y / 256);
+  if (tileY < 0 || tileY >= worldTiles) return radarUnavailableSample();
+
+  const wrappedX = ((tileX % worldTiles) + worldTiles) % worldTiles;
+  const localX = Math.round(point.x - tileX * 256);
+  const localY = Math.round(point.y - tileY * 256);
+  const url = weatherTileUrl(frame.url, z, wrappedX, tileY);
+  const imageData = await fetchRadarTileImageData(url);
+  const center = radarSampleStats(imageData, localX, localY, RADAR_PRECIP_CENTER_RADIUS_PX);
+  const nearby = radarSampleStats(imageData, localX, localY, RADAR_PRECIP_NEARBY_RADIUS_PX);
+  const active = center.density >= 0.035 || center.maxScore >= 1.15 || (center.hits >= 2 && nearby.density >= 0.02);
+  const near = nearby.density >= 0.028 || nearby.hits >= 7 || nearby.maxScore >= 1.3;
+  const intensity = radarSampleIntensity(active ? center : nearby);
+  const code = intensity === "heavy" ? 65 : intensity === "moderate" ? 63 : 61;
+  const label = weatherCodes[code] || "Rain";
+
+  if (active) {
+    return {
+      phase: "active",
+      confidence: "observed",
+      code,
+      label,
+      intensity,
+      detail: `${label} on radar over this place`,
+      stats: { center, nearby }
+    };
+  }
+  if (near) {
+    return {
+      phase: "nearby",
+      confidence: "nearby",
+      code,
+      label,
+      intensity,
+      detail: `${label} on radar nearby`,
+      stats: { center, nearby }
+    };
+  }
+  return {
+    phase: "clear",
+    confidence: "observed-clear",
+    code: null,
+    label: "Dry",
+    intensity: "none",
+    detail: "Radar is clear over this place",
+    stats: { center, nearby }
+  };
+}
+
+function radarUnavailableSample() {
+  return {
+    phase: "unavailable",
+    confidence: "unavailable",
+    code: null,
+    label: "Radar unavailable",
+    intensity: "unknown",
+    detail: "Radar could not be sampled",
+    stats: null
+  };
+}
+
+async function fetchRadarTileImageData(url) {
+  const response = await fetch(url, { cache: "force-cache" });
+  if (!response.ok) throw new Error("Radar tile sample failed.");
+  const blob = await response.blob();
+  const bitmap = await decodeRadarImageBlob(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Radar tile canvas unavailable.");
+  ctx.drawImage(bitmap, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  if (typeof bitmap.close === "function") bitmap.close();
+  return imageData;
+}
+
+async function decodeRadarImageBlob(blob) {
+  if ("createImageBitmap" in window) return createImageBitmap(blob);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Radar tile decode failed."));
+    };
+    image.src = url;
+  });
+}
+
+function radarSampleStats(imageData, cx, cy, radius) {
+  let hits = 0;
+  let score = 0;
+  let maxScore = 0;
+  let count = 0;
+  const radiusSq = radius * radius;
+  const minX = Math.max(0, Math.floor(cx - radius));
+  const maxX = Math.min(imageData.width - 1, Math.ceil(cx + radius));
+  const minY = Math.max(0, Math.floor(cy - radius));
+  const maxY = Math.min(imageData.height - 1, Math.ceil(cy + radius));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy > radiusSq) continue;
+      const index = (y * imageData.width + x) * 4;
+      const pixelScore = radarPixelPrecipScore(
+        imageData.data[index],
+        imageData.data[index + 1],
+        imageData.data[index + 2],
+        imageData.data[index + 3]
+      );
+      count += 1;
+      if (pixelScore > 0) {
+        hits += 1;
+        score += pixelScore;
+        maxScore = Math.max(maxScore, pixelScore);
+      }
+    }
+  }
+
+  return {
+    hits,
+    count,
+    score: Number(score.toFixed(2)),
+    maxScore: Number(maxScore.toFixed(2)),
+    density: count ? Number((hits / count).toFixed(3)) : 0
+  };
+}
+
+function radarPixelPrecipScore(r, g, b, a) {
+  if (a < 18) return 0;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const saturation = max - min;
+  const brightness = (r + g + b) / 3;
+  if (brightness < 18) return 0;
+  if (saturation < 10 && a < 120) return 0;
+  let score = Math.min(1, a / 210);
+  if (saturation >= 24) score += 0.35;
+  if (saturation >= 64) score += 0.25;
+  if (r > 170 && g > 100) score += 0.2;
+  return score;
+}
+
+function radarSampleIntensity(stats) {
+  if (!stats) return "unknown";
+  if (stats.maxScore >= 1.55 || stats.density >= 0.2) return "heavy";
+  if (stats.maxScore >= 1.25 || stats.density >= 0.08) return "moderate";
+  if (stats.hits > 0) return "light";
+  return "none";
 }
 
 async function fetchNwsRadarFrames() {
