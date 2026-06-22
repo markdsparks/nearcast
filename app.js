@@ -1,4 +1,4 @@
-const VERSION = "2.6.20";
+const VERSION = "2.6.21";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1038,7 +1038,7 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
     const soonLabel = precipTruth.label || "Rain";
     return {
       short: `${soonLabel} soon · ${precipTruth.context || "near-term nowcast"}`,
-      detail: `Showing a wet scene because ${soonLabel.toLowerCase()} starts soon. Text stays future-tense until precipitation is active.`,
+      detail: `Showing the current sky with an unsettled feel because ${soonLabel.toLowerCase()} starts soon. Text stays future-tense until precipitation is active.`,
       source: precipTruth.source,
       confidence: precipTruth.confidence
     };
@@ -1047,7 +1047,7 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
   if (precipTruth?.phase === "likely-this-hour") {
     const chance = precipTruth.chance || display.pop || 0;
     const scene = precipTruth.visualWet
-      ? "the scene leans wet because no 15-minute nowcast is available to narrow the start time"
+      ? "the scene leans unsettled because no 15-minute nowcast is available to narrow the start time"
       : `the scene stays ${label.toLowerCase()} because near-term precipitation is not active yet`;
     return {
       short: `Rain likely this hour · ${precipTruth.context || `${chance}% this hour`}`,
@@ -1171,8 +1171,7 @@ function buildWeatherTruth(data = state.forecast) {
     // Keep current-condition icons separate from the immersive scene: "rain soon"
     // can tint the sky, but it must not become the Now icon.
     const nowCode = measuredCode ?? currentCode ?? baseCode;
-    const visualCode = precipTruth.visualWet ? strongerPrecipCode(baseCode, precipTruth.visualCode) : baseCode;
-    const sceneCode = measuredCode ? strongerPrecipCode(visualCode, measuredCode) : visualCode;
+    const sceneCode = measuredCode ?? baseCode;
     display = {
       code: sceneCode,
       sceneCode,
@@ -1199,8 +1198,7 @@ function buildWeatherTruth(data = state.forecast) {
       hourlyIndex: -1
     });
     const nowCode = nowPrecip.isWetNow ? strongerPrecipCode(fallbackCode, nowPrecip.code) : fallbackCode;
-    const visualCode = precipTruth.visualWet ? strongerPrecipCode(fallbackCode, precipTruth.visualCode) : fallbackCode;
-    const sceneCode = nowPrecip.isWetNow ? strongerPrecipCode(visualCode, nowPrecip.code) : visualCode;
+    const sceneCode = nowPrecip.isWetNow ? strongerPrecipCode(fallbackCode, nowPrecip.code) : fallbackCode;
     display = {
       code: sceneCode,
       sceneCode,
@@ -11019,6 +11017,33 @@ function skySeriesValue(series, index, fallback = null) {
   return skyNumber(series[index], fallback);
 }
 
+function skyWindMph(value) {
+  const speed = Number(value);
+  if (!Number.isFinite(speed)) return 0;
+  return state.unit === "fahrenheit" ? speed : speed / 1.609344;
+}
+
+function skyPrecipPressure(precipTruth = {}) {
+  const phase = precipTruth?.phase;
+  const chance = clamp01((precipTruth?.chance || 0) / 100);
+  if (phase === "imminent") {
+    const lead = Number.isFinite(precipTruth.startsInMin)
+      ? clamp01(1 - precipTruth.startsInMin / IMMINENT_PRECIP_MINUTES)
+      : 0.4;
+    return clamp01(0.16 + lead * 0.36 + chance * 0.22);
+  }
+  if (phase === "likely-this-hour") {
+    return clamp01(0.18 + chance * 0.24 + (precipTruth.visualWet ? 0.10 : 0));
+  }
+  if (phase === "possible-this-hour") {
+    return clamp01(0.08 + chance * 0.12);
+  }
+  if (phase === "possible-later" && Number.isFinite(precipTruth.startsInMin) && precipTruth.startsInMin <= 120) {
+    return clamp01(0.05 + (1 - precipTruth.startsInMin / 120) * 0.12);
+  }
+  return 0;
+}
+
 function clamp01(value) {
   return clamp(value, 0, 1);
 }
@@ -11106,6 +11131,8 @@ function skyHourlySample(data, ms, displayCondition = {}) {
     direct: skySeriesValue(h.direct_radiation, idx, current.direct_radiation),
     diffuse: skySeriesValue(h.diffuse_radiation, idx, current.diffuse_radiation),
     uv: skySeriesValue(h.uv_index, idx, null),
+    wind: skySeriesValue(h.wind_speed_10m, idx, current.wind_speed_10m),
+    gust: skySeriesValue(h.wind_gusts_10m, idx, current.wind_gusts_10m),
     isDay: h.is_day && idx >= 0 ? Boolean(h.is_day[idx]) : current.is_day !== undefined ? Boolean(current.is_day) : null
   };
 }
@@ -11136,7 +11163,28 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
   const visibilityHaze = visibilityKm === null ? 0 : clamp01((18 - visibilityKm) / 14);
   const humidity = skyNumber(data?.current?.relative_humidity_2m, null);
   const humidityHaze = humidity === null ? 0 : clamp01((humidity - 72) / 24) * 0.32;
-  const haze = clamp01(visibilityHaze + (condition === "rain" || condition === "thunder" ? 0 : humidityHaze) + highCloud / 360);
+  const air = airQualitySummary(data);
+  const aqi = air?.aqi ?? null;
+  const airRank = air?.band?.rank ?? 0;
+  const airHaze = aqi === null
+    ? 0
+    : clamp01((aqi - 55) / 185) * 0.24 + Math.max(0, airRank - 1) * 0.035;
+  const pollenRank = air?.pollen?.rank ?? 0;
+  const pollenVeil = pollenRank > 1
+    ? clamp01((pollenRank - 1) / 3) * 0.22
+    : 0;
+  const windMph = skyWindMph(sample.wind);
+  const gustMph = skyWindMph(sample.gust);
+  const windiness = clamp01((Math.max(windMph, gustMph * 0.72) - 6) / 28);
+  const precipPressure = skyPrecipPressure(displayCondition.precipTruth);
+  const haze = clamp01(
+    visibilityHaze +
+    (condition === "rain" || condition === "thunder" ? 0 : humidityHaze) +
+    highCloud / 360 +
+    airHaze +
+    pollenVeil * 0.45 +
+    precipPressure * 0.08
+  );
   const shortwave = skyNumber(sample.shortwave, null);
   const direct = skyNumber(sample.direct, null);
   const diffuse = skyNumber(sample.diffuse, null);
@@ -11151,7 +11199,9 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     0.24 +
     (radiation ?? solarLift) * 0.64 * (1 - cloudShade * 0.58) +
     diffuseGlow * 0.14 -
-    wetness * 0.14
+    wetness * 0.14 -
+    precipPressure * 0.10 -
+    airHaze * 0.08
   );
   const nightBrightness = clamp(0.06 + twilight * 0.26 + (condition === "clear" ? 0.05 : 0) - cloudShade * 0.025, 0.04, 0.34);
   const brightness = effectiveIsDay ? daytimeBrightness : nightBrightness;
@@ -11191,6 +11241,16 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     highCloud,
     directness,
     wetness,
+    humidity,
+    windMph,
+    gustMph,
+    windiness,
+    airHaze,
+    airRank,
+    aqi,
+    pollenVeil,
+    pollenRank,
+    precipPressure,
     precipitation: skyNumber(sample.precipitation, 0),
     pop: skyNumber(sample.pop, displayCondition.pop ?? 0)
   };
@@ -11295,9 +11355,18 @@ function skyGradientStops(condition, phase, skyState = state.skyState) {
     const haze = ["#8aa7bc", "#c7d4db", "#eef2f1"];
     const brightness = skyState ? skyState.brightness : 0.62;
     const cloud = skyState ? skyState.cloud / 100 : phase.cloud / 100;
+    const pressure = skyState?.precipPressure ?? 0;
+    const airHaze = skyState?.airHaze ?? 0;
+    const pollenVeil = skyState?.pollenVeil ?? 0;
+    const pressureSky = ["#6f7f8c", "#adbac4", "#dce2e4"];
+    const airSky = ["#8b98a0", "#c1c1ba", "#e4ded2"];
+    const pollenSky = ["#7f9f9c", "#d6d2a5", "#f3e7bd"];
     let stops = blendStopSet(base, bright, clamp01((brightness - 0.55) / 0.35) * 0.62);
     stops = blendStopSet(stops, warm, clamp01(phase.warmth ?? phase.golden) * (condition === "clear" || condition === "partly-cloudy" ? 0.88 : 0.46));
     stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.75 + cloud * 0.18));
+    stops = blendStopSet(stops, pressureSky, pressure * 0.38);
+    stops = blendStopSet(stops, airSky, airHaze * 0.38);
+    stops = blendStopSet(stops, pollenSky, pollenVeil * 0.25);
     return { angle: 180, positions: [0, 54, 100], stops };
   }
   const nightBase = {
@@ -11317,8 +11386,14 @@ function skyGradientStops(condition, phase, skyState = state.skyState) {
     thunder: ["#08090f", "#1b1d29", "#45424d"]
   }[condition] || nightBase;
   const haze = ["#111827", "#273343", "#505b6a"];
+  const pressureSky = ["#090d14", "#1f2935", "#3d4652"];
+  const airSky = ["#141820", "#30303a", "#5a514f"];
+  const pollenSky = ["#101821", "#303842", "#665e54"];
   let stops = blendStopSet(nightBase, twilight, clamp01(phase.twilight));
   stops = blendStopSet(stops, haze, clamp01((phase.haze ?? 0) * 0.45 + (phase.cloud ?? 0) / 220));
+  stops = blendStopSet(stops, pressureSky, (skyState?.precipPressure ?? 0) * 0.32);
+  stops = blendStopSet(stops, airSky, (skyState?.airHaze ?? 0) * 0.32);
+  stops = blendStopSet(stops, pollenSky, (skyState?.pollenVeil ?? 0) * 0.18);
   return { angle: 160, positions: [0, 55, 100], stops };
 }
 
@@ -11440,9 +11515,10 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   const cloudPct = clamp(skyState.cloud, 0, 100);
   const lowCloud = clamp01(skyState.lowCloud / 100);
   const highCloud = clamp01(skyState.highCloud / 100);
+  const precipPressure = skyState.precipPressure ?? 0;
   const precipCloudBonus = condition === "rain" || condition === "snow" || condition === "thunder" ? 1 : 0;
   const clouds = Math.round(clamp(
-    cloudPct / 18 + lowCloud * 1.2 + highCloud * 0.4 + precipCloudBonus,
+    cloudPct / 18 + lowCloud * 1.2 + highCloud * 0.4 + precipCloudBonus + precipPressure * 1.45,
     condition === "clear" ? 0 : 1,
     condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
   ));
@@ -11489,6 +11565,8 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (cfg.sun)          parts.push(skySun(vw, vh, phase));
   if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds"), skyState));
   if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
+  if ((skyState?.precipPressure ?? 0) > 0.08) parts.push(skyApproachVeil(vw, vh, skyState));
+  if ((skyState?.airHaze ?? 0) > 0.08 || (skyState?.pollenVeil ?? 0) > 0.10) parts.push(skyAirVeil(vw, vh, skyState));
   if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain"), skyState));
   if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState));
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
@@ -11604,6 +11682,8 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
   const lowLayer = skyState ? clamp01(skyState.lowCloud / 100) : 0.5;
   const highLayer = skyState ? clamp01(skyState.highCloud / 100) : 0.3;
   const haze = skyState?.haze ?? 0;
+  const pressure = skyState?.precipPressure ?? 0;
+  const windiness = skyState?.windiness ?? 0;
   let out = "";
   for (let c = 0; c < count; c++) {
     const bx = rng() * vw * 1.26 - vw * 0.13;
@@ -11613,8 +11693,8 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
       isOvercast ? 0.05 + rng() * 0.24 + layerLift :
       0.08 + rng() * 0.30 + layerLift
     );
-    const scale = 0.72 + rng() * 0.84 + cloudDepth * 0.22;
-    const dur = (105 + rng() * 80).toFixed(0);
+    const scale = 0.72 + rng() * 0.84 + (cloudDepth + pressure * 0.34) * 0.22;
+    const dur = ((105 + rng() * 80) * (1 - windiness * 0.34)).toFixed(0);
     const delay = (rng() * 90).toFixed(0);
     const dir = rng() > 0.5 ? "normal" : "reverse";
 
@@ -11622,12 +11702,12 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
     if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : lerpHex("#2d3b55", "#46546b", haze));
     else if (isRainy) fill = lerpHex("#55606a", "#6f7c86", haze * 0.45);
     else if (isOvercast) fill = lerpHex("#8d98a2", "#a8b3bc", haze * 0.5);
-    else fill = lerpHex("#f4f9fd", "#c5d0d8", cloudDepth * 0.34 + haze * 0.28);
-    const op = clamp((isOvercast || isRainy ? 0.58 : 0.34) + cloudDepth * 0.28 + rng() * 0.14, 0.22, 0.88).toFixed(2);
+    else fill = lerpHex("#f4f9fd", "#c5d0d8", cloudDepth * 0.34 + haze * 0.28 + pressure * 0.16);
+    const op = clamp((isOvercast || isRainy ? 0.58 : 0.34) + cloudDepth * 0.28 + pressure * 0.12 + rng() * 0.14, 0.22, 0.9).toFixed(2);
 
     const bodyWidth = (280 + rng() * 260) * scale;
     const bodyHeight = (42 + rng() * 36) * scale;
-    const shear = (rng() - 0.5) * 54 * scale;
+    const shear = (rng() - 0.5) * 54 * scale + windiness * 46 * scale;
     const topY = by - bodyHeight * (0.38 + rng() * 0.24);
     const midY = by + (rng() - 0.5) * 12 * scale;
     const baseY = by + bodyHeight * (0.34 + rng() * 0.22);
@@ -11651,12 +11731,44 @@ function skyHaze(vw, vh, skyState) {
   const haze = clamp01(skyState?.haze ?? 0);
   const warm = clamp01(skyState?.warmth ?? 0);
   const cloud = clamp01((skyState?.cloud ?? 0) / 100);
-  const topOpacity = clamp(haze * 0.20 + warm * 0.08 + cloud * 0.04, 0.02, 0.26);
-  const horizonOpacity = clamp(haze * 0.30 + warm * 0.18, 0.03, 0.36);
+  const air = clamp01(skyState?.airHaze ?? 0);
+  const pollen = clamp01(skyState?.pollenVeil ?? 0);
+  const topOpacity = clamp(haze * 0.20 + warm * 0.08 + cloud * 0.04 + air * 0.10 + pollen * 0.05, 0.02, 0.3);
+  const horizonOpacity = clamp(haze * 0.30 + warm * 0.18 + air * 0.12 + pollen * 0.08, 0.03, 0.4);
   const fill = lerpHex("#dcebf4", "#ffd0a0", warm);
   return `
     <rect x="0" y="0" width="${vw}" height="${vh}" fill="${fill}" opacity="${topOpacity.toFixed(2)}"/>
     <ellipse cx="${Math.round(vw * 0.5)}" cy="${Math.round(vh * 0.78)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.28)}" fill="${fill}" opacity="${horizonOpacity.toFixed(2)}" filter="url(#sky-glow-f)"/>
+  `;
+}
+
+function skyApproachVeil(vw, vh, skyState) {
+  const pressure = clamp01(skyState?.precipPressure ?? 0);
+  const wind = clamp01(skyState?.windiness ?? 0);
+  const isDay = skyState?.isDay !== false;
+  const fill = isDay ? "#5f7180" : "#111827";
+  const edgeFill = isDay ? "#9aa8b2" : "#273142";
+  const opacity = clamp(pressure * 0.18, 0.02, 0.18);
+  const edgeOpacity = clamp(pressure * 0.16, 0.02, 0.16);
+  const x = Math.round(vw * (0.18 + wind * 0.22));
+  const y = Math.round(vh * (0.16 + pressure * 0.06));
+  return `
+    <ellipse cx="${x}" cy="${y}" rx="${Math.round(vw * (0.62 + pressure * 0.18))}" ry="${Math.round(vh * 0.34)}" fill="${fill}" opacity="${opacity.toFixed(2)}" filter="url(#sky-glow-f)"/>
+    <rect x="0" y="0" width="${vw}" height="${Math.round(vh * (0.44 + pressure * 0.16))}" fill="${edgeFill}" opacity="${edgeOpacity.toFixed(2)}"/>
+  `;
+}
+
+function skyAirVeil(vw, vh, skyState) {
+  const air = clamp01(skyState?.airHaze ?? 0);
+  const pollen = clamp01(skyState?.pollenVeil ?? 0);
+  const isDay = skyState?.isDay !== false;
+  const airFill = isDay ? "#d8cec0" : "#6a5f5c";
+  const pollenFill = isDay ? "#efe0a8" : "#807553";
+  const airOpacity = clamp(air * 0.20, 0, 0.18);
+  const pollenOpacity = clamp(pollen * 0.22, 0, 0.16);
+  return `
+    <rect x="0" y="0" width="${vw}" height="${vh}" fill="${airFill}" opacity="${airOpacity.toFixed(2)}"/>
+    <ellipse cx="${Math.round(vw * 0.62)}" cy="${Math.round(vh * 0.58)}" rx="${Math.round(vw * 0.72)}" ry="${Math.round(vh * 0.34)}" fill="${pollenFill}" opacity="${pollenOpacity.toFixed(2)}" filter="url(#sky-glow-f)"/>
   `;
 }
 
