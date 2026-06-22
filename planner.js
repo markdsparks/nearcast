@@ -416,13 +416,42 @@ function renderNextPlanCard(item, data = state.forecast) {
   `;
 }
 
-function renderMainPlanBriefing(items, data = state.forecast) {
+function planBriefingItemKey(item) {
+  if (!item) return "";
+  return [
+    item.memory?.id || "",
+    Number.isFinite(item.event?.startMs) ? item.event.startMs : "",
+    Number.isFinite(item.event?.endMs) ? item.event.endMs : ""
+  ].join(":");
+}
+
+function planBriefingLeadText(items, options = {}) {
+  if (!items?.length) return "";
+  const top = items[0];
+  const title = planMemoryTitle(top.memory);
+  const reason = capitalize(String(top.primaryReason || top.reasons?.[0] || "weather is the main signal").trim().replace(/[.!?]+$/, ""));
+  if (options.also) {
+    return items.length === 1
+      ? `Also today: ${title}. ${reason}.`
+      : `Also today, ${title} has the strongest weather signal: ${reason}.`;
+  }
+  if (options.inline) {
+    return items.length === 1
+      ? `${title}. ${reason}.`
+      : `${title} has today's strongest weather signal: ${reason}.`;
+  }
+  return items.length === 1
+    ? `${title}: ${reason}.`
+    : `${title} has today's strongest weather signal: ${reason}.`;
+}
+
+function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
   if (!items?.length) return "";
   const visible = items.slice(0, MAIN_PLAN_BRIEFING_MAX_ITEMS);
-  const top = visible[0];
-  const lead = items.length === 1
-    ? `${planMemoryTitle(top.memory)} is ${top.verdict.toLowerCase()} today - ${top.primaryReason}.`
-    : `${planMemoryTitle(top.memory)} has today's biggest weather signal - ${top.primaryReason}.`;
+  const lead = planBriefingLeadText(visible, options);
+  const countLabel = options.also
+    ? items.length === 1 ? "1 other plan" : `${items.length} other plans`
+    : items.length === 1 ? "1 remembered plan" : `${items.length} remembered plans`;
   const rows = visible.map((item) => {
     const title = planMemoryTitle(item.memory);
     const reason = item.reasons.slice(0, 2).join(" · ") || item.primaryReason;
@@ -439,7 +468,7 @@ function renderMainPlanBriefing(items, data = state.forecast) {
         <span class="main-plan-spark" aria-hidden="true">✦</span>
         <div>
           <strong>What matters today</strong>
-          <small>${items.length === 1 ? "1 remembered plan" : `${items.length} remembered plans`}</small>
+          <small>${countLabel}</small>
         </div>
       </div>
       <p>${escapeHtml(lead)}</p>
@@ -454,9 +483,13 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   if (!slot) return;
   const next = nextPlanBriefingItem(data, place);
   const today = planAwareBriefingItems(data, place);
+  const nextKey = planBriefingItemKey(next);
+  const mainItems = nextKey
+    ? today.filter((item) => planBriefingItemKey(item) !== nextKey)
+    : today;
   const html = [
     renderNextPlanCard(next, data),
-    renderMainPlanBriefing(today, data)
+    renderMainPlanBriefing(mainItems, data, { also: Boolean(nextKey) })
   ].filter(Boolean).join("");
   slot.hidden = !html;
   slot.innerHTML = html;
@@ -466,10 +499,7 @@ function renderPlanAwareBriefing() {
   const items = planAwareBriefingItems();
   if (!items.length) return "";
   const visible = items.slice(0, PLAN_BRIEFING_MAX_ITEMS);
-  const top = visible[0];
-  const lead = items.length === 1
-    ? `Here's what matters today: ${planMemoryTitle(top.memory)} is ${top.verdict.toLowerCase()} - ${top.primaryReason}.`
-    : `Here's what matters today: ${planMemoryTitle(top.memory)} has the biggest weather signal - ${top.primaryReason}.`;
+  const lead = `Here's what matters today: ${planBriefingLeadText(visible, { inline: true }).replace(/\.$/, "")}.`;
   const rows = visible.map((item) => {
     const title = planMemoryTitle(item.memory);
     const reason = item.reasons.slice(0, 2).join(" · ");
