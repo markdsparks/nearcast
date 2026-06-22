@@ -1058,6 +1058,21 @@ async function runPlannerClarification(index) {
   plannerClarification = null;
   const row = beginAskResponse(option.label);
   try {
+    if (pending.type === "confirm") {
+      if (option.confirmPlan) {
+        finishAskResponse(row, pending.result, editingMemoryId ? {
+          updateMemoryId: editingMemoryId,
+          original: plannerEditingMemoryDraft || pending.plan?.original || option.label
+        } : {});
+        return;
+      }
+      const nextClarification = buildPlanConfirmationAdjustment(pending, option.field);
+      if (nextClarification) {
+        plannerClarification = nextClarification;
+        finishAskResponse(row, nextClarification.prompt);
+        return;
+      }
+    }
     const result = await completePlanRequest(pending.plan, option);
     if (result?.clarification) {
       plannerClarification = result.clarification;
@@ -1081,11 +1096,14 @@ async function continuePlannerClarificationWithText(text) {
   try {
     const option = { label: text };
     if (pending.type === "location") {
-      option.locationQuery = mergeLocationClarification(pending.plan.locationQuery, text);
+      option.locationQuery = pending.replaceLocation
+        ? text
+        : mergeLocationClarification(pending.plan.locationQuery, text);
     } else if (pending.type === "day") {
       option.dayText = text;
     } else if (pending.type === "time") {
       option.timeText = text;
+      option.replaceTime = Boolean(pending.replaceTime);
     }
     const result = await completePlanRequest(pending.plan, option);
     if (result?.clarification) {
@@ -1693,7 +1711,12 @@ async function completePlanRequest(plan, override = {}) {
     }
   }
   if (override.timeText) {
-    nextPlan.timing = inferPlanTiming(`${nextPlan.original} ${normalizePlanTimeClarification(override.timeText)}`, baseContext, nextPlan.activityKey);
+    const timeText = normalizePlanTimeClarification(override.timeText);
+    nextPlan.timing = inferPlanTiming(
+      override.replaceTime ? timeText : `${nextPlan.original} ${timeText}`,
+      baseContext,
+      nextPlan.activityKey
+    );
   }
 
   if (!nextPlan.dayExplicit) {
@@ -1746,7 +1769,7 @@ async function completePlanRequest(plan, override = {}) {
   const endMs = planBoundaryMs(data, window.endHour, dayIdx);
   const alert = topAlertForPlanRange(alerts, startMs, endMs);
   const displayLabel = planWindowDisplayLabel(nextPlan, stats);
-  return {
+  const result = {
     answer: planAnswer(nextPlan, place, c, stats, alert),
     event: plannerShowEvent({
       title: `${planDisplayName(nextPlan)} ${displayLabel}`,
@@ -1758,6 +1781,19 @@ async function completePlanRequest(plan, override = {}) {
       label: displayLabel
     })
   };
+  if (!override.confirmed) {
+    return {
+      clarification: buildPlanConfirmation(nextPlan, result, {
+        place,
+        data,
+        alerts,
+        dayIdx,
+        window,
+        stats
+      })
+    };
+  }
+  return result;
 }
 
 function plannerShowEvent({ title, place, data, alerts, window, stats, label }) {
@@ -3216,18 +3252,104 @@ function buildDayClarification(plan, c = buildAIContext()) {
   };
 }
 
-function buildTimeClarification(plan) {
+function buildTimeClarification(plan, options = {}) {
   const label = planDisplayName(plan);
+  const optionMeta = options.replaceTime ? { replaceTime: true } : {};
   return {
     type: "time",
     plan,
+    replaceTime: Boolean(options.replaceTime),
     prompt: `What time should I use for ${label.toLowerCase()}?`,
     options: [
-      { label: "Morning", timeText: "morning" },
-      { label: "Afternoon", timeText: "afternoon" },
-      { label: "Evening", timeText: "evening" }
+      { label: "Morning", timeText: "morning", ...optionMeta },
+      { label: "Afternoon", timeText: "afternoon", ...optionMeta },
+      { label: "Evening", timeText: "evening", ...optionMeta }
     ]
   };
+}
+
+function buildPlanConfirmation(plan, result, context = {}) {
+  const event = result?.event;
+  const data = context.data || event?.data || state.forecast;
+  const place = normalizePlace(context.place || event?.place || state.activePlace || {});
+  const dayIdx = Number.isInteger(context.dayIdx) ? context.dayIdx : event?.dayIndex;
+  const window = context.window || event || {};
+  return {
+    type: "confirm",
+    plan,
+    result,
+    prompt: "I read your plan this way. Does it look right?",
+    facts: {
+      plan: planDisplayName(plan),
+      day: planConfirmationDayLabel(data, dayIdx),
+      time: planConfirmationTimeLabel(window),
+      place: placeLabel(place)
+    },
+    notes: planConfirmationNotes(plan, place),
+    options: [
+      { label: "Looks right", confirmPlan: true },
+      { label: "Change day", field: "day" },
+      { label: "Change time", field: "time" },
+      { label: "Change place", field: "location" }
+    ]
+  };
+}
+
+function buildPlanConfirmationAdjustment(pending, field) {
+  const plan = pending?.plan;
+  if (!plan) return null;
+  if (field === "day") {
+    const event = pending.result?.event;
+    const c = event ? buildAIContext(event.data, event.place, event.alerts || []) : buildAIContext();
+    return buildDayClarification(plan, c);
+  }
+  if (field === "time") return buildTimeClarification(plan, { replaceTime: true });
+  if (field === "location") {
+    const options = [];
+    const seen = new Set();
+    const pushPlace = (place, prefix) => {
+      if (!place) return;
+      const normalized = normalizePlace(place);
+      const key = `${Number(normalized.latitude).toFixed(3)}:${Number(normalized.longitude).toFixed(3)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      options.push({ label: `${prefix} ${placeLabel(normalized)}`, place: normalized });
+    };
+    pushPlace(state.activePlace, "Use");
+    pushPlace(pending.result?.event?.place, "Keep");
+    return {
+      type: "location",
+      plan,
+      replaceLocation: true,
+      prompt: `Which place should I use for ${planDisplayName(plan).toLowerCase()}? You can also type city + state.`,
+      options
+    };
+  }
+  return null;
+}
+
+function planConfirmationDayLabel(data, dayIdx) {
+  const idx = Number.isInteger(dayIdx) ? dayIdx : 0;
+  const iso = data?.daily?.time?.[idx];
+  if (!iso) return "Selected day";
+  return formatDay(iso, idx);
+}
+
+function planConfirmationTimeLabel(window) {
+  if (Number.isFinite(window?.startHour) && Number.isFinite(window?.endHour)) {
+    return `${hourText(window.startHour)}-${hourText(window.endHour)}`;
+  }
+  return "Selected time";
+}
+
+function planConfirmationNotes(plan, place) {
+  const notes = [];
+  if (plan.timing?.assumption) notes.push(plan.timing.assumption.replace(/\.$/, ""));
+  if (plan.dayCorrection) notes.push(`read "${plan.dayCorrection.from}" as ${plan.dayCorrection.to}`);
+  if (plan.locationImplicit) notes.push(`read ${placeLabel(place)} as the place`);
+  if (plan.intent?.source === "repair") notes.push("filled in loose wording");
+  if (plan.intent?.source === "local-ai") notes.push("read details from your wording");
+  return notes;
 }
 
 async function resolvePlanPlace(plan) {
@@ -4314,6 +4436,40 @@ function bindAskSendButton() {
   bindTapAction(send, submitAskForm);
 }
 
+function renderPlannerClarification(disabledAttr = "") {
+  const pending = plannerClarification;
+  if (!pending) return "";
+  if (pending.type === "confirm") {
+    const facts = pending.facts || {};
+    const notes = (pending.notes || []).filter(Boolean);
+    return `
+      <div class="ask-confirm" aria-label="Planner interpretation confirmation">
+        <div class="ask-confirm-head">
+          <strong>Confirm the plan</strong>
+          <small>Nearcast read your text this way</small>
+        </div>
+        <dl class="ask-confirm-facts">
+          <div><dt>Plan</dt><dd>${escapeHtml(facts.plan || "Plan")}</dd></div>
+          <div><dt>Day</dt><dd>${escapeHtml(facts.day || "Selected day")}</dd></div>
+          <div><dt>Time</dt><dd>${escapeHtml(facts.time || "Selected time")}</dd></div>
+          <div><dt>Place</dt><dd>${escapeHtml(facts.place || "Selected place")}</dd></div>
+        </dl>
+        ${notes.length ? `<p>${escapeHtml(notes.join(" · "))}</p>` : ""}
+        <div class="ask-clarify ask-confirm-actions">
+          ${pending.options.map((option, index) =>
+            `<button class="ask-clarify-chip${option.confirmPlan ? " primary" : ""}" type="button" data-ask-clarify="${index}"${disabledAttr}>${escapeHtml(option.label)}</button>`
+          ).join("")}
+        </div>
+      </div>
+    `;
+  }
+  return `<div class="ask-clarify" aria-label="Planner follow-up choices">` +
+    pending.options.map((option, index) =>
+      `<button class="ask-clarify-chip" type="button" data-ask-clarify="${index}"${disabledAttr}>${escapeHtml(option.label)}</button>`
+    ).join("") +
+  `</div>`;
+}
+
 function renderAsk() {
   const perf = perfStart();
   const panel = els.aiAsk;
@@ -4378,13 +4534,7 @@ function renderAsk() {
     `</div>`;
   }).join("");
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
-  const clarification = plannerClarification
-    ? `<div class="ask-clarify" aria-label="Planner follow-up choices">` +
-      plannerClarification.options.map((option, index) =>
-        `<button class="ask-clarify-chip" type="button" data-ask-clarify="${index}"${dis}>${escapeHtml(option.label)}</button>`
-      ).join("") +
-    `</div>`
-    : "";
+  const clarification = renderPlannerClarification(dis);
 
   panel.innerHTML =
     memorySection +
