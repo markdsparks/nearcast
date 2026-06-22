@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v6";
+const SKY_SCENE_VERSION = "sky-v7";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -1015,7 +1015,9 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   const tileHeight = Math.round(vh * 1.08);
   const fineDuration = clamp(2.55 - intensity * 0.86 - windLean * 0.24, 1.10, 2.65);
   const nearDuration = clamp(1.72 - intensity * 0.48 - windLean * 0.16, 0.78, 1.78);
-  const bandCount = Math.max(2, Math.round((lightRain ? 3 : 4 + intensity * 3) * (isDay ? 1 : 0.72)));
+  const bandCount = isDay
+    ? Math.max(2, Math.round(lightRain ? 3 : 4 + intensity * 3))
+    : 0;
 
   for (let i = 0; i < bandCount; i++) {
     const x = Math.round(-vw * 0.25 + rng() * vw * 1.15);
