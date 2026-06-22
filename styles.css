@@ -589,18 +589,18 @@ html[data-sky] body {
   will-change: transform, opacity;
 }
 
-.sky-rain {
-  opacity: 0;
-  animation: sky-rain-fall linear infinite;
-  will-change: transform, opacity;
+.sky-rain-layer {
+  animation-name: sky-rain-layer-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  transform-box: view-box;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
-.sky-rain-fine {
-  filter: url(#sky-rain-fine-f);
-}
-
-.sky-rain-near {
-  filter: url(#sky-rain-near-f);
+.sky-rain-streak {
+  vector-effect: non-scaling-stroke;
+  shape-rendering: geometricPrecision;
 }
 
 @keyframes sky-rain-sheet-drift {
@@ -608,11 +608,9 @@ html[data-sky] body {
   to   { transform: translateX(calc(var(--rain-drift, 24px) * 0.22)); }
 }
 
-@keyframes sky-rain-fall {
-  from { transform: translateY(-18vh) translateX(calc(var(--rain-drift, 24px) * -0.26)); opacity: 0; }
-  8%   { opacity: var(--rain-op, 0.36); }
-  86%  { opacity: var(--rain-op, 0.36); }
-  to   { transform: translateY(118vh) translateX(var(--rain-drift, 24px)); opacity: 0; }
+@keyframes sky-rain-layer-fall {
+  from { transform: translateY(0); }
+  to   { transform: translateY(var(--rain-distance, 1200px)); }
 }
 
 .sky-snow {
@@ -6371,6 +6369,11 @@ button.sheet-plan-badge:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .sky-rain-layer,
+  .sky-rain-sheet {
+    animation: none;
+  }
+
   .loading-chip-dot {
     animation: none;
     opacity: 1;

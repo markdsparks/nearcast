@@ -700,12 +700,6 @@ function skyFilterDefs() {
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
     </filter>
-    <filter id="sky-rain-fine-f" x="-12%" y="-12%" width="124%" height="124%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="0.08"/>
-    </filter>
-    <filter id="sky-rain-near-f" x="-22%" y="-22%" width="144%" height="144%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="0.34"/>
-    </filter>
   </defs>`;
 }
 
@@ -910,6 +904,9 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   let fine = "";
   let near = "";
   let bands = "";
+  const tileHeight = Math.round(vh * 1.08);
+  const fineDuration = clamp(2.15 - intensity * 0.82 - windLean * 0.28, 1.02, 2.25);
+  const nearDuration = clamp(1.26 - intensity * 0.42 - windLean * 0.18, 0.64, 1.34);
 
   for (let i = 0; i < 6; i++) {
     const x = Math.round(-vw * 0.25 + rng() * vw * 1.15);
@@ -921,26 +918,22 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
 
   for (let i = 0; i < fineCount; i++) {
     const x = -vw * 0.25 + rng() * vw * 1.5;
-    const y = -vh * 0.24 + rng() * vh * 1.28;
+    const y = rng() * tileHeight;
     const len = 28 + intensity * 38 + rng() * (drizzle ? 22 : 46);
     const dx = len * (0.20 + windLean * 0.46) + drift * 0.18;
     const width = 0.82 + intensity * 0.54 + rng() * 0.44;
     const op = clamp((drizzle ? 0.34 : 0.40) + intensity * 0.34 + rng() * 0.22 + (active ? 0.06 : 0), 0.32, heavy ? 0.82 : 0.74);
-    const dur = clamp((drizzle ? 1.62 : 1.06) - intensity * 0.34 - windLean * 0.22 + rng() * 0.56, 0.52, 2.0);
-    const delay = rng() * 3.4;
-    fine += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain sky-rain-fine" style="--rain-op:${op.toFixed(2)};--rain-drift:${drift.toFixed(0)}px;animation-delay:-${delay.toFixed(2)}s;animation-duration:${dur.toFixed(2)}s" stroke="${fineColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="butt" filter="url(#sky-rain-fine-f)"/>`;
+    fine += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain-streak sky-rain-fine" opacity="${op.toFixed(2)}" stroke="${fineColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="butt"/>`;
   }
 
   for (let i = 0; i < nearCount; i++) {
     const x = -vw * 0.18 + rng() * vw * 1.36;
-    const y = -vh * 0.34 + rng() * vh * 1.22;
+    const y = rng() * tileHeight;
     const len = 58 + intensity * 72 + rng() * 68;
     const dx = len * (0.24 + windLean * 0.48) + drift * 0.24;
     const width = 1.15 + intensity * 1.0 + rng() * 0.95;
     const op = clamp(0.30 + intensity * 0.30 + rng() * 0.20 + (active ? 0.06 : 0), 0.30, heavy ? 0.72 : 0.62);
-    const dur = clamp(0.66 - intensity * 0.18 - windLean * 0.10 + rng() * 0.32, 0.40, 0.98);
-    const delay = rng() * 2.4;
-    near += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain sky-rain-near" style="--rain-op:${op.toFixed(2)};--rain-drift:${(drift * 1.25).toFixed(0)}px;animation-delay:-${delay.toFixed(2)}s;animation-duration:${dur.toFixed(2)}s" stroke="${nearColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" filter="url(#sky-rain-near-f)"/>`;
+    near += `<line x1="${x.toFixed(0)}" y1="${y.toFixed(0)}" x2="${(x + dx).toFixed(0)}" y2="${(y + len).toFixed(0)}" class="sky-rain-streak sky-rain-near" opacity="${op.toFixed(2)}" stroke="${nearColor}" stroke-width="${width.toFixed(2)}" stroke-linecap="round"/>`;
   }
 
   return `
@@ -950,8 +943,14 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
       <ellipse cx="${Math.round(vw * 0.48)}" cy="${Math.round(vh * 0.74)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.30)}" fill="${glowColor}" opacity="${horizonOpacity.toFixed(3)}" filter="url(#sky-glow-f)"/>
       ${bands}
     </g>
-    <g class="sky-rain-curtain">${fine}</g>
-    <g class="sky-rain-foreground">${near}</g>
+    <g class="sky-rain-layer sky-rain-curtain" style="--rain-distance:${tileHeight}px;animation-duration:${fineDuration.toFixed(2)}s;animation-delay:-${(rng() * fineDuration).toFixed(2)}s">
+      <g>${fine}</g>
+      <g transform="translate(0 -${tileHeight})">${fine}</g>
+    </g>
+    <g class="sky-rain-layer sky-rain-foreground" style="--rain-distance:${tileHeight}px;animation-duration:${nearDuration.toFixed(2)}s;animation-delay:-${(rng() * nearDuration).toFixed(2)}s">
+      <g>${near}</g>
+      <g transform="translate(0 -${tileHeight})">${near}</g>
+    </g>
   `;
 }
 
