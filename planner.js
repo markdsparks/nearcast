@@ -272,6 +272,7 @@ function renderSupportActions(includeRetry = false) {
 }
 
 const PLAN_BRIEFING_MAX_ITEMS = 3;
+const MAIN_PLAN_BRIEFING_MAX_ITEMS = 2;
 
 function briefingPanel(html, className = "") {
   const cls = ["briefing-panel", className].filter(Boolean).join(" ");
@@ -313,44 +314,152 @@ function planBriefingReason(item) {
   return reasons[0] || "weather looks manageable";
 }
 
-function planAwareBriefingItems(data = state.forecast, place = state.activePlace) {
+function planBriefingItemFromEvent(memory, event, data, place, c = buildAIContext(data, place, activeAlerts)) {
+  if (!memory || !event || !data || !place || !c) return null;
+  const stats = planWindowStats(data, c, {
+    dayIdx: event.dayIndex,
+    startHour: event.startHour,
+    endHour: event.endHour,
+    label: "custom"
+  });
+  if (!stats) return null;
+  const activityKey = planBriefingActivityKey(memory);
+  const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.event || ACTIVITY_RULES.walk;
+  const alert = topAlertForPlanRange(activeAlerts, event.startMs, event.endMs);
+  const alertSignal = alert ? alertTone(alert) : "";
+  const score = numericWindowScore(rule, stats);
+  const verdict = planVerdict(score, alertSignal);
+  const item = {
+    memory,
+    event,
+    stats,
+    alert,
+    alertTone: alertSignal,
+    score,
+    verdict,
+    units: c.units,
+    reasons: planReasons(stats, c.units, alert).slice(0, 3)
+  };
+  item.tone = planBriefingTone(item);
+  item.priority = planBriefingPriority(item);
+  item.primaryReason = planBriefingReason(item);
+  item.advice = planAdvice(stats, alert, score);
+  return item;
+}
+
+function planAwareBriefingItems(data = state.forecast, place = state.activePlace, options = {}) {
   if (!data || !place || !state.planMemories?.length) return [];
-  const todayIndex = typeof forecastDailyIndex === "function" ? forecastDailyIndex(data) : 0;
+  const todayIndex = Number.isInteger(options.dayIndex)
+    ? options.dayIndex
+    : typeof forecastDailyIndex === "function" ? forecastDailyIndex(data) : 0;
   const c = buildAIContext(data, place, activeAlerts);
   if (!c) return [];
   return activePlanMemoryEventsForDay(todayIndex, data, place)
-    .map(({ memory, event }) => {
-      const stats = planWindowStats(data, c, {
-        dayIdx: event.dayIndex,
-        startHour: event.startHour,
-        endHour: event.endHour,
-        label: "custom"
-      });
-      if (!stats) return null;
-      const activityKey = planBriefingActivityKey(memory);
-      const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.event || ACTIVITY_RULES.walk;
-      const alert = topAlertForPlanRange(activeAlerts, event.startMs, event.endMs);
-      const alertSignal = alert ? alertTone(alert) : "";
-      const score = numericWindowScore(rule, stats);
-      const verdict = planVerdict(score, alertSignal);
-      const item = {
-        memory,
-        event,
-        stats,
-        alert,
-        alertTone: alertSignal,
-        score,
-        verdict,
-        units: c.units,
-        reasons: planReasons(stats, c.units, alert).slice(0, 3)
-      };
-      item.tone = planBriefingTone(item);
-      item.priority = planBriefingPriority(item);
-      item.primaryReason = planBriefingReason(item);
-      return item;
-    })
+    .map(({ memory, event }) => planBriefingItemFromEvent(memory, event, data, place, c))
     .filter(Boolean)
     .sort((a, b) => b.priority - a.priority || a.event.startMs - b.event.startMs);
+}
+
+function nextPlanBriefingItem(data = state.forecast, place = state.activePlace) {
+  if (!data || !place || !state.planMemories?.length) return null;
+  const c = buildAIContext(data, place, activeAlerts);
+  if (!c) return null;
+  const events = planMemoryEventsForPlace(data, place, { limit: 12 });
+  for (const { memory, event } of events) {
+    const item = planBriefingItemFromEvent(memory, event, data, place, c);
+    if (item) return item;
+  }
+  return null;
+}
+
+function planPulseMetricRows(item) {
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const rain = `${item.stats.rainChance}%`;
+  const wind = `${item.stats.gustMax || item.stats.windMax} ${item.units.wind}`;
+  const temps = `${item.stats.tempMin}${degree(tempUnit)}-${item.stats.tempMax}${degree(tempUnit)}`;
+  return [
+    ["Rain", rain],
+    ["Gusts", wind],
+    ["Temp", temps]
+  ].map(([label, value]) =>
+    `<span><b>${escapeHtml(label)}</b><strong>${escapeHtml(value)}</strong></span>`
+  ).join("");
+}
+
+function planPulseWhenText(memory, data = state.forecast) {
+  return `${planMemoryDayLabel(memory, data)} · ${planMemoryTimeText(memory)}`;
+}
+
+function renderNextPlanCard(item, data = state.forecast) {
+  if (!item) return "";
+  const title = planMemoryTitle(item.memory);
+  const when = planPulseWhenText(item.memory, data);
+  const where = placeLabel(item.memory.place);
+  const lead = `${item.verdict}. ${capitalize(item.primaryReason)}.`;
+  return `
+    <article class="next-plan-card is-${item.tone}" aria-label="Next remembered plan">
+      <div class="next-plan-kicker">
+        <span>Next up</span>
+        <em>${escapeHtml(when)}</em>
+      </div>
+      <div class="next-plan-title">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(where)}</span>
+      </div>
+      <p>${escapeHtml(lead)} <span>${escapeHtml(item.advice)}</span></p>
+      <div class="next-plan-metrics">${planPulseMetricRows(item)}</div>
+      <div class="next-plan-actions">
+        <button type="button" data-memory-show="${escapeHtml(item.memory.id)}">Show forecast</button>
+        <button type="button" data-memory-edit="${escapeHtml(item.memory.id)}">Edit</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderMainPlanBriefing(items, data = state.forecast) {
+  if (!items?.length) return "";
+  const visible = items.slice(0, MAIN_PLAN_BRIEFING_MAX_ITEMS);
+  const top = visible[0];
+  const lead = items.length === 1
+    ? `${planMemoryTitle(top.memory)} is ${top.verdict.toLowerCase()} today - ${top.primaryReason}.`
+    : `${planMemoryTitle(top.memory)} has today's biggest weather signal - ${top.primaryReason}.`;
+  const rows = visible.map((item) => {
+    const title = planMemoryTitle(item.memory);
+    const reason = item.reasons.slice(0, 2).join(" · ") || item.primaryReason;
+    return `
+      <button class="plan-pulse-brief-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Open ${escapeHtml(title)} forecast">
+        <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(planPulseWhenText(item.memory, data))}</small></span>
+        <em>${escapeHtml(reason)}</em>
+      </button>
+    `;
+  }).join("");
+  return `
+    <section class="main-plan-briefing" aria-label="What matters today">
+      <div class="main-plan-head">
+        <span class="main-plan-spark" aria-hidden="true">✦</span>
+        <div>
+          <strong>What matters today</strong>
+          <small>${items.length === 1 ? "1 remembered plan" : `${items.length} remembered plans`}</small>
+        </div>
+      </div>
+      <p>${escapeHtml(lead)}</p>
+      <div class="plan-pulse-brief-list">${rows}</div>
+      ${items.length > visible.length ? `<button class="plan-pulse-more" type="button" data-memory-open>View memories</button>` : ""}
+    </section>
+  `;
+}
+
+function renderPlanPulse(data = state.forecast, place = state.activePlace) {
+  const slot = els.planPulse;
+  if (!slot) return;
+  const next = nextPlanBriefingItem(data, place);
+  const today = planAwareBriefingItems(data, place);
+  const html = [
+    renderNextPlanCard(next, data),
+    renderMainPlanBriefing(today, data)
+  ].filter(Boolean).join("");
+  slot.hidden = !html;
+  slot.innerHTML = html;
 }
 
 function renderPlanAwareBriefing() {
@@ -785,7 +894,12 @@ function fillPlannerTemplate(template, options = {}) {
   input.value = template || "";
   if (form) {
     form.classList.add("is-drafting");
-    form.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (els.aiSheet && !els.aiSheet.hidden) {
+      els.aiSheet.scrollTo({ top: els.aiSheet.scrollHeight, behavior: "smooth" });
+      restoreSheetScrollAnchor(els.aiSheet);
+    } else {
+      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
   }
   if (helper) {
     helper.textContent = helperText;
@@ -3018,6 +3132,7 @@ function refreshOpenGlobalMemorySheet() {
 
 function refreshPlanMemorySurfaces() {
   renderBriefing();
+  renderPlanPulse();
   renderForecastMemorySurfaces();
   refreshOpenGlobalMemorySheet();
   if (typeof refreshOpenDayDetailMemorySurfaces === "function") {
@@ -4289,7 +4404,9 @@ function renderAsk() {
       `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
     `</form>`;
   bindAskSendButton();
-  bindInputResponsiveness(document.getElementById("askInput"), "planner-input");
+  const input = document.getElementById("askInput");
+  bindInputResponsiveness(input, "planner-input");
+  bindSheetInputViewportGuard(input, els.aiSheet);
   perfEnd("renderAsk", perf);
 }
 
@@ -4383,6 +4500,7 @@ function openAISheet(options = {}) {
   const { restoreScroll = null, autoBrief = true } = options;
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
+  setSheetScrollAnchor(els.aiSheet);
   showSheet(els.aiBackdrop, els.aiSheet);
   document.body.style.overflow = "hidden";
   if (restoreScroll !== null && restoreScroll !== undefined) {
@@ -4397,6 +4515,7 @@ function openAISheet(options = {}) {
 function closeAISheet() {
   els.aiBackdrop.classList.remove("show");
   els.aiSheet.classList.remove("show");
+  clearSheetScrollAnchor(els.aiSheet);
   document.body.style.overflow = "";
   setTimeout(() => {
     els.aiBackdrop.hidden = true;

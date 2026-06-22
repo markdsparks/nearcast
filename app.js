@@ -1,4 +1,4 @@
-const VERSION = "2.6.45";
+const VERSION = "2.6.48";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -346,6 +346,7 @@ const els = {
   uvLabel: document.querySelector("#uvLabel"),
   insights: document.querySelector("#insights"),
   insightCards: document.querySelector("#insightCards"),
+  planPulse: document.querySelector("#planPulse"),
   briefing: document.querySelector("#briefing"),
   aiAsk: document.querySelector("#aiAsk"),
   aiLauncher: document.querySelector("#aiLauncher"),
@@ -1589,6 +1590,42 @@ function bindInputResponsiveness(input, name) {
   });
 }
 
+function currentPageScrollY() {
+  return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+}
+
+function setSheetScrollAnchor(sheet) {
+  if (!sheet) return;
+  sheet.dataset.pageAnchorY = String(Math.round(currentPageScrollY()));
+}
+
+function clearSheetScrollAnchor(sheet) {
+  if (!sheet) return;
+  delete sheet.dataset.pageAnchorY;
+}
+
+function restoreSheetScrollAnchor(sheet) {
+  const y = Number(sheet?.dataset?.pageAnchorY);
+  if (!Number.isFinite(y) || sheet.hidden || typeof window.scrollTo !== "function") return;
+  try {
+    window.scrollTo({ top: y, left: 0, behavior: "auto" });
+  } catch {
+    window.scrollTo(0, y);
+  }
+}
+
+function bindSheetInputViewportGuard(input, sheet) {
+  if (!input || !sheet || input.dataset.sheetViewportGuard === "1") return;
+  input.dataset.sheetViewportGuard = "1";
+  const restore = () => {
+    restoreSheetScrollAnchor(sheet);
+    requestAnimationFrame(() => restoreSheetScrollAnchor(sheet));
+    setTimeout(() => restoreSheetScrollAnchor(sheet), 80);
+  };
+  input.addEventListener("focus", restore);
+  input.addEventListener("input", restore);
+}
+
 let viewportSyncRaf = 0;
 let viewportSyncSignature = "";
 
@@ -1920,6 +1957,27 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
+  bindTapDelegate(els.planPulse, "[data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+    const memoryOpen = target.closest("[data-memory-open]");
+    if (memoryOpen) {
+      openGlobalMemorySheet();
+      return;
+    }
+    const memoryShow = target.closest("[data-memory-show]");
+    if (memoryShow) {
+      showPlanMemory(memoryShow.dataset.memoryShow);
+      return;
+    }
+    const memoryEdit = target.closest("[data-memory-edit]");
+    if (memoryEdit) {
+      startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
+      return;
+    }
+    const planShow = target.closest("[data-plan-brief-show]");
+    if (planShow) {
+      showPlanMemory(planShow.dataset.planBriefShow);
+    }
+  }, { preventDefault: false });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
     if (memoryOpen) {
@@ -3447,6 +3505,7 @@ function renderForecast(data, place, options = {}) {
   renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
   renderNowcast(data, truth);
   renderInsights(data, windUnit);
+  renderPlanPulse(data, place);
   resetBriefing();
   renderHourly(data, tempUnit, truth);
   renderDaily(data, tempUnit, precipUnit);
