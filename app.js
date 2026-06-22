@@ -1,4 +1,4 @@
-const VERSION = "2.6.51";
+const VERSION = "2.6.52";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -307,6 +307,7 @@ const els = {
   locationName: document.querySelector("#locationName"),
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
+  heroRange: document.querySelector("#heroRange"),
   nowSummary: document.querySelector("#nowSummary"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
@@ -3589,6 +3590,23 @@ function renderForecast(data, place, options = {}) {
 
   els.locationName.textContent = placeLabel(place);
   els.nowTemp.textContent = `${Math.round(current.temperature_2m)}${degree(tempUnit)}`;
+  const high = data.daily?.temperature_2m_max?.[todayIndex];
+  const low = data.daily?.temperature_2m_min?.[todayIndex];
+  const hasRange = Number.isFinite(high) && Number.isFinite(low);
+  if (els.heroRange) {
+    els.heroRange.hidden = !hasRange;
+    els.heroRange.textContent = hasRange
+      ? `H ${Math.round(high)}${degree(tempUnit)} · L ${Math.round(low)}${degree(tempUnit)}`
+      : "";
+    if (hasRange) {
+      els.heroRange.setAttribute(
+        "aria-label",
+        `High ${Math.round(high)}${degree(tempUnit)}, low ${Math.round(low)}${degree(tempUnit)}`
+      );
+    } else {
+      els.heroRange.removeAttribute("aria-label");
+    }
+  }
   renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = truth.precip?.phase === "active"
