@@ -1,4 +1,4 @@
-const VERSION = "2.6.21";
+const VERSION = "2.6.22";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1486,8 +1486,98 @@ function bindInputResponsiveness(input, name) {
   });
 }
 
+let viewportSyncRaf = 0;
+let viewportSyncSignature = "";
+
+function viewportDimension(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function readViewportGeometry() {
+  const root = document.documentElement;
+  const visual = window.visualViewport;
+  const widthCandidates = [
+    viewportDimension(visual?.width),
+    viewportDimension(window.innerWidth),
+    viewportDimension(root?.clientWidth)
+  ].filter((value) => value !== null);
+  const heightCandidates = [
+    viewportDimension(visual?.height),
+    viewportDimension(window.innerHeight),
+    viewportDimension(root?.clientHeight)
+  ].filter((value) => value !== null);
+  return {
+    width: Math.ceil(widthCandidates.length ? Math.max(320, ...widthCandidates) : 320),
+    height: Math.ceil(heightCandidates.length ? Math.max(...heightCandidates) : 640)
+  };
+}
+
+function rerenderCurrentSkyForViewport() {
+  if (state.skyCode === null || state.theme !== "auto" || textInputIsActive()) return;
+  const el = document.getElementById("skyCanvas");
+  if (!el) return;
+  renderSkyScene(el, state.skyState?.condition || skyCondition(state.skyCode), state.skyState?.isDay ?? state.skyIsDay, state.skyState);
+}
+
+function syncViewportGeometry(options = {}) {
+  const { force = false, rerenderSky = false } = options;
+  const root = document.documentElement;
+  const { width, height } = readViewportGeometry();
+  const signature = `${width}x${height}`;
+  const changed = force || signature !== viewportSyncSignature;
+  if (!changed) return false;
+
+  viewportSyncSignature = signature;
+  root.style.setProperty("--app-viewport-width", `${width}px`);
+  root.style.setProperty("--app-viewport-height", `${height}px`);
+  if (rerenderSky) rerenderCurrentSkyForViewport();
+  return true;
+}
+
+function scheduleViewportGeometrySync(options = {}) {
+  if (viewportSyncRaf) cancelAnimationFrame(viewportSyncRaf);
+  viewportSyncRaf = requestAnimationFrame(() => {
+    viewportSyncRaf = 0;
+    syncViewportGeometry(options);
+  });
+}
+
+function settleViewportGeometry() {
+  syncViewportGeometry({ force: true, rerenderSky: true });
+  requestAnimationFrame(() => {
+    syncViewportGeometry({ force: true, rerenderSky: true });
+    requestAnimationFrame(() => syncViewportGeometry({ force: true, rerenderSky: true }));
+  });
+  [120, 360, 900].forEach((delay) => {
+    setTimeout(() => syncViewportGeometry({ force: true, rerenderSky: true }), delay);
+  });
+}
+
+function initViewportGeometrySync() {
+  syncViewportGeometry({ force: true });
+  window.addEventListener("resize", () => scheduleViewportGeometrySync({ rerenderSky: true }), { passive: true });
+  window.addEventListener("orientationchange", settleViewportGeometry, { passive: true });
+  window.addEventListener("pageshow", settleViewportGeometry, { passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) settleViewportGeometry();
+  });
+
+  const visual = window.visualViewport;
+  if (visual) {
+    visual.addEventListener("resize", () => scheduleViewportGeometrySync({ rerenderSky: true }), { passive: true });
+    visual.addEventListener("scroll", () => scheduleViewportGeometrySync(), { passive: true });
+    if ("onscrollend" in visual) {
+      visual.addEventListener("scrollend", settleViewportGeometry, { passive: true });
+    }
+  }
+
+  settleViewportGeometry();
+}
+
 function init() {
   initPerfDiagnostics();
+  initViewportGeometrySync();
   document.getElementById("appVersion").textContent = `v${VERSION}`;
   applyTheme();
   renderSavedPlaces();
@@ -11578,9 +11668,11 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
 function skyViewportSize() {
   const root = document.documentElement;
   const visual = window.visualViewport;
+  const syncedHeight = parseFloat(getComputedStyle(root).getPropertyValue("--app-viewport-height"));
+  const syncedWidth = parseFloat(getComputedStyle(root).getPropertyValue("--app-viewport-width"));
   return {
-    width: Math.ceil(Math.max(window.innerWidth || 0, root?.clientWidth || 0, visual?.width || 0, 320)),
-    height: Math.ceil(Math.max(window.innerHeight || 0, root?.clientHeight || 0, visual?.height || 0, 640) + SKY_RENDER_OVERSCAN_PX)
+    width: Math.ceil(Math.max(window.innerWidth || 0, root?.clientWidth || 0, visual?.width || 0, syncedWidth || 0, 320)),
+    height: Math.ceil(Math.max(window.innerHeight || 0, root?.clientHeight || 0, visual?.height || 0, syncedHeight || 0, 640) + SKY_RENDER_OVERSCAN_PX * 2)
   };
 }
 
@@ -11832,13 +11924,6 @@ function skyLightning(vw, vh, rng) {
     <path d="${bolt2}" stroke="white" stroke-width="1.5" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d2}s"/>
   `;
 }
-
-window.addEventListener("resize", () => {
-  if (state.skyCode !== null && state.theme === "auto") {
-    const el = document.getElementById("skyCanvas");
-    if (el) renderSkyScene(el, state.skyState?.condition || skyCondition(state.skyCode), state.skyState?.isDay ?? state.skyIsDay, state.skyState);
-  }
-});
 
 function refreshSkyForLiveTime() {
   if (state.skyCode === null || state.theme !== "auto" || !state.forecast) return;
