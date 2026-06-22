@@ -2086,6 +2086,14 @@ function wireMemoryEditForm() {
   const placeInput = document.getElementById("memoryEditPlace");
   placeInput?.addEventListener("input", () => {
     memoryEditState.placeQuery = placeInput.value;
+    if (!memoryEditPlaceQueryMatchesSelected()) {
+      memoryEditState.data = null;
+      memoryEditState.alerts = [];
+      memoryEditState.forecastKey = "";
+      memoryEditState.results = [];
+      renderMemoryEditPlaceResults();
+      setMemoryEditPreview("<p>Save changes or tap Search to use this place.</p>", "is-warning");
+    }
   });
   placeInput?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
@@ -2180,10 +2188,88 @@ function selectMemoryEditPlace(index) {
   memoryEditState.placeQuery = placeLabel(memoryEditState.place);
   memoryEditState.data = samePlanPlace(memoryEditState.place, state.activePlace) ? state.forecast : null;
   memoryEditState.alerts = samePlanPlace(memoryEditState.place, state.activePlace) ? activeAlerts : [];
+  memoryEditState.forecastKey = "";
   memoryEditState.results = [];
   memoryEditState.error = "";
   renderMemoryEditSheet();
   updateMemoryEditPreview({ fetchIfNeeded: true });
+}
+
+function memoryEditErrorMessage(err, fallback = "I could not save that edit. Check the date, time, and place.") {
+  return err?.userMessage || fallback;
+}
+
+function memoryEditPlaceQueryMatchesSelected() {
+  if (!memoryEditState?.place) return false;
+  const query = String(memoryEditState.placeQuery || "").trim();
+  if (!query) return false;
+  const parsed = parseLocationQuery(query);
+  const place = memoryEditState.place;
+  const queryKey = normalizeQualifierKey(query);
+  const labelKeys = [
+    placeLabel(place),
+    place.name,
+    [place.name, place.admin1].filter(Boolean).join(" "),
+    [place.name, place.country].filter(Boolean).join(" ")
+  ].map(normalizeQualifierKey).filter(Boolean);
+  return labelKeys.includes(queryKey) || planPlaceMatchesParsedQuery(place, parsed);
+}
+
+function planPlaceMatchesParsedQuery(place, parsed) {
+  if (!place || !parsed) return false;
+  const primary = normalizeQualifierKey(parsed.primary || parsed.raw);
+  const name = normalizeQualifierKey(place.name);
+  if (primary && name !== primary) return false;
+  const state = normalizeQualifierKey(parsed.stateName || "");
+  const admin = normalizeQualifierKey(place.admin1 || "");
+  if (state && admin && admin !== state) return false;
+  const country = String(parsed.countryCode || "").toUpperCase();
+  if (country && placeCountryCode(place) && placeCountryCode(place) !== country) return false;
+  return Boolean(primary || state || country);
+}
+
+function memoryEditResolvedPlaceFromOptions(options) {
+  const matches = options?.matches || [];
+  if (!matches.length) return null;
+  if (shouldClarifyPlanPlace(options)) return null;
+  return normalizePlace(matches[0].place);
+}
+
+async function ensureMemoryEditPlace() {
+  if (!memoryEditState) return null;
+  const input = document.getElementById("memoryEditPlace");
+  const query = (input?.value || memoryEditState.placeQuery || "").trim();
+  memoryEditState.placeQuery = query;
+  if (!query) {
+    const error = new Error("Missing place.");
+    error.userMessage = "Enter a place before saving.";
+    throw error;
+  }
+  if (memoryEditPlaceQueryMatchesSelected()) return memoryEditState.place;
+
+  renderMemoryEditPlaceResults("Checking place...");
+  const options = await fetchPlannerPlaceOptions(query);
+  if (!memoryEditState) return null;
+  const resolved = memoryEditResolvedPlaceFromOptions(options);
+  memoryEditState.results = (options.matches || []).slice(0, 5).map(({ place }) => normalizePlace(place));
+  if (!resolved) {
+    renderMemoryEditPlaceResults(memoryEditState.results.length ? "" : "No matching places found.");
+    const error = new Error("Unresolved place.");
+    error.userMessage = memoryEditState.results.length
+      ? "Choose a place from the search results before saving."
+      : `I could not find "${query}". Try city + state.`;
+    throw error;
+  }
+
+  memoryEditState.place = resolved;
+  memoryEditState.placeQuery = placeLabel(resolved);
+  memoryEditState.data = samePlanPlace(resolved, state.activePlace) ? state.forecast : null;
+  memoryEditState.alerts = samePlanPlace(resolved, state.activePlace) ? activeAlerts : [];
+  memoryEditState.forecastKey = "";
+  memoryEditState.results = [];
+  memoryEditState.error = "";
+  renderMemoryEditPlaceResults();
+  return memoryEditState.place;
 }
 
 function memoryEditForecastKey() {
@@ -2234,6 +2320,15 @@ async function updateMemoryEditPreview(options = {}) {
   if (!memoryEditState.title) {
     setMemoryEditPreview("<p>Add a plan name before saving.</p>", "is-warning");
     return;
+  }
+  if (fetchIfNeeded) {
+    try {
+      await ensureMemoryEditPlace();
+      if (!memoryEditState || seq !== memoryEditState.previewSeq) return;
+    } catch (err) {
+      setMemoryEditPreview(`<p>${escapeHtml(memoryEditErrorMessage(err, "I could not check that place. Try city + state."))}</p>`, "is-warning");
+      return;
+    }
   }
   let data = memoryEditState.data;
   if (!data && fetchIfNeeded) {
@@ -2303,6 +2398,7 @@ async function saveStructuredMemoryEdit(event) {
   renderMemoryEditSheet();
   setMemoryEditPreview("<p>Saving changes...</p>", "is-loading");
   try {
+    await ensureMemoryEditPlace();
     const data = await ensureMemoryEditForecast();
     refreshMemoryEditDateSelect();
     const dayIdx = data?.daily?.time?.indexOf(memoryEditState.targetDate) ?? -1;
@@ -2347,10 +2443,10 @@ async function saveStructuredMemoryEdit(event) {
     renderAsk();
     refreshPlanMemorySurfaces();
     closeMemoryEditSheet();
-  } catch {
+  } catch (err) {
     if (memoryEditState) memoryEditState.saving = false;
     renderMemoryEditSheet();
-    setMemoryEditPreview("<p>I could not save that edit. Check the date, time, and place.</p>", "is-warning");
+    setMemoryEditPreview(`<p>${escapeHtml(memoryEditErrorMessage(err))}</p>`, "is-warning");
   }
 }
 
@@ -2967,7 +3063,19 @@ function normalizePlanTimeClarification(value) {
 function samePlanPlace(a, b) {
   if (!a || !b) return false;
   if (a.id && b.id && a.id === b.id) return true;
-  return distanceKm(a, b) < 1;
+  const distance = distanceKm(a, b);
+  if (distance < 1) return true;
+  if (distance >= 25) return false;
+  const nameA = normalizeQualifierKey(a.name);
+  const nameB = normalizeQualifierKey(b.name);
+  if (!nameA || nameA !== nameB) return false;
+  const countryA = placeCountryCode(a);
+  const countryB = placeCountryCode(b);
+  if (countryA && countryB && countryA !== countryB) return false;
+  const adminA = normalizeQualifierKey(a.admin1 || "");
+  const adminB = normalizeQualifierKey(b.admin1 || "");
+  if (adminA && adminB && adminA !== adminB) return false;
+  return true;
 }
 
 function resolvePlanDayIndex(plan, data, c) {
