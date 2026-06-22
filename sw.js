@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v2625";
-const ASSET_VERSION = "2.6.25";
+const CACHE = "nearcast-v2626";
+const ASSET_VERSION = "2.6.26";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -8,7 +8,12 @@ const SHELL = [
   BASE,
   `${BASE}index.html`,
   `${BASE}styles.css?v=${ASSET_VERSION}`,
+  `${BASE}planner.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
+  `${BASE}map.js?v=${ASSET_VERSION}`,
+  `${BASE}sky.js?v=${ASSET_VERSION}`,
+  `${BASE}daygraph.js?v=${ASSET_VERSION}`,
+  `${BASE}boot.js?v=${ASSET_VERSION}`,
   `${BASE}ai.js?v=${ASSET_VERSION}`,
   `${BASE}ai-worker.js?v=${ASSET_VERSION}`,
   `${BASE}manifest.json`,
