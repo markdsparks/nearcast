@@ -3346,6 +3346,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+  scroll-margin-bottom: 84px;
 }
 .ask-form.is-drafting input {
   border-color: rgba(91, 141, 220, 0.72);
@@ -3390,6 +3391,16 @@ h2 {
 .ask-send:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.ai-sheet.sheet-keyboard-active .ask-form {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin: 0 -2px;
+  padding: 8px 2px 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0), var(--glass-heavy) 28%),
+    var(--bg);
 }
 .ask-exchange {
   margin-top: 11px;
@@ -5647,12 +5658,12 @@ body.map-immersive-active #mapLegend {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--sheet-keyboard-inset, 0px);
   z-index: 301;
   width: 100%;
   max-width: 560px;
   margin: 0 auto;
-  max-height: 92vh;
+  max-height: min(92vh, calc(var(--app-viewport-height, 100dvh) - 8px));
   overflow-y: auto;
   padding: 10px 20px 28px;
   overscroll-behavior: contain;
@@ -5666,6 +5677,10 @@ body.map-immersive-active #mapLegend {
   backdrop-filter: blur(18px);
   transform: translateY(101%);
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.day-sheet.sheet-keyboard-active {
+  max-height: calc(var(--app-viewport-height, 100dvh) - 10px);
+  padding-bottom: max(28px, calc(18px + env(safe-area-inset-bottom, 0px)));
 }
 .day-sheet.show {
   transform: translateY(0);

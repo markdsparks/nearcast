@@ -4666,6 +4666,7 @@ function closeAISheet() {
   els.aiBackdrop.classList.remove("show");
   els.aiSheet.classList.remove("show");
   clearSheetScrollAnchor(els.aiSheet);
+  clearSheetKeyboardGuard(els.aiSheet);
   document.body.style.overflow = "";
   setTimeout(() => {
     els.aiBackdrop.hidden = true;

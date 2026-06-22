@@ -1,4 +1,4 @@
-const VERSION = "2.6.49";
+const VERSION = "2.6.50";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -1614,16 +1614,119 @@ function restoreSheetScrollAnchor(sheet) {
   }
 }
 
+let sheetInputViewportGuardInstalled = false;
+let activeSheetInputGuard = { input: null, sheet: null, raf: 0 };
+
+function visualKeyboardInset() {
+  const visual = window.visualViewport;
+  if (!visual) return 0;
+  const layoutHeight = window.innerHeight || document.documentElement.clientHeight || visual.height;
+  const inset = layoutHeight - visual.height - visual.offsetTop;
+  return Math.max(0, Math.round(inset));
+}
+
+function clearSheetKeyboardGuard(sheet) {
+  if (!sheet) return;
+  if (activeSheetInputGuard.sheet === sheet) {
+    if (activeSheetInputGuard.raf) cancelAnimationFrame(activeSheetInputGuard.raf);
+    activeSheetInputGuard = { input: null, sheet: null, raf: 0 };
+  }
+  sheet.classList.remove("sheet-keyboard-active");
+  sheet.style.removeProperty("--sheet-keyboard-inset");
+}
+
+function visibleViewportBounds() {
+  const visual = window.visualViewport;
+  if (!visual) {
+    return { top: 0, bottom: window.innerHeight || document.documentElement.clientHeight || 0 };
+  }
+  return {
+    top: Math.max(0, visual.offsetTop || 0),
+    bottom: Math.max(0, (visual.offsetTop || 0) + visual.height)
+  };
+}
+
+function scrollSheetInputIntoView(input, sheet) {
+  if (!input || !sheet || sheet.hidden) return;
+  const target = input.closest(".ask-form") || input;
+  const sheetRect = sheet.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const viewport = visibleViewportBounds();
+  const top = Math.max(sheetRect.top, viewport.top) + 12;
+  const bottom = Math.min(sheetRect.bottom, viewport.bottom) - 16;
+  if (targetRect.bottom > bottom) {
+    sheet.scrollTop += targetRect.bottom - bottom;
+  } else if (targetRect.top < top) {
+    sheet.scrollTop -= top - targetRect.top;
+  }
+}
+
+function runSheetInputViewportGuard() {
+  activeSheetInputGuard.raf = 0;
+  const { input, sheet } = activeSheetInputGuard;
+  if (!input || !sheet || sheet.hidden || document.activeElement !== input) {
+    clearSheetKeyboardGuard(sheet);
+    return;
+  }
+  sheet.classList.add("sheet-keyboard-active");
+  sheet.style.setProperty("--sheet-keyboard-inset", `${visualKeyboardInset()}px`);
+  restoreSheetScrollAnchor(sheet);
+  scrollSheetInputIntoView(input, sheet);
+}
+
+function scheduleSheetInputViewportGuard() {
+  if (!activeSheetInputGuard.input || activeSheetInputGuard.raf) return;
+  activeSheetInputGuard.raf = requestAnimationFrame(runSheetInputViewportGuard);
+}
+
+function pulseSheetInputViewportGuard(input, sheet) {
+  activeSheetInputGuard.input = input;
+  activeSheetInputGuard.sheet = sheet;
+  scheduleSheetInputViewportGuard();
+  [80, 180, 360, 640].forEach((delay) => {
+    setTimeout(() => {
+      if (activeSheetInputGuard.input === input) scheduleSheetInputViewportGuard();
+    }, delay);
+  });
+}
+
+function releaseSheetInputViewportGuard(input, sheet) {
+  setTimeout(() => {
+    if (document.activeElement === input) return;
+    if (activeSheetInputGuard.input === input) {
+      activeSheetInputGuard = { input: null, sheet: null, raf: 0 };
+    }
+    clearSheetKeyboardGuard(sheet);
+  }, 160);
+}
+
+function installSheetInputViewportGuardListeners() {
+  if (sheetInputViewportGuardInstalled) return;
+  sheetInputViewportGuardInstalled = true;
+  const schedule = () => scheduleSheetInputViewportGuard();
+  window.addEventListener("resize", schedule, { passive: true });
+  const visual = window.visualViewport;
+  if (visual) {
+    visual.addEventListener("resize", schedule, { passive: true });
+    visual.addEventListener("scroll", schedule, { passive: true });
+    if ("onscrollend" in visual) {
+      visual.addEventListener("scrollend", schedule, { passive: true });
+    }
+  }
+}
+
 function bindSheetInputViewportGuard(input, sheet) {
   if (!input || !sheet || input.dataset.sheetViewportGuard === "1") return;
   input.dataset.sheetViewportGuard = "1";
+  installSheetInputViewportGuardListeners();
   const restore = () => {
-    restoreSheetScrollAnchor(sheet);
-    requestAnimationFrame(() => restoreSheetScrollAnchor(sheet));
-    setTimeout(() => restoreSheetScrollAnchor(sheet), 80);
+    pulseSheetInputViewportGuard(input, sheet);
   };
   input.addEventListener("focus", restore);
+  input.addEventListener("click", restore);
   input.addEventListener("input", restore);
+  input.addEventListener("keyup", restore);
+  input.addEventListener("blur", () => releaseSheetInputViewportGuard(input, sheet));
 }
 
 let viewportSyncRaf = 0;
