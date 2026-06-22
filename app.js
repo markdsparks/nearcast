@@ -1,4 +1,4 @@
-const VERSION = "2.6.30";
+const VERSION = "2.6.31";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -5854,13 +5854,19 @@ function daysFromToday(value) {
   return daysFromForecastToday(value);
 }
 
-// Full divider label for the hourly list, e.g. "Tomorrow · Tuesday".
+function dayDividerDateLabel(value) {
+  const day = datePart(value);
+  const d = day ? new Date(`${day}T12:00:00`) : new Date(value);
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(d);
+}
+
+// Full divider label for the hourly list, e.g. "Tomorrow · Tue, Jun 23".
 function dayDividerLabel(value) {
   const diff = daysFromToday(value);
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(new Date(value));
-  if (diff === 0) return `Today · ${weekday}`;
-  if (diff === 1) return `Tomorrow · ${weekday}`;
-  return weekday;
+  const label = dayDividerDateLabel(value);
+  if (diff === 0) return `Today · ${label}`;
+  if (diff === 1) return `Tomorrow · ${label}`;
+  return label;
 }
 
 // Compact label for the graph's midnight line, e.g. "Tomorrow" or "Wed".
