@@ -1,4 +1,4 @@
-const VERSION = "2.6.69";
+const VERSION = "2.6.70";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -3405,6 +3405,7 @@ function closePlaceSheet() {
 
 async function loadPlace(place, force = false) {
   state.activePlace = normalizePlace(place);
+  els.shell.classList.add("place-loading");
   state.radarPrecipSeq += 1;
   state.radarPrecipSignal = null;
   state.radarPrecipPlaceId = state.activePlace.id;
@@ -3429,6 +3430,8 @@ async function loadPlace(place, force = false) {
     lastLoadedAt = Date.now();
   } catch (error) {
     setStatus("Could not load weather data. Try another place or reload the page.", true);
+  } finally {
+    els.shell.classList.remove("place-loading");
   }
 
   // Alerts are best-effort and US-only — never block or break the forecast

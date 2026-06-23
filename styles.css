@@ -1296,16 +1296,16 @@ h2 {
   height: 34px;
   border: 1px solid var(--border-glass-md);
   border-radius: 999px;
-  background: var(--glass-light);
+  background: rgba(18, 31, 42, 0.34);
   color: var(--muted);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 10px 26px rgba(12, 24, 36, 0.10);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  contain: paint;
+  overflow: hidden;
 }
 
 .favorite-button svg {
@@ -1329,8 +1329,13 @@ h2 {
 
 .favorite-button:not(:disabled):hover {
   color: var(--ink);
-  transform: translateY(-1px);
   border-color: var(--blue);
+}
+
+.shell.place-loading .favorite-button {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .favorite-button.is-saved {
