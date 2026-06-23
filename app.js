@@ -1,4 +1,4 @@
-const VERSION = "2.6.70";
+const VERSION = "2.6.71";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -400,7 +400,7 @@ const els = {
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
-  savePlace: document.querySelector("#savePlace"),
+  placeSaveButton: document.querySelector("#placeSaveButton"),
   weatherMap: document.querySelector("#weatherMap"),
   baseTileLayer: document.querySelector("#baseTileLayer"),
   weatherTileLayer: document.querySelector("#weatherTileLayer"),
@@ -2253,16 +2253,11 @@ function bindEvents() {
   window.addEventListener("pageshow", handleForegroundResume);
   window.addEventListener("focus", handleForegroundResume);
   window.addEventListener("scroll", scheduleFloatingChromeUpdate, { passive: true });
-  bindTapAction(els.savePlace, () => {
+  bindTapAction(els.placeSaveButton, () => {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
-    if (alreadySaved) {
-      openPlaceSheet();
-      return;
-    }
+    if (alreadySaved) return;
     savePlace(state.activePlace);
-    updateSaveButton();
-    openPlaceSheet();
   });
   bindTapAction(els.radarMode, () => setMapMode("radar"));
   bindTapAction(els.futureMode, () => setMapMode("future"));
@@ -3247,20 +3242,24 @@ function renderSearchResults() {
   });
 }
 
-function updateSaveButton() {
-  if (!els.savePlace) return;
+function updatePlaceSaveButton() {
+  if (!els.placeSaveButton) return;
   const alreadySaved = Boolean(state.activePlace &&
     state.savedPlaces.some((p) => p.id === state.activePlace.id));
   const placeName = state.activePlace?.name || "place";
 
-  els.savePlace.disabled = !state.activePlace;
-  els.savePlace.classList.toggle("is-saved", alreadySaved);
-  els.savePlace.setAttribute("aria-pressed", String(alreadySaved));
-  els.savePlace.setAttribute(
+  els.placeSaveButton.hidden = !state.activePlace;
+  els.placeSaveButton.disabled = !state.activePlace || alreadySaved;
+  els.placeSaveButton.classList.toggle("is-saved", alreadySaved);
+  els.placeSaveButton.setAttribute("aria-pressed", String(alreadySaved));
+  els.placeSaveButton.setAttribute(
     "aria-label",
-    alreadySaved ? `${placeName} is saved. Open saved places.` : `Save ${placeName}`
+    alreadySaved ? `${placeName} is saved` : `Save ${placeName}`
   );
-  els.savePlace.title = alreadySaved ? "Saved place" : "Save place";
+  els.placeSaveButton.querySelector("[data-place-save-title]").textContent =
+    alreadySaved ? "Saved" : "Save this place";
+  els.placeSaveButton.querySelector("[data-place-save-copy]").textContent =
+    alreadySaved ? `${placeName} is in your places.` : `Add ${placeName} for faster switching.`;
 }
 
 // Lightweight current-conditions for the saved-places glance row.
@@ -3295,14 +3294,14 @@ async function fetchGlance(place) {
 
 function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
-  updateSaveButton();
+  updatePlaceSaveButton();
   updatePlaceSwitcher();
 
   if (!state.savedPlaces.length) {
     els.savedPlaces.innerHTML = `
       <div class="place-empty">
         <strong>No saved places yet</strong>
-        <span>Save a place from the forecast to make switching faster.</span>
+        <span>Use Save this place above to make switching faster.</span>
       </div>
     `;
   }
@@ -3405,7 +3404,6 @@ function closePlaceSheet() {
 
 async function loadPlace(place, force = false) {
   state.activePlace = normalizePlace(place);
-  els.shell.classList.add("place-loading");
   state.radarPrecipSeq += 1;
   state.radarPrecipSignal = null;
   state.radarPrecipPlaceId = state.activePlace.id;
@@ -3430,8 +3428,6 @@ async function loadPlace(place, force = false) {
     lastLoadedAt = Date.now();
   } catch (error) {
     setStatus("Could not load weather data. Try another place or reload the page.", true);
-  } finally {
-    els.shell.classList.remove("place-loading");
   }
 
   // Alerts are best-effort and US-only — never block or break the forecast

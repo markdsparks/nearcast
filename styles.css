@@ -1288,76 +1288,6 @@ h2 {
   color: var(--ink);
 }
 
-.favorite-button {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border-glass-md);
-  border-radius: 999px;
-  background: rgba(18, 31, 42, 0.34);
-  color: var(--muted);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  contain: paint;
-  overflow: hidden;
-}
-
-.favorite-button svg {
-  width: 18px;
-  height: 18px;
-  overflow: visible;
-}
-
-.favorite-fill {
-  opacity: 0;
-  transform: scale(0.72);
-  transform-origin: 12px 12px;
-  transition: opacity 0.16s, transform 0.16s;
-}
-
-.favorite-outline {
-  opacity: 0.8;
-  stroke-width: 2.15;
-  transition: opacity 0.16s;
-}
-
-.favorite-button:not(:disabled):hover {
-  color: var(--ink);
-  border-color: var(--blue);
-}
-
-.shell.place-loading .favorite-button {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.favorite-button.is-saved {
-  color: var(--gold);
-  border-color: rgba(179, 107, 31, 0.36);
-  background: rgba(255, 239, 198, 0.48);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 12px 28px rgba(92, 59, 19, 0.12);
-}
-
-.favorite-button.is-saved .favorite-fill {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.favorite-button:disabled {
-  opacity: 0.46;
-  cursor: default;
-  transform: none;
-}
-
 .launch-current {
   display: grid;
   justify-items: center;
@@ -3763,6 +3693,74 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.place-save-button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 60px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.place-save-button[hidden] {
+  display: none;
+}
+.place-save-button:not(:disabled):hover {
+  border-color: var(--blue);
+}
+.place-save-button.is-saved {
+  border-color: rgba(29, 122, 87, 0.48);
+  background: var(--panel-soft);
+  color: var(--green);
+}
+.place-save-button:disabled {
+  cursor: default;
+}
+.place-save-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--panel-soft);
+  color: var(--gold);
+}
+.place-save-button.is-saved .place-save-icon {
+  color: var(--green);
+}
+.place-save-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.place-save-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.place-save-copy strong,
+.place-save-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.place-save-copy strong {
+  font-size: 0.95rem;
+  font-weight: 850;
+}
+.place-save-copy span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 .place-item {
   display: grid;
@@ -7554,7 +7552,6 @@ button.sheet-plan-badge:focus-visible {
     padding: 0 8px;
   }
 
-  .favorite-button,
   .sheet-close {
     width: 44px;
     height: 44px;
