@@ -1,8 +1,10 @@
-const VERSION = "2.6.60";
+const VERSION = "2.6.61";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
-const WELCOME_AMBIENCE_TIMEOUT_MS = 1800;
+const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
+const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
+const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
 const PERF_STORAGE_KEY = "nearcast-perf";
 const PERF_RENDER_WARN_MS = 50;
 const PERF_INPUT_WARN_MS = 80;
@@ -282,6 +284,8 @@ let searchSuggestTimer = null;
 let searchRequestSeq = 0;
 let welcomeAmbienceStarted = false;
 let welcomeAmbienceAbort = null;
+let locationLookupSeq = 0;
+let locationLookupTimer = null;
 
 const els = {
   themeColorMeta: document.querySelector("meta[name='theme-color']"),
@@ -3275,6 +3279,7 @@ function handleForegroundResume(event = {}) {
     : event.persisted ? now - lastLoadedAt : 0;
   if (idleMs >= VIEW_RESET_IDLE_MS) resetTransientViewToForecastTop();
   lastBackgroundedAt = null;
+  clearRestoredWelcomeLoading(event, idleMs);
   refreshOnForeground();
 }
 
@@ -3284,6 +3289,15 @@ function refreshOnForeground() {
   if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
   for (const id in glanceData) delete glanceData[id]; // let chips re-pull too
   loadPlace(state.activePlace, true);
+}
+
+function clearRestoredWelcomeLoading(event = {}, idleMs = 0) {
+  if (!welcomeIsActive()) return;
+  if (!event.persisted && idleMs < 1000) return;
+  clearLocationLookupWatchdog();
+  setLoadingStatus("");
+  if (!els.status.hidden && !els.status.classList.contains("error")) setStatus("");
+  if (!welcomeAmbienceStarted) initWelcomeAmbience();
 }
 
 function plannerHasActiveDraft() {
@@ -5678,20 +5692,53 @@ async function useCurrentLocation() {
     return;
   }
 
+  const lookupSeq = ++locationLookupSeq;
   setStatus("Waiting for location permission...");
+  startLocationLookupWatchdog(lookupSeq);
   navigator.geolocation.getCurrentPosition(
     async (position) => {
+      if (lookupSeq !== locationLookupSeq) return;
+      clearLocationLookupWatchdog(lookupSeq);
       const fallback = placeFromCoordinates(position.coords);
       setStatus("Naming your location...");
       try {
-        loadPlace(await reverseGeocodePlace(position.coords, fallback));
+        const place = await reverseGeocodePlace(position.coords, fallback);
+        if (lookupSeq !== locationLookupSeq) return;
+        loadPlace(place);
       } catch {
+        if (lookupSeq !== locationLookupSeq) return;
         loadPlace(fallback);
       }
     },
-    () => setStatus("Location permission was not granted.", true),
+    (error) => {
+      if (lookupSeq !== locationLookupSeq) return;
+      clearLocationLookupWatchdog(lookupSeq);
+      setStatus(locationErrorMessage(error), true);
+    },
     { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
   );
+}
+
+function startLocationLookupWatchdog(lookupSeq) {
+  clearLocationLookupWatchdog();
+  locationLookupTimer = setTimeout(() => {
+    if (lookupSeq !== locationLookupSeq || state.activePlace) return;
+    setStatus("Location lookup is taking too long. Search for a place or try again.", true);
+  }, LOCATION_LOOKUP_TIMEOUT_MS);
+}
+
+function clearLocationLookupWatchdog(lookupSeq = null) {
+  if (lookupSeq !== null && lookupSeq !== locationLookupSeq) return;
+  if (!locationLookupTimer) return;
+  clearTimeout(locationLookupTimer);
+  locationLookupTimer = null;
+}
+
+function locationErrorMessage(error) {
+  if (error?.code === 1) return "Location permission was not granted.";
+  if (error?.code === 2) return "Current location is unavailable. Search for a place or try again.";
+  if (error?.code === 3) return "Location lookup timed out. Search for a place or try again.";
+  return "Could not get your location. Search for a place or try again.";
 }
 
 function placeFromCoordinates(coords) {
@@ -5725,9 +5772,7 @@ async function reverseGeocodePlace(coords, fallback) {
     "accept-language": "en"
   }).toString();
 
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Reverse geocoding failed.");
-  const json = await response.json();
+  const json = await fetchJsonWithTimeout(url, REVERSE_GEOCODE_TIMEOUT_MS);
   const place = placeFromReverseGeocode(json, fallback);
   localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), place }));
   return { ...fallback, ...place };
