@@ -57,6 +57,11 @@
   --welcome-ambient-border: rgba(22, 36, 50, 0.16);
   --welcome-ambient-shadow: 0 8px 18px rgba(29, 48, 58, 0.08);
   --welcome-ambient-text-shadow: none;
+  --welcome-kicker-fg: #1f745c;
+  --welcome-headline-fg: #111a24;
+  --welcome-sub-fg: #263d51;
+  --welcome-moments-fg: #334b5f;
+  --welcome-copy-shadow: 0 1px 12px rgba(255, 255, 255, 0.40);
   --daily-secondary: var(--muted);
   --daily-secondary-strong: var(--muted);
   --daily-section-meta: var(--muted);
@@ -147,6 +152,11 @@
       0 10px 24px rgba(0, 0, 0, 0.24),
       inset 0 1px 0 rgba(255, 255, 255, 0.12);
     --welcome-ambient-text-shadow: 0 1px 9px rgba(0, 0, 0, 0.38);
+    --welcome-kicker-fg: #66d3ae;
+    --welcome-headline-fg: rgba(244, 250, 253, 0.98);
+    --welcome-sub-fg: rgba(231, 242, 248, 0.90);
+    --welcome-moments-fg: rgba(216, 231, 239, 0.78);
+    --welcome-copy-shadow: 0 2px 16px rgba(0, 0, 0, 0.46);
     --content-wash: transparent;
     --welcome-stage-wash:
       linear-gradient(180deg, rgba(4, 8, 15, 0.20), rgba(4, 8, 15, 0.12) 48%, rgba(4, 8, 15, 0.18) 100%),
@@ -207,6 +217,11 @@
     0 10px 24px rgba(0, 0, 0, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
   --welcome-ambient-text-shadow: 0 1px 9px rgba(0, 0, 0, 0.38);
+  --welcome-kicker-fg: #66d3ae;
+  --welcome-headline-fg: rgba(244, 250, 253, 0.98);
+  --welcome-sub-fg: rgba(231, 242, 248, 0.90);
+  --welcome-moments-fg: rgba(216, 231, 239, 0.78);
+  --welcome-copy-shadow: 0 2px 16px rgba(0, 0, 0, 0.46);
   --content-wash: transparent;
   --welcome-stage-wash:
     linear-gradient(180deg, rgba(4, 8, 15, 0.20), rgba(4, 8, 15, 0.12) 48%, rgba(4, 8, 15, 0.18) 100%),
@@ -430,6 +445,11 @@
     0 10px 24px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.13);
   --welcome-ambient-text-shadow: 0 1px 9px rgba(0, 0, 0, 0.40);
+  --welcome-kicker-fg: #66d3ae;
+  --welcome-headline-fg: rgba(244, 250, 253, 0.98);
+  --welcome-sub-fg: rgba(231, 242, 248, 0.90);
+  --welcome-moments-fg: rgba(216, 231, 239, 0.78);
+  --welcome-copy-shadow: 0 2px 16px rgba(0, 0, 0, 0.48);
 }
 
 :root[data-theme="light"][data-sky-tone="bright"] {
@@ -7333,16 +7353,17 @@ button.sheet-plan-badge:focus-visible {
   outline-offset: 3px;
 }
 .welcome-kicker {
-  color: var(--green);
+  color: var(--welcome-kicker-fg);
   font-size: 0.76rem;
   font-weight: 900;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  text-shadow: var(--welcome-copy-shadow);
 }
 .mode-welcome .welcome-brand {
   width: min(100%, 12.8ch);
   max-width: calc(100vw - 32px);
-  color: var(--ink);
+  color: var(--welcome-headline-fg);
   font-size: clamp(2.25rem, 9.7vw, 5.35rem);
   font-weight: 950;
   line-height: 0.94;
@@ -7350,23 +7371,26 @@ button.sheet-plan-badge:focus-visible {
   overflow-wrap: normal;
   text-wrap: balance;
   white-space: normal;
+  text-shadow: var(--welcome-copy-shadow);
 }
 .welcome-sub {
-  color: var(--muted);
+  color: var(--welcome-sub-fg);
   font-size: clamp(1rem, 3vw, 1.18rem);
   font-weight: 750;
   max-width: 28ch;
   margin: 0 auto;
+  text-shadow: var(--welcome-copy-shadow);
 }
 .welcome-moments {
   max-width: 100%;
   margin-top: 8px;
-  color: var(--muted);
+  color: var(--welcome-moments-fg);
   font-size: 0.78rem;
   font-weight: 850;
   letter-spacing: 0.02em;
-  opacity: 0.82;
+  opacity: 1;
   white-space: nowrap;
+  text-shadow: var(--welcome-copy-shadow);
 }
 
 .welcome-locate {

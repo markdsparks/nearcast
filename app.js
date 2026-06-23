@@ -1,4 +1,4 @@
-const VERSION = "2.6.66";
+const VERSION = "2.6.67";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -3060,6 +3060,7 @@ function applyWelcomeAmbience(data, place, options = {}) {
   const display = { ...(truth.display || {}), welcomeAmbient: true };
   updateWelcomeBrandMark(truth.nowCode ?? truth.code, truth.isDay);
   updateSkyCanvas(sceneCode, truth.isDay, data, display);
+  if (state.theme === "auto") applyTheme();
   setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth, source), { source });
 }
 
