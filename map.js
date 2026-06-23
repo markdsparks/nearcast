@@ -1488,6 +1488,7 @@ function renderTileMap() {
   renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
   if (mapState.immersive) updateImmersiveHUD();
   renderMapMarkers();
+  renderStormImpactOverlay(viewport);
   perfEnd("renderTileMap", perf);
 }
 
@@ -1720,11 +1721,16 @@ function renderMapMarker(place, options = {}) {
   const { left, top } = layout;
   const marker = document.createElement("div");
   const isActive = isActiveMapPlace(place);
+  const impact = stormImpactForPlace(place);
   const name = mapMarkerName(place);
   const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
-  marker.className = `map-marker${mapState.immersive && isActive ? " is-active-place" : ""}`;
-  if (tempText) {
-    marker.innerHTML = `<span>${escapeHtml(name)}</span><strong>${escapeHtml(tempText)}</strong>`;
+  const impactText = impact ? formatImpactMarkerEta(impact.etaMin) : "";
+  const classNames = ["map-marker"];
+  if (mapState.immersive && isActive) classNames.push("is-active-place");
+  if (impact) classNames.push("has-impact", `is-impact-${impact.tone}`);
+  marker.className = classNames.join(" ");
+  if (tempText || impactText) {
+    marker.innerHTML = `<span>${escapeHtml(name)}</span>${tempText ? `<strong>${escapeHtml(tempText)}</strong>` : ""}${impactText ? `<small>${escapeHtml(impactText)}</small>` : ""}`;
   } else {
     marker.textContent = name;
   }
@@ -1744,11 +1750,13 @@ function mapMarkerLayout(place, viewport = getMapViewport()) {
 
   const isActive = isActiveMapPlace(place);
   const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
+  const impact = stormImpactForPlace(place);
+  const impactText = impact ? formatImpactMarkerEta(impact.etaMin) : "";
   const name = mapMarkerName(place);
   return {
     left,
     top,
-    bounds: mapMarkerBounds(left, top, estimateMapMarkerWidth(name, tempText), tempText ? 31 : 29)
+    bounds: mapMarkerBounds(left, top, estimateMapMarkerWidth(name, tempText, impactText), tempText || impactText ? 31 : 29)
   };
 }
 
@@ -1760,11 +1768,12 @@ function activeMapMarkerTemp() {
   return document.getElementById("nowTemp")?.textContent || "";
 }
 
-function estimateMapMarkerWidth(name, tempText = "") {
+function estimateMapMarkerWidth(name, tempText = "", impactText = "") {
   const nameWidth = Math.min(112, String(name || "").length * 7.2);
   const tempWidth = tempText ? 10 + String(tempText).length * 8.4 : 0;
-  const width = 18 + nameWidth + tempWidth;
-  return Math.max(tempText ? 92 : 74, Math.min(tempText ? 178 : 130, width));
+  const impactWidth = impactText ? 12 + String(impactText).length * 7.2 : 0;
+  const width = 18 + nameWidth + tempWidth + impactWidth;
+  return Math.max(tempText || impactText ? 92 : 74, Math.min(tempText || impactText ? 190 : 130, width));
 }
 
 function mapMarkerBounds(left, top, width, height) {
@@ -1803,6 +1812,12 @@ function projectLatLon(latitude, longitude, zoom) {
 
 // ── Immersive Map ────────────────────────────────────────────
 let immersiveDragAbort = null;
+const impactTapState = {
+  active: false,
+  moved: false,
+  startX: 0,
+  startY: 0
+};
 
 function enterImmersiveMap() {
   if (mapState.immersive) return;
@@ -1863,6 +1878,7 @@ function enterImmersiveMap() {
 function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
+  clearStormImpact();
   Object.assign(els, mapState._normalEls);
   mapState._normalEls = null;
   mapState.immersive = false;
@@ -1923,36 +1939,754 @@ function bindImmersiveDrag() {
 
   canvas.addEventListener("mousedown", (e) => {
     e.preventDefault();
+    startStormImpactTap(e.clientX, e.clientY);
     startMapDrag(e.clientX, e.clientY, canvas);
   }, { signal: sig });
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
+    cancelStormImpactTap();
     zoomMapFromWheel(e);
   }, { passive: false, signal: sig });
-  window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY), { signal: sig });
-  window.addEventListener("mouseup", () => endMapGesture(canvas), { signal: sig });
+  window.addEventListener("mousemove", (e) => {
+    updateStormImpactTap(e.clientX, e.clientY);
+    moveMapDrag(e.clientX, e.clientY);
+  }, { signal: sig });
+  window.addEventListener("mouseup", (e) => {
+    const shouldInspect = finishStormImpactTap(e.clientX, e.clientY, canvas);
+    endMapGesture(canvas);
+    if (shouldInspect) inspectStormImpactAt(e.clientX, e.clientY);
+  }, { signal: sig });
 
   canvas.addEventListener("touchstart", (e) => {
     if (e.touches.length === 2) {
       e.preventDefault();
+      cancelStormImpactTap();
       startMapPinch(e.touches[0], e.touches[1]);
       return;
     }
     const t = e.touches[0];
+    startStormImpactTap(t.clientX, t.clientY);
     startMapDrag(t.clientX, t.clientY, canvas);
   }, { passive: false, signal: sig });
   window.addEventListener("touchmove", (e) => {
     if (pinchState.active && e.touches.length === 2) {
       e.preventDefault();
+      cancelStormImpactTap();
       moveMapPinch(e.touches[0], e.touches[1]);
       return;
     }
     if (e.touches.length === 1) {
       const t = e.touches[0];
+      updateStormImpactTap(t.clientX, t.clientY);
       moveMapDrag(t.clientX, t.clientY);
     }
   }, { passive: false, signal: sig });
-  window.addEventListener("touchend", () => endMapGesture(canvas), { signal: sig });
+  window.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    const shouldInspect = t ? finishStormImpactTap(t.clientX, t.clientY, canvas) : false;
+    endMapGesture(canvas);
+    if (shouldInspect && t) inspectStormImpactAt(t.clientX, t.clientY);
+  }, { signal: sig });
+  window.addEventListener("touchcancel", () => {
+    cancelStormImpactTap();
+    endMapGesture(canvas);
+  }, { signal: sig });
+}
+
+function startStormImpactTap(x, y) {
+  if (!mapState.immersive || !state.activePlace) return;
+  impactTapState.active = true;
+  impactTapState.moved = false;
+  impactTapState.startX = x;
+  impactTapState.startY = y;
+}
+
+function updateStormImpactTap(x, y) {
+  if (!impactTapState.active || impactTapState.moved) return;
+  const dx = x - impactTapState.startX;
+  const dy = y - impactTapState.startY;
+  if (Math.hypot(dx, dy) > MAP_TAP_MOVE_PX) impactTapState.moved = true;
+}
+
+function finishStormImpactTap(x, y, canvas = els.weatherMap) {
+  updateStormImpactTap(x, y);
+  const rect = canvas?.getBoundingClientRect();
+  const inside = rect
+    ? x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    : false;
+  const shouldInspect = impactTapState.active && !impactTapState.moved && inside && mapState.immersive && Boolean(state.activePlace);
+  cancelStormImpactTap();
+  return shouldInspect;
+}
+
+function cancelStormImpactTap() {
+  impactTapState.active = false;
+  impactTapState.moved = false;
+}
+
+async function inspectStormImpactAt(clientX, clientY) {
+  const target = mapLatLonFromClientPoint(clientX, clientY);
+  if (!target) return;
+
+  const seq = ++mapState.stormImpact.seq;
+  mapState.stormImpact.status = "loading";
+  mapState.stormImpact.analysis = {
+    target,
+    tapSource: activeMapSource()
+  };
+  renderStormImpactCard();
+  renderStormImpactOverlay();
+
+  try {
+    const analysis = await analyzeStormImpactAtPoint(target, { tapSource: activeMapSource() });
+    if (seq !== mapState.stormImpact.seq) return;
+    mapState.stormImpact.status = "ready";
+    mapState.stormImpact.analysis = analysis;
+  } catch {
+    if (seq !== mapState.stormImpact.seq) return;
+    mapState.stormImpact.status = "error";
+    mapState.stormImpact.analysis = {
+      target,
+      tapSource: activeMapSource(),
+      title: "Radar check unavailable",
+      summary: "Nearcast could not sample the radar tiles for this spot. Try again in a moment."
+    };
+  }
+
+  renderStormImpactCard();
+  renderTileMap();
+}
+
+function clearStormImpact(options = {}) {
+  if (!mapState.stormImpact) return;
+  mapState.stormImpact.seq += 1;
+  mapState.stormImpact.status = "idle";
+  mapState.stormImpact.analysis = null;
+  if (els.stormImpactCard) els.stormImpactCard.hidden = true;
+  const layer = document.getElementById("immersiveImpactLayer");
+  if (layer) layer.innerHTML = "";
+  if (options.render !== false && mapState.immersive && mapState.initialized && state.activePlace) renderTileMap();
+}
+
+async function analyzeStormImpactAtPoint(target, options = {}) {
+  const frames = selectStormImpactFrames(await fetchRadarFrames());
+  const base = {
+    target,
+    tapSource: options.tapSource || activeMapSource(),
+    hasPrecip: false,
+    impacts: [],
+    closestMiss: null,
+    source: "Radar"
+  };
+
+  if (!frames.length) {
+    return {
+      ...base,
+      title: "Radar unavailable here",
+      summary: "No recent observed radar frames are available for this map area."
+    };
+  }
+
+  const z = STORM_IMPACT_SAMPLE_ZOOM;
+  const tileCache = new Map();
+  const settled = await Promise.allSettled(
+    frames.map((frame) => sampleStormImpactFrame(frame, target, z, tileCache))
+  );
+  const samples = settled
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  const latestSample = samples[samples.length - 1] || null;
+  const source = latestSample?.source || frames[frames.length - 1]?.attribution || frames[frames.length - 1]?.sourceLabel || "Radar";
+
+  if (!latestSample || !isSignificantStormSample(latestSample)) {
+    return {
+      ...base,
+      source,
+      title: "No solid radar return",
+      summary: base.tapSource === "forecast"
+        ? "This forecast frame is display guidance; storm impact uses the latest observed radar, which is weak or clear at this spot."
+        : "The latest radar is weak or clear at this tap."
+    };
+  }
+
+  const significant = samples.filter(isSignificantStormSample);
+  const motion = estimateStormMotion(significant);
+  const latestWorld = latestSample.centroidWorld || latestSample.targetWorld;
+  const latestLatLon = unprojectWorldPoint(latestWorld, z);
+  const radiusPx = stormImpactRadius(latestSample);
+  const places = stormImpactPlaces();
+  const impactResult = computeStormImpacts({
+    latestWorld,
+    latestLatLon,
+    motion,
+    radiusPx,
+    places,
+    z
+  });
+
+  const analysis = {
+    ...base,
+    z,
+    source,
+    hasPrecip: true,
+    label: stormImpactRainLabel(latestSample),
+    intensity: latestSample.intensity,
+    frameTimestamp: latestSample.timestamp,
+    sampleCount: samples.length,
+    motion,
+    radiusPx,
+    latestWorld,
+    latestLatLon,
+    impacts: impactResult.impacts,
+    closestMiss: impactResult.closestMiss
+  };
+  analysis.title = stormImpactTitle(analysis);
+  analysis.summary = stormImpactSummary(analysis);
+  return analysis;
+}
+
+function selectStormImpactFrames(frames) {
+  const now = Date.now();
+  const observed = [...(frames || [])]
+    .filter((frame) => frame?.url && Number.isFinite(frame.timestamp))
+    .filter((frame) => frame.timestamp <= now + 2 * 60 * 1000)
+    .filter((frame) => now - frame.timestamp <= STORM_IMPACT_MAX_FRAME_AGE_MS)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (observed.length <= STORM_IMPACT_FRAME_LIMIT) return observed;
+  const recent = observed.slice(-STORM_IMPACT_FRAME_LIMIT * 2);
+  const stride = Math.max(1, Math.ceil(recent.length / STORM_IMPACT_FRAME_LIMIT));
+  return recent
+    .filter((_, index) => index % stride === 0 || index === recent.length - 1)
+    .slice(-STORM_IMPACT_FRAME_LIMIT);
+}
+
+async function sampleStormImpactFrame(frame, target, z, tileCache) {
+  const targetWorld = projectLatLon(target.latitude, target.longitude, z);
+  const stats = await radarAreaStats(frame, targetWorld, z, STORM_IMPACT_SAMPLE_RADIUS_PX, tileCache);
+  const centroidWorld = stats.totalScore > 0
+    ? { x: targetWorld.x + stats.centroidDx, y: targetWorld.y + stats.centroidDy }
+    : targetWorld;
+  const intensity = radarSampleIntensity(stats);
+  return {
+    ...stats,
+    frame,
+    source: frame.attribution || frame.sourceLabel || "Radar",
+    timestamp: frame.timestamp,
+    targetWorld,
+    centroidWorld,
+    intensity
+  };
+}
+
+async function radarAreaStats(frame, targetWorld, z, radiusPx, tileCache) {
+  const worldTiles = 2 ** z;
+  const minX = Math.floor(targetWorld.x - radiusPx);
+  const maxX = Math.ceil(targetWorld.x + radiusPx);
+  const minY = Math.floor(targetWorld.y - radiusPx);
+  const maxY = Math.ceil(targetWorld.y + radiusPx);
+  const startTileX = Math.floor(minX / 256);
+  const endTileX = Math.floor(maxX / 256);
+  const startTileY = Math.floor(minY / 256);
+  const endTileY = Math.floor(maxY / 256);
+  const tiles = new Map();
+  const loads = [];
+
+  for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
+    for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
+      if (tileY < 0 || tileY >= worldTiles) continue;
+      const key = `${tileX}/${tileY}`;
+      loads.push(radarTileImageDataForSample(frame, z, tileX, tileY, tileCache).then((imageData) => {
+        if (imageData) tiles.set(key, imageData);
+      }));
+    }
+  }
+
+  await Promise.all(loads);
+
+  let hits = 0;
+  let count = 0;
+  let totalScore = 0;
+  let maxScore = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumDistance = 0;
+  let maxDistance = 0;
+  const radiusSq = radiusPx * radiusPx;
+
+  for (let y = minY; y <= maxY; y += 1) {
+    const dy = y - targetWorld.y;
+    const tileY = Math.floor(y / 256);
+    if (tileY < 0 || tileY >= worldTiles) continue;
+
+    for (let x = minX; x <= maxX; x += 1) {
+      const dx = x - targetWorld.x;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > radiusSq) continue;
+
+      const tileX = Math.floor(x / 256);
+      const imageData = tiles.get(`${tileX}/${tileY}`);
+      if (!imageData) continue;
+      const localX = x - tileX * 256;
+      const localY = y - tileY * 256;
+      if (localX < 0 || localX >= imageData.width || localY < 0 || localY >= imageData.height) continue;
+
+      const index = (localY * imageData.width + localX) * 4;
+      const score = radarPixelPrecipScore(
+        imageData.data[index],
+        imageData.data[index + 1],
+        imageData.data[index + 2],
+        imageData.data[index + 3]
+      );
+      count += 1;
+      if (score > 0) {
+        const distance = Math.sqrt(distSq);
+        hits += 1;
+        totalScore += score;
+        maxScore = Math.max(maxScore, score);
+        sumX += dx * score;
+        sumY += dy * score;
+        sumDistance += distance * score;
+        maxDistance = Math.max(maxDistance, distance);
+      }
+    }
+  }
+
+  return {
+    hits,
+    count,
+    score: Number(totalScore.toFixed(2)),
+    totalScore,
+    maxScore: Number(maxScore.toFixed(2)),
+    density: count ? Number((hits / count).toFixed(3)) : 0,
+    centroidDx: totalScore ? sumX / totalScore : 0,
+    centroidDy: totalScore ? sumY / totalScore : 0,
+    weightedRadius: totalScore ? sumDistance / totalScore : 0,
+    maxDistance
+  };
+}
+
+async function radarTileImageDataForSample(frame, z, tileX, tileY, tileCache) {
+  const worldTiles = 2 ** z;
+  if (tileY < 0 || tileY >= worldTiles) return null;
+  const wrappedX = ((tileX % worldTiles) + worldTiles) % worldTiles;
+  const key = `${frame.url}:${z}:${wrappedX}:${tileY}`;
+  if (!tileCache.has(key)) {
+    const url = weatherTileUrl(frame.url, z, wrappedX, tileY);
+    tileCache.set(key, fetchRadarTileImageData(url).catch(() => null));
+  }
+  return tileCache.get(key);
+}
+
+function isSignificantStormSample(sample) {
+  if (!sample) return false;
+  return sample.hits >= STORM_IMPACT_MIN_SAMPLE_HITS ||
+    sample.density >= STORM_IMPACT_MIN_SAMPLE_DENSITY ||
+    sample.maxScore >= 1.16;
+}
+
+function estimateStormMotion(samples) {
+  const usable = [...(samples || [])]
+    .filter((sample) => sample?.centroidWorld && Number.isFinite(sample.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  if (usable.length < 2) return null;
+
+  const latest = usable[usable.length - 1];
+  const t0 = latest.timestamp;
+  const rows = usable.map((sample) => ({
+    t: (sample.timestamp - t0) / 60000,
+    x: sample.centroidWorld.x,
+    y: sample.centroidWorld.y,
+    w: Math.max(1, sample.score || sample.hits || 1)
+  }));
+  const vx = weightedSlope(rows, "x");
+  const vy = weightedSlope(rows, "y");
+  const speedPxMin = Math.hypot(vx, vy);
+  if (!Number.isFinite(speedPxMin) || speedPxMin < STORM_IMPACT_MIN_SPEED_PX_PER_MIN) return null;
+
+  const first = usable[0];
+  const windowMin = Math.max(1, (latest.timestamp - first.timestamp) / 60000);
+  const displacementPx = Math.hypot(
+    latest.centroidWorld.x - first.centroidWorld.x,
+    latest.centroidWorld.y - first.centroidWorld.y
+  );
+  const confidence = usable.length >= 4 && windowMin >= 8 && displacementPx >= 6
+    ? "strong"
+    : usable.length >= 3 && displacementPx >= 4 ? "medium" : "low";
+
+  return {
+    vx,
+    vy,
+    speedPxMin,
+    direction: compassDirectionFromVector(vx, vy),
+    confidence,
+    frameCount: usable.length,
+    windowMin,
+    displacementPx
+  };
+}
+
+function weightedSlope(rows, key) {
+  const totalW = rows.reduce((sum, row) => sum + row.w, 0);
+  if (!totalW) return 0;
+  const meanT = rows.reduce((sum, row) => sum + row.t * row.w, 0) / totalW;
+  const meanV = rows.reduce((sum, row) => sum + row[key] * row.w, 0) / totalW;
+  let numerator = 0;
+  let denominator = 0;
+  rows.forEach((row) => {
+    const dt = row.t - meanT;
+    numerator += row.w * dt * (row[key] - meanV);
+    denominator += row.w * dt * dt;
+  });
+  return denominator ? numerator / denominator : 0;
+}
+
+function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, places, z }) {
+  const impacts = [];
+  const candidates = [];
+  const currentRadius = Math.max(radiusPx, STORM_IMPACT_PATH_RADIUS_PX * 0.72);
+  const pathRadius = Math.max(STORM_IMPACT_PATH_RADIUS_PX, radiusPx * 0.88);
+  const nearRadius = Math.max(STORM_IMPACT_NEAR_PATH_RADIUS_PX, pathRadius * 1.45);
+  const lookaheadMin = STORM_IMPACT_LOOKAHEAD_MS / 60000;
+  const speedSq = motion ? motion.vx * motion.vx + motion.vy * motion.vy : 0;
+  const speed = motion?.speedPxMin || 0;
+
+  places.forEach((place) => {
+    const placeWorld = projectLatLon(place.latitude, place.longitude, z);
+    const dx = placeWorld.x - latestWorld.x;
+    const dy = placeWorld.y - latestWorld.y;
+    const nowDistancePx = Math.hypot(dx, dy);
+    let impact = null;
+    let closestMin = 0;
+    let crossPx = nowDistancePx;
+
+    if (nowDistancePx <= currentRadius) {
+      impact = {
+        tone: "likely",
+        etaMin: 0,
+        crossPx: nowDistancePx,
+        closestMin: 0,
+        detail: "Radar return is near this place now."
+      };
+    } else if (motion && speedSq > 0) {
+      const dot = dx * motion.vx + dy * motion.vy;
+      closestMin = dot / speedSq;
+      const closestDx = dx - motion.vx * closestMin;
+      const closestDy = dy - motion.vy * closestMin;
+      crossPx = Math.hypot(closestDx, closestDy);
+      const inWindow = closestMin >= -8 && closestMin <= lookaheadMin;
+
+      if (inWindow && crossPx <= nearRadius) {
+        const threshold = crossPx <= pathRadius ? pathRadius : nearRadius;
+        const entryOffset = crossPx < threshold && speed > 0
+          ? Math.sqrt(Math.max(0, threshold * threshold - crossPx * crossPx)) / speed
+          : 0;
+        const etaMin = Math.max(0, closestMin - entryOffset);
+        const tone = crossPx <= pathRadius * 0.65 && motion.confidence !== "low"
+          ? "likely"
+          : crossPx <= pathRadius ? "possible" : "nearby";
+        impact = {
+          tone,
+          etaMin,
+          crossPx,
+          closestMin,
+          detail: stormImpactDetail(tone, crossPx, latestLatLon.latitude, z)
+        };
+      }
+    }
+
+    const candidate = {
+      place,
+      placeKey: stormImpactPlaceKey(place),
+      placeName: mapMarkerName(place),
+      nowDistancePx,
+      crossPx,
+      closestMin,
+      distanceLabel: formatImpactDistance(crossPx, latestLatLon.latitude, z)
+    };
+    candidates.push(candidate);
+
+    if (impact) {
+      impacts.push({
+        ...candidate,
+        ...impact,
+        etaMin: Math.round(impact.etaMin),
+        toneLabel: impact.tone === "likely" ? "Likely" : impact.tone === "possible" ? "May clip" : "Nearby"
+      });
+    }
+  });
+
+  const toneRank = { likely: 0, possible: 1, nearby: 2 };
+  impacts.sort((a, b) => (a.etaMin - b.etaMin) || ((toneRank[a.tone] ?? 3) - (toneRank[b.tone] ?? 3)));
+  const misses = candidates
+    .filter((candidate) => !impacts.some((impact) => impact.placeKey === candidate.placeKey))
+    .filter((candidate) => candidate.closestMin >= -8 && candidate.closestMin <= lookaheadMin)
+    .sort((a, b) => a.crossPx - b.crossPx);
+
+  return {
+    impacts: impacts.slice(0, 5),
+    closestMiss: misses[0] || null
+  };
+}
+
+function stormImpactDetail(tone, crossPx, latitude, z) {
+  const distance = formatImpactDistance(crossPx, latitude, z);
+  if (tone === "likely") return crossPx < 8 ? "Projected near the center of the track." : `Projected path passes within ${distance}.`;
+  if (tone === "possible") return `Projected edge passes within ${distance}.`;
+  return `Track should pass nearby, about ${distance} away.`;
+}
+
+function stormImpactRadius(sample) {
+  const radius = Math.max(24, Math.min(58, (sample.weightedRadius || 18) + 16));
+  return Number(radius.toFixed(1));
+}
+
+function stormImpactPlaces() {
+  const places = [];
+  const seen = new Set();
+  [state.activePlace, ...(state.savedPlaces || [])].filter(Boolean).forEach((place) => {
+    const key = stormImpactPlaceKey(place);
+    if (seen.has(key)) return;
+    seen.add(key);
+    places.push(place);
+  });
+  return places;
+}
+
+function stormImpactForPlace(place) {
+  if (!mapState.immersive) return null;
+  const impacts = mapState.stormImpact?.analysis?.impacts || [];
+  const key = stormImpactPlaceKey(place);
+  return impacts.find((impact) => impact.placeKey === key) || null;
+}
+
+function stormImpactPlaceKey(place) {
+  if (!place) return "";
+  if (place.id) return `id:${place.id}`;
+  const lat = Number(place.latitude || 0).toFixed(4);
+  const lon = Number(place.longitude || 0).toFixed(4);
+  return `ll:${lat}:${lon}`;
+}
+
+function stormImpactRainLabel(sample) {
+  if (!sample) return "Radar return";
+  if (sample.intensity === "heavy" || sample.intensity === "moderate") return "Rain";
+  return "Light rain";
+}
+
+function stormImpactTitle(analysis) {
+  if (!analysis.hasPrecip) return analysis.title || "No radar return";
+  if (analysis.impacts.length) {
+    const first = analysis.impacts[0];
+    return `${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
+  }
+  return `${analysis.label} track`;
+}
+
+function stormImpactSummary(analysis) {
+  if (!analysis.hasPrecip) return analysis.summary || "No observed radar return was found at this tap.";
+  const motion = analysis.motion ? stormMotionCopy(analysis.motion, analysis.latestLatLon.latitude, analysis.z) : "";
+  const sourceNote = analysis.tapSource === "forecast"
+    ? " Impact uses latest observed radar, not the forecast tile currently shown."
+    : "";
+
+  if (!analysis.motion) {
+    return `${analysis.label} is on radar here, but the recent frames do not show enough movement for an ETA yet.${sourceNote}`;
+  }
+  if (analysis.impacts.length) {
+    const first = analysis.impacts[0];
+    return `${first.toneLabel} for ${first.placeName} ${formatImpactEtaPhrase(first.etaMin)} if this track holds. ${motion}${sourceNote}`;
+  }
+  if (analysis.closestMiss) {
+    return `Projected track misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${sourceNote}`;
+  }
+  return `Projected track misses your places for now. ${motion}${sourceNote}`;
+}
+
+function stormMotionCopy(motion, latitude, z) {
+  const speed = formatMotionSpeed(motion.speedPxMin, latitude, z);
+  return `Moving ${motion.direction} about ${speed}.`;
+}
+
+function renderStormImpactCard() {
+  const card = els.stormImpactCard;
+  if (!card) return;
+  const status = mapState.stormImpact?.status || "idle";
+  const analysis = mapState.stormImpact?.analysis;
+  if (status === "idle" || !analysis) {
+    card.hidden = true;
+    return;
+  }
+
+  card.hidden = false;
+  if (els.stormImpactKicker) {
+    els.stormImpactKicker.textContent = analysis.source
+      ? `Storm impact · ${analysis.source}`
+      : "Storm impact";
+  }
+
+  if (status === "loading") {
+    if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Checking radar";
+    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Sampling recent observed frames around this return.";
+    if (els.stormImpactList) els.stormImpactList.innerHTML = "";
+    return;
+  }
+
+  if (els.stormImpactTitle) els.stormImpactTitle.textContent = analysis.title || "Storm impact";
+  if (els.stormImpactSummary) els.stormImpactSummary.textContent = analysis.summary || "";
+  if (els.stormImpactList) els.stormImpactList.innerHTML = stormImpactRowsHtml(analysis);
+}
+
+function stormImpactRowsHtml(analysis) {
+  if (!analysis.hasPrecip) return "";
+  if (analysis.impacts?.length) return analysis.impacts.map(stormImpactRowHtml).join("");
+  if (analysis.closestMiss) {
+    return stormImpactRowHtml({
+      ...analysis.closestMiss,
+      tone: "miss",
+      etaMin: null,
+      toneLabel: "Miss",
+      detail: `Closest projected pass is ${analysis.closestMiss.distanceLabel} away.`
+    });
+  }
+  return "";
+}
+
+function stormImpactRowHtml(impact) {
+  const eta = impact.etaMin == null ? "Miss" : formatImpactEta(impact.etaMin);
+  const sub = impact.etaMin == null ? "track" : impact.toneLabel || "ETA";
+  return `
+    <article class="storm-impact-row" data-tone="${escapeHtml(impact.tone || "nearby")}">
+      <span>${escapeHtml(eta)}<small>${escapeHtml(sub)}</small></span>
+      <strong>${escapeHtml(impact.placeName)}</strong>
+      <em>${escapeHtml(impact.detail || "")}</em>
+    </article>
+  `;
+}
+
+function renderStormImpactOverlay(viewport = null) {
+  const layer = document.getElementById("immersiveImpactLayer");
+  if (!layer) return;
+  const analysis = mapState.stormImpact?.analysis;
+  if (!mapState.immersive || !analysis?.target) {
+    layer.innerHTML = "";
+    return;
+  }
+
+  const vp = viewport || getMapViewport();
+  const target = mapScreenPointForLatLon(analysis.target.latitude, analysis.target.longitude, vp);
+  const targetHtml = `<span class="impact-target" style="left:${target.x.toFixed(1)}px;top:${target.y.toFixed(1)}px"></span>`;
+  let pathHtml = "";
+
+  if (analysis.hasPrecip && analysis.motion && analysis.latestWorld) {
+    const start = mapScreenPointForWorld(analysis.latestWorld, analysis.z, vp);
+    const lookaheadMin = analysis.impacts?.length
+      ? clamp(Math.max(...analysis.impacts.map((impact) => impact.etaMin || 0)) + 24, 34, 120)
+      : 72;
+    const endWorld = {
+      x: analysis.latestWorld.x + analysis.motion.vx * lookaheadMin,
+      y: analysis.latestWorld.y + analysis.motion.vy * lookaheadMin
+    };
+    const end = mapScreenPointForWorld(endWorld, analysis.z, vp);
+    pathHtml = `
+      <svg class="impact-track-svg" aria-hidden="true">
+        <line class="impact-track-line" x1="${start.x.toFixed(1)}" y1="${start.y.toFixed(1)}" x2="${end.x.toFixed(1)}" y2="${end.y.toFixed(1)}"></line>
+      </svg>
+    `;
+  }
+
+  layer.innerHTML = `${pathHtml}${targetHtml}`;
+}
+
+function mapLatLonFromClientPoint(clientX, clientY) {
+  if (!els.weatherMap || !state.activePlace) return null;
+  const rect = els.weatherMap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const viewport = getMapViewport();
+  const world = {
+    x: viewport.center.x - rect.width / 2 + (clientX - rect.left),
+    y: viewport.center.y - rect.height / 2 + (clientY - rect.top)
+  };
+  return unprojectWorldPoint(world, mapState.zoom);
+}
+
+function mapScreenPointForLatLon(latitude, longitude, viewport = getMapViewport()) {
+  const point = projectLatLon(latitude, longitude, mapState.zoom);
+  return {
+    x: point.x - (viewport.center.x - viewport.width / 2),
+    y: point.y - (viewport.center.y - viewport.height / 2)
+  };
+}
+
+function mapScreenPointForWorld(world, sourceZoom, viewport = getMapViewport()) {
+  const latLon = unprojectWorldPoint(world, sourceZoom);
+  return mapScreenPointForLatLon(latLon.latitude, latLon.longitude, viewport);
+}
+
+function unprojectWorldPoint(point, zoom) {
+  const worldSize = 256 * 2 ** zoom;
+  const longitude = normalizeMapLongitude((point.x / worldSize) * 360 - 180);
+  const n = Math.PI - (2 * Math.PI * point.y) / worldSize;
+  const latitude = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  return { latitude, longitude };
+}
+
+function compassDirectionFromVector(vx, vy) {
+  const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const degrees = (Math.atan2(vx, -vy) * 180 / Math.PI + 360) % 360;
+  return directions[Math.round(degrees / 22.5) % directions.length];
+}
+
+function kmPerPixelAtLat(latitude, z) {
+  return (156543.03392 * Math.cos(latitude * Math.PI / 180)) / (2 ** z) / 1000;
+}
+
+function formatImpactDistance(px, latitude, z) {
+  const km = Math.max(0, px * kmPerPixelAtLat(latitude, z));
+  if (state.unit === "fahrenheit") {
+    const miles = km * 0.621371;
+    return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+  }
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}
+
+function formatMotionSpeed(pxPerMin, latitude, z) {
+  const kph = Math.max(0, pxPerMin * kmPerPixelAtLat(latitude, z) * 60);
+  if (state.unit === "fahrenheit") return `${Math.round(kph * 0.621371)} mph`;
+  return `${Math.round(kph)} km/h`;
+}
+
+function formatImpactEta(minutes) {
+  if (minutes == null) return "Miss";
+  const rounded = Math.max(0, Math.round(minutes));
+  if (rounded <= 2) return "Now";
+  if (rounded < 60) return `${rounded} min`;
+  const hours = Math.floor(rounded / 60);
+  const mins = rounded % 60;
+  return mins ? `${hours}h ${mins}m` : `${hours} hr`;
+}
+
+function formatImpactMarkerEta(minutes) {
+  if (minutes == null) return "";
+  const rounded = Math.max(0, Math.round(minutes));
+  if (rounded <= 2) return "now";
+  if (rounded < 60) return `${rounded}m`;
+  return `${Math.max(1, Math.round(rounded / 60))}h`;
+}
+
+function formatImpactEtaPhrase(minutes) {
+  if (minutes == null) return "";
+  const rounded = Math.max(0, Math.round(minutes));
+  if (rounded <= 2) return "now";
+  return `in ${formatImpactEta(rounded).toLowerCase()}`;
+}
+
+function formatImpactEtaSentence(minutes) {
+  if (minutes == null) return "";
+  const rounded = Math.max(0, Math.round(minutes));
+  if (rounded <= 2) return "now";
+  return `in ${formatImpactEta(rounded).toLowerCase()}`;
 }
 
 function zoomMapFromWheel(e) {

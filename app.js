@@ -1,4 +1,4 @@
-const VERSION = "2.6.73";
+const VERSION = "2.6.75";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -82,7 +82,12 @@ const mapState = {
   _normalEls: null,
   timelineKind: "radar",
   nowIndex: 0,
-  forecastUnavailable: false
+  forecastUnavailable: false,
+  stormImpact: {
+    status: "idle",
+    analysis: null,
+    seq: 0
+  }
 };
 
 const perfState = {
@@ -109,6 +114,16 @@ const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;
 const RADAR_PRECIP_MAX_FRAME_AGE_MS = 14 * 60 * 1000;
 const RADAR_PRECIP_CACHE_MS = 3 * 60 * 1000;
 const RADAR_PRECIP_CACHE_VERSION = "v1";
+const STORM_IMPACT_SAMPLE_ZOOM = 7;
+const STORM_IMPACT_SAMPLE_RADIUS_PX = 46;
+const STORM_IMPACT_MIN_SAMPLE_HITS = 14;
+const STORM_IMPACT_MIN_SAMPLE_DENSITY = 0.004;
+const STORM_IMPACT_MAX_FRAME_AGE_MS = 50 * 60 * 1000;
+const STORM_IMPACT_FRAME_LIMIT = 8;
+const STORM_IMPACT_LOOKAHEAD_MS = 2 * 60 * 60 * 1000;
+const STORM_IMPACT_PATH_RADIUS_PX = 34;
+const STORM_IMPACT_NEAR_PATH_RADIUS_PX = 52;
+const STORM_IMPACT_MIN_SPEED_PX_PER_MIN = 0.05;
 const MAP_TAP_MOVE_PX = 8;
 const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
 const CARTO_TILE_HOSTS = ["a", "b", "c", "d"];
@@ -418,7 +433,13 @@ const els = {
   futureMode: document.querySelector("#futureMode"),
   playRadar: document.querySelector("#playRadar"),
   frameSlider: document.querySelector("#frameSlider"),
-  frameLabel: document.querySelector("#frameLabel")
+  frameLabel: document.querySelector("#frameLabel"),
+  stormImpactCard: document.querySelector("#stormImpactCard"),
+  stormImpactKicker: document.querySelector("#stormImpactKicker"),
+  stormImpactTitle: document.querySelector("#stormImpactTitle"),
+  stormImpactSummary: document.querySelector("#stormImpactSummary"),
+  stormImpactList: document.querySelector("#stormImpactList"),
+  stormImpactClose: document.querySelector("#stormImpactClose")
 };
 
 const RAIN_LIKELY_CODE = 10001;
@@ -2279,6 +2300,7 @@ function bindEvents() {
   bindTapAction(els.zoomOutMap, () => setMapZoom(mapState.zoom - 1));
   bindTapAction(els.zoomInMap, () => setMapZoom(mapState.zoom + 1));
   bindTapAction(els.playRadar, toggleRadarPlayback);
+  bindTapAction(els.stormImpactClose, () => clearStormImpact());
   els.frameSlider.addEventListener("input", () => scrubToFrame(Number(els.frameSlider.value)));
   bindTapAction(document.getElementById("expandMap"), enterImmersiveMap);
 
@@ -3442,6 +3464,7 @@ function warmStartForecast(place) {
     state.radarPrecipSignal = null;
     state.radarPrecipPlaceId = normalized.id;
     state.weatherTruth = null;
+    if (typeof clearStormImpact === "function") clearStormImpact();
 
     updateMode();
     updateFloatingChrome({ forceReveal: true });
@@ -3467,6 +3490,7 @@ async function loadPlace(place, force = false) {
   state.radarPrecipSignal = null;
   state.radarPrecipPlaceId = state.activePlace.id;
   state.weatherTruth = null;
+  if (typeof clearStormImpact === "function") clearStormImpact();
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
   updateFloatingChrome({ forceReveal: true });

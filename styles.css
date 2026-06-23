@@ -4620,6 +4620,154 @@ body.map-immersive-active #mapLegend {
   height: 24px;
 }
 
+.storm-impact-card {
+  align-self: start;
+  display: grid;
+  gap: 8px;
+  width: min(306px, calc(100vw - (var(--imm-hud-x) * 2) - 58px));
+  max-height: min(48vh, 440px);
+  overflow: auto;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(8, 12, 18, 0.70);
+  color: #fff;
+  box-shadow: 0 18px 46px rgba(2, 6, 12, 0.28);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.storm-impact-card[hidden] {
+  display: none;
+}
+
+.storm-impact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.storm-impact-head span {
+  overflow: hidden;
+  color: rgba(134, 217, 185, 0.92);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storm-impact-close {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.storm-impact-card h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 1.02rem;
+  font-weight: 950;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.storm-impact-card p {
+  margin: 0;
+  color: rgba(233, 243, 248, 0.72);
+  font-size: 0.77rem;
+  font-weight: 760;
+  line-height: 1.32;
+}
+
+.storm-impact-list {
+  display: grid;
+  gap: 7px;
+}
+
+.storm-impact-row {
+  display: grid;
+  grid-template-columns: minmax(50px, auto) minmax(0, 1fr);
+  grid-template-areas:
+    "eta name"
+    "eta detail";
+  gap: 2px 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-left: 3px solid rgba(134, 217, 185, 0.82);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.storm-impact-row[data-tone="possible"] {
+  border-left-color: rgba(244, 196, 83, 0.88);
+}
+
+.storm-impact-row[data-tone="nearby"],
+.storm-impact-row[data-tone="miss"] {
+  border-left-color: rgba(132, 184, 236, 0.80);
+}
+
+.storm-impact-row > span {
+  grid-area: eta;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-width: 48px;
+  min-height: 42px;
+  padding: 5px 6px;
+  border-radius: 10px;
+  background: rgba(8, 12, 18, 0.34);
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 950;
+  text-align: center;
+}
+
+.storm-impact-row > span small {
+  display: block;
+  margin-top: 1px;
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.54rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.storm-impact-row strong {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 0.8rem;
+  font-weight: 930;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storm-impact-row em {
+  grid-area: detail;
+  color: rgba(231, 243, 250, 0.66);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
 .imm-bottom-hud {
   position: absolute;
   left: var(--imm-bottom-x);
@@ -4952,6 +5100,53 @@ body.map-immersive-active #mapLegend {
   z-index: 20;
 }
 
+.impact-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.impact-track-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.impact-track-line {
+  stroke: rgba(134, 217, 185, 0.84);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 8 8;
+  filter: drop-shadow(0 2px 8px rgba(2, 6, 12, 0.42));
+}
+
+.impact-target {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgba(134, 217, 185, 0.42) 0 20%, rgba(134, 217, 185, 0.12) 35%, transparent 58%);
+  box-shadow:
+    0 0 0 7px rgba(8, 12, 18, 0.20),
+    0 0 28px rgba(134, 217, 185, 0.42);
+}
+
+.impact-target::after {
+  content: "";
+  position: absolute;
+  inset: 11px;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 18px rgba(134, 217, 185, 0.62);
+}
+
 .map-marker {
   position: absolute;
   transform: translate(-50%, -100%);
@@ -4978,7 +5173,24 @@ body.map-immersive-active #mapLegend {
   white-space: nowrap;
 }
 
+.map-marker.has-impact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 190px;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
 .map-marker.is-active-place span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-marker.has-impact span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4991,6 +5203,46 @@ body.map-immersive-active #mapLegend {
   font-weight: 900;
   font-variant-numeric: tabular-nums;
 }
+
+.map-marker small {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  font-size: 0.58rem;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.map-marker.is-impact-likely {
+  background: #173f35;
+  color: #f4fff9;
+  box-shadow:
+    0 10px 28px rgba(2, 6, 12, 0.30),
+    0 0 0 3px rgba(134, 217, 185, 0.30);
+}
+
+.map-marker.is-impact-possible {
+  background: #453417;
+  color: #fff7df;
+  box-shadow:
+    0 10px 28px rgba(2, 6, 12, 0.30),
+    0 0 0 3px rgba(244, 196, 83, 0.28);
+}
+
+.map-marker.is-impact-nearby {
+  background: #19344c;
+  color: #edf7ff;
+  box-shadow:
+    0 10px 28px rgba(2, 6, 12, 0.28),
+    0 0 0 3px rgba(132, 184, 236, 0.24);
+}
+
+.map-marker.is-impact-likely::after { background: #173f35; }
+.map-marker.is-impact-possible::after { background: #453417; }
+.map-marker.is-impact-nearby::after { background: #19344c; }
 
 .map-marker::after {
   content: "";
@@ -5706,6 +5958,30 @@ body.map-immersive-active #mapLegend {
   .imm-place-switch svg {
     width: 23px;
     height: 23px;
+  }
+
+  .storm-impact-card {
+    position: fixed;
+    top: calc(var(--imm-hud-top) + 150px);
+    left: var(--imm-hud-x);
+    right: var(--imm-hud-x);
+    width: auto;
+    max-height: min(34vh, 320px);
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .storm-impact-card h2 {
+    font-size: 0.94rem;
+  }
+
+  .storm-impact-card p {
+    font-size: 0.71rem;
+  }
+
+  .storm-impact-row {
+    grid-template-columns: minmax(46px, auto) minmax(0, 1fr);
+    padding: 8px 9px;
   }
 
   .immersive-map .map-loading {
