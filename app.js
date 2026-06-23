@@ -1,8 +1,10 @@
-const VERSION = "2.6.65";
+const VERSION = "2.6.66";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
+const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
+const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
 const PERF_STORAGE_KEY = "nearcast-perf";
@@ -10,6 +12,21 @@ const PERF_RENDER_WARN_MS = 50;
 const PERF_INPUT_WARN_MS = 80;
 const PERF_LONG_TASK_WARN_MS = 120;
 const PERF_MAX_ENTRIES = 80;
+
+const WELCOME_WORLD_SKY_PLACES = [
+  { id: "paris", name: "Paris", country: "France", countryCode: "FR", latitude: 48.8566, longitude: 2.3522 },
+  { id: "tokyo", name: "Tokyo", country: "Japan", countryCode: "JP", latitude: 35.6762, longitude: 139.6503 },
+  { id: "sydney", name: "Sydney", country: "Australia", countryCode: "AU", latitude: -33.8688, longitude: 151.2093 },
+  { id: "rio", name: "Rio de Janeiro", country: "Brazil", countryCode: "BR", latitude: -22.9068, longitude: -43.1729 },
+  { id: "cape-town", name: "Cape Town", country: "South Africa", countryCode: "ZA", latitude: -33.9249, longitude: 18.4241 },
+  { id: "reykjavik", name: "Reykjavik", country: "Iceland", countryCode: "IS", latitude: 64.1466, longitude: -21.9426 },
+  { id: "new-york", name: "New York", country: "United States", countryCode: "US", latitude: 40.7128, longitude: -74.0060 },
+  { id: "cairo", name: "Cairo", country: "Egypt", countryCode: "EG", latitude: 30.0444, longitude: 31.2357 },
+  { id: "london", name: "London", country: "United Kingdom", countryCode: "GB", latitude: 51.5072, longitude: -0.1276 },
+  { id: "singapore", name: "Singapore", country: "Singapore", countryCode: "SG", latitude: 1.3521, longitude: 103.8198 },
+  { id: "vancouver", name: "Vancouver", country: "Canada", countryCode: "CA", latitude: 49.2827, longitude: -123.1207 },
+  { id: "marrakesh", name: "Marrakesh", country: "Morocco", countryCode: "MA", latitude: 31.6295, longitude: -7.9811 }
+];
 
 const perfQueryFlag = (() => {
   try {
@@ -286,6 +303,10 @@ let searchSuggestTimer = null;
 let searchRequestSeq = 0;
 let welcomeAmbienceStarted = false;
 let welcomeAmbienceAbort = null;
+let welcomeWorldSkyTimer = null;
+let welcomeWorldSkyAbort = null;
+let welcomeWorldSkyIndex = Math.floor(Date.now() / WELCOME_WORLD_SKY_ROTATE_MS) % WELCOME_WORLD_SKY_PLACES.length;
+let welcomeAmbientSource = "idle";
 let locationLookupSeq = 0;
 let locationLookupTimer = null;
 
@@ -2219,6 +2240,7 @@ function bindEvents() {
   bindTapAction(els.placeBackdrop, closePlaceSheet);
   bindTapAction(document.getElementById("placeSheetClose"), closePlaceSheet);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
+  bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
   bindTapAction(document.getElementById("searchLocate"), () => {
     toggleSearch(false);
     useCurrentLocation();
@@ -2827,18 +2849,28 @@ function updateWelcomeBrandMark(code = null, isDay = browserApproximateIsDay()) 
   mark.dataset.day = isDay ? "day" : "night";
 }
 
-function setWelcomeAmbientLabel(text) {
+function setWelcomeAmbientLabel(text, options = {}) {
   if (!els.welcomeAmbientLabel) return;
   const copy = String(text || "").trim();
   els.welcomeAmbientLabel.textContent = copy;
   els.welcomeAmbientLabel.hidden = !copy;
+  els.welcomeAmbientLabel.disabled = !copy;
+  const source = options.source || "";
+  els.welcomeAmbientLabel.dataset.source = source;
+  els.welcomeAmbientLabel.classList.toggle("is-world", source === "world");
+  els.welcomeAmbientLabel.classList.toggle("is-local", source === "local");
+  const action = source === "world" ? "Tap for another city." : "Tap for a world sky.";
+  els.welcomeAmbientLabel.title = copy ? action : "";
+  els.welcomeAmbientLabel.setAttribute("aria-label", copy ? `${copy}. ${action}` : "Welcome sky");
 }
 
-function welcomeAmbientCopy(data, place, truth) {
+function welcomeAmbientCopy(data, place, truth, source = "local") {
   const placeName = String(place?.name || "").trim();
   if (!placeName) return "";
   const condition = dailyConditionLabel(truth?.sceneCode ?? truth?.code ?? data?.current?.weather_code ?? 3);
-  return `Local sky near ${placeName} · ${condition}`;
+  return source === "world"
+    ? `World sky over ${placeName} · ${condition}`
+    : `Local sky near ${placeName} · ${condition}`;
 }
 
 function cancelWelcomeAmbience() {
@@ -2846,6 +2878,8 @@ function cancelWelcomeAmbience() {
     welcomeAmbienceAbort.abort();
     welcomeAmbienceAbort = null;
   }
+  cancelWelcomeWorldSky();
+  welcomeAmbientSource = "idle";
 }
 
 function readWelcomeAmbienceCache() {
@@ -2871,6 +2905,119 @@ function writeWelcomeAmbienceCache(place, data) {
   }
 }
 
+function welcomeWorldSkyCacheKey(place) {
+  return `${state.unit}:${place.id || place.name}`;
+}
+
+function readWelcomeWorldSkyCache(place) {
+  try {
+    const all = JSON.parse(sessionStorage.getItem(WELCOME_WORLD_SKY_CACHE_KEY) || "{}");
+    const cached = all[welcomeWorldSkyCacheKey(place)];
+    if (!cached || Date.now() - cached.savedAt > 15 * 60 * 1000) return null;
+    return cached.data || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWelcomeWorldSkyCache(place, data) {
+  try {
+    const all = JSON.parse(sessionStorage.getItem(WELCOME_WORLD_SKY_CACHE_KEY) || "{}");
+    all[welcomeWorldSkyCacheKey(place)] = {
+      savedAt: Date.now(),
+      data
+    };
+    sessionStorage.setItem(WELCOME_WORLD_SKY_CACHE_KEY, JSON.stringify(all));
+  } catch {
+    /* World sky is decorative; cache failures should stay invisible. */
+  }
+}
+
+function clearWelcomeWorldSkyTimer() {
+  if (welcomeWorldSkyTimer) {
+    clearTimeout(welcomeWorldSkyTimer);
+    welcomeWorldSkyTimer = null;
+  }
+}
+
+function cancelWelcomeWorldSky() {
+  clearWelcomeWorldSkyTimer();
+  if (welcomeWorldSkyAbort) {
+    welcomeWorldSkyAbort.abort();
+    welcomeWorldSkyAbort = null;
+  }
+}
+
+function nextWelcomeWorldSkyPlace() {
+  const place = WELCOME_WORLD_SKY_PLACES[welcomeWorldSkyIndex % WELCOME_WORLD_SKY_PLACES.length];
+  welcomeWorldSkyIndex = (welcomeWorldSkyIndex + 1) % WELCOME_WORLD_SKY_PLACES.length;
+  return place;
+}
+
+function scheduleWelcomeWorldSkyRotation() {
+  clearWelcomeWorldSkyTimer();
+  if (!welcomeIsActive() || welcomeAmbientSource !== "world") return;
+  welcomeWorldSkyTimer = setTimeout(() => {
+    showNextWelcomeWorldSky();
+  }, WELCOME_WORLD_SKY_ROTATE_MS);
+}
+
+function startWelcomeWorldSky() {
+  if (!welcomeIsActive()) return;
+  welcomeAmbientSource = "world";
+  showNextWelcomeWorldSky();
+}
+
+async function showNextWelcomeWorldSky(attempt = 0) {
+  if (!welcomeIsActive()) return;
+  clearWelcomeWorldSkyTimer();
+  if (welcomeWorldSkyAbort) {
+    welcomeWorldSkyAbort.abort();
+    welcomeWorldSkyAbort = null;
+  }
+
+  const place = nextWelcomeWorldSkyPlace();
+  welcomeAmbientSource = "world";
+  setWelcomeAmbientLabel(`World sky over ${place.name}`, { source: "world" });
+
+  const cached = readWelcomeWorldSkyCache(place);
+  if (cached) {
+    applyWelcomeAmbience(cached, place, { source: "world" });
+    scheduleWelcomeWorldSkyRotation();
+    return;
+  }
+
+  const abort = new AbortController();
+  welcomeWorldSkyAbort = abort;
+  try {
+    const data = await fetchWelcomeAmbienceForecast(place, abort.signal);
+    if (!welcomeIsActive() || abort.signal.aborted || welcomeAmbientSource !== "world") return;
+    writeWelcomeWorldSkyCache(place, data);
+    applyWelcomeAmbience(data, place, { source: "world" });
+    scheduleWelcomeWorldSkyRotation();
+  } catch {
+    if (!abort.signal.aborted && welcomeIsActive() && welcomeAmbientSource === "world") {
+      if (attempt < WELCOME_WORLD_SKY_PLACES.length - 1) {
+        showNextWelcomeWorldSky(attempt + 1);
+      } else {
+        scheduleWelcomeWorldSkyRotation();
+      }
+    }
+  } finally {
+    if (welcomeWorldSkyAbort === abort) welcomeWorldSkyAbort = null;
+  }
+}
+
+function handleWelcomeAmbientChip() {
+  if (!welcomeIsActive()) return;
+  if (welcomeAmbienceAbort) {
+    welcomeAmbienceAbort.abort();
+    welcomeAmbienceAbort = null;
+  }
+  welcomeAmbienceStarted = true;
+  startWelcomeWorldSky();
+}
+
 function initWelcomeAmbience() {
   if (welcomeAmbienceStarted || !welcomeIsActive()) return;
   welcomeAmbienceStarted = true;
@@ -2889,24 +3036,31 @@ async function loadWelcomeAmbience() {
     const data = await fetchWelcomeAmbienceForecast(place, abort.signal);
     if (!welcomeIsActive() || abort.signal.aborted) return;
     writeWelcomeAmbienceCache(place, data);
-    applyWelcomeAmbience(data, place);
+    if (welcomeAmbientSource === "world") return;
+    cancelWelcomeWorldSky();
+    applyWelcomeAmbience(data, place, { source: "local" });
     applied = true;
   } catch {
-    /* Keep the designed default welcome sky when coarse lookup is unavailable. */
+    if (!abort.signal.aborted && welcomeIsActive() && welcomeAmbientSource !== "local") {
+      startWelcomeWorldSky();
+      applied = true;
+    }
   } finally {
-    if (!applied) welcomeAmbienceStarted = false;
+    if (!applied && welcomeAmbientSource !== "world") welcomeAmbienceStarted = false;
     if (welcomeAmbienceAbort === abort) welcomeAmbienceAbort = null;
   }
 }
 
-function applyWelcomeAmbience(data, place) {
+function applyWelcomeAmbience(data, place, options = {}) {
   if (!welcomeIsActive() || !data) return;
+  const source = options.source || "local";
+  welcomeAmbientSource = source;
   const truth = buildWeatherTruth(data);
   const sceneCode = truth.sceneCode ?? truth.code;
   const display = { ...(truth.display || {}), welcomeAmbient: true };
   updateWelcomeBrandMark(truth.nowCode ?? truth.code, truth.isDay);
   updateSkyCanvas(sceneCode, truth.isDay, data, display);
-  setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth));
+  setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth, source), { source });
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs, signal = null) {

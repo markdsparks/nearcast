@@ -7295,6 +7295,8 @@ button.sheet-plan-badge:focus-visible {
   height: auto;
 }
 .welcome-ambient-label {
+  appearance: none;
+  -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7306,6 +7308,7 @@ button.sheet-plan-badge:focus-visible {
   border-radius: 999px;
   background: var(--welcome-ambient-bg);
   color: var(--welcome-ambient-fg);
+  font-family: inherit;
   font-size: 0.74rem;
   font-weight: 850;
   line-height: 1.1;
@@ -7314,6 +7317,20 @@ button.sheet-plan-badge:focus-visible {
   text-shadow: var(--welcome-ambient-text-shadow);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.welcome-ambient-label:hover,
+.welcome-ambient-label:focus-visible {
+  border-color: rgba(255, 255, 255, 0.42);
+  transform: translateY(-1px);
+}
+.welcome-ambient-label:active {
+  transform: translateY(0);
+}
+.welcome-ambient-label:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.58);
+  outline-offset: 3px;
 }
 .welcome-kicker {
   color: var(--green);
