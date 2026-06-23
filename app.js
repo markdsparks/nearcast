@@ -1,4 +1,4 @@
-const VERSION = "2.6.59";
+const VERSION = "2.6.60";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -5128,11 +5128,7 @@ function shortClock(t) {
   const parts = localDateTimeParts(t);
   if (parts) return formatClock(parts.hour, parts.minute, true);
   const d = new Date(t);
-  let h = d.getHours();
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const ap = h < 12 ? "a" : "p";
-  h = h % 12 || 12;
-  return `${h}:${m}${ap}`;
+  return formatClock(d.getHours(), d.getMinutes(), true);
 }
 
 function buildNowcastGraph(analysis) {
@@ -6072,12 +6068,40 @@ function degree(unit) {
   return `°${unit}`;
 }
 
+function clockDateFromParts(hour, minute = 0) {
+  const rawHour = Number(hour);
+  const rawMinute = Number(minute);
+  if (!Number.isFinite(rawHour) || !Number.isFinite(rawMinute)) return null;
+  const totalMinutes = ((Math.floor(rawHour) * 60 + Math.floor(rawMinute)) % 1440 + 1440) % 1440;
+  const normalizedHour = Math.floor(totalMinutes / 60);
+  const normalizedMinute = totalMinutes % 60;
+  return new Date(Date.UTC(2000, 0, 1, normalizedHour, normalizedMinute));
+}
+
+function compactDayPeriod(value) {
+  const text = String(value || "").trim();
+  if (/^a/i.test(text)) return "a";
+  if (/^p/i.test(text)) return "p";
+  return text.replace(/\./g, "").slice(0, 1).toLowerCase();
+}
+
+function compactClockParts(parts) {
+  return parts.map((part) => {
+    if (part.type === "dayPeriod") return compactDayPeriod(part.value);
+    if (part.type === "literal") return part.value.replace(/\s+/g, "");
+    return part.value;
+  }).join("").replace(/\s+/g, "");
+}
+
 function formatClock(hour, minute = 0, compact = false, showMinutes = true) {
-  const normalized = ((Math.floor(hour) % 24) + 24) % 24;
-  const hr = normalized % 12 || 12;
-  const suffix = normalized < 12 ? (compact ? "a" : "AM") : (compact ? "p" : "PM");
-  const mins = String(Math.floor(minute)).padStart(2, "0");
-  return showMinutes ? `${hr}:${mins}${compact ? "" : " "}${suffix}` : `${hr}${compact ? "" : " "}${suffix}`;
+  const date = clockDateFromParts(hour, minute);
+  if (!date) return "--";
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    ...(showMinutes ? { minute: "2-digit" } : {}),
+    timeZone: "UTC"
+  });
+  return compact ? compactClockParts(formatter.formatToParts(date)) : formatter.format(date);
 }
 
 function formatTime(value) {

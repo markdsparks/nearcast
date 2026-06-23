@@ -2143,10 +2143,8 @@ function memoryEditDateLabel(iso, data = memoryEditState?.data) {
 
 function memoryEditHourLabel(hour) {
   const value = Number(hour);
-  if (value === 24) return "12 AM next day";
-  const h = ((value % 24) + 24) % 24;
-  const hr = h % 12 === 0 ? 12 : h % 12;
-  return `${hr} ${h < 12 ? "AM" : "PM"}`;
+  const label = formatClock(value, 0, false, false);
+  return value === 24 ? `${label} next day` : label;
 }
 
 function memoryEditDateOptions(selectedDate = memoryEditState?.targetDate) {
@@ -3664,9 +3662,7 @@ function hasAny(s, words) {
 }
 
 function hourText(hour) {
-  const h = ((hour % 24) + 24) % 24;
-  const hr = h % 12 === 0 ? 12 : h % 12;
-  return `${hr}${h < 12 ? "am" : "pm"}`;
+  return formatClock(hour, 0, true, false);
 }
 
 function parseAskHour(value, ampm) {

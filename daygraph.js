@@ -888,8 +888,7 @@ function shortHour(t) {
   const parts = localDateTimeParts(t);
   if (parts) return formatClock(parts.hour, 0, true, false);
   const h = new Date(t).getHours();
-  const hr = h % 12 === 0 ? 12 : h % 12;
-  return `${hr}${h < 12 ? "a" : "p"}`;
+  return formatClock(h, 0, true, false);
 }
 
 let graphPts = [];
@@ -1115,7 +1114,7 @@ function drawHourlyGraph() {
     dot.setAttribute("cy", p.y);
     dot.style.display = "";
 
-    const long = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(p.time));
+    const long = formatHour(p.time);
     const main = isWind
       ? `${long} · ${Math.round(p.wind)} ${windUnit}`
       : `${long} · ${Math.round(p.temp)}${degree(tempUnit)}`;
