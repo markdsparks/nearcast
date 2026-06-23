@@ -1,4 +1,4 @@
-const VERSION = "2.6.71";
+const VERSION = "2.6.72";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -44,6 +44,7 @@ const state = {
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
+  welcomeOverride: false,
   savedPlaces: JSON.parse(localStorage.getItem("weather-places") || "[]"),
   searchResults: [],
   skyCode: null,
@@ -401,6 +402,7 @@ const els = {
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
   placeSaveButton: document.querySelector("#placeSaveButton"),
+  placeWelcomeButton: document.querySelector("#placeWelcomeButton"),
   weatherMap: document.querySelector("#weatherMap"),
   baseTileLayer: document.querySelector("#baseTileLayer"),
   weatherTileLayer: document.querySelector("#weatherTileLayer"),
@@ -2239,6 +2241,7 @@ function bindEvents() {
   });
   bindTapAction(els.placeBackdrop, closePlaceSheet);
   bindTapAction(document.getElementById("placeSheetClose"), closePlaceSheet);
+  bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
   bindTapAction(document.getElementById("searchLocate"), () => {
@@ -2808,7 +2811,7 @@ function hideSearchResults() {
 // Two modes: "welcome" (no place yet — search/location is the hero) and
 // "browse" (a place is loaded — weather is the hero, search collapses to an icon).
 function updateMode() {
-  const hasContext = Boolean(state.activePlace) || state.savedPlaces.length > 0;
+  const hasContext = !state.welcomeOverride && (Boolean(state.activePlace) || state.savedPlaces.length > 0);
   els.shell.classList.toggle("mode-welcome", !hasContext);
   document.documentElement.toggleAttribute("data-welcome", !hasContext);
   if (!hasContext) {
@@ -2830,8 +2833,7 @@ function browserApproximateIsDay(date = new Date()) {
 
 function welcomeIsActive() {
   return Boolean(els.shell?.classList.contains("mode-welcome")) &&
-    !state.activePlace &&
-    !state.savedPlaces.length;
+    (state.welcomeOverride || (!state.activePlace && !state.savedPlaces.length));
 }
 
 function updateWelcomeBrandMark(code = null, isDay = browserApproximateIsDay()) {
@@ -3402,7 +3404,22 @@ function closePlaceSheet() {
   }, 260);
 }
 
+function showWelcomeFromPlaces() {
+  state.welcomeOverride = true;
+  state.activePlace = null;
+  closePlaceSheet();
+  clearSearchResults();
+  setStatus("");
+  updateMode();
+  updatePlaceSwitcher();
+  requestAnimationFrame(() => {
+    try { window.scrollTo({ top: 0, left: 0, behavior: "auto" }); }
+    catch { window.scrollTo(0, 0); }
+  });
+}
+
 async function loadPlace(place, force = false) {
+  state.welcomeOverride = false;
   state.activePlace = normalizePlace(place);
   state.radarPrecipSeq += 1;
   state.radarPrecipSignal = null;
@@ -3471,6 +3488,7 @@ function handleForegroundResume(event = {}) {
 
 function refreshOnForeground() {
   if (document.visibilityState === "hidden") return;
+  if (welcomeIsActive()) return;
   if (!state.activePlace) return;
   if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
   for (const id in glanceData) delete glanceData[id]; // let chips re-pull too

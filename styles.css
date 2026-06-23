@@ -3865,6 +3865,24 @@ h2 {
 .place-empty strong {
   color: var(--ink);
 }
+.place-welcome-button {
+  align-self: center;
+  margin: 12px auto 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  opacity: 0.52;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.place-welcome-button:hover,
+.place-welcome-button:focus-visible {
+  color: var(--ink);
+  opacity: 0.82;
+}
 
 .insight-band {
   display: grid;
