@@ -370,6 +370,7 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     azimuth: solar?.azimuth ?? null,
     x,
     y,
+    welcomeAmbient: displayCondition.welcomeAmbient === true,
     golden,
     twilight,
     brightness,
@@ -602,6 +603,8 @@ function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondi
   if (!el) return;
 
   state.skyCode = weatherCode;
+  state.skyData = data || null;
+  state.skyDisplayCondition = displayCondition || null;
 
   if (state.theme !== "auto") {
     state.skyIsDay = isDay;
@@ -677,18 +680,25 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   const highCloud = clamp01(skyState.highCloud / 100);
   const precipPressure = skyState.precipPressure ?? 0;
   const activePrecip = skyState.activePrecip === true || skyState.precipPhase === "active";
+  const welcomeClearCue = skyState.welcomeAmbient === true && condition === "clear";
+  const scenicCloudPct = welcomeClearCue ? Math.min(cloudPct, 42) : cloudPct;
+  const scenicVisualCloudPct = welcomeClearCue ? Math.min(visualCloudPct, 42) : visualCloudPct;
   const precipCloudBonus = condition === "rain" || condition === "snow" || condition === "thunder" ? 1 : 0;
   const layerCloud = condition === "partly-cloudy"
     ? lowCloud * 0.55 + highCloud * 0.20
-    : lowCloud * 1.2 + highCloud * 0.4;
+    : welcomeClearCue
+      ? Math.min(lowCloud * 0.55 + highCloud * 0.18, 0.62)
+      : lowCloud * 1.2 + highCloud * 0.4;
   const cloudDivisor = condition === "partly-cloudy" ? 30 : 18;
   const clouds = Math.round(clamp(
-    visualCloudPct / cloudDivisor + layerCloud + precipCloudBonus + precipPressure * 1.45,
+    scenicVisualCloudPct / cloudDivisor + layerCloud + precipCloudBonus + precipPressure * 1.45,
     condition === "clear" ? 0 : condition === "partly-cloudy" ? 2 : 1,
     condition === "partly-cloudy" ? 4 : condition === "overcast" || condition === "thunder" ? 7 : condition === "rain" ? 6 : 5
   ));
-  const skyObjectCloudPct = condition === "partly-cloudy" ? visualCloudPct : cloudPct;
-  const moonVisible = !isDay && skyObjectCloudPct < 82 && skyState.twilight < 0.82 && condition !== "rain" && condition !== "thunder";
+  const skyObjectCloudPct = condition === "partly-cloudy" ? visualCloudPct : welcomeClearCue ? scenicCloudPct : cloudPct;
+  const moonCloudLimit = welcomeClearCue ? 96 : 82;
+  const moonTwilightLimit = welcomeClearCue ? 0.92 : 0.82;
+  const moonVisible = !isDay && skyObjectCloudPct < moonCloudLimit && skyState.twilight < moonTwilightLimit && condition !== "rain" && condition !== "thunder";
   const sunVisible = isDay &&
     !activePrecip &&
     condition !== "thunder" &&

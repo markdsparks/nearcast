@@ -1,4 +1,4 @@
-const VERSION = "2.6.63";
+const VERSION = "2.6.65";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -31,6 +31,8 @@ const state = {
   searchResults: [],
   skyCode: null,
   skyIsDay: null,
+  skyData: null,
+  skyDisplayCondition: null,
   skyState: null,
   weatherTruth: null,
   radarPrecipSignal: null,
@@ -2373,7 +2375,12 @@ function applyTheme() {
     : (isDark ? "Dark mode (manual) — click to reset to auto" : "Light mode (manual) — click to reset to auto");
 
   if (state.skyCode !== null) {
-    updateSkyCanvas(state.skyCode, state.skyIsDay);
+    updateSkyCanvas(
+      state.skyCode,
+      state.skyIsDay,
+      state.skyData || state.forecast,
+      state.skyDisplayCondition
+    );
   } else {
     if (state.theme !== "auto") clearSkyCanvas();
     else updateSkyChrome(null, null);
@@ -2813,36 +2820,11 @@ function welcomeIsActive() {
 function updateWelcomeBrandMark(code = null, isDay = browserApproximateIsDay()) {
   const mark = document.querySelector(".welcome-brand-mark");
   if (!mark) return;
-  const iconCode = code === null || code === undefined ? 0 : code;
-  const key = `${iconCode}|${isDay ? "day" : "night"}`;
-  if (mark.dataset.key !== key) {
-    mark.innerHTML = welcomeBrandMarkHtml(iconCode, isDay);
-    mark.dataset.key = key;
+  if (!mark.querySelector("img")) {
+    mark.innerHTML = '<img src="icons/nearcast-mark.svg" alt="">';
   }
   mark.dataset.source = code === null || code === undefined ? "ambient" : "local";
   mark.dataset.day = isDay ? "day" : "night";
-}
-
-function welcomeBrandMarkHtml(code, isDay) {
-  return `
-    <svg class="welcome-brand-pin-shell" viewBox="0 0 120 132" aria-hidden="true" focusable="false">
-      <defs>
-        <linearGradient id="welcomePinGlass" x1="28" y1="12" x2="92" y2="118" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
-          <stop offset="0.56" stop-color="#d8eef7" stop-opacity="0.78"/>
-          <stop offset="1" stop-color="#8bc6d7" stop-opacity="0.66"/>
-        </linearGradient>
-        <linearGradient id="welcomePinStroke" x1="28" y1="14" x2="92" y2="118" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
-          <stop offset="1" stop-color="#2f927c" stop-opacity="0.62"/>
-        </linearGradient>
-      </defs>
-      <ellipse cx="60" cy="121" rx="29" ry="5.5" fill="rgba(18,34,48,0.16)" filter="blur(1px)"/>
-      <path d="M60 118 C60 118 19 82 19 52 C19 27 37.2 13 60 13 C82.8 13 101 27 101 52 C101 82 60 118 60 118Z" fill="url(#welcomePinGlass)" stroke="url(#welcomePinStroke)" stroke-width="1.7"/>
-    </svg>
-    <span class="welcome-brand-weather-icon" aria-hidden="true">${weatherIcon(code, isDay, { density: "dense" })}</span>
-    <span class="welcome-brand-horizon" aria-hidden="true"></span>
-  `;
 }
 
 function setWelcomeAmbientLabel(text) {
@@ -2921,8 +2903,9 @@ function applyWelcomeAmbience(data, place) {
   if (!welcomeIsActive() || !data) return;
   const truth = buildWeatherTruth(data);
   const sceneCode = truth.sceneCode ?? truth.code;
+  const display = { ...(truth.display || {}), welcomeAmbient: true };
   updateWelcomeBrandMark(truth.nowCode ?? truth.code, truth.isDay);
-  updateSkyCanvas(sceneCode, truth.isDay, data, truth.display);
+  updateSkyCanvas(sceneCode, truth.isDay, data, display);
   setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth));
 }
 
