@@ -2029,16 +2029,21 @@ async function inspectStormImpactAt(clientX, clientY) {
   if (!target) return;
 
   const seq = ++mapState.stormImpact.seq;
+  const selectedFrame = mapState.frames[mapState.frameIndex] || null;
   mapState.stormImpact.status = "loading";
   mapState.stormImpact.analysis = {
     target,
-    tapSource: activeMapSource()
+    tapSource: activeMapSource(selectedFrame),
+    selectedTimestamp: selectedFrame?.timestamp || null
   };
   renderStormImpactCard();
   renderStormImpactOverlay();
 
   try {
-    const analysis = await analyzeStormImpactAtPoint(target, { tapSource: activeMapSource() });
+    const analysis = await analyzeStormImpactAtPoint(target, {
+      tapSource: activeMapSource(selectedFrame),
+      selectedFrame
+    });
     if (seq !== mapState.stormImpact.seq) return;
     mapState.stormImpact.status = "ready";
     mapState.stormImpact.analysis = analysis;
@@ -2047,7 +2052,8 @@ async function inspectStormImpactAt(clientX, clientY) {
     mapState.stormImpact.status = "error";
     mapState.stormImpact.analysis = {
       target,
-      tapSource: activeMapSource(),
+      tapSource: activeMapSource(selectedFrame),
+      selectedTimestamp: selectedFrame?.timestamp || null,
       title: "Radar check unavailable",
       summary: "Nearcast could not sample the radar tiles for this spot. Try again in a moment."
     };
@@ -2069,15 +2075,27 @@ function clearStormImpact(options = {}) {
 }
 
 async function analyzeStormImpactAtPoint(target, options = {}) {
-  const frames = selectStormImpactFrames(await fetchRadarFrames());
   const base = {
     target,
     tapSource: options.tapSource || activeMapSource(),
+    selectedTimestamp: options.selectedFrame?.timestamp || null,
     hasPrecip: false,
+    hasObservedPrecip: false,
     impacts: [],
     closestMiss: null,
     source: "Radar"
   };
+
+  const observed = await analyzeObservedStormImpactAtPoint(target, base);
+  const shouldUseForecast = base.tapSource === "forecast" || !observed.impacts.length;
+  if (!shouldUseForecast) return observed;
+
+  const guidance = await analyzeForecastGuidanceAtPoint(target, options).catch(() => null);
+  return mergeStormImpactGuidance(observed, guidance);
+}
+
+async function analyzeObservedStormImpactAtPoint(target, base) {
+  const frames = selectStormImpactFrames(await fetchRadarFrames());
 
   if (!frames.length) {
     return {
@@ -2130,6 +2148,7 @@ async function analyzeStormImpactAtPoint(target, options = {}) {
     z,
     source,
     hasPrecip: true,
+    hasObservedPrecip: true,
     label: stormImpactRainLabel(latestSample),
     intensity: latestSample.intensity,
     frameTimestamp: latestSample.timestamp,
@@ -2144,6 +2163,100 @@ async function analyzeStormImpactAtPoint(target, options = {}) {
   analysis.title = stormImpactTitle(analysis);
   analysis.summary = stormImpactSummary(analysis);
   return analysis;
+}
+
+async function analyzeForecastGuidanceAtPoint(target, options = {}) {
+  const frames = selectStormForecastFrames(await fetchNoaaFutureRainFrames(), options);
+  if (!frames.length) return null;
+
+  const z = STORM_FORECAST_SAMPLE_ZOOM;
+  const tileCache = new Map();
+  const places = stormImpactPlaces();
+  const targetSamples = await Promise.allSettled(
+    frames.map((frame) => sampleForecastGuidanceFrame(frame, target, z, tileCache))
+  );
+  const targetByTimestamp = new Map();
+  const targetSignals = [];
+  targetSamples.forEach((result) => {
+    if (result.status !== "fulfilled" || !result.value) return;
+    targetByTimestamp.set(result.value.timestamp, result.value);
+    if (isSignificantForecastSample(result.value)) targetSignals.push(result.value);
+  });
+
+  const tapHasForecastSignal = targetSignals.length > 0;
+  if (!tapHasForecastSignal && options.tapSource !== "forecast") return null;
+
+  const impacts = [];
+  for (const place of places) {
+    let best = null;
+    for (const frame of frames) {
+      const targetSample = targetByTimestamp.get(frame.timestamp);
+      const targetSignal = isSignificantForecastSample(targetSample);
+      if (!tapHasForecastSignal && !targetSignal && options.tapSource !== "forecast") continue;
+
+      const placeSample = await sampleForecastGuidanceFrame(frame, place, z, tileCache).catch(() => null);
+      if (!isSignificantForecastSample(placeSample)) continue;
+
+      const etaMin = Math.max(0, Math.round((frame.timestamp - Date.now()) / 60000));
+      const placeWorld = projectLatLon(place.latitude, place.longitude, z);
+      const targetWorld = projectLatLon(target.latitude, target.longitude, z);
+      const distancePx = Math.hypot(placeWorld.x - targetWorld.x, placeWorld.y - targetWorld.y);
+      const impact = {
+        place,
+        placeKey: stormImpactPlaceKey(place),
+        placeName: mapMarkerName(place),
+        tone: targetSignal || distancePx <= STORM_IMPACT_NEAR_PATH_RADIUS_PX * 1.6 ? "possible" : "nearby",
+        toneLabel: "Forecast",
+        impactSource: "forecast",
+        etaMin,
+        timestamp: frame.timestamp,
+        crossPx: distancePx,
+        closestMin: etaMin,
+        distanceLabel: formatImpactDistance(distancePx, place.latitude, z),
+        detail: `Forecast guidance shows precipitation near this place around ${formatTimelineTime(frame.timestamp)}.`
+      };
+      if (!best || impact.etaMin < best.etaMin) best = impact;
+    }
+    if (best) impacts.push(best);
+  }
+
+  impacts.sort((a, b) => a.etaMin - b.etaMin);
+  const firstTarget = targetSignals[0] || null;
+  return {
+    source: "Forecast guidance",
+    hasForecastPrecip: tapHasForecastSignal || impacts.length > 0,
+    label: "Forecast rain",
+    z,
+    targetSignal: firstTarget,
+    impacts: impacts.slice(0, 5)
+  };
+}
+
+function mergeStormImpactGuidance(observed, guidance) {
+  if (!guidance?.hasForecastPrecip) return observed;
+
+  const observedKeys = new Set((observed.impacts || []).map((impact) => impact.placeKey));
+  const forecastImpacts = (guidance.impacts || [])
+    .filter((impact) => !observedKeys.has(impact.placeKey));
+  const impacts = [...(observed.impacts || []), ...forecastImpacts]
+    .sort((a, b) => (a.etaMin - b.etaMin) || impactSourceRank(a) - impactSourceRank(b));
+
+  const merged = {
+    ...observed,
+    source: observed.hasObservedPrecip ? `${observed.source} + Forecast guidance` : "Forecast guidance",
+    hasPrecip: observed.hasPrecip || guidance.hasForecastPrecip,
+    label: observed.hasPrecip ? observed.label : guidance.label,
+    forecastGuidance: guidance,
+    impacts,
+    closestMiss: impacts.length ? null : observed.closestMiss
+  };
+  merged.title = stormImpactTitle(merged);
+  merged.summary = stormImpactSummary(merged);
+  return merged;
+}
+
+function impactSourceRank(impact) {
+  return impact?.impactSource === "forecast" ? 1 : 0;
 }
 
 function selectStormImpactFrames(frames) {
@@ -2162,6 +2275,29 @@ function selectStormImpactFrames(frames) {
     .slice(-STORM_IMPACT_FRAME_LIMIT);
 }
 
+function selectStormForecastFrames(frames, options = {}) {
+  const now = Date.now();
+  const selectedTimestamp = options.selectedFrame?.source === "forecast" && Number.isFinite(options.selectedFrame.timestamp)
+    ? options.selectedFrame.timestamp
+    : null;
+  const start = selectedTimestamp ? selectedTimestamp - 15 * 60 * 1000 : now;
+  const end = selectedTimestamp
+    ? selectedTimestamp + Math.min(STORM_FORECAST_LOOKAHEAD_MS, 2 * 60 * 60 * 1000)
+    : now + STORM_FORECAST_LOOKAHEAD_MS;
+
+  const selected = [...(frames || [])]
+    .filter((frame) => frame?.url || frame?.layers?.length)
+    .filter((frame) => Number.isFinite(frame.timestamp))
+    .filter((frame) => frame.timestamp >= start && frame.timestamp <= end)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  if (selected.length <= STORM_FORECAST_FRAME_LIMIT) return selected;
+  const stride = Math.max(1, Math.ceil(selected.length / STORM_FORECAST_FRAME_LIMIT));
+  return selected
+    .filter((_, index) => index % stride === 0 || index === selected.length - 1)
+    .slice(0, STORM_FORECAST_FRAME_LIMIT);
+}
+
 async function sampleStormImpactFrame(frame, target, z, tileCache) {
   const targetWorld = projectLatLon(target.latitude, target.longitude, z);
   const stats = await radarAreaStats(frame, targetWorld, z, STORM_IMPACT_SAMPLE_RADIUS_PX, tileCache);
@@ -2178,6 +2314,39 @@ async function sampleStormImpactFrame(frame, target, z, tileCache) {
     centroidWorld,
     intensity
   };
+}
+
+async function sampleForecastGuidanceFrame(frame, target, z, tileCache) {
+  const targetWorld = projectLatLon(target.latitude, target.longitude, z);
+  const stats = await weatherFrameAreaStats(frame, targetWorld, z, STORM_FORECAST_SAMPLE_RADIUS_PX, tileCache);
+  if (!stats) return null;
+  const centroidWorld = stats.totalScore > 0
+    ? { x: targetWorld.x + stats.centroidDx, y: targetWorld.y + stats.centroidDy }
+    : targetWorld;
+  return {
+    ...stats,
+    frame,
+    source: frame.attribution || frame.sourceLabel || "Forecast guidance",
+    timestamp: frame.timestamp,
+    targetWorld,
+    centroidWorld,
+    intensity: radarSampleIntensity(stats)
+  };
+}
+
+async function weatherFrameAreaStats(frame, targetWorld, z, radiusPx, tileCache) {
+  const layers = (frame.layers?.length ? frame.layers : [{ url: frame.url, opacity: 1 }])
+    .filter((layer) => layer?.url);
+  if (!layers.length) return null;
+
+  const settled = await Promise.allSettled(
+    layers.map((layer) => radarAreaStats({ url: layer.url }, targetWorld, z, radiusPx, tileCache))
+  );
+  const samples = settled
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value);
+  if (!samples.length) return null;
+  return samples.sort((a, b) => forecastSampleScore(b) - forecastSampleScore(a))[0];
 }
 
 async function radarAreaStats(frame, targetWorld, z, radiusPx, tileCache) {
@@ -2286,6 +2455,18 @@ function isSignificantStormSample(sample) {
     sample.maxScore >= 1.16;
 }
 
+function isSignificantForecastSample(sample) {
+  if (!sample) return false;
+  return sample.hits >= STORM_FORECAST_MIN_SAMPLE_HITS ||
+    sample.density >= STORM_FORECAST_MIN_SAMPLE_DENSITY ||
+    sample.maxScore >= 1.06;
+}
+
+function forecastSampleScore(sample) {
+  if (!sample) return 0;
+  return (sample.maxScore || 0) * 100 + (sample.density || 0) * 1000 + (sample.hits || 0);
+}
+
 function estimateStormMotion(samples) {
   const usable = [...(samples || [])]
     .filter((sample) => sample?.centroidWorld && Number.isFinite(sample.timestamp))
@@ -2367,6 +2548,7 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
         etaMin: 0,
         crossPx: nowDistancePx,
         closestMin: 0,
+        impactSource: "radar",
         detail: "Radar return is near this place now."
       };
     } else if (motion && speedSq > 0) {
@@ -2391,6 +2573,7 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
           etaMin,
           crossPx,
           closestMin,
+          impactSource: "radar",
           detail: stormImpactDetail(tone, crossPx, latestLatLon.latitude, z)
         };
       }
@@ -2412,6 +2595,7 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
         ...candidate,
         ...impact,
         etaMin: Math.round(impact.etaMin),
+        impactSource: impact.impactSource || "radar",
         toneLabel: impact.tone === "likely" ? "Likely" : impact.tone === "possible" ? "May clip" : "Nearby"
       });
     }
@@ -2481,6 +2665,9 @@ function stormImpactTitle(analysis) {
     const first = analysis.impacts[0];
     return `${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
   }
+  if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.hasObservedPrecip) {
+    return "Forecast rain nearby";
+  }
   return `${analysis.label} track`;
 }
 
@@ -2488,15 +2675,24 @@ function stormImpactSummary(analysis) {
   if (!analysis.hasPrecip) return analysis.summary || "No observed radar return was found at this tap.";
   const motion = analysis.motion ? stormMotionCopy(analysis.motion, analysis.latestLatLon.latitude, analysis.z) : "";
   const sourceNote = analysis.tapSource === "forecast"
-    ? " Impact uses latest observed radar, not the forecast tile currently shown."
+    ? " Observed radar still drives motion when a current track is available."
     : "";
+  const firstImpact = analysis.impacts?.[0] || null;
+  if (firstImpact?.impactSource === "forecast") {
+    const observedNote = analysis.hasObservedPrecip
+      ? "Observed radar track misses your places for now."
+      : "Observed radar is weak or clear at the tap.";
+    return `Forecast guidance brings precipitation near ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)}. ${observedNote}${sourceNote}`;
+  }
+  if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.impacts.length) {
+    return `Forecast guidance has precipitation near the tap, but not near your places in the sampled forecast window.${sourceNote}`;
+  }
 
   if (!analysis.motion) {
     return `${analysis.label} is on radar here, but the recent frames do not show enough movement for an ETA yet.${sourceNote}`;
   }
   if (analysis.impacts.length) {
-    const first = analysis.impacts[0];
-    return `${first.toneLabel} for ${first.placeName} ${formatImpactEtaPhrase(first.etaMin)} if this track holds. ${motion}${sourceNote}`;
+    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this track holds. ${motion}${sourceNote}`;
   }
   if (analysis.closestMiss) {
     return `Projected track misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${sourceNote}`;
