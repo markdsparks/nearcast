@@ -1,4 +1,4 @@
-const VERSION = "2.6.72";
+const VERSION = "2.6.73";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -6,6 +6,7 @@ const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
 const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
+const FORECAST_WARM_START_MAX_AGE_MS = 60 * 60 * 1000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
 const PERF_STORAGE_KEY = "nearcast-perf";
 const PERF_RENDER_WARN_MS = 50;
@@ -1908,13 +1909,24 @@ function init() {
 
   // Returning users open straight to their weather (last viewed → first saved).
   // First-timers get the welcome state to find a place — no arbitrary default.
-  const lastPlace = JSON.parse(localStorage.getItem("weather-last-place") || "null");
-  if (lastPlace && lastPlace.latitude != null) {
-    loadPlace(lastPlace);
-  } else if (state.savedPlaces.length) {
-    loadPlace(state.savedPlaces[0]);
+  const lastPlace = readStorageJson("weather-last-place");
+  const startingPlace = lastPlace && lastPlace.latitude != null
+    ? lastPlace
+    : state.savedPlaces.length ? state.savedPlaces[0] : null;
+  if (startingPlace) {
+    warmStartForecast(startingPlace);
+    loadPlace(startingPlace);
   } else {
     updateMode(); // welcome mode
+  }
+}
+
+function readStorageJson(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -3418,6 +3430,36 @@ function showWelcomeFromPlaces() {
   });
 }
 
+function warmStartForecast(place) {
+  try {
+    const normalized = normalizePlace(place);
+    const cached = readForecastCache(normalized, { maxAge: FORECAST_WARM_START_MAX_AGE_MS });
+    if (!cached) return false;
+
+    state.welcomeOverride = false;
+    state.activePlace = normalized;
+    state.radarPrecipSeq += 1;
+    state.radarPrecipSignal = null;
+    state.radarPrecipPlaceId = normalized.id;
+    state.weatherTruth = null;
+
+    updateMode();
+    updateFloatingChrome({ forceReveal: true });
+    updatePlaceSwitcher();
+    mapState.panX = 0;
+    mapState.panY = 0;
+    renderSavedPlaces();
+    updateMapPlace();
+    syncMapToPlace();
+    renderAlerts([]);
+    renderForecast(cached.data, normalized, { refreshMap: false });
+    setLoadingStatus("");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function loadPlace(place, force = false) {
   state.welcomeOverride = false;
   state.activePlace = normalizePlace(place);
@@ -3577,12 +3619,26 @@ const AIR_QUALITY_FIELDS = [
   "olive_pollen"
 ];
 
-async function fetchForecast(place, force = false) {
-  const cacheKey = `forecast:${FORECAST_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
-  const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
-  const maxCacheAge = 15 * 60 * 1000;
+function forecastCacheKey(place, unit = state.unit) {
+  return `forecast:${FORECAST_CACHE_VERSION}:${unit}:${Number(place.latitude).toFixed(3)}:${Number(place.longitude).toFixed(3)}`;
+}
 
-  if (!force && cached && Date.now() - cached.savedAt < maxCacheAge) {
+function readForecastCache(place, options = {}) {
+  if (!place || place.latitude === undefined || place.longitude === undefined) return null;
+  const cacheKey = forecastCacheKey(place, options.unit || state.unit);
+  const cached = readStorageJson(cacheKey);
+  if (!cached?.data || !Number.isFinite(Number(cached.savedAt))) return null;
+  const maxAge = options.maxAge ?? Infinity;
+  if (Date.now() - Number(cached.savedAt) > maxAge) return null;
+  return cached;
+}
+
+async function fetchForecast(place, force = false) {
+  const cacheKey = forecastCacheKey(place);
+  const maxCacheAge = 15 * 60 * 1000;
+  const cached = readForecastCache(place, { maxAge: maxCacheAge });
+
+  if (!force && cached) {
     return cached.data;
   }
 
