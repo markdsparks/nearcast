@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v2661";
-const ASSET_VERSION = "2.6.61";
+const CACHE = "nearcast-v2662";
+const ASSET_VERSION = "2.6.62";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -75,6 +75,10 @@ function freshNavigation(request) {
   );
 }
 
+function networkOnly(request) {
+  return fetch(request).catch(() => Response.error());
+}
+
 // Fetch strategy:
 //  - API calls (Open-Meteo, RainViewer, NWS/NOAA) → network-first, no caching
 //  - Map tiles (OSM, radar/forecast tiles) → network-only (too large to cache)
@@ -88,6 +92,7 @@ self.addEventListener("fetch", e => {
   if (
     url.hostname.includes("open-meteo.com") ||
     url.hostname.includes("rainviewer.com") ||
+    url.hostname.includes("geojs.io") ||
     url.hostname.includes("ipapi.co") ||
     url.hostname.includes("ipwho.is") ||
     url.hostname.includes("weather.gov") ||
@@ -102,7 +107,7 @@ self.addEventListener("fetch", e => {
     url.pathname.includes("/v2/radar/") ||
     url.pathname.includes("/nowcast/")
   ) {
-    e.respondWith(fetch(e.request));
+    e.respondWith(networkOnly(e.request));
     return;
   }
 

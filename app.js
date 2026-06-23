@@ -1,4 +1,4 @@
-const VERSION = "2.6.61";
+const VERSION = "2.6.62";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -2916,6 +2916,16 @@ async function fetchJsonWithTimeout(url, timeoutMs, signal = null) {
 
 async function fetchApproximateWelcomePlace(signal = null) {
   const providers = [
+    {
+      url: "https://get.geojs.io/v1/ip/geo.json",
+      parse: (json) => approximatePlaceFromIpJson(json, {
+        lat: "latitude",
+        lon: "longitude",
+        region: "region",
+        country: "country",
+        countryCode: "country_code"
+      })
+    },
     {
       url: "https://ipapi.co/json/",
       parse: (json) => approximatePlaceFromIpJson(json, {
