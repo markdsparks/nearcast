@@ -1,4 +1,4 @@
-const VERSION = "2.6.67";
+const VERSION = "2.6.69";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -2819,11 +2819,11 @@ function updateMode() {
   if (!hasContext) {
     els.shell.classList.remove("search-open");
     closeAppMenu();
-    setWelcomeAmbientLabel("");
+    clearWelcomeTransientUi();
     updateWelcomeBrandMark(null, browserApproximateIsDay());
     initWelcomeAmbience();
   } else {
-    setWelcomeAmbientLabel("");
+    clearWelcomeTransientUi();
     cancelWelcomeAmbience();
   }
 }
@@ -2864,6 +2864,16 @@ function setWelcomeAmbientLabel(text, options = {}) {
   els.welcomeAmbientLabel.setAttribute("aria-label", copy ? `${copy}. ${action}` : "Welcome sky");
 }
 
+function clearWelcomeTransientUi() {
+  setWelcomeAmbientLabel("");
+  els.loadingStatuses.forEach((status) => {
+    if (!status.classList.contains("welcome-loading")) return;
+    const text = status.querySelector("[data-loading-message]");
+    if (text) text.textContent = "";
+    status.hidden = true;
+  });
+}
+
 function welcomeAmbientCopy(data, place, truth, source = "local") {
   const placeName = String(place?.name || "").trim();
   if (!placeName) return "";
@@ -2880,6 +2890,7 @@ function cancelWelcomeAmbience() {
   }
   cancelWelcomeWorldSky();
   welcomeAmbientSource = "idle";
+  welcomeAmbienceStarted = false;
 }
 
 function readWelcomeAmbienceCache() {
@@ -6245,10 +6256,16 @@ function isTransientStatus(message) {
 }
 
 function setLoadingStatus(message) {
+  const textValue = String(message || "");
+  const welcome = welcomeIsActive();
   els.loadingStatuses.forEach((status) => {
+    const isWelcomeStatus = status.classList.contains("welcome-loading");
+    const isLaunchStatus = status.classList.contains("launch-loading");
+    const visible = Boolean(textValue) &&
+      ((isWelcomeStatus && welcome) || (isLaunchStatus && !welcome) || (!isWelcomeStatus && !isLaunchStatus));
     const text = status.querySelector("[data-loading-message]");
-    if (text) text.textContent = message;
-    status.hidden = !message;
+    if (text) text.textContent = visible ? textValue : "";
+    status.hidden = !visible;
   });
 }
 

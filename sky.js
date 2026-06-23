@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v7";
+const SKY_SCENE_VERSION = "sky-v8";
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -784,6 +784,10 @@ function skyVisiblePoint(vw, vh, phase, options = {}) {
   };
 }
 
+function skyChromeSafeMinY(defaultMinY) {
+  return state.skyState?.welcomeAmbient === true ? defaultMinY : Math.max(defaultMinY, 0.18);
+}
+
 function skyFilterDefs() {
   return `<defs>
     <filter id="sky-cloud-f" x="-18%" y="-45%" width="136%" height="190%">
@@ -810,7 +814,7 @@ function skyStars(vw, vh, count, rng) {
 }
 
 function skyMoon(vw, vh, phase) {
-  const point = skyVisiblePoint(vw, vh, phase, { minY: 0.10, maxY: 0.30 });
+  const point = skyVisiblePoint(vw, vh, phase, { minY: skyChromeSafeMinY(0.10), maxY: 0.34 });
   const cx = point.x, cy = point.y, r = 42;
   const { illum, waxing } = moonPhase(state.skyState?.nowMs ?? skyNow());
   // Carve the phase: white disc minus an offset black disc → crescent → gibbous.
@@ -819,7 +823,6 @@ function skyMoon(vw, vh, phase) {
   const id = `sky-moon-${++skyMaskCounter}`;
   return `
     <circle cx="${cx}" cy="${cy}" r="${r * 4.6}" fill="#6f7fb2" opacity="0.075" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
-    <circle cx="${cx}" cy="${cy}" r="${r * 2.0}" fill="none" stroke="#afc5ed" stroke-width="1" opacity="0.11" class="sky-moon-glow"/>
     <defs><mask id="${id}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff"/><circle cx="${sx}" cy="${cy}" r="${r}" fill="#000"/></mask></defs>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="#cfe0f3" opacity="0.14"/>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="#eef4ff" opacity="0.95" mask="url(#${id})"/>
@@ -839,7 +842,7 @@ function skySun(vw, vh, phase) {
     vw,
     vh,
     isPartly ? { ...phase, y: Math.max(phase.y ?? 0.16, 0.16) } : phase,
-    { minY: isPartly ? 0.15 : 0.11, maxY: 0.34 }
+    { minY: skyChromeSafeMinY(isPartly ? 0.15 : 0.11), maxY: 0.34 }
   );
   const cx = point.x, cy = point.y, r = isPartly ? 50 : 46;
   const warm = phase.warmth ?? phase.golden;

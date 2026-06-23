@@ -1187,6 +1187,15 @@ h2 {
   display: inline-flex;
 }
 
+.shell:not(.mode-welcome) .welcome-loading,
+.shell:not(.mode-welcome) .welcome-ambient-label,
+.mode-welcome .launch-loading {
+  display: none !important;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .launch-loading {
   margin-top: 14px;
 }
@@ -1313,6 +1322,8 @@ h2 {
 }
 
 .favorite-outline {
+  opacity: 0.8;
+  stroke-width: 2.15;
   transition: opacity 0.16s;
 }
 
