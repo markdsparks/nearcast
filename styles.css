@@ -1559,10 +1559,29 @@ h2 {
     linear-gradient(135deg, rgba(200, 85, 85, 0.12), rgba(53, 111, 183, 0.07)),
     rgba(255, 255, 255, 0.42);
 }
+.for-you-card.is-away {
+  border-color: rgba(53, 111, 183, 0.30);
+  background:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.13), rgba(52, 125, 98, 0.07)),
+    rgba(255, 255, 255, 0.44);
+}
 .for-you-card.is-weather.is-rain,
 .for-you-card.is-weather.is-snow {
   border-color: var(--summary-rain-border);
   background: var(--summary-rain-bg);
+}
+.for-you-card.is-interruption {
+  border-color: rgba(201, 152, 55, 0.36);
+  background:
+    linear-gradient(135deg, rgba(201, 152, 55, 0.14), rgba(255, 255, 255, 0.16)),
+    rgba(255, 255, 255, 0.42);
+}
+.for-you-card.is-interruption.is-rain,
+.for-you-card.is-interruption.is-watch {
+  border-color: rgba(200, 85, 85, 0.32);
+  background:
+    linear-gradient(135deg, rgba(200, 85, 85, 0.12), rgba(201, 152, 55, 0.09)),
+    rgba(255, 255, 255, 0.42);
 }
 .for-you-card.is-action {
   border-color: rgba(53, 111, 183, 0.25);

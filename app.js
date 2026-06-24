@@ -1,4 +1,4 @@
-const VERSION = "2.6.85";
+const VERSION = "2.6.86";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -21,6 +21,7 @@ const FOR_YOU_SIGNAL_IDS = [
   "best-patio",
   "plan",
   "launch-summary",
+  "weather-alert",
   "memory-open",
   "memory-show",
   "memory-edit"
@@ -2400,10 +2401,15 @@ function bindEvents() {
       showPlanMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
-  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-alert], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
     const signal = target.dataset.forYouSignal;
     if (signal) recordForYouSignal(signal);
 
+    const alert = target.closest("[data-for-you-alert]");
+    if (alert) {
+      openAlertSheet();
+      return;
+    }
     const summary = target.closest("[data-for-you-summary]");
     if (summary) {
       if (!signal) recordForYouSignal("launch-summary");
@@ -5369,15 +5375,8 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
     return;
   }
 
-  const hasPlanMemory = Boolean(state.planMemories?.length);
-  const cards = [
-    ...forYouPlanCards(data, place).slice(0, 1),
-    forYouWeatherCard(data, tempUnit, windUnit, truth),
-    ...forYouActionCards(data, truth, 3)
-  ].filter(Boolean);
-  if (!hasPlanMemory && cards.length < 4) cards.push(forYouSeedPlanCard(false));
-
-  const visibleCards = cards.slice(0, 4);
+  const context = buildTodayContext(data, place, tempUnit, windUnit, truth);
+  const visibleCards = todayPriorityCards(context);
   if (!visibleCards.length) {
     els.forYouToday.hidden = true;
     els.forYouToday.innerHTML = "";
@@ -5388,8 +5387,8 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
   els.forYouToday.innerHTML = `
     <div class="for-you-head">
       <span>
-        <strong>For You / Today</strong>
-        <small>${escapeHtml(forYouMeta(place))}</small>
+        <strong>Today</strong>
+        <small>${escapeHtml(forYouMeta(context))}</small>
       </span>
       <button class="for-you-plan-btn" type="button" data-for-you-template="I have " data-for-you-signal="plan">Plan</button>
     </div>
@@ -5397,9 +5396,52 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
   `;
 }
 
-function forYouMeta(place) {
-  const memoryCount = Array.isArray(state.planMemories) ? state.planMemories.length : 0;
+function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+  const weatherItems = launchSummaryItems(data, tempUnit, windUnit, truth);
+  const weatherChoice = topForYouWeatherChoice(weatherItems);
+  const herePlanCards = forYouPlanCards(data, place).slice(0, 1);
+  const elsewherePlanCard = forYouElsewherePlanCard(data, place);
+  const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
+  return {
+    data,
+    place,
+    tempUnit,
+    windUnit,
+    truth,
+    weatherItems,
+    weatherTone: weatherChoice?.item?.tone || "",
+    weatherCard: forYouWeatherCard(data, tempUnit, windUnit, truth, weatherItems, place, weatherChoice),
+    herePlanCards,
+    elsewherePlanCard,
+    interruptionCard: interruption.html,
+    interruptionType: interruption.type,
+    actionCards: forYouActionCards(data, truth, 3),
+    memoryCount: Array.isArray(state.planMemories) ? state.planMemories.length : 0
+  };
+}
+
+function todayPriorityCards(context) {
+  if (!context) return [];
+  const cards = [];
+  if (context.herePlanCards?.[0]) cards.push(context.herePlanCards[0]);
+  else if (context.elsewherePlanCard) cards.push(context.elsewherePlanCard);
+
+  const weatherAlreadyWarns = ["rain", "snow", "wind"].includes(context.weatherTone);
+  if (context.interruptionCard && (context.interruptionType === "alert" || !weatherAlreadyWarns)) {
+    cards.push(context.interruptionCard);
+  }
+  if (context.weatherCard) cards.push(context.weatherCard);
+  cards.push(...(context.actionCards || []));
+  if (!context.memoryCount && cards.length < 4) cards.push(forYouSeedPlanCard(false));
+  return cards.filter(Boolean).slice(0, 4);
+}
+
+function forYouMeta(context) {
+  const place = context?.place || context;
+  const memoryCount = Number(context?.memoryCount ?? (Array.isArray(state.planMemories) ? state.planMemories.length : 0));
   const placeText = place ? placeLabel(place) : "Current place";
+  const hasAwayPlan = Boolean(context?.elsewherePlanCard && !context?.herePlanCards?.length);
+  if (hasAwayPlan) return `${placeText} · next plan is away`;
   if (memoryCount) return `${placeText} · ${memoryCount} remembered plan${memoryCount === 1 ? "" : "s"}`;
   const actionCount = Object.values(state.userContext?.actions || {})
     .reduce((total, item) => total + (Number(item.count) || 0), 0);
@@ -5440,24 +5482,82 @@ function forYouPlanCard(item, label, data) {
   `;
 }
 
-function forYouWeatherCard(data, tempUnit, windUnit, truth) {
-  const items = launchSummaryItems(data, tempUnit, windUnit, truth);
-  const ranked = items.map((item, index) => ({
-    item,
-    index,
-    rank: forYouWeatherRank(item)
-  })).sort((a, b) => b.rank - a.rank || a.index - b.index);
-  const top = ranked[0];
+function forYouElsewherePlanCard(data, place) {
+  const entry = nextForYouElsewhereMemory(data, place);
+  const memory = entry?.memory;
+  if (!memory?.id) return "";
+  const title = typeof planMemoryTitle === "function" ? planMemoryTitle(memory) : (memory.title || "Plan");
+  const where = placeLabel(memory.place);
+  const day = typeof planMemoryDayLabel === "function" ? planMemoryDayLabel(memory, data) : memory.targetDate;
+  const time = typeof planMemoryTimeText === "function" ? planMemoryTimeText(memory) : "";
+  return `
+    <button class="for-you-card is-plan is-away" type="button" data-memory-show="${escapeHtml(memory.id)}" data-for-you-signal="memory-show">
+      <span class="for-you-kicker"><span>Next away</span><em>${escapeHtml(where)}</em></span>
+      <strong>${escapeHtml(title)}</strong>
+      <span class="for-you-body">${escapeHtml([day, time].filter(Boolean).join(" · "))}</span>
+      <small>Load place</small>
+    </button>
+  `;
+}
+
+function nextForYouElsewhereMemory(data, place) {
+  if (!Array.isArray(state.planMemories) || !state.planMemories.length || !place) return null;
+  const now = forecastNowMs(data);
+  const items = state.planMemories
+    .filter((memory) => !forYouSamePlace(memory.place, place))
+    .map((memory) => {
+      const startMs = forYouMemoryBoundaryMs(memory, data, memory.startHour);
+      const endMs = forYouMemoryBoundaryMs(memory, data, memory.endHour);
+      return { memory, startMs, endMs };
+    })
+    .filter((item) => item.endMs === null || item.endMs >= now - 60 * 60 * 1000)
+    .sort((a, b) => (a.startMs ?? Infinity) - (b.startMs ?? Infinity));
+  return items[0] || null;
+}
+
+function forYouSamePlace(a, b) {
+  if (typeof samePlanPlace === "function") return samePlanPlace(a, b);
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  return Math.abs(Number(a.latitude) - Number(b.latitude)) < 0.01 &&
+    Math.abs(Number(a.longitude) - Number(b.longitude)) < 0.01;
+}
+
+function forYouMemoryBoundaryMs(memory, data, hour) {
+  const targetDate = datePart(memory?.targetDate);
+  const numericHour = Number(hour);
+  if (!targetDate || !Number.isFinite(numericHour)) return null;
+  const dayOffset = daysFromForecastToday(targetDate, data);
+  if (typeof planBoundaryMs === "function" && Number.isInteger(dayOffset)) {
+    return planBoundaryMs(data, numericHour, dayOffset);
+  }
+  const wholeHour = Math.floor(numericHour);
+  const minute = Math.round((numericHour - wholeHour) * 60);
+  return parseForecastTimestamp(`${targetDate}T${String(wholeHour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`, data);
+}
+
+function forYouWeatherCard(data, tempUnit, windUnit, truth, items = launchSummaryItems(data, tempUnit, windUnit, truth), place = state.activePlace, choice = null) {
+  const top = choice || topForYouWeatherChoice(items);
   if (!top?.item) return "";
   const item = top.item;
+  const placeName = place?.name || "Here";
   return `
     <button class="for-you-card is-weather is-${escapeHtml(item.tone || "neutral")}" type="button" data-for-you-summary="${top.index}" data-for-you-signal="launch-summary">
-      <span class="for-you-kicker"><span>${escapeHtml(item.label)}</span><em>Weather</em></span>
+      <span class="for-you-kicker"><span>Around me</span><em>${escapeHtml(placeName)}</em></span>
       <strong>${escapeHtml(item.value)}</strong>
       <span class="for-you-body">${escapeHtml(compactForYouText(item.receipt || "Hourly detail", 92))}</span>
       <small>Hourly detail</small>
     </button>
   `;
+}
+
+function topForYouWeatherChoice(items) {
+  const ranked = items.map((item, index) => ({
+    item,
+    index,
+    rank: forYouWeatherRank(item)
+  })).sort((a, b) => b.rank - a.rank || a.index - b.index);
+  return ranked[0] || null;
 }
 
 function forYouWeatherRank(item) {
@@ -5473,6 +5573,59 @@ function forYouWeatherRank(item) {
     neutral: 20
   };
   return (toneRank[tone] || 20) + (item?.label === "Next" ? 8 : 0);
+}
+
+function forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems) {
+  const alert = activeAlerts?.[0];
+  if (alert) {
+    return {
+      type: "alert",
+      html: `
+        <button class="for-you-card is-interruption is-watch" type="button" data-for-you-alert data-for-you-signal="weather-alert">
+          <span class="for-you-kicker"><span>Heads up</span><em>${escapeHtml(alertToneLabel(alertTone(alert)))}</em></span>
+          <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
+          <span class="for-you-body">${escapeHtml(compactForYouText(alertMeaningLine(alert, alertTone(alert), alertKind(alert)), 92))}</span>
+          <small>Alert details</small>
+        </button>
+      `
+    };
+  }
+
+  const nextRain = nextRainChance(data, 12, 55);
+  if (nextRain) {
+    const summaryIndex = weatherItems.findIndex((item) => item?.tone === "rain" || /rain/i.test(item?.value || ""));
+    return {
+      type: "rain",
+      html: `
+        <button class="for-you-card is-interruption is-rain" type="button" data-for-you-summary="${summaryIndex >= 0 ? summaryIndex : 1}" data-for-you-signal="launch-summary">
+          <span class="for-you-kicker"><span>Heads up</span><em>Rain risk</em></span>
+          <strong>${nextRain.chance}% near ${escapeHtml(formatTime(nextRain.time))}</strong>
+          <span class="for-you-body">Worth checking before outdoor plans.</span>
+          <small>Hourly detail</small>
+        </button>
+      `
+    };
+  }
+
+  const gustThreshold = windUnit === "mph" ? 28 : 45;
+  const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 18);
+  const gust = gustIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m[gustIndex] || 0) : 0;
+  if (gust >= gustThreshold) {
+    const summaryIndex = weatherItems.findIndex((item) => item?.tone === "wind");
+    return {
+      type: "wind",
+      html: `
+        <button class="for-you-card is-interruption is-wind" type="button" data-for-you-summary="${summaryIndex >= 0 ? summaryIndex : 2}" data-for-you-signal="launch-summary">
+          <span class="for-you-kicker"><span>Heads up</span><em>Wind</em></span>
+          <strong>Gusts ${gust} ${escapeHtml(windUnit)}</strong>
+          <span class="for-you-body">Outdoor plans may need a little margin.</span>
+          <small>Hourly detail</small>
+        </button>
+      `
+    };
+  }
+
+  return { type: "", html: "" };
 }
 
 function forYouActionCards(data, truth, limit = 2) {
