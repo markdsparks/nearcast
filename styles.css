@@ -4258,6 +4258,7 @@ h2 {
 }
 
 .day-condition,
+.day-precip-note,
 .day-memory {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4274,6 +4275,13 @@ h2 {
   font-size: 0.68rem;
   font-weight: 900;
   opacity: 1;
+}
+
+.day-precip-note {
+  color: var(--daily-secondary);
+  font-size: 0.68rem;
+  font-weight: 850;
+  opacity: 0.92;
 }
 
 .day-temps {

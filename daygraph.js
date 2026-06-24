@@ -270,11 +270,11 @@ function detailHoursForIndices(indices, {
   if (!data || !indices.length) return [];
   const eventWindows = detailEventWindows(eventWindow);
   return indices.map((h) => {
-    const rawCode = data.hourly.weather_code[h];
-    const pop = data.hourly.precipitation_probability[h] || 0;
-    const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[h] : null;
+    const profile = hourlyPrecipProfile(data, h);
+    const rawCode = profile.rawCode;
+    const pop = profile.pop;
     const precip = data.hourly.precipitation[h] || 0;
-    const code = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
+    const code = profile.code;
     const truth = state.weatherTruth;
     const ms = parseForecastTimestamp(data.hourly.time[h], data);
     const nextMs = indices.includes(h + 1)
@@ -309,6 +309,9 @@ function detailHoursForIndices(indices, {
         : "",
       precipSource,
       precipDetail: activePrecip ? (truth?.surfaceDetail || truth?.receiptDetail || truth?.receipt || "") : "",
+      precipPrimary: isNowHour ? activePrecip || isPrecipCode(truthCode) : profile.primary,
+      precipChance: profile.chance,
+      precipAmountSupported: profile.amountSupported,
       stormPotential: hasThunderPotential(rawCode, pop, isNowHour ? truthCode : code, activePrecip ? Math.max(precip, truthPrecip || 0) : precip, data),
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
@@ -543,6 +546,7 @@ function buildDaySummary(hrs, windUnit) {
   const parts = [];
   if (thunder) parts.push(`Thunder possible${maxPop >= 20 ? `, up to ${maxPop}% rain` : ""}`);
   else if (maxPop >= 50) parts.push(`Rain likely, up to ${maxPop}% chance`);
+  else if (maxPop >= 40) parts.push(`Rain possible, up to ${maxPop}% chance`);
   else if (maxPop >= 20) parts.push(`Slight chance of rain (${maxPop}%)`);
   else parts.push("Mostly dry");
   if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
@@ -566,12 +570,12 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
   if (hour.activePrecip) {
     signals.push({ label: "Rain now", tone: " is-wet" });
   } else if (hour.pop >= 20) {
-    signals.push({ label: `${hour.pop}% rain`, tone: hour.pop >= 40 ? " is-wet" : "" });
+    signals.push({ label: `${hour.pop}% rain`, tone: hour.precipPrimary ? " is-wet" : "" });
   }
 
   if (hour.activePrecip && hour.precipText) {
     signals.push({ label: hour.precipText, tone: " is-flag" });
-  } else if (hour.precip > 0.02) {
+  } else if (hour.precipPrimary && hour.precip > 0) {
     signals.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
   } else if (windy) {
     signals.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
@@ -611,7 +615,11 @@ function hourlyDetailNote(hour, tempUnit, windUnit) {
       : "";
     weatherNote = `${likelihood} through this hour.${burst}`;
   } else if (hour.pop >= 50) {
-    weatherNote = "Rain likely through this hour.";
+    weatherNote = `${hour.pop}% rain chance this hour. It may still stay dry nearby.`;
+  } else if (hour.pop >= 30) {
+    weatherNote = `${hour.pop}% rain chance this hour. Worth watching, but not enough to make the hour look wet.`;
+  } else if (hour.pop >= 20) {
+    weatherNote = `Low rain chance this hour (${hour.pop}%).`;
   } else if (hour.gust >= 25) {
     weatherNote = `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
   } else if (hour.uv >= 6) {
@@ -713,7 +721,7 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
     const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time, data);
-    const rainClass = hour.activePrecip || hour.pop >= 40 ? " is-rainy" : "";
+    const rainClass = hour.activePrecip || hour.precipPrimary ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
     const stormClass = hour.stormPotential ? " is-stormy" : "";

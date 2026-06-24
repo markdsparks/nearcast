@@ -1,4 +1,4 @@
-const VERSION = "2.6.81";
+const VERSION = "2.6.82";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -744,6 +744,13 @@ const PRECIP_FEATURE_POP = 30; // POP% at/above which precipitation is featured
 const RAIN_LIKELY_POP = 60; // High POP can outrank a plain sky/cloud code
 const THUNDER_POTENTIAL_POP = 20; // Lower-confidence thunder gets a badge, not the main icon
 const IMMINENT_PRECIP_MINUTES = 30; // Wet-biased hero window: "about to rain" should feel wet
+const HOURLY_PRECIP_PRIMARY_POP = 60; // The hour is likely wet enough for a rain-first icon.
+const HOURLY_PRECIP_SUPPORTED_POP = 30; // A chance hour can go rain-first when amount supports it.
+const HOURLY_PRECIP_CHANCE_POP = 20; // Below this, keep precip out of the compact hourly surface.
+const DAILY_PRECIP_ONE_HOUR_POP = 60; // One likely hour can make the day rain-shaped.
+const DAILY_PRECIP_TWO_HOURS_POP = 40; // A couple chance hours can make the day rain-shaped.
+const DAILY_PRECIP_THREE_HOURS_POP = 30; // Several chance hours can make the day rain-shaped.
+const DAILY_PRECIP_NOTE_POP = 20; // Low daily chance stays as a note/percentage, not the headline.
 
 function forecastUsesInches(data = state.forecast) {
   const unit = data?.current_units?.precipitation ||
@@ -758,6 +765,12 @@ function precipRateThresholds(data = state.forecast) {
   return forecastUsesInches(data)
     ? { measurable: 0.008, moderate: 0.1, heavy: 0.3 }
     : { measurable: 0.2, moderate: 2.5, heavy: 7.6 };
+}
+
+function precipNoticeThresholds(data = state.forecast) {
+  return forecastUsesInches(data)
+    ? { hourlyAmount: 0.03, dailyAmount: 0.08 }
+    : { hourlyAmount: 0.75, dailyAmount: 2 };
 }
 
 function precipRateFromAmount(amount, intervalSeconds = 3600) {
@@ -833,6 +846,152 @@ function isThunderCode(code) {
 
 function isPrecipCode(code) {
   return code === RAIN_LIKELY_CODE || (code >= 51 && code <= 86);
+}
+
+function precipKindFromCode(code) {
+  if (isSnowCode(code)) return "snow";
+  if (isThunderCode(code)) return "storm";
+  return "rain";
+}
+
+function hourlySkyCode(data, index) {
+  const h = data?.hourly || {};
+  const rawCode = h.weather_code?.[index];
+  const cloud = h.cloud_cover ? h.cloud_cover[index] : null;
+  return effectiveWeatherCode(rawCode, 0, cloud, 0, {
+    data,
+    featureByProbability: false,
+    precipRate: 0
+  });
+}
+
+function hourlyPrecipProfile(data, index, options = {}) {
+  const h = data?.hourly || {};
+  const rawCode = h.weather_code?.[index];
+  const pop = h.precipitation_probability ? (h.precipitation_probability[index] || 0) : 0;
+  const cloud = h.cloud_cover ? h.cloud_cover[index] : null;
+  const precip = h.precipitation ? (h.precipitation[index] || 0) : 0;
+  const rate = precipRateFromAmount(precip, options.intervalSeconds || 3600);
+  const thresholds = precipNoticeThresholds(data);
+  const activePrecip = Boolean(options.activePrecip);
+  const likely = pop >= HOURLY_PRECIP_PRIMARY_POP;
+  const amountSupported = pop >= HOURLY_PRECIP_SUPPORTED_POP && rate >= thresholds.hourlyAmount;
+  const primary = activePrecip || likely || amountSupported;
+  const skyCode = hourlySkyCode(data, index);
+  const code = activePrecip && options.activeCode != null
+    ? options.activeCode
+    : primary
+      ? effectiveWeatherCode(rawCode, pop, cloud, precip, { data })
+      : skyCode;
+  return {
+    rawCode,
+    pop,
+    cloud,
+    precip,
+    rate,
+    code,
+    skyCode,
+    primary,
+    likely,
+    amountSupported,
+    chance: pop >= HOURLY_PRECIP_CHANCE_POP
+  };
+}
+
+function dailyPrecipProfile(data, dayIndex) {
+  const daily = data?.daily || {};
+  const h = data?.hourly || {};
+  const dayStr = daily.time?.[dayIndex];
+  const thresholds = precipNoticeThresholds(data);
+  const dailyAmount = daily.precipitation_sum?.[dayIndex] || 0;
+  const dailyPop = daily.precipitation_probability_max?.[dayIndex] || 0;
+  const activeNow = dayIndex === forecastDailyIndex(data) && state.weatherTruth?.precip?.phase === "active";
+  let maxPop = dailyPop;
+  let count20 = 0;
+  let count30 = 0;
+  let count40 = 0;
+  let count60 = 0;
+  let bestCode = null;
+  let bestRawCode = daily.weather_code?.[dayIndex] ?? null;
+  let bestScore = -1;
+  let bestRawScore = -1;
+
+  const considerCandidate = (rawCode, pop, cloud, precip, rate) => {
+    const candidate = effectiveWeatherCode(rawCode, pop, cloud, precip, { data });
+    if (!isPrecipCode(candidate) && !isThunderCode(candidate)) return;
+    const amountScore = Math.min(999, Math.round((rate || 0) * 100));
+    const score = precipRank(candidate) * 100000 + (pop || 0) * 1000 + amountScore;
+    if (score > bestScore) {
+      bestScore = score;
+      bestCode = candidate;
+    }
+  };
+
+  if (h.time?.length && dayStr) {
+    h.time.forEach((time, index) => {
+      if (!time.startsWith(dayStr)) return;
+      const profile = hourlyPrecipProfile(data, index);
+      maxPop = Math.max(maxPop, profile.pop || 0);
+      if (profile.pop >= DAILY_PRECIP_NOTE_POP) count20 += 1;
+      if (profile.pop >= DAILY_PRECIP_THREE_HOURS_POP) count30 += 1;
+      if (profile.pop >= DAILY_PRECIP_TWO_HOURS_POP) count40 += 1;
+      if (profile.pop >= DAILY_PRECIP_ONE_HOUR_POP) count60 += 1;
+      if (isPrecipCode(profile.rawCode) || isThunderCode(profile.rawCode)) {
+        const rawScore = (profile.pop || 0) * 1000 + precipRank(profile.rawCode);
+        if (rawScore > bestRawScore) {
+          bestRawScore = rawScore;
+          bestRawCode = profile.rawCode;
+        }
+      }
+      if (
+        profile.pop >= DAILY_PRECIP_THREE_HOURS_POP ||
+        (profile.pop >= DAILY_PRECIP_NOTE_POP && profile.rate >= thresholds.hourlyAmount)
+      ) {
+        considerCandidate(profile.rawCode, profile.pop, profile.cloud, profile.precip, profile.rate);
+      }
+    });
+  } else {
+    if (dailyPop >= DAILY_PRECIP_NOTE_POP) count20 = 1;
+    if (dailyPop >= DAILY_PRECIP_THREE_HOURS_POP) count30 = 1;
+    if (dailyPop >= DAILY_PRECIP_TWO_HOURS_POP) count40 = 1;
+    if (dailyPop >= DAILY_PRECIP_ONE_HOUR_POP) count60 = 1;
+    if (dailyPop >= DAILY_PRECIP_THREE_HOURS_POP && (isPrecipCode(bestRawCode) || isThunderCode(bestRawCode))) {
+      bestCode = bestRawCode;
+    }
+  }
+
+  const amountPrimary = dailyAmount >= thresholds.dailyAmount;
+  const primary = Boolean(activeNow || count60 >= 1 || count40 >= 2 || count30 >= 3 || amountPrimary);
+  if (activeNow && isPrecipCode(state.weatherTruth?.nowCode)) {
+    bestCode = state.weatherTruth.nowCode;
+  }
+  if (primary && bestCode == null) {
+    if (isPrecipCode(bestRawCode) || isThunderCode(bestRawCode)) bestCode = bestRawCode;
+    else bestCode = RAIN_LIKELY_CODE;
+  }
+
+  const noun = precipKindFromCode(bestCode ?? bestRawCode);
+  let note = "";
+  if (!primary) {
+    if (maxPop >= DAILY_PRECIP_THREE_HOURS_POP || count20 >= 2) note = `Brief ${noun} chance`;
+    else if (maxPop >= DAILY_PRECIP_NOTE_POP || dailyAmount > 0) note = `Low ${noun} chance`;
+  }
+
+  return {
+    primary,
+    code: bestCode,
+    rawCode: bestRawCode,
+    noun,
+    note,
+    maxPop,
+    dailyAmount,
+    count20,
+    count30,
+    count40,
+    count60,
+    amountPrimary,
+    activeNow
+  };
 }
 
 function hasThunderPotential(rawCode, pop, shownCode, precipAmount = 0, data = state.forecast) {
@@ -1425,6 +1584,7 @@ function currentRainChanceFromHourly(data = state.forecast) {
 // Rough severity ranking so a daily headline can feature the most significant
 // precipitation, not just the lightest/likeliest one.
 function precipRank(code) {
+  if (code === RAIN_LIKELY_CODE) return 2;
   if (code >= 95) return 6;                                  // thunderstorms
   if (code === 65 || code === 67 || code === 75 || code === 82 || code === 86) return 5; // heavy
   if (code === 63 || code === 73 || code === 81 || code === 80 || code === 85) return 4; // moderate / showers
@@ -1441,25 +1601,23 @@ function precipRank(code) {
 function representativeDailyCode(data, dayIndex) {
   const dayStr = data.daily.time[dayIndex];
   const h = data.hourly;
-  if (!h || !h.time) return data.daily.weather_code[dayIndex];
-  let precipCode = null, precipScore = -1;
+  const precipProfile = dailyPrecipProfile(data, dayIndex);
+  if (!h || !h.time) {
+    if (precipProfile.primary && precipProfile.code != null) return precipProfile.code;
+    return isPrecipCode(data.daily.weather_code[dayIndex])
+      ? skyCodeFromCloud(null)
+      : data.daily.weather_code[dayIndex];
+  }
   const skyCounts = {};
   let cloudSum = 0, cloudN = 0;
   for (let i = 0; i < h.time.length; i++) {
     if (!h.time[i].startsWith(dayStr)) continue;
-    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
     const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
-    if (eff >= 51) {
-      const score = precipRank(eff) * 1000 + pop; // severity first, likelihood breaks ties
-      if (score > precipScore) { precipScore = score; precipCode = eff; }
-    } else {
-      skyCounts[eff] = (skyCounts[eff] || 0) + 1;
-    }
+    const eff = hourlySkyCode(data, i);
+    skyCounts[eff] = (skyCounts[eff] || 0) + 1;
     if (Number.isFinite(cloud)) { cloudSum += cloud; cloudN++; }
   }
-  if (precipCode != null) return precipCode;
+  if (precipProfile.primary && precipProfile.code != null) return precipProfile.code;
   const modalSky = Object.keys(skyCounts).sort((a, b) => skyCounts[b] - skyCounts[a])[0];
   return modalSky != null ? Number(modalSky) : skyCodeFromCloud(cloudN ? cloudSum / cloudN : null);
 }
@@ -1471,11 +1629,8 @@ function hasThunderPotentialForDay(data, dayIndex, shownCode) {
   if (!h || !h.time) return false;
   return h.time.some((time, i) => {
     if (!time.startsWith(dayStr)) return false;
-    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
-    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
-    return hasThunderPotential(h.weather_code[i], pop, eff, precip, data);
+    const profile = hourlyPrecipProfile(data, i);
+    return hasThunderPotential(profile.rawCode, profile.pop, profile.code, profile.precip, data);
   });
 }
 
@@ -1484,11 +1639,8 @@ function hasThunderPotentialForIndices(data, indices, shownCode) {
   const h = data.hourly;
   if (!h || !h.time) return false;
   return indices.some((i) => {
-    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
-    const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
-    return hasThunderPotential(h.weather_code[i], pop, eff, precip, data);
+    const profile = hourlyPrecipProfile(data, i);
+    return hasThunderPotential(profile.rawCode, profile.pop, profile.code, profile.precip, data);
   });
 }
 
@@ -1499,18 +1651,17 @@ function representativeHourlyCodeForIndices(data, indices) {
   const skyCounts = {};
   let cloudSum = 0, cloudN = 0;
   indices.forEach((i) => {
-    const pop = h.precipitation_probability ? (h.precipitation_probability[i] || 0) : 0;
+    const profile = hourlyPrecipProfile(data, i);
     const cloud = h.cloud_cover ? h.cloud_cover[i] : null;
-    const precip = h.precipitation ? (h.precipitation[i] || 0) : 0;
-    const eff = effectiveWeatherCode(h.weather_code[i], pop, cloud, precip, { data });
-    if (eff >= 51) {
-      const score = precipRank(eff) * 1000 + pop;
+    const eff = profile.code;
+    if (profile.primary && eff >= 51) {
+      const score = precipRank(eff) * 1000 + profile.pop;
       if (score > precipScore) {
         precipScore = score;
         precipCode = eff;
       }
     } else {
-      skyCounts[eff] = (skyCounts[eff] || 0) + 1;
+      skyCounts[profile.skyCode] = (skyCounts[profile.skyCode] || 0) + 1;
     }
     if (Number.isFinite(cloud)) {
       cloudSum += cloud;
@@ -5581,7 +5732,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
       hi: r(daily.temperature_2m_max[i]),
       lo: r(daily.temperature_2m_min[i]),
       rainChance: daily.precipitation_probability_max[i] || 0,
-      sky: sky(daily.weather_code[i]),
+      sky: sky(representativeDailyCode(data, i)),
       sunrise: daily.sunrise[i] ? shortClock(daily.sunrise[i]) : null,
       sunset: daily.sunset[i] ? shortClock(daily.sunset[i]) : null
     });
@@ -5620,7 +5771,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
       hi: r(daily.temperature_2m_max[1]),
       lo: r(daily.temperature_2m_min[1]),
       rainChance: daily.precipitation_probability_max[1] || 0,
-      sky: sky(daily.weather_code[1]),
+      sky: sky(representativeDailyCode(data, 1)),
       sunrise: daily.sunrise[1] ? shortClock(daily.sunrise[1]) : null,
       sunset: daily.sunset[1] ? shortClock(daily.sunset[1]) : null
     },
@@ -5809,7 +5960,7 @@ function buildEveningInsights(data, windUnit) {
   const rain1 = data.daily.precipitation_probability_max[tomorrowIndex] || 0;
   const uv1 = Math.round(data.daily.uv_index_max[tomorrowIndex] || 0);
   const gust1 = Math.round(data.daily.wind_gusts_10m_max[tomorrowIndex] || 0);
-  const code1 = weatherCodes[data.daily.weather_code[tomorrowIndex]] || "Mixed";
+  const code1 = weatherCodes[representativeDailyCode(data, tomorrowIndex)] || "Mixed";
 
   const overnightRain = maxRainInRange(data, now, sixAmMs);
 
@@ -5852,11 +6003,11 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
 
   // Compact, scannable columns — tap any hour to open that hour expanded.
   els.hourly.innerHTML = rows.map(({ time, index }, position) => {
-    let rain = data.hourly.precipitation_probability[index] || 0;
-    const cloud = data.hourly.cloud_cover ? data.hourly.cloud_cover[index] : null;
+    const precipProfile = hourlyPrecipProfile(data, index);
+    let rain = precipProfile.pop;
     let rawCode = data.hourly.weather_code[index];
     let precip = data.hourly.precipitation?.[index] || 0;
-    let wcode = effectiveWeatherCode(rawCode, rain, cloud, precip, { data });
+    let wcode = precipProfile.code;
     let stormPotential = hasThunderPotential(rawCode, rain, wcode, precip, data);
     if (position === 0) {
       const display = truth.display;
@@ -5867,10 +6018,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
       stormPotential = display.stormPotential || hasThunderPotential(rawCode, display.pop, wcode, precip, data);
     }
     const nowPrecipPhase = position === 0 ? truth.precip?.phase : null;
-    const measuredRate = precipRateFromAmount(precip);
     const measuredWet = position === 0
       ? nowPrecipPhase === "active"
-      : measuredRate >= precipRateThresholds(data).measurable;
+      : precipProfile.primary && precipProfile.amountSupported;
     const code = weatherCodes[wcode] || "Weather";
     const isHourDay = position === 0 ? truth.isDay : (data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true);
     const temp = Math.round(data.hourly.temperature_2m[index]);
@@ -5976,11 +6126,13 @@ function renderDaily(data, tempUnit, precipUnit) {
     const rain = data.daily.precipitation_probability_max[index] || 0;
     const precip = data.daily.precipitation_sum[index] || 0;
     const wcode = representativeDailyCode(data, index);
+    const precipProfile = dailyPrecipProfile(data, index);
     const code = dailyConditionLabel(wcode);
     const stormPotential = hasThunderPotentialForDay(data, index, wcode);
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${memoryCue ? `, remembered ${memoryCue}` : ""}`;
+    const precipNote = precipProfile.note;
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${precipNote ? `, ${precipNote}` : ""}${memoryCue ? `, remembered ${memoryCue}` : ""}`;
     return `
       <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${memoryCue ? " has-plan-memory" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
@@ -5989,6 +6141,7 @@ function renderDaily(data, tempUnit, precipUnit) {
             <div class="day-name">${formatDay(time, index)}</div>
             <div class="day-meta">
               <span class="day-condition">${escapeHtml(code)}</span>
+              ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
               ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
             </div>
           </div>
