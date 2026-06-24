@@ -1,4 +1,4 @@
-const VERSION = "2.6.80";
+const VERSION = "2.6.81";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
@@ -2061,6 +2061,30 @@ function bindTapDelegate(container, selector, action, options = {}) {
   });
 }
 
+function stopStormImpactControlEvent(event) {
+  if (!event) return;
+  if (event.cancelable && event.type === "click") event.preventDefault();
+  event.stopPropagation();
+  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+}
+
+function bindStormImpactCardGuards() {
+  const card = els.stormImpactCard;
+  if (!card || card._stormImpactGuardAbort) return;
+  const abort = new AbortController();
+  card._stormImpactGuardAbort = abort;
+  ["mousedown", "mouseup", "touchstart", "touchmove", "touchend", "pointerdown", "pointerup", "click"].forEach((type) => {
+    card.addEventListener(type, stopStormImpactControlEvent, { signal: abort.signal });
+  });
+}
+
+function dismissStormImpactFromControl(event) {
+  stopStormImpactControlEvent(event);
+  guardNextClickThrough(800);
+  if (typeof cancelStormImpactTap === "function") cancelStormImpactTap();
+  if (typeof clearStormImpact === "function") clearStormImpact();
+}
+
 function bindEvents() {
   document.addEventListener("click", blockGuardedClickThrough, true);
 
@@ -2315,7 +2339,8 @@ function bindEvents() {
   bindTapAction(els.zoomOutMap, () => setMapZoom(mapState.zoom - 1));
   bindTapAction(els.zoomInMap, () => setMapZoom(mapState.zoom + 1));
   bindTapAction(els.playRadar, toggleRadarPlayback);
-  bindTapAction(els.stormImpactClose, () => clearStormImpact());
+  bindStormImpactCardGuards();
+  bindTapAction(els.stormImpactClose, dismissStormImpactFromControl);
   els.frameSlider.addEventListener("input", () => scrubToFrame(Number(els.frameSlider.value)));
   bindTapAction(document.getElementById("expandMap"), enterImmersiveMap);
 
