@@ -2121,10 +2121,10 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
     return {
       ...base,
       source,
-      title: "No solid radar return",
+      title: "No selected storm",
       summary: base.tapSource === "forecast"
         ? "This forecast frame is display guidance; storm impact uses the latest observed radar, which is weak or clear at this spot."
-        : "The latest radar is weak or clear at this tap."
+        : "The latest radar is weak or clear where you tapped."
     };
   }
 
@@ -2134,6 +2134,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
   const latestLatLon = unprojectWorldPoint(latestWorld, z);
   const radiusPx = stormImpactRadius(latestSample);
   const places = stormImpactPlaces();
+  const selection = stormImpactSelection(latestSample);
   const impactResult = computeStormImpacts({
     latestWorld,
     latestLatLon,
@@ -2157,6 +2158,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
     radiusPx,
     latestWorld,
     latestLatLon,
+    selection,
     impacts: impactResult.impacts,
     closestMiss: impactResult.closestMiss
   };
@@ -2300,7 +2302,8 @@ function selectStormForecastFrames(frames, options = {}) {
 
 async function sampleStormImpactFrame(frame, target, z, tileCache) {
   const targetWorld = projectLatLon(target.latitude, target.longitude, z);
-  const stats = await radarAreaStats(frame, targetWorld, z, STORM_IMPACT_SAMPLE_RADIUS_PX, tileCache);
+  const stats = await radarStormCellStats(frame, targetWorld, z, tileCache) ||
+    await radarAreaStats(frame, targetWorld, z, STORM_IMPACT_SAMPLE_RADIUS_PX, tileCache);
   const centroidWorld = stats.totalScore > 0
     ? { x: targetWorld.x + stats.centroidDx, y: targetWorld.y + stats.centroidDy }
     : targetWorld;
@@ -2347,6 +2350,258 @@ async function weatherFrameAreaStats(frame, targetWorld, z, radiusPx, tileCache)
     .map((result) => result.value);
   if (!samples.length) return null;
   return samples.sort((a, b) => forecastSampleScore(b) - forecastSampleScore(a))[0];
+}
+
+async function radarStormCellStats(frame, targetWorld, z, tileCache) {
+  const radiusPx = STORM_IMPACT_CELL_SCAN_RADIUS_PX;
+  const step = Math.max(1, STORM_IMPACT_CELL_GRID_STEP_PX);
+  const worldTiles = 2 ** z;
+  const minX = Math.floor(targetWorld.x - radiusPx);
+  const maxX = Math.ceil(targetWorld.x + radiusPx);
+  const minY = Math.floor(targetWorld.y - radiusPx);
+  const maxY = Math.ceil(targetWorld.y + radiusPx);
+  const startTileX = Math.floor(minX / 256);
+  const endTileX = Math.floor(maxX / 256);
+  const startTileY = Math.floor(minY / 256);
+  const endTileY = Math.floor(maxY / 256);
+  const tiles = new Map();
+  const loads = [];
+
+  for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
+    for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
+      if (tileY < 0 || tileY >= worldTiles) continue;
+      const key = `${tileX}/${tileY}`;
+      loads.push(radarTileImageDataForSample(frame, z, tileX, tileY, tileCache).then((imageData) => {
+        if (imageData) tiles.set(key, imageData);
+      }));
+    }
+  }
+
+  await Promise.all(loads);
+  if (!tiles.size) return null;
+
+  const gridWidth = Math.floor((maxX - minX) / step) + 1;
+  const gridHeight = Math.floor((maxY - minY) / step) + 1;
+  const scores = new Float32Array(gridWidth * gridHeight);
+  const wet = new Uint8Array(gridWidth * gridHeight);
+  const scanRadiusSq = radiusPx * radiusPx;
+  const seedRadiusSq = STORM_IMPACT_CELL_SEED_RADIUS_PX * STORM_IMPACT_CELL_SEED_RADIUS_PX;
+  let count = 0;
+  let seedIndex = -1;
+  let seedScore = 0;
+  let seedDistanceSq = Infinity;
+
+  for (let gy = 0; gy < gridHeight; gy += 1) {
+    const y = minY + gy * step;
+    const dy = y - targetWorld.y;
+    for (let gx = 0; gx < gridWidth; gx += 1) {
+      const x = minX + gx * step;
+      const dx = x - targetWorld.x;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > scanRadiusSq) continue;
+
+      count += 1;
+      const score = radarWorldPixelScore(tiles, x, y);
+      if (score < STORM_IMPACT_CELL_MIN_SCORE) continue;
+
+      const index = gy * gridWidth + gx;
+      scores[index] = score;
+      wet[index] = 1;
+      if (distSq <= seedRadiusSq && (score > seedScore || (score === seedScore && distSq < seedDistanceSq))) {
+        seedIndex = index;
+        seedScore = score;
+        seedDistanceSq = distSq;
+      }
+    }
+  }
+
+  if (seedIndex < 0) return null;
+
+  const visited = new Uint8Array(wet.length);
+  const queue = new Int32Array(wet.length);
+  const cellIndices = [];
+  const maxGap = Math.max(1, STORM_IMPACT_CELL_GAP_CELLS);
+  let head = 0;
+  let tail = 0;
+  queue[tail] = seedIndex;
+  tail += 1;
+  visited[seedIndex] = 1;
+
+  while (head < tail) {
+    const index = queue[head];
+    head += 1;
+    cellIndices.push(index);
+    const gx = index % gridWidth;
+    const gy = Math.floor(index / gridWidth);
+
+    for (let oy = -maxGap; oy <= maxGap; oy += 1) {
+      for (let ox = -maxGap; ox <= maxGap; ox += 1) {
+        if (!ox && !oy) continue;
+        if (ox * ox + oy * oy > maxGap * maxGap) continue;
+        const nx = gx + ox;
+        const ny = gy + oy;
+        if (nx < 0 || nx >= gridWidth || ny < 0 || ny >= gridHeight) continue;
+        const nextIndex = ny * gridWidth + nx;
+        if (visited[nextIndex] || !wet[nextIndex]) continue;
+        visited[nextIndex] = 1;
+        queue[tail] = nextIndex;
+        tail += 1;
+      }
+    }
+  }
+
+  if (!cellIndices.length) return null;
+
+  let hits = 0;
+  let totalScore = 0;
+  let maxScore = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let minCellX = Infinity;
+  let maxCellX = -Infinity;
+  let minCellY = Infinity;
+  let maxCellY = -Infinity;
+
+  cellIndices.forEach((index) => {
+    const score = scores[index];
+    const gx = index % gridWidth;
+    const gy = Math.floor(index / gridWidth);
+    const x = minX + gx * step;
+    const y = minY + gy * step;
+    hits += 1;
+    totalScore += score;
+    maxScore = Math.max(maxScore, score);
+    sumX += (x - targetWorld.x) * score;
+    sumY += (y - targetWorld.y) * score;
+    minCellX = Math.min(minCellX, x);
+    maxCellX = Math.max(maxCellX, x);
+    minCellY = Math.min(minCellY, y);
+    maxCellY = Math.max(maxCellY, y);
+  });
+
+  if (!totalScore) return null;
+
+  const centroidDx = sumX / totalScore;
+  const centroidDy = sumY / totalScore;
+  const centroidWorld = {
+    x: targetWorld.x + centroidDx,
+    y: targetWorld.y + centroidDy
+  };
+  let sumDistance = 0;
+  let maxDistance = 0;
+  const boundary = [];
+
+  cellIndices.forEach((index) => {
+    const score = scores[index];
+    const gx = index % gridWidth;
+    const gy = Math.floor(index / gridWidth);
+    const x = minX + gx * step;
+    const y = minY + gy * step;
+    const distance = Math.hypot(x - centroidWorld.x, y - centroidWorld.y);
+    sumDistance += distance * score;
+    maxDistance = Math.max(maxDistance, distance);
+    if (isStormCellBoundary(gx, gy, gridWidth, gridHeight, visited)) {
+      boundary.push({ x, y });
+    }
+  });
+
+  const outlineWorld = simplifyStormCellOutline(convexHull(boundary.length ? boundary : cellIndices.map((index) => {
+    const gx = index % gridWidth;
+    const gy = Math.floor(index / gridWidth);
+    return { x: minX + gx * step, y: minY + gy * step };
+  })));
+  const weightedRadius = totalScore ? sumDistance / totalScore : 0;
+  const cellRadiusPx = Math.max(weightedRadius + 12, Math.min(maxDistance + 8, radiusPx));
+
+  return {
+    cell: true,
+    hits,
+    count,
+    score: Number(totalScore.toFixed(2)),
+    totalScore,
+    maxScore: Number(maxScore.toFixed(2)),
+    density: count ? Number((hits / count).toFixed(3)) : 0,
+    centroidDx,
+    centroidDy,
+    weightedRadius,
+    maxDistance,
+    cellRadiusPx,
+    boundsWorld: {
+      minX: minCellX,
+      maxX: maxCellX,
+      minY: minCellY,
+      maxY: maxCellY
+    },
+    outlineWorld
+  };
+}
+
+function radarWorldPixelScore(tiles, x, y) {
+  const tileX = Math.floor(x / 256);
+  const tileY = Math.floor(y / 256);
+  const imageData = tiles.get(`${tileX}/${tileY}`);
+  if (!imageData) return 0;
+  const localX = x - tileX * 256;
+  const localY = y - tileY * 256;
+  if (localX < 0 || localX >= imageData.width || localY < 0 || localY >= imageData.height) return 0;
+
+  const index = (localY * imageData.width + localX) * 4;
+  return radarPixelPrecipScore(
+    imageData.data[index],
+    imageData.data[index + 1],
+    imageData.data[index + 2],
+    imageData.data[index + 3]
+  );
+}
+
+function isStormCellBoundary(gx, gy, gridWidth, gridHeight, visited) {
+  for (let oy = -1; oy <= 1; oy += 1) {
+    for (let ox = -1; ox <= 1; ox += 1) {
+      if (!ox && !oy) continue;
+      const nx = gx + ox;
+      const ny = gy + oy;
+      if (nx < 0 || nx >= gridWidth || ny < 0 || ny >= gridHeight) return true;
+      if (!visited[ny * gridWidth + nx]) return true;
+    }
+  }
+  return false;
+}
+
+function convexHull(points) {
+  const unique = [];
+  const seen = new Set();
+  (points || []).forEach((point) => {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+    const key = `${point.x.toFixed(2)}:${point.y.toFixed(2)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(point);
+  });
+  if (unique.length <= 2) return unique;
+
+  unique.sort((a, b) => (a.x - b.x) || (a.y - b.y));
+  const cross = (origin, a, b) => (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+  const lower = [];
+  unique.forEach((point) => {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  });
+  const upper = [];
+  for (let i = unique.length - 1; i >= 0; i -= 1) {
+    const point = unique[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function simplifyStormCellOutline(points) {
+  const outline = (points || []).filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+  if (outline.length <= STORM_IMPACT_CELL_MAX_OUTLINE_POINTS) return outline;
+  const stride = Math.ceil(outline.length / STORM_IMPACT_CELL_MAX_OUTLINE_POINTS);
+  return outline.filter((_, index) => index % stride === 0).slice(0, STORM_IMPACT_CELL_MAX_OUTLINE_POINTS);
 }
 
 async function radarAreaStats(frame, targetWorld, z, radiusPx, tileCache) {
@@ -2616,14 +2871,25 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
 
 function stormImpactDetail(tone, crossPx, latitude, z) {
   const distance = formatImpactDistance(crossPx, latitude, z);
-  if (tone === "likely") return crossPx < 8 ? "Projected near the center of the track." : `Projected path passes within ${distance}.`;
-  if (tone === "possible") return `Projected edge passes within ${distance}.`;
-  return `Track should pass nearby, about ${distance} away.`;
+  if (tone === "likely") return crossPx < 8 ? "Selected storm area tracks over this place." : `Selected storm area passes within ${distance}.`;
+  if (tone === "possible") return `Selected storm edge passes within ${distance}.`;
+  return `Selected storm should pass nearby, about ${distance} away.`;
 }
 
 function stormImpactRadius(sample) {
+  if (sample?.cellRadiusPx) return Number(Math.max(28, Math.min(112, sample.cellRadiusPx)).toFixed(1));
   const radius = Math.max(24, Math.min(58, (sample.weightedRadius || 18) + 16));
   return Number(radius.toFixed(1));
+}
+
+function stormImpactSelection(sample) {
+  if (!sample?.cell) return null;
+  return {
+    kind: "cell",
+    outlineWorld: sample.outlineWorld || [],
+    boundsWorld: sample.boundsWorld || null,
+    radiusPx: stormImpactRadius(sample)
+  };
 }
 
 function stormImpactPlaces() {
@@ -2655,6 +2921,11 @@ function stormImpactPlaceKey(place) {
 
 function stormImpactRainLabel(sample) {
   if (!sample) return "Radar return";
+  if (sample.cell) {
+    return sample.intensity === "heavy" || sample.intensity === "moderate"
+      ? "Selected storm"
+      : "Selected rain area";
+  }
   if (sample.intensity === "heavy" || sample.intensity === "moderate") return "Rain";
   return "Light rain";
 }
@@ -2663,12 +2934,13 @@ function stormImpactTitle(analysis) {
   if (!analysis.hasPrecip) return analysis.title || "No radar return";
   if (analysis.impacts.length) {
     const first = analysis.impacts[0];
+    if (first.impactSource === "forecast") return `Forecast near ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
     return `${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
   }
   if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.hasObservedPrecip) {
     return "Forecast rain nearby";
   }
-  return `${analysis.label} track`;
+  return analysis.selection ? "Selected storm track" : `${analysis.label} track`;
 }
 
 function stormImpactSummary(analysis) {
@@ -2689,15 +2961,15 @@ function stormImpactSummary(analysis) {
   }
 
   if (!analysis.motion) {
-    return `${analysis.label} is on radar here, but the recent frames do not show enough movement for an ETA yet.${sourceNote}`;
+    return `${analysis.label} is highlighted, but recent radar frames do not show enough movement for an ETA yet.${sourceNote}`;
   }
   if (analysis.impacts.length) {
-    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this track holds. ${motion}${sourceNote}`;
+    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this selected area holds. ${motion}${sourceNote}`;
   }
   if (analysis.closestMiss) {
-    return `Projected track misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${sourceNote}`;
+    return `Selected storm misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${sourceNote}`;
   }
-  return `Projected track misses your places for now. ${motion}${sourceNote}`;
+  return `Selected storm misses your places for now. ${motion}${sourceNote}`;
 }
 
 function stormMotionCopy(motion, latitude, z) {
@@ -2717,14 +2989,15 @@ function renderStormImpactCard() {
 
   card.hidden = false;
   if (els.stormImpactKicker) {
-    els.stormImpactKicker.textContent = analysis.source
-      ? `Storm impact · ${analysis.source}`
+    const sourceLabel = stormImpactKickerLabel(analysis);
+    els.stormImpactKicker.textContent = sourceLabel
+      ? `Storm impact · ${sourceLabel}`
       : "Storm impact";
   }
 
   if (status === "loading") {
-    if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Checking radar";
-    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Sampling recent observed frames around this return.";
+    if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Finding storm area";
+    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Selecting the nearby radar area, then checking whether it reaches your places.";
     if (els.stormImpactList) els.stormImpactList.innerHTML = "";
     return;
   }
@@ -2732,6 +3005,16 @@ function renderStormImpactCard() {
   if (els.stormImpactTitle) els.stormImpactTitle.textContent = analysis.title || "Storm impact";
   if (els.stormImpactSummary) els.stormImpactSummary.textContent = analysis.summary || "";
   if (els.stormImpactList) els.stormImpactList.innerHTML = stormImpactRowsHtml(analysis);
+}
+
+function stormImpactKickerLabel(analysis) {
+  if (!analysis) return "";
+  if (analysis.selection) {
+    return analysis.forecastGuidance?.hasForecastPrecip
+      ? "Selected storm + forecast"
+      : "Selected storm";
+  }
+  return analysis.source || "";
 }
 
 function stormImpactRowsHtml(analysis) {
@@ -2773,6 +3056,7 @@ function renderStormImpactOverlay(viewport = null) {
   const vp = viewport || getMapViewport();
   const target = mapScreenPointForLatLon(analysis.target.latitude, analysis.target.longitude, vp);
   const targetHtml = `<span class="impact-target" style="left:${target.x.toFixed(1)}px;top:${target.y.toFixed(1)}px"></span>`;
+  const selectionHtml = stormImpactSelectionHtml(analysis, vp);
   let pathHtml = "";
 
   if (analysis.hasPrecip && analysis.motion && analysis.latestWorld) {
@@ -2792,7 +3076,24 @@ function renderStormImpactOverlay(viewport = null) {
     `;
   }
 
-  layer.innerHTML = `${pathHtml}${targetHtml}`;
+  layer.innerHTML = `${selectionHtml}${pathHtml}${targetHtml}`;
+}
+
+function stormImpactSelectionHtml(analysis, viewport) {
+  const outline = analysis?.selection?.outlineWorld || [];
+  if (!analysis?.hasPrecip || !outline.length) return "";
+
+  const points = outline
+    .map((point) => mapScreenPointForWorld(point, analysis.z, viewport))
+    .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(" ");
+  if (!points) return "";
+
+  return `
+    <svg class="impact-cell-svg" aria-hidden="true">
+      <polygon class="impact-cell-polygon" points="${points}"></polygon>
+    </svg>
+  `;
 }
 
 function mapLatLonFromClientPoint(clientX, clientY) {
