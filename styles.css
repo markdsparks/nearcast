@@ -1247,7 +1247,8 @@ h2 {
 .launch-place-row,
 .launch-current,
 .launch-alert,
-.launch-stage .summary {
+.launch-stage .summary,
+.for-you-today {
   position: relative;
   z-index: 1;
 }
@@ -1450,6 +1451,178 @@ h2 {
   font-size: 1rem;
   font-weight: 900;
   line-height: 1;
+}
+
+.for-you-today[hidden] {
+  display: none;
+}
+.for-you-today {
+  display: grid;
+  gap: 8px;
+  width: min(920px, 94vw);
+  margin-top: 12px;
+  text-align: left;
+}
+.for-you-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+  color: var(--ink);
+}
+.for-you-head span,
+.for-you-head strong,
+.for-you-head small {
+  display: block;
+  min-width: 0;
+}
+.for-you-head strong {
+  font-size: 0.82rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.for-you-head small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.for-you-plan-btn {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid rgba(53, 111, 183, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.40);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 950;
+  backdrop-filter: blur(14px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.for-you-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.for-you-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 126px;
+  padding: 11px;
+  border: 1px solid rgba(54, 76, 98, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 14px 34px rgba(27, 45, 62, 0.10);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  backdrop-filter: blur(16px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.for-you-card:hover,
+.for-you-card:focus-visible,
+.for-you-plan-btn:hover,
+.for-you-plan-btn:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
+.for-you-card.is-plan {
+  border-color: rgba(52, 125, 98, 0.28);
+  background:
+    linear-gradient(135deg, rgba(52, 125, 98, 0.12), rgba(53, 111, 183, 0.08)),
+    rgba(255, 255, 255, 0.44);
+}
+.for-you-card.is-plan.is-caution {
+  border-color: rgba(201, 152, 55, 0.34);
+  background:
+    linear-gradient(135deg, rgba(201, 152, 55, 0.13), rgba(53, 111, 183, 0.07)),
+    rgba(255, 255, 255, 0.42);
+}
+.for-you-card.is-plan.is-watch {
+  border-color: rgba(200, 85, 85, 0.32);
+  background:
+    linear-gradient(135deg, rgba(200, 85, 85, 0.12), rgba(53, 111, 183, 0.07)),
+    rgba(255, 255, 255, 0.42);
+}
+.for-you-card.is-weather.is-rain,
+.for-you-card.is-weather.is-snow {
+  border-color: var(--summary-rain-border);
+  background: var(--summary-rain-bg);
+}
+.for-you-card.is-action {
+  border-color: rgba(53, 111, 183, 0.25);
+  background:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.12), rgba(199, 216, 226, 0.16)),
+    rgba(255, 255, 255, 0.42);
+}
+.for-you-kicker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.for-you-kicker span,
+.for-you-kicker em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.for-you-kicker em {
+  max-width: 54%;
+  color: var(--blue);
+  font-style: normal;
+}
+.for-you-card strong {
+  display: block;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.93rem;
+  font-weight: 950;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+.for-you-body {
+  display: block;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+}
+.for-you-card small {
+  align-self: end;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .today-glance {
@@ -5781,6 +5954,34 @@ body.map-immersive-active #mapLegend {
   }
   .summary-strip-item strong {
     font-size: 0.84rem;
+  }
+  .for-you-today {
+    width: min(100%, 94vw);
+    margin-top: 10px;
+  }
+  .for-you-head {
+    align-items: start;
+  }
+  .for-you-head small {
+    max-width: 68vw;
+  }
+  .for-you-grid {
+    display: grid;
+    grid-auto-columns: minmax(218px, 78vw);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    justify-content: start;
+    overflow-x: auto;
+    padding: 1px 2px 4px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .for-you-grid::-webkit-scrollbar {
+    display: none;
+  }
+  .for-you-card {
+    min-height: 116px;
+    scroll-snap-align: start;
   }
 
   .hero {

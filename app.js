@@ -1,6 +1,7 @@
-const VERSION = "2.6.82";
+const VERSION = "2.6.83";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
+const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
@@ -13,6 +14,17 @@ const PERF_RENDER_WARN_MS = 50;
 const PERF_INPUT_WARN_MS = 80;
 const PERF_LONG_TASK_WARN_MS = 120;
 const PERF_MAX_ENTRIES = 80;
+const FOR_YOU_SIGNAL_IDS = [
+  "best-dry",
+  "best-walk",
+  "best-dinner",
+  "best-patio",
+  "plan",
+  "launch-summary",
+  "memory-open",
+  "memory-show",
+  "memory-edit"
+];
 
 const WELCOME_WORLD_SKY_PLACES = [
   { id: "paris", name: "Paris", country: "France", countryCode: "FR", latitude: 48.8566, longitude: 2.3522 },
@@ -59,8 +71,61 @@ const state = {
   radarPrecipSeq: 0,
   locationIsDay: null,
   forecastUnit: null,
-  planMemories: loadPlanMemories()
+  planMemories: loadPlanMemories(),
+  userContext: loadUserContext()
 };
+
+function defaultUserContext() {
+  return { actions: {}, updatedAt: 0 };
+}
+
+function normalizeForYouSignal(value) {
+  const signal = String(value || "").trim();
+  return FOR_YOU_SIGNAL_IDS.includes(signal) ? signal : "";
+}
+
+function loadUserContext() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FOR_YOU_CONTEXT_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return defaultUserContext();
+    const actions = {};
+    Object.entries(parsed.actions || {}).forEach(([key, value]) => {
+      const signal = normalizeForYouSignal(key);
+      if (!signal || !value || typeof value !== "object") return;
+      const count = Math.max(0, Math.min(99, Math.round(Number(value.count) || 0)));
+      const lastAt = Math.max(0, Number(value.lastAt) || 0);
+      if (count > 0 || lastAt > 0) actions[signal] = { count, lastAt };
+    });
+    return {
+      actions,
+      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0)
+    };
+  } catch {
+    return defaultUserContext();
+  }
+}
+
+function saveUserContext() {
+  try {
+    localStorage.setItem(FOR_YOU_CONTEXT_KEY, JSON.stringify(state.userContext || defaultUserContext()));
+  } catch {
+    // Personalization is optional; forecast and planning stay fully usable.
+  }
+}
+
+function recordForYouSignal(value) {
+  const signal = normalizeForYouSignal(value);
+  if (!signal) return;
+  if (!state.userContext || typeof state.userContext !== "object") state.userContext = defaultUserContext();
+  if (!state.userContext.actions || typeof state.userContext.actions !== "object") state.userContext.actions = {};
+  const current = state.userContext.actions[signal] || { count: 0, lastAt: 0 };
+  state.userContext.actions[signal] = {
+    count: Math.min(99, (Number(current.count) || 0) + 1),
+    lastAt: Date.now()
+  };
+  state.userContext.updatedAt = Date.now();
+  saveUserContext();
+}
 
 const mapState = {
   initialized: false,
@@ -368,6 +433,7 @@ const els = {
   nowTemp: document.querySelector("#nowTemp"),
   heroRange: document.querySelector("#heroRange"),
   nowSummary: document.querySelector("#nowSummary"),
+  forYouToday: document.querySelector("#forYouToday"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
@@ -2334,6 +2400,60 @@ function bindEvents() {
       showPlanMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
+  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+    const signal = target.dataset.forYouSignal;
+    if (signal) recordForYouSignal(signal);
+
+    const summary = target.closest("[data-for-you-summary]");
+    if (summary) {
+      if (!signal) recordForYouSignal("launch-summary");
+      openLaunchSummaryDetail(Number(summary.dataset.forYouSummary));
+      return;
+    }
+    const ask = target.closest("[data-for-you-ask]");
+    if (ask) {
+      openAISheet({ autoBrief: false });
+      requestAnimationFrame(() => {
+        if (typeof clearPlannerMemoryEdit === "function") clearPlannerMemoryEdit();
+        if (typeof renderAsk === "function") renderAsk();
+        runAsk(ask.dataset.forYouQ, ask.dataset.forYouIntent);
+      });
+      return;
+    }
+    const template = target.closest("[data-for-you-template]");
+    if (template) {
+      openAISheet({ autoBrief: false });
+      requestAnimationFrame(() => {
+        if (typeof clearPlannerMemoryEdit === "function") clearPlannerMemoryEdit();
+        if (typeof renderAsk === "function") renderAsk();
+        fillPlannerTemplate(template.dataset.forYouTemplate || "");
+      });
+      return;
+    }
+    const memoryOpen = target.closest("[data-memory-open]");
+    if (memoryOpen) {
+      if (!signal) recordForYouSignal("memory-open");
+      openGlobalMemorySheet();
+      return;
+    }
+    const memoryShow = target.closest("[data-memory-show]");
+    if (memoryShow) {
+      if (!signal) recordForYouSignal("memory-show");
+      showPlanMemory(memoryShow.dataset.memoryShow);
+      return;
+    }
+    const memoryEdit = target.closest("[data-memory-edit]");
+    if (memoryEdit) {
+      if (!signal) recordForYouSignal("memory-edit");
+      startPlanMemoryEdit(memoryEdit.dataset.memoryEdit);
+      return;
+    }
+    const planShow = target.closest("[data-plan-brief-show]");
+    if (planShow) {
+      if (!signal) recordForYouSignal("memory-show");
+      showPlanMemory(planShow.dataset.planBriefShow);
+    }
+  }, { preventDefault: false });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
     if (memoryOpen) {
@@ -4097,6 +4217,7 @@ function renderForecast(data, place, options = {}) {
     }
   }
   renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
+  renderForYouToday(data, place, tempUnit, windUnit, truth);
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = truth.precip?.phase === "active"
     ? "Now"
@@ -5238,6 +5359,181 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
     `</button>`
   )).join("");
   els.nowSummary.setAttribute("aria-label", `${items.map((item) => `${item.label}: ${item.value}`).join(". ")}. Tap a chip for hourly details.`);
+}
+
+function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+  if (!els.forYouToday) return;
+  if (!data || !place) {
+    els.forYouToday.hidden = true;
+    els.forYouToday.innerHTML = "";
+    return;
+  }
+
+  const hasPlanMemory = Boolean(state.planMemories?.length);
+  const cards = [
+    ...forYouPlanCards(data, place).slice(0, 1),
+    forYouWeatherCard(data, tempUnit, windUnit, truth),
+    ...forYouActionCards(data, truth, 3)
+  ].filter(Boolean);
+  if (!hasPlanMemory && cards.length < 4) cards.push(forYouSeedPlanCard(false));
+
+  const visibleCards = cards.slice(0, 4);
+  if (!visibleCards.length) {
+    els.forYouToday.hidden = true;
+    els.forYouToday.innerHTML = "";
+    return;
+  }
+
+  els.forYouToday.hidden = false;
+  els.forYouToday.innerHTML = `
+    <div class="for-you-head">
+      <span>
+        <strong>For You / Today</strong>
+        <small>${escapeHtml(forYouMeta(place))}</small>
+      </span>
+      <button class="for-you-plan-btn" type="button" data-for-you-template="I have " data-for-you-signal="plan">Plan</button>
+    </div>
+    <div class="for-you-grid">${visibleCards.join("")}</div>
+  `;
+}
+
+function forYouMeta(place) {
+  const memoryCount = Array.isArray(state.planMemories) ? state.planMemories.length : 0;
+  const placeText = place ? placeLabel(place) : "Current place";
+  if (memoryCount) return `${placeText} · ${memoryCount} remembered plan${memoryCount === 1 ? "" : "s"}`;
+  const actionCount = Object.values(state.userContext?.actions || {})
+    .reduce((total, item) => total + (Number(item.count) || 0), 0);
+  return actionCount ? `${placeText} · tuned by recent choices` : placeText;
+}
+
+function forYouPlanCards(data, place) {
+  if (typeof nextPlanBriefingItem !== "function") return [];
+  const next = nextPlanBriefingItem(data, place);
+  const today = typeof planAwareBriefingItems === "function" ? planAwareBriefingItems(data, place) : [];
+  const nextKey = typeof planBriefingItemKey === "function" ? planBriefingItemKey(next) : "";
+  const alternate = today.find((item) => (
+    typeof planBriefingItemKey !== "function" || planBriefingItemKey(item) !== nextKey
+  ));
+  return [
+    next ? forYouPlanCard(next, "Next plan", data) : "",
+    !next && alternate ? forYouPlanCard(alternate, "Today", data) : ""
+  ].filter(Boolean);
+}
+
+function forYouPlanCard(item, label, data) {
+  const memory = item?.memory;
+  if (!memory?.id) return "";
+  const title = typeof planMemoryTitle === "function" ? planMemoryTitle(memory) : (memory.title || "Plan");
+  const when = typeof planPulseWhenText === "function" ? planPulseWhenText(memory, data) : "";
+  const lead = [item.verdict, item.primaryReason ? capitalize(item.primaryReason) : ""]
+    .filter(Boolean)
+    .join(". ")
+    .replace(/\.$/, "");
+  const body = compactForYouText(lead || item.advice || "Plan-aware forecast", 92);
+  return `
+    <button class="for-you-card is-plan is-${escapeHtml(item.tone || "neutral")}" type="button" data-memory-show="${escapeHtml(memory.id)}" data-for-you-signal="memory-show">
+      <span class="for-you-kicker"><span>${escapeHtml(label)}</span><em>${escapeHtml(when)}</em></span>
+      <strong>${escapeHtml(title)}</strong>
+      <span class="for-you-body">${escapeHtml(body)}</span>
+      <small>Show forecast</small>
+    </button>
+  `;
+}
+
+function forYouWeatherCard(data, tempUnit, windUnit, truth) {
+  const items = launchSummaryItems(data, tempUnit, windUnit, truth);
+  const ranked = items.map((item, index) => ({
+    item,
+    index,
+    rank: forYouWeatherRank(item)
+  })).sort((a, b) => b.rank - a.rank || a.index - b.index);
+  const top = ranked[0];
+  if (!top?.item) return "";
+  const item = top.item;
+  return `
+    <button class="for-you-card is-weather is-${escapeHtml(item.tone || "neutral")}" type="button" data-for-you-summary="${top.index}" data-for-you-signal="launch-summary">
+      <span class="for-you-kicker"><span>${escapeHtml(item.label)}</span><em>Weather</em></span>
+      <strong>${escapeHtml(item.value)}</strong>
+      <span class="for-you-body">${escapeHtml(compactForYouText(item.receipt || "Hourly detail", 92))}</span>
+      <small>Hourly detail</small>
+    </button>
+  `;
+}
+
+function forYouWeatherRank(item) {
+  const tone = String(item?.tone || "");
+  const toneRank = {
+    rain: 90,
+    snow: 90,
+    wind: 72,
+    temp: 58,
+    sun: 42,
+    dry: 36,
+    now: 30,
+    neutral: 20
+  };
+  return (toneRank[tone] || 20) + (item?.label === "Next" ? 8 : 0);
+}
+
+function forYouActionCards(data, truth, limit = 2) {
+  if (typeof buildBestWindowCards !== "function") return [];
+  return buildBestWindowCards()
+    .map((card, index) => ({
+      card,
+      priority: forYouActionPriority(card, data, truth, index)
+    }))
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, Math.max(0, limit))
+    .map(({ card }) => forYouActionCard(card));
+}
+
+function forYouActionPriority(card, data, truth, index) {
+  const signal = normalizeForYouSignal(card?.intent);
+  const stats = signal ? state.userContext?.actions?.[signal] : null;
+  const countBoost = Math.min(6, Number(stats?.count) || 0) * 7;
+  const ageMs = stats?.lastAt ? Date.now() - Number(stats.lastAt) : Infinity;
+  const recencyBoost = Number.isFinite(ageMs) ? Math.max(0, 12 - (ageMs / (24 * 60 * 60 * 1000)) * 3) : 0;
+  return ((Number(card?.score) || 0) / 8) + countBoost + recencyBoost + forYouTimeBoost(signal, data, truth) - index;
+}
+
+function forYouTimeBoost(signal, data, truth) {
+  const nowMs = forecastNowMs(data);
+  const hour = timelineLocalParts(nowMs, data).hour;
+  if (signal === "best-dinner" && hour >= 14 && hour <= 20) return 16;
+  if (signal === "best-patio" && hour >= 15 && hour <= 21) return 12;
+  if (signal === "best-walk" && ((hour >= 6 && hour <= 10) || (hour >= 16 && hour <= 20))) return 10;
+  if (signal === "best-dry" && (truth?.rainChance || 0) >= 25) return 14;
+  return 0;
+}
+
+function forYouActionCard(card) {
+  if (!card?.q) return "";
+  const signal = normalizeForYouSignal(card.intent) || "plan";
+  return `
+    <button class="for-you-card is-action" type="button" data-for-you-ask data-for-you-q="${escapeHtml(card.q)}" data-for-you-intent="${escapeHtml(card.intent || "")}" data-for-you-signal="${escapeHtml(signal)}">
+      <span class="for-you-kicker"><span>${escapeHtml(card.badge || "Plan")}</span><em>Planner</em></span>
+      <strong>${escapeHtml(card.title || "Plan window")}</strong>
+      <span class="for-you-body">${escapeHtml(compactForYouText(card.window || card.meta || "Best window", 92))}</span>
+      <small>${escapeHtml(compactForYouText(card.meta || "Check timing", 64))}</small>
+    </button>
+  `;
+}
+
+function forYouSeedPlanCard(hasMemories) {
+  return `
+    <button class="for-you-card is-action is-seed" type="button" data-for-you-template="${hasMemories ? "I also have " : "I have "}" data-for-you-signal="plan">
+      <span class="for-you-kicker"><span>Plan</span><em>Today</em></span>
+      <strong>${hasMemories ? "Add another plan" : "Remember a plan"}</strong>
+      <span class="for-you-body">${hasMemories ? "Put another moment on the forecast." : "Today, tonight, or tomorrow."}</span>
+      <small>Plan mode</small>
+    </button>
+  `;
+}
+
+function compactForYouText(value, limit) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
 function summaryItemAria(item) {
