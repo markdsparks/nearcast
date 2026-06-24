@@ -2140,6 +2140,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
     latestLatLon,
     motion,
     radiusPx,
+    selection,
     places,
     z
   });
@@ -2384,6 +2385,7 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
   const gridHeight = Math.floor((maxY - minY) / step) + 1;
   const scores = new Float32Array(gridWidth * gridHeight);
   const wet = new Uint8Array(gridWidth * gridHeight);
+  const core = new Uint8Array(gridWidth * gridHeight);
   const scanRadiusSq = radiusPx * radiusPx;
   const seedRadiusSq = STORM_IMPACT_CELL_SEED_RADIUS_PX * STORM_IMPACT_CELL_SEED_RADIUS_PX;
   let count = 0;
@@ -2402,12 +2404,13 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
 
       count += 1;
       const score = radarWorldPixelScore(tiles, x, y);
-      if (score < STORM_IMPACT_CELL_MIN_SCORE) continue;
+      if (score < STORM_IMPACT_CELL_HALO_SCORE) continue;
 
       const index = gy * gridWidth + gx;
       scores[index] = score;
       wet[index] = 1;
-      if (distSq <= seedRadiusSq && (score > seedScore || (score === seedScore && distSq < seedDistanceSq))) {
+      if (score >= STORM_IMPACT_CELL_CORE_SCORE) core[index] = 1;
+      if (core[index] && distSq <= seedRadiusSq && (score > seedScore || (score === seedScore && distSq < seedDistanceSq))) {
         seedIndex = index;
         seedScore = score;
         seedDistanceSq = distSq;
@@ -2420,7 +2423,9 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
   const visited = new Uint8Array(wet.length);
   const queue = new Int32Array(wet.length);
   const cellIndices = [];
-  const maxGap = Math.max(1, STORM_IMPACT_CELL_GAP_CELLS);
+  const maxGap = Math.max(1, Math.ceil(STORM_IMPACT_CELL_MERGE_RADIUS_PX / step), STORM_IMPACT_CELL_GAP_CELLS);
+  const maxSelectedCells = Math.max(36, Math.floor(count * STORM_IMPACT_CELL_MAX_AREA_FRACTION));
+  let capped = false;
   let head = 0;
   let tail = 0;
   queue[tail] = seedIndex;
@@ -2431,6 +2436,10 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
     const index = queue[head];
     head += 1;
     cellIndices.push(index);
+    if (cellIndices.length >= maxSelectedCells) {
+      capped = head < tail;
+      break;
+    }
     const gx = index % gridWidth;
     const gy = Math.floor(index / gridWidth);
 
@@ -2451,6 +2460,11 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
   }
 
   if (!cellIndices.length) return null;
+
+  const selected = new Uint8Array(wet.length);
+  cellIndices.forEach((index) => {
+    selected[index] = 1;
+  });
 
   let hits = 0;
   let totalScore = 0;
@@ -2500,7 +2514,7 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
     const distance = Math.hypot(x - centroidWorld.x, y - centroidWorld.y);
     sumDistance += distance * score;
     maxDistance = Math.max(maxDistance, distance);
-    if (isStormCellBoundary(gx, gy, gridWidth, gridHeight, visited)) {
+    if (isStormCellBoundary(gx, gy, gridWidth, gridHeight, selected)) {
       boundary.push({ x, y });
     }
   });
@@ -2526,6 +2540,7 @@ async function radarStormCellStats(frame, targetWorld, z, tileCache) {
     weightedRadius,
     maxDistance,
     cellRadiusPx,
+    capped,
     boundsWorld: {
       minX: minCellX,
       maxX: maxCellX,
@@ -2778,7 +2793,7 @@ function weightedSlope(rows, key) {
   return denominator ? numerator / denominator : 0;
 }
 
-function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, places, z }) {
+function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, selection, places, z }) {
   const impacts = [];
   const candidates = [];
   const currentRadius = Math.max(radiusPx, STORM_IMPACT_PATH_RADIUS_PX * 0.72);
@@ -2787,17 +2802,51 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
   const lookaheadMin = STORM_IMPACT_LOOKAHEAD_MS / 60000;
   const speedSq = motion ? motion.vx * motion.vx + motion.vy * motion.vy : 0;
   const speed = motion?.speedPxMin || 0;
+  const outline = selection?.outlineWorld?.length >= 3 ? selection.outlineWorld : null;
+  const polygonBuffer = selectedStormImpactBuffers(radiusPx);
 
   places.forEach((place) => {
     const placeWorld = projectLatLon(place.latitude, place.longitude, z);
     const dx = placeWorld.x - latestWorld.x;
     const dy = placeWorld.y - latestWorld.y;
-    const nowDistancePx = Math.hypot(dx, dy);
+    const centerDistancePx = Math.hypot(dx, dy);
+    const polygonApproach = outline
+      ? selectedStormPolygonApproach({ outline, placeWorld, motion, lookaheadMin, buffers: polygonBuffer })
+      : null;
+    const nowDistancePx = polygonApproach ? polygonApproach.nowDistancePx : centerDistancePx;
     let impact = null;
     let closestMin = 0;
     let crossPx = nowDistancePx;
 
-    if (nowDistancePx <= currentRadius) {
+    if (polygonApproach) {
+      closestMin = polygonApproach.closestMin;
+      crossPx = polygonApproach.crossPx;
+      if (polygonApproach.nowDistancePx <= polygonBuffer.hit) {
+        impact = {
+          tone: "likely",
+          etaMin: 0,
+          crossPx: polygonApproach.nowDistancePx,
+          closestMin: 0,
+          impactSource: "radar",
+          detail: "Selected storm area is near this place now."
+        };
+      } else if (motion && polygonApproach.inWindow && polygonApproach.crossPx <= polygonBuffer.near) {
+        const tone = polygonApproach.crossPx <= polygonBuffer.hit && motion.confidence !== "low"
+          ? "likely"
+          : polygonApproach.crossPx <= polygonBuffer.clip ? "possible" : "nearby";
+        const etaMin = tone === "likely"
+          ? polygonApproach.hitMin
+          : tone === "possible" ? polygonApproach.clipMin : polygonApproach.nearMin;
+        impact = {
+          tone,
+          etaMin: etaMin == null ? polygonApproach.closestMin : etaMin,
+          crossPx: polygonApproach.crossPx,
+          closestMin: polygonApproach.closestMin,
+          impactSource: "radar",
+          detail: stormImpactDetail(tone, polygonApproach.crossPx, latestLatLon.latitude, z)
+        };
+      }
+    } else if (nowDistancePx <= currentRadius) {
       impact = {
         tone: "likely",
         etaMin: 0,
@@ -2869,6 +2918,91 @@ function computeStormImpacts({ latestWorld, latestLatLon, motion, radiusPx, plac
   };
 }
 
+function selectedStormImpactBuffers(radiusPx) {
+  return {
+    hit: Math.max(10, Math.min(18, radiusPx * 0.14)),
+    clip: Math.max(22, Math.min(34, radiusPx * 0.28)),
+    near: Math.max(40, Math.min(62, radiusPx * 0.50))
+  };
+}
+
+function selectedStormPolygonApproach({ outline, placeWorld, motion, lookaheadMin, buffers }) {
+  const distanceAt = (minutes) => {
+    const offset = motion
+      ? { x: motion.vx * minutes, y: motion.vy * minutes }
+      : { x: 0, y: 0 };
+    return distanceFromPointToPolygon({
+      x: placeWorld.x - offset.x,
+      y: placeWorld.y - offset.y
+    }, outline);
+  };
+  const nowDistancePx = distanceAt(0);
+  let best = { minutes: 0, distance: nowDistancePx };
+  let hitMin = nowDistancePx <= buffers.hit ? 0 : null;
+  let clipMin = nowDistancePx <= buffers.clip ? 0 : null;
+  let nearMin = nowDistancePx <= buffers.near ? 0 : null;
+
+  if (motion) {
+    const stepMin = 4;
+    for (let minutes = stepMin; minutes <= lookaheadMin; minutes += stepMin) {
+      const distance = distanceAt(minutes);
+      if (distance < best.distance) best = { minutes, distance };
+      if (hitMin == null && distance <= buffers.hit) hitMin = minutes;
+      if (clipMin == null && distance <= buffers.clip) clipMin = minutes;
+      if (nearMin == null && distance <= buffers.near) nearMin = minutes;
+    }
+    if (lookaheadMin % stepMin !== 0) {
+      const distance = distanceAt(lookaheadMin);
+      if (distance < best.distance) best = { minutes: lookaheadMin, distance };
+      if (hitMin == null && distance <= buffers.hit) hitMin = lookaheadMin;
+      if (clipMin == null && distance <= buffers.clip) clipMin = lookaheadMin;
+      if (nearMin == null && distance <= buffers.near) nearMin = lookaheadMin;
+    }
+  }
+
+  return {
+    nowDistancePx,
+    crossPx: best.distance,
+    closestMin: best.minutes,
+    hitMin,
+    clipMin,
+    nearMin,
+    inWindow: best.minutes >= -8 && best.minutes <= lookaheadMin
+  };
+}
+
+function distanceFromPointToPolygon(point, polygon) {
+  if (pointInPolygon(point, polygon)) return 0;
+  let minDistance = Infinity;
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    minDistance = Math.min(minDistance, distanceFromPointToSegment(point, a, b));
+  }
+  return Number.isFinite(minDistance) ? minDistance : Infinity;
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const intersects = ((a.y > point.y) !== (b.y > point.y)) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / ((b.y - a.y) || 1) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceFromPointToSegment(point, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (!lengthSq) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq, 0, 1);
+  return Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t));
+}
+
 function stormImpactDetail(tone, crossPx, latitude, z) {
   const distance = formatImpactDistance(crossPx, latitude, z);
   if (tone === "likely") return crossPx < 8 ? "Selected storm area tracks over this place." : `Selected storm area passes within ${distance}.`;
@@ -2888,7 +3022,8 @@ function stormImpactSelection(sample) {
     kind: "cell",
     outlineWorld: sample.outlineWorld || [],
     boundsWorld: sample.boundsWorld || null,
-    radiusPx: stormImpactRadius(sample)
+    radiusPx: stormImpactRadius(sample),
+    capped: Boolean(sample.capped)
   };
 }
 
