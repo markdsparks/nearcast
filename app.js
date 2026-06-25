@@ -1,4 +1,4 @@
-const VERSION = "2.6.91";
+const VERSION = "2.6.93";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4284,7 +4284,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   const uvVal = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   const comfort = comfortGlance(actualVal, feelsVal, humidityVal, tempUnit);
   const rain = rainGlance(data, rainVal, truth);
-  const wind = windGlance(windVal, windUnit);
+  const wind = windGlance(windVal, windUnit, data);
   const air = airGlance(data, humidityVal);
   const airHeadline = air.summary && (air.summary.band?.rank >= 2 || air.summary.pollen?.rank >= 3)
     ? `, ${air.summary.headline.toLowerCase()}`
@@ -4300,7 +4300,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     els.rainSignal.title = detail;
     els.rainSignal.setAttribute("aria-label", detail ? `Rain. ${rain.context}. ${detail}` : `Rain. ${rain.context}`);
   }
-  if (els.windContext) els.windContext.textContent = wind.context;
+  if (els.windContext) els.windContext.innerHTML = windContextHtml(wind);
   if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
   if (els.humidity) {
     if (air.html) els.humidity.innerHTML = air.html;
@@ -4410,13 +4410,65 @@ function nextRainChance(data, hoursAhead, threshold) {
   return null;
 }
 
-function windGlance(speed, unit) {
+function windGlance(speed, unit, data = state.forecast) {
   const mph = unit === "mph" ? speed : speed / 1.609344;
-  if (mph >= 30) return { headline: "very windy", context: "Secure loose items" };
-  if (mph >= 20) return { headline: "windy", context: "Noticeable gusts" };
-  if (mph >= 12) return { headline: "breezy", context: "A steady breeze" };
-  if (mph >= 5) return { headline: "light wind", context: "Gentle movement" };
-  return { headline: "calm wind", context: "Barely moving" };
+  if (mph >= 30) return { headline: "very windy", context: "Secure loose items", duration: windDurationCue(data, unit, 30, Infinity, "very windy") };
+  if (mph >= 20) return { headline: "windy", context: "Noticeable gusts", duration: windDurationCue(data, unit, 20, 30, "windy") };
+  if (mph >= 12) return { headline: "breezy", context: "A steady breeze", duration: windDurationCue(data, unit, 12, 20, "breezy") };
+  if (mph >= 5) return { headline: "light wind", context: "Gentle movement", duration: windDurationCue(data, unit, 5, 12, "light wind") };
+  return { headline: "calm wind", context: "Barely moving", duration: windDurationCue(data, unit, 0, 5, "calm wind") };
+}
+
+function windContextHtml(wind) {
+  const context = escapeHtml(wind?.context || "--");
+  if (!wind?.duration) return context;
+  return `${context} <span class="wind-duration-cue" aria-label="${escapeHtml(wind.duration.aria)}" title="${escapeHtml(wind.duration.title)}">${durationClockIcon()}<b>${escapeHtml(wind.duration.label)}</b></span>`;
+}
+
+function durationClockIcon() {
+  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8v3.3l2.2 1.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function windDurationCue(data, unit, minMph, maxMph, label) {
+  const times = data?.hourly?.time || [];
+  const values = data?.hourly?.wind_speed_10m || [];
+  const currentIndex = currentHourlyIndex(data);
+  if (!times.length || !values.length || currentIndex < 0) return null;
+
+  const now = forecastNowMs(data);
+  const endOfDay = forecastLocalBoundaryMs(data, 24) || now + 18 * 60 * 60 * 1000;
+  let endMs = endOfDay;
+  for (let index = currentIndex + 1; index < times.length; index += 1) {
+    const ms = parseForecastTimestamp(times[index], data);
+    if (ms === null || ms <= now) continue;
+    if (ms >= endOfDay) {
+      endMs = endOfDay;
+      break;
+    }
+    const value = Number(values[index]);
+    const mph = unit === "mph" ? value : value / 1.609344;
+    if (Number.isFinite(mph) && !windMphInBand(mph, minMph, maxMph)) {
+      endMs = ms;
+      break;
+    }
+  }
+
+  const durationMs = endMs - now;
+  if (durationMs < 5 * 60 * 1000) return null;
+  const allDay = endMs >= endOfDay - 45 * 60 * 1000 && durationMs >= 8 * 60 * 60 * 1000;
+  const display = allDay ? "all day" : durationBrief(durationMs);
+  const until = formatForecastMs(endMs, data);
+  const durationSubject = /wind$/i.test(label) ? capitalize(label) : `${capitalize(label)} conditions`;
+  const durationVerb = /conditions$/i.test(durationSubject) ? "last" : "lasts";
+  return {
+    label: display,
+    title: `${capitalize(label)} for ${allDay ? "the rest of today" : `about ${display}`}${until ? `, until ${until}` : ""}.`,
+    aria: `${durationSubject} ${durationVerb} ${allDay ? "the rest of today" : `about ${display}`}${until ? `, until ${until}` : ""}.`
+  };
+}
+
+function windMphInBand(mph, minMph, maxMph) {
+  return mph >= minMph && mph < maxMph;
 }
 
 function humidityContext(value) {
