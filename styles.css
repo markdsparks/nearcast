@@ -1964,27 +1964,121 @@ h2 {
   line-height: 1.25;
 }
 
-.wind-direction-cue {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 5px;
+.wind-dial-value {
+  margin-top: 8px;
+  font-size: 1rem;
+}
+
+.wind-dial {
+  position: relative;
+  display: block;
+  width: min(92px, 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
   color: var(--ink);
-  font-weight: 900;
+}
+
+.wind-dial-ring {
+  position: absolute;
+  inset: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(180, 210, 232, 0.20);
+  background: repeating-conic-gradient(rgba(184, 207, 226, 0.24) 0deg 1.4deg, transparent 1.4deg 6deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
+}
+
+.wind-dial-cardinal {
+  position: absolute;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.wind-dial-cardinal.is-n {
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.wind-dial-cardinal.is-e {
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+}
+
+.wind-dial-cardinal.is-s {
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.wind-dial-cardinal.is-w {
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+}
+
+.wind-dial-pointer {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--wind-dir, 0deg));
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.24));
+}
+
+.wind-dial-pointer svg {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 24px;
+  height: 36px;
+  color: var(--ink);
+  transform: translateX(-50%);
+}
+
+.wind-dial-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.wind-dial-center b {
+  font-size: 1.28rem;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.wind-dial-center em,
+.wind-dial-direction {
+  color: var(--ink);
+  font-style: normal;
+  font-weight: 850;
+}
+
+.wind-dial-center em {
+  margin-top: 1px;
+  font-size: 0.78rem;
+}
+
+.wind-dial-direction {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.58rem;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.wind-direction-cue svg {
-  width: 12px;
-  height: 12px;
-  color: var(--blue);
-  opacity: 0.92;
-  transform: rotate(var(--wind-dir, 0deg));
-  transform-origin: 50% 50%;
-}
-
-.wind-direction-cue b {
-  font: inherit;
+#windSignal small {
+  margin-top: 5px;
+  text-align: center;
 }
 
 .daylight-card {

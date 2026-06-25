@@ -1,4 +1,4 @@
-const VERSION = "2.6.94";
+const VERSION = "2.6.96";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4300,6 +4300,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     els.rainSignal.title = detail;
     els.rainSignal.setAttribute("aria-label", detail ? `Rain. ${rain.context}. ${detail}` : `Rain. ${rain.context}`);
   }
+  if (els.wind) els.wind.innerHTML = windDialHtml(windVal, windUnit, wind);
   if (els.windContext) els.windContext.innerHTML = windContextHtml(wind);
   if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
   if (els.humidity) {
@@ -4421,13 +4422,34 @@ function windGlance(speed, unit, directionDeg = null) {
 }
 
 function windContextHtml(wind) {
-  const context = escapeHtml(wind?.context || "--");
-  if (!wind?.direction) return context;
-  return `${context} <span class="wind-direction-cue" aria-label="${escapeHtml(wind.direction.aria)}" title="${escapeHtml(wind.direction.title)}" style="--wind-dir:${wind.direction.degrees}deg">${windDirectionIcon()}<b>${escapeHtml(wind.direction.label)}</b></span>`;
+  return escapeHtml(wind?.context || "--");
+}
+
+function windDialHtml(speed, unit, wind) {
+  const value = Number.isFinite(speed) ? Math.round(speed) : "--";
+  const direction = wind?.direction || null;
+  const directionStyle = direction ? ` style="--wind-dir:${direction.degrees}deg"` : "";
+  const directionLabel = direction ? `<span class="wind-dial-direction">${escapeHtml(direction.label)}</span>` : "";
+  const directionAria = direction ? ` ${direction.aria}` : "";
+  return `
+    <span class="wind-dial${direction ? "" : " is-missing-direction"}" role="img" aria-label="${escapeHtml(`${value} ${unit} wind.${directionAria}`)}"${directionStyle}>
+      <span class="wind-dial-ring" aria-hidden="true"></span>
+      <span class="wind-dial-cardinal is-n" aria-hidden="true">N</span>
+      <span class="wind-dial-cardinal is-e" aria-hidden="true">E</span>
+      <span class="wind-dial-cardinal is-s" aria-hidden="true">S</span>
+      <span class="wind-dial-cardinal is-w" aria-hidden="true">W</span>
+      ${direction ? `<span class="wind-dial-pointer" aria-hidden="true">${windDirectionIcon()}</span>` : ""}
+      <span class="wind-dial-center" aria-hidden="true">
+        <b>${escapeHtml(value)}</b>
+        <em>${escapeHtml(unit)}</em>
+        ${directionLabel}
+      </span>
+    </span>
+  `;
 }
 
 function windDirectionIcon() {
-  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 1.8 12.6 13 8 10.8 3.4 13 8 1.8Z" fill="currentColor"/></svg>`;
+  return `<svg viewBox="0 0 24 34" aria-hidden="true" focusable="false"><path d="M12 2 21 21.5l-9-4.3-9 4.3L12 2Z" fill="currentColor"/><path d="M12 17.2v14" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>`;
 }
 
 function windDirectionCue(value) {
