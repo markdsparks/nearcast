@@ -1,4 +1,4 @@
-const VERSION = "2.6.88";
+const VERSION = "2.6.89";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -21,7 +21,6 @@ const FOR_YOU_SIGNAL_IDS = [
   "best-patio",
   "plan",
   "launch-summary",
-  "weather-alert",
   "memory-open",
   "memory-show",
   "memory-edit"
@@ -2420,15 +2419,10 @@ function bindEvents() {
       showPlanMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
-  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-alert], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
     const signal = target.dataset.forYouSignal;
     if (signal) recordForYouSignal(signal);
 
-    const alert = target.closest("[data-for-you-alert]");
-    if (alert) {
-      openAlertSheet();
-      return;
-    }
     const summary = target.closest("[data-for-you-summary]");
     if (summary) {
       if (!signal) recordForYouSignal("launch-summary");
@@ -5555,21 +5549,6 @@ function forYouMemoryBoundaryMs(memory, data, hour) {
 }
 
 function forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems) {
-  const alert = activeAlerts?.[0];
-  if (alert) {
-    return {
-      type: "alert",
-      html: `
-        <button class="for-you-card is-interruption is-watch" type="button" data-for-you-alert data-for-you-signal="weather-alert">
-          <span class="for-you-kicker"><span>Heads up</span><em>${escapeHtml(alertToneLabel(alertTone(alert)))}</em></span>
-          <strong>${escapeHtml(alert.event || "Weather alert")}</strong>
-          <span class="for-you-body">${escapeHtml(compactForYouText(alertMeaningLine(alert, alertTone(alert), alertKind(alert)), 92))}</span>
-          <small>Alert details</small>
-        </button>
-      `
-    };
-  }
-
   const nextRain = nextRainChance(data, 12, 55);
   if (nextRain) {
     const summaryIndex = weatherItems.findIndex((item) => item?.tone === "rain" || /rain/i.test(item?.value || ""));
