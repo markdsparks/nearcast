@@ -1,4 +1,4 @@
-const VERSION = "2.6.86";
+const VERSION = "2.6.88";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -435,6 +435,7 @@ const els = {
   heroRange: document.querySelector("#heroRange"),
   nowSummary: document.querySelector("#nowSummary"),
   forYouToday: document.querySelector("#forYouToday"),
+  launchShortcuts: document.querySelector("#launchShortcuts"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
@@ -2279,6 +2280,24 @@ function bindTapDelegate(container, selector, action, options = {}) {
   });
 }
 
+function handleLaunchShortcut(action) {
+  if (action === "plan") {
+    recordForYouSignal("plan");
+    openAISheet({ autoBrief: false });
+    return;
+  }
+
+  const targets = {
+    hourly: ".hourly-panel",
+    daily: ".daily-panel",
+    map: "#mapView"
+  };
+  const target = document.querySelector(targets[action]);
+  if (!target) return;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+}
+
 function stopStormImpactControlEvent(event) {
   if (!event) return;
   if (event.cancelable && event.type === "click") event.preventDefault();
@@ -2459,6 +2478,9 @@ function bindEvents() {
       if (!signal) recordForYouSignal("memory-show");
       showPlanMemory(planShow.dataset.planBriefShow);
     }
+  }, { preventDefault: false });
+  bindTapDelegate(els.launchShortcuts, "[data-launch-jump]", (event, target) => {
+    handleLaunchShortcut(target.dataset.launchJump);
   }, { preventDefault: false });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
@@ -4224,6 +4246,7 @@ function renderForecast(data, place, options = {}) {
   }
   renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
+  renderLaunchShortcuts(data, place);
   els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
   els.rainChance.textContent = truth.precip?.phase === "active"
     ? "Now"
@@ -5367,6 +5390,11 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
   els.nowSummary.setAttribute("aria-label", `${items.map((item) => `${item.label}: ${item.value}`).join(". ")}. Tap a chip for hourly details.`);
 }
 
+function renderLaunchShortcuts(data, place) {
+  if (!els.launchShortcuts) return;
+  els.launchShortcuts.hidden = !(data && place);
+}
+
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
   if (!els.forYouToday) return;
   if (!data || !place) {
@@ -5384,6 +5412,7 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
   }
 
   els.forYouToday.hidden = false;
+  els.forYouToday.classList.toggle("is-single", visibleCards.length === 1);
   els.forYouToday.innerHTML = `
     <div class="for-you-head">
       <span>
@@ -5398,7 +5427,6 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
 
 function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
   const weatherItems = launchSummaryItems(data, tempUnit, windUnit, truth);
-  const weatherChoice = topForYouWeatherChoice(weatherItems);
   const herePlanCards = forYouPlanCards(data, place).slice(0, 1);
   const elsewherePlanCard = forYouElsewherePlanCard(data, place);
   const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
@@ -5409,13 +5437,10 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     windUnit,
     truth,
     weatherItems,
-    weatherTone: weatherChoice?.item?.tone || "",
-    weatherCard: forYouWeatherCard(data, tempUnit, windUnit, truth, weatherItems, place, weatherChoice),
     herePlanCards,
     elsewherePlanCard,
     interruptionCard: interruption.html,
     interruptionType: interruption.type,
-    actionCards: forYouActionCards(data, truth, 3),
     memoryCount: Array.isArray(state.planMemories) ? state.planMemories.length : 0
   };
 }
@@ -5426,14 +5451,9 @@ function todayPriorityCards(context) {
   if (context.herePlanCards?.[0]) cards.push(context.herePlanCards[0]);
   else if (context.elsewherePlanCard) cards.push(context.elsewherePlanCard);
 
-  const weatherAlreadyWarns = ["rain", "snow", "wind"].includes(context.weatherTone);
-  if (context.interruptionCard && (context.interruptionType === "alert" || !weatherAlreadyWarns)) {
-    cards.push(context.interruptionCard);
-  }
-  if (context.weatherCard) cards.push(context.weatherCard);
-  cards.push(...(context.actionCards || []));
-  if (!context.memoryCount && cards.length < 4) cards.push(forYouSeedPlanCard(false));
-  return cards.filter(Boolean).slice(0, 4);
+  if (context.interruptionCard) cards.push(context.interruptionCard);
+
+  return cards.filter(Boolean).slice(0, 2);
 }
 
 function forYouMeta(context) {
@@ -5441,11 +5461,9 @@ function forYouMeta(context) {
   const memoryCount = Number(context?.memoryCount ?? (Array.isArray(state.planMemories) ? state.planMemories.length : 0));
   const placeText = place ? placeLabel(place) : "Current place";
   const hasAwayPlan = Boolean(context?.elsewherePlanCard && !context?.herePlanCards?.length);
-  if (hasAwayPlan) return `${placeText} · next plan is away`;
-  if (memoryCount) return `${placeText} · ${memoryCount} remembered plan${memoryCount === 1 ? "" : "s"}`;
-  const actionCount = Object.values(state.userContext?.actions || {})
-    .reduce((total, item) => total + (Number(item.count) || 0), 0);
-  return actionCount ? `${placeText} · tuned by recent choices` : placeText;
+  if (hasAwayPlan) return `${placeText} · next plan away`;
+  if (memoryCount) return `${placeText} · plan-aware`;
+  return placeText;
 }
 
 function forYouPlanCards(data, place) {
@@ -5495,7 +5513,7 @@ function forYouElsewherePlanCard(data, place) {
       <span class="for-you-kicker"><span>Next away</span><em>${escapeHtml(where)}</em></span>
       <strong>${escapeHtml(title)}</strong>
       <span class="for-you-body">${escapeHtml([day, time].filter(Boolean).join(" · "))}</span>
-      <small>Load place</small>
+      <small>Load trip forecast</small>
     </button>
   `;
 }
@@ -5534,45 +5552,6 @@ function forYouMemoryBoundaryMs(memory, data, hour) {
   const wholeHour = Math.floor(numericHour);
   const minute = Math.round((numericHour - wholeHour) * 60);
   return parseForecastTimestamp(`${targetDate}T${String(wholeHour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`, data);
-}
-
-function forYouWeatherCard(data, tempUnit, windUnit, truth, items = launchSummaryItems(data, tempUnit, windUnit, truth), place = state.activePlace, choice = null) {
-  const top = choice || topForYouWeatherChoice(items);
-  if (!top?.item) return "";
-  const item = top.item;
-  const placeName = place?.name || "Here";
-  return `
-    <button class="for-you-card is-weather is-${escapeHtml(item.tone || "neutral")}" type="button" data-for-you-summary="${top.index}" data-for-you-signal="launch-summary">
-      <span class="for-you-kicker"><span>Around me</span><em>${escapeHtml(placeName)}</em></span>
-      <strong>${escapeHtml(item.value)}</strong>
-      <span class="for-you-body">${escapeHtml(compactForYouText(item.receipt || "Hourly detail", 92))}</span>
-      <small>Hourly detail</small>
-    </button>
-  `;
-}
-
-function topForYouWeatherChoice(items) {
-  const ranked = items.map((item, index) => ({
-    item,
-    index,
-    rank: forYouWeatherRank(item)
-  })).sort((a, b) => b.rank - a.rank || a.index - b.index);
-  return ranked[0] || null;
-}
-
-function forYouWeatherRank(item) {
-  const tone = String(item?.tone || "");
-  const toneRank = {
-    rain: 90,
-    snow: 90,
-    wind: 72,
-    temp: 58,
-    sun: 42,
-    dry: 36,
-    now: 30,
-    neutral: 20
-  };
-  return (toneRank[tone] || 20) + (item?.label === "Next" ? 8 : 0);
 }
 
 function forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems) {
@@ -5626,61 +5605,6 @@ function forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems) {
   }
 
   return { type: "", html: "" };
-}
-
-function forYouActionCards(data, truth, limit = 2) {
-  if (typeof buildBestWindowCards !== "function") return [];
-  return buildBestWindowCards()
-    .map((card, index) => ({
-      card,
-      priority: forYouActionPriority(card, data, truth, index)
-    }))
-    .sort((a, b) => b.priority - a.priority)
-    .slice(0, Math.max(0, limit))
-    .map(({ card }) => forYouActionCard(card));
-}
-
-function forYouActionPriority(card, data, truth, index) {
-  const signal = normalizeForYouSignal(card?.intent);
-  const stats = signal ? state.userContext?.actions?.[signal] : null;
-  const countBoost = Math.min(6, Number(stats?.count) || 0) * 7;
-  const ageMs = stats?.lastAt ? Date.now() - Number(stats.lastAt) : Infinity;
-  const recencyBoost = Number.isFinite(ageMs) ? Math.max(0, 12 - (ageMs / (24 * 60 * 60 * 1000)) * 3) : 0;
-  return ((Number(card?.score) || 0) / 8) + countBoost + recencyBoost + forYouTimeBoost(signal, data, truth) - index;
-}
-
-function forYouTimeBoost(signal, data, truth) {
-  const nowMs = forecastNowMs(data);
-  const hour = timelineLocalParts(nowMs, data).hour;
-  if (signal === "best-dinner" && hour >= 14 && hour <= 20) return 16;
-  if (signal === "best-patio" && hour >= 15 && hour <= 21) return 12;
-  if (signal === "best-walk" && ((hour >= 6 && hour <= 10) || (hour >= 16 && hour <= 20))) return 10;
-  if (signal === "best-dry" && (truth?.rainChance || 0) >= 25) return 14;
-  return 0;
-}
-
-function forYouActionCard(card) {
-  if (!card?.q) return "";
-  const signal = normalizeForYouSignal(card.intent) || "plan";
-  return `
-    <button class="for-you-card is-action" type="button" data-for-you-ask data-for-you-q="${escapeHtml(card.q)}" data-for-you-intent="${escapeHtml(card.intent || "")}" data-for-you-signal="${escapeHtml(signal)}">
-      <span class="for-you-kicker"><span>${escapeHtml(card.badge || "Plan")}</span><em>Planner</em></span>
-      <strong>${escapeHtml(card.title || "Plan window")}</strong>
-      <span class="for-you-body">${escapeHtml(compactForYouText(card.window || card.meta || "Best window", 92))}</span>
-      <small>${escapeHtml(compactForYouText(card.meta || "Check timing", 64))}</small>
-    </button>
-  `;
-}
-
-function forYouSeedPlanCard(hasMemories) {
-  return `
-    <button class="for-you-card is-action is-seed" type="button" data-for-you-template="${hasMemories ? "I also have " : "I have "}" data-for-you-signal="plan">
-      <span class="for-you-kicker"><span>Plan</span><em>Today</em></span>
-      <strong>${hasMemories ? "Add another plan" : "Remember a plan"}</strong>
-      <span class="for-you-body">${hasMemories ? "Put another moment on the forecast." : "Today, tonight, or tomorrow."}</span>
-      <small>Plan mode</small>
-    </button>
-  `;
 }
 
 function compactForYouText(value, limit) {

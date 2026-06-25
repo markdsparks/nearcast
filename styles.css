@@ -50,6 +50,23 @@
   --summary-rain-border: rgba(78, 126, 180, 0.28);
   --summary-dry-bg: rgba(232, 246, 237, 0.56);
   --summary-dry-border: rgba(76, 139, 104, 0.24);
+  --for-you-card-bg: rgba(250, 253, 255, 0.58);
+  --for-you-card-border: rgba(54, 76, 98, 0.18);
+  --for-you-plan-bg:
+    linear-gradient(135deg, rgba(52, 125, 98, 0.12), rgba(53, 111, 183, 0.08)),
+    rgba(255, 255, 255, 0.50);
+  --for-you-away-bg:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.13), rgba(52, 125, 98, 0.07)),
+    rgba(255, 255, 255, 0.52);
+  --for-you-action-bg:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.12), rgba(199, 216, 226, 0.16)),
+    rgba(255, 255, 255, 0.48);
+  --for-you-text: var(--ink);
+  --for-you-muted: var(--muted);
+  --for-you-accent: var(--blue);
+  --for-you-plan-btn-bg: rgba(255, 255, 255, 0.52);
+  --for-you-plan-btn-fg: var(--ink);
+  --for-you-text-shadow: none;
   --border-glass: rgba(22, 36, 50, 0.15);
   --border-glass-md: rgba(22, 36, 50, 0.19);
   --welcome-ambient-bg: rgba(250, 253, 255, 0.76);
@@ -143,6 +160,23 @@
     --summary-rain-border: rgba(116, 184, 255, 0.24);
     --summary-dry-bg: rgba(31, 70, 54, 0.46);
     --summary-dry-border: rgba(103, 181, 137, 0.24);
+    --for-you-card-bg: rgba(9, 16, 24, 0.78);
+    --for-you-card-border: rgba(232, 244, 252, 0.16);
+    --for-you-plan-bg:
+      linear-gradient(135deg, rgba(103, 181, 137, 0.18), rgba(116, 184, 255, 0.11)),
+      rgba(9, 16, 24, 0.80);
+    --for-you-away-bg:
+      linear-gradient(135deg, rgba(116, 184, 255, 0.18), rgba(103, 181, 137, 0.10)),
+      rgba(9, 16, 24, 0.82);
+    --for-you-action-bg:
+      linear-gradient(135deg, rgba(116, 184, 255, 0.16), rgba(199, 216, 226, 0.08)),
+      rgba(9, 16, 24, 0.78);
+    --for-you-text: rgba(246, 250, 253, 0.96);
+    --for-you-muted: rgba(210, 226, 236, 0.82);
+    --for-you-accent: #9ecaff;
+    --for-you-plan-btn-bg: rgba(240, 247, 252, 0.90);
+    --for-you-plan-btn-fg: #101820;
+    --for-you-text-shadow: 0 1px 12px rgba(0, 0, 0, 0.36);
     --border-glass: rgba(255, 255, 255, 0.08);
     --border-glass-md: rgba(255, 255, 255, 0.10);
     --welcome-ambient-bg: linear-gradient(135deg, rgba(14, 24, 34, 0.76), rgba(23, 36, 48, 0.62));
@@ -208,6 +242,23 @@
   --summary-rain-border: rgba(116, 184, 255, 0.24);
   --summary-dry-bg: rgba(31, 70, 54, 0.46);
   --summary-dry-border: rgba(103, 181, 137, 0.24);
+  --for-you-card-bg: rgba(9, 16, 24, 0.78);
+  --for-you-card-border: rgba(232, 244, 252, 0.16);
+  --for-you-plan-bg:
+    linear-gradient(135deg, rgba(103, 181, 137, 0.18), rgba(116, 184, 255, 0.11)),
+    rgba(9, 16, 24, 0.80);
+  --for-you-away-bg:
+    linear-gradient(135deg, rgba(116, 184, 255, 0.18), rgba(103, 181, 137, 0.10)),
+    rgba(9, 16, 24, 0.82);
+  --for-you-action-bg:
+    linear-gradient(135deg, rgba(116, 184, 255, 0.16), rgba(199, 216, 226, 0.08)),
+    rgba(9, 16, 24, 0.78);
+  --for-you-text: rgba(246, 250, 253, 0.96);
+  --for-you-muted: rgba(210, 226, 236, 0.82);
+  --for-you-accent: #9ecaff;
+  --for-you-plan-btn-bg: rgba(240, 247, 252, 0.90);
+  --for-you-plan-btn-fg: #101820;
+  --for-you-text-shadow: 0 1px 12px rgba(0, 0, 0, 0.36);
   --border-glass: rgba(255, 255, 255, 0.08);
   --border-glass-md: rgba(255, 255, 255, 0.10);
   --welcome-ambient-bg: linear-gradient(135deg, rgba(14, 24, 34, 0.76), rgba(23, 36, 48, 0.62));
@@ -1289,6 +1340,12 @@ h2 {
   color: var(--ink);
 }
 
+:root[data-theme="dark"] .launch-location,
+:root[data-theme="dark"] .hero-range {
+  color: rgba(229, 242, 249, 0.84);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.50);
+}
+
 .launch-current {
   display: grid;
   justify-items: center;
@@ -1453,13 +1510,47 @@ h2 {
   line-height: 1;
 }
 
+.launch-shortcuts[hidden] {
+  display: none;
+}
+.launch-shortcuts {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  width: min(720px, 94vw);
+  margin-top: 10px;
+}
+.launch-shortcuts button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid var(--summary-chip-border);
+  border-radius: 999px;
+  background: var(--summary-chip-bg);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 900;
+  backdrop-filter: blur(14px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.launch-shortcuts button:hover,
+.launch-shortcuts button:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
+
 .for-you-today[hidden] {
   display: none;
 }
 .for-you-today {
   display: grid;
-  gap: 8px;
-  width: min(920px, 94vw);
+  gap: 7px;
+  width: min(720px, 94vw);
   margin-top: 12px;
   text-align: left;
 }
@@ -1469,7 +1560,8 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   padding: 0 4px;
-  color: var(--ink);
+  color: var(--for-you-text);
+  text-shadow: var(--for-you-text-shadow);
 }
 .for-you-head span,
 .for-you-head strong,
@@ -1487,7 +1579,7 @@ h2 {
 .for-you-head small {
   margin-top: 2px;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--for-you-muted);
   font-size: 0.76rem;
   font-weight: 800;
   line-height: 1.2;
@@ -1500,8 +1592,8 @@ h2 {
   padding: 5px 11px;
   border: 1px solid rgba(53, 111, 183, 0.25);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.40);
-  color: var(--ink);
+  background: var(--for-you-plan-btn-bg);
+  color: var(--for-you-plan-btn-fg);
   cursor: pointer;
   font: inherit;
   font-size: 0.76rem;
@@ -1512,21 +1604,24 @@ h2 {
 }
 .for-you-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+.for-you-today.is-single .for-you-grid {
+  grid-template-columns: minmax(0, min(100%, 420px));
 }
 .for-you-card {
   display: grid;
   align-content: start;
   gap: 6px;
   min-width: 0;
-  min-height: 126px;
+  min-height: 98px;
   padding: 11px;
-  border: 1px solid rgba(54, 76, 98, 0.18);
+  border: 1px solid var(--for-you-card-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--for-you-card-bg);
   box-shadow: 0 14px 34px rgba(27, 45, 62, 0.10);
-  color: var(--ink);
+  color: var(--for-you-text);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -1543,9 +1638,7 @@ h2 {
 }
 .for-you-card.is-plan {
   border-color: rgba(52, 125, 98, 0.28);
-  background:
-    linear-gradient(135deg, rgba(52, 125, 98, 0.12), rgba(53, 111, 183, 0.08)),
-    rgba(255, 255, 255, 0.44);
+  background: var(--for-you-plan-bg);
 }
 .for-you-card.is-plan.is-caution {
   border-color: rgba(201, 152, 55, 0.34);
@@ -1561,9 +1654,7 @@ h2 {
 }
 .for-you-card.is-away {
   border-color: rgba(53, 111, 183, 0.30);
-  background:
-    linear-gradient(135deg, rgba(53, 111, 183, 0.13), rgba(52, 125, 98, 0.07)),
-    rgba(255, 255, 255, 0.44);
+  background: var(--for-you-away-bg);
 }
 .for-you-card.is-weather.is-rain,
 .for-you-card.is-weather.is-snow {
@@ -1585,9 +1676,7 @@ h2 {
 }
 .for-you-card.is-action {
   border-color: rgba(53, 111, 183, 0.25);
-  background:
-    linear-gradient(135deg, rgba(53, 111, 183, 0.12), rgba(199, 216, 226, 0.16)),
-    rgba(255, 255, 255, 0.42);
+  background: var(--for-you-action-bg);
 }
 .for-you-kicker {
   display: flex;
@@ -1595,7 +1684,7 @@ h2 {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  color: var(--muted);
+  color: var(--for-you-muted);
   font-size: 0.68rem;
   font-weight: 950;
   letter-spacing: 0.04em;
@@ -1611,13 +1700,13 @@ h2 {
 }
 .for-you-kicker em {
   max-width: 54%;
-  color: var(--blue);
+  color: var(--for-you-accent);
   font-style: normal;
 }
 .for-you-card strong {
   display: block;
   min-width: 0;
-  color: var(--ink);
+  color: var(--for-you-text);
   font-size: 0.93rem;
   font-weight: 950;
   line-height: 1.12;
@@ -1626,7 +1715,7 @@ h2 {
 .for-you-body {
   display: block;
   min-width: 0;
-  color: var(--ink);
+  color: var(--for-you-text);
   font-size: 0.78rem;
   font-weight: 760;
   line-height: 1.28;
@@ -1636,7 +1725,7 @@ h2 {
   align-self: end;
   min-width: 0;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--for-you-muted);
   font-size: 0.7rem;
   font-weight: 850;
   line-height: 1.2;
@@ -5974,6 +6063,15 @@ body.map-immersive-active #mapLegend {
   .summary-strip-item strong {
     font-size: 0.84rem;
   }
+  .launch-shortcuts {
+    width: min(100%, 94vw);
+    margin-top: 9px;
+  }
+  .launch-shortcuts button {
+    min-height: 31px;
+    padding: 6px 10px;
+    font-size: 0.72rem;
+  }
   .for-you-today {
     width: min(100%, 94vw);
     margin-top: 10px;
@@ -5995,11 +6093,14 @@ body.map-immersive-active #mapLegend {
     scroll-snap-type: x proximity;
     scrollbar-width: none;
   }
+  .for-you-today.is-single .for-you-grid {
+    grid-auto-columns: minmax(0, 100%);
+  }
   .for-you-grid::-webkit-scrollbar {
     display: none;
   }
   .for-you-card {
-    min-height: 116px;
+    min-height: 98px;
     scroll-snap-align: start;
   }
 
