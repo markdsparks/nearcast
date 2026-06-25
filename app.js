@@ -1,7 +1,8 @@
-const VERSION = "2.6.89";
+const VERSION = "2.6.91";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
+const CONTINUITY_KEY = "nearcast-continuity-v1";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
@@ -71,6 +72,7 @@ const state = {
   radarPrecipSeq: 0,
   locationIsDay: null,
   forecastUnit: null,
+  continuityBaseline: { key: "", store: null },
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
@@ -4267,6 +4269,7 @@ function renderForecast(data, place, options = {}) {
   if (options.refreshMap !== false) refreshInlineMap(true);
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(sceneCode, truth.isDay, data, displayCondition);
+  saveContinuitySnapshot(data, place, tempUnit, windUnit, truth);
   perfEnd("renderForecast", perf);
 }
 
@@ -5421,6 +5424,7 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
 
 function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
   const weatherItems = launchSummaryItems(data, tempUnit, windUnit, truth);
+  const continuity = forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, continuityBaselineStore(data, place));
   const herePlanCards = forYouPlanCards(data, place).slice(0, 1);
   const elsewherePlanCard = forYouElsewherePlanCard(data, place);
   const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
@@ -5431,6 +5435,9 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     windUnit,
     truth,
     weatherItems,
+    continuityCard: continuity.html,
+    continuityType: continuity.type,
+    continuityMemoryId: continuity.memoryId,
     herePlanCards,
     elsewherePlanCard,
     interruptionCard: interruption.html,
@@ -5442,10 +5449,17 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
 function todayPriorityCards(context) {
   if (!context) return [];
   const cards = [];
-  if (context.herePlanCards?.[0]) cards.push(context.herePlanCards[0]);
+  if (context.continuityCard) cards.push(context.continuityCard);
+
+  if (
+    context.herePlanCards?.[0] &&
+    (!context.continuityMemoryId || !context.herePlanCards[0].includes(`data-memory-show="${escapeHtml(context.continuityMemoryId)}"`))
+  ) cards.push(context.herePlanCards[0]);
   else if (context.elsewherePlanCard) cards.push(context.elsewherePlanCard);
 
-  if (context.interruptionCard) cards.push(context.interruptionCard);
+  if (context.interruptionCard && context.interruptionType !== context.continuityType) {
+    cards.push(context.interruptionCard);
+  }
 
   return cards.filter(Boolean).slice(0, 2);
 }
@@ -5455,9 +5469,366 @@ function forYouMeta(context) {
   const memoryCount = Number(context?.memoryCount ?? (Array.isArray(state.planMemories) ? state.planMemories.length : 0));
   const placeText = place ? placeLabel(place) : "Current place";
   const hasAwayPlan = Boolean(context?.elsewherePlanCard && !context?.herePlanCards?.length);
+  if (context?.continuityCard) return `${placeText} · changed since last check`;
   if (hasAwayPlan) return `${placeText} · next plan away`;
   if (memoryCount) return `${placeText} · plan-aware`;
   return placeText;
+}
+
+function defaultContinuityStore() {
+  return { places: {}, plans: {}, updatedAt: 0 };
+}
+
+function loadContinuityStore() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CONTINUITY_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return defaultContinuityStore();
+    return {
+      places: parsed.places && typeof parsed.places === "object" ? parsed.places : {},
+      plans: parsed.plans && typeof parsed.plans === "object" ? parsed.plans : {},
+      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0)
+    };
+  } catch {
+    return defaultContinuityStore();
+  }
+}
+
+function saveContinuityStore(store) {
+  try {
+    localStorage.setItem(CONTINUITY_KEY, JSON.stringify(store));
+  } catch {
+    // Continuity is an enhancement; the forecast should never depend on storage.
+  }
+}
+
+function continuityPlaceKey(place) {
+  if (!place) return "";
+  if (place.id) return `id:${place.id}`;
+  const lat = Number(place.latitude);
+  const lon = Number(place.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return `geo:${lat.toFixed(3)},${lon.toFixed(3)}`;
+  return `name:${placeLabel(place).toLowerCase()}`;
+}
+
+function continuityPlanKey(memory) {
+  const id = memory?.id || memory?.memoryId;
+  return id ? `memory:${id}` : "";
+}
+
+function continuityNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function continuityDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  return current - previous;
+}
+
+function continuityChangeWord(delta, up, down) {
+  return delta > 0 ? up : down;
+}
+
+function continuityWindDeltaThreshold(windUnit) {
+  return windUnit === "mph" ? 8 : 13;
+}
+
+function continuityWindNotableThreshold(windUnit) {
+  return windUnit === "mph" ? 24 : 39;
+}
+
+function continuityTempDeltaThreshold(tempUnit) {
+  return tempUnit === "F" ? 5 : 3;
+}
+
+function continuityPlaceSnapshot(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+  if (!data || !place) return null;
+  const now = forecastNowMs(data);
+  const todayIndex = forecastDailyIndex(data);
+  const endMs = forecastLocalBoundaryMs(data, 24) || now + 18 * 60 * 60 * 1000;
+  const nextRain = nextRainChance(data, 24, 20);
+  const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 24);
+  return {
+    savedAt: Date.now(),
+    placeKey: continuityPlaceKey(place),
+    placeLabel: placeLabel(place),
+    forecastTime: data.current?.time || "",
+    localDate: forecastLocalDate(data) || "",
+    tempUnit,
+    windUnit,
+    high: continuityNumber(data.daily?.temperature_2m_max?.[todayIndex]),
+    low: continuityNumber(data.daily?.temperature_2m_min?.[todayIndex]),
+    rainMax: continuityNumber(maxRainInRange(data, now, endMs)),
+    nextRainChance: continuityNumber(nextRain?.chance || 0),
+    nextRainMs: nextRain?.time ? parseForecastTimestamp(nextRain.time, data) : null,
+    gustMax: continuityNumber(gustIndex >= 0 ? data.hourly?.wind_gusts_10m?.[gustIndex] : data.daily?.wind_gusts_10m_max?.[todayIndex]),
+    gustMs: gustIndex >= 0 ? parseForecastTimestamp(data.hourly.time[gustIndex], data) : null,
+    nowTemp: continuityNumber(data.current?.temperature_2m),
+    feels: continuityNumber(data.current?.apparent_temperature),
+    rainPhase: truth?.precip?.phase || ""
+  };
+}
+
+function continuityPlanItems(data, place) {
+  if (!data || !place || typeof nextPlanBriefingItem !== "function") return [];
+  const items = [];
+  const seen = new Set();
+  const push = (item) => {
+    const key = typeof planBriefingItemKey === "function" ? planBriefingItemKey(item) : item?.memory?.id || "";
+    if (!item?.memory?.id || !key || seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  };
+  push(nextPlanBriefingItem(data, place));
+  if (typeof planAwareBriefingItems === "function") {
+    planAwareBriefingItems(data, place).forEach(push);
+  }
+  return items.slice(0, 4);
+}
+
+function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
+  const memory = item?.memory;
+  const stats = item?.stats;
+  if (!memory?.id || !stats) return null;
+  return {
+    savedAt: Date.now(),
+    placeKey: continuityPlaceKey(place),
+    memoryId: memory.id,
+    title: typeof planMemoryTitle === "function" ? planMemoryTitle(memory) : (memory.title || "Plan"),
+    targetDate: memory.targetDate || "",
+    startHour: continuityNumber(memory.startHour),
+    endHour: continuityNumber(memory.endHour),
+    startMs: Number.isFinite(item.event?.startMs) ? item.event.startMs : null,
+    endMs: Number.isFinite(item.event?.endMs) ? item.event.endMs : null,
+    tempUnit,
+    windUnit,
+    rainChance: continuityNumber(stats.rainChance),
+    gustMax: continuityNumber(stats.gustMax ?? stats.windMax),
+    tempMin: continuityNumber(stats.tempMin),
+    tempMax: continuityNumber(stats.tempMax),
+    score: continuityNumber(item.score),
+    tone: item.tone || "",
+    verdict: item.verdict || "",
+    when: typeof planPulseWhenText === "function" ? planPulseWhenText(memory, data) : ""
+  };
+}
+
+function continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+  return {
+    place: continuityPlaceSnapshot(data, place, tempUnit, windUnit, truth),
+    plans: continuityPlanItems(data, place)
+      .map((item) => continuityPlanSnapshot(item, data, place, tempUnit, windUnit))
+      .filter(Boolean)
+  };
+}
+
+function continuityBaselineStore(data, place) {
+  const key = `${continuityPlaceKey(place)}|${data?.current?.time || ""}`;
+  if (state.continuityBaseline?.key !== key) {
+    state.continuityBaseline = { key, store: loadContinuityStore() };
+  }
+  return state.continuityBaseline.store || defaultContinuityStore();
+}
+
+function pruneContinuityStore(store, currentPlaceKey = "") {
+  const maxAge = 10 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const recentEntries = (entries, keepKey, limit) => entries
+    .filter(([key, value]) => key === keepKey || now - (Number(value?.savedAt) || 0) <= maxAge)
+    .sort((a, b) => (Number(b[1]?.savedAt) || 0) - (Number(a[1]?.savedAt) || 0))
+    .slice(0, limit);
+  return {
+    places: Object.fromEntries(recentEntries(Object.entries(store.places || {}), currentPlaceKey, 24)),
+    plans: Object.fromEntries(recentEntries(Object.entries(store.plans || {}), "", 80)),
+    updatedAt: now
+  };
+}
+
+function saveContinuitySnapshot(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+  const snapshots = continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth);
+  if (!snapshots.place?.placeKey) return;
+  let store = loadContinuityStore();
+  store.places[snapshots.place.placeKey] = snapshots.place;
+  snapshots.plans.forEach((snapshot) => {
+    const key = continuityPlanKey(snapshot);
+    if (key) store.plans[key] = snapshot;
+  });
+  store = pruneContinuityStore(store, snapshots.place.placeKey);
+  saveContinuityStore(store);
+}
+
+function continuitySummaryIndex(weatherItems, tone) {
+  const index = weatherItems.findIndex((item) => item?.tone === tone || new RegExp(tone, "i").test(item?.value || ""));
+  return index >= 0 ? index : 0;
+}
+
+function forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, store = loadContinuityStore()) {
+  const snapshots = continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth);
+  const planCard = forYouPlanContinuityCard(snapshots.plans, store);
+  if (planCard.html) return planCard;
+  return forYouPlaceContinuityCard(snapshots.place, store, weatherItems, tempUnit, windUnit);
+}
+
+function forYouPlanContinuityCard(planSnapshots, store) {
+  const choices = planSnapshots
+    .map((current) => {
+      const previous = store.plans?.[continuityPlanKey(current)];
+      const change = continuityPlanChange(current, previous);
+      return change ? { current, change } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.change.priority - a.change.priority);
+  const top = choices[0];
+  if (!top) return { type: "", html: "", memoryId: "" };
+  const { current, change } = top;
+  return {
+    type: change.type,
+    memoryId: current.memoryId,
+    html: `
+      <button class="for-you-card is-plan is-continuity is-${escapeHtml(change.tone)}" type="button" data-memory-show="${escapeHtml(current.memoryId)}" data-for-you-signal="memory-show">
+        <span class="for-you-kicker"><span>Changed</span><em>Plan watch</em></span>
+        <strong>${escapeHtml(change.title)}</strong>
+        <span class="for-you-body">${escapeHtml(change.body)}</span>
+        <small>Show forecast</small>
+      </button>
+    `
+  };
+}
+
+function continuityPlanChange(current, previous) {
+  if (!current || !previous) return null;
+  if (current.targetDate !== previous.targetDate || current.startHour !== previous.startHour || current.endHour !== previous.endHour) return null;
+  const rainDelta = continuityDelta(current.rainChance, previous.rainChance);
+  if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainChance, previous.rainChance) >= 35) {
+    const wetter = rainDelta > 0;
+    return {
+      type: "plan-rain",
+      tone: wetter ? "watch" : "good",
+      priority: 90 + Math.abs(rainDelta),
+      title: `${current.title} ${wetter ? "got wetter" : "got drier"}`,
+      body: `Rain now ${current.rainChance}%, ${wetter ? "up" : "down"} from ${previous.rainChance}%.`
+    };
+  }
+
+  const gustDelta = continuityDelta(current.gustMax, previous.gustMax);
+  const windThreshold = continuityWindDeltaThreshold(current.windUnit);
+  if (
+    current.windUnit === previous.windUnit &&
+    gustDelta !== null &&
+    Math.abs(gustDelta) >= windThreshold &&
+    Math.max(current.gustMax, previous.gustMax) >= continuityWindNotableThreshold(current.windUnit)
+  ) {
+    const stronger = gustDelta > 0;
+    return {
+      type: "plan-wind",
+      tone: stronger ? "caution" : "good",
+      priority: 70 + Math.abs(gustDelta),
+      title: `${current.title} ${stronger ? "got windier" : "eased up"}`,
+      body: `Gusts now ${current.gustMax} ${current.windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${current.windUnit}.`
+    };
+  }
+
+  const scoreDelta = continuityDelta(current.score, previous.score);
+  if (scoreDelta !== null && Math.abs(scoreDelta) >= 18 && continuityScoreBand(current.score) !== continuityScoreBand(previous.score)) {
+    const better = scoreDelta > 0;
+    return {
+      type: "plan-score",
+      tone: better ? "good" : "caution",
+      priority: 55 + Math.abs(scoreDelta),
+      title: `${current.title} looks ${better ? "better" : "iffy now"}`,
+      body: `Plan window moved from ${continuityScoreBand(previous.score)} to ${continuityScoreBand(current.score)}.`
+    };
+  }
+
+  return null;
+}
+
+function continuityScoreBand(score) {
+  if (score >= 65) return "good";
+  if (score >= 45) return "iffy";
+  return "poor";
+}
+
+function forYouPlaceContinuityCard(current, store, weatherItems, tempUnit, windUnit) {
+  const previous = current?.placeKey ? store.places?.[current.placeKey] : null;
+  const change = continuityPlaceChange(current, previous, tempUnit, windUnit);
+  if (!change) return { type: "", html: "", memoryId: "" };
+  const summaryIndex = continuitySummaryIndex(weatherItems || [], change.summaryTone || change.type);
+  return {
+    type: change.type,
+    memoryId: "",
+    html: `
+      <button class="for-you-card is-interruption is-continuity is-${escapeHtml(change.summaryTone || change.type)}" type="button" data-for-you-summary="${summaryIndex}" data-for-you-signal="launch-summary">
+        <span class="for-you-kicker"><span>Since last check</span><em>Here</em></span>
+        <strong>${escapeHtml(change.title)}</strong>
+        <span class="for-you-body">${escapeHtml(change.body)}</span>
+        <small>Hourly detail</small>
+      </button>
+    `
+  };
+}
+
+function continuityPlaceChange(current, previous, tempUnit, windUnit) {
+  if (!current || !previous || current.localDate !== previous.localDate) return null;
+  const rainDelta = continuityDelta(current.rainMax, previous.rainMax);
+  if (rainDelta !== null && Math.abs(rainDelta) >= 25 && Math.max(current.rainMax, previous.rainMax) >= 35) {
+    const wetter = rainDelta > 0;
+    return {
+      type: "rain",
+      summaryTone: "rain",
+      title: `Rain ${wetter ? "picked up" : "backed off"}`,
+      body: `Peak chance now ${current.rainMax}%, ${wetter ? "up" : "down"} from ${previous.rainMax}%.`
+    };
+  }
+
+  const rainMovedMs = continuityDelta(current.nextRainMs, previous.nextRainMs);
+  if (
+    rainMovedMs !== null &&
+    Math.abs(rainMovedMs) >= 90 * 60 * 1000 &&
+    Math.min(current.nextRainChance || 0, previous.nextRainChance || 0) >= 20 &&
+    Math.max(current.nextRainChance || 0, previous.nextRainChance || 0) >= 35
+  ) {
+    const later = rainMovedMs > 0;
+    return {
+      type: "rain",
+      summaryTone: "rain",
+      title: `Rain moved ${later ? "later" : "earlier"}`,
+      body: `Now near ${formatTime(current.nextRainMs)}, was near ${formatTime(previous.nextRainMs)}.`
+    };
+  }
+
+  const gustDelta = continuityDelta(current.gustMax, previous.gustMax);
+  if (
+    current.windUnit === previous.windUnit &&
+    gustDelta !== null &&
+    Math.abs(gustDelta) >= continuityWindDeltaThreshold(windUnit) &&
+    Math.max(current.gustMax, previous.gustMax) >= continuityWindNotableThreshold(windUnit)
+  ) {
+    const stronger = gustDelta > 0;
+    return {
+      type: "wind",
+      summaryTone: "wind",
+      title: `Wind ${stronger ? "picked up" : "eased"}`,
+      body: `Gusts now ${current.gustMax} ${windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${windUnit}.`
+    };
+  }
+
+  const highDelta = continuityDelta(current.high, previous.high);
+  if (
+    current.tempUnit === previous.tempUnit &&
+    highDelta !== null &&
+    Math.abs(highDelta) >= continuityTempDeltaThreshold(tempUnit)
+  ) {
+    const warmer = highDelta > 0;
+    return {
+      type: "temp",
+      summaryTone: "temp",
+      title: `Today got ${continuityChangeWord(highDelta, "warmer", "cooler")}`,
+      body: `High now ${current.high}${degree(tempUnit)}, ${warmer ? "up" : "down"} from ${previous.high}${degree(tempUnit)}.`
+    };
+  }
+
+  return null;
 }
 
 function forYouPlanCards(data, place) {
