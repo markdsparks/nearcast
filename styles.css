@@ -2109,15 +2109,19 @@ h2 {
 
 .wind-field {
   --wind-dir: 0deg;
+  --wind-flow-dir: 0deg;
   --wind-strength: 0;
   --wind-duration: 10s;
-  --wind-travel: 10px;
-  --wind-bend: 8deg;
-  --wind-skew: 3deg;
+  --wind-flow-start-x: -8px;
+  --wind-flow-start-y: 0px;
+  --wind-flow-x: 8px;
+  --wind-flow-y: 0px;
+  --wind-lean-x: 2px;
+  --wind-lean-y: 0px;
   position: relative;
   display: block;
-  width: min(112px, 100%);
-  height: 94px;
+  width: min(124px, 100%);
+  height: 96px;
   margin: 0 auto;
   color: var(--ink);
   isolation: isolate;
@@ -2125,16 +2129,16 @@ h2 {
 
 .wind-field-meadow {
   position: absolute;
-  inset: 7px;
+  inset: 8px 3px 7px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: 18px 18px 24px 24px;
   background:
-    radial-gradient(circle at 34% 28%, rgba(240, 255, 232, 0.42), transparent 34%),
-    radial-gradient(circle at 70% 74%, rgba(80, 154, 104, 0.28), transparent 38%),
-    linear-gradient(145deg, rgba(72, 139, 98, 0.36), rgba(38, 88, 74, 0.22));
+    radial-gradient(circle at 24% 16%, rgba(225, 255, 198, 0.50), transparent 27%),
+    radial-gradient(circle at 74% 22%, rgba(123, 216, 119, 0.34), transparent 30%),
+    linear-gradient(180deg, rgba(73, 142, 84, 0.44) 0%, rgba(42, 113, 58, 0.64) 56%, rgba(18, 70, 38, 0.78) 100%);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-    inset 0 -14px 26px rgba(18, 44, 34, 0.18),
+    inset 0 -18px 30px rgba(12, 36, 26, 0.34),
     0 10px 24px rgba(18, 44, 34, 0.10);
 }
 
@@ -2145,84 +2149,127 @@ h2 {
   z-index: 3;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 50% 50%, transparent 42%, rgba(9, 18, 24, 0.18) 100%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent 42%);
+    radial-gradient(circle at 50% 60%, transparent 52%, rgba(9, 18, 24, 0.18) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), transparent 34%);
   pointer-events: none;
 }
 
-.wind-field-flow,
-.wind-field-blades {
+.wind-field-soil {
   position: absolute;
-  left: -34%;
-  top: -34%;
-  width: 168%;
-  height: 168%;
-  transform-origin: 50% 50%;
-  pointer-events: none;
-}
-
-.wind-field-flow {
+  left: -8%;
+  right: -8%;
+  bottom: -7px;
+  height: 30px;
   z-index: 1;
   background:
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 10px,
-      rgba(230, 255, 216, 0.22) 10px 12px,
-      transparent 12px 22px
-    );
-  transform: rotate(var(--wind-dir)) translateX(calc(-1 * var(--wind-travel)));
-  animation: wind-field-flow var(--wind-duration) linear infinite;
+    radial-gradient(ellipse at 50% 100%, rgba(12, 45, 31, 0.86), transparent 68%),
+    linear-gradient(180deg, rgba(60, 142, 72, 0.10), rgba(10, 46, 27, 0.74));
+  pointer-events: none;
 }
 
-.wind-field-flow.is-back {
-  opacity: 0.28;
-  filter: blur(1.5px);
-}
-
-.wind-field-flow.is-front {
-  z-index: 4;
-  opacity: 0.36;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 16px,
-      rgba(255, 255, 255, 0.28) 16px 17px,
-      rgba(207, 247, 192, 0.24) 17px 19px,
-      transparent 19px 34px
-    );
-  animation-delay: -2.1s;
-}
-
-.wind-field-blades {
+.wind-field-grass {
+  position: absolute;
+  inset: 0;
   z-index: 2;
-  opacity: 0.62;
-  background:
-    repeating-linear-gradient(
-      98deg,
-      transparent 0 5px,
-      rgba(225, 255, 209, 0.28) 5px 6px,
-      transparent 6px 12px
-    ),
-    repeating-linear-gradient(
-      74deg,
-      transparent 0 8px,
-      rgba(35, 94, 61, 0.30) 8px 9px,
-      transparent 9px 18px
-    );
-  transform: rotate(var(--wind-dir)) skewY(var(--wind-skew));
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 1px 1px rgba(4, 16, 9, 0.30));
 }
 
-.wind-field.is-calm .wind-field-flow {
-  opacity: 0.14;
+.wind-field-grass-back {
+  opacity: 0.58;
+}
+
+.wind-field-grass-mid,
+.wind-field-grass-front,
+.wind-field-seed-heads {
+  transform: translate(var(--wind-lean-x), var(--wind-lean-y));
+  transform-origin: 50% 92%;
+}
+
+.wind-grass,
+.wind-seed-head {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.wind-grass {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.wind-grass.is-soft {
+  stroke: rgba(203, 252, 169, 0.50);
+  stroke-width: 1.45;
+}
+
+.wind-grass.is-a {
+  stroke: rgba(174, 244, 116, 0.86);
+  stroke-width: 1.95;
+}
+
+.wind-grass.is-b {
+  stroke: rgba(94, 214, 95, 0.86);
+  stroke-width: 1.8;
+}
+
+.wind-grass.is-c {
+  stroke: rgba(225, 255, 175, 0.76);
+  stroke-width: 1.32;
+}
+
+.wind-grass.is-near {
+  stroke-width: 2.65;
+}
+
+.wind-seed-head {
+  stroke: rgba(238, 255, 199, 0.82);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+}
+
+.wind-field-seeds {
+  position: absolute;
+  left: -18%;
+  top: -18%;
+  z-index: 4;
+  width: 136%;
+  height: 136%;
+  opacity: 0.48;
+  background:
+    radial-gradient(circle at 18% 42%, rgba(238, 255, 217, 0.72) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 34% 20%, rgba(238, 255, 217, 0.56) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 58% 56%, rgba(238, 255, 217, 0.68) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 78% 34%, rgba(238, 255, 217, 0.56) 0 1px, transparent 1.5px);
+  transform: translate(var(--wind-flow-start-x), var(--wind-flow-start-y));
+  animation: wind-field-seeds var(--wind-duration) ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.wind-field-seeds.is-back {
+  z-index: 1;
+  opacity: 0.26;
+  filter: blur(1px);
+}
+
+.wind-field-seeds.is-front {
+  animation-delay: -2.4s;
+}
+
+.wind-field.is-calm .wind-field-seeds {
+  opacity: 0.20;
   animation-duration: 15s;
 }
 
-.wind-field.is-calm .wind-field-blades {
-  opacity: 0.48;
+.wind-field.is-calm .wind-field-grass-mid,
+.wind-field.is-calm .wind-field-grass-front,
+.wind-field.is-calm .wind-field-seed-heads {
+  transform: translate(0, 0);
 }
 
-.wind-field.is-strong .wind-field-flow.is-front {
-  opacity: 0.48;
+.wind-field.is-strong .wind-field-seeds.is-front {
+  opacity: 0.64;
 }
 
 .wind-field-cardinal {
@@ -2271,8 +2318,8 @@ h2 {
   line-height: 1;
   pointer-events: none;
   text-shadow:
-    0 1px 10px rgba(255, 255, 255, 0.55),
-    0 1px 3px rgba(255, 255, 255, 0.32);
+    0 2px 5px rgba(7, 18, 15, 0.34),
+    0 0 9px rgba(255, 255, 255, 0.30);
 }
 
 .wind-field-readout b {
@@ -2302,12 +2349,12 @@ h2 {
   white-space: nowrap;
 }
 
-@keyframes wind-field-flow {
+@keyframes wind-field-seeds {
   from {
-    transform: rotate(var(--wind-dir)) translateX(calc(-1 * var(--wind-travel)));
+    transform: translate(var(--wind-flow-start-x), var(--wind-flow-start-y));
   }
   to {
-    transform: rotate(var(--wind-dir)) translateX(var(--wind-travel));
+    transform: translate(var(--wind-flow-x), var(--wind-flow-y));
   }
 }
 
@@ -7883,7 +7930,7 @@ button.sheet-plan-badge:focus-visible {
     transform: none;
   }
 
-  .wind-field-flow {
+  .wind-field-seeds {
     animation: none;
   }
 
