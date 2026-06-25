@@ -1,4 +1,4 @@
-const VERSION = "2.6.96";
+const VERSION = "2.6.98";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4428,7 +4428,7 @@ function windContextHtml(wind) {
 function windDialHtml(speed, unit, wind) {
   const value = Number.isFinite(speed) ? Math.round(speed) : "--";
   const direction = wind?.direction || null;
-  const directionStyle = direction ? ` style="--wind-dir:${direction.degrees}deg"` : "";
+  const directionStyle = direction ? ` style="--wind-dir:${direction.towardDegrees}deg"` : "";
   const directionLabel = direction ? `<span class="wind-dial-direction">${escapeHtml(direction.label)}</span>` : "";
   const directionAria = direction ? ` ${direction.aria}` : "";
   return `
@@ -4458,6 +4458,7 @@ function windDirectionCue(value) {
   const direction = compassDirection(degrees);
   return {
     degrees,
+    towardDegrees: (degrees + 180) % 360,
     label: `from ${direction.short}`,
     title: `Wind from ${direction.long}.`,
     aria: `Wind from ${direction.long}.`

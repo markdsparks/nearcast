@@ -1850,21 +1850,25 @@ h2 {
   font-size: 1.38rem;
 }
 
-.air-quality-card {
+.air-quality-card,
+.glance-signal-optional.is-visible.air-quality-card {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .air-quality-card::after {
   content: "";
   position: absolute;
-  right: -28px;
-  bottom: -34px;
-  width: 104px;
-  height: 104px;
+  right: 8px;
+  bottom: 8px;
+  width: 86px;
+  height: 86px;
   border-radius: 999px;
   background: radial-gradient(circle, var(--air-card-glow, rgba(36, 180, 107, 0.26)) 0%, transparent 67%);
-  opacity: 0.66;
+  opacity: 0.48;
   pointer-events: none;
+  z-index: 0;
 }
 
 .air-quality-card.air-good { --air-card-accent: #24b46b; --air-card-glow: rgba(36, 180, 107, 0.34); }
@@ -1874,19 +1878,41 @@ h2 {
 .air-quality-card.air-very-unhealthy { --air-card-accent: #9a62d0; --air-card-glow: rgba(154, 98, 208, 0.40); }
 .air-quality-card.air-hazardous { --air-card-accent: #8d3150; --air-card-glow: rgba(141, 49, 80, 0.42); }
 
+#humiditySignal.air-quality-card > span:first-child {
+  position: relative;
+  z-index: 1;
+}
+
+#humiditySignal.air-quality-card #humidity {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: 1;
+  align-items: center;
+  min-height: 88px;
+  margin-top: 8px;
+}
+
+#humiditySignal.air-quality-card #humidityContext {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+}
+
 .air-visual {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: minmax(56px, 0.7fr) minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: 78px;
 }
 
 .air-orb {
   position: relative;
   display: block;
-  width: 42px;
-  height: 42px;
+  width: min(68px, 100%);
+  aspect-ratio: 1;
+  justify-self: center;
   border-radius: 999px;
   background:
     conic-gradient(var(--air-accent) var(--air-level), rgba(116, 131, 150, 0.20) 0),
@@ -1899,7 +1925,7 @@ h2 {
 .air-orb::before {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: 8px;
   border-radius: inherit;
   background:
     radial-gradient(circle at 35% 26%, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.22) 28%, transparent 48%),
@@ -1928,6 +1954,7 @@ h2 {
 
 .air-visual-copy {
   min-width: 0;
+  align-self: center;
 }
 
 .air-visual-copy b,
@@ -1939,20 +1966,20 @@ h2 {
 
 .air-visual-copy b {
   color: var(--ink);
-  font-size: clamp(0.92rem, 2vw, 1.08rem);
+  font-size: clamp(1rem, 2vw, 1.26rem);
   font-weight: 900;
-  line-height: 1.08;
+  line-height: 1.02;
   white-space: normal;
 }
 
 .air-visual-copy em {
-  margin-top: 4px;
+  margin-top: 7px;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: clamp(0.78rem, 1.45vw, 0.9rem);
   font-style: normal;
   font-weight: 850;
   line-height: 1.1;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .glance-signal small {
