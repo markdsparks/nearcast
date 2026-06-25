@@ -1,4 +1,4 @@
-const VERSION = "2.6.98";
+const VERSION = "2.6.99";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -11,6 +11,7 @@ const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
 const FORECAST_WARM_START_MAX_AGE_MS = 60 * 60 * 1000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
 const PERF_STORAGE_KEY = "nearcast-perf";
+const WIND_FIELD_STORAGE_KEY = "nearcast-wind-field";
 const PERF_RENDER_WARN_MS = 50;
 const PERF_INPUT_WARN_MS = 80;
 const PERF_LONG_TASK_WARN_MS = 120;
@@ -42,15 +43,30 @@ const WELCOME_WORLD_SKY_PLACES = [
   { id: "marrakesh", name: "Marrakesh", country: "Morocco", countryCode: "MA", latitude: 31.6295, longitude: -7.9811 }
 ];
 
-const perfQueryFlag = (() => {
+function queryValue(...names) {
   try {
-    return new URLSearchParams(window.location.search).get("perf");
+    const params = new URLSearchParams(window.location.search);
+    for (const name of names) {
+      const value = params.get(name);
+      if (value !== null) return value;
+    }
   } catch {
     return null;
   }
-})();
+  return null;
+}
+
+const perfQueryFlag = queryValue("perf");
 if (perfQueryFlag === "1") localStorage.setItem(PERF_STORAGE_KEY, "1");
 else if (perfQueryFlag === "0") localStorage.removeItem(PERF_STORAGE_KEY);
+
+const windFieldQueryFlag = queryValue("windField", "windfield");
+if (windFieldQueryFlag === "1") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "1");
+else if (windFieldQueryFlag === "0") localStorage.removeItem(WIND_FIELD_STORAGE_KEY);
+
+const featureFlags = {
+  windField: localStorage.getItem(WIND_FIELD_STORAGE_KEY) === "1"
+};
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
@@ -444,6 +460,7 @@ const els = {
   rainSignal: document.querySelector("#rainSignal"),
   rainChance: document.querySelector("#rainChance"),
   rainContext: document.querySelector("#rainContext"),
+  windSignal: document.querySelector("#windSignal"),
   wind: document.querySelector("#wind"),
   windContext: document.querySelector("#windContext"),
   uv: document.querySelector("#uv"),
@@ -4300,7 +4317,8 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     els.rainSignal.title = detail;
     els.rainSignal.setAttribute("aria-label", detail ? `Rain. ${rain.context}. ${detail}` : `Rain. ${rain.context}`);
   }
-  if (els.wind) els.wind.innerHTML = windDialHtml(windVal, windUnit, wind);
+  if (els.windSignal) els.windSignal.classList.toggle("is-wind-field", featureFlags.windField);
+  if (els.wind) els.wind.innerHTML = windVisualHtml(windVal, windUnit, wind);
   if (els.windContext) els.windContext.innerHTML = windContextHtml(wind);
   if (els.airSignalLabel) els.airSignalLabel.textContent = air.label;
   if (els.humidity) {
@@ -4425,6 +4443,10 @@ function windContextHtml(wind) {
   return escapeHtml(wind?.context || "--");
 }
 
+function windVisualHtml(speed, unit, wind) {
+  return featureFlags.windField ? windFieldHtml(speed, unit, wind) : windDialHtml(speed, unit, wind);
+}
+
 function windDialHtml(speed, unit, wind) {
   const value = Number.isFinite(speed) ? Math.round(speed) : "--";
   const direction = wind?.direction || null;
@@ -4452,16 +4474,60 @@ function windDirectionIcon() {
   return `<svg viewBox="0 0 24 34" aria-hidden="true" focusable="false"><path d="M12 2 21 21.5l-9-4.3-9 4.3L12 2Z" fill="currentColor"/><path d="M12 17.2v14" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>`;
 }
 
+function windFieldHtml(speed, unit, wind) {
+  const numericSpeed = Number(speed);
+  const value = Number.isFinite(numericSpeed) ? Math.round(numericSpeed) : "--";
+  const mph = Number.isFinite(numericSpeed) ? (unit === "mph" ? numericSpeed : numericSpeed / 1.609344) : 0;
+  const strength = Math.max(0, Math.min(1, mph / 28));
+  const direction = wind?.direction || null;
+  const fieldStyle = [
+    direction ? `--wind-dir:${direction.towardDegrees}deg` : "",
+    `--wind-strength:${strength.toFixed(2)}`,
+    `--wind-duration:${Math.max(4.2, 11 - strength * 6.2).toFixed(1)}s`,
+    `--wind-travel:${Math.round(6 + strength * 24)}px`,
+    `--wind-bend:${Math.round(7 + strength * 22)}deg`,
+    `--wind-skew:${Math.round(2 + strength * 10)}deg`
+  ].filter(Boolean).join(";");
+  const speedClass = mph >= 20 ? " is-strong" : mph >= 12 ? " is-breezy" : mph >= 5 ? " is-light" : " is-calm";
+  const directionLabel = direction ? `<span class="wind-field-direction">${escapeHtml(direction.label)}</span>` : "";
+  const aria = direction
+    ? `${value} ${unit} wind. ${direction.aria} Field flowing ${direction.towardAria}.`
+    : `${value} ${unit} wind. Direction unavailable.`;
+
+  return `
+    <span class="wind-field${direction ? "" : " is-missing-direction"}${speedClass}" role="img" aria-label="${escapeHtml(aria)}" style="${escapeHtml(fieldStyle)}">
+      <span class="wind-field-meadow" aria-hidden="true">
+        <span class="wind-field-flow is-back"></span>
+        <span class="wind-field-blades"></span>
+        <span class="wind-field-flow is-front"></span>
+      </span>
+      <span class="wind-field-cardinal is-n" aria-hidden="true">N</span>
+      <span class="wind-field-cardinal is-e" aria-hidden="true">E</span>
+      <span class="wind-field-cardinal is-s" aria-hidden="true">S</span>
+      <span class="wind-field-cardinal is-w" aria-hidden="true">W</span>
+      <span class="wind-field-readout" aria-hidden="true">
+        <b>${escapeHtml(value)}</b>
+        <em>${escapeHtml(unit)}</em>
+        ${directionLabel}
+      </span>
+    </span>
+  `;
+}
+
 function windDirectionCue(value) {
   const degrees = normalizeWindDegrees(value);
   if (degrees === null) return null;
   const direction = compassDirection(degrees);
+  const towardDegrees = (degrees + 180) % 360;
+  const toward = compassDirection(towardDegrees);
   return {
     degrees,
-    towardDegrees: (degrees + 180) % 360,
+    towardDegrees,
     label: `from ${direction.short}`,
+    towardLabel: `toward ${toward.short}`,
     title: `Wind from ${direction.long}.`,
-    aria: `Wind from ${direction.long}.`
+    aria: `Wind from ${direction.long}.`,
+    towardAria: `toward ${toward.long}`
   };
 }
 
