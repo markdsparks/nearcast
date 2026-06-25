@@ -1964,24 +1964,26 @@ h2 {
   line-height: 1.25;
 }
 
-.wind-duration-cue {
+.wind-direction-cue {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   margin-left: 5px;
   color: var(--ink);
   font-weight: 900;
   white-space: nowrap;
 }
 
-.wind-duration-cue svg {
+.wind-direction-cue svg {
   width: 12px;
   height: 12px;
   color: var(--blue);
   opacity: 0.92;
+  transform: rotate(var(--wind-dir, 0deg));
+  transform-origin: 50% 50%;
 }
 
-.wind-duration-cue b {
+.wind-direction-cue b {
   font: inherit;
 }
 

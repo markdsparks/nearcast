@@ -1,4 +1,4 @@
-const VERSION = "2.6.93";
+const VERSION = "2.6.94";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4284,7 +4284,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   const uvVal = Math.round(data.daily.uv_index_max[todayIndex] || 0);
   const comfort = comfortGlance(actualVal, feelsVal, humidityVal, tempUnit);
   const rain = rainGlance(data, rainVal, truth);
-  const wind = windGlance(windVal, windUnit, data);
+  const wind = windGlance(windVal, windUnit, current.wind_direction_10m);
   const air = airGlance(data, humidityVal);
   const airHeadline = air.summary && (air.summary.band?.rank >= 2 || air.summary.pollen?.rank >= 3)
     ? `, ${air.summary.headline.toLowerCase()}`
@@ -4410,65 +4410,66 @@ function nextRainChance(data, hoursAhead, threshold) {
   return null;
 }
 
-function windGlance(speed, unit, data = state.forecast) {
+function windGlance(speed, unit, directionDeg = null) {
   const mph = unit === "mph" ? speed : speed / 1.609344;
-  if (mph >= 30) return { headline: "very windy", context: "Secure loose items", duration: windDurationCue(data, unit, 30, Infinity, "very windy") };
-  if (mph >= 20) return { headline: "windy", context: "Noticeable gusts", duration: windDurationCue(data, unit, 20, 30, "windy") };
-  if (mph >= 12) return { headline: "breezy", context: "A steady breeze", duration: windDurationCue(data, unit, 12, 20, "breezy") };
-  if (mph >= 5) return { headline: "light wind", context: "Gentle movement", duration: windDurationCue(data, unit, 5, 12, "light wind") };
-  return { headline: "calm wind", context: "Barely moving", duration: windDurationCue(data, unit, 0, 5, "calm wind") };
+  const direction = windDirectionCue(directionDeg);
+  if (mph >= 30) return { headline: "very windy", context: "Secure loose items", direction };
+  if (mph >= 20) return { headline: "windy", context: "Noticeable gusts", direction };
+  if (mph >= 12) return { headline: "breezy", context: "A steady breeze", direction };
+  if (mph >= 5) return { headline: "light wind", context: "Gentle movement", direction };
+  return { headline: "calm wind", context: "Barely moving", direction };
 }
 
 function windContextHtml(wind) {
   const context = escapeHtml(wind?.context || "--");
-  if (!wind?.duration) return context;
-  return `${context} <span class="wind-duration-cue" aria-label="${escapeHtml(wind.duration.aria)}" title="${escapeHtml(wind.duration.title)}">${durationClockIcon()}<b>${escapeHtml(wind.duration.label)}</b></span>`;
+  if (!wind?.direction) return context;
+  return `${context} <span class="wind-direction-cue" aria-label="${escapeHtml(wind.direction.aria)}" title="${escapeHtml(wind.direction.title)}" style="--wind-dir:${wind.direction.degrees}deg">${windDirectionIcon()}<b>${escapeHtml(wind.direction.label)}</b></span>`;
 }
 
-function durationClockIcon() {
-  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8v3.3l2.2 1.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+function windDirectionIcon() {
+  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 1.8 12.6 13 8 10.8 3.4 13 8 1.8Z" fill="currentColor"/></svg>`;
 }
 
-function windDurationCue(data, unit, minMph, maxMph, label) {
-  const times = data?.hourly?.time || [];
-  const values = data?.hourly?.wind_speed_10m || [];
-  const currentIndex = currentHourlyIndex(data);
-  if (!times.length || !values.length || currentIndex < 0) return null;
-
-  const now = forecastNowMs(data);
-  const endOfDay = forecastLocalBoundaryMs(data, 24) || now + 18 * 60 * 60 * 1000;
-  let endMs = endOfDay;
-  for (let index = currentIndex + 1; index < times.length; index += 1) {
-    const ms = parseForecastTimestamp(times[index], data);
-    if (ms === null || ms <= now) continue;
-    if (ms >= endOfDay) {
-      endMs = endOfDay;
-      break;
-    }
-    const value = Number(values[index]);
-    const mph = unit === "mph" ? value : value / 1.609344;
-    if (Number.isFinite(mph) && !windMphInBand(mph, minMph, maxMph)) {
-      endMs = ms;
-      break;
-    }
-  }
-
-  const durationMs = endMs - now;
-  if (durationMs < 5 * 60 * 1000) return null;
-  const allDay = endMs >= endOfDay - 45 * 60 * 1000 && durationMs >= 8 * 60 * 60 * 1000;
-  const display = allDay ? "all day" : durationBrief(durationMs);
-  const until = formatForecastMs(endMs, data);
-  const durationSubject = /wind$/i.test(label) ? capitalize(label) : `${capitalize(label)} conditions`;
-  const durationVerb = /conditions$/i.test(durationSubject) ? "last" : "lasts";
+function windDirectionCue(value) {
+  const degrees = normalizeWindDegrees(value);
+  if (degrees === null) return null;
+  const direction = compassDirection(degrees);
   return {
-    label: display,
-    title: `${capitalize(label)} for ${allDay ? "the rest of today" : `about ${display}`}${until ? `, until ${until}` : ""}.`,
-    aria: `${durationSubject} ${durationVerb} ${allDay ? "the rest of today" : `about ${display}`}${until ? `, until ${until}` : ""}.`
+    degrees,
+    label: `from ${direction.short}`,
+    title: `Wind from ${direction.long}.`,
+    aria: `Wind from ${direction.long}.`
   };
 }
 
-function windMphInBand(mph, minMph, maxMph) {
-  return mph >= minMph && mph < maxMph;
+function normalizeWindDegrees(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const degrees = Number(value);
+  if (!Number.isFinite(degrees)) return null;
+  return Math.round(((degrees % 360) + 360) % 360);
+}
+
+function compassDirection(degrees) {
+  const labels = [
+    ["N", "north"],
+    ["NNE", "north-northeast"],
+    ["NE", "northeast"],
+    ["ENE", "east-northeast"],
+    ["E", "east"],
+    ["ESE", "east-southeast"],
+    ["SE", "southeast"],
+    ["SSE", "south-southeast"],
+    ["S", "south"],
+    ["SSW", "south-southwest"],
+    ["SW", "southwest"],
+    ["WSW", "west-southwest"],
+    ["W", "west"],
+    ["WNW", "west-northwest"],
+    ["NW", "northwest"],
+    ["NNW", "north-northwest"]
+  ];
+  const [short, long] = labels[Math.round(degrees / 22.5) % labels.length];
+  return { short, long };
 }
 
 function humidityContext(value) {
