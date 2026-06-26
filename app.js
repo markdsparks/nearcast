@@ -1,4 +1,4 @@
-const VERSION = "2.6.107";
+const VERSION = "2.6.108";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -62,10 +62,12 @@ else if (perfQueryFlag === "0") localStorage.removeItem(PERF_STORAGE_KEY);
 
 const windFieldQueryFlag = queryValue("windField", "windfield");
 if (windFieldQueryFlag === "1") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "1");
-else if (windFieldQueryFlag === "0") localStorage.removeItem(WIND_FIELD_STORAGE_KEY);
+else if (windFieldQueryFlag === "0") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "0");
+
+const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 
 const featureFlags = {
-  windField: localStorage.getItem(WIND_FIELD_STORAGE_KEY) === "1"
+  windField: windFieldStoredFlag !== "0"
 };
 
 const state = {
