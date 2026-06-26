@@ -1,4 +1,4 @@
-const VERSION = "2.6.106";
+const VERSION = "2.6.107";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4554,6 +4554,9 @@ function windRibbonSvg() {
         <path class="wind-ribbon-stream is-back" d="M22 74 C41 55 57 55 72 67 C86 78 102 73 115 58" />
         <path class="wind-ribbon-stream is-front" d="M18 48 C34 36 50 37 62 49 C74 61 90 61 108 39" />
         <path class="wind-ribbon-current" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
+        <path class="wind-ribbon-arrow-shaft is-tail" d="M17 61 C29 43 45 34 61 39" />
+        <path class="wind-ribbon-arrow-shaft is-middle" d="M61 39 C69 40 74 44 77 49 C81 55 85 59 90 62" />
+        <path class="wind-ribbon-arrow-shaft is-head" d="M90 62 C101 65 110 55 116 43" />
         <circle class="wind-ribbon-source" cx="17" cy="61" r="5.3" />
         <path class="wind-ribbon-arrow" d="M116 43 101 36 105 53Z" />
       </g>

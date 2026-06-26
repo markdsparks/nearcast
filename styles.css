@@ -2211,7 +2211,8 @@ h2 {
 .wind-ribbon-halo,
 .wind-ribbon-track,
 .wind-ribbon-stream,
-.wind-ribbon-current {
+.wind-ribbon-current,
+.wind-ribbon-arrow-shaft {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -2226,9 +2227,9 @@ h2 {
 }
 
 .wind-ribbon-track {
-  stroke: var(--wind-accent-strong);
-  stroke-width: calc(6px + (var(--wind-strength) * 4px));
-  opacity: calc(0.58 + (var(--wind-strength) * 0.22));
+  stroke: var(--wind-accent);
+  stroke-width: calc(5px + (var(--wind-strength) * 2.2px));
+  opacity: calc(0.22 + (var(--wind-strength) * 0.18));
   filter: drop-shadow(0 5px 12px rgba(16, 44, 73, 0.18));
 }
 
@@ -2247,11 +2248,31 @@ h2 {
 
 .wind-ribbon-current {
   stroke: rgba(255, 255, 255, 0.96);
-  stroke-width: 3.5;
-  opacity: calc(0.46 + (var(--wind-strength) * 0.38));
+  stroke-width: 2.8;
+  opacity: calc(0.34 + (var(--wind-strength) * 0.28));
   stroke-dasharray: 13 130;
   animation: wind-ribbon-current var(--wind-duration) ease-in-out infinite;
   filter: drop-shadow(0 2px 7px rgba(255, 255, 255, 0.20));
+}
+
+.wind-ribbon-arrow-shaft {
+  stroke: var(--wind-accent-strong);
+  filter: drop-shadow(0 3px 7px rgba(16, 44, 73, 0.18));
+}
+
+.wind-ribbon-arrow-shaft.is-tail {
+  stroke-width: calc(3.4px + (var(--wind-strength) * 1.1px));
+  opacity: calc(0.42 + (var(--wind-strength) * 0.18));
+}
+
+.wind-ribbon-arrow-shaft.is-middle {
+  stroke-width: calc(1.5px + (var(--wind-strength) * 0.5px));
+  opacity: calc(0.18 + (var(--wind-strength) * 0.12));
+}
+
+.wind-ribbon-arrow-shaft.is-head {
+  stroke-width: calc(3.2px + (var(--wind-strength) * 1.2px));
+  opacity: calc(0.52 + (var(--wind-strength) * 0.20));
 }
 
 .wind-ribbon-source {
@@ -2277,6 +2298,15 @@ h2 {
 .wind-ribbon.is-calm .wind-ribbon-stream {
   animation-duration: 10s;
   opacity: 0.22;
+}
+
+.wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-tail,
+.wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-head {
+  opacity: 0.36;
+}
+
+.wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-middle {
+  opacity: 0.12;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow {
