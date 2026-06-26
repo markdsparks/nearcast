@@ -1,4 +1,4 @@
-const VERSION = "2.6.104";
+const VERSION = "2.6.106";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4518,41 +4518,25 @@ function windFieldHtml(speed, unit, wind) {
   const mph = Number.isFinite(numericSpeed) ? (unit === "mph" ? numericSpeed : numericSpeed / 1.609344) : 0;
   const strength = Math.max(0, Math.min(1, mph / 28));
   const direction = wind?.direction || null;
-  const flowTravel = Math.round(7 + strength * 22);
-  const flowX = direction ? Math.sin(direction.towardRadians) : 1;
-  const flowY = direction ? -Math.cos(direction.towardRadians) : 0;
-  const lean = 2 + strength * 10;
   const fieldStyle = [
-    direction ? `--wind-dir:${direction.towardDegrees}deg` : "",
     direction ? `--wind-flow-dir:${direction.flowDegrees}deg` : "",
     `--wind-strength:${strength.toFixed(2)}`,
-    `--wind-duration:${Math.max(4.2, 11 - strength * 6.2).toFixed(1)}s`,
-    `--wind-flow-start-x:${(-flowX * flowTravel).toFixed(1)}px`,
-    `--wind-flow-start-y:${(-flowY * flowTravel).toFixed(1)}px`,
-    `--wind-flow-x:${(flowX * flowTravel).toFixed(1)}px`,
-    `--wind-flow-y:${(flowY * flowTravel).toFixed(1)}px`,
-    `--wind-lean-x:${(flowX * lean).toFixed(1)}px`,
-    `--wind-lean-y:${(flowY * lean * 0.34).toFixed(1)}px`
+    `--wind-duration:${Math.max(3.2, 8.4 - strength * 5).toFixed(1)}s`
   ].filter(Boolean).join(";");
   const speedClass = mph >= 20 ? " is-strong" : mph >= 12 ? " is-breezy" : mph >= 5 ? " is-light" : " is-calm";
-  const directionLabel = direction ? `<span class="wind-field-direction">${escapeHtml(direction.label)}</span>` : "";
+  const directionLabel = direction ? `<span class="wind-ribbon-direction">${escapeHtml(direction.label)}</span>` : "";
   const aria = direction
-    ? `${value} ${unit} wind. ${direction.aria} Field flowing ${direction.towardAria}.`
+    ? `${value} ${unit} wind. ${direction.aria} Flow arrow points ${direction.towardAria}.`
     : `${value} ${unit} wind. Direction unavailable.`;
 
   return `
-    <span class="wind-field${direction ? "" : " is-missing-direction"}${speedClass}" role="img" aria-label="${escapeHtml(aria)}" style="${escapeHtml(fieldStyle)}">
-      <span class="wind-field-meadow" aria-hidden="true">
-        <span class="wind-field-soil"></span>
-        ${windFieldGrassSvg()}
-        <span class="wind-field-seeds is-back"></span>
-        <span class="wind-field-seeds is-front"></span>
-      </span>
-      <span class="wind-field-cardinal is-n" aria-hidden="true">N</span>
-      <span class="wind-field-cardinal is-e" aria-hidden="true">E</span>
-      <span class="wind-field-cardinal is-s" aria-hidden="true">S</span>
-      <span class="wind-field-cardinal is-w" aria-hidden="true">W</span>
-      <span class="wind-field-readout" aria-hidden="true">
+    <span class="wind-ribbon${direction ? "" : " is-missing-direction"}${speedClass}" role="img" aria-label="${escapeHtml(aria)}" style="${escapeHtml(fieldStyle)}">
+      <span class="wind-ribbon-cardinal is-n" aria-hidden="true">N</span>
+      <span class="wind-ribbon-cardinal is-e" aria-hidden="true">E</span>
+      <span class="wind-ribbon-cardinal is-s" aria-hidden="true">S</span>
+      <span class="wind-ribbon-cardinal is-w" aria-hidden="true">W</span>
+      ${windRibbonSvg()}
+      <span class="wind-ribbon-readout" aria-hidden="true">
         <b>${escapeHtml(value)}</b>
         <em>${escapeHtml(unit)}</em>
         ${directionLabel}
@@ -4561,48 +4545,17 @@ function windFieldHtml(speed, unit, wind) {
   `;
 }
 
-function windFieldGrassSvg() {
+function windRibbonSvg() {
   return `
-    <svg class="wind-field-grass" viewBox="0 0 112 94" aria-hidden="true" focusable="false">
-      <g class="wind-field-grass-back">
-        <path class="wind-grass is-soft" d="M6 92 C12 74 18 60 28 48" />
-        <path class="wind-grass is-soft" d="M18 92 C24 76 27 63 34 50" />
-        <path class="wind-grass is-soft" d="M30 94 C35 76 43 60 54 46" />
-        <path class="wind-grass is-soft" d="M47 94 C50 74 55 60 63 44" />
-        <path class="wind-grass is-soft" d="M64 94 C66 76 70 61 78 48" />
-        <path class="wind-grass is-soft" d="M83 94 C84 76 88 63 96 50" />
-        <path class="wind-grass is-soft" d="M101 94 C101 79 104 68 110 57" />
-      </g>
-      <g class="wind-field-grass-mid">
-        <path class="wind-grass is-a" d="M3 92 C10 72 16 56 27 33" />
-        <path class="wind-grass is-b" d="M9 94 C12 76 16 61 23 43" />
-        <path class="wind-grass is-c" d="M15 93 C24 73 30 55 42 28" />
-        <path class="wind-grass is-a" d="M24 94 C27 76 32 59 40 40" />
-        <path class="wind-grass is-b" d="M31 94 C38 74 44 56 55 31" />
-        <path class="wind-grass is-c" d="M40 95 C42 78 46 64 53 45" />
-        <path class="wind-grass is-a" d="M48 95 C54 75 59 57 68 36" />
-        <path class="wind-grass is-b" d="M56 95 C58 78 62 64 70 44" />
-        <path class="wind-grass is-c" d="M64 95 C70 76 75 57 86 35" />
-        <path class="wind-grass is-a" d="M73 95 C74 78 78 64 85 45" />
-        <path class="wind-grass is-b" d="M82 94 C88 75 92 58 102 39" />
-        <path class="wind-grass is-c" d="M92 94 C94 78 99 64 108 46" />
-        <path class="wind-grass is-a" d="M104 94 C106 80 108 70 112 58" />
-      </g>
-      <g class="wind-field-grass-front">
-        <path class="wind-grass is-near is-b" d="M0 95 C9 78 15 64 28 42" />
-        <path class="wind-grass is-near is-c" d="M7 95 C18 77 24 63 39 36" />
-        <path class="wind-grass is-near is-a" d="M18 96 C25 78 31 64 43 43" />
-        <path class="wind-grass is-near is-b" d="M28 96 C39 75 46 60 60 34" />
-        <path class="wind-grass is-near is-c" d="M40 96 C47 78 52 63 64 42" />
-        <path class="wind-grass is-near is-a" d="M51 96 C60 76 67 59 81 35" />
-        <path class="wind-grass is-near is-b" d="M63 96 C68 79 74 65 86 43" />
-        <path class="wind-grass is-near is-c" d="M74 96 C84 76 91 61 105 39" />
-        <path class="wind-grass is-near is-a" d="M88 96 C93 80 99 66 112 47" />
-      </g>
-      <g class="wind-field-seed-heads">
-        <path class="wind-seed-head" d="M42 28 l-2 -4 m2 4 l3 -3 m-3 3 l4 1" />
-        <path class="wind-seed-head" d="M68 36 l-3 -4 m3 4 l4 -2 m-4 2 l5 2" />
-        <path class="wind-seed-head" d="M102 39 l-2 -4 m2 4 l4 -2 m-4 2 l4 2" />
+    <svg class="wind-ribbon-svg" viewBox="0 0 132 108" aria-hidden="true" focusable="false">
+      <g class="wind-ribbon-rotor">
+        <path class="wind-ribbon-halo" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
+        <path class="wind-ribbon-track" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
+        <path class="wind-ribbon-stream is-back" d="M22 74 C41 55 57 55 72 67 C86 78 102 73 115 58" />
+        <path class="wind-ribbon-stream is-front" d="M18 48 C34 36 50 37 62 49 C74 61 90 61 108 39" />
+        <path class="wind-ribbon-current" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
+        <circle class="wind-ribbon-source" cx="17" cy="61" r="5.3" />
+        <path class="wind-ribbon-arrow" d="M116 43 101 36 105 53Z" />
       </g>
     </svg>
   `;
@@ -7414,7 +7367,7 @@ function buildWindGlanceDetail(data, windUnit) {
         ${glanceDetailFactHtml("Gusts now", gust !== null ? `${gust} ${windUnit}` : "--", "Short bursts")}
         ${glanceDetailFactHtml("Peak next 12h", peakGust !== null ? `${peakGust} ${windUnit}` : "--", peakIndex >= 0 ? `Near ${formatTime(data.hourly.time[peakIndex])}` : "")}
       </div>
-      ${glanceDetailNoteHtml("How to read it", "The arrow and moving field show where the wind is blowing. The label names where the wind is coming from, which matches standard weather reports.")}
+      ${glanceDetailNoteHtml("How to read it", "The ribbon and arrow show where the wind is blowing. The label names where the wind is coming from, which matches standard weather reports.")}
     `
   };
 }
