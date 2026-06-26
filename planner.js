@@ -273,6 +273,18 @@ function renderSupportActions(includeRetry = false) {
 
 const PLAN_BRIEFING_MAX_ITEMS = 3;
 const MAIN_PLAN_BRIEFING_MAX_ITEMS = 2;
+const PLAN_WATCH_MAX_AUTO_FETCH_PLACES = 4;
+const PLAN_WATCH_FORECAST_MAX_AGE_MS = 60 * 60 * 1000;
+const PLAN_WATCH_REFRESH_THROTTLE_MS = 90 * 1000;
+
+const planWatchState = {
+  data: {},
+  alerts: {},
+  loading: {},
+  errors: {},
+  lastFetchAt: {},
+  baselineStore: null
+};
 
 function briefingPanel(html, className = "") {
   const cls = ["briefing-panel", className].filter(Boolean).join(" ");
@@ -314,9 +326,10 @@ function planBriefingReason(item) {
   return reasons[0] || "weather looks manageable";
 }
 
-function planBriefingItemFromEvent(memory, event, data, place, c = buildAIContext(data, place, activeAlerts)) {
-  if (!memory || !event || !data || !place || !c) return null;
-  const stats = planWindowStats(data, c, {
+function planBriefingItemFromEvent(memory, event, data, place, c = null, alerts = activeAlerts) {
+  const context = c || buildAIContext(data, place, alerts || []);
+  if (!memory || !event || !data || !place || !context) return null;
+  const stats = planWindowStats(data, context, {
     dayIdx: event.dayIndex,
     startHour: event.startHour,
     endHour: event.endHour,
@@ -325,7 +338,7 @@ function planBriefingItemFromEvent(memory, event, data, place, c = buildAIContex
   if (!stats) return null;
   const activityKey = planBriefingActivityKey(memory);
   const rule = ACTIVITY_RULES[activityKey] || ACTIVITY_RULES.event || ACTIVITY_RULES.walk;
-  const alert = topAlertForPlanRange(activeAlerts, event.startMs, event.endMs);
+  const alert = topAlertForPlanRange(alerts || [], event.startMs, event.endMs);
   const alertSignal = alert ? alertTone(alert) : "";
   const score = numericWindowScore(rule, stats);
   const verdict = planVerdict(score, alertSignal);
@@ -337,8 +350,8 @@ function planBriefingItemFromEvent(memory, event, data, place, c = buildAIContex
     alertTone: alertSignal,
     score,
     verdict,
-    units: c.units,
-    reasons: planReasons(stats, c.units, alert).slice(0, 3)
+    units: context.units,
+    reasons: planReasons(stats, context.units, alert).slice(0, 3)
   };
   item.tone = planBriefingTone(item);
   item.priority = planBriefingPriority(item);
@@ -2693,11 +2706,12 @@ function memoryTimestamp(value) {
   })).format(date);
 }
 
-function planMemoryEvent(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
+function planMemoryEventForData(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
   if (!memory || !data || !place || !samePlanPlace(memory.place, place)) return null;
   const dayIdx = data.daily?.time?.indexOf(memory.targetDate);
   if (dayIdx === undefined || dayIdx < 0) return null;
-  const c = buildAIContext(data, place, alerts);
+  const normalizedPlace = normalizePlace(place);
+  const c = buildAIContext(data, normalizedPlace, alerts || []);
   if (!c) return null;
   const window = {
     dayIdx,
@@ -2709,9 +2723,9 @@ function planMemoryEvent(memory, data = state.forecast, place = state.activePlac
   if (!stats) return null;
   const event = plannerShowEvent({
     title: memory.title,
-    place,
+    place: normalizedPlace,
     data,
-    alerts,
+    alerts: alerts || [],
     window,
     stats,
     label: memory.label
@@ -2721,6 +2735,10 @@ function planMemoryEvent(memory, data = state.forecast, place = state.activePlac
     event.badgeLabel = "Memory";
   }
   return event;
+}
+
+function planMemoryEvent(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
+  return planMemoryEventForData(memory, data, place, alerts);
 }
 
 function planMemoryEventsForPlace(data = state.forecast, place = state.activePlace, options = {}) {
@@ -3095,23 +3113,218 @@ function groupPlanMemoryItemsByPlace(items) {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function renderGlobalMemoryCard({ memory, event, isHere, isPast }) {
-  const where = placeLabel(memory.place);
-  const when = `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
-  const meta = event
-    ? planMemoryMeta(memory, event)
-    : `${when} · ${where}`;
-  const original = String(memory.original || "").trim();
+function planWatchPlaceKey(place) {
+  if (typeof continuityPlaceKey === "function") return continuityPlaceKey(place);
+  const normalized = normalizePlace(place || {});
+  return [
+    placeLabel(normalized).toLowerCase(),
+    Number(normalized.latitude || 0).toFixed(3),
+    Number(normalized.longitude || 0).toFixed(3)
+  ].join("|");
+}
+
+function planWatchSourceForMemory(memory, isHere = false) {
+  const place = normalizePlace(memory?.place || {});
+  const key = planWatchPlaceKey(place);
+  if (isHere && state.forecast) {
+    return {
+      key,
+      place: normalizePlace(state.activePlace || place),
+      data: state.forecast,
+      alerts: activeAlerts || [],
+      status: "ready"
+    };
+  }
+
+  const cached = typeof readForecastCache === "function"
+    ? readForecastCache(place, { maxAge: PLAN_WATCH_FORECAST_MAX_AGE_MS })
+    : null;
+  const data = planWatchState.data[key] || cached?.data || null;
+  return {
+    key,
+    place,
+    data,
+    alerts: planWatchState.alerts[key] || [],
+    status: data ? "ready" : planWatchState.loading[key] ? "loading" : planWatchState.errors[key] ? "error" : "idle",
+    error: planWatchState.errors[key] || ""
+  };
+}
+
+function planWatchCompactText(value, limit = 98) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function planWatchPendingItem(memory, source, isPast = false) {
+  const label = isPast
+    ? "Past"
+    : source.status === "error" ? "Refresh needed"
+      : source.status === "loading" ? "Checking forecast"
+        : "Waiting on forecast";
+  const reason = isPast
+    ? "Kept here until you forget it."
+    : source.status === "error" ? "Could not update this place yet."
+      : "The plan is remembered; forecast detail will appear when this place is checked.";
+  return {
+    memory,
+    source,
+    status: source.status,
+    tone: source.status === "error" ? "caution" : "pending",
+    label,
+    reason,
+    isPast,
+    event: null,
+    stats: null,
+    units: { temp: degree(state.unit === "fahrenheit" ? "F" : "C"), wind: state.unit === "fahrenheit" ? "mph" : "km/h" }
+  };
+}
+
+function planWatchLabel(item) {
+  if (!item) return "Waiting on forecast";
+  if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") return "Watch closely";
+  if (item.tone === "caution") return "Needs a margin";
+  return "Looks good";
+}
+
+function planWatchReason(item) {
+  if (!item) return "";
+  const reason = capitalize(String(item.primaryReason || item.reasons?.[0] || "weather looks manageable").replace(/[.!?]+$/, ""));
+  if (item.tone === "good") return reason;
+  return planWatchCompactText(`${reason}. ${item.advice || ""}`);
+}
+
+function planWatchBaselineStore() {
+  return planWatchState.baselineStore || state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+}
+
+function planWatchChangeForItem(item, source) {
+  if (
+    !item?.memory ||
+    !item?.stats ||
+    !source?.data ||
+    typeof continuityPlanSnapshot !== "function" ||
+    typeof continuityPlanKey !== "function" ||
+    typeof continuityPlanChange !== "function"
+  ) return null;
+
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit);
+  const previous = snapshot ? planWatchBaselineStore()?.plans?.[continuityPlanKey(snapshot)] : null;
+  return continuityPlanChange(snapshot, previous);
+}
+
+function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPast = false }) {
+  const source = planWatchSourceForMemory(memory, isHere);
+  if (!source.data) return planWatchPendingItem(memory, source, isPast);
+
+  const watchEvent = event || planMemoryEventForData(memory, source.data, source.place, source.alerts);
+  if (!watchEvent) return planWatchPendingItem(memory, source, isPast);
+
+  const now = forecastNowMs(source.data);
+  const past = isPast || watchEvent.endMs < now - 60 * 60 * 1000;
+  const item = planBriefingItemFromEvent(memory, watchEvent, source.data, source.place, null, source.alerts);
+  if (!item) return planWatchPendingItem(memory, source, past);
+
+  const change = planWatchChangeForItem(item, source);
+  return {
+    ...item,
+    source,
+    data: source.data,
+    place: source.place,
+    event: watchEvent,
+    status: "ready",
+    label: past ? "Past" : planWatchLabel(item),
+    reason: past ? "Kept here until you forget it." : planWatchReason(item),
+    change,
+    isPast: past
+  };
+}
+
+function planWatchWhenText(memory, data = state.forecast) {
+  return `${planMemoryDayLabel(memory, data)} · ${planMemoryTimeText(memory)}`;
+}
+
+function planWatchMetaText(memory, watch) {
+  return `${planWatchWhenText(memory, watch?.data || state.forecast)} · ${placeLabel(memory.place)}`;
+}
+
+function renderPlanWatchSignals(watch) {
+  if (!watch?.stats) return "";
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const rows = [
+    ["Rain", `${watch.stats.rainChance}%`],
+    ["Gusts", `${watch.stats.gustMax || watch.stats.windMax} ${watch.units.wind}`],
+    ["Temp", `${watch.stats.tempMin}${degree(tempUnit)}-${watch.stats.tempMax}${degree(tempUnit)}`]
+  ];
+  return `<div class="plan-watch-signals">` +
+    rows.map(([label, value]) => `<span><b>${escapeHtml(label)}</b><strong>${escapeHtml(value)}</strong></span>`).join("") +
+  `</div>`;
+}
+
+function renderPlanWatchStatus(watch) {
+  const tone = watch?.tone || "pending";
+  const change = watch?.change;
   return `
-    <article class="memory-card global-memory-card${isPast ? " is-past" : ""}${isHere ? " is-here" : ""}">
+    <div class="plan-watch-status is-${escapeHtml(tone)}">
+      <span class="plan-watch-pill">${escapeHtml(watch?.label || "Waiting on forecast")}</span>
+      <span class="plan-watch-reason">${escapeHtml(watch?.reason || "")}</span>
+      ${change ? `<span class="plan-watch-change">${escapeHtml(change.body)}</span>` : ""}
+    </div>
+    ${renderPlanWatchSignals(watch)}
+  `;
+}
+
+function planWatchAttentionRank(watch) {
+  if (!watch || watch.isPast) return 0;
+  if (watch.tone === "watch") return 4;
+  if (watch.tone === "caution") return 3;
+  if (watch.change) return 2;
+  if (watch.status === "loading") return 1;
+  return 0;
+}
+
+function renderPlanWatchOverview(watchItems) {
+  const upcoming = watchItems.filter((watch) => !watch.isPast);
+  if (!upcoming.length) return "";
+  const top = [...upcoming].sort((a, b) =>
+    planWatchAttentionRank(b) - planWatchAttentionRank(a) ||
+    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
+  )[0];
+  if (!top) return "";
+
+  const tone = top.tone || "pending";
+  const title = top.tone === "good" && !top.change
+    ? "Plans look manageable"
+    : `${planMemoryTitle(top.memory)}: ${top.label}`;
+  const body = top.tone === "good" && !top.change
+    ? `${upcoming.length === 1 ? "Your upcoming plan has" : "Upcoming plans have"} no major weather signal right now.`
+    : top.change?.body || top.reason;
+  return `
+    <section class="plan-watch-overview is-${escapeHtml(tone)}">
+      <span>Plan Watch</span>
+      <strong>${escapeHtml(title)}</strong>
+      <small>${escapeHtml(planWatchCompactText(body, 112))}</small>
+    </section>
+  `;
+}
+
+function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null }) {
+  const watched = watch || planWatchItemForMemoryItem({ memory, event, isHere, isPast });
+  const meta = planWatchMetaText(memory, watched);
+  const effectivePast = Boolean(isPast || watched?.isPast);
+  const kicker = effectivePast ? "Past" : isHere ? "Here" : "Away";
+  return `
+    <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""} is-${escapeHtml(watched?.tone || "pending")}">
       <button class="memory-main global-memory-main" type="button" data-memory-detail="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Inspect ${planMemoryTitle(memory)}`)}">
-        <span class="global-memory-kicker">${escapeHtml(isHere ? "Current place" : where)}</span>
+        <span class="global-memory-kicker">${escapeHtml(kicker)}</span>
         <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
         <span>${escapeHtml(meta)}</span>
-        ${original ? `<em>${escapeHtml(original)}</em>` : ""}
+        ${renderPlanWatchStatus(watched)}
       </button>
       <div class="memory-actions global-memory-actions">
-        ${isPast ? "" : `<button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>`}
+        ${effectivePast ? "" : `<button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>`}
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
@@ -3121,7 +3334,7 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast }) {
 
 function renderGlobalMemoryGroup(label, items, options = {}) {
   if (!items.length) return "";
-  const { sub = "" } = options;
+  const { sub = "", watchById = null } = options;
   return `
     <section class="global-memory-group">
       <div class="memory-group-title global-memory-group-title">
@@ -3129,7 +3342,7 @@ function renderGlobalMemoryGroup(label, items, options = {}) {
         ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
       </div>
       <div class="memory-list global-memory-list">
-        ${items.map(renderGlobalMemoryCard).join("")}
+        ${items.map((item) => renderGlobalMemoryCard({ ...item, watch: watchById?.get(item.memory.id) })).join("")}
       </div>
     </section>
   `;
@@ -3148,11 +3361,15 @@ function renderGlobalMemorySheet() {
   const elsewhere = upcoming.filter((item) => !item.isHere);
   const otherGroups = groupPlanMemoryItemsByPlace(elsewhere);
   const placeCount = new Set(state.planMemories.map(planMemoryPlaceKey)).size;
+  const watchItems = upcoming.map(planWatchItemForMemoryItem);
+  const watchById = new Map(watchItems.map((watch) => [watch.memory.id, watch]));
+  const attentionCount = watchItems.filter((watch) => ["watch", "caution"].includes(watch.tone) && !watch.isPast).length;
 
   els.memorySheetSummary.innerHTML = `
-    <div class="memory-summary-stat"><strong>${state.planMemories.length}</strong><span>remembered</span></div>
-    <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>upcoming</span></div>
+    <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>watching</span></div>
+    <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>need margin</span></div>
     <div class="memory-summary-stat"><strong>${placeCount}</strong><span>${placeCount === 1 ? "place" : "places"}</span></div>
+    ${renderPlanWatchOverview(watchItems)}
   `;
 
   if (!state.planMemories.length) {
@@ -3166,27 +3383,79 @@ function renderGlobalMemorySheet() {
     return;
   }
 
-  const otherHtml = otherGroups.map((group) =>
-    renderGlobalMemoryGroup(group.label, group.items, { sub: `${group.items.length} upcoming` })
-  ).join("");
-
   els.memorySheetBody.innerHTML =
     renderGlobalMemoryGroup("Current place", here, {
-      sub: state.activePlace ? placeLabel(state.activePlace) : ""
+      sub: state.activePlace ? placeLabel(state.activePlace) : "",
+      watchById
     }) +
-    otherHtml +
-    renderGlobalMemoryGroup("Past", past, { sub: "kept locally until you forget them" }) +
+    otherGroups.map((group) =>
+      renderGlobalMemoryGroup(group.label, group.items, { sub: `${group.items.length} upcoming`, watchById })
+    ).join("") +
+    renderGlobalMemoryGroup("Past", past, { sub: "kept locally until you forget them", watchById }) +
     `<button class="memory-new-btn" type="button" data-memory-new>Plan something new</button>`;
+}
+
+function planWatchFetchPlaces(items) {
+  const seen = new Set();
+  return items
+    .filter((item) => !item.isPast && !item.isHere)
+    .map(({ memory }) => {
+      const place = normalizePlace(memory.place);
+      const key = planWatchPlaceKey(place);
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return { key, place };
+    })
+    .filter(Boolean)
+    .slice(0, PLAN_WATCH_MAX_AUTO_FETCH_PLACES);
+}
+
+function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, state.activePlace, { includePast: false })) {
+  if (!items?.length || typeof fetchForecast !== "function") return;
+  if (!planWatchState.baselineStore) {
+    planWatchState.baselineStore = state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+  }
+
+  planWatchFetchPlaces(items).forEach(({ key, place }) => {
+    const now = Date.now();
+    if (planWatchState.loading[key]) return;
+    if (now - Number(planWatchState.lastFetchAt[key] || 0) < PLAN_WATCH_REFRESH_THROTTLE_MS) return;
+    const cached = typeof readForecastCache === "function"
+      ? readForecastCache(place, { maxAge: PLAN_WATCH_FORECAST_MAX_AGE_MS })
+      : null;
+    if (cached?.data) planWatchState.data[key] = cached.data;
+
+    planWatchState.loading[key] = true;
+    planWatchState.lastFetchAt[key] = now;
+    delete planWatchState.errors[key];
+    refreshOpenGlobalMemorySheet();
+
+    Promise.all([
+      fetchForecast(place),
+      safeFetchPlanAlerts(place).catch(() => [])
+    ]).then(([data, alerts]) => {
+      planWatchState.data[key] = data;
+      planWatchState.alerts[key] = alerts || [];
+      delete planWatchState.errors[key];
+    }).catch((err) => {
+      planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
+    }).finally(() => {
+      delete planWatchState.loading[key];
+      refreshOpenGlobalMemorySheet();
+    });
+  });
 }
 
 function openGlobalMemorySheet() {
   if (!els.memorySheet || !els.memoryBackdrop) return;
+  planWatchState.baselineStore = state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
   renderGlobalMemorySheet();
   els.memoryBackdrop.hidden = false;
   els.memorySheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   showSheet(els.memoryBackdrop, els.memorySheet);
   document.body.style.overflow = "hidden";
+  refreshPlanWatchForecasts();
 }
 
 function refreshOpenGlobalMemorySheet() {
