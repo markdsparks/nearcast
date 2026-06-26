@@ -2150,13 +2150,13 @@ h2 {
   --wind-flow-dir: 0deg;
   --wind-strength: 0;
   --wind-duration: 7.4s;
-  --wind-accent: rgba(100, 180, 255, 0.84);
-  --wind-accent-strong: rgba(239, 248, 255, 0.96);
-  --wind-accent-warm: rgba(122, 223, 192, 0.72);
+  --wind-accent: rgba(111, 180, 232, 0.72);
+  --wind-accent-strong: rgba(239, 248, 255, 0.92);
+  --wind-accent-warm: rgba(132, 210, 206, 0.54);
   position: relative;
   display: block;
-  width: min(132px, 100%);
-  height: 108px;
+  width: min(118px, 100%);
+  height: 106px;
   margin: 0 auto;
   color: var(--ink);
   isolation: isolate;
@@ -2169,13 +2169,12 @@ h2 {
   z-index: 0;
   border-radius: 999px;
   background:
-    radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.22), transparent 28%),
-    radial-gradient(circle at 68% 72%, rgba(122, 223, 192, 0.16), transparent 34%),
-    radial-gradient(circle, rgba(100, 180, 255, 0.14), rgba(100, 180, 255, 0.04) 56%, transparent 70%);
+    radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 0.14), transparent 34%),
+    radial-gradient(circle, rgba(104, 151, 184, 0.10), rgba(104, 151, 184, 0.03) 58%, transparent 72%);
   box-shadow:
-    inset 0 0 0 1px rgba(184, 207, 226, 0.18),
-    0 16px 34px rgba(18, 54, 92, 0.12);
-  opacity: calc(0.64 + (var(--wind-strength) * 0.22));
+    inset 0 0 0 1px rgba(184, 207, 226, 0.16),
+    0 12px 24px rgba(18, 54, 92, 0.08);
+  opacity: calc(0.48 + (var(--wind-strength) * 0.14));
 }
 
 .wind-ribbon::after {
@@ -2195,7 +2194,7 @@ h2 {
 
 .wind-ribbon-svg {
   position: absolute;
-  inset: 1px 0 0;
+  inset: 0;
   z-index: 2;
   width: 100%;
   height: 100%;
@@ -2221,16 +2220,16 @@ h2 {
 
 .wind-ribbon-halo {
   stroke: var(--wind-accent);
-  stroke-width: 24;
-  opacity: calc(0.16 + (var(--wind-strength) * 0.20));
-  filter: blur(2px);
+  stroke-width: 12;
+  opacity: calc(0.07 + (var(--wind-strength) * 0.10));
+  filter: blur(4px);
 }
 
 .wind-ribbon-track {
-  stroke: var(--wind-accent);
-  stroke-width: calc(5px + (var(--wind-strength) * 2.2px));
-  opacity: calc(0.22 + (var(--wind-strength) * 0.18));
-  filter: drop-shadow(0 5px 12px rgba(16, 44, 73, 0.18));
+  stroke: rgba(184, 207, 226, 0.62);
+  stroke-width: 1.25;
+  opacity: calc(0.28 + (var(--wind-strength) * 0.12));
+  stroke-dasharray: 2 6;
 }
 
 .wind-ribbon-stream {
@@ -2248,69 +2247,69 @@ h2 {
 
 .wind-ribbon-current {
   stroke: rgba(255, 255, 255, 0.96);
-  stroke-width: 2.8;
-  opacity: calc(0.34 + (var(--wind-strength) * 0.28));
-  stroke-dasharray: 13 130;
+  stroke-width: 1.45;
+  opacity: calc(0.26 + (var(--wind-strength) * 0.18));
+  stroke-dasharray: 8 86;
   animation: wind-ribbon-current var(--wind-duration) ease-in-out infinite;
-  filter: drop-shadow(0 2px 7px rgba(255, 255, 255, 0.20));
+  filter: drop-shadow(0 1px 5px rgba(255, 255, 255, 0.18));
 }
 
 .wind-ribbon-arrow-shaft {
   stroke: var(--wind-accent-strong);
-  filter: drop-shadow(0 3px 7px rgba(16, 44, 73, 0.18));
+  filter: drop-shadow(0 2px 5px rgba(16, 44, 73, 0.16));
 }
 
 .wind-ribbon-arrow-shaft.is-tail {
-  stroke-width: calc(3.4px + (var(--wind-strength) * 1.1px));
-  opacity: calc(0.42 + (var(--wind-strength) * 0.18));
+  stroke-width: calc(2.4px + (var(--wind-strength) * 0.8px));
+  opacity: calc(0.46 + (var(--wind-strength) * 0.16));
 }
 
 .wind-ribbon-arrow-shaft.is-middle {
-  stroke-width: calc(1.5px + (var(--wind-strength) * 0.5px));
-  opacity: calc(0.18 + (var(--wind-strength) * 0.12));
+  stroke-width: calc(1px + (var(--wind-strength) * 0.3px));
+  opacity: calc(0.10 + (var(--wind-strength) * 0.07));
 }
 
 .wind-ribbon-arrow-shaft.is-head {
-  stroke-width: calc(3.2px + (var(--wind-strength) * 1.2px));
-  opacity: calc(0.52 + (var(--wind-strength) * 0.20));
+  stroke-width: calc(2.8px + (var(--wind-strength) * 0.8px));
+  opacity: calc(0.62 + (var(--wind-strength) * 0.14));
 }
 
 .wind-ribbon-source {
-  fill: rgba(184, 207, 226, 0.78);
+  fill: rgba(184, 207, 226, 0.54);
   stroke: rgba(255, 255, 255, 0.82);
-  stroke-width: 1.5;
-  filter: drop-shadow(0 3px 6px rgba(16, 44, 73, 0.22));
+  stroke-width: 1.25;
+  filter: drop-shadow(0 2px 4px rgba(16, 44, 73, 0.16));
 }
 
 .wind-ribbon-arrow {
   fill: var(--wind-accent-strong);
   stroke: rgba(14, 26, 37, 0.18);
-  stroke-width: 0.8;
-  filter: drop-shadow(0 5px 8px rgba(16, 44, 73, 0.28));
+  stroke-width: 0.65;
+  filter: drop-shadow(0 3px 6px rgba(16, 44, 73, 0.24));
 }
 
 .wind-ribbon.is-calm .wind-ribbon-track {
-  stroke-width: 5.5;
-  opacity: 0.54;
+  stroke-width: 1.15;
+  opacity: 0.24;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-current,
 .wind-ribbon.is-calm .wind-ribbon-stream {
   animation-duration: 10s;
-  opacity: 0.22;
+  opacity: 0.14;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-tail,
 .wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-head {
-  opacity: 0.36;
+  opacity: 0.40;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-middle {
-  opacity: 0.12;
+  opacity: 0.08;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow {
-  opacity: 0.58;
+  opacity: 0.74;
 }
 
 .wind-ribbon.is-strong .wind-ribbon-arrow {

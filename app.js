@@ -1,4 +1,4 @@
-const VERSION = "2.6.108";
+const VERSION = "2.6.109";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4521,7 +4521,7 @@ function windFieldHtml(speed, unit, wind) {
   const strength = Math.max(0, Math.min(1, mph / 28));
   const direction = wind?.direction || null;
   const fieldStyle = [
-    direction ? `--wind-flow-dir:${direction.flowDegrees}deg` : "",
+    direction ? `--wind-flow-dir:${direction.towardDegrees}deg` : "",
     `--wind-strength:${strength.toFixed(2)}`,
     `--wind-duration:${Math.max(3.2, 8.4 - strength * 5).toFixed(1)}s`
   ].filter(Boolean).join(";");
@@ -4551,16 +4551,14 @@ function windRibbonSvg() {
   return `
     <svg class="wind-ribbon-svg" viewBox="0 0 132 108" aria-hidden="true" focusable="false">
       <g class="wind-ribbon-rotor">
-        <path class="wind-ribbon-halo" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
-        <path class="wind-ribbon-track" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
-        <path class="wind-ribbon-stream is-back" d="M22 74 C41 55 57 55 72 67 C86 78 102 73 115 58" />
-        <path class="wind-ribbon-stream is-front" d="M18 48 C34 36 50 37 62 49 C74 61 90 61 108 39" />
-        <path class="wind-ribbon-current" d="M17 61 C36 30 62 28 76 48 C89 66 103 66 116 43" />
-        <path class="wind-ribbon-arrow-shaft is-tail" d="M17 61 C29 43 45 34 61 39" />
-        <path class="wind-ribbon-arrow-shaft is-middle" d="M61 39 C69 40 74 44 77 49 C81 55 85 59 90 62" />
-        <path class="wind-ribbon-arrow-shaft is-head" d="M90 62 C101 65 110 55 116 43" />
-        <circle class="wind-ribbon-source" cx="17" cy="61" r="5.3" />
-        <path class="wind-ribbon-arrow" d="M116 43 101 36 105 53Z" />
+        <path class="wind-ribbon-halo" d="M66 91 L66 17" />
+        <path class="wind-ribbon-track" d="M66 91 L66 17" />
+        <path class="wind-ribbon-current" d="M66 88 L66 24" />
+        <path class="wind-ribbon-arrow-shaft is-tail" d="M66 90 L66 65" />
+        <path class="wind-ribbon-arrow-shaft is-middle" d="M66 63 L66 46" />
+        <path class="wind-ribbon-arrow-shaft is-head" d="M66 43 L66 26" />
+        <circle class="wind-ribbon-source" cx="66" cy="91" r="4.4" />
+        <path class="wind-ribbon-arrow" d="M66 14 L55 31 L77 31Z" />
       </g>
     </svg>
   `;
@@ -7372,7 +7370,7 @@ function buildWindGlanceDetail(data, windUnit) {
         ${glanceDetailFactHtml("Gusts now", gust !== null ? `${gust} ${windUnit}` : "--", "Short bursts")}
         ${glanceDetailFactHtml("Peak next 12h", peakGust !== null ? `${peakGust} ${windUnit}` : "--", peakIndex >= 0 ? `Near ${formatTime(data.hourly.time[peakIndex])}` : "")}
       </div>
-      ${glanceDetailNoteHtml("How to read it", "The ribbon and arrow show where the wind is blowing. The label names where the wind is coming from, which matches standard weather reports.")}
+      ${glanceDetailNoteHtml("How to read it", "The dot marks where the wind is coming from. The arrow points where it is blowing, while the label keeps the standard weather convention.")}
     `
   };
 }
