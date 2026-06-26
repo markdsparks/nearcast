@@ -3813,6 +3813,13 @@ h2 {
     linear-gradient(135deg, rgba(200, 85, 85, 0.12), rgba(91, 141, 220, 0.05)),
     var(--panel-soft);
 }
+.global-memory-card.is-focused {
+  scroll-margin: 92px 0;
+  border-color: rgba(53, 111, 183, 0.58);
+  box-shadow:
+    0 0 0 3px rgba(53, 111, 183, 0.18),
+    0 18px 42px rgba(27, 45, 62, 0.14);
+}
 .global-memory-card.is-past {
   border-color: rgba(129, 151, 172, 0.18);
   background: rgba(255, 255, 255, 0.03);

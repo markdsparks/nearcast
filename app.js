@@ -1,4 +1,4 @@
-const VERSION = "2.6.115";
+const VERSION = "2.6.116";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2444,7 +2444,7 @@ function bindEvents() {
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
-      showPlanMemory(planShow.dataset.planBriefShow);
+      openPlanWatchForMemory(planShow.dataset.planBriefShow);
       return;
     }
     const memoryOpen = event.target.closest("[data-memory-open]");
@@ -2468,7 +2468,7 @@ function bindEvents() {
     }
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
-      showPlanMemory(memoryShow.dataset.memoryShow);
+      openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }
     const memoryEdit = target.closest("[data-memory-edit]");
@@ -2478,7 +2478,7 @@ function bindEvents() {
     }
     const planShow = target.closest("[data-plan-brief-show]");
     if (planShow) {
-      showPlanMemory(planShow.dataset.planBriefShow);
+      openPlanWatchForMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
   bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
@@ -2520,7 +2520,7 @@ function bindEvents() {
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
       if (!signal) recordForYouSignal("memory-show");
-      showPlanMemory(memoryShow.dataset.memoryShow);
+      openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }
     const memoryEdit = target.closest("[data-memory-edit]");
@@ -2532,7 +2532,7 @@ function bindEvents() {
     const planShow = target.closest("[data-plan-brief-show]");
     if (planShow) {
       if (!signal) recordForYouSignal("memory-show");
-      showPlanMemory(planShow.dataset.planBriefShow);
+      openPlanWatchForMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
   bindTapDelegate(els.launchShortcuts, "[data-launch-jump]", (event, target) => {
@@ -2556,7 +2556,7 @@ function bindEvents() {
     }
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
-      showPlanMemory(memoryShow.dataset.memoryShow);
+      openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }
     const memoryForget = target.closest("[data-memory-forget]");
@@ -2601,12 +2601,18 @@ function bindEvents() {
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new]", (event, target) => {
     const memoryNew = target.closest("[data-memory-new]");
     if (memoryNew) {
       closeGlobalMemorySheet();
       openAISheet({ autoBrief: false });
       requestAnimationFrame(() => fillPlannerTemplate(""));
+      return;
+    }
+    const memoryHourly = target.closest("[data-memory-hourly]");
+    if (memoryHourly) {
+      closeGlobalMemorySheet();
+      showPlanMemory(memoryHourly.dataset.memoryHourly);
       return;
     }
     const memoryDetail = target.closest("[data-memory-detail]");
@@ -2616,8 +2622,7 @@ function bindEvents() {
     }
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
-      closeGlobalMemorySheet();
-      showPlanMemory(memoryShow.dataset.memoryShow);
+      openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }
     const memoryForget = target.closest("[data-memory-forget]");
@@ -2635,11 +2640,17 @@ function bindEvents() {
   bindTapAction(els.memoryEditBackdrop, closeMemoryEditSheet);
   bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
   bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
-  bindTapDelegate(els.memoryDetailBody, "[data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+    const memoryHourly = target.closest("[data-memory-hourly]");
+    if (memoryHourly) {
+      closeMemoryDetail();
+      showPlanMemory(memoryHourly.dataset.memoryHourly);
+      return;
+    }
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
       closeMemoryDetail();
-      showPlanMemory(memoryShow.dataset.memoryShow);
+      openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }
     const memoryForget = target.closest("[data-memory-forget]");
@@ -5929,7 +5940,7 @@ function forYouPlanContinuityCard(planSnapshots, store) {
         <span class="for-you-kicker"><span>Changed</span><em>Plan watch</em></span>
         <strong>${escapeHtml(change.title)}</strong>
         <span class="for-you-body">${escapeHtml(change.body)}</span>
-        <small>Show forecast</small>
+        <small>Check plan</small>
       </button>
     `
   };
@@ -6100,7 +6111,7 @@ function forYouPlanCard(item, label, data) {
       <span class="for-you-kicker"><span>${escapeHtml(label)}</span><em>${escapeHtml(when)}</em></span>
       <strong>${escapeHtml(title)}</strong>
       <span class="for-you-body">${escapeHtml(body)}</span>
-      <small>Show forecast</small>
+      <small>Check plan</small>
     </button>
   `;
 }
@@ -6118,7 +6129,7 @@ function forYouElsewherePlanCard(data, place) {
       <span class="for-you-kicker"><span>Next away</span><em>${escapeHtml(where)}</em></span>
       <strong>${escapeHtml(title)}</strong>
       <span class="for-you-body">${escapeHtml([day, time].filter(Boolean).join(" · "))}</span>
-      <small>Load trip forecast</small>
+      <small>Check plan</small>
     </button>
   `;
 }

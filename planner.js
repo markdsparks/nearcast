@@ -285,6 +285,7 @@ const planWatchState = {
   lastFetchAt: {},
   baselineStore: null
 };
+let planWatchFocusMemoryId = "";
 
 function briefingPanel(html, className = "") {
   const cls = ["briefing-panel", className].filter(Boolean).join(" ");
@@ -422,7 +423,7 @@ function renderNextPlanCard(item, data = state.forecast) {
       <p>${escapeHtml(lead)} <span>${escapeHtml(item.advice)}</span></p>
       <div class="next-plan-metrics">${planPulseMetricRows(item)}</div>
       <div class="next-plan-actions">
-        <button type="button" data-memory-show="${escapeHtml(item.memory.id)}">Show forecast</button>
+        <button type="button" data-memory-show="${escapeHtml(item.memory.id)}">Check plan</button>
         <button type="button" data-memory-edit="${escapeHtml(item.memory.id)}">Edit</button>
       </div>
     </article>
@@ -469,7 +470,7 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
     const title = planMemoryTitle(item.memory);
     const reason = item.reasons.slice(0, 2).join(" · ") || item.primaryReason;
     return `
-      <button class="plan-pulse-brief-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Open ${escapeHtml(title)} forecast">
+      <button class="plan-pulse-brief-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Check ${escapeHtml(title)} plan">
         <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(planPulseWhenText(item.memory, data))}</small></span>
         <em>${escapeHtml(reason)}</em>
       </button>
@@ -517,7 +518,7 @@ function renderPlanAwareBriefing() {
     const title = planMemoryTitle(item.memory);
     const reason = item.reasons.slice(0, 2).join(" · ");
     return `
-      <button class="plan-briefing-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Open ${escapeHtml(title)} forecast">
+      <button class="plan-briefing-item is-${item.tone}" type="button" data-plan-brief-show="${escapeHtml(item.memory.id)}" aria-label="Check ${escapeHtml(title)} plan">
         <span class="plan-briefing-item-head">
           <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(planMemoryTimeText(item.memory))}</small></span>
           <em>${escapeHtml(item.verdict)}</em>
@@ -2087,6 +2088,12 @@ async function showPlanMemory(id, options = {}) {
   }
 }
 
+function openPlanWatchForMemory(id, options = {}) {
+  const memory = state.planMemories.find((item) => item.id === id);
+  if (!memory) return;
+  openGlobalMemorySheet({ focusMemoryId: memory.id, source: options.source || "plan" });
+}
+
 function memoryIdsFromValue(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   return String(value || "")
@@ -2689,7 +2696,7 @@ function renderMemoryDetailPanel(memory) {
       </dl>
       <div class="memory-detail-actions">
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit memory</button>
-        <button type="button" data-memory-show="${escapeHtml(memory.id)}">Show forecast</button>
+        <button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
     </article>
@@ -3055,7 +3062,7 @@ function renderPlanMemoryGroup(label, items) {
             <span>${escapeHtml(planMemoryMeta(memory, event))}</span>
           </button>
           <div class="memory-actions">
-            <button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>
+            <button type="button" data-memory-show="${escapeHtml(memory.id)}">Check plan</button>
             <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
             <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
           </div>
@@ -3315,8 +3322,9 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
   const meta = planWatchMetaText(memory, watched);
   const effectivePast = Boolean(isPast || watched?.isPast);
   const kicker = effectivePast ? "Past" : isHere ? "Here" : "Away";
+  const focused = memory.id === planWatchFocusMemoryId;
   return `
-    <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""} is-${escapeHtml(watched?.tone || "pending")}">
+    <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""}${focused ? " is-focused" : ""} is-${escapeHtml(watched?.tone || "pending")}" data-memory-card="${escapeHtml(memory.id)}">
       <button class="memory-main global-memory-main" type="button" data-memory-detail="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Inspect ${planMemoryTitle(memory)}`)}">
         <span class="global-memory-kicker">${escapeHtml(kicker)}</span>
         <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
@@ -3324,7 +3332,7 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
         ${renderPlanWatchStatus(watched)}
       </button>
       <div class="memory-actions global-memory-actions">
-        ${effectivePast ? "" : `<button type="button" data-memory-show="${escapeHtml(memory.id)}">${isHere ? "Show" : "Load"}</button>`}
+        ${effectivePast ? "" : `<button type="button" data-memory-hourly="${escapeHtml(memory.id)}">${isHere ? "Hourly detail" : "Load hourly"}</button>`}
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
@@ -3395,6 +3403,22 @@ function renderGlobalMemorySheet() {
     `<button class="memory-new-btn" type="button" data-memory-new>Plan something new</button>`;
 }
 
+function scrollFocusedPlanWatchCard() {
+  if (!planWatchFocusMemoryId || !els.memorySheetBody) return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const card = [...els.memorySheetBody.querySelectorAll("[data-memory-card]")]
+        .find((item) => item.dataset.memoryCard === planWatchFocusMemoryId);
+      if (!card?.scrollIntoView) return;
+      try {
+        card.scrollIntoView({ block: "center", behavior: "smooth" });
+      } catch {
+        card.scrollIntoView();
+      }
+    });
+  });
+}
+
 function planWatchFetchPlaces(items) {
   const seen = new Set();
   return items
@@ -3446,8 +3470,14 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
   });
 }
 
-function openGlobalMemorySheet() {
+function openGlobalMemorySheet(options = {}) {
   if (!els.memorySheet || !els.memoryBackdrop) return;
+  const focusMemoryId = String(options.focusMemoryId || "").trim();
+  if (focusMemoryId && state.planMemories.some((memory) => memory.id === focusMemoryId)) {
+    planWatchFocusMemoryId = focusMemoryId;
+  } else if (!focusMemoryId) {
+    planWatchFocusMemoryId = "";
+  }
   planWatchState.baselineStore = state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
   renderGlobalMemorySheet();
   els.memoryBackdrop.hidden = false;
@@ -3455,6 +3485,7 @@ function openGlobalMemorySheet() {
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   showSheet(els.memoryBackdrop, els.memorySheet);
   document.body.style.overflow = "hidden";
+  scrollFocusedPlanWatchCard();
   refreshPlanWatchForecasts();
 }
 
