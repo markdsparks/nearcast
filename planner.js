@@ -1146,7 +1146,7 @@ async function continuePlannerClarificationWithText(text) {
       original: plannerEditingMemoryDraft || pending.plan?.original || text
     } : {});
   } catch {
-    finishAskResponse(row, "I could not use that detail. Try something like \"6 PM\" or \"Fillmore, IL.\"");
+    finishAskResponse(row, `I could not use that detail. Try something like "${formatClock(18, 0, false, false)}" or "Fillmore, IL."`);
   }
 }
 
@@ -1546,28 +1546,28 @@ function planDurationHours(activityKey) {
 function planPeriodWindow(period, activityKey) {
   if (period === "morning") {
     const start = activityKey === "golf" || activityKey === "run" ? 7 : 8;
-    return { startHour: start, endHour: 12, period: "morning", assumption: `I used ${formatHourFloat(start)}-noon for morning.` };
+    return { startHour: start, endHour: 12, period: "morning", assumption: `I used ${formatHourRangeText(start, 12)} for morning.` };
   }
   if (period === "afternoon") {
-    return { startHour: 12, endHour: 18, period: "afternoon", assumption: "I used noon-6 PM for afternoon." };
+    return { startHour: 12, endHour: 18, period: "afternoon", assumption: `I used ${formatHourRangeText(12, 18)} for afternoon.` };
   }
   if (period === "evening" || period === "night") {
     if (activityKey === "dinner" || activityKey === "grill" || activityKey === "picnic") {
-      return { startHour: 17, endHour: 21, period: "evening", assumption: "I used 5-9 PM for dinner hours." };
+      return { startHour: 17, endHour: 21, period: "evening", assumption: `I used ${formatHourRangeText(17, 21)} for dinner hours.` };
     }
     if (activityKey === "sports") {
-      return { startHour: 18, endHour: 22, period: "evening", assumption: "I used 6-10 PM for game time." };
+      return { startHour: 18, endHour: 22, period: "evening", assumption: `I used ${formatHourRangeText(18, 22)} for game time.` };
     }
-    return { startHour: 18, endHour: 22, period: "evening", assumption: "I used 6-10 PM for evening." };
+    return { startHour: 18, endHour: 22, period: "evening", assumption: `I used ${formatHourRangeText(18, 22)} for evening.` };
   }
   if (period === "overnight") {
-    return { startHour: 0, endHour: 7, period: "overnight", assumption: "I used midnight-7 AM for overnight." };
+    return { startHour: 0, endHour: 7, period: "overnight", assumption: `I used ${formatHourRangeText(0, 7)} for overnight.` };
   }
   return { startHour: 8, endHour: 20, period: "day", assumption: "I used daytime hours." };
 }
 
 function defaultActivityWindow(activityKey) {
-  if (activityKey === "dinner" || activityKey === "grill") return { startHour: 17, endHour: 21, period: "evening", assumption: "I used 5-9 PM for dinner hours." };
+  if (activityKey === "dinner" || activityKey === "grill") return { startHour: 17, endHour: 21, period: "evening", assumption: `I used ${formatHourRangeText(17, 21)} for dinner hours.` };
   return null;
 }
 
@@ -2685,12 +2685,12 @@ function renderMemoryDetailPanel(memory) {
 
 function memoryTimestamp(value) {
   const date = new Date(Number(value) || Date.now());
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions({
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(date);
+  })).format(date);
 }
 
 function planMemoryEvent(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
@@ -3645,12 +3645,18 @@ function planAdvice(stats, alert, score) {
 }
 
 function formatHourFloat(hour) {
-  if (hour === 12) return "noon";
-  if (hour === 24) return "midnight";
+  if (!prefersTwentyFourHourClock()) {
+    if (hour === 12) return "noon";
+    if (hour === 24) return "midnight";
+  }
   const total = Math.round(hour * 60);
   const h = Math.floor(total / 60) % 24;
   const m = total % 60;
   return formatClock(h, m, false, m !== 0);
+}
+
+function formatHourRangeText(startHour, endHour) {
+  return `${formatHourFloat(startHour)}-${formatHourFloat(endHour)}`;
 }
 
 function askText(q) {

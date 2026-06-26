@@ -1,4 +1,4 @@
-const VERSION = "2.6.111";
+const VERSION = "2.6.112";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7824,27 +7824,49 @@ function compactClockParts(parts) {
   }).join("").replace(/\s+/g, "");
 }
 
+function userClockPreference() {
+  try {
+    const options = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions();
+    const cycle = options.hourCycle;
+    if (["h11", "h12", "h23", "h24"].includes(cycle)) return { hourCycle: cycle };
+    if (typeof options.hour12 === "boolean") return { hour12: options.hour12 };
+  } catch (_) {
+    return {};
+  }
+  return {};
+}
+
+function prefersTwentyFourHourClock() {
+  const preference = userClockPreference();
+  return preference.hourCycle === "h23" || preference.hourCycle === "h24" || preference.hour12 === false;
+}
+
+function timeFormatOptions(options = {}) {
+  const preference = userClockPreference();
+  return { ...options, ...preference };
+}
+
 function formatClock(hour, minute = 0, compact = false, showMinutes = true) {
   const date = clockDateFromParts(hour, minute);
   if (!date) return "--";
-  const formatter = new Intl.DateTimeFormat(undefined, {
+  const formatter = new Intl.DateTimeFormat(undefined, timeFormatOptions({
     hour: "numeric",
     ...(showMinutes ? { minute: "2-digit" } : {}),
     timeZone: "UTC"
-  });
+  }));
   return compact ? compactClockParts(formatter.formatToParts(date)) : formatter.format(date);
 }
 
 function formatTime(value) {
   const parts = localDateTimeParts(value);
   if (parts) return formatClock(parts.hour, parts.minute);
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric", minute: "2-digit" })).format(new Date(value));
 }
 
 function formatHour(value) {
   const parts = localDateTimeParts(value);
   if (parts) return formatClock(parts.hour, 0, false, false);
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric" })).format(new Date(value));
 }
 
 function formatDay(value, index) {
@@ -8050,9 +8072,9 @@ function renderAlerts(alerts) {
 function formatAlertTime(iso) {
   const d = new Date(iso);
   const sameDay = d.toDateString() === new Date().toDateString();
-  return new Intl.DateTimeFormat(undefined, sameDay
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions(sameDay
     ? { hour: "numeric", minute: "2-digit" }
-    : { weekday: "short", hour: "numeric", minute: "2-digit" }).format(d);
+    : { weekday: "short", hour: "numeric", minute: "2-digit" })).format(d);
 }
 
 function alertWindow(a) {
