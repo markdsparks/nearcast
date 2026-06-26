@@ -1,8 +1,9 @@
-const VERSION = "2.6.112";
+const VERSION = "2.6.113";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
+const TIME_FORMAT_KEY = "nearcast-time-format";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
@@ -73,6 +74,7 @@ const featureFlags = {
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
   theme: localStorage.getItem("weather-theme") || "auto",
+  timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -439,6 +441,8 @@ const els = {
   welcomeLocate: document.querySelector("#welcomeLocate"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
+  timeFormatButtons: document.querySelectorAll("[data-time-format]"),
+  timeFormatMeta: document.querySelector("#timeFormatMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2210,6 +2214,7 @@ function init() {
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
+  updateTimeFormatButtons();
   bindEvents();
   initMetricTipListeners();
   initDaylightScrubListeners();
@@ -2433,6 +2438,9 @@ function bindEvents() {
   });
 
   bindTapAction(els.themeToggle, toggleTheme);
+  els.timeFormatButtons.forEach((button) => {
+    bindTapAction(button, () => setTimeFormatPreference(button.dataset.timeFormat));
+  });
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
@@ -2973,6 +2981,44 @@ function daysFromForecastToday(value, data = state.forecast) {
 function updateUnitButton() {
   els.unitToggle.textContent = state.unit === "fahrenheit" ? "F" : "C";
   els.unitToggle.title = state.unit === "fahrenheit" ? "Switch to Celsius" : "Switch to Fahrenheit";
+}
+
+function sanitizeTimeFormatPreference(value) {
+  return ["auto", "12", "24"].includes(value) ? value : "auto";
+}
+
+function timeFormatMetaText() {
+  if (state.timeFormat === "12") return "Always show 6:00 PM";
+  if (state.timeFormat === "24") return "Always show 18:00";
+  return prefersTwentyFourHourClock() ? "Auto: showing 24-hour" : "Auto: showing 12-hour";
+}
+
+function updateTimeFormatButtons() {
+  els.timeFormatButtons.forEach((button) => {
+    const active = button.dataset.timeFormat === state.timeFormat;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (els.timeFormatMeta) els.timeFormatMeta.textContent = timeFormatMetaText();
+}
+
+function setTimeFormatPreference(value) {
+  const next = sanitizeTimeFormatPreference(value);
+  if (next === state.timeFormat) return;
+  state.timeFormat = next;
+  localStorage.setItem(TIME_FORMAT_KEY, next);
+  updateTimeFormatButtons();
+  refreshTimeFormattedSurfaces();
+}
+
+function refreshTimeFormattedSurfaces() {
+  if (state.forecast && state.activePlace) renderForecast(state.forecast, state.activePlace, { refreshMap: false });
+  if (typeof refreshOpenDayDetailMemorySurfaces === "function") refreshOpenDayDetailMemorySurfaces();
+  if (typeof renderForecastMemorySurfaces === "function") renderForecastMemorySurfaces();
+  if (typeof showFrame === "function" && mapState.frames?.length) showFrame(mapState.frameIndex);
+  if (typeof renderTimelineTimeBubble === "function") renderTimelineTimeBubble();
+  if (memoryEditState && typeof renderMemoryEditSheet === "function") renderMemoryEditSheet();
+  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
 }
 
 async function searchPlaces(query, { quiet = false } = {}) {
@@ -7825,6 +7871,8 @@ function compactClockParts(parts) {
 }
 
 function userClockPreference() {
+  if (state.timeFormat === "12") return { hourCycle: "h12" };
+  if (state.timeFormat === "24") return { hourCycle: "h23" };
   try {
     const options = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions();
     const cycle = options.hourCycle;

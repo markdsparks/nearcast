@@ -997,6 +997,79 @@ h2 {
   width: 100%;
 }
 
+.menu-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-glass-md);
+  border-radius: 8px;
+  background: var(--glass-light);
+}
+
+.menu-setting-copy {
+  min-width: 0;
+}
+
+.menu-setting-copy strong,
+.menu-setting-copy span {
+  display: block;
+}
+
+.menu-setting-copy strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.menu-setting-copy span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(42px, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-glass-md);
+  border-radius: 8px;
+  background: rgba(24, 34, 48, 0.08);
+}
+
+.segmented-control button {
+  min-width: 42px;
+  height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.segmented-control button.active,
+.segmented-control button[aria-pressed="true"] {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  box-shadow: 0 6px 16px rgba(18, 34, 48, 0.16);
+}
+
+.segmented-control button:focus-visible {
+  outline: 3px solid rgba(74, 127, 205, 0.34);
+  outline-offset: 2px;
+}
+
 .icon-button {
   width: 42px;
   height: 42px;
