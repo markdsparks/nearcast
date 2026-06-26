@@ -1,4 +1,4 @@
-const VERSION = "2.6.100";
+const VERSION = "2.6.101";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -196,7 +196,7 @@ const RADAR_PRECIP_CENTER_RADIUS_PX = 4;
 const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;
 const RADAR_PRECIP_MAX_FRAME_AGE_MS = 14 * 60 * 1000;
 const RADAR_PRECIP_CACHE_MS = 3 * 60 * 1000;
-const RADAR_PRECIP_CACHE_VERSION = "v1";
+const RADAR_PRECIP_CACHE_VERSION = "v2";
 const STORM_IMPACT_SAMPLE_ZOOM = 7;
 const STORM_IMPACT_SAMPLE_RADIUS_PX = 46;
 const STORM_IMPACT_CELL_SCAN_RADIUS_PX = 180;

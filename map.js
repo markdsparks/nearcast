@@ -692,8 +692,22 @@ function radarPixelPrecipScore(r, g, b, a) {
 
 function radarSampleIntensity(stats) {
   if (!stats) return "unknown";
-  if (stats.maxScore >= 1.55 || stats.density >= 0.2) return "heavy";
-  if (stats.maxScore >= 1.25 || stats.density >= 0.08) return "moderate";
+  const density = Number(stats.density) || 0;
+  const hitScore = stats.hits ? (Number(stats.score) || 0) / stats.hits : 0;
+  const areaScore = stats.count ? (Number(stats.score) || 0) / stats.count : 0;
+
+  // A single saturated radar pixel should prove "rain here", not "heavy rain".
+  // Use coverage plus average signal so sparse tile artifacts stay light.
+  if (
+    density >= 0.28 ||
+    areaScore >= 0.22 ||
+    (density >= 0.18 && hitScore >= 1.35)
+  ) return "heavy";
+  if (
+    density >= 0.10 ||
+    areaScore >= 0.075 ||
+    (density >= 0.05 && hitScore >= 1.18)
+  ) return "moderate";
   if (stats.hits > 0) return "light";
   return "none";
 }
