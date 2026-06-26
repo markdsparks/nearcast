@@ -2268,8 +2268,8 @@ h2 {
 }
 
 .wind-ribbon-arrow-shaft.is-middle {
-  stroke-width: calc(1px + (var(--wind-strength) * 0.3px));
-  opacity: calc(0.10 + (var(--wind-strength) * 0.07));
+  stroke-width: calc(0.8px + (var(--wind-strength) * 0.2px));
+  opacity: calc(0.06 + (var(--wind-strength) * 0.05));
 }
 
 .wind-ribbon-arrow-shaft.is-head {
@@ -2308,7 +2308,7 @@ h2 {
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow-shaft.is-middle {
-  opacity: 0.08;
+  opacity: 0.04;
 }
 
 .wind-ribbon.is-calm .wind-ribbon-arrow {
