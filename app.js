@@ -1,4 +1,4 @@
-const VERSION = "2.6.102";
+const VERSION = "2.6.103";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -196,7 +196,7 @@ const RADAR_PRECIP_CENTER_RADIUS_PX = 4;
 const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;
 const RADAR_PRECIP_MAX_FRAME_AGE_MS = 14 * 60 * 1000;
 const RADAR_PRECIP_CACHE_MS = 3 * 60 * 1000;
-const RADAR_PRECIP_CACHE_VERSION = "v2";
+const RADAR_PRECIP_CACHE_VERSION = "v3";
 const STORM_IMPACT_SAMPLE_ZOOM = 7;
 const STORM_IMPACT_SAMPLE_RADIUS_PX = 46;
 const STORM_IMPACT_CELL_SCAN_RADIUS_PX = 180;
@@ -1109,10 +1109,12 @@ function thunderBadgeHtml(label = "Thunder possible") {
 }
 
 // "Now" has no probability, so gate by whether precipitation is actually falling.
-function effectiveCurrentCode(current) {
+function effectiveCurrentCode(current, data = state.forecast) {
   const code = current.weather_code;
+  const rate = precipRateFromAmount(current.precipitation, current.interval || 3600);
+  const measuredCode = precipCodeFromRate(rate, code, data);
+  if (measuredCode) return measuredCode;
   if (code == null || code < 51) return code;
-  if ((current.precipitation || 0) > 0) return code;
   return skyCodeFromCloud(current.cloud_cover);
 }
 
@@ -1175,16 +1177,43 @@ function applyRadarPrecipSignal(signal, data = state.forecast) {
 
   if (radar.phase !== "active") return signal;
 
-  const radarCode = radarPrecipCode(data, radar);
+  const radarCode = radarObservedPrecipCode(data, radar);
   signal.isWetNow = true;
   signal.rate = Math.max(signal.rate || 0, precipRateThresholds(data).measurable);
   signal.code = strongerPrecipCode(signal.code, radarCode);
   signal.isSnow = signal.isSnow || isSnowCode(radarCode);
   signal.chance = Math.max(signal.chance || 0, 100);
   signal.label = weatherCodes[signal.code] || (signal.isSnow ? "Snow" : "Rain");
-  signal.detail = radar.detail || `${signal.label} on radar over this place`;
+  signal.detail = radarObservedPrecipDetail(radarCode, "over this place");
   signal.source = "radar-current";
   return signal;
+}
+
+function radarObservedPrecipCode(data = state.forecast, radar = currentRadarPrecipSignal()) {
+  const code = radarPrecipCode(data, radar);
+  if (isThunderCode(code)) return code;
+  if (isSnowCode(code)) return 71;
+  return 61;
+}
+
+function radarObservedPrecipDetail(code, where = "over this place") {
+  if (isThunderCode(code)) return `Storms observed on radar ${where}`;
+  if (isSnowCode(code)) return `Snow observed on radar ${where}`;
+  return `Rain observed on radar ${where}`;
+}
+
+function observedPrecipSummaryLabel(code) {
+  if (isThunderCode(code)) return "Storms observed";
+  if (isSnowCode(code)) return "Snow observed";
+  return "Rain observed";
+}
+
+function activePrecipSummaryValue(precip, nowPrecip = null) {
+  const code = precip?.textCode ?? precip?.visualCode ?? nowPrecip?.code ?? 61;
+  const source = precip?.source || nowPrecip?.source || "";
+  if (source === "radar-current") return observedPrecipSummaryLabel(code);
+  const label = precip?.label || weatherCodes[code] || (isSnowCode(code) ? "Snow" : "Rain");
+  return `${label} now`;
 }
 
 function radarPrecipCode(data = state.forecast, radar = currentRadarPrecipSignal()) {
@@ -1584,11 +1613,7 @@ function buildWeatherTruth(data = state.forecast) {
       baseCode,
       hourlyIndex: currentIndex
     });
-    const currentRate = precipRateFromAmount(current.precipitation, current.interval || 3600);
-    const currentCode = effectiveWeatherCode(current.weather_code, null, current.cloud_cover, current.precipitation, {
-      data,
-      precipRate: currentRate
-    });
+    const currentCode = effectiveCurrentCode(current, data);
     const measuredCode = nowPrecip.isWetNow ? strongerPrecipCode(currentCode, nowPrecip.code) : null;
     // Keep current-condition icons separate from the immersive scene: "rain soon"
     // can tint the sky, but it must not become the Now icon.
@@ -1609,7 +1634,7 @@ function buildWeatherTruth(data = state.forecast) {
       stormPotential: hasThunderPotential(rawCode, pop, nowCode, precip, data)
     };
   } else {
-    const fallbackCode = effectiveCurrentCode(current);
+    const fallbackCode = effectiveCurrentCode(current, data);
     const precipTruth = buildPrecipTruth(data, nowPrecip, {
       rawCode: current.weather_code,
       pop: null,
@@ -6196,7 +6221,7 @@ function launchSummaryItems(data, tempUnit, windUnit, truth = weatherTruth(data)
     baseCode: truth.display?.code
   });
   const activePrecip = precip.phase === "active";
-  const nowValue = activePrecip ? `${precip.label} now` : `${comfort} - feels ${feels}${degree(tempUnit)}`;
+  const nowValue = activePrecip ? activePrecipSummaryValue(precip, nowPrecip) : `${comfort} - feels ${feels}${degree(tempUnit)}`;
   const now = {
     label: "Now",
     value: nowValue,
@@ -7321,7 +7346,7 @@ function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(da
   const precipUnit = data.current_units?.precipitation || data.hourly_units?.precipitation || (state.unit === "fahrenheit" ? "in" : "mm");
   const amount = Math.max(Number(data.current?.precipitation || 0), Number(truth.nowPrecip?.amount || 0));
   const nowLabel = precip.phase === "active"
-    ? `${precip.label || truth.label || "Rain"} now`
+    ? activePrecipSummaryValue(precip, truth.nowPrecip)
     : precip.phase === "nearby" ? `${precip.label || "Rain"} nearby`
       : precip.phase === "imminent" ? `${precip.label || "Rain"} soon`
         : amount > 0 ? `${truth.label || "Precipitation"} now` : "Dry here";
