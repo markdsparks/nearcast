@@ -1272,12 +1272,13 @@ h2 {
 }
 
 .launch-stage {
+  --launch-top-clearance: clamp(72px, 11vh, 120px);
   position: relative;
   display: grid;
   justify-items: center;
   align-content: center;
   min-height: clamp(360px, 58svh, 620px);
-  padding: clamp(72px, 11vh, 120px) 12px clamp(40px, 7vh, 82px);
+  padding: var(--launch-top-clearance) 12px clamp(40px, 7vh, 82px);
   margin-bottom: 8px;
   text-align: center;
 }
@@ -1316,8 +1317,10 @@ h2 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   min-height: 36px;
   max-width: min(520px, 88vw);
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1330,6 +1333,14 @@ h2 {
   text-shadow: 0 1px 14px rgba(255, 255, 255, 0.36);
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+#locationName {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .launch-location:not(:disabled) {
@@ -6458,8 +6469,17 @@ body.map-immersive-active #mapLegend {
   }
 
   .launch-stage {
-    min-height: clamp(330px, 54svh, 520px);
-    padding: 68px 8px 34px;
+    --launch-top-clearance: clamp(96px, calc(env(safe-area-inset-top, 0px) + 72px), 132px);
+    min-height: clamp(360px, 58svh, 560px);
+    padding: var(--launch-top-clearance) 8px 38px;
+  }
+
+  .launch-place-row {
+    max-width: min(620px, calc(100vw - 52px));
+  }
+
+  .launch-location {
+    max-width: 100%;
   }
 
   .launch-current {
