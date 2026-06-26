@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.6.101">
-    <link rel="manifest" href="manifest.json?v=2.6.101">
+    <link rel="stylesheet" href="styles.css?v=2.6.102">
+    <link rel="manifest" href="manifest.json?v=2.6.102">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.101">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.101">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.102">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.102">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -348,6 +348,21 @@
 
     <div class="metric-tip" id="metricTip" hidden></div>
 
+    <div class="sheet-backdrop" id="glanceDetailBackdrop" hidden></div>
+    <aside class="day-sheet glance-detail-sheet" id="glanceDetailSheet" hidden aria-label="Weather detail" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="glanceDetailClose" type="button" aria-label="Close weather detail">✕</button>
+      <header class="sheet-head glance-detail-head">
+        <span class="sheet-icon glance-detail-icon" id="glanceDetailIcon" aria-hidden="true"></span>
+        <div class="sheet-head-text">
+          <h2 id="glanceDetailTitle">Weather detail</h2>
+          <p class="sheet-context" id="glanceDetailContext"></p>
+        </div>
+      </header>
+      <p class="sheet-summary" id="glanceDetailSummary"></p>
+      <div class="glance-detail-body" id="glanceDetailBody"></div>
+    </aside>
+
     <div class="sheet-backdrop" id="placeBackdrop" hidden></div>
     <aside class="day-sheet place-sheet" id="placeSheet" hidden aria-label="Saved places" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
@@ -498,11 +513,11 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="planner.js?v=2.6.101"></script>
-    <script src="app.js?v=2.6.101"></script>
-    <script src="map.js?v=2.6.101"></script>
-    <script src="sky.js?v=2.6.101"></script>
-    <script src="daygraph.js?v=2.6.101"></script>
-    <script src="boot.js?v=2.6.101"></script>
+    <script src="planner.js?v=2.6.102"></script>
+    <script src="app.js?v=2.6.102"></script>
+    <script src="map.js?v=2.6.102"></script>
+    <script src="sky.js?v=2.6.102"></script>
+    <script src="daygraph.js?v=2.6.102"></script>
+    <script src="boot.js?v=2.6.102"></script>
   </body>
 </html>

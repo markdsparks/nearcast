@@ -1,4 +1,4 @@
-const VERSION = "2.6.101";
+const VERSION = "2.6.102";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -518,6 +518,14 @@ const els = {
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
+  glanceDetailBackdrop: document.querySelector("#glanceDetailBackdrop"),
+  glanceDetailSheet: document.querySelector("#glanceDetailSheet"),
+  glanceDetailClose: document.querySelector("#glanceDetailClose"),
+  glanceDetailIcon: document.querySelector("#glanceDetailIcon"),
+  glanceDetailTitle: document.querySelector("#glanceDetailTitle"),
+  glanceDetailContext: document.querySelector("#glanceDetailContext"),
+  glanceDetailSummary: document.querySelector("#glanceDetailSummary"),
+  glanceDetailBody: document.querySelector("#glanceDetailBody"),
   placeSaveButton: document.querySelector("#placeSaveButton"),
   placeWelcomeButton: document.querySelector("#placeWelcomeButton"),
   weatherMap: document.querySelector("#weatherMap"),
@@ -2626,6 +2634,8 @@ function bindEvents() {
   bindTapAction(els.placeBackdrop, closePlaceSheet);
   bindTapAction(document.getElementById("placeSheetClose"), closePlaceSheet);
   bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
+  bindTapAction(els.glanceDetailClose, closeGlanceDetail);
+  bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
   bindTapAction(document.getElementById("searchLocate"), () => {
@@ -2728,6 +2738,9 @@ function bindEvents() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.placeSheet.hidden) closePlaceSheet();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.glanceDetailSheet.hidden) closeGlanceDetail();
   });
 
   // Severe weather alerts
@@ -7217,11 +7230,283 @@ function removeSavedPlace(id) {
   updateMode();
 }
 
+function openGlanceDetail(kind) {
+  const data = state.forecast;
+  if (!data || !els.glanceDetailSheet || !els.glanceDetailBackdrop) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const detail = buildGlanceDetail(kind, data, tempUnit, windUnit, weatherTruth(data));
+  if (!detail) return;
+
+  hideMetricTip();
+  els.glanceDetailSheet.className = `day-sheet glance-detail-sheet is-${detail.kind}`;
+  if (els.glanceDetailIcon) els.glanceDetailIcon.innerHTML = detail.icon;
+  if (els.glanceDetailTitle) els.glanceDetailTitle.textContent = detail.title;
+  if (els.glanceDetailContext) {
+    els.glanceDetailContext.textContent = detail.context || "";
+    els.glanceDetailContext.hidden = !detail.context;
+  }
+  if (els.glanceDetailSummary) els.glanceDetailSummary.textContent = detail.summary || "";
+  if (els.glanceDetailBody) els.glanceDetailBody.innerHTML = detail.body || "";
+
+  els.glanceDetailBackdrop.hidden = false;
+  els.glanceDetailSheet.hidden = false;
+  showSheet(els.glanceDetailBackdrop, els.glanceDetailSheet);
+  document.body.style.overflow = "hidden";
+}
+
+function closeGlanceDetail() {
+  if (!els.glanceDetailSheet || !els.glanceDetailBackdrop || els.glanceDetailSheet.hidden) return;
+  els.glanceDetailBackdrop.classList.remove("show");
+  els.glanceDetailSheet.classList.remove("show");
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
+  setTimeout(() => {
+    els.glanceDetailBackdrop.hidden = true;
+    els.glanceDetailSheet.hidden = true;
+  }, 260);
+}
+
+function buildGlanceDetail(kind, data, tempUnit, windUnit, truth = weatherTruth(data)) {
+  if (kind === "feels") return buildFeelsGlanceDetail(data, tempUnit, windUnit);
+  if (kind === "rain") return buildRainGlanceDetail(data, tempUnit, windUnit, truth);
+  if (kind === "wind") return buildWindGlanceDetail(data, windUnit);
+  if (kind === "air") return buildAirGlanceDetail(data);
+  return null;
+}
+
+function buildFeelsGlanceDetail(data, tempUnit, windUnit) {
+  const current = data.current || {};
+  const feels = Math.round(current.apparent_temperature);
+  const actual = Math.round(current.temperature_2m);
+  const diff = feels - actual;
+  const humidity = current.relative_humidity_2m;
+  const windSpeed = Math.round(current.wind_speed_10m || 0);
+  const humidityNote = Number.isFinite(humidity) ? humidityContext(humidity) : "";
+  const wind = windGlance(windSpeed, windUnit, current.wind_direction_10m);
+  const context = [
+    `Air ${actual}${degree(tempUnit)}`,
+    Number.isFinite(humidity) ? `${humidity}% humidity` : "",
+    `${windSpeed} ${windUnit} wind`
+  ].filter(Boolean).join(" · ");
+
+  return {
+    kind: "feels",
+    icon: glanceDetailIconHtml("feels"),
+    title: `Feels like ${feels}${degree(tempUnit)}`,
+    context,
+    summary: metricTipFeels(diff, feels, tempUnit),
+    body: `
+      <section class="glance-detail-hero is-feels">
+        <b>${escapeHtml(`${feels}${degree(tempUnit)}`)}</b>
+        <span>${escapeHtml(feelsContext(diff, tempUnit))}</span>
+      </section>
+      <div class="glance-detail-facts">
+        ${glanceDetailFactHtml("Air temp", `${actual}${degree(tempUnit)}`, "Measured temperature")}
+        ${glanceDetailFactHtml("Humidity", Number.isFinite(humidity) ? `${humidity}%` : "--", humidityNote)}
+        ${glanceDetailFactHtml("Wind", `${windSpeed} ${windUnit}`, wind.context)}
+        ${glanceDetailFactHtml("Difference", `${diff > 0 ? "+" : ""}${diff}${degree(tempUnit)}`, diff === 0 ? "No adjustment" : "Feels-like adjustment")}
+      </div>
+      ${glanceDetailNoteHtml("Why it matters", "The feels-like value blends air temperature with humidity and wind so the glance matches what your body notices outside.")}
+    `
+  };
+}
+
+function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(data)) {
+  const rain = rainGlance(data, truth.rainChance, truth);
+  const precip = truth.precip || {};
+  const chance = truth.rainChance || 0;
+  const nowcast = analyzeNowcast(data);
+  const usableNowcast = nowcast && !nowcastConflictsWithActivePrecip(nowcast, truth) ? nowcast : null;
+  const next = nextRainChance(data, 12, 20);
+  const precipUnit = data.current_units?.precipitation || data.hourly_units?.precipitation || (state.unit === "fahrenheit" ? "in" : "mm");
+  const amount = Math.max(Number(data.current?.precipitation || 0), Number(truth.nowPrecip?.amount || 0));
+  const nowLabel = precip.phase === "active"
+    ? `${precip.label || truth.label || "Rain"} now`
+    : precip.phase === "nearby" ? `${precip.label || "Rain"} nearby`
+      : precip.phase === "imminent" ? `${precip.label || "Rain"} soon`
+        : amount > 0 ? `${truth.label || "Precipitation"} now` : "Dry here";
+  const source = weatherSourceLabel(precip.source || truth.source);
+  const detail = precip.detail || truth.surfaceDetail || truth.receiptDetail || metricTipRain(chance);
+  const title = precip.phase === "active" || precip.phase === "nearby" || precip.phase === "imminent"
+    ? capitalize(nowLabel)
+    : `Rain chance ${chance}%`;
+
+  return {
+    kind: "rain",
+    icon: glanceDetailIconHtml(usableNowcast?.isSnow ? "snow" : "rain"),
+    title,
+    context: `${rain.context} · ${source}`,
+    summary: detail,
+    body: `
+      <section class="glance-detail-hero is-rain">
+        <b>${escapeHtml(els.rainChance?.textContent || `${chance}%`)}</b>
+        <span>${escapeHtml(rain.context)}</span>
+      </section>
+      <div class="glance-detail-facts">
+        ${glanceDetailFactHtml("Right now", nowLabel, amount > 0 ? `${formatAmount(amount)} ${precipUnit} measured` : source)}
+        ${glanceDetailFactHtml("This hour", `${chance}%`, "Hourly forecast chance")}
+        ${glanceDetailFactHtml("Next signal", next ? `${next.chance}% near ${formatTime(next.time)}` : "No meaningful rain", next ? "Forecast window" : "Next 12 hours")}
+        ${glanceDetailFactHtml("Wind", `${Math.round(data.current?.wind_speed_10m || 0)} ${windUnit}`, "For umbrella comfort")}
+      </div>
+      ${usableNowcast ? `
+        <section class="glance-detail-nowcast">
+          <div class="glance-detail-section-head">
+            <span>Near-term precip</span>
+            <strong>${escapeHtml(usableNowcast.detail)}</strong>
+          </div>
+          <div class="nowcast-graph">${buildNowcastGraph(usableNowcast)}</div>
+        </section>
+      ` : ""}
+      ${glanceDetailNoteHtml("Signal", detail)}
+    `
+  };
+}
+
+function buildWindGlanceDetail(data, windUnit) {
+  const current = data.current || {};
+  const speed = Math.round(current.wind_speed_10m || 0);
+  const gust = Number.isFinite(current.wind_gusts_10m) ? Math.round(current.wind_gusts_10m) : null;
+  const peakIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 12);
+  const peakGust = peakIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m[peakIndex] || 0) : null;
+  const wind = windGlance(speed, windUnit, current.wind_direction_10m);
+  const direction = wind.direction;
+  const directionText = direction ? capitalize(direction.label) : "Direction unavailable";
+  const towardText = direction ? capitalize(direction.towardLabel) : "";
+
+  return {
+    kind: "wind",
+    icon: glanceDetailIconHtml("wind"),
+    title: `${speed} ${windUnit} wind`,
+    context: [directionText, wind.context].filter(Boolean).join(" · "),
+    summary: metricTipWind(speed, windUnit),
+    body: `
+      <section class="glance-detail-wind">
+        ${windVisualHtml(speed, windUnit, wind)}
+      </section>
+      <div class="glance-detail-facts">
+        ${glanceDetailFactHtml("Coming from", directionText, towardText ? `Blowing ${direction.towardLabel}` : "")}
+        ${glanceDetailFactHtml("Current speed", `${speed} ${windUnit}`, wind.context)}
+        ${glanceDetailFactHtml("Gusts now", gust !== null ? `${gust} ${windUnit}` : "--", "Short bursts")}
+        ${glanceDetailFactHtml("Peak next 12h", peakGust !== null ? `${peakGust} ${windUnit}` : "--", peakIndex >= 0 ? `Near ${formatTime(data.hourly.time[peakIndex])}` : "")}
+      </div>
+      ${glanceDetailNoteHtml("How to read it", "The arrow and moving field show where the wind is blowing. The label names where the wind is coming from, which matches standard weather reports.")}
+    `
+  };
+}
+
+function buildAirGlanceDetail(data) {
+  const humidity = data.current?.relative_humidity_2m ?? 0;
+  const air = airGlance(data, humidity);
+  const summary = air.summary;
+
+  if (summary) {
+    const currentRows = [
+      summary.aqi !== null ? glanceDetailFactHtml("AQI", `${summary.aqi}`, summary.band?.label || "") : "",
+      summary.pm25 !== null ? glanceDetailFactHtml("PM2.5", `${Math.round(summary.pm25)} ug/m3`, "Fine particles") : "",
+      summary.pm10 !== null ? glanceDetailFactHtml("PM10", `${Math.round(summary.pm10)} ug/m3`, "Coarse particles") : "",
+      summary.pollen ? glanceDetailFactHtml("Pollen", `${capitalize(summary.pollen.label)} ${summary.pollen.levelLabel}`, "Outdoor allergens") : ""
+    ].filter(Boolean).join("");
+    const scale = AQI_SCALE.map((item) => `
+      <li class="glance-detail-scale-row">
+        <span style="--aqi-color:${escapeHtml(item.color)}" aria-hidden="true"></span>
+        <strong>${escapeHtml(item.range)}</strong>
+        <b>${escapeHtml(item.label)}</b>
+      </li>
+    `).join("");
+
+    return {
+      kind: "air",
+      icon: glanceDetailIconHtml("air"),
+      title: summary.visualLabel || summary.display || "Air quality",
+      context: [summary.band?.advice || summary.context, summary.source].filter(Boolean).join(" · "),
+      summary: air.context || summary.band?.advice || summary.context,
+      body: `
+        <section class="glance-detail-air">
+          ${airQualityVisualHtml(summary)}
+        </section>
+        <div class="glance-detail-facts">${currentRows}</div>
+        <section class="glance-detail-scale" aria-label="AQI scale">
+          <div class="glance-detail-section-head">
+            <span>AQI ranges</span>
+            <strong>${escapeHtml(summary.band?.label || "Current")}</strong>
+          </div>
+          <ol>${scale}</ol>
+        </section>
+      `
+    };
+  }
+
+  return {
+    kind: "air",
+    icon: glanceDetailIconHtml("air"),
+    title: `Humidity ${humidity}%`,
+    context: humidityContext(humidity),
+    summary: metricTipHumidity(humidity),
+    body: `
+      <section class="glance-detail-hero is-air">
+        <b>${escapeHtml(`${humidity}%`)}</b>
+        <span>${escapeHtml(humidityContext(humidity))}</span>
+      </section>
+      <div class="glance-detail-facts">
+        ${glanceDetailFactHtml("Humidity", `${humidity}%`, humidityContext(humidity))}
+        ${glanceDetailFactHtml("Feels like", els.feelsLike?.textContent || "--", "Humidity can change comfort")}
+      </div>
+      ${glanceDetailNoteHtml("Why it matters", "Humidity becomes glance-worthy when it pushes comfort noticeably muggy or unusually dry.")}
+    `
+  };
+}
+
+function weatherSourceLabel(source) {
+  const value = String(source || "").toLowerCase();
+  if (value.includes("radar")) return "Observed radar";
+  if (value.includes("minutely")) return "15-minute precip";
+  if (value.includes("current")) return "Current conditions";
+  if (value.includes("hourly")) return "Hourly forecast";
+  if (value.includes("dry")) return "Dry forecast";
+  return "Forecast";
+}
+
+function glanceDetailFactHtml(label, value, note = "") {
+  return `
+    <div class="glance-detail-fact">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${note ? `<em>${escapeHtml(note)}</em>` : ""}
+    </div>
+  `;
+}
+
+function glanceDetailNoteHtml(label, text) {
+  if (!text) return "";
+  return `
+    <section class="glance-detail-note">
+      <span>${escapeHtml(label)}</span>
+      <p>${escapeHtml(text)}</p>
+    </section>
+  `;
+}
+
+function glanceDetailIconHtml(kind) {
+  if (kind === "feels") {
+    return `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="18" y="7" width="4" height="16" rx="2" fill="currentColor"/><circle cx="20" cy="28" r="7" fill="currentColor"/><path d="M25 11h5M25 17h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+  }
+  if (kind === "wind") {
+    return `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M7 14c7-4 11 4 17 0 3-2 5-2 9-1M7 22c6-4 10 4 16 0 3-2 5-2 8-1M20 30h11" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>`;
+  }
+  if (kind === "air") {
+    return `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 6s-9 11-9 19a9 9 0 0 0 18 0C29 17 20 6 20 6Z" fill="currentColor" opacity="0.22"/><path d="M13 25h14" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="20" cy="24" r="11" stroke="currentColor" stroke-width="2.4" opacity="0.55"/></svg>`;
+  }
+  if (kind === "snow") return snowGlyph();
+  return raindropGlyph();
+}
+
 function bindMetricTips(data, tempUnit, windUnit) {
-  document.querySelectorAll(".today-glance .has-tip").forEach((card) => {
+  document.querySelectorAll(".today-glance .has-tip, .today-glance .has-detail").forEach((card) => {
     card.classList.remove("has-tip");
+    card.classList.remove("has-detail");
     delete card.dataset.tip;
     delete card.dataset.tipHtml;
+    delete card.dataset.glanceDetail;
     card.removeAttribute("tabindex");
     card.removeAttribute("role");
     card.removeAttribute("aria-label");
@@ -7237,22 +7522,23 @@ function bindMetricTips(data, tempUnit, windUnit) {
   const air = airGlance(data, humidityVal);
 
   const tips = {
-    feelsLike: metricTipFeels(diff, feelsVal, tempUnit),
-    rainChance: metricTipRain(rainVal),
-    wind: metricTipWind(windVal, windUnit),
-    humidity: air.tipHtml || metricTipHumidity(humidityVal)
+    feelsLike: { kind: "feels", tip: metricTipFeels(diff, feelsVal, tempUnit), aria: "Open feels-like detail" },
+    rainChance: { kind: "rain", tip: metricTipRain(rainVal), aria: "Open rain detail" },
+    wind: { kind: "wind", tip: metricTipWind(windVal, windUnit), aria: "Open wind detail" },
+    humidity: { kind: "air", tip: air.tipHtml || metricTipHumidity(humidityVal), rich: Boolean(air.tipHtml), aria: air.tipHtml ? "Open air quality detail" : "Open air detail" }
   };
 
-  Object.entries(tips).forEach(([id, tip]) => {
-    if (!tip) return;
+  Object.entries(tips).forEach(([id, detail]) => {
+    if (!detail?.tip) return;
     const card = document.getElementById(id)?.closest(".glance-signal");
     if (!card) return;
-    if (id === "humidity" && air.tipHtml) card.dataset.tipHtml = tip;
-    else card.dataset.tip = tip;
-    card.classList.add("has-tip");
+    if (detail.rich) card.dataset.tipHtml = detail.tip;
+    else card.dataset.tip = detail.tip;
+    card.dataset.glanceDetail = detail.kind;
+    card.classList.add("has-tip", "has-detail");
     card.tabIndex = 0;
     card.setAttribute("role", "button");
-    card.setAttribute("aria-label", id === "humidity" && air.tipHtml ? "Show AQI scale and air details" : "Show weather detail");
+    card.setAttribute("aria-label", detail.aria);
   });
 }
 
@@ -7383,6 +7669,17 @@ function initDaylightScrubListeners() {
 function initMetricTipListeners() {
   const metricsEl = document.querySelector(".today-glance");
   if (!metricsEl) return;
+  const openCardDetail = (card) => {
+    const kind = card?.dataset?.glanceDetail;
+    if (!kind) return false;
+    openGlanceDetail(kind);
+    return true;
+  };
+  const toggleCardTip = (card) => {
+    if (!card) return;
+    if (activeTipCard === card) hideMetricTip();
+    else showMetricTip(card);
+  };
 
   // Hover: mouse only
   metricsEl.addEventListener("mouseenter", (event) => {
@@ -7395,16 +7692,15 @@ function initMetricTipListeners() {
     if (card) hideMetricTip();
   }, true);
 
-  // Tap: toggle tip — but only on a genuine tap, never a scroll. We let
+  // Tap: open detail — but only on a genuine tap, never a scroll. We let
   // touchstart pass through (no preventDefault) so the page can still scroll
-  // when a swipe begins on a metric card, and only toggle on touchend if the
-  // finger didn't move. This fixes the mobile annoyance where scrolling from a
-  // card would snap open a tip and stop the scroll.
+  // when a swipe begins on a metric card, and only act on touchend if the
+  // finger didn't move.
   let tipTouch = null;
   const TIP_MOVE_TOLERANCE = 10;
 
   metricsEl.addEventListener("touchstart", (event) => {
-    const card = event.target.closest(".has-tip");
+    const card = event.target.closest(".has-detail, .has-tip");
     const t = event.touches[0];
     tipTouch = card ? { card, x: t.clientX, y: t.clientY, moved: false } : null;
   }, { passive: true });
@@ -7421,25 +7717,28 @@ function initMetricTipListeners() {
   metricsEl.addEventListener("touchend", (event) => {
     const touch = tipTouch;
     tipTouch = null;
-    if (!touch || touch.moved) return; // scrolled — leave tips alone
+    if (!touch || touch.moved) return; // scrolled — leave cards alone
     event.preventDefault(); // a real tap: block the synthetic click + mouse events
-    if (activeTipCard === touch.card) hideMetricTip();
-    else showMetricTip(touch.card);
+    if (!openCardDetail(touch.card)) toggleCardTip(touch.card);
   }, { passive: false });
 
   metricsEl.addEventListener("click", (event) => {
+    const detailCard = event.target.closest(".has-detail");
+    if (detailCard) {
+      openCardDetail(detailCard);
+      return;
+    }
     const card = event.target.closest(".has-tip");
     if (!card) return;
-    showMetricTip(card);
+    toggleCardTip(card);
   });
 
   metricsEl.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
-    const card = event.target.closest(".has-tip");
+    const card = event.target.closest(".has-detail, .has-tip");
     if (!card) return;
     event.preventDefault();
-    if (activeTipCard === card) hideMetricTip();
-    else showMetricTip(card);
+    if (!openCardDetail(card)) toggleCardTip(card);
   });
 
   document.addEventListener("click", (event) => {
