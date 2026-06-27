@@ -175,8 +175,65 @@ function syncMapToPlace() {
   renderTileMap();
 }
 
-function refreshInlineMap(forceFrames = false) {
+let inlineMapRefreshObserver = null;
+let inlineMapRefreshQueuedForce = false;
+
+function mapViewNearViewport() {
+  const target = document.getElementById("mapView");
+  if (!target) return true;
+  const rect = target.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight || 720;
+  return rect.top < vh * 1.35 && rect.bottom > -vh * 0.35;
+}
+
+function queueInlineMapRefresh(forceFrames = false) {
+  inlineMapRefreshQueuedForce = inlineMapRefreshQueuedForce || forceFrames;
+  if (mapState.initialized && !mapState.immersive) {
+    stopRadarPlayback({ renderStatic: false });
+    setFrameLabel("Map updates when viewed");
+  }
+  const target = document.getElementById("mapView");
+  if (!target || !("IntersectionObserver" in window)) {
+    const force = inlineMapRefreshQueuedForce;
+    inlineMapRefreshQueuedForce = false;
+    refreshInlineMap(force, { defer: false });
+    return;
+  }
+  if (inlineMapRefreshObserver) return;
+  inlineMapRefreshObserver = new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1];
+    if (!entry?.isIntersecting) return;
+    const force = inlineMapRefreshQueuedForce;
+    inlineMapRefreshQueuedForce = false;
+    inlineMapRefreshObserver.disconnect();
+    inlineMapRefreshObserver = null;
+    refreshInlineMap(force, { defer: false });
+  }, { rootMargin: "520px 0px 640px", threshold: 0 });
+  inlineMapRefreshObserver.observe(target);
+}
+
+function shouldDeferInlineMapRefresh(options = {}) {
+  if (options.defer === false) return false;
+  if (mapState.immersive) return false;
+  if (!("IntersectionObserver" in window)) return false;
+  return !mapViewNearViewport();
+}
+
+function ensureInlineMapReady(forceFrames = false) {
+  refreshInlineMap(forceFrames, { defer: false });
+}
+
+function refreshInlineMap(forceFrames = false, options = {}) {
   if (!state.activePlace || !els.weatherMap) return;
+  if (shouldDeferInlineMapRefresh(options)) {
+    queueInlineMapRefresh(forceFrames);
+    return;
+  }
+  if (inlineMapRefreshObserver) {
+    inlineMapRefreshObserver.disconnect();
+    inlineMapRefreshObserver = null;
+  }
+  inlineMapRefreshQueuedForce = false;
   initMap();
   syncMapToPlace();
   if (mapState.immersive) {

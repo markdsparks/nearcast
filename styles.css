@@ -9524,6 +9524,21 @@ button.sheet-plan-badge:focus-visible {
   stroke-opacity: 0.22;
 }
 
+@supports (content-visibility: auto) {
+  .nowcast,
+  .insights-section,
+  .hourly-panel,
+  .map-panel,
+  .daily-panel {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 420px;
+  }
+
+  .map-panel {
+    contain-intrinsic-size: 1px 560px;
+  }
+}
+
 @media (pointer: coarse) {
   .launch-location {
     min-height: 44px;

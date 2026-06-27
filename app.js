@@ -1,4 +1,4 @@
-const VERSION = "3.0.5";
+const VERSION = "3.0.6";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2426,6 +2426,9 @@ function handleLaunchShortcut(action) {
   };
   const target = document.querySelector(targets[action]);
   if (!target) return;
+  if (action === "map" && typeof ensureInlineMapReady === "function") {
+    ensureInlineMapReady(true);
+  }
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
 }
@@ -3108,13 +3111,41 @@ function setTimeFormatPreference(value) {
 }
 
 function refreshTimeFormattedSurfaces() {
-  if (state.forecast && state.activePlace) renderForecast(state.forecast, state.activePlace, { refreshMap: false });
+  renderTimeFormattedForecastSurfaces();
   if (typeof refreshOpenDayDetailMemorySurfaces === "function") refreshOpenDayDetailMemorySurfaces();
-  if (typeof renderForecastMemorySurfaces === "function") renderForecastMemorySurfaces();
   if (typeof showFrame === "function" && mapState.frames?.length) showFrame(mapState.frameIndex);
   if (typeof renderTimelineTimeBubble === "function") renderTimelineTimeBubble();
   if (memoryEditState && typeof renderMemoryEditSheet === "function") renderMemoryEditSheet();
   if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
+}
+
+function renderTimeFormattedForecastSurfaces() {
+  const data = state.forecast;
+  const place = state.activePlace;
+  if (!data || !place) return;
+  const perf = perfStart();
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const todayIndex = forecastDailyIndex(data);
+  const truth = state.weatherTruth || buildWeatherTruth(data);
+  state.weatherTruth = truth;
+
+  if (els.sunrise) els.sunrise.textContent = data.daily.sunrise[todayIndex] ? formatTime(data.daily.sunrise[todayIndex]) : "--";
+  if (els.sunset) els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
+  if (els.updatedAt) els.updatedAt.textContent = `Updated ${formatTime(data.current.time)}`;
+
+  renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
+  renderForYouToday(data, place, tempUnit, windUnit, truth);
+  renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
+  renderInsights(data, windUnit);
+  if (typeof renderPlanPulse === "function") renderPlanPulse(data, place);
+  renderHourly(data, tempUnit, truth);
+  renderDaily(data, tempUnit, precipUnit);
+  bindMetricTips(data, tempUnit, windUnit);
+  perfEnd("renderTimeFormattedForecastSurfaces", perf, PERF_RENDER_WARN_MS, {
+    skipped: ["map", "sky", "continuity"]
+  });
 }
 
 async function searchPlaces(query, { quiet = false } = {}) {
@@ -4647,7 +4678,11 @@ function renderForecast(data, place, options = {}) {
   bindMetricTips(data, tempUnit, windUnit);
   updateSkyCanvas(sceneCode, truth.isDay, data, displayCondition);
   saveContinuitySnapshot(data, place, tempUnit, windUnit, truth);
-  perfEnd("renderForecast", perf);
+  perfEnd("renderForecast", perf, PERF_RENDER_WARN_MS, {
+    refreshMap: options.refreshMap !== false,
+    refreshSky: true,
+    continuity: true
+  });
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data), truth = weatherTruth(data)) {
