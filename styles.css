@@ -592,6 +592,7 @@ body {
   background: var(--sky-page-bg-color);
   background-color: var(--sky-page-bg-color);
   color: var(--ink);
+  overscroll-behavior-y: contain;
 }
 
 html[data-sky] {
@@ -1255,6 +1256,68 @@ h2 {
   background: var(--status-error-bg);
   border-left-color: var(--status-error-border);
   color: var(--red);
+}
+
+.pull-refresh {
+  --pull-refresh-y: 0px;
+  --pull-refresh-progress: 0;
+  position: fixed;
+  top: max(10px, calc(env(safe-area-inset-top, 0px) + 8px));
+  left: 50%;
+  z-index: 235;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border-glass);
+  background:
+    linear-gradient(135deg, rgba(116, 184, 255, 0.14), rgba(103, 181, 137, 0.10)),
+    var(--glass-heavy);
+  color: var(--ink);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(16px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, calc(-130% + var(--pull-refresh-y))) scale(0.98);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.pull-refresh.is-visible {
+  opacity: 1;
+  transform: translate(-50%, var(--pull-refresh-y)) scale(1);
+}
+
+.pull-refresh strong {
+  font-size: 0.78rem;
+  font-weight: 880;
+  white-space: nowrap;
+}
+
+.pull-refresh-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  border: 2px solid rgba(125, 151, 170, 0.34);
+  border-top-color: var(--blue);
+  transform: rotate(calc(var(--pull-refresh-progress, 0) * 360deg));
+}
+
+.pull-refresh.is-ready .pull-refresh-spinner {
+  border-top-color: var(--green);
+}
+
+.pull-refresh.is-refreshing .pull-refresh-spinner {
+  animation: pull-refresh-spin 0.82s linear infinite;
+}
+
+@keyframes pull-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .loading-chip {

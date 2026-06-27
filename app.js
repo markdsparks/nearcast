@@ -1,4 +1,4 @@
-const VERSION = "3.0.1";
+const VERSION = "3.0.2";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -12,6 +12,9 @@ const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
 const FORECAST_WARM_START_MAX_AGE_MS = 60 * 60 * 1000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
+const PULL_REFRESH_THRESHOLD_PX = 68;
+const PULL_REFRESH_MAX_PX = 108;
+const PULL_REFRESH_COOLDOWN_MS = 12 * 1000;
 const PERF_STORAGE_KEY = "nearcast-perf";
 const WIND_FIELD_STORAGE_KEY = "nearcast-wind-field";
 const PERF_RENDER_WARN_MS = 50;
@@ -429,6 +432,17 @@ let welcomeWorldSkyIndex = Math.floor(Date.now() / WELCOME_WORLD_SKY_ROTATE_MS) 
 let welcomeAmbientSource = "idle";
 let locationLookupSeq = 0;
 let locationLookupTimer = null;
+const pullRefreshState = {
+  tracking: false,
+  active: false,
+  ready: false,
+  refreshing: false,
+  startX: 0,
+  startY: 0,
+  distance: 0,
+  hideTimer: null,
+  lastRefreshAt: 0
+};
 
 const els = {
   themeColorMeta: document.querySelector("meta[name='theme-color']"),
@@ -440,6 +454,8 @@ const els = {
   welcome: document.querySelector("#welcome"),
   welcomeAmbientLabel: document.querySelector("#welcomeAmbientLabel"),
   welcomeLocate: document.querySelector("#welcomeLocate"),
+  pullRefresh: document.querySelector("#pullRefresh"),
+  pullRefreshLabel: document.querySelector("[data-pull-refresh-label]"),
   releaseBackdrop: document.querySelector("#releaseBackdrop"),
   releaseSplash: document.querySelector("#releaseSplash"),
   releaseSplashClose: document.querySelector("#releaseSplashClose"),
@@ -2755,6 +2771,7 @@ function bindEvents() {
   window.addEventListener("pageshow", handleForegroundResume);
   window.addEventListener("focus", handleForegroundResume);
   window.addEventListener("scroll", scheduleFloatingChromeUpdate, { passive: true });
+  initPullToRefresh();
   bindTapAction(els.placeSaveButton, () => {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
@@ -4073,6 +4090,167 @@ function refreshOnForeground() {
   if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
   for (const id in glanceData) delete glanceData[id]; // let chips re-pull too
   loadPlace(state.activePlace, true);
+}
+
+function initPullToRefresh() {
+  if (!els.pullRefresh || initPullToRefresh.bound) return;
+  initPullToRefresh.bound = true;
+  document.addEventListener("touchstart", handlePullRefreshStart, { passive: true });
+  document.addEventListener("touchmove", handlePullRefreshMove, { passive: false });
+  document.addEventListener("touchend", handlePullRefreshEnd, { passive: true });
+  document.addEventListener("touchcancel", cancelPullRefreshGesture, { passive: true });
+}
+
+function pullRefreshAtTop() {
+  return currentScrollY() <= 2;
+}
+
+function pullRefreshModalOpen() {
+  return Boolean(
+    document.querySelector(".day-sheet:not([hidden])") ||
+    document.querySelector(".release-splash:not([hidden])") ||
+    document.querySelector(".sheet-backdrop.show")
+  );
+}
+
+function canStartPullRefresh(target) {
+  if (!state.activePlace || !state.forecast) return false;
+  if (welcomeIsActive()) return false;
+  if (document.visibilityState === "hidden") return false;
+  if (mapState.immersive || document.body.style.overflow === "hidden") return false;
+  if (els.shell?.classList.contains("search-open") || els.shell?.classList.contains("menu-open")) return false;
+  if (pullRefreshModalOpen()) return false;
+  if (!pullRefreshAtTop()) return false;
+  const blocked = target?.closest?.("input, textarea, select, option, [contenteditable='true'], .day-sheet, .sheet-backdrop, .map-controls, .map-timeline, input[type='range']");
+  return !blocked;
+}
+
+function handlePullRefreshStart(event) {
+  if (pullRefreshState.refreshing || event.touches.length !== 1 || !canStartPullRefresh(event.target)) {
+    cancelPullRefreshGesture();
+    return;
+  }
+  const touch = event.touches[0];
+  pullRefreshState.tracking = true;
+  pullRefreshState.active = false;
+  pullRefreshState.ready = false;
+  pullRefreshState.startX = touch.clientX;
+  pullRefreshState.startY = touch.clientY;
+  pullRefreshState.distance = 0;
+}
+
+function handlePullRefreshMove(event) {
+  if (!pullRefreshState.tracking || pullRefreshState.refreshing) return;
+  if (event.touches.length !== 1) {
+    cancelPullRefreshGesture();
+    return;
+  }
+  const touch = event.touches[0];
+  const dx = touch.clientX - pullRefreshState.startX;
+  const dy = touch.clientY - pullRefreshState.startY;
+  if (dy < -4 || Math.abs(dx) > Math.max(28, dy * 1.35)) {
+    cancelPullRefreshGesture();
+    return;
+  }
+  if (dy <= 6) return;
+  if (!pullRefreshAtTop() && !pullRefreshState.active) {
+    cancelPullRefreshGesture();
+    return;
+  }
+
+  pullRefreshState.active = true;
+  if (event.cancelable) event.preventDefault();
+  const distance = Math.min(PULL_REFRESH_MAX_PX, dy * 0.56);
+  const ready = distance >= PULL_REFRESH_THRESHOLD_PX;
+  pullRefreshState.distance = distance;
+  pullRefreshState.ready = ready;
+  setPullRefreshVisual(distance, ready ? "Release to update" : "Pull to update", { ready });
+}
+
+function handlePullRefreshEnd() {
+  if (!pullRefreshState.tracking) return;
+  const shouldRefresh = pullRefreshState.active && pullRefreshState.ready;
+  pullRefreshState.tracking = false;
+  pullRefreshState.active = false;
+  pullRefreshState.ready = false;
+  if (shouldRefresh) {
+    triggerPullRefresh();
+    return;
+  }
+  hidePullRefresh();
+}
+
+function cancelPullRefreshGesture() {
+  if (!pullRefreshState.tracking && !pullRefreshState.active) return;
+  pullRefreshState.tracking = false;
+  pullRefreshState.active = false;
+  pullRefreshState.ready = false;
+  pullRefreshState.distance = 0;
+  if (!pullRefreshState.refreshing) hidePullRefresh();
+}
+
+function setPullRefreshVisual(distance, label, options = {}) {
+  if (!els.pullRefresh) return;
+  if (pullRefreshState.hideTimer) {
+    clearTimeout(pullRefreshState.hideTimer);
+    pullRefreshState.hideTimer = null;
+  }
+  const y = Math.max(0, Math.min(PULL_REFRESH_MAX_PX, Math.round(distance)));
+  const progress = Math.max(0, Math.min(1, y / PULL_REFRESH_THRESHOLD_PX));
+  els.pullRefresh.hidden = false;
+  els.pullRefresh.style.setProperty("--pull-refresh-y", `${y}px`);
+  els.pullRefresh.style.setProperty("--pull-refresh-progress", String(progress));
+  els.pullRefresh.classList.add("is-visible");
+  els.pullRefresh.classList.toggle("is-ready", Boolean(options.ready));
+  els.pullRefresh.classList.toggle("is-refreshing", Boolean(options.refreshing));
+  if (els.pullRefreshLabel) els.pullRefreshLabel.textContent = label;
+}
+
+function hidePullRefresh(delay = 180) {
+  if (!els.pullRefresh) return;
+  if (pullRefreshState.hideTimer) clearTimeout(pullRefreshState.hideTimer);
+  els.pullRefresh.classList.remove("is-visible", "is-ready", "is-refreshing");
+  els.pullRefresh.style.setProperty("--pull-refresh-y", "0px");
+  els.pullRefresh.style.setProperty("--pull-refresh-progress", "0");
+  pullRefreshState.hideTimer = setTimeout(() => {
+    els.pullRefresh.hidden = true;
+    pullRefreshState.hideTimer = null;
+  }, delay);
+}
+
+function schedulePullRefreshHide(holdMs = 700) {
+  if (pullRefreshState.hideTimer) clearTimeout(pullRefreshState.hideTimer);
+  pullRefreshState.hideTimer = setTimeout(() => {
+    pullRefreshState.hideTimer = null;
+    hidePullRefresh();
+  }, holdMs);
+}
+
+async function triggerPullRefresh() {
+  if (pullRefreshState.refreshing || !state.activePlace) {
+    hidePullRefresh();
+    return;
+  }
+  const now = Date.now();
+  if (now - pullRefreshState.lastRefreshAt < PULL_REFRESH_COOLDOWN_MS) {
+    setPullRefreshVisual(42, "Updated just now");
+    schedulePullRefreshHide(700);
+    return;
+  }
+
+  pullRefreshState.refreshing = true;
+  setPullRefreshVisual(42, "Updating forecast", { refreshing: true });
+  const beforeLoadedAt = lastLoadedAt;
+  for (const id in glanceData) delete glanceData[id];
+  try {
+    await loadPlace(state.activePlace, true);
+  } finally {
+    pullRefreshState.refreshing = false;
+    pullRefreshState.lastRefreshAt = Date.now();
+    const updated = lastLoadedAt !== beforeLoadedAt;
+    setPullRefreshVisual(42, updated ? "Updated" : "Could not update");
+    schedulePullRefreshHide(updated ? 700 : 1200);
+  }
 }
 
 function clearRestoredWelcomeLoading(event = {}, idleMs = 0) {
