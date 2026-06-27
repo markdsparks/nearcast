@@ -3497,8 +3497,14 @@ function refreshOpenGlobalMemorySheet() {
 function refreshPlanMemorySurfaces() {
   renderBriefing();
   renderPlanPulse();
+  if (typeof refreshPlanAwareLaunchSurfaces === "function") {
+    refreshPlanAwareLaunchSurfaces();
+  }
   renderForecastMemorySurfaces();
   refreshOpenGlobalMemorySheet();
+  if (els.memoryDetailSheet && !els.memoryDetailSheet.hidden) {
+    refreshOpenMemoryDetail();
+  }
   if (typeof refreshOpenDayDetailMemorySurfaces === "function") {
     refreshOpenDayDetailMemorySurfaces();
   }

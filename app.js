@@ -1,4 +1,4 @@
-const VERSION = "3.0";
+const VERSION = "3.0.1";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -5706,6 +5706,15 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
 function renderLaunchShortcuts(data, place) {
   if (!els.launchShortcuts) return;
   els.launchShortcuts.hidden = !(data && place);
+}
+
+function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.activePlace) {
+  if (!data || !place) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const truth = state.weatherTruth || weatherTruth(data);
+  renderForYouToday(data, place, tempUnit, windUnit, truth);
+  renderLaunchShortcuts(data, place);
 }
 
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
