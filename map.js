@@ -126,8 +126,13 @@ function moveMapDrag(x, y) {
   mapState.panY = dragState.startPanY + dy;
   if (Math.hypot(dx, dy) > MAP_PAN_PREVIEW_EPSILON_PX) {
     dragState.moved = true;
-    beginMapPanPreview();
-    scheduleMapPanPreview(dx, dy);
+    pauseMapPlaybackForManualPan();
+    if (mapState.immersive) {
+      scheduleMapRender();
+    } else {
+      beginMapPanPreview();
+      scheduleMapPanPreview(dx, dy);
+    }
   }
 }
 
@@ -162,11 +167,14 @@ function mapPanPreviewLayers() {
 function beginMapPanPreview() {
   if (dragState.previewActive) return;
   dragState.previewActive = true;
-  if (mapState.playing) {
-    dragState.resumePlayback = true;
-    stopRadarPlayback({ renderStatic: false });
-  }
+  pauseMapPlaybackForManualPan();
   if (els.weatherMap) els.weatherMap.classList.add("is-panning");
+}
+
+function pauseMapPlaybackForManualPan() {
+  if (!mapState.playing || dragState.resumePlayback) return;
+  dragState.resumePlayback = true;
+  stopRadarPlayback({ renderStatic: false });
 }
 
 function scheduleMapPanPreview(dx, dy) {

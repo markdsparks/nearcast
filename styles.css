@@ -5593,7 +5593,7 @@ h2 {
   inset: 0;
   z-index: 1000;
   overflow: hidden;
-  background: transparent;
+  background: #dce6eb;
   --imm-safe-top: env(safe-area-inset-top, 0px);
   --imm-hud-x: 18px;
   --imm-hud-top: max(18px, calc(var(--imm-safe-top) + 14px));
