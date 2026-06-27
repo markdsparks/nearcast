@@ -6219,8 +6219,6 @@ body.map-immersive-active #mapLegend {
   inset: 0;
   pointer-events: none;
   contain: layout paint;
-  transform: translateZ(0);
-  will-change: transform;
 }
 
 .tile-layer img {

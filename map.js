@@ -1,6 +1,6 @@
 /* Nearcast radar/map timeline and immersive map interactions. */
 
-const MAP_PAN_PREVIEW_EPSILON_PX = 0.5;
+const MAP_PAN_MOVE_EPSILON_PX = 0.5;
 
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
@@ -110,9 +110,6 @@ function startMapDrag(x, y, el = els.weatherMap) {
   dragState.startPanX = mapState.panX;
   dragState.startPanY = mapState.panY;
   dragState.moved = false;
-  dragState.previewActive = false;
-  dragState.pendingPreviewX = 0;
-  dragState.pendingPreviewY = 0;
   dragState.resumePlayback = false;
   if (el) el.style.cursor = "grabbing";
 }
@@ -124,15 +121,10 @@ function moveMapDrag(x, y) {
   const dy = y - dragState.startY;
   mapState.panX = dragState.startPanX + dx;
   mapState.panY = dragState.startPanY + dy;
-  if (Math.hypot(dx, dy) > MAP_PAN_PREVIEW_EPSILON_PX) {
+  if (Math.hypot(dx, dy) > MAP_PAN_MOVE_EPSILON_PX) {
     dragState.moved = true;
     pauseMapPlaybackForManualPan();
-    if (mapState.immersive) {
-      scheduleMapRender();
-    } else {
-      beginMapPanPreview();
-      scheduleMapPanPreview(dx, dy);
-    }
+    scheduleMapRender();
   }
 }
 
@@ -141,7 +133,8 @@ function endMapGesture(el = els.weatherMap) {
   const shouldResumePlayback = dragState.resumePlayback;
   dragState.active = false;
   pinchState.active = false;
-  finishMapPanPreview({ render: shouldRender });
+  dragState.moved = false;
+  if (shouldRender) renderTileMap();
   if (el) el.style.cursor = "grab";
   if (shouldResumePlayback) {
     requestAnimationFrame(() => {
@@ -152,73 +145,14 @@ function endMapGesture(el = els.weatherMap) {
   }
 }
 
-let mapPanPreviewRaf = 0;
-
-function mapPanPreviewLayers() {
-  return [
-    els.baseTileLayer,
-    els.weatherTileLayer,
-    els.labelTileLayer,
-    els.markerLayer,
-    document.getElementById("immersiveImpactLayer")
-  ].filter(Boolean);
-}
-
-function beginMapPanPreview() {
-  if (dragState.previewActive) return;
-  dragState.previewActive = true;
-  pauseMapPlaybackForManualPan();
-  if (els.weatherMap) els.weatherMap.classList.add("is-panning");
-}
-
 function pauseMapPlaybackForManualPan() {
   if (!mapState.playing || dragState.resumePlayback) return;
   dragState.resumePlayback = true;
   stopRadarPlayback({ renderStatic: false });
 }
 
-function scheduleMapPanPreview(dx, dy) {
-  dragState.pendingPreviewX = dx;
-  dragState.pendingPreviewY = dy;
-  if (mapPanPreviewRaf) return;
-  mapPanPreviewRaf = requestAnimationFrame(() => {
-    mapPanPreviewRaf = 0;
-    applyMapPanPreview(dragState.pendingPreviewX, dragState.pendingPreviewY);
-  });
-}
-
-function applyMapPanPreview(dx, dy) {
-  if (!dragState.previewActive) return;
-  const transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`;
-  mapPanPreviewLayers().forEach((layer) => {
-    layer.style.transform = transform;
-  });
-}
-
-function clearMapPanPreview() {
-  if (mapPanPreviewRaf) {
-    cancelAnimationFrame(mapPanPreviewRaf);
-    mapPanPreviewRaf = 0;
-  }
-  mapPanPreviewLayers().forEach((layer) => {
-    layer.style.transform = "";
-  });
-  if (els.weatherMap) els.weatherMap.classList.remove("is-panning");
-  dragState.previewActive = false;
-  dragState.pendingPreviewX = 0;
-  dragState.pendingPreviewY = 0;
-}
-
-function finishMapPanPreview(options = {}) {
-  const { render = false } = options;
-  clearMapPanPreview();
-  dragState.moved = false;
-  if (render) renderTileMap();
-}
-
-// Full re-tiling is still capped to one render per frame for non-gesture calls
-// such as resize and mode changes. Active pan uses a composited transform and
-// reconciles tiles only when the gesture settles.
+// Full re-tiling is capped to one render per frame so bursts of touchmove
+// events can't force multiple DOM reconciliation passes before paint.
 let mapRenderQueued = false;
 function scheduleMapRender() {
   if (mapRenderQueued) return;
@@ -241,8 +175,9 @@ function touchMidpoint(a, b) {
 }
 
 function startMapPinch(a, b) {
-  if (dragState.previewActive || dragState.moved) {
-    finishMapPanPreview({ render: dragState.moved });
+  if (dragState.moved) {
+    dragState.moved = false;
+    renderTileMap();
   }
   const mid = touchMidpoint(a, b);
   dragState.active = false;
@@ -1744,15 +1679,16 @@ function renderWeatherTiles(viewport = null) {
   renderWeatherLayers(layers, frame && frame.maxZoom, viewport);
 }
 
-// Extra tiles beyond the viewport keep composited pans from showing an edge
-// before the final re-tile. Immersive gets a wider cushion because swipes are
-// longer on the full-screen map.
+// Extra tiles beyond the viewport keep fast pans from showing an edge while the
+// next frame reconciles. Immersive gets a wider cushion because full-screen
+// swipes are longer.
 const TILE_BUFFER = 1;
 const IMMERSIVE_TILE_BUFFER = 2;
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   if (!layer) return;
   const perf = perfStart();
+  const tileNodes = mapLayerTileNodes(layer);
   const z = mapTileSourceZoom(options.sourceZoom || MAP_MAX_ZOOM);
   const tileSize = 256;
   const sourceScale = 2 ** (mapState.zoom - z);
@@ -1783,7 +1719,11 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
       const key = `${z}/${tileX}/${tileY}`; // unwrapped tileX → distinct keys across the date line
       wanted.add(key);
       const url = urlForTile({ z, x: wrappedX, y: tileY });
-      let img = layer.querySelector(`:scope > img[data-tile="${key}"]`);
+      let img = tileNodes.get(key);
+      if (img && !img.isConnected) {
+        tileNodes.delete(key);
+        img = null;
+      }
       if (!img) {
         img = document.createElement("img");
         img.alt = "";
@@ -1797,6 +1737,7 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
         });
         img.addEventListener("error", () => onTileError(img, layer));
         layer.appendChild(img);
+        tileNodes.set(key, img);
       }
       if (img.dataset.url !== url) {
         img.dataset.url = url;
@@ -1817,11 +1758,18 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   // but REALIGNED to the current zoom so they track it as a soft stand-in instead of
   // looking "stuck" at the old position. Older zoom levels are dropped outright.
   layer._wantedTiles = wanted;
-  layer.querySelectorAll(":scope > img").forEach((img) => {
-    if (wanted.has(img.dataset.tile)) return;
-    const parts = (img.dataset.tile || "").split("/");
+  [...tileNodes.entries()].forEach(([key, img]) => {
+    if (!img.isConnected) {
+      tileNodes.delete(key);
+      return;
+    }
+    if (wanted.has(key)) return;
+    const parts = key.split("/");
     const tz = Number(parts[0]);
-    if (tz === z || Math.abs(tz - z) > 1) { img.remove(); return; }
+    if (tz === z || Math.abs(tz - z) > 1) {
+      removeMapTile(layer, img, tileNodes);
+      return;
+    }
     const ts = tileSize * 2 ** (mapState.zoom - tz);
     img.style.width = `${Math.ceil(ts)}px`;
     img.style.height = `${Math.ceil(ts)}px`;
@@ -1835,18 +1783,34 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   });
 }
 
+function mapLayerTileNodes(layer) {
+  if (!layer._tileNodes) {
+    layer._tileNodes = new Map();
+    layer.querySelectorAll(":scope > img[data-tile]").forEach((img) => {
+      layer._tileNodes.set(img.dataset.tile, img);
+    });
+  }
+  return layer._tileNodes;
+}
+
+function removeMapTile(layer, img, tileNodes = mapLayerTileNodes(layer)) {
+  if (img?.dataset?.tile) tileNodes.delete(img.dataset.tile);
+  img.remove();
+}
+
 // Remove leftover tiles (typically the previous zoom level) once every currently
 // wanted tile has settled — called after each render and on each tile load, so the
 // old view stays visible until the new one is ready.
 function maybePurgeStaleTiles(layer) {
   const wanted = layer._wantedTiles;
   if (!wanted) return;
+  const tileNodes = mapLayerTileNodes(layer);
   for (const key of wanted) {
-    const img = layer.querySelector(`:scope > img[data-tile="${key}"]`);
+    const img = tileNodes.get(key);
     if (!img || !img.complete) return; // new set hasn't finished loading yet
   }
-  layer.querySelectorAll(":scope > img").forEach((img) => {
-    if (!wanted.has(img.dataset.tile)) img.remove();
+  [...tileNodes.entries()].forEach(([key, img]) => {
+    if (!wanted.has(key)) removeMapTile(layer, img, tileNodes);
   });
 }
 
