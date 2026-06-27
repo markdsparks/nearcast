@@ -7248,6 +7248,205 @@ body.map-immersive-active .day-sheet.show {
   transform: translateY(0);
 }
 
+.release-backdrop {
+  z-index: 420;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(116, 184, 255, 0.20), transparent 36%),
+    rgba(8, 12, 20, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.release-splash {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 421;
+  width: min(620px, calc(100vw - 28px));
+  max-height: calc(var(--app-viewport-height, 100dvh) - 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 24px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(103, 181, 137, 0.20), transparent 28%),
+    radial-gradient(circle at 88% 18%, rgba(116, 184, 255, 0.18), transparent 30%),
+    linear-gradient(180deg, var(--glass-heavy), var(--glass-mid)),
+    var(--bg);
+  border: 1px solid var(--border-glass-md);
+  border-radius: 24px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(22px);
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 18px)) scale(0.98);
+  transition:
+    opacity 0.24s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.release-splash.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.release-splash > * {
+  position: relative;
+  z-index: 1;
+}
+
+.release-close {
+  top: max(14px, calc(env(safe-area-inset-top, 0px) + 10px));
+  right: max(14px, calc(env(safe-area-inset-right, 0px) + 10px));
+  width: 34px;
+  height: 34px;
+  background: var(--glass-heavy);
+}
+
+.release-head {
+  padding: 4px 38px 0 0;
+}
+
+.release-mark {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  margin-bottom: 14px;
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(103, 181, 137, 0.24), rgba(116, 184, 255, 0.18)),
+    var(--glass-light);
+  border: 1px solid var(--border-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.release-mark img {
+  width: 31px;
+  height: 31px;
+}
+
+.release-kicker {
+  margin: 0 0 6px;
+  color: var(--green);
+  font-size: 0.76rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.release-head h2 {
+  margin: 0;
+  font-size: clamp(2.25rem, 8vw, 4rem);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.release-summary {
+  max-width: 34rem;
+  margin: 12px 0 0;
+  color: var(--ink-faint);
+  font-size: 1.02rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.release-feature-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.release-feature {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px 11px;
+  min-height: 112px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border-glass);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    var(--glass-light);
+}
+
+.release-feature-icon {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  color: var(--blue);
+  background: rgba(116, 184, 255, 0.13);
+  border: 1px solid rgba(116, 184, 255, 0.18);
+}
+
+.release-feature-icon svg {
+  width: 23px;
+  height: 23px;
+}
+
+.release-feature strong {
+  align-self: end;
+  font-size: 0.97rem;
+  line-height: 1.08;
+}
+
+.release-feature > strong + span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 720;
+  line-height: 1.28;
+}
+
+.release-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.release-primary {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(116, 184, 255, 0.28), rgba(103, 181, 137, 0.24)),
+    var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: 0.96rem;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.release-primary:hover,
+.release-primary:focus-visible {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 520px) {
+  .release-splash {
+    width: min(420px, calc(100vw - 24px));
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .release-feature-list {
+    grid-template-columns: 1fr;
+  }
+
+  .release-actions {
+    justify-content: stretch;
+  }
+
+  .release-primary {
+    width: 100%;
+  }
+}
+
 .sheet-grabber {
   width: 40px;
   height: 4px;

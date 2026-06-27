@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=2.6.116">
-    <link rel="manifest" href="manifest.json?v=2.6.116">
+    <link rel="stylesheet" href="styles.css?v=3.0">
+    <link rel="manifest" href="manifest.json?v=3.0">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2.6.116">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=2.6.116">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -359,6 +359,64 @@
 
     <div class="metric-tip" id="metricTip" hidden></div>
 
+    <div class="sheet-backdrop release-backdrop" id="releaseBackdrop" hidden></div>
+    <aside class="release-splash" id="releaseSplash" hidden aria-label="Welcome to Nearcast v3" role="dialog" aria-modal="true">
+      <button class="sheet-close release-close" id="releaseSplashClose" type="button" aria-label="Close welcome to v3">✕</button>
+      <header class="release-head">
+        <span class="release-mark" aria-hidden="true"><img src="icons/nearcast-mark.svg" alt=""></span>
+        <p class="release-kicker">Nearcast 3.0</p>
+        <h2>Welcome to v3</h2>
+        <p class="release-summary">Nearcast now watches the weather around your plans without giving up the fast hourly, 10 day, and map views.</p>
+      </header>
+      <div class="release-feature-list">
+        <article class="release-feature">
+          <span class="release-feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 20s6-5.3 6-10.1A6 6 0 1 0 6 9.9C6 14.7 12 20 12 20Z" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M8.8 10.5h6.4M8.8 13.3h4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <strong>Plan Watch</strong>
+          <span>Tap remembered plans for a live weather verdict, key signals, and hourly detail.</span>
+        </article>
+        <article class="release-feature">
+          <span class="release-feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M5 13.2c3.2-7.2 10.8-7.2 14 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M8 14.2c2-3.6 6-3.6 8 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <circle cx="12" cy="16.6" r="1.7" fill="currentColor"/>
+            </svg>
+          </span>
+          <strong>Today, around you</strong>
+          <span>The top of the app can now surface what matters for your day, not only the current place.</span>
+        </article>
+        <article class="release-feature">
+          <span class="release-feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 8h9.4a3 3 0 1 0-2.8-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M4 13h14.4a3 3 0 1 1-2.8 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M4 18h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <strong>Richer glance cards</strong>
+          <span>Feels, rain, wind, and air now open into deeper, more visual weather explanations.</span>
+        </article>
+        <article class="release-feature">
+          <span class="release-feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 6.5h16M4 12h16M4 17.5h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M8 4v5M15.5 9.5v5M10.5 15v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <strong>Still fast to scan</strong>
+          <span>Hourly, 10 day, map, alerts, and saved places stay one tap away.</span>
+        </article>
+      </div>
+      <div class="release-actions">
+        <button class="release-primary" id="releaseSplashPrimary" type="button">Start using v3</button>
+      </div>
+    </aside>
+
     <div class="sheet-backdrop" id="glanceDetailBackdrop" hidden></div>
     <aside class="day-sheet glance-detail-sheet" id="glanceDetailSheet" hidden aria-label="Weather detail" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
@@ -524,11 +582,11 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="planner.js?v=2.6.116"></script>
-    <script src="app.js?v=2.6.116"></script>
-    <script src="map.js?v=2.6.116"></script>
-    <script src="sky.js?v=2.6.116"></script>
-    <script src="daygraph.js?v=2.6.116"></script>
-    <script src="boot.js?v=2.6.116"></script>
+    <script src="planner.js?v=3.0"></script>
+    <script src="app.js?v=3.0"></script>
+    <script src="map.js?v=3.0"></script>
+    <script src="sky.js?v=3.0"></script>
+    <script src="daygraph.js?v=3.0"></script>
+    <script src="boot.js?v=3.0"></script>
   </body>
 </html>

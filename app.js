@@ -1,9 +1,10 @@
-const VERSION = "2.6.116";
+const VERSION = "3.0";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
+const RELEASE_SPLASH_KEY = "nearcast-release-v3-seen";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
@@ -439,6 +440,10 @@ const els = {
   welcome: document.querySelector("#welcome"),
   welcomeAmbientLabel: document.querySelector("#welcomeAmbientLabel"),
   welcomeLocate: document.querySelector("#welcomeLocate"),
+  releaseBackdrop: document.querySelector("#releaseBackdrop"),
+  releaseSplash: document.querySelector("#releaseSplash"),
+  releaseSplashClose: document.querySelector("#releaseSplashClose"),
+  releaseSplashPrimary: document.querySelector("#releaseSplashPrimary"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
   timeFormatButtons: document.querySelectorAll("[data-time-format]"),
@@ -2229,6 +2234,7 @@ function init() {
   if (startingPlace) {
     warmStartForecast(startingPlace);
     loadPlace(startingPlace);
+    maybeShowReleaseSplash();
   } else {
     updateMode(); // welcome mode
   }
@@ -2241,6 +2247,56 @@ function readStorageJson(key) {
   } catch {
     return null;
   }
+}
+
+function userHasWeatherContext() {
+  return Boolean(state.activePlace || state.savedPlaces.length || readStorageJson("weather-last-place"));
+}
+
+function releaseSplashWasSeen() {
+  try {
+    return localStorage.getItem(RELEASE_SPLASH_KEY) === "seen";
+  } catch {
+    return true;
+  }
+}
+
+function markReleaseSplashSeen() {
+  try {
+    localStorage.setItem(RELEASE_SPLASH_KEY, "seen");
+  } catch {
+    // Release notes are nonessential; privacy/storage failures should not interrupt the app.
+  }
+}
+
+function maybeShowReleaseSplash() {
+  if (!els.releaseSplash || !els.releaseBackdrop) return;
+  if (releaseSplashWasSeen() || !userHasWeatherContext()) return;
+  window.setTimeout(openReleaseSplash, 420);
+}
+
+function openReleaseSplash() {
+  if (!els.releaseSplash || !els.releaseBackdrop || releaseSplashWasSeen()) return;
+  els.releaseBackdrop.hidden = false;
+  els.releaseSplash.hidden = false;
+  showSheet(els.releaseBackdrop, els.releaseSplash);
+  document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => {
+    try { els.releaseSplashPrimary?.focus({ preventScroll: true }); }
+    catch { els.releaseSplashPrimary?.focus(); }
+  });
+}
+
+function closeReleaseSplash() {
+  if (!els.releaseSplash || !els.releaseBackdrop || els.releaseSplash.hidden) return;
+  markReleaseSplashSeen();
+  els.releaseBackdrop.classList.remove("show");
+  els.releaseSplash.classList.remove("show");
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
+  setTimeout(() => {
+    els.releaseBackdrop.hidden = true;
+    els.releaseSplash.hidden = true;
+  }, 260);
 }
 
 const TAP_MOVE_TOLERANCE = 22;
@@ -2684,6 +2740,9 @@ function bindEvents() {
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
+  bindTapAction(els.releaseSplashClose, closeReleaseSplash);
+  bindTapAction(els.releaseSplashPrimary, closeReleaseSplash);
+  bindTapAction(els.releaseBackdrop, closeReleaseSplash);
   bindTapAction(document.getElementById("searchLocate"), () => {
     toggleSearch(false);
     useCurrentLocation();
@@ -2787,6 +2846,12 @@ function bindEvents() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.glanceDetailSheet.hidden) closeGlanceDetail();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.releaseSplash && !els.releaseSplash.hidden) {
+      event.stopImmediatePropagation();
+      closeReleaseSplash();
+    }
   });
 
   // Severe weather alerts
