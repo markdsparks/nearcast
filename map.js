@@ -5,12 +5,6 @@ const MAP_PAN_REBASE_PX = 96;
 const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
 const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
 const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
-const MAPLIBRE_WEATHER_LAYER_PREFIX = "nearcast-weather";
-const MAPLIBRE_WEATHER_SOURCE_PREFIX = "nearcast-weather-source";
-const MAPLIBRE_MAX_WEATHER_LAYERS = 2;
-const MAPLIBRE_WEATHER_SLOT_COUNT = 2;
-const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
-const MAPLIBRE_WEATHER_REVEAL_TIMEOUT_MS = 1300;
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const mapLibreRecords = new Map();
@@ -340,7 +334,7 @@ function syncMapLibrePreviewHitbox(container) {
 }
 
 function clearClassicLayersForMapLibre() {
-  [els.baseTileLayer, els.weatherTileLayer, els.labelTileLayer].forEach((layer) => {
+  [els.baseTileLayer, els.labelTileLayer].forEach((layer) => {
     if (!layer) return;
     layer.innerHTML = "";
     layer.style.transform = "";
@@ -381,9 +375,15 @@ function syncMapLibreStateAndOverlays(map) {
   if (mapLibreOverlayRaf) return;
   mapLibreOverlayRaf = requestAnimationFrame(() => {
     mapLibreOverlayRaf = 0;
-    renderMapMarkers();
-    if (mapState.immersive) renderStormImpactOverlay();
+    renderMapLibreOverlays();
   });
+}
+
+function renderMapLibreOverlays() {
+  if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex);
+  else renderWeatherTiles();
+  renderMapMarkers();
+  if (mapState.immersive) renderStormImpactOverlay();
 }
 
 function mapLibreTileStyle() {
@@ -507,12 +507,6 @@ function ensureMapLibreMap() {
     theme,
     placeKey: "",
     loaded: false,
-    weatherKey: "",
-    pendingWeather: false,
-    weatherActiveSlot: -1,
-    weatherSlots: [],
-    weatherRevealRaf: 0,
-    weatherCleanupTimer: 0,
     rendered: false,
     fallbackTimer: 0,
     lastError: ""
@@ -537,8 +531,7 @@ function ensureMapLibreMap() {
   map.on("load", () => {
     record.loaded = true;
     syncMapLibreCamera(record, { force: true });
-    renderMapLibreWeather();
-    renderMapMarkers();
+    renderMapLibreOverlays();
     markRenderedIfSourcesLoaded();
     requestAnimationFrame(() => {
       if (mapLibreRecords.get(container) !== record) return;
@@ -609,242 +602,13 @@ function renderMapLibreMap() {
   if (!record) return;
   syncMapLibreCamera(record);
   if (!mapLibreRecordReady(record)) return;
-  renderMapLibreWeather();
-  renderMapMarkers();
+  renderMapLibreOverlays();
   if (mapState.immersive) updateImmersiveHUD();
 }
 
-function mapLibreFrameLayers(frame = mapState.frames[mapState.frameIndex]) {
-  if (!frame) return [];
-  const layers = frame.layers?.length ? frame.layers : [{ url: frame.url, opacity: 0.78 }];
-  return layers
-    .filter((layer) => layer?.url && (layer.opacity ?? 1) > 0.01)
-    .slice(0, MAPLIBRE_MAX_WEATHER_LAYERS);
-}
-
-function mapLibreWeatherTemplate(url) {
-  return String(url || "")
-    .replace(/%7Bbbox%7D/ig, "{bbox-epsg-3857}")
-    .replace(/\{bbox\}/ig, "{bbox-epsg-3857}");
-}
-
-function mapLibreWeatherKey(frame, layers, frameIndex = mapState.frameIndex) {
-  return JSON.stringify({
-    index: frameIndex,
-    source: activeMapSource(frame),
-    timestamp: frame?.timestamp || "",
-    zoom: frame?.maxZoom || MAP_MAX_ZOOM,
-    layers: layers.map((layer) => [layer.url, Number(layer.opacity ?? 1).toFixed(3)])
-  });
-}
-
-function mapLibreWeatherLayerId(slot, index) {
-  return `${MAPLIBRE_WEATHER_LAYER_PREFIX}-${slot}-${index}`;
-}
-
-function mapLibreWeatherSourceId(slot, index) {
-  return `${MAPLIBRE_WEATHER_SOURCE_PREFIX}-${slot}-${index}`;
-}
-
-function mapLibreWeatherFrameKey(frameIndex) {
-  const frame = mapState.frames[frameIndex];
-  const layers = mapLibreFrameLayers(frame);
-  return mapLibreWeatherKey(frame, layers, frameIndex);
-}
-
-function mapLibreWeatherSlotForKey(record, key) {
-  return (record?.weatherSlots || []).findIndex((slot) => slot?.key === key);
-}
-
-function removeMapLibreWeatherSlot(record, slot) {
-  if (!record?.map || slot < 0) return;
-  for (let index = 0; index < MAPLIBRE_MAX_WEATHER_LAYERS; index += 1) {
-    const layerId = mapLibreWeatherLayerId(slot, index);
-    const sourceId = mapLibreWeatherSourceId(slot, index);
-    if (record.map.getLayer(layerId)) record.map.removeLayer(layerId);
-    if (record.map.getSource(sourceId)) record.map.removeSource(sourceId);
-  }
-  if (record.weatherSlots) record.weatherSlots[slot] = null;
-}
-
-function removeMapLibreWeather(record) {
-  if (!record?.map) return;
-  if (record.weatherRevealRaf) {
-    cancelAnimationFrame(record.weatherRevealRaf);
-    record.weatherRevealRaf = 0;
-  }
-  if (record.weatherCleanupTimer) {
-    clearTimeout(record.weatherCleanupTimer);
-    record.weatherCleanupTimer = 0;
-  }
-  for (let slot = 0; slot < MAPLIBRE_WEATHER_SLOT_COUNT; slot += 1) {
-    removeMapLibreWeatherSlot(record, slot);
-  }
-  record.weatherKey = "";
-  record.weatherActiveSlot = -1;
-}
-
-function setMapLibreWeatherSlotOpacity(record, slot, visible) {
-  const slotData = record?.weatherSlots?.[slot];
-  if (!record?.map || !slotData) return;
-  slotData.layers.forEach((layer, index) => {
-    const layerId = mapLibreWeatherLayerId(slot, index);
-    if (!record.map.getLayer(layerId)) return;
-    const opacity = visible
-      ? Number(layer.opacity ?? 0.78)
-      : MAPLIBRE_WEATHER_PRELOAD_OPACITY;
-    record.map.setPaintProperty(layerId, "raster-opacity", opacity);
-  });
-}
-
-function mapLibreWeatherSlotReady(record, slot) {
-  const slotData = record?.weatherSlots?.[slot];
-  if (!record?.map || !slotData) return false;
-  return slotData.sourceIds.every((sourceId) => record.map.isSourceLoaded?.(sourceId));
-}
-
-function revealMapLibreWeatherSlot(record, slot) {
-  const slotData = record?.weatherSlots?.[slot];
-  if (!record?.map || !slotData) return;
-  const previousSlot = record.weatherActiveSlot;
-  setMapLibreWeatherSlotOpacity(record, slot, true);
-  if (previousSlot >= 0 && previousSlot !== slot) {
-    setMapLibreWeatherSlotOpacity(record, previousSlot, false);
-    if (record.weatherCleanupTimer) clearTimeout(record.weatherCleanupTimer);
-    record.weatherCleanupTimer = setTimeout(() => {
-      if (record.weatherActiveSlot !== previousSlot) removeMapLibreWeatherSlot(record, previousSlot);
-      record.weatherCleanupTimer = 0;
-    }, 220);
-  }
-  record.weatherActiveSlot = slot;
-  record.weatherKey = slotData.key;
-  record.weatherRevealRaf = 0;
-  record.map.triggerRepaint?.();
-}
-
-function scheduleMapLibreWeatherReveal(record, slot) {
-  if (!record?.map) return;
-  if (record.weatherRevealRaf) {
-    cancelAnimationFrame(record.weatherRevealRaf);
-    record.weatherRevealRaf = 0;
-  }
-  const startedAt = performance.now();
-  const tick = () => {
-    if (!record.map || !record.weatherSlots?.[slot]) {
-      record.weatherRevealRaf = 0;
-      return;
-    }
-    const waited = performance.now() - startedAt;
-    if (mapLibreWeatherSlotReady(record, slot) || waited >= MAPLIBRE_WEATHER_REVEAL_TIMEOUT_MS) {
-      revealMapLibreWeatherSlot(record, slot);
-      return;
-    }
-    record.weatherRevealRaf = requestAnimationFrame(tick);
-  };
-  record.weatherRevealRaf = requestAnimationFrame(tick);
-}
-
-function mapLibreInactiveWeatherSlot(record) {
-  if (!record?.weatherSlots) return 0;
-  for (let slot = 0; slot < MAPLIBRE_WEATHER_SLOT_COUNT; slot += 1) {
-    if (slot !== record.weatherActiveSlot && !record.weatherSlots[slot]) return slot;
-  }
-  return record.weatherActiveSlot === 0 ? 1 : 0;
-}
-
-function addMapLibreWeatherSlot(record, frameIndex, options = {}) {
-  const frame = mapState.frames[frameIndex];
-  const layers = mapLibreFrameLayers(frame);
-  if (!record?.map || !frame || !layers.length) return -1;
-  const key = mapLibreWeatherKey(frame, layers, frameIndex);
-  const existingSlot = mapLibreWeatherSlotForKey(record, key);
-  if (existingSlot >= 0) return existingSlot;
-
-  const slot = mapLibreInactiveWeatherSlot(record);
-  removeMapLibreWeatherSlot(record, slot);
-  const beforeId = record.map.getLayer(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
-  const sourceIds = [];
-  const visible = Boolean(options.visible);
-  layers.forEach((layer, index) => {
-    const sourceId = mapLibreWeatherSourceId(slot, index);
-    const layerId = mapLibreWeatherLayerId(slot, index);
-    sourceIds.push(sourceId);
-    record.map.addSource(sourceId, {
-      type: "raster",
-      tiles: [mapLibreWeatherTemplate(layer.url)],
-      tileSize: 256,
-      minzoom: MAP_MIN_ZOOM,
-      maxzoom: Math.min(frame.maxZoom || MAP_MAX_ZOOM, MAP_MAX_ZOOM)
-    });
-    record.map.addLayer({
-      id: layerId,
-      type: "raster",
-      source: sourceId,
-      paint: {
-        "raster-opacity": visible ? Number(layer.opacity ?? 0.78) : MAPLIBRE_WEATHER_PRELOAD_OPACITY,
-        "raster-resampling": "linear",
-        "raster-fade-duration": 0
-      }
-    }, beforeId);
-  });
-
-  record.weatherSlots[slot] = { key, frameIndex, sourceIds, layers };
-  if (visible) {
-    record.weatherActiveSlot = slot;
-    record.weatherKey = key;
-  }
-  return slot;
-}
-
-function preloadMapLibreWeatherFrame(frameIndex) {
-  if (!mapRendererIsGl() || !els.weatherMap) return;
-  const record = ensureMapLibreMap();
-  if (!record || !mapLibreRecordReady(record)) return;
-  addMapLibreWeatherSlot(record, frameIndex, { visible: false });
-}
-
-function mapLibreWeatherFrameReady(frameIndex) {
-  if (!mapRendererIsGl() || !els.weatherMap) return false;
-  const record = mapLibreRecords.get(els.weatherMap);
-  if (!record) return false;
-  const key = mapLibreWeatherFrameKey(frameIndex);
-  if (record.weatherKey === key) return true;
-  const slot = mapLibreWeatherSlotForKey(record, key);
-  return slot >= 0 && mapLibreWeatherSlotReady(record, slot);
-}
-
-function renderMapLibreWeather(frameIndex = mapState.frameIndex) {
-  if (!mapRendererIsGl() || !els.weatherMap) return;
-  const record = ensureMapLibreMap();
-  if (!record) return;
-  if (!mapLibreRecordReady(record)) {
-    record.pendingWeather = true;
-    return;
-  }
-  const frame = mapState.frames[frameIndex];
-  const layers = mapLibreFrameLayers(frame);
-  const key = mapLibreWeatherKey(frame, layers, frameIndex);
-  if (record.weatherKey === key) return;
-  if (!frame || !layers.length) {
-    removeMapLibreWeather(record);
-    return;
-  }
-
-  let slot = mapLibreWeatherSlotForKey(record, key);
-  if (slot < 0) {
-    slot = addMapLibreWeatherSlot(record, frameIndex, { visible: record.weatherActiveSlot < 0 });
-  }
-  if (slot < 0) return;
-  if (record.weatherActiveSlot < 0 || record.weatherSlots[slot]?.key === record.weatherKey) {
-    revealMapLibreWeatherSlot(record, slot);
-    return;
-  }
-  scheduleMapLibreWeatherReveal(record, slot);
-}
-
 function clearMapLibreWeather() {
-  const record = els.weatherMap ? mapLibreRecords.get(els.weatherMap) : null;
-  removeMapLibreWeather(record);
+  // Weather animation is rendered by the classic DOM tile panes even when the
+  // base map is WebGL, so there are no MapLibre weather sources to clear.
 }
 
 function destroyMapLibreRecord(container) {
@@ -1993,12 +1757,6 @@ function shouldBufferRadarPlayback(index = mapState.frameIndex) {
 // so advancing is an instant swap with no load flash and — crucially — no
 // alpha-blend of two frames (which caused the pulsing/double-exposure).
 function renderXfade(index, viewport = null) {
-  if (mapRendererIsGl()) {
-    const next = shouldBufferRadarPlayback(index) ? nextPlaybackIndexFrom(index) : index;
-    renderMapLibreWeather(index);
-    if (next !== index) preloadMapLibreWeatherFrame(next);
-    return;
-  }
   const N = mapState.frames.length;
   if (!N || !els.weatherTileLayer) return;
   const perf = perfStart();
@@ -2045,7 +1803,6 @@ function radarFramePane(frameIndex) {
 }
 
 function radarPaneReady(frameIndex) {
-  if (mapRendererIsGl()) return mapLibreWeatherFrameReady(frameIndex);
   const pane = radarFramePane(frameIndex);
   if (!pane) return false;
   const images = [...pane.querySelectorAll(":scope > img")];
@@ -2424,10 +2181,6 @@ function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
 }
 
 function renderWeatherTiles(viewport = null) {
-  if (mapRendererIsGl()) {
-    renderMapLibreWeather();
-    return;
-  }
   const frame = mapState.frames[mapState.frameIndex];
   const layers = (frame && state.activePlace)
     ? (frame.layers || [{ url: frame.url, opacity: 0.78 }])
