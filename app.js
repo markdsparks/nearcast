@@ -1,9 +1,14 @@
-const VERSION = "3.0.11";
+const VERSION = "3.0.19";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
+const MAP_RENDERER_KEY = "nearcast-map-renderer";
+const MAPLIBRE_CSS_ID = "maplibreCss";
+const MAPLIBRE_SCRIPT_ID = "maplibreScript";
+const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
+const MAPLIBRE_SCRIPT_URL = `vendor/maplibre/maplibre-gl.js?v=${VERSION}`;
 const RELEASE_SPLASH_KEY = "nearcast-release-v3-seen";
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
@@ -70,7 +75,14 @@ const windFieldQueryFlag = queryValue("windField", "windfield");
 if (windFieldQueryFlag === "1") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "1");
 else if (windFieldQueryFlag === "0") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "0");
 
+const mapRendererQueryFlag = queryValue("mapRenderer", "maprenderer", "map");
+if (["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLowerCase())) {
+  localStorage.setItem(MAP_RENDERER_KEY, String(mapRendererQueryFlag).toLowerCase() === "classic" ? "classic" : "gl");
+}
+
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
+let mapLibreAssetPromise = null;
+let mapLibreAssetStatus = window.maplibregl ? "ready" : "idle";
 
 const featureFlags = {
   windField: windFieldStoredFlag !== "0"
@@ -80,6 +92,7 @@ const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
   theme: localStorage.getItem("weather-theme") || "auto",
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
+  mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -473,6 +486,8 @@ const els = {
   unitToggle: document.querySelector("#unitToggle"),
   timeFormatButtons: document.querySelectorAll("[data-time-format]"),
   timeFormatMeta: document.querySelector("#timeFormatMeta"),
+  mapRendererButtons: document.querySelectorAll("[data-map-renderer]"),
+  mapRendererMeta: document.querySelector("#mapRendererMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2245,6 +2260,8 @@ function init() {
   renderSavedPlaces();
   updateUnitButton();
   updateTimeFormatButtons();
+  updateMapRendererButtons();
+  if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
   initMetricTipListeners();
   initDaylightScrubListeners();
@@ -2530,6 +2547,9 @@ function bindEvents() {
   bindTapAction(els.themeToggle, toggleTheme);
   els.timeFormatButtons.forEach((button) => {
     bindTapAction(button, () => setTimeFormatPreference(button.dataset.timeFormat));
+  });
+  els.mapRendererButtons.forEach((button) => {
+    bindTapAction(button, () => setMapRendererPreference(button.dataset.mapRenderer));
   });
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
@@ -3102,6 +3122,10 @@ function sanitizeTimeFormatPreference(value) {
   return ["auto", "12", "24"].includes(value) ? value : "auto";
 }
 
+function sanitizeMapRendererPreference(value) {
+  return value === "gl" ? "gl" : "classic";
+}
+
 function timeFormatMetaText() {
   if (state.timeFormat === "12") return "Always show 6:00 PM";
   if (state.timeFormat === "24") return "Always show 18:00";
@@ -3124,6 +3148,97 @@ function setTimeFormatPreference(value) {
   localStorage.setItem(TIME_FORMAT_KEY, next);
   updateTimeFormatButtons();
   refreshTimeFormattedSurfaces();
+}
+
+function mapRendererMetaText() {
+  if (state.mapRenderer === "gl") {
+    if (window.maplibregl) return "Experimental WebGL map";
+    if (mapLibreAssetStatus === "loading") return "Loading WebGL map";
+    if (mapLibreAssetStatus === "error") return "WebGL unavailable";
+    return "Tap to load WebGL map";
+  }
+  return "Stable Nearcast map";
+}
+
+function ensureMapLibreStylesheet() {
+  if (document.getElementById(MAPLIBRE_CSS_ID)) return;
+  const link = document.createElement("link");
+  link.id = MAPLIBRE_CSS_ID;
+  link.rel = "stylesheet";
+  link.href = MAPLIBRE_CSS_URL;
+  document.head.appendChild(link);
+}
+
+function ensureMapLibreAssets(options = {}) {
+  if (window.maplibregl) {
+    mapLibreAssetStatus = "ready";
+    updateMapRendererButtons();
+    if (options.renderAfterLoad && state.mapRenderer === "gl" && typeof applyMapRendererPreference === "function") {
+      applyMapRendererPreference();
+    }
+    return Promise.resolve(true);
+  }
+
+  ensureMapLibreStylesheet();
+  if (!mapLibreAssetPromise) {
+    const shouldReplaceScript = mapLibreAssetStatus === "error";
+    mapLibreAssetStatus = "loading";
+    updateMapRendererButtons();
+    mapLibreAssetPromise = new Promise((resolve) => {
+      let script = document.getElementById(MAPLIBRE_SCRIPT_ID);
+      if (script && shouldReplaceScript) {
+        script.remove();
+        script = null;
+      }
+      if (!script) {
+        script = document.createElement("script");
+        script.id = MAPLIBRE_SCRIPT_ID;
+        script.src = MAPLIBRE_SCRIPT_URL;
+        script.async = true;
+        document.body.appendChild(script);
+      }
+      script.addEventListener("load", () => resolve(true), { once: true });
+      script.addEventListener("error", () => resolve(false), { once: true });
+    }).then((loaded) => {
+      const ready = loaded && Boolean(window.maplibregl);
+      mapLibreAssetStatus = ready ? "ready" : "error";
+      if (!ready) {
+        document.getElementById(MAPLIBRE_SCRIPT_ID)?.remove();
+        mapLibreAssetPromise = null;
+      }
+      updateMapRendererButtons();
+      return ready;
+    });
+  }
+
+  return mapLibreAssetPromise.then((ready) => {
+    if (ready && options.renderAfterLoad && state.mapRenderer === "gl" && typeof applyMapRendererPreference === "function") {
+      applyMapRendererPreference();
+    }
+    return ready;
+  });
+}
+
+function updateMapRendererButtons() {
+  els.mapRendererButtons.forEach((button) => {
+    const active = button.dataset.mapRenderer === state.mapRenderer;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (els.mapRendererMeta) els.mapRendererMeta.textContent = mapRendererMetaText();
+}
+
+function setMapRendererPreference(value) {
+  const next = sanitizeMapRendererPreference(value);
+  if (next === state.mapRenderer) return;
+  state.mapRenderer = next;
+  localStorage.setItem(MAP_RENDERER_KEY, next);
+  updateMapRendererButtons();
+  if (next === "gl") {
+    ensureMapLibreAssets({ renderAfterLoad: true });
+  } else if (typeof applyMapRendererPreference === "function") {
+    applyMapRendererPreference();
+  }
 }
 
 function refreshTimeFormattedSurfaces() {

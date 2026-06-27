@@ -3,6 +3,15 @@
 const MAP_PAN_MOVE_EPSILON_PX = 0.5;
 const MAP_PAN_REBASE_PX = 96;
 const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
+const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
+const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
+const MAPLIBRE_MARKER_SOURCE_ID = "nearcast-markers";
+const MAPLIBRE_MARKER_HALO_LAYER_ID = "nearcast-marker-halo";
+const MAPLIBRE_MARKER_LAYER_ID = "nearcast-marker";
+const MAPLIBRE_WEATHER_LAYER_PREFIX = "nearcast-weather";
+const MAPLIBRE_WEATHER_SOURCE_PREFIX = "nearcast-weather-source";
+const MAPLIBRE_MAX_WEATHER_LAYERS = 2;
+const mapLibreRecords = new Map();
 
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
@@ -16,6 +25,9 @@ function initMap() {
 
 function bindMapDrag() {
   const el = els.weatherMap;
+  document.addEventListener("click", openMapLibrePreviewFromEvent, true);
+  document.addEventListener("pointerup", openMapLibrePreviewFromEvent, true);
+  document.addEventListener("touchend", openMapLibrePreviewFromEvent, { capture: true, passive: false });
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -67,6 +79,33 @@ function bindMapDrag() {
     e.preventDefault();
     enterImmersiveMap();
   });
+  el.addEventListener("click", (e) => {
+    openMapLibrePreviewFromEvent(e);
+  }, true);
+}
+
+function openMapLibrePreviewFromEvent(event) {
+  if (!mapRendererIsGl() || mapState.immersive || !state.activePlace) return false;
+  const target = event.target instanceof Element
+    ? event.target
+    : event.target?.parentElement;
+  const previewMap = target?.closest?.("#weatherMap.is-gl-renderer");
+  if (!previewMap || previewMap !== els.weatherMap) return false;
+  const point = eventClientPoint(event);
+  if (mapTapState.active && point && !finishMapPreviewTap(point.x, point.y)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  enterImmersiveMap();
+  return true;
+}
+
+function eventClientPoint(event) {
+  const touch = event.changedTouches?.[0] || event.touches?.[0];
+  if (touch) return { x: touch.clientX, y: touch.clientY };
+  if (typeof event.clientX === "number" && typeof event.clientY === "number") {
+    return { x: event.clientX, y: event.clientY };
+  }
+  return null;
 }
 
 function startMapPreviewTap(x, y, el = els.weatherMap) {
@@ -105,6 +144,7 @@ function cancelMapPreviewTap() {
 }
 
 function startMapDrag(x, y, el = els.weatherMap) {
+  if (mapRendererIsGl()) return;
   pinchState.active = false;
   dragState.active = true;
   dragState.startX = x;
@@ -120,6 +160,11 @@ function startMapDrag(x, y, el = els.weatherMap) {
 }
 
 function moveMapDrag(x, y) {
+  if (mapRendererIsGl() && !mapState.immersive) {
+    updateMapPreviewTap(x, y);
+    return;
+  }
+  if (mapRendererIsGl()) return;
   if (!dragState.active || pinchState.active) return;
   updateMapPreviewTap(x, y);
   const dx = x - dragState.startX;
@@ -233,6 +278,400 @@ function finishAnchoredMapPan(options = {}) {
   if (render) renderTileMap();
 }
 
+function mapRendererIsGl() {
+  return state.mapRenderer === "gl" && Boolean(window.maplibregl);
+}
+
+function applyMapRendererPreference() {
+  updateMapRendererButtons();
+  stopRadarPlayback({ renderStatic: false });
+  if (!mapRendererIsGl()) {
+    destroyMapLibreMaps();
+    if (mapState.immersive && !immersiveDragAbort) bindImmersiveDrag();
+  } else if (mapState.immersive && immersiveDragAbort) {
+    immersiveDragAbort.abort();
+    immersiveDragAbort = null;
+  }
+  if (!mapState.initialized || !state.activePlace) return;
+  renderTileMap();
+  if (mapState.frames.length) showFrame(mapState.frameIndex);
+}
+
+function ensureMapLibreSurface(container) {
+  let surface = container.querySelector(":scope > .maplibre-surface");
+  if (!surface) {
+    surface = document.createElement("div");
+    surface.className = "maplibre-surface";
+    container.appendChild(surface);
+  }
+  if (!surface.dataset.nearcastTapBound) {
+    surface.dataset.nearcastTapBound = "1";
+    surface.addEventListener("click", openMapLibrePreviewFromEvent, true);
+  }
+  return surface;
+}
+
+function syncMapLibrePreviewHitbox(container) {
+  let hitbox = container.querySelector(":scope > .maplibre-open-hitbox");
+  if (mapState.immersive) {
+    hitbox?.remove();
+    return;
+  }
+  if (hitbox) return;
+  hitbox = document.createElement("button");
+  hitbox.type = "button";
+  hitbox.className = "maplibre-open-hitbox";
+  hitbox.tabIndex = -1;
+  hitbox.setAttribute("aria-label", "Open immersive map");
+  hitbox.addEventListener("click", openMapLibrePreviewFromEvent);
+  hitbox.addEventListener("pointerup", openMapLibrePreviewFromEvent);
+  hitbox.addEventListener("touchend", openMapLibrePreviewFromEvent, { passive: false });
+  container.appendChild(hitbox);
+}
+
+function mapLibrePlaceKey(place = state.activePlace) {
+  if (!place) return "";
+  return `${Number(place.latitude).toFixed(5)},${Number(place.longitude).toFixed(5)}`;
+}
+
+function mapLibreCenterFromState() {
+  const place = state.activePlace;
+  if (!place) return [0, 0];
+  const zoom = clampMapZoom(mapState.zoom);
+  const placeWorld = projectLatLon(place.latitude, place.longitude, zoom);
+  const centerWorld = {
+    x: placeWorld.x - mapState.panX,
+    y: placeWorld.y - mapState.panY
+  };
+  const center = unprojectWorldPoint(centerWorld, zoom);
+  return [center.longitude, center.latitude];
+}
+
+function syncMapLibreStateFromMap(map) {
+  if (!map || !state.activePlace) return;
+  const center = map.getCenter();
+  const zoom = clampMapZoom(map.getZoom());
+  const placeWorld = projectLatLon(state.activePlace.latitude, state.activePlace.longitude, zoom);
+  const centerWorld = projectLatLon(center.lat, center.lng, zoom);
+  mapState.zoom = zoom;
+  mapState.panX = placeWorld.x - centerWorld.x;
+  mapState.panY = placeWorld.y - centerWorld.y;
+}
+
+function mapLibreTileStyle() {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  return {
+    theme: isDark ? "dark" : "light",
+    base: "rastertiles/voyager_nolabels",
+    labels: "rastertiles/voyager_only_labels"
+  };
+}
+
+function mapLibreCartoTileUrl(style) {
+  return `https://a.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png`;
+}
+
+function mapLibreBasePaint(theme) {
+  return theme === "dark"
+    ? {
+        "raster-saturation": -0.2,
+        "raster-contrast": 0.04,
+        "raster-brightness-min": 0.04,
+        "raster-brightness-max": 0.82,
+        "raster-fade-duration": 0
+      }
+    : {
+        "raster-saturation": -0.65,
+        "raster-contrast": -0.08,
+        "raster-brightness-min": 0.06,
+        "raster-brightness-max": 0.98,
+        "raster-fade-duration": 0
+      };
+}
+
+function mapLibreStyle() {
+  const style = mapLibreTileStyle();
+  return {
+    version: 8,
+    sources: {
+      "nearcast-base": {
+        type: "raster",
+        tiles: [mapLibreCartoTileUrl(style.base)],
+        tileSize: 256,
+        attribution: "CARTO, OpenStreetMap contributors"
+      },
+      "nearcast-labels": {
+        type: "raster",
+        tiles: [mapLibreCartoTileUrl(style.labels)],
+        tileSize: 256
+      }
+    },
+    layers: [
+      {
+        id: MAPLIBRE_BASE_LAYER_ID,
+        type: "raster",
+        source: "nearcast-base",
+        paint: mapLibreBasePaint(style.theme)
+      },
+      {
+        id: MAPLIBRE_LABEL_LAYER_ID,
+        type: "raster",
+        source: "nearcast-labels",
+        paint: {
+          "raster-opacity": 0.96,
+          "raster-fade-duration": 0
+        }
+      }
+    ]
+  };
+}
+
+function ensureMapLibreMap() {
+  if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return null;
+  const container = els.weatherMap;
+  container.classList.add("is-gl-renderer");
+  syncMapLibrePreviewHitbox(container);
+  const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  let record = mapLibreRecords.get(container);
+  if (record && record.theme !== theme) {
+    destroyMapLibreRecord(container);
+    record = null;
+  }
+  if (record) {
+    record.map.resize();
+    return record;
+  }
+
+  const surface = ensureMapLibreSurface(container);
+  const map = new maplibregl.Map({
+    container: surface,
+    style: mapLibreStyle(),
+    center: mapLibreCenterFromState(),
+    zoom: clampMapZoom(mapState.zoom),
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
+    interactive: mapState.immersive,
+    attributionControl: false,
+    fadeDuration: 0,
+    renderWorldCopies: true
+  });
+  map.dragRotate.disable();
+  map.touchZoomRotate.disableRotation();
+  if (!mapState.immersive) {
+    map.dragPan.disable();
+    map.scrollZoom.disable();
+    map.boxZoom.disable();
+    map.doubleClickZoom.disable();
+    map.keyboard.disable();
+    map.touchZoomRotate.disable();
+  }
+
+  record = {
+    map,
+    surface,
+    theme,
+    placeKey: "",
+    loaded: false,
+    weatherKey: "",
+    markersKey: "",
+    pendingWeather: false,
+    pendingMarkers: false
+  };
+  mapLibreRecords.set(container, record);
+
+  map.on("load", () => {
+    record.loaded = true;
+    syncMapLibreCamera(record, { force: true });
+    renderMapLibreWeather();
+    renderMapLibreMarkers();
+  });
+  map.on("moveend", () => syncMapLibreStateFromMap(map));
+  map.on("zoomend", () => syncMapLibreStateFromMap(map));
+  map.on("click", (event) => {
+    if (!mapState.immersive || !event.originalEvent) return;
+    syncMapLibreStateFromMap(map);
+    inspectStormImpactAt(event.originalEvent.clientX, event.originalEvent.clientY);
+  });
+
+  return record;
+}
+
+function mapLibreRecordReady(record) {
+  return Boolean(record?.loaded && record.map?.isStyleLoaded?.());
+}
+
+function syncMapLibreCamera(record, options = {}) {
+  if (!record?.map || !state.activePlace) return;
+  const placeKey = mapLibrePlaceKey();
+  if (!options.force && record.placeKey === placeKey) return;
+  record.map.jumpTo({
+    center: mapLibreCenterFromState(),
+    zoom: clampMapZoom(mapState.zoom)
+  });
+  record.placeKey = placeKey;
+}
+
+function renderMapLibreMap() {
+  const record = ensureMapLibreMap();
+  if (!record) return;
+  syncMapLibreCamera(record);
+  if (!mapLibreRecordReady(record)) return;
+  renderMapLibreWeather();
+  renderMapLibreMarkers();
+  if (mapState.immersive) updateImmersiveHUD();
+}
+
+function mapLibreFrameLayers(frame = mapState.frames[mapState.frameIndex]) {
+  if (!frame) return [];
+  const layers = frame.layers?.length ? frame.layers : [{ url: frame.url, opacity: 0.78 }];
+  return layers
+    .filter((layer) => layer?.url && (layer.opacity ?? 1) > 0.01)
+    .slice(0, MAPLIBRE_MAX_WEATHER_LAYERS);
+}
+
+function mapLibreWeatherTemplate(url) {
+  return String(url || "")
+    .replace(/%7Bbbox%7D/ig, "{bbox-epsg-3857}")
+    .replace(/\{bbox\}/ig, "{bbox-epsg-3857}");
+}
+
+function mapLibreWeatherKey(frame, layers) {
+  return JSON.stringify({
+    index: mapState.frameIndex,
+    source: activeMapSource(frame),
+    zoom: frame?.maxZoom || MAP_MAX_ZOOM,
+    layers: layers.map((layer) => [layer.url, Number(layer.opacity ?? 1).toFixed(3)])
+  });
+}
+
+function removeMapLibreWeather(record) {
+  if (!record?.map) return;
+  for (let index = 0; index < MAPLIBRE_MAX_WEATHER_LAYERS; index += 1) {
+    const layerId = `${MAPLIBRE_WEATHER_LAYER_PREFIX}-${index}`;
+    const sourceId = `${MAPLIBRE_WEATHER_SOURCE_PREFIX}-${index}`;
+    if (record.map.getLayer(layerId)) record.map.removeLayer(layerId);
+    if (record.map.getSource(sourceId)) record.map.removeSource(sourceId);
+  }
+  record.weatherKey = "";
+}
+
+function renderMapLibreWeather() {
+  if (!mapRendererIsGl() || !els.weatherMap) return;
+  const record = ensureMapLibreMap();
+  if (!record) return;
+  if (!mapLibreRecordReady(record)) {
+    record.pendingWeather = true;
+    return;
+  }
+
+  const frame = mapState.frames[mapState.frameIndex];
+  const layers = mapLibreFrameLayers(frame);
+  const key = mapLibreWeatherKey(frame, layers);
+  if (record.weatherKey === key) return;
+  removeMapLibreWeather(record);
+  if (!frame || !layers.length) return;
+
+  const beforeId = record.map.getLayer(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
+  layers.forEach((layer, index) => {
+    const sourceId = `${MAPLIBRE_WEATHER_SOURCE_PREFIX}-${index}`;
+    const layerId = `${MAPLIBRE_WEATHER_LAYER_PREFIX}-${index}`;
+    record.map.addSource(sourceId, {
+      type: "raster",
+      tiles: [mapLibreWeatherTemplate(layer.url)],
+      tileSize: 256,
+      minzoom: MAP_MIN_ZOOM,
+      maxzoom: Math.min(frame.maxZoom || MAP_MAX_ZOOM, MAP_MAX_ZOOM)
+    });
+    record.map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      paint: {
+        "raster-opacity": Number(layer.opacity ?? 0.78),
+        "raster-resampling": "linear",
+        "raster-fade-duration": 0
+      }
+    }, beforeId);
+  });
+  record.weatherKey = key;
+}
+
+function renderMapLibreMarkers() {
+  if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return;
+  const record = ensureMapLibreMap();
+  if (!record) return;
+  if (!mapLibreRecordReady(record)) {
+    record.pendingMarkers = true;
+    return;
+  }
+
+  const places = [state.activePlace, ...(state.savedPlaces || [])].filter(Boolean);
+  const features = places.map((place, index) => ({
+    type: "Feature",
+    properties: {
+      active: index === 0,
+      name: place.name || placeLabel(place)
+    },
+    geometry: {
+      type: "Point",
+      coordinates: [normalizeMapLongitude(place.longitude), Number(place.latitude)]
+    }
+  })).filter((feature) => Number.isFinite(feature.geometry.coordinates[0]) && Number.isFinite(feature.geometry.coordinates[1]));
+  const key = JSON.stringify(features.map((feature) => [feature.geometry.coordinates, feature.properties.active]));
+  const data = { type: "FeatureCollection", features };
+
+  if (!record.map.getSource(MAPLIBRE_MARKER_SOURCE_ID)) {
+    record.map.addSource(MAPLIBRE_MARKER_SOURCE_ID, { type: "geojson", data });
+    const beforeId = record.map.getLayer(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
+    record.map.addLayer({
+      id: MAPLIBRE_MARKER_HALO_LAYER_ID,
+      type: "circle",
+      source: MAPLIBRE_MARKER_SOURCE_ID,
+      paint: {
+        "circle-radius": ["case", ["get", "active"], 13, 9],
+        "circle-color": "rgba(255,255,255,0.88)",
+        "circle-opacity": ["case", ["get", "active"], 0.92, 0.62],
+        "circle-blur": 0.18
+      }
+    }, beforeId);
+    record.map.addLayer({
+      id: MAPLIBRE_MARKER_LAYER_ID,
+      type: "circle",
+      source: MAPLIBRE_MARKER_SOURCE_ID,
+      paint: {
+        "circle-radius": ["case", ["get", "active"], 6.5, 4.5],
+        "circle-color": ["case", ["get", "active"], "#2f7fe8", "#102033"],
+        "circle-stroke-color": "rgba(255,255,255,0.96)",
+        "circle-stroke-width": ["case", ["get", "active"], 2.5, 1.5]
+      }
+    }, beforeId);
+  } else if (record.markersKey !== key) {
+    record.map.getSource(MAPLIBRE_MARKER_SOURCE_ID).setData(data);
+  }
+  record.markersKey = key;
+}
+
+function clearMapLibreWeather() {
+  const record = els.weatherMap ? mapLibreRecords.get(els.weatherMap) : null;
+  removeMapLibreWeather(record);
+}
+
+function destroyMapLibreRecord(container) {
+  const record = mapLibreRecords.get(container);
+  if (!record) return;
+  record.map.remove();
+  record.surface?.remove();
+  container.classList.remove("is-gl-renderer");
+  mapLibreRecords.delete(container);
+}
+
+function destroyMapLibreMaps() {
+  [...mapLibreRecords.keys()].forEach(destroyMapLibreRecord);
+  document.querySelectorAll(".tile-map.is-gl-renderer").forEach((container) => {
+    container.classList.remove("is-gl-renderer");
+  });
+}
+
 // Full re-tiling is capped to one render per frame so bursts of touchmove
 // events can't force multiple DOM reconciliation passes before paint.
 let mapRenderQueued = false;
@@ -257,6 +696,7 @@ function touchMidpoint(a, b) {
 }
 
 function startMapPinch(a, b) {
+  if (mapRendererIsGl()) return;
   if (dragState.moved) {
     finishAnchoredMapPan({ render: true });
   }
@@ -270,6 +710,7 @@ function startMapPinch(a, b) {
 }
 
 function moveMapPinch(a, b) {
+  if (mapRendererIsGl()) return;
   if (!pinchState.active || pinchState.startDistance <= 0) return;
   const ratio = touchDistance(a, b) / pinchState.startDistance;
   if (!Number.isFinite(ratio) || ratio <= 0) return;
@@ -356,6 +797,10 @@ function refreshInlineMap(forceFrames = false, options = {}) {
 }
 
 function renderMapMarkers() {
+  if (mapRendererIsGl()) {
+    renderMapLibreMarkers();
+    return;
+  }
   if (!mapState.initialized || !els.markerLayer) return;
   els.markerLayer.innerHTML = "";
   if (!state.activePlace) return;
@@ -1353,6 +1798,10 @@ function shouldBufferRadarPlayback(index = mapState.frameIndex) {
 // so advancing is an instant swap with no load flash and — crucially — no
 // alpha-blend of two frames (which caused the pulsing/double-exposure).
 function renderXfade(index, viewport = null) {
+  if (mapRendererIsGl()) {
+    renderMapLibreWeather();
+    return;
+  }
   const N = mapState.frames.length;
   if (!N || !els.weatherTileLayer) return;
   const perf = perfStart();
@@ -1562,6 +2011,7 @@ function clearMapLayers(options = {}) {
   els.frameSlider.max = "0";
   els.frameSlider.value = "0";
   updateRangeProgress(els.frameSlider);
+  clearMapLibreWeather();
   els.weatherTileLayer.innerHTML = "";
   setFrameLabel("No frames");
   updateTimelineEraVisuals();
@@ -1626,6 +2076,19 @@ function radarBlurFilter(sourceZoom) {
 function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
   const newZoom = clampMapZoom(nextZoom);
   if (Math.abs(newZoom - mapState.zoom) < 0.001) return;
+  if (mapRendererIsGl()) {
+    const record = ensureMapLibreMap();
+    if (record?.map) {
+      const options = { duration: 0 };
+      if (anchorClientX != null && anchorClientY != null && els.weatherMap) {
+        const rect = els.weatherMap.getBoundingClientRect();
+        options.around = record.map.unproject([anchorClientX - rect.left, anchorClientY - rect.top]);
+      }
+      record.map.zoomTo(newZoom, options);
+      syncMapLibreStateFromMap(record.map);
+      return;
+    }
+  }
   const scale = 2 ** (newZoom - mapState.zoom);
 
   if (anchorClientX != null && anchorClientY != null && state.activePlace && els.weatherMap) {
@@ -1665,6 +2128,11 @@ function renderTileMap() {
   if (!mapState.initialized || !state.activePlace) return;
   const rect = els.weatherMap.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  if (mapRendererIsGl()) {
+    renderMapLibreMap();
+    return;
+  }
+  if (els.weatherMap) els.weatherMap.classList.remove("is-gl-renderer");
   const perf = perfStart();
   if (dragState.anchorActive) clearMapPanTransform();
 
@@ -1758,6 +2226,10 @@ function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
 }
 
 function renderWeatherTiles(viewport = null) {
+  if (mapRendererIsGl()) {
+    renderMapLibreWeather();
+    return;
+  }
   const frame = mapState.frames[mapState.frameIndex];
   const layers = (frame && state.activePlace)
     ? (frame.layers || [{ url: frame.url, opacity: 0.78 }])
@@ -2096,7 +2568,14 @@ function enterImmersiveMap() {
 
   updateImmersiveHUD();
   bindImmersiveModeButtons();
-  bindImmersiveDrag();
+  if (mapRendererIsGl()) {
+    if (immersiveDragAbort) {
+      immersiveDragAbort.abort();
+      immersiveDragAbort = null;
+    }
+  } else {
+    bindImmersiveDrag();
+  }
   document.addEventListener("keydown", onImmersiveKey);
 }
 

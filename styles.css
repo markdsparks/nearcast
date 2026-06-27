@@ -1085,6 +1085,10 @@ h2 {
   background: rgba(24, 34, 48, 0.08);
 }
 
+.map-renderer-options {
+  grid-auto-columns: minmax(64px, 1fr);
+}
+
 .segmented-control button {
   min-width: 42px;
   height: 34px;
@@ -6209,6 +6213,41 @@ body.map-immersive-active #mapLegend {
 .tile-map {
   position: relative;
   overflow: hidden;
+}
+
+.maplibre-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.maplibre-open-hitbox {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tile-map.is-gl-renderer > .tile-layer,
+.tile-map.is-gl-renderer > .marker-layer,
+.tile-map.is-gl-renderer > .impact-layer {
+  display: none;
+}
+
+.tile-map.is-gl-renderer .maplibregl-canvas {
+  outline: none;
+}
+
+.tile-map.is-gl-renderer .maplibregl-control-container {
+  display: none;
 }
 
 .tile-layer,
