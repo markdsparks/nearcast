@@ -306,6 +306,13 @@ function ensureMapLibreSurface(container) {
     surface.className = "maplibre-surface";
     container.appendChild(surface);
   }
+  Object.assign(surface.style, {
+    position: "absolute",
+    inset: "0",
+    width: "100%",
+    height: "100%",
+    overflow: "hidden"
+  });
   if (!surface.dataset.nearcastTapBound) {
     surface.dataset.nearcastTapBound = "1";
     surface.addEventListener("click", openMapLibrePreviewFromEvent, true);
@@ -329,6 +336,14 @@ function syncMapLibrePreviewHitbox(container) {
   hitbox.addEventListener("pointerup", openMapLibrePreviewFromEvent);
   hitbox.addEventListener("touchend", openMapLibrePreviewFromEvent, { passive: false });
   container.appendChild(hitbox);
+}
+
+function clearClassicLayersForMapLibre() {
+  [els.baseTileLayer, els.weatherTileLayer, els.labelTileLayer, els.markerLayer].forEach((layer) => {
+    if (!layer) return;
+    layer.innerHTML = "";
+    layer.style.transform = "";
+  });
 }
 
 function mapLibrePlaceKey(place = state.activePlace) {
@@ -435,6 +450,7 @@ function ensureMapLibreMap() {
   if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return null;
   const container = els.weatherMap;
   container.classList.add("is-gl-renderer");
+  clearClassicLayersForMapLibre();
   syncMapLibrePreviewHitbox(container);
   const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   let record = mapLibreRecords.get(container);
@@ -444,6 +460,9 @@ function ensureMapLibreMap() {
   }
   if (record) {
     record.map.resize();
+    requestAnimationFrame(() => {
+      if (mapLibreRecords.get(container) === record) record.map.resize();
+    });
     return record;
   }
 
@@ -495,6 +514,7 @@ function ensureMapLibreMap() {
     }
   };
   const markRenderedIfSourcesLoaded = () => {
+    if (!record.surface?.clientWidth || !record.surface?.clientHeight) return;
     const baseLoaded = map.isSourceLoaded?.("nearcast-base") || false;
     const labelsLoaded = map.isSourceLoaded?.("nearcast-labels") || false;
     const allTilesLoaded = map.areTilesLoaded?.() || false;
@@ -507,8 +527,16 @@ function ensureMapLibreMap() {
     renderMapLibreWeather();
     renderMapLibreMarkers();
     markRenderedIfSourcesLoaded();
+    requestAnimationFrame(() => {
+      if (mapLibreRecords.get(container) !== record) return;
+      map.resize();
+      map.triggerRepaint?.();
+      markRenderedIfSourcesLoaded();
+    });
   });
-  map.on("idle", markRenderedIfSourcesLoaded);
+  map.on("idle", () => {
+    markRenderedIfSourcesLoaded();
+  });
   map.on("sourcedata", (event) => {
     if (event.sourceId === "nearcast-base" || event.sourceId === "nearcast-labels") {
       markRenderedIfSourcesLoaded();
@@ -613,7 +641,6 @@ function renderMapLibreWeather() {
     record.pendingWeather = true;
     return;
   }
-
   const frame = mapState.frames[mapState.frameIndex];
   const layers = mapLibreFrameLayers(frame);
   const key = mapLibreWeatherKey(frame, layers);

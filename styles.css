@@ -6218,7 +6218,18 @@ body.map-immersive-active #mapLegend {
 .maplibre-surface {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: 1;
+  overflow: hidden;
+}
+
+.tile-map.is-gl-renderer > .maplibre-surface.maplibregl-map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .maplibre-open-hitbox {
