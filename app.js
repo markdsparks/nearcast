@@ -1,4 +1,4 @@
-const VERSION = "3.0.6";
+const VERSION = "3.0.7";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2508,7 +2508,13 @@ function bindEvents() {
     if (state.forecast && state.activePlace) {
       const forecastUnit = state.forecastUnit || oldUnit;
       state.forecast = convertForecastUnits(state.forecast, forecastUnit, state.unit);
-      renderForecast(state.forecast, state.activePlace);
+      renderForecast(state.forecast, state.activePlace, {
+        refreshMap: false,
+        refreshSky: false,
+        saveContinuity: false,
+        refreshTheme: false,
+        reason: "unit-toggle"
+      });
     } else if (state.activePlace) {
       loadPlace(state.activePlace);
     }
@@ -2907,7 +2913,8 @@ function bindEvents() {
   });
 }
 
-function applyTheme() {
+function applyTheme(options = {}) {
+  const { rerenderSky = true, rerenderMap = true } = options;
   let isDark;
   if (state.theme === "auto") {
     if (state.locationIsDay !== null) {
@@ -2927,19 +2934,21 @@ function applyTheme() {
     ? (isDark ? "Night mode (auto) — click to force light" : "Day mode (auto) — click to force dark")
     : (isDark ? "Dark mode (manual) — click to reset to auto" : "Light mode (manual) — click to reset to auto");
 
-  if (state.skyCode !== null) {
-    updateSkyCanvas(
-      state.skyCode,
-      state.skyIsDay,
-      state.skyData || state.forecast,
-      state.skyDisplayCondition
-    );
-  } else {
-    if (state.theme !== "auto") clearSkyCanvas();
-    else updateSkyChrome(null, null);
+  if (rerenderSky) {
+    if (state.skyCode !== null) {
+      updateSkyCanvas(
+        state.skyCode,
+        state.skyIsDay,
+        state.skyData || state.forecast,
+        state.skyDisplayCondition
+      );
+    } else {
+      if (state.theme !== "auto") clearSkyCanvas();
+      else updateSkyChrome(null, null);
+    }
   }
 
-  if (mapState.initialized && state.activePlace) {
+  if (rerenderMap && mapState.initialized && state.activePlace) {
     renderTileMap();
   }
 }
@@ -3120,31 +3129,10 @@ function refreshTimeFormattedSurfaces() {
 }
 
 function renderTimeFormattedForecastSurfaces() {
-  const data = state.forecast;
-  const place = state.activePlace;
-  if (!data || !place) return;
-  const perf = perfStart();
-  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
-  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const todayIndex = forecastDailyIndex(data);
-  const truth = state.weatherTruth || buildWeatherTruth(data);
-  state.weatherTruth = truth;
-
-  if (els.sunrise) els.sunrise.textContent = data.daily.sunrise[todayIndex] ? formatTime(data.daily.sunrise[todayIndex]) : "--";
-  if (els.sunset) els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
-  if (els.updatedAt) els.updatedAt.textContent = `Updated ${formatTime(data.current.time)}`;
-
-  renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
-  renderForYouToday(data, place, tempUnit, windUnit, truth);
-  renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
-  renderInsights(data, windUnit);
-  if (typeof renderPlanPulse === "function") renderPlanPulse(data, place);
-  renderHourly(data, tempUnit, truth);
-  renderDaily(data, tempUnit, precipUnit);
-  bindMetricTips(data, tempUnit, windUnit);
-  perfEnd("renderTimeFormattedForecastSurfaces", perf, PERF_RENDER_WARN_MS, {
-    skipped: ["map", "sky", "continuity"]
+  if (!state.forecast || !state.activePlace) return;
+  renderForecast(state.forecast, state.activePlace, {
+    only: ["launch", "glance", "nowcast", "insights", "plan", "hourly", "daily", "metricTips"],
+    reason: "time-format"
   });
 }
 
@@ -4603,85 +4591,182 @@ function updateWeatherTruthReceipt(truth) {
   document.documentElement.dataset.weatherSource = truth.source || "forecast";
 }
 
-function renderForecast(data, place, options = {}) {
-  const perf = perfStart();
-  state.forecast = data; // retained for the day-detail sheet
-  state.forecastUnit = state.unit;
-  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
-  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const current = data.current;
-  const todayCode = weatherCodes[current.weather_code] || "Weather";
-  const todayIndex = forecastDailyIndex(data);
+const FORECAST_RENDER_LANE_KEYS = [
+  "theme",
+  "hero",
+  "launch",
+  "glance",
+  "nowcast",
+  "insights",
+  "plan",
+  "briefing",
+  "hourly",
+  "daily",
+  "map",
+  "metricTips",
+  "sky",
+  "continuity"
+];
 
+function forecastRenderLaneState(value) {
+  return Object.fromEntries(FORECAST_RENDER_LANE_KEYS.map((key) => [key, value]));
+}
+
+function forecastRenderLaneList(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function normalizeForecastRenderLanes(options = {}) {
+  const only = forecastRenderLaneList(options.only);
+  const lanes = only.length ? forecastRenderLaneState(false) : forecastRenderLaneState(true);
+  only.forEach((key) => {
+    if (key in lanes) lanes[key] = true;
+  });
+  if (options.lanes && typeof options.lanes === "object") {
+    Object.entries(options.lanes).forEach(([key, value]) => {
+      if (key in lanes) lanes[key] = Boolean(value);
+    });
+  }
+  forecastRenderLaneList(options.skip).forEach((key) => {
+    if (key in lanes) lanes[key] = false;
+  });
+  if (options.refreshMap === false) lanes.map = false;
+  if (options.refreshSky === false) lanes.sky = false;
+  if (options.saveContinuity === false) lanes.continuity = false;
+  if (options.resetBriefing === false) lanes.briefing = false;
+  if (options.refreshTheme === false) lanes.theme = false;
+  return lanes;
+}
+
+function activeForecastRenderLanes(lanes) {
+  return FORECAST_RENDER_LANE_KEYS.filter((key) => lanes[key]);
+}
+
+function buildForecastRenderContext(data, place) {
+  const current = data.current;
+  const todayIndex = forecastDailyIndex(data);
   const truth = buildWeatherTruth(data);
-  state.weatherTruth = truth;
-  const firstRainChance = truth.rainChance;
-  const displayCondition = truth.display;
+  const displayCondition = truth.display || currentDisplayCondition(data);
   const isDay = displayCondition.isDay;
-  state.sunriseMs = parseForecastTimestamp(data.daily.sunrise[todayIndex], data);
-  state.sunsetMs = parseForecastTimestamp(data.daily.sunset[todayIndex], data);
   const nowCode = truth.nowCode ?? truth.code;
   const sceneCode = truth.sceneCode ?? nowCode;
-  state.skyState = deriveSkyState(sceneCode, isDay, data, displayCondition);
-  syncWeatherTruthDaylight(truth, state.skyState.isDay);
-  state.skyIsDay = truth.isDay;
-  state.locationIsDay = truth.isDay;
-  if (state.theme === "auto") applyTheme();
+  return {
+    data,
+    place,
+    current,
+    todayIndex,
+    truth,
+    firstRainChance: truth.rainChance,
+    displayCondition,
+    isDay,
+    nowCode,
+    sceneCode,
+    tempUnit: state.unit === "fahrenheit" ? "F" : "C",
+    precipUnit: state.unit === "fahrenheit" ? "in" : "mm",
+    windUnit: state.unit === "fahrenheit" ? "mph" : "km/h",
+    skyState: null
+  };
+}
 
-  els.locationName.textContent = placeLabel(place);
-  els.nowTemp.textContent = `${Math.round(current.temperature_2m)}${degree(tempUnit)}`;
-  const high = data.daily?.temperature_2m_max?.[todayIndex];
-  const low = data.daily?.temperature_2m_min?.[todayIndex];
+function applyForecastRenderState(ctx, lanes) {
+  state.forecast = ctx.data; // retained for the day-detail sheet
+  state.forecastUnit = state.unit;
+  state.weatherTruth = ctx.truth;
+  state.sunriseMs = parseForecastTimestamp(ctx.data.daily.sunrise[ctx.todayIndex], ctx.data);
+  state.sunsetMs = parseForecastTimestamp(ctx.data.daily.sunset[ctx.todayIndex], ctx.data);
+  ctx.skyState = deriveSkyState(ctx.sceneCode, ctx.isDay, ctx.data, ctx.displayCondition);
+  state.skyState = ctx.skyState;
+  syncWeatherTruthDaylight(ctx.truth, ctx.skyState.isDay);
+  state.skyIsDay = ctx.truth.isDay;
+  state.locationIsDay = ctx.truth.isDay;
+  if (lanes.theme && state.theme === "auto") applyTheme({ rerenderSky: false, rerenderMap: false });
+  updateWeatherTruthReceipt(ctx.truth);
+}
+
+function renderForecastHero(ctx) {
+  els.locationName.textContent = placeLabel(ctx.place);
+  els.nowTemp.textContent = `${Math.round(ctx.current.temperature_2m)}${degree(ctx.tempUnit)}`;
+  const high = ctx.data.daily?.temperature_2m_max?.[ctx.todayIndex];
+  const low = ctx.data.daily?.temperature_2m_min?.[ctx.todayIndex];
   const hasRange = Number.isFinite(high) && Number.isFinite(low);
   if (els.heroRange) {
     els.heroRange.hidden = !hasRange;
     els.heroRange.textContent = hasRange
-      ? `H ${Math.round(high)}${degree(tempUnit)} · L ${Math.round(low)}${degree(tempUnit)}`
+      ? `H ${Math.round(high)}${degree(ctx.tempUnit)} · L ${Math.round(low)}${degree(ctx.tempUnit)}`
       : "";
     if (hasRange) {
       els.heroRange.setAttribute(
         "aria-label",
-        `High ${Math.round(high)}${degree(tempUnit)}, low ${Math.round(low)}${degree(tempUnit)}`
+        `High ${Math.round(high)}${degree(ctx.tempUnit)}, low ${Math.round(low)}${degree(ctx.tempUnit)}`
       );
     } else {
       els.heroRange.removeAttribute("aria-label");
     }
   }
-  renderLaunchSummaryStrip(data, tempUnit, windUnit, truth);
-  renderForYouToday(data, place, tempUnit, windUnit, truth);
-  renderLaunchShortcuts(data, place);
-  els.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${degree(tempUnit)}`;
-  els.rainChance.textContent = truth.precip?.phase === "active"
+  updateHeroWeatherIcon(ctx.nowCode, ctx.truth.isDay);
+}
+
+function renderForecastLaunch(ctx) {
+  renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
+  renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
+  renderLaunchShortcuts(ctx.data, ctx.place);
+}
+
+function renderForecastCurrentReadouts(ctx) {
+  els.feelsLike.textContent = `${Math.round(ctx.current.apparent_temperature)}${degree(ctx.tempUnit)}`;
+  els.rainChance.textContent = ctx.truth.precip?.phase === "active"
     ? "Now"
-    : truth.precip?.phase === "nearby" ? "Nearby"
-      : truth.precip?.phase === "imminent" ? "Soon" : `${firstRainChance || 0}%`;
-  els.wind.textContent = `${Math.round(current.wind_speed_10m)} ${windUnit}`;
-  els.uv.textContent = Math.round(data.daily.uv_index_max[todayIndex] || 0);
-  els.humidity.textContent = `${current.relative_humidity_2m ?? "--"}%`;
-  els.sunrise.textContent = data.daily.sunrise[todayIndex] ? formatTime(data.daily.sunrise[todayIndex]) : "--";
-  els.sunset.textContent = data.daily.sunset[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "--";
-  els.updatedAt.textContent = `Updated ${formatTime(current.time)}`;
-  updateWeatherTruthReceipt(truth);
+    : ctx.truth.precip?.phase === "nearby" ? "Nearby"
+      : ctx.truth.precip?.phase === "imminent" ? "Soon" : `${ctx.firstRainChance || 0}%`;
+  els.wind.textContent = `${Math.round(ctx.current.wind_speed_10m)} ${ctx.windUnit}`;
+  els.uv.textContent = Math.round(ctx.data.daily.uv_index_max[ctx.todayIndex] || 0);
+  els.humidity.textContent = `${ctx.current.relative_humidity_2m ?? "--"}%`;
+  els.sunrise.textContent = ctx.data.daily.sunrise[ctx.todayIndex] ? formatTime(ctx.data.daily.sunrise[ctx.todayIndex]) : "--";
+  els.sunset.textContent = ctx.data.daily.sunset[ctx.todayIndex] ? formatTime(ctx.data.daily.sunset[ctx.todayIndex]) : "--";
+  els.updatedAt.textContent = `Updated ${formatTime(ctx.current.time)}`;
+}
 
-  updateHeroWeatherIcon(nowCode, truth.isDay);
+function renderForecastGlance(ctx) {
+  renderForecastCurrentReadouts(ctx);
+  renderTodayGlance(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.todayIndex, ctx.truth);
+}
 
-  renderTodayGlance(data, tempUnit, windUnit, todayIndex, truth);
-  renderNowcast(data, truth);
-  renderInsights(data, windUnit);
-  renderPlanPulse(data, place);
-  resetBriefing();
-  renderHourly(data, tempUnit, truth);
-  renderDaily(data, tempUnit, precipUnit);
+function renderForecastPlan(ctx) {
+  renderPlanPulse(ctx.data, ctx.place);
+}
+
+function renderForecastLists(ctx, lanes) {
+  if (lanes.hourly) renderHourly(ctx.data, ctx.tempUnit, ctx.truth);
+  if (lanes.daily) renderDaily(ctx.data, ctx.tempUnit, ctx.precipUnit);
+}
+
+function renderForecastMap() {
   updateMapPlace();
-  if (options.refreshMap !== false) refreshInlineMap(true);
-  bindMetricTips(data, tempUnit, windUnit);
-  updateSkyCanvas(sceneCode, truth.isDay, data, displayCondition);
-  saveContinuitySnapshot(data, place, tempUnit, windUnit, truth);
+  refreshInlineMap(true);
+}
+
+function renderForecast(data, place, options = {}) {
+  const perf = perfStart();
+  const lanes = normalizeForecastRenderLanes(options);
+  const ctx = buildForecastRenderContext(data, place);
+  applyForecastRenderState(ctx, lanes);
+
+  if (lanes.hero) renderForecastHero(ctx);
+  if (lanes.launch) renderForecastLaunch(ctx);
+  if (lanes.glance) renderForecastGlance(ctx);
+  if (lanes.nowcast) renderNowcast(ctx.data, ctx.truth);
+  if (lanes.insights) renderInsights(ctx.data, ctx.windUnit);
+  if (lanes.plan) renderForecastPlan(ctx);
+  if (lanes.briefing) resetBriefing();
+  renderForecastLists(ctx, lanes);
+  if (lanes.map) renderForecastMap();
+  if (lanes.metricTips) bindMetricTips(ctx.data, ctx.tempUnit, ctx.windUnit);
+  if (lanes.sky) updateSkyCanvas(ctx.sceneCode, ctx.truth.isDay, ctx.data, ctx.displayCondition);
+  if (lanes.continuity) saveContinuitySnapshot(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   perfEnd("renderForecast", perf, PERF_RENDER_WARN_MS, {
-    refreshMap: options.refreshMap !== false,
-    refreshSky: true,
-    continuity: true
+    reason: options.reason || "full",
+    lanes: activeForecastRenderLanes(lanes)
   });
 }
 

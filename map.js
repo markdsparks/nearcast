@@ -482,7 +482,12 @@ async function startRadarPrecipProbe(place, data, force = false) {
     if (seq !== state.radarPrecipSeq || !state.activePlace || state.activePlace.id !== placeId) return;
     state.radarPrecipSignal = signal;
     state.radarPrecipPlaceId = placeId;
-    if (state.forecast === data) renderForecast(data, state.activePlace, { refreshMap: false });
+    if (state.forecast === data) {
+      renderForecast(data, state.activePlace, {
+        skip: ["daily", "map", "continuity"],
+        reason: "radar-precip"
+      });
+    }
   } catch {
     if (seq !== state.radarPrecipSeq || !state.activePlace || state.activePlace.id !== placeId) return;
     state.radarPrecipSignal = {
