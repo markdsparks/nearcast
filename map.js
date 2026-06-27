@@ -935,8 +935,7 @@ async function fetchRainViewerFrames() {
     source: "radar",
     sourceLabel: "Radar",
     attribution: "RainViewer",
-    maxZoom: 7,
-    glMaxZoom: 8
+    maxZoom: 7
   }));
 }
 
@@ -1361,11 +1360,10 @@ function buildNwsRadarFrame(config, time) {
     source: "radar",
     sourceLabel: "Radar",
     attribution: "NOAA/NWS MRMS",
-    // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser bilinear-smooths
-    // them) instead of the WMS server rendering MRMS's ~1km grid as hard blocks
-    // at native zoom. Also means fewer, larger tiles per frame.
-    maxZoom: RADAR_TILE_MAX_ZOOM,
-    glMaxZoom: RADAR_TILE_GL_MAX_ZOOM
+    // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser/GPU resampling
+    // softens them) instead of the WMS server rendering MRMS's ~1km grid as
+    // hard blocks at close zoom. Also means fewer, larger tiles per frame.
+    maxZoom: RADAR_TILE_MAX_ZOOM
   };
 }
 
@@ -2027,12 +2025,7 @@ function weatherFrameMaxZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
   }
 
   const frame = frameOrMaxZoom || {};
-  const baseMax = Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frame.maxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
-  if (!mapRendererIsGl() || activeMapSource(frame) !== "radar") return baseMax;
-
-  const glMax = Math.floor(Number(frame.glMaxZoom));
-  if (!Number.isFinite(glMax)) return baseMax;
-  return Math.max(baseMax, Math.min(glMax, MAP_MAX_ZOOM));
+  return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frame.maxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
 }
 
 function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
@@ -2044,7 +2037,7 @@ function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
 // hard cell blocks at high zoom. Returns a CSS filter string for a weather pane.
 function radarBlurFilter(sourceZoom) {
   const scale = 2 ** (mapState.zoom - sourceZoom);
-  const px = Math.min(Math.max(scale * 0.55, 0.6), 2.4);
+  const px = Math.min(Math.max(scale * 0.68, 0.75), 3.0);
   return `blur(${px.toFixed(2)}px)`;
 }
 
