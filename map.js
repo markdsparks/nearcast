@@ -11,6 +11,8 @@ const MAPLIBRE_MARKER_LAYER_ID = "nearcast-marker";
 const MAPLIBRE_WEATHER_LAYER_PREFIX = "nearcast-weather";
 const MAPLIBRE_WEATHER_SOURCE_PREFIX = "nearcast-weather-source";
 const MAPLIBRE_MAX_WEATHER_LAYERS = 2;
+const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
+const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const mapLibreRecords = new Map();
 
 function initMap() {
@@ -367,8 +369,11 @@ function mapLibreTileStyle() {
   };
 }
 
-function mapLibreCartoTileUrl(style) {
-  return `https://a.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png`;
+function mapLibreCartoTileUrls(style) {
+  const hosts = Array.isArray(CARTO_TILE_HOSTS) && CARTO_TILE_HOSTS.length
+    ? CARTO_TILE_HOSTS
+    : ["a"];
+  return hosts.map((host) => `https://${host}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png`);
 }
 
 function mapLibreBasePaint(theme) {
@@ -396,13 +401,13 @@ function mapLibreStyle() {
     sources: {
       "nearcast-base": {
         type: "raster",
-        tiles: [mapLibreCartoTileUrl(style.base)],
+        tiles: mapLibreCartoTileUrls(style.base),
         tileSize: 256,
         attribution: "CARTO, OpenStreetMap contributors"
       },
       "nearcast-labels": {
         type: "raster",
-        tiles: [mapLibreCartoTileUrl(style.labels)],
+        tiles: mapLibreCartoTileUrls(style.labels),
         tileSize: 256
       }
     },
@@ -475,15 +480,42 @@ function ensureMapLibreMap() {
     weatherKey: "",
     markersKey: "",
     pendingWeather: false,
-    pendingMarkers: false
+    pendingMarkers: false,
+    rendered: false,
+    fallbackTimer: 0,
+    lastError: ""
   };
   mapLibreRecords.set(container, record);
+
+  const markRendered = () => {
+    record.rendered = true;
+    if (record.fallbackTimer) {
+      clearTimeout(record.fallbackTimer);
+      record.fallbackTimer = 0;
+    }
+  };
+  const markRenderedIfSourcesLoaded = () => {
+    const baseLoaded = map.isSourceLoaded?.("nearcast-base") || false;
+    const labelsLoaded = map.isSourceLoaded?.("nearcast-labels") || false;
+    const allTilesLoaded = map.areTilesLoaded?.() || false;
+    if (baseLoaded || labelsLoaded || allTilesLoaded) markRendered();
+  };
 
   map.on("load", () => {
     record.loaded = true;
     syncMapLibreCamera(record, { force: true });
     renderMapLibreWeather();
     renderMapLibreMarkers();
+    markRenderedIfSourcesLoaded();
+  });
+  map.on("idle", markRenderedIfSourcesLoaded);
+  map.on("sourcedata", (event) => {
+    if (event.sourceId === "nearcast-base" || event.sourceId === "nearcast-labels") {
+      markRenderedIfSourcesLoaded();
+    }
+  });
+  map.on("error", (event) => {
+    record.lastError = event?.error?.message || event?.message || "MapLibre source error";
   });
   map.on("moveend", () => syncMapLibreStateFromMap(map));
   map.on("zoomend", () => syncMapLibreStateFromMap(map));
@@ -492,8 +524,26 @@ function ensureMapLibreMap() {
     syncMapLibreStateFromMap(map);
     inspectStormImpactAt(event.originalEvent.clientX, event.originalEvent.clientY);
   });
+  map.getCanvas()?.addEventListener("webglcontextlost", () => {
+    fallbackMapLibreRenderer("WebGL context was lost");
+  }, { once: true });
+  record.fallbackTimer = setTimeout(() => {
+    if (mapLibreRecords.get(container) !== record || record.rendered || state.mapRenderer !== "gl") return;
+    fallbackMapLibreRenderer(record.lastError || "WebGL map tiles did not finish loading");
+  }, mapState.immersive ? MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS : MAPLIBRE_LOAD_TIMEOUT_MS);
 
   return record;
+}
+
+function fallbackMapLibreRenderer(reason = "WebGL map unavailable") {
+  if (state.mapRenderer !== "gl") return;
+  console.warn(`[Nearcast] Falling back to Classic map: ${reason}`);
+  state.mapRenderer = "classic";
+  try { localStorage.setItem(MAP_RENDERER_KEY, "classic"); } catch {}
+  if (typeof updateMapRendererButtons === "function") updateMapRendererButtons();
+  destroyMapLibreMaps();
+  renderTileMap();
+  if (mapState.frames.length) showFrame(mapState.frameIndex);
 }
 
 function mapLibreRecordReady(record) {
@@ -659,8 +709,10 @@ function clearMapLibreWeather() {
 function destroyMapLibreRecord(container) {
   const record = mapLibreRecords.get(container);
   if (!record) return;
+  if (record.fallbackTimer) clearTimeout(record.fallbackTimer);
   record.map.remove();
   record.surface?.remove();
+  container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
   container.classList.remove("is-gl-renderer");
   mapLibreRecords.delete(container);
 }
@@ -668,8 +720,10 @@ function destroyMapLibreRecord(container) {
 function destroyMapLibreMaps() {
   [...mapLibreRecords.keys()].forEach(destroyMapLibreRecord);
   document.querySelectorAll(".tile-map.is-gl-renderer").forEach((container) => {
+    container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
     container.classList.remove("is-gl-renderer");
   });
+  document.querySelectorAll(".maplibre-open-hitbox").forEach((hitbox) => hitbox.remove());
 }
 
 // Full re-tiling is capped to one render per frame so bursts of touchmove

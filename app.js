@@ -1,4 +1,4 @@
-const VERSION = "3.0.19";
+const VERSION = "3.0.21";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -82,6 +82,7 @@ if (["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLow
 
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 let mapLibreAssetPromise = null;
+let mapLibreCssPromise = null;
 let mapLibreAssetStatus = window.maplibregl ? "ready" : "idle";
 
 const featureFlags = {
@@ -3161,12 +3162,26 @@ function mapRendererMetaText() {
 }
 
 function ensureMapLibreStylesheet() {
-  if (document.getElementById(MAPLIBRE_CSS_ID)) return;
+  if (mapLibreCssPromise) return mapLibreCssPromise;
+  const existing = document.getElementById(MAPLIBRE_CSS_ID);
+  if (existing) {
+    mapLibreCssPromise = Promise.resolve(true);
+    return mapLibreCssPromise;
+  }
   const link = document.createElement("link");
   link.id = MAPLIBRE_CSS_ID;
   link.rel = "stylesheet";
   link.href = MAPLIBRE_CSS_URL;
+  mapLibreCssPromise = new Promise((resolve) => {
+    link.addEventListener("load", () => resolve(true), { once: true });
+    link.addEventListener("error", () => {
+      link.remove();
+      mapLibreCssPromise = null;
+      resolve(false);
+    }, { once: true });
+  });
   document.head.appendChild(link);
+  return mapLibreCssPromise;
 }
 
 function ensureMapLibreAssets(options = {}) {
@@ -3179,7 +3194,7 @@ function ensureMapLibreAssets(options = {}) {
     return Promise.resolve(true);
   }
 
-  ensureMapLibreStylesheet();
+  const cssPromise = ensureMapLibreStylesheet();
   if (!mapLibreAssetPromise) {
     const shouldReplaceScript = mapLibreAssetStatus === "error";
     mapLibreAssetStatus = "loading";
@@ -3199,8 +3214,8 @@ function ensureMapLibreAssets(options = {}) {
       }
       script.addEventListener("load", () => resolve(true), { once: true });
       script.addEventListener("error", () => resolve(false), { once: true });
-    }).then((loaded) => {
-      const ready = loaded && Boolean(window.maplibregl);
+    }).then((loaded) => Promise.all([Promise.resolve(loaded), cssPromise])).then(([scriptLoaded, cssLoaded]) => {
+      const ready = scriptLoaded && cssLoaded && Boolean(window.maplibregl);
       mapLibreAssetStatus = ready ? "ready" : "error";
       if (!ready) {
         document.getElementById(MAPLIBRE_SCRIPT_ID)?.remove();
@@ -3214,6 +3229,11 @@ function ensureMapLibreAssets(options = {}) {
   return mapLibreAssetPromise.then((ready) => {
     if (ready && options.renderAfterLoad && state.mapRenderer === "gl" && typeof applyMapRendererPreference === "function") {
       applyMapRendererPreference();
+    } else if (!ready && state.mapRenderer === "gl") {
+      state.mapRenderer = "classic";
+      localStorage.setItem(MAP_RENDERER_KEY, "classic");
+      updateMapRendererButtons();
+      if (typeof applyMapRendererPreference === "function") applyMapRendererPreference();
     }
     return ready;
   });
