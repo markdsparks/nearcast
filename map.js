@@ -1,6 +1,8 @@
 /* Nearcast radar/map timeline and immersive map interactions. */
 
 const MAP_PAN_MOVE_EPSILON_PX = 0.5;
+const MAP_PAN_REBASE_PX = 96;
+const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
 
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
@@ -110,6 +112,9 @@ function startMapDrag(x, y, el = els.weatherMap) {
   dragState.startPanX = mapState.panX;
   dragState.startPanY = mapState.panY;
   dragState.moved = false;
+  dragState.anchorActive = false;
+  dragState.anchorPanX = mapState.panX;
+  dragState.anchorPanY = mapState.panY;
   dragState.resumePlayback = false;
   if (el) el.style.cursor = "grabbing";
 }
@@ -124,7 +129,7 @@ function moveMapDrag(x, y) {
   if (Math.hypot(dx, dy) > MAP_PAN_MOVE_EPSILON_PX) {
     dragState.moved = true;
     pauseMapPlaybackForManualPan();
-    scheduleMapRender();
+    updateAnchoredMapPan();
   }
 }
 
@@ -133,8 +138,7 @@ function endMapGesture(el = els.weatherMap) {
   const shouldResumePlayback = dragState.resumePlayback;
   dragState.active = false;
   pinchState.active = false;
-  dragState.moved = false;
-  if (shouldRender) renderTileMap();
+  finishAnchoredMapPan({ render: shouldRender });
   if (el) el.style.cursor = "grab";
   if (shouldResumePlayback) {
     requestAnimationFrame(() => {
@@ -149,6 +153,84 @@ function pauseMapPlaybackForManualPan() {
   if (!mapState.playing || dragState.resumePlayback) return;
   dragState.resumePlayback = true;
   stopRadarPlayback({ renderStatic: false });
+}
+
+let mapPanTransformRaf = 0;
+
+function mapPanLayers() {
+  return [
+    els.baseTileLayer,
+    els.weatherTileLayer,
+    els.labelTileLayer,
+    els.markerLayer,
+    document.getElementById("immersiveImpactLayer")
+  ].filter(Boolean);
+}
+
+function beginAnchoredMapPan() {
+  if (dragState.anchorActive) return;
+  dragState.anchorActive = true;
+  dragState.anchorPanX = dragState.startPanX;
+  dragState.anchorPanY = dragState.startPanY;
+  if (els.weatherMap) els.weatherMap.classList.add("is-panning");
+}
+
+function updateAnchoredMapPan() {
+  beginAnchoredMapPan();
+  const dx = mapState.panX - dragState.anchorPanX;
+  const dy = mapState.panY - dragState.anchorPanY;
+  const threshold = mapState.immersive ? IMMERSIVE_MAP_PAN_REBASE_PX : MAP_PAN_REBASE_PX;
+  if (Math.abs(dx) >= threshold || Math.abs(dy) >= threshold) {
+    rebaseAnchoredMapPan();
+    return;
+  }
+  scheduleMapPanTransform(dx, dy);
+}
+
+function scheduleMapPanTransform(dx, dy) {
+  dragState.anchorDx = dx;
+  dragState.anchorDy = dy;
+  if (mapPanTransformRaf) return;
+  mapPanTransformRaf = requestAnimationFrame(() => {
+    mapPanTransformRaf = 0;
+    applyMapPanTransform(dragState.anchorDx || 0, dragState.anchorDy || 0);
+  });
+}
+
+function applyMapPanTransform(dx, dy) {
+  if (!dragState.anchorActive) return;
+  const transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`;
+  mapPanLayers().forEach((layer) => {
+    layer.style.transform = transform;
+  });
+}
+
+function clearMapPanTransform() {
+  if (mapPanTransformRaf) {
+    cancelAnimationFrame(mapPanTransformRaf);
+    mapPanTransformRaf = 0;
+  }
+  mapPanLayers().forEach((layer) => {
+    layer.style.transform = "";
+  });
+  dragState.anchorDx = 0;
+  dragState.anchorDy = 0;
+}
+
+function rebaseAnchoredMapPan() {
+  clearMapPanTransform();
+  renderTileMap();
+  dragState.anchorPanX = mapState.panX;
+  dragState.anchorPanY = mapState.panY;
+}
+
+function finishAnchoredMapPan(options = {}) {
+  const { render = false } = options;
+  clearMapPanTransform();
+  dragState.anchorActive = false;
+  dragState.moved = false;
+  if (els.weatherMap) els.weatherMap.classList.remove("is-panning");
+  if (render) renderTileMap();
 }
 
 // Full re-tiling is capped to one render per frame so bursts of touchmove
@@ -176,8 +258,7 @@ function touchMidpoint(a, b) {
 
 function startMapPinch(a, b) {
   if (dragState.moved) {
-    dragState.moved = false;
-    renderTileMap();
+    finishAnchoredMapPan({ render: true });
   }
   const mid = touchMidpoint(a, b);
   dragState.active = false;
@@ -1585,6 +1666,7 @@ function renderTileMap() {
   const rect = els.weatherMap.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const perf = perfStart();
+  if (dragState.anchorActive) clearMapPanTransform();
 
   const viewport = getMapViewport();
   const style = mapTileStyle();
@@ -1596,6 +1678,10 @@ function renderTileMap() {
   if (mapState.immersive) updateImmersiveHUD();
   renderMapMarkers();
   renderStormImpactOverlay(viewport);
+  if (dragState.anchorActive) {
+    dragState.anchorPanX = mapState.panX;
+    dragState.anchorPanY = mapState.panY;
+  }
   perfEnd("renderTileMap", perf);
 }
 

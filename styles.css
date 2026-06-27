@@ -6230,6 +6230,13 @@ body.map-immersive-active #mapLegend {
   backface-visibility: hidden;
 }
 
+.tile-map.is-panning .tile-layer,
+.tile-map.is-panning .marker-layer,
+.tile-map.is-panning .tile-sublayer,
+.tile-map.is-panning .impact-layer {
+  will-change: transform;
+}
+
 #baseTileLayer[data-map-theme="light"] img {
   filter: grayscale(0.85) saturate(0.35) brightness(1.06) contrast(0.92);
 }
