@@ -1,4 +1,4 @@
-const VERSION = "3.0.3";
+const VERSION = "3.0.4";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -451,6 +451,7 @@ const els = {
   shell: document.querySelector(".shell"),
   appMenuToggle: document.querySelector("#appMenuToggle"),
   appMenu: document.querySelector("#appMenu"),
+  manualRefresh: document.querySelector("#manualRefresh"),
   searchToggle: document.querySelector("#searchToggle"),
   welcome: document.querySelector("#welcome"),
   welcomeAmbientLabel: document.querySelector("#welcomeAmbientLabel"),
@@ -2738,6 +2739,7 @@ function bindEvents() {
     }
   });
   bindTapAction(els.appMenuToggle, () => toggleAppMenu());
+  bindTapAction(els.manualRefresh, triggerManualRefresh);
   bindTapAction(els.searchToggle, () => {
     closeAppMenu();
     toggleSearch(true);
@@ -4227,6 +4229,13 @@ function schedulePullRefreshHide(holdMs = 700) {
   }, holdMs);
 }
 
+function setManualRefreshBusy(isBusy) {
+  if (!els.manualRefresh) return;
+  els.manualRefresh.classList.toggle("is-refreshing", Boolean(isBusy));
+  els.manualRefresh.disabled = Boolean(isBusy);
+  els.manualRefresh.setAttribute("aria-busy", String(Boolean(isBusy)));
+}
+
 async function triggerPullRefresh() {
   if (pullRefreshState.refreshing || !state.activePlace) {
     hidePullRefresh();
@@ -4240,6 +4249,7 @@ async function triggerPullRefresh() {
   }
 
   pullRefreshState.refreshing = true;
+  setManualRefreshBusy(true);
   setPullRefreshVisual(42, "Updating forecast", { refreshing: true });
   const beforeLoadedAt = lastLoadedAt;
   for (const id in glanceData) delete glanceData[id];
@@ -4247,11 +4257,20 @@ async function triggerPullRefresh() {
     await loadPlace(state.activePlace, true);
   } finally {
     pullRefreshState.refreshing = false;
+    setManualRefreshBusy(false);
     pullRefreshState.lastRefreshAt = Date.now();
     const updated = lastLoadedAt !== beforeLoadedAt;
     setPullRefreshVisual(42, updated ? "Updated" : "Could not update");
     schedulePullRefreshHide(updated ? 700 : 1200);
   }
+}
+
+async function triggerManualRefresh(event) {
+  event?.preventDefault?.();
+  if (!state.activePlace || welcomeIsActive() || pullRefreshState.refreshing) return;
+  closeAppMenu();
+  toggleSearch(false);
+  await triggerPullRefresh();
 }
 
 function clearRestoredWelcomeLoading(event = {}, idleMs = 0) {
