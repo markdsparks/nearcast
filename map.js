@@ -935,7 +935,8 @@ async function fetchRainViewerFrames() {
     source: "radar",
     sourceLabel: "Radar",
     attribution: "RainViewer",
-    maxZoom: 7
+    maxZoom: 7,
+    glMaxZoom: 8
   }));
 }
 
@@ -1363,7 +1364,8 @@ function buildNwsRadarFrame(config, time) {
     // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser bilinear-smooths
     // them) instead of the WMS server rendering MRMS's ~1km grid as hard blocks
     // at native zoom. Also means fewer, larger tiles per frame.
-    maxZoom: RADAR_TILE_MAX_ZOOM
+    maxZoom: RADAR_TILE_MAX_ZOOM,
+    glMaxZoom: RADAR_TILE_GL_MAX_ZOOM
   };
 }
 
@@ -1785,7 +1787,7 @@ function renderXfade(index, viewport = null) {
     const frame = mapState.frames[f];
     const url = frameUrl(frame);
     if (url) {
-      const sourceZoom = mapTileSourceZoom((frame && frame.maxZoom) || MAP_MAX_ZOOM);
+      const sourceZoom = weatherFrameSourceZoom(frame || MAP_MAX_ZOOM);
       renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
       pane.style.filter = radarBlurFilter(sourceZoom);
     }
@@ -2019,6 +2021,24 @@ function mapTileSourceZoom(maxZoom = MAP_MAX_ZOOM) {
   return Math.min(Math.max(Math.floor(mapState.zoom + 0.0001), MAP_MIN_ZOOM), max);
 }
 
+function weatherFrameMaxZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
+  if (typeof frameOrMaxZoom === "number") {
+    return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frameOrMaxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
+  }
+
+  const frame = frameOrMaxZoom || {};
+  const baseMax = Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frame.maxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
+  if (!mapRendererIsGl() || activeMapSource(frame) !== "radar") return baseMax;
+
+  const glMax = Math.floor(Number(frame.glMaxZoom));
+  if (!Number.isFinite(glMax)) return baseMax;
+  return Math.max(baseMax, Math.min(glMax, MAP_MAX_ZOOM));
+}
+
+function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
+  return mapTileSourceZoom(weatherFrameMaxZoom(frameOrMaxZoom));
+}
+
 // Radar tiles are coarse (capped source zoom + low-res precip data), so soften
 // them in proportion to how much they're being upscaled — bilinear alone leaves
 // hard cell blocks at high zoom. Returns a CSS filter string for a weather pane.
@@ -2157,7 +2177,7 @@ function weatherTileUrl(template, z, x, y) {
 // sublayer (radar, a cross-fade pair, or two interpolated NOAA frames) gets its
 // own pane: they share z/x/y tile keys, so a flat tile set would clobber, and
 // separate panes let the cross-fade ride on each pane's opacity.
-function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
+function renderWeatherLayers(layers, frameOrMaxZoom, viewport = null) {
   if (!mapState.initialized || !els.weatherTileLayer) return;
   layers = (layers || []).filter((l) => l && l.url && l.opacity > 0.01);
   while (els.weatherTileLayer.children.length > layers.length) {
@@ -2166,7 +2186,7 @@ function renderWeatherLayers(layers, frameMaxZoom, viewport = null) {
   if (!layers.length) return;
 
   const tileViewport = viewport || getMapViewport();
-  const sourceZoom = mapTileSourceZoom(frameMaxZoom || MAP_MAX_ZOOM);
+  const sourceZoom = weatherFrameSourceZoom(frameOrMaxZoom || MAP_MAX_ZOOM);
   layers.forEach((layer, index) => {
     let pane = els.weatherTileLayer.children[index];
     if (!pane) {
@@ -2185,7 +2205,7 @@ function renderWeatherTiles(viewport = null) {
   const layers = (frame && state.activePlace)
     ? (frame.layers || [{ url: frame.url, opacity: 0.78 }])
     : [];
-  renderWeatherLayers(layers, frame && frame.maxZoom, viewport);
+  renderWeatherLayers(layers, frame, viewport);
 }
 
 // Extra tiles beyond the viewport keep fast pans from showing an edge while the

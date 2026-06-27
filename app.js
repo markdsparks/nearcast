@@ -1,4 +1,4 @@
-const VERSION = "3.0.26";
+const VERSION = "3.0.27";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -214,6 +214,7 @@ let floatingChromeUpTravel = 0;
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 10;
 const RADAR_TILE_MAX_ZOOM = 8; // cap radar source tiles so they upscale smoothly past z8
+const RADAR_TILE_GL_MAX_ZOOM = 9; // WebGL can afford sharper observed radar without exposing raw z10 grid blocks
 const RADAR_PRECIP_SAMPLE_ZOOM = 8;
 const RADAR_PRECIP_CENTER_RADIUS_PX = 4;
 const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;
