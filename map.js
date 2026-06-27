@@ -444,8 +444,8 @@ function finishMapLibreInteraction(map) {
   const resumePlayback = mapLibreInteraction.resumePlayback;
   mapLibreInteraction.active = false;
   mapLibreInteraction.resumePlayback = false;
-  setMapLibreRadarSuspended(false);
   renderMapLibreOverlays({ forceRadar: true });
+  requestAnimationFrame(() => setMapLibreRadarSuspended(false));
   if (resumePlayback && mapState.frames.length && !mapState.playing) {
     requestAnimationFrame(() => {
       if (!mapState.playing && mapState.frames.length) startRadarPlayback({ restartIfAtEnd: false });
@@ -470,12 +470,12 @@ function renderMapLibreOverlays(options = {}) {
   if (shouldRenderRadar) {
     if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex);
     else renderWeatherTiles();
+    renderMapMarkers();
+    if (mapState.immersive) renderStormImpactOverlay();
     mapLibreInteraction.needsRadarRender = false;
   } else {
     mapLibreInteraction.needsRadarRender = true;
   }
-  renderMapMarkers();
-  if (mapState.immersive && shouldRenderRadar) renderStormImpactOverlay();
 }
 
 function mapLibreTileStyle() {

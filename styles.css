@@ -6306,10 +6306,11 @@ body.map-immersive-active #mapLegend {
 }
 .weather-layer {
   z-index: 10;
-  transition: opacity 150ms ease;
+  transition: opacity 90ms ease;
 }
-.tile-map.is-gl-radar-suspended .weather-layer {
-  opacity: 0.34;
+.tile-map.is-gl-radar-suspended .weather-layer,
+.tile-map.is-gl-radar-suspended .marker-layer {
+  opacity: 0;
 }
 .label-layer {
   z-index: 15;
@@ -6320,6 +6321,7 @@ body.map-immersive-active #mapLegend {
 }
 .marker-layer {
   z-index: 20;
+  transition: opacity 90ms ease;
 }
 
 .impact-layer {
