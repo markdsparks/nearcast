@@ -852,24 +852,34 @@ function refreshInlineMap(forceFrames = false, options = {}) {
 
 function renderMapMarkers() {
   if (!mapState.initialized || !els.markerLayer) return;
-  els.markerLayer.innerHTML = "";
-  if (!state.activePlace) return;
+  const markerNodes = mapMarkerNodes();
+  const liveKeys = new Set();
+  if (!state.activePlace) {
+    clearMapMarkerNodes();
+    return;
+  }
 
   const viewport = getMapViewport();
   const placedBounds = [];
-  const activeMarker = renderMapMarker(state.activePlace, { viewport });
+  const activeMarker = renderMapMarker(state.activePlace, { viewport, markerNodes, liveKeys });
   if (activeMarker?.bounds) placedBounds.push(activeMarker.bounds);
 
-  if (!mapState.immersive) return;
+  if (mapState.immersive) {
+    state.savedPlaces
+      .filter((place) => !isActiveMapPlace(place))
+      .forEach((place) => {
+        const layout = mapMarkerLayout(place, viewport);
+        if (!layout || mapBoundsOverlapAny(layout.bounds, placedBounds)) return;
+        const marker = renderMapMarker(place, { viewport, layout, markerNodes, liveKeys });
+        if (marker?.bounds) placedBounds.push(marker.bounds);
+      });
+  }
 
-  state.savedPlaces
-    .filter((place) => !isActiveMapPlace(place))
-    .forEach((place) => {
-      const layout = mapMarkerLayout(place, viewport);
-      if (!layout || mapBoundsOverlapAny(layout.bounds, placedBounds)) return;
-      const marker = renderMapMarker(place, { viewport, layout });
-      if (marker?.bounds) placedBounds.push(marker.bounds);
-    });
+  markerNodes.forEach((node, key) => {
+    if (liveKeys.has(key)) return;
+    node.remove();
+    markerNodes.delete(key);
+  });
 }
 
 async function setMapMode(mode) {
@@ -2059,6 +2069,7 @@ function clearMapLayers(options = {}) {
   updateRangeProgress(els.frameSlider);
   clearMapLibreWeather();
   els.weatherTileLayer.innerHTML = "";
+  clearMapMarkerNodes();
   setFrameLabel("No frames");
   updateTimelineEraVisuals();
 }
@@ -2464,6 +2475,32 @@ function tileBbox3857(z, x, y) {
   return [minX, minY, maxX, maxY].join(",");
 }
 
+function mapMarkerNodes() {
+  const layer = els.markerLayer;
+  if (!layer) return new Map();
+  if (!layer._markerNodes) {
+    layer._markerNodes = new Map();
+    layer.querySelectorAll(":scope > .map-marker[data-marker-key]").forEach((node) => {
+      layer._markerNodes.set(node.dataset.markerKey, node);
+    });
+  }
+  return layer._markerNodes;
+}
+
+function clearMapMarkerNodes() {
+  if (!els.markerLayer) return;
+  els.markerLayer.innerHTML = "";
+  if (els.markerLayer._markerNodes) els.markerLayer._markerNodes.clear();
+}
+
+function mapMarkerKey(place) {
+  if (isActiveMapPlace(place)) return "active";
+  if (place?.id) return `place:${place.id}`;
+  const lat = Number(place?.latitude || 0).toFixed(5);
+  const lon = Number(place?.longitude || 0).toFixed(5);
+  return `place:${lat},${lon}`;
+}
+
 function renderMapMarker(place, options = {}) {
   if (!state.activePlace) return;
   const viewport = options.viewport || getMapViewport();
@@ -2471,7 +2508,9 @@ function renderMapMarker(place, options = {}) {
   if (!layout) return null;
 
   const { left, top } = layout;
-  const marker = document.createElement("div");
+  const markerNodes = options.markerNodes || mapMarkerNodes();
+  const liveKeys = options.liveKeys || new Set();
+  const key = mapMarkerKey(place);
   const isActive = isActiveMapPlace(place);
   const impact = stormImpactForPlace(place);
   const name = mapMarkerName(place);
@@ -2480,15 +2519,29 @@ function renderMapMarker(place, options = {}) {
   const classNames = ["map-marker"];
   if (mapState.immersive && isActive) classNames.push("is-active-place");
   if (impact) classNames.push("has-impact", `is-impact-${impact.tone}`);
-  marker.className = classNames.join(" ");
-  if (tempText || impactText) {
-    marker.innerHTML = `<span>${escapeHtml(name)}</span>${tempText ? `<strong>${escapeHtml(tempText)}</strong>` : ""}${impactText ? `<small>${escapeHtml(impactText)}</small>` : ""}`;
-  } else {
-    marker.textContent = name;
+  const className = classNames.join(" ");
+  const content = tempText || impactText
+    ? `<span>${escapeHtml(name)}</span>${tempText ? `<strong>${escapeHtml(tempText)}</strong>` : ""}${impactText ? `<small>${escapeHtml(impactText)}</small>` : ""}`
+    : escapeHtml(name);
+  const signature = `${className}|${content}`;
+
+  let marker = markerNodes.get(key);
+  if (!marker || !marker.isConnected) {
+    marker = document.createElement("div");
+    marker.dataset.markerKey = key;
+    els.markerLayer.appendChild(marker);
+    markerNodes.set(key, marker);
   }
-  marker.style.left = `${left}px`;
-  marker.style.top = `${top}px`;
-  els.markerLayer.appendChild(marker);
+  liveKeys.add(key);
+
+  if (marker.dataset.signature !== signature) {
+    marker.className = className;
+    if (tempText || impactText) marker.innerHTML = content;
+    else marker.textContent = name;
+    marker.dataset.signature = signature;
+  }
+
+  marker.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0) translate(-50%, -100%)`;
   return layout;
 }
 
