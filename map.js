@@ -7,8 +7,16 @@ const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
 const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
+const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
+let mapLibreOverlayForceRadar = false;
+const mapLibreInteraction = {
+  active: false,
+  settleTimer: 0,
+  resumePlayback: false,
+  needsRadarRender: false
+};
 
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
@@ -370,20 +378,104 @@ function syncMapLibreStateFromMap(map) {
   mapState.panY = placeWorld.y - centerWorld.y;
 }
 
-function syncMapLibreStateAndOverlays(map) {
+function setMapLibreRadarSuspended(suspended) {
+  document.querySelectorAll(".tile-map.is-gl-radar-suspended").forEach((el) => {
+    if (!suspended || el !== els.weatherMap) el.classList.remove("is-gl-radar-suspended");
+  });
+  if (els.weatherMap?.classList.contains("is-gl-renderer")) {
+    els.weatherMap.classList.toggle("is-gl-radar-suspended", Boolean(suspended));
+  }
+}
+
+function clearMapLibreInteractionState() {
+  if (mapLibreOverlayRaf) {
+    cancelAnimationFrame(mapLibreOverlayRaf);
+    mapLibreOverlayRaf = 0;
+  }
+  mapLibreOverlayForceRadar = false;
+  if (mapLibreInteraction.settleTimer) {
+    clearTimeout(mapLibreInteraction.settleTimer);
+    mapLibreInteraction.settleTimer = 0;
+  }
+  mapLibreInteraction.active = false;
+  mapLibreInteraction.resumePlayback = false;
+  mapLibreInteraction.needsRadarRender = false;
+  setMapLibreRadarSuspended(false);
+}
+
+function beginMapLibreInteraction(map) {
+  if (!mapRendererIsGl() || !mapState.immersive || !state.activePlace) return;
   syncMapLibreStateFromMap(map);
+  if (mapLibreInteraction.settleTimer) {
+    clearTimeout(mapLibreInteraction.settleTimer);
+    mapLibreInteraction.settleTimer = 0;
+  }
+  if (mapLibreInteraction.active) return;
+
+  mapLibreInteraction.active = true;
+  mapLibreInteraction.resumePlayback = Boolean(mapState.playing);
+  mapLibreInteraction.needsRadarRender = true;
+  if (mapState.playing) stopRadarPlayback({ renderStatic: false });
+  setMapLibreRadarSuspended(true);
+}
+
+function scheduleMapLibreSettle(map) {
+  if (!mapRendererIsGl() || !mapLibreInteraction.active) {
+    syncMapLibreStateAndOverlays(map, { forceRadar: true });
+    return;
+  }
+  syncMapLibreStateFromMap(map);
+  syncMapLibreStateAndOverlays(map);
+  if (mapLibreInteraction.settleTimer) clearTimeout(mapLibreInteraction.settleTimer);
+  mapLibreInteraction.settleTimer = setTimeout(() => finishMapLibreInteraction(map), MAPLIBRE_RADAR_SETTLE_MS);
+}
+
+function finishMapLibreInteraction(map) {
+  if (mapLibreOverlayRaf) {
+    cancelAnimationFrame(mapLibreOverlayRaf);
+    mapLibreOverlayRaf = 0;
+  }
+  mapLibreOverlayForceRadar = false;
+  if (mapLibreInteraction.settleTimer) {
+    clearTimeout(mapLibreInteraction.settleTimer);
+    mapLibreInteraction.settleTimer = 0;
+  }
+  syncMapLibreStateFromMap(map);
+  const resumePlayback = mapLibreInteraction.resumePlayback;
+  mapLibreInteraction.active = false;
+  mapLibreInteraction.resumePlayback = false;
+  setMapLibreRadarSuspended(false);
+  renderMapLibreOverlays({ forceRadar: true });
+  if (resumePlayback && mapState.frames.length && !mapState.playing) {
+    requestAnimationFrame(() => {
+      if (!mapState.playing && mapState.frames.length) startRadarPlayback({ restartIfAtEnd: false });
+    });
+  }
+}
+
+function syncMapLibreStateAndOverlays(map, options = {}) {
+  syncMapLibreStateFromMap(map);
+  if (options.forceRadar) mapLibreOverlayForceRadar = true;
   if (mapLibreOverlayRaf) return;
   mapLibreOverlayRaf = requestAnimationFrame(() => {
     mapLibreOverlayRaf = 0;
-    renderMapLibreOverlays();
+    const forceRadar = mapLibreOverlayForceRadar;
+    mapLibreOverlayForceRadar = false;
+    renderMapLibreOverlays({ forceRadar });
   });
 }
 
-function renderMapLibreOverlays() {
-  if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex);
-  else renderWeatherTiles();
+function renderMapLibreOverlays(options = {}) {
+  const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
+  if (shouldRenderRadar) {
+    if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex);
+    else renderWeatherTiles();
+    mapLibreInteraction.needsRadarRender = false;
+  } else {
+    mapLibreInteraction.needsRadarRender = true;
+  }
   renderMapMarkers();
-  if (mapState.immersive) renderStormImpactOverlay();
+  if (mapState.immersive && shouldRenderRadar) renderStormImpactOverlay();
 }
 
 function mapLibreTileStyle() {
@@ -551,10 +643,12 @@ function ensureMapLibreMap() {
   map.on("error", (event) => {
     record.lastError = event?.error?.message || event?.message || "MapLibre source error";
   });
+  map.on("movestart", () => beginMapLibreInteraction(map));
+  map.on("zoomstart", () => beginMapLibreInteraction(map));
   map.on("move", () => syncMapLibreStateAndOverlays(map));
   map.on("zoom", () => syncMapLibreStateAndOverlays(map));
-  map.on("moveend", () => syncMapLibreStateAndOverlays(map));
-  map.on("zoomend", () => syncMapLibreStateAndOverlays(map));
+  map.on("moveend", () => scheduleMapLibreSettle(map));
+  map.on("zoomend", () => scheduleMapLibreSettle(map));
   map.on("click", (event) => {
     if (!mapState.immersive || !event.originalEvent) return;
     syncMapLibreStateAndOverlays(map);
@@ -623,10 +717,7 @@ function destroyMapLibreRecord(container) {
 }
 
 function destroyMapLibreMaps() {
-  if (mapLibreOverlayRaf) {
-    cancelAnimationFrame(mapLibreOverlayRaf);
-    mapLibreOverlayRaf = 0;
-  }
+  clearMapLibreInteractionState();
   [...mapLibreRecords.keys()].forEach(destroyMapLibreRecord);
   document.querySelectorAll(".tile-map.is-gl-renderer").forEach((container) => {
     container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
@@ -2483,6 +2574,7 @@ const impactTapState = {
 function enterImmersiveMap() {
   if (mapState.immersive) return;
   stopRadarPlayback({ renderStatic: false });
+  clearMapLibreInteractionState();
   mapState.immersive = true;
   document.body.classList.add("map-immersive-active");
 
@@ -2546,6 +2638,7 @@ function enterImmersiveMap() {
 function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
+  clearMapLibreInteractionState();
   clearStormImpact();
   Object.assign(els, mapState._normalEls);
   mapState._normalEls = null;
