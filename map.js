@@ -1,5 +1,7 @@
 /* Nearcast radar/map timeline and immersive map interactions. */
 
+const MAP_PAN_PREVIEW_EPSILON_PX = 0.5;
+
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
   mapState.initialized = true;
@@ -107,25 +109,108 @@ function startMapDrag(x, y, el = els.weatherMap) {
   dragState.startY = y;
   dragState.startPanX = mapState.panX;
   dragState.startPanY = mapState.panY;
+  dragState.moved = false;
+  dragState.previewActive = false;
+  dragState.pendingPreviewX = 0;
+  dragState.pendingPreviewY = 0;
+  dragState.resumePlayback = false;
   if (el) el.style.cursor = "grabbing";
 }
 
 function moveMapDrag(x, y) {
   if (!dragState.active || pinchState.active) return;
   updateMapPreviewTap(x, y);
-  mapState.panX = dragState.startPanX + (x - dragState.startX);
-  mapState.panY = dragState.startPanY + (y - dragState.startY);
-  scheduleMapRender();
+  const dx = x - dragState.startX;
+  const dy = y - dragState.startY;
+  mapState.panX = dragState.startPanX + dx;
+  mapState.panY = dragState.startPanY + dy;
+  if (Math.hypot(dx, dy) > MAP_PAN_PREVIEW_EPSILON_PX) {
+    dragState.moved = true;
+    beginMapPanPreview();
+    scheduleMapPanPreview(dx, dy);
+  }
 }
 
 function endMapGesture(el = els.weatherMap) {
+  const shouldRender = dragState.active && dragState.moved;
+  const shouldResumePlayback = dragState.resumePlayback;
   dragState.active = false;
   pinchState.active = false;
+  finishMapPanPreview({ render: shouldRender });
   if (el) el.style.cursor = "grab";
+  if (shouldResumePlayback) {
+    requestAnimationFrame(() => {
+      if (!mapState.playing && mapState.frames.length) {
+        startRadarPlayback({ restartIfAtEnd: !mapState.immersive });
+      }
+    });
+  }
 }
 
-// Re-tiling is cheap (tiles are reused by key, not rebuilt) but we still cap it
-// to one render per frame so a burst of touchmove events can't thrash layout.
+let mapPanPreviewRaf = 0;
+
+function mapPanPreviewLayers() {
+  return [
+    els.baseTileLayer,
+    els.weatherTileLayer,
+    els.labelTileLayer,
+    els.markerLayer,
+    document.getElementById("immersiveImpactLayer")
+  ].filter(Boolean);
+}
+
+function beginMapPanPreview() {
+  if (dragState.previewActive) return;
+  dragState.previewActive = true;
+  if (mapState.playing) {
+    dragState.resumePlayback = true;
+    stopRadarPlayback({ renderStatic: false });
+  }
+  if (els.weatherMap) els.weatherMap.classList.add("is-panning");
+}
+
+function scheduleMapPanPreview(dx, dy) {
+  dragState.pendingPreviewX = dx;
+  dragState.pendingPreviewY = dy;
+  if (mapPanPreviewRaf) return;
+  mapPanPreviewRaf = requestAnimationFrame(() => {
+    mapPanPreviewRaf = 0;
+    applyMapPanPreview(dragState.pendingPreviewX, dragState.pendingPreviewY);
+  });
+}
+
+function applyMapPanPreview(dx, dy) {
+  if (!dragState.previewActive) return;
+  const transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`;
+  mapPanPreviewLayers().forEach((layer) => {
+    layer.style.transform = transform;
+  });
+}
+
+function clearMapPanPreview() {
+  if (mapPanPreviewRaf) {
+    cancelAnimationFrame(mapPanPreviewRaf);
+    mapPanPreviewRaf = 0;
+  }
+  mapPanPreviewLayers().forEach((layer) => {
+    layer.style.transform = "";
+  });
+  if (els.weatherMap) els.weatherMap.classList.remove("is-panning");
+  dragState.previewActive = false;
+  dragState.pendingPreviewX = 0;
+  dragState.pendingPreviewY = 0;
+}
+
+function finishMapPanPreview(options = {}) {
+  const { render = false } = options;
+  clearMapPanPreview();
+  dragState.moved = false;
+  if (render) renderTileMap();
+}
+
+// Full re-tiling is still capped to one render per frame for non-gesture calls
+// such as resize and mode changes. Active pan uses a composited transform and
+// reconciles tiles only when the gesture settles.
 let mapRenderQueued = false;
 function scheduleMapRender() {
   if (mapRenderQueued) return;
@@ -148,6 +233,9 @@ function touchMidpoint(a, b) {
 }
 
 function startMapPinch(a, b) {
+  if (dragState.previewActive || dragState.moved) {
+    finishMapPanPreview({ render: dragState.moved });
+  }
   const mid = touchMidpoint(a, b);
   dragState.active = false;
   pinchState.active = true;
@@ -1648,9 +1736,11 @@ function renderWeatherTiles(viewport = null) {
   renderWeatherLayers(layers, frame && frame.maxZoom, viewport);
 }
 
-// One extra ring of tiles beyond the viewport so a pan always has loaded tiles
-// to slide into before an edge could show.
+// Extra tiles beyond the viewport keep composited pans from showing an edge
+// before the final re-tile. Immersive gets a wider cushion because swipes are
+// longer on the full-screen map.
 const TILE_BUFFER = 1;
+const IMMERSIVE_TILE_BUFFER = 2;
 
 function renderTileLayer(layer, viewport, urlForTile, options = {}) {
   if (!layer) return;
@@ -1668,10 +1758,11 @@ function renderTileLayer(layer, viewport, urlForTile, options = {}) {
     x: topLeft.x / sourceScale,
     y: topLeft.y / sourceScale
   };
-  const startX = Math.floor(sourceTopLeft.x / tileSize) - TILE_BUFFER;
-  const endX = Math.floor((sourceTopLeft.x + viewport.width / sourceScale) / tileSize) + TILE_BUFFER;
-  const startY = Math.floor(sourceTopLeft.y / tileSize) - TILE_BUFFER;
-  const endY = Math.floor((sourceTopLeft.y + viewport.height / sourceScale) / tileSize) + TILE_BUFFER;
+  const tileBuffer = mapState.immersive ? IMMERSIVE_TILE_BUFFER : TILE_BUFFER;
+  const startX = Math.floor(sourceTopLeft.x / tileSize) - tileBuffer;
+  const endX = Math.floor((sourceTopLeft.x + viewport.width / sourceScale) / tileSize) + tileBuffer;
+  const startY = Math.floor(sourceTopLeft.y / tileSize) - tileBuffer;
+  const endY = Math.floor((sourceTopLeft.y + viewport.height / sourceScale) / tileSize) + tileBuffer;
 
   // Reconcile against tiles already in the pane: reuse the ones still on screen
   // (just reposition them) and only create/remove at the edges. Rebuilding every

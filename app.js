@@ -1,4 +1,4 @@
-const VERSION = "3.0.7";
+const VERSION = "3.0.8";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -392,7 +392,12 @@ const dragState = {
   startX: 0,
   startY: 0,
   startPanX: 0,
-  startPanY: 0
+  startPanY: 0,
+  moved: false,
+  previewActive: false,
+  pendingPreviewX: 0,
+  pendingPreviewY: 0,
+  resumePlayback: false
 };
 
 const pinchState = {
