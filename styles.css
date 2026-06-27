@@ -1262,7 +1262,7 @@ h2 {
   --pull-refresh-y: 0px;
   --pull-refresh-progress: 0;
   position: fixed;
-  top: max(10px, calc(env(safe-area-inset-top, 0px) + 8px));
+  top: max(58px, calc(env(safe-area-inset-top, 0px) + 46px));
   left: 50%;
   z-index: 235;
   display: inline-flex;

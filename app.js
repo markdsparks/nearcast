@@ -1,4 +1,4 @@
-const VERSION = "3.0.2";
+const VERSION = "3.0.3";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -12,8 +12,9 @@ const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
 const FORECAST_WARM_START_MAX_AGE_MS = 60 * 60 * 1000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
-const PULL_REFRESH_THRESHOLD_PX = 68;
-const PULL_REFRESH_MAX_PX = 108;
+const PULL_REFRESH_TOP_TOLERANCE_PX = 28;
+const PULL_REFRESH_THRESHOLD_PX = 44;
+const PULL_REFRESH_MAX_PX = 92;
 const PULL_REFRESH_COOLDOWN_MS = 12 * 1000;
 const PERF_STORAGE_KEY = "nearcast-perf";
 const WIND_FIELD_STORAGE_KEY = "nearcast-wind-field";
@@ -4095,21 +4096,21 @@ function refreshOnForeground() {
 function initPullToRefresh() {
   if (!els.pullRefresh || initPullToRefresh.bound) return;
   initPullToRefresh.bound = true;
-  document.addEventListener("touchstart", handlePullRefreshStart, { passive: true });
-  document.addEventListener("touchmove", handlePullRefreshMove, { passive: false });
-  document.addEventListener("touchend", handlePullRefreshEnd, { passive: true });
-  document.addEventListener("touchcancel", cancelPullRefreshGesture, { passive: true });
+  document.addEventListener("touchstart", handlePullRefreshStart, { passive: true, capture: true });
+  document.addEventListener("touchmove", handlePullRefreshMove, { passive: false, capture: true });
+  document.addEventListener("touchend", handlePullRefreshEnd, { passive: true, capture: true });
+  document.addEventListener("touchcancel", cancelPullRefreshGesture, { passive: true, capture: true });
 }
 
 function pullRefreshAtTop() {
-  return currentScrollY() <= 2;
+  return currentScrollY() <= PULL_REFRESH_TOP_TOLERANCE_PX;
 }
 
 function pullRefreshModalOpen() {
   return Boolean(
     document.querySelector(".day-sheet:not([hidden])") ||
     document.querySelector(".release-splash:not([hidden])") ||
-    document.querySelector(".sheet-backdrop.show")
+    document.querySelector(".sheet-backdrop.show:not([hidden])")
   );
 }
 
@@ -4117,7 +4118,7 @@ function canStartPullRefresh(target) {
   if (!state.activePlace || !state.forecast) return false;
   if (welcomeIsActive()) return false;
   if (document.visibilityState === "hidden") return false;
-  if (mapState.immersive || document.body.style.overflow === "hidden") return false;
+  if (mapState.immersive) return false;
   if (els.shell?.classList.contains("search-open") || els.shell?.classList.contains("menu-open")) return false;
   if (pullRefreshModalOpen()) return false;
   if (!pullRefreshAtTop()) return false;
@@ -4152,7 +4153,7 @@ function handlePullRefreshMove(event) {
     cancelPullRefreshGesture();
     return;
   }
-  if (dy <= 6) return;
+  if (dy <= 3) return;
   if (!pullRefreshAtTop() && !pullRefreshState.active) {
     cancelPullRefreshGesture();
     return;
@@ -4160,7 +4161,7 @@ function handlePullRefreshMove(event) {
 
   pullRefreshState.active = true;
   if (event.cancelable) event.preventDefault();
-  const distance = Math.min(PULL_REFRESH_MAX_PX, dy * 0.56);
+  const distance = Math.min(PULL_REFRESH_MAX_PX, dy * 0.78);
   const ready = distance >= PULL_REFRESH_THRESHOLD_PX;
   pullRefreshState.distance = distance;
   pullRefreshState.ready = ready;
