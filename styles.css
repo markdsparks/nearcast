@@ -791,6 +791,137 @@ html[data-sky] body {
   animation: sky-lightning-flash 10s ease infinite;
 }
 
+#skyCanvas .sky-motion-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;
+  contain: paint;
+}
+
+:root[data-sky-motion="lite"] #skyCanvas .sky-motion-stage {
+  display: block;
+}
+
+:root[data-sky-motion="still"] #skyCanvas .sky-motion-stage,
+:root.sky-motion-paused-for-map #skyCanvas .sky-motion-stage {
+  display: none;
+}
+
+#skyCanvas .sky-motion-layer {
+  position: absolute;
+  pointer-events: none;
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+  will-change: transform, opacity;
+}
+
+#skyCanvas .sky-motion-stars {
+  inset: -6vh -6vw;
+  opacity: var(--sky-star-motion-opacity, 0);
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.84) 0, rgba(255, 255, 255, 0.84) 1px, transparent 1.8px),
+    radial-gradient(circle at 31% 9%, rgba(220, 235, 255, 0.72) 0, rgba(220, 235, 255, 0.72) 1.2px, transparent 2px),
+    radial-gradient(circle at 47% 27%, rgba(255, 255, 255, 0.64) 0, rgba(255, 255, 255, 0.64) 1px, transparent 1.8px),
+    radial-gradient(circle at 68% 15%, rgba(236, 244, 255, 0.76) 0, rgba(236, 244, 255, 0.76) 1.1px, transparent 2px),
+    radial-gradient(circle at 82% 34%, rgba(255, 255, 255, 0.62) 0, rgba(255, 255, 255, 0.62) 1px, transparent 2px);
+  background-size: 320px 220px, 360px 250px, 420px 280px, 380px 240px, 460px 300px;
+  animation: sky-lite-star-breathe 5.8s ease-in-out infinite;
+}
+
+#skyCanvas .sky-motion-cloud-flow {
+  inset: -12vh -18vw;
+  opacity: var(--sky-cloud-motion-opacity, 0);
+  background:
+    radial-gradient(ellipse at 18% 28%, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.24) 24%, transparent 58%),
+    radial-gradient(ellipse at 48% 20%, rgba(228, 239, 246, 0.32) 0%, rgba(228, 239, 246, 0.18) 26%, transparent 62%),
+    radial-gradient(ellipse at 78% 34%, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.17) 28%, transparent 64%),
+    radial-gradient(ellipse at 38% 52%, rgba(190, 207, 218, 0.22) 0%, rgba(190, 207, 218, 0.12) 30%, transparent 68%);
+  animation: sky-lite-cloud-flow var(--sky-cloud-motion-duration, 132s) ease-in-out infinite alternate;
+}
+
+#skyCanvas .sky-motion-rain-flow {
+  inset: -62vh -26vw -18vh;
+  opacity: var(--sky-rain-motion-opacity, 0);
+  background-image:
+    repeating-linear-gradient(104deg, transparent 0, transparent 14px, rgba(228, 241, 250, 0.32) 14px, rgba(228, 241, 250, 0.32) 15px, transparent 15px, transparent 27px);
+  background-size: 170px 210px;
+  animation: sky-lite-rain-flow var(--sky-rain-motion-duration, 1.8s) linear infinite;
+}
+
+#skyCanvas .sky-motion-rain-near {
+  opacity: var(--sky-rain-near-opacity, 0);
+  background-image:
+    repeating-linear-gradient(104deg, transparent 0, transparent 22px, rgba(255, 255, 255, 0.34) 22px, rgba(255, 255, 255, 0.34) 24px, transparent 24px, transparent 42px);
+  background-size: 230px 270px;
+  animation-duration: var(--sky-rain-near-duration, 1.4s);
+}
+
+#skyCanvas .sky-motion-snow-flow {
+  inset: -82vh -18vw -20vh;
+  opacity: var(--sky-snow-motion-opacity, 0);
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.92) 0, rgba(255, 255, 255, 0.92) 1.5px, transparent 2.4px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.72) 0, rgba(255, 255, 255, 0.72) 2.2px, transparent 3.2px),
+    radial-gradient(circle, rgba(224, 240, 255, 0.70) 0, rgba(224, 240, 255, 0.70) 1.2px, transparent 2.2px);
+  background-size: 86px 110px, 138px 164px, 184px 216px;
+  animation: sky-lite-snow-flow var(--sky-snow-motion-duration, 13s) linear infinite;
+}
+
+#skyCanvas .sky-motion-snow-near {
+  opacity: var(--sky-snow-near-opacity, 0);
+  background-size: 128px 142px, 196px 220px, 250px 290px;
+  animation-duration: var(--sky-snow-near-duration, 9.4s);
+}
+
+#skyCanvas .sky-motion-lightning-flash {
+  inset: 0;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse at 62% 18%, rgba(232, 240, 255, 0.72), transparent 42%),
+    rgba(190, 212, 255, 0.44);
+  animation: sky-lite-lightning-flash 10.5s ease-in-out infinite;
+}
+
+@keyframes sky-lite-star-breathe {
+  0%, 100% { opacity: var(--sky-star-motion-dim-opacity, 0); }
+  48% { opacity: var(--sky-star-motion-opacity, 0); }
+}
+
+@keyframes sky-lite-cloud-flow {
+  from { transform: translate3d(var(--sky-cloud-x-start, -20px), var(--sky-cloud-y-start, 0), 0) scale(1.02); }
+  to { transform: translate3d(var(--sky-cloud-x-end, 28px), var(--sky-cloud-y-end, 0), 0) scale(1.05); }
+}
+
+@keyframes sky-lite-rain-flow {
+  from { transform: translate3d(var(--sky-precip-x-start, -16px), -28%, 0); }
+  to { transform: translate3d(var(--sky-precip-x-end, 34px), 8%, 0); }
+}
+
+@keyframes sky-lite-snow-flow {
+  from { transform: translate3d(var(--sky-snow-x-start, -12px), -34%, 0); }
+  to { transform: translate3d(var(--sky-snow-x-end, 28px), 12%, 0); }
+}
+
+@keyframes sky-lite-lightning-flash {
+  0%, 80%, 100% { opacity: 0; }
+  82% { opacity: 0.50; }
+  84% { opacity: 0; }
+  87% { opacity: 0.30; }
+  89% { opacity: 0; }
+}
+
+:root[data-sky-motion="lite"] .sky-star,
+:root[data-sky-motion="lite"] .sky-sun-rays,
+:root[data-sky-motion="lite"] .sky-shoot,
+:root[data-sky-motion="lite"] .sky-moon-glow,
+:root[data-sky-motion="lite"] .sky-cloud,
+:root[data-sky-motion="lite"] .sky-rain-sheet,
+:root[data-sky-motion="lite"] .sky-rain-layer,
+:root[data-sky-motion="lite"] .sky-snow,
+:root[data-sky-motion="lite"] .sky-lightning,
 :root[data-sky-motion="still"] .sky-star,
 :root[data-sky-motion="still"] .sky-sun-rays,
 :root[data-sky-motion="still"] .sky-shoot,

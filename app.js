@@ -1,4 +1,4 @@
-const VERSION = "3.0.40";
+const VERSION = "3.0.41";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3213,6 +3213,7 @@ function sanitizeMapDiagnosticMode(value) {
 function sanitizeSkyMotionPreference(value) {
   const mode = String(value || "").toLowerCase();
   if (["full", "on", "motion", "animated"].includes(mode)) return "full";
+  if (["lite", "light", "composite", "mobile", "optimized"].includes(mode)) return "lite";
   if (["still", "static", "off", "none", "0"].includes(mode)) return "still";
   return "auto";
 }
@@ -3225,7 +3226,7 @@ function mediaQueryMatches(query) {
   }
 }
 
-function devicePrefersStillSkyMotion() {
+function devicePrefersLiteSkyMotion() {
   const touchDevice = Number(navigator.maxTouchPoints || 0) > 0;
   const compactTouchViewport = touchDevice && Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 900;
   return (
@@ -3239,8 +3240,9 @@ function devicePrefersStillSkyMotion() {
 function effectiveSkyMotionMode() {
   if (mediaQueryMatches("(prefers-reduced-motion: reduce)")) return "still";
   if (state.skyMotionPreference === "full") return "full";
+  if (state.skyMotionPreference === "lite") return "lite";
   if (state.skyMotionPreference === "still") return "still";
-  return devicePrefersStillSkyMotion() ? "still" : "full";
+  return devicePrefersLiteSkyMotion() ? "lite" : "full";
 }
 
 function syncSkyMotionPreference() {
