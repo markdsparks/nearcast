@@ -140,6 +140,28 @@ The dependency-free path is enough for the first visual quality spike. We may
 still want `wgrib2` or ecCodes before production if we need broader product
 support, reprojection, metadata validation, or automated tile generation.
 
+## Step 3: publish a live static tile snapshot
+
+The app stays static. A publisher job generates radar tiles and a manifest just
+before deployment:
+
+```bash
+node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east
+```
+
+Defaults:
+
+- Profile: `metro-east`
+- Bounds: `38.35,-90.65,39.25,-89.25`
+- Frames: `6`
+- Zooms: `6-13`
+- Manifest: `radar/mrms/manifest.json`
+- Tile root: `radar/mrms/live/`
+
+`radar/mrms/live/` is intentionally ignored by Git. The GitHub Actions publisher
+deploys those generated files as static Cloudflare assets without committing
+them.
+
 ## Success bar
 
 - The same weather moment looks materially better than NOAA WMS from z7.5 to

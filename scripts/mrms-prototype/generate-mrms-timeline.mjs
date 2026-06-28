@@ -280,6 +280,8 @@ Options:
   --tile-radius=2            Tile radius around focus when tile-bounds is omitted.
   --tile-bounds=minLat,minLon,maxLat,maxLon
                               Generate a bounded coverage area.
+  --coverage-id=metro-east   Optional id for explicit coverage metadata.
+  --coverage-label=NAME      Optional label for explicit coverage metadata.
   --skip-empty-tiles         Do not write transparent no-radar tiles.
   --tile-version=mrms1       Optional cache-buster query string for tile URLs.
   --ttl-minutes=15           Manifest freshness window for live generated data.

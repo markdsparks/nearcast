@@ -98,6 +98,19 @@ future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
 the same manifest contract, it can enter the map as a normal precipitation
 timeline frame.
 
+### Live publish path
+
+`scripts/mrms-prototype/publish-mrms-live.mjs` is the first operational wrapper
+around the generator. It defaults to a small `metro-east` coverage profile,
+creates `radar/mrms/live/` tiles, writes a live `radar/mrms/manifest.json`, and
+is designed to run immediately before a static Cloudflare deploy. The scheduled
+GitHub Actions workflow publishes those generated files as deployment assets
+without committing them back to Git.
+
+The first live profile intentionally stops at z13. Wider regions or z14+ tiles
+are possible, but they need a more deliberate tile budget, object storage, or
+multiple regional packs before becoming a global default.
+
 ### Track A: commercial provider bake-off
 
 Purpose: determine whether we should buy the radar rendering substrate instead
@@ -158,6 +171,8 @@ Prototype shape:
    with an `expiresAt` freshness window and atomic manifest replacement.
 9. Publish coverage metadata with every generated pack so the app can fall back
    outside generated coverage instead of showing a blank local tile set.
+10. Run the live publisher in CI before deploy so the deployed static asset
+    snapshot includes fresh generated tiles without storing them in Git history.
 
 Why this is different from WMS:
 

@@ -43,6 +43,52 @@ Recommended routing:
 - `sw.js` derives its shell cache base from the service worker URL.
 - `_headers` keeps `sw.js`, `manifest.json`, and HTML from sticking in
   Cloudflare/browser caches during rollout.
+- `radar/mrms/manifest.json` is also no-cache because generated radar freshness
+  comes from that manifest, not the app shell.
+
+## Generated MRMS radar publisher
+
+The app still deploys as static assets. Live generated radar is produced before
+deployment by `.github/workflows/publish-generated-mrms.yml`:
+
+1. Check out the repo.
+2. Run `scripts/mrms-prototype/publish-mrms-live.mjs`.
+3. Generate regional tiles into the untracked `radar/mrms/live/` directory.
+4. Replace `radar/mrms/manifest.json` in the build workspace with a live
+   manifest containing `expiresAt`, frames, tile URLs, and coverage metadata.
+5. Run `npx --yes wrangler deploy`.
+
+This workflow does not commit generated radar tiles. It publishes them as part
+of the static asset deployment snapshot, which keeps Git history from becoming a
+radar archive.
+
+Required GitHub secrets:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Required GitHub variable for scheduled publishing:
+
+- `ENABLE_MRMS_PUBLISH=true`
+
+Manual dispatch works without that variable. Scheduled runs are gated so the
+workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
+secrets are configured.
+
+Default live profile:
+
+- `metro-east`
+- Bounds: `38.35,-90.65,39.25,-89.25`
+- Zooms: `6-13`
+- Frames: `6`
+- Freshness window: `30` minutes
+
+The workflow also supports manual dispatch, so a test run can be triggered
+without waiting for the schedule.
+
+Future generated forecast maps should reuse the same static-asset pattern:
+produce tile frames plus a coverage-aware manifest first, then let the app
+consume that manifest as ordinary precipitation timeline frames.
 
 ## Not included yet
 

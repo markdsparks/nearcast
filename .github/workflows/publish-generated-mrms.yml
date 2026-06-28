@@ -1,0 +1,63 @@
+name: Publish generated MRMS radar
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Coverage profile
+        required: false
+        default: metro-east
+      frames:
+        description: Number of recent MRMS frames
+        required: false
+        default: "6"
+      ttlMinutes:
+        description: Manifest freshness window
+        required: false
+        default: "30"
+  schedule:
+    - cron: "*/15 * * * *"
+
+concurrency:
+  group: publish-generated-mrms
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_MRMS_PUBLISH == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MRMS_PROFILE: ${{ github.event.inputs.profile || 'metro-east' }}
+      MRMS_FRAMES: ${{ github.event.inputs.frames || '6' }}
+      MRMS_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || '30' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate live MRMS radar tiles
+        run: |
+          node scripts/mrms-prototype/publish-mrms-live.mjs \
+            --profile="$MRMS_PROFILE" \
+            --frames="$MRMS_FRAMES" \
+            --ttl-minutes="$MRMS_TTL_MINUTES"
+
+      - name: Verify generated manifest
+        run: |
+          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
+
+      - name: Deploy static assets with generated radar
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing CLOUDFLARE_API_TOKEN secret."
+            exit 1
+          fi
+          npx --yes wrangler deploy
