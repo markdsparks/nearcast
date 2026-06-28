@@ -258,7 +258,6 @@ function skyHourlySample(data, ms, displayCondition = {}) {
     diffuse: skySeriesValue(h.diffuse_radiation, idx, current.diffuse_radiation),
     uv: skySeriesValue(h.uv_index, idx, null),
     wind: skySeriesValue(h.wind_speed_10m, idx, current.wind_speed_10m),
-    windDir: skySeriesValue(h.wind_direction_10m, idx, current.wind_direction_10m),
     gust: skySeriesValue(h.wind_gusts_10m, idx, current.wind_gusts_10m),
     isDay: h.is_day && idx >= 0 ? Boolean(h.is_day[idx]) : current.is_day !== undefined ? Boolean(current.is_day) : null
   };
@@ -312,8 +311,6 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     : 0;
   const windMph = skyWindMph(sample.wind);
   const gustMph = skyWindMph(sample.gust);
-  const windFromDeg = skyNumber(sample.windDir, null);
-  const windToRad = Number.isFinite(windFromDeg) ? ((windFromDeg + 180) % 360) * Math.PI / 180 : null;
   const windiness = clamp01((Math.max(windMph, gustMph * 0.72) - 6) / 28);
   const precipPressure = skyPrecipPressure(precipTruth);
   const haze = clamp01(
@@ -387,9 +384,6 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     wetness,
     humidity,
     windMph,
-    windFromDeg,
-    windToX: windToRad === null ? 0.35 : Math.sin(windToRad),
-    windToY: windToRad === null ? 0.18 : -Math.cos(windToRad),
     gustMph,
     windiness,
     airHaze,
@@ -754,80 +748,8 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState));
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
 
-  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>${skyMotionLayers(cfg, condition, skyState)}`;
+  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>`;
   perfEnd("renderSkyScene", perf);
-}
-
-function skyMotionLayers(cfg, condition, skyState = state.skyState) {
-  if (!cfg || !skyState) return "";
-  const windiness = clamp01(skyState.windiness || 0);
-  const flowX = clamp((skyState.windToX ?? 0.35) * (44 + windiness * 78), -112, 112);
-  const flowY = clamp((skyState.windToY ?? 0.18) * (16 + windiness * 30), -42, 42);
-  const cloudStartX = -flowX * 0.42;
-  const cloudEndX = flowX * 0.56;
-  const cloudStartY = -flowY * 0.22;
-  const cloudEndY = flowY * 0.26;
-  const precipStartX = -flowX * 0.34;
-  const precipEndX = flowX * 0.72;
-  const snowStartX = -flowX * 0.24;
-  const snowEndX = flowX * 0.52;
-  const cloud = clamp01((skyState.cloud || 0) / 100);
-  const precipPressure = clamp01(skyState.precipPressure || 0);
-  const rainIntensity = skyPrecipVisualIntensity(skyState, cfg.lightning);
-  const snowIntensity = clamp01((skyState.pop - 20) / 70 + (skyState.precipitation || 0) * 0.5);
-  const starOpacity = !skyState.isDay && cfg.stars
-    ? clamp((cfg.stars / 85) * (1 - cloud * 0.5), 0.16, 0.54)
-    : 0;
-  const cloudOpacity = cfg.clouds
-    ? clamp(0.10 + cloud * 0.24 + precipPressure * 0.14 + (condition === "partly-cloudy" ? 0.04 : 0), 0.12, condition === "partly-cloudy" ? 0.32 : 0.46)
-    : 0;
-  const rainOpacity = cfg.rain
-    ? clamp(0.12 + rainIntensity * 0.38 + (skyState.activePrecip ? 0.06 : 0), 0.14, cfg.lightning ? 0.62 : 0.50)
-    : 0;
-  const snowOpacity = cfg.snow
-    ? clamp(0.22 + snowIntensity * 0.32, 0.24, 0.56)
-    : 0;
-  const cloudDuration = clamp(154 - windiness * 62, 88, 176);
-  const rainDuration = clamp(2.45 - rainIntensity * 0.72 - windiness * 0.28, 1.10, 2.65);
-  const snowDuration = clamp(16 - snowIntensity * 4.5 - windiness * 2.2, 8.8, 16.5);
-  const style = [
-    `--sky-flow-x:${flowX.toFixed(0)}px`,
-    `--sky-flow-y:${flowY.toFixed(0)}px`,
-    `--sky-cloud-x-start:${cloudStartX.toFixed(0)}px`,
-    `--sky-cloud-x-end:${cloudEndX.toFixed(0)}px`,
-    `--sky-cloud-y-start:${cloudStartY.toFixed(0)}px`,
-    `--sky-cloud-y-end:${cloudEndY.toFixed(0)}px`,
-    `--sky-precip-x-start:${precipStartX.toFixed(0)}px`,
-    `--sky-precip-x-end:${precipEndX.toFixed(0)}px`,
-    `--sky-snow-x-start:${snowStartX.toFixed(0)}px`,
-    `--sky-snow-x-end:${snowEndX.toFixed(0)}px`,
-    `--sky-cloud-motion-opacity:${cloudOpacity.toFixed(3)}`,
-    `--sky-cloud-motion-duration:${cloudDuration.toFixed(0)}s`,
-    `--sky-rain-motion-opacity:${rainOpacity.toFixed(3)}`,
-    `--sky-rain-near-opacity:${(rainOpacity * 0.74).toFixed(3)}`,
-    `--sky-rain-motion-duration:${rainDuration.toFixed(2)}s`,
-    `--sky-rain-near-duration:${(rainDuration * 0.78).toFixed(2)}s`,
-    `--sky-snow-motion-opacity:${snowOpacity.toFixed(3)}`,
-    `--sky-snow-near-opacity:${(snowOpacity * 0.68).toFixed(3)}`,
-    `--sky-snow-motion-duration:${snowDuration.toFixed(2)}s`,
-    `--sky-snow-near-duration:${(snowDuration * 0.72).toFixed(2)}s`,
-    `--sky-star-motion-opacity:${starOpacity.toFixed(3)}`,
-    `--sky-star-motion-dim-opacity:${(starOpacity * 0.55).toFixed(3)}`
-  ].join(";");
-  const layers = [];
-  if (starOpacity > 0) layers.push(`<div class="sky-motion-layer sky-motion-stars"></div>`);
-  if (cloudOpacity > 0) layers.push(`<div class="sky-motion-layer sky-motion-cloud-flow"></div>`);
-  if (rainOpacity > 0) {
-    layers.push(`<div class="sky-motion-layer sky-motion-rain-flow sky-motion-rain-far"></div>`);
-    layers.push(`<div class="sky-motion-layer sky-motion-rain-flow sky-motion-rain-near"></div>`);
-  }
-  if (snowOpacity > 0) {
-    layers.push(`<div class="sky-motion-layer sky-motion-snow-flow sky-motion-snow-far"></div>`);
-    layers.push(`<div class="sky-motion-layer sky-motion-snow-flow sky-motion-snow-near"></div>`);
-  }
-  if (cfg.lightning) layers.push(`<div class="sky-motion-layer sky-motion-lightning-flash"></div>`);
-  if (!layers.length) return "";
-  return `<div class="sky-motion-stage" aria-hidden="true" style="${style}">${layers.join("")}</div>`;
 }
 
 function skyViewportSize() {
