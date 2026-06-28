@@ -68,13 +68,35 @@ Current spike status:
   folder, and publish one combined manifest atomically. Live manifests can carry
   `expiresAt`; sample manifests are marked with `sample: true` so the app can
   distinguish testing data from live radar.
+- Generated manifests now publish `coverageBounds` / `coverageAreas`, and the
+  app only uses the generated provider when the active place is inside that
+  coverage. This keeps a local/regional generated pack from silently replacing
+  global NOAA/RainViewer coverage for users elsewhere.
 - The first banded contour passes used a separate separator stroke; on-device
   MapLibre resampling made those edges read as a gray-purple bleed. The current
   sample removes the outline entirely and uses a tile URL version query so
   mobile clients fetch the no-border tiles.
 - Default app behavior remains unchanged; generated MRMS is still selected via
   the radar-provider setting and falls back to NOAA/RainViewer if a live
-  generated manifest is unavailable or stale.
+  generated manifest is unavailable, stale, or outside its declared coverage.
+
+### Generated precipitation manifest contract
+
+This should remain source-agnostic. Observed MRMS radar is the first producer,
+but generated future forecast maps can use the same shape later:
+
+- `frames[]`: ordered weather frames with `time`/`timestamp`, `url` or `layers`,
+  `minZoom`, `maxZoom`, and optional frame-level `coverageBounds`.
+- `coverageBounds`: the broad geographic area this manifest can safely serve.
+- `coverageAreas[]`: one or more named generated packs. The app can check the
+  active place against these before choosing generated tiles.
+- `sample`: `true` for checked-in or manual test packs that may be stale.
+- `expiresAt`: freshness guard for live generated packs.
+
+The app should not care whether a generated frame came from observed MRMS,
+future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
+the same manifest contract, it can enter the map as a normal precipitation
+timeline frame.
 
 ### Track A: commercial provider bake-off
 
@@ -134,6 +156,8 @@ Prototype shape:
    app can consume through the `mrms-generated` provider.
 8. For live usage, publish multiple recent frames through the timeline wrapper
    with an `expiresAt` freshness window and atomic manifest replacement.
+9. Publish coverage metadata with every generated pack so the app can fall back
+   outside generated coverage instead of showing a blank local tile set.
 
 Why this is different from WMS:
 

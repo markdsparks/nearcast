@@ -48,6 +48,14 @@ The adapter needs to provide:
   "provider": "mrms-generated",
   "style": "banded",
   "generatedAt": "2026-06-28T17:36:07Z",
+  "coverageBounds": { "minLat": 37, "minLon": -92, "maxLat": 40, "maxLon": -88 },
+  "coverageAreas": [
+    {
+      "id": "metro-east",
+      "label": "Metro East",
+      "bounds": { "minLat": 37, "minLon": -92, "maxLat": 40, "maxLon": -88 }
+    }
+  ],
   "minZoom": 4,
   "maxZoom": 14,
   "frames": [
@@ -58,6 +66,11 @@ The adapter needs to provide:
   ]
 }
 ```
+
+Generated sources should declare geographic coverage so Nearcast can fall back
+to the global NOAA/RainViewer path outside a local or regional tile pack. Keep
+this shape source-agnostic; future generated forecast precipitation can enter
+through the same frame contract.
 
 Generate a bounded test tile set with:
 

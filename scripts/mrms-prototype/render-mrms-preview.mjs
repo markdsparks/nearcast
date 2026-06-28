@@ -698,10 +698,12 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           minY: centerTile.y - radius,
           maxY: centerTile.y + radius
         };
+    const bounds = tileRangeToBounds(range, z, tileSize);
     const zoomSummary = {
       z,
       centerX: centerTile.x,
       centerY: centerTile.y,
+      bounds,
       minX: null,
       maxX: null,
       minY: null,
@@ -750,6 +752,15 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     perZoom.push(zoomSummary);
   });
 
+  const coverageBounds = generatedCoverageBounds(tileBounds, perZoom);
+  const coverageAreas = coverageBounds ? [
+    {
+      id: cleanTileSegment(args["coverage-id"] || args["frame-prefix"] || frameId),
+      label: args["coverage-label"] || (tileBounds ? "Generated coverage" : "Generated focus area"),
+      bounds: coverageBounds
+    }
+  ] : [];
+
   const manifest = {
     provider: "mrms-generated",
     product: args.product || DEFAULT_PRODUCT,
@@ -768,7 +779,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       lat: round(centerLat, 5),
       lon: round(centerLon, 5)
     },
-    coverageBounds: tileBounds,
+    coverageBounds,
+    coverageAreas,
     attribution: "NOAA MRMS · Nearcast",
     frames: [
       {
@@ -780,6 +792,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
         layers: layers || undefined,
         minZoom: Math.min(...zooms),
         maxZoom: Math.max(...zooms),
+        coverageBounds,
         sourceLabel: "Radar",
         style: style.name
       }
@@ -813,6 +826,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       radarTiles,
       radarPixels,
       maxRenderedDbz: round(maxRenderedDbz, 1),
+      coverageBounds,
       coverage: perZoom
     }
   };
@@ -1426,6 +1440,41 @@ function tileRangeForBounds(bounds, zoom, tileSize = DEFAULT_TILE_SIZE) {
     maxX: Math.max(nw.x, se.x),
     minY: Math.min(nw.y, se.y),
     maxY: Math.max(nw.y, se.y)
+  };
+}
+
+function tileRangeToBounds(range, zoom, tileSize = DEFAULT_TILE_SIZE) {
+  const worldSize = tileSize * (2 ** zoom);
+  const nw = worldToLonLat(range.minX * tileSize, range.minY * tileSize, worldSize);
+  const se = worldToLonLat((range.maxX + 1) * tileSize, (range.maxY + 1) * tileSize, worldSize);
+  return roundBounds({
+    minLat: se.lat,
+    minLon: nw.lon,
+    maxLat: nw.lat,
+    maxLon: se.lon
+  });
+}
+
+function generatedCoverageBounds(explicitBounds, perZoom) {
+  if (explicitBounds) return roundBounds(explicitBounds);
+  const tightest = [...(perZoom || [])]
+    .filter((item) => item?.bounds && Number.isFinite(Number(item.z)))
+    .sort((a, b) => Number(b.z) - Number(a.z))[0];
+  return tightest?.bounds ? roundBounds(tightest.bounds) : null;
+}
+
+function roundBounds(bounds) {
+  if (!bounds) return null;
+  const minLat = Math.max(-85.05113, Math.min(85.05113, Number(bounds.minLat)));
+  const maxLat = Math.max(-85.05113, Math.min(85.05113, Number(bounds.maxLat)));
+  const minLon = Number(bounds.minLon);
+  const maxLon = Number(bounds.maxLon);
+  if (![minLat, maxLat, minLon, maxLon].every(Number.isFinite)) return null;
+  return {
+    minLat: round(Math.min(minLat, maxLat), 5),
+    minLon: round(minLon, 5),
+    maxLat: round(Math.max(minLat, maxLat), 5),
+    maxLon: round(maxLon, 5)
   };
 }
 

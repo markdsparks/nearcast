@@ -180,6 +180,9 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
   const candidateTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.candidateTiles || 0), 0);
   const radarTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.radarTiles || 0), 0);
   const first = manifests[0] || {};
+  const explicitCoverageBounds = parseBounds(args["tile-bounds"] || args["coverage-bounds"]);
+  const coverageAreas = combinedCoverageAreas(manifests, explicitCoverageBounds);
+  const coverageBounds = explicitCoverageBounds || unionBounds(coverageAreas.map((area) => area.bounds));
 
   return {
     provider: "mrms-generated",
@@ -196,7 +199,8 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
     tileRadius: first.tileRadius,
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
     outDir: manifestRelativeTileUrl(manifestOut, outDir),
-    coverageBounds: parseBounds(args["tile-bounds"] || args["coverage-bounds"]),
+    coverageBounds,
+    coverageAreas,
     attribution: first.attribution || "NOAA MRMS · Nearcast",
     frames,
     coverage: {
@@ -379,6 +383,61 @@ function parseBounds(value) {
     minLon: Math.min(aLon, bLon),
     maxLat: Math.max(aLat, bLat),
     maxLon: Math.max(aLon, bLon)
+  };
+}
+
+function combinedCoverageAreas(manifests, explicitCoverageBounds) {
+  if (explicitCoverageBounds) {
+    return [{
+      id: cleanTileSegment(args["coverage-id"] || "generated-coverage"),
+      label: args["coverage-label"] || "Generated coverage",
+      bounds: explicitCoverageBounds
+    }];
+  }
+
+  return manifests.flatMap((manifest, index) => {
+    const areas = Array.isArray(manifest.coverageAreas) ? manifest.coverageAreas : [];
+    if (areas.length) {
+      return areas
+        .map((area, areaIndex) => ({
+          id: cleanTileSegment(area.id || `coverage-${index}-${areaIndex}`),
+          label: area.label || `Generated coverage ${index + 1}`,
+          bounds: parseBoundsObject(area.bounds || area)
+        }))
+        .filter((area) => area.bounds);
+    }
+    const bounds = parseBoundsObject(manifest.coverageBounds);
+    return bounds ? [{
+      id: cleanTileSegment(`coverage-${index}`),
+      label: `Generated coverage ${index + 1}`,
+      bounds
+    }] : [];
+  });
+}
+
+function parseBoundsObject(value) {
+  if (!value || typeof value !== "object") return null;
+  const minLat = Number(value.minLat);
+  const minLon = Number(value.minLon);
+  const maxLat = Number(value.maxLat);
+  const maxLon = Number(value.maxLon);
+  if (![minLat, minLon, maxLat, maxLon].every(Number.isFinite)) return null;
+  return {
+    minLat: Math.min(minLat, maxLat),
+    minLon: Math.min(minLon, maxLon),
+    maxLat: Math.max(minLat, maxLat),
+    maxLon: Math.max(minLon, maxLon)
+  };
+}
+
+function unionBounds(boundsList) {
+  const bounds = boundsList.filter(Boolean);
+  if (!bounds.length) return null;
+  return {
+    minLat: Math.min(...bounds.map((item) => item.minLat)),
+    minLon: Math.min(...bounds.map((item) => item.minLon)),
+    maxLat: Math.max(...bounds.map((item) => item.maxLat)),
+    maxLon: Math.max(...bounds.map((item) => item.maxLon))
   };
 }
 

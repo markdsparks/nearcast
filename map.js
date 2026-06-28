@@ -1814,6 +1814,9 @@ function validateGeneratedMrmsManifest(manifest) {
   if (!manifest?.sample && Number.isFinite(expiresAt) && expiresAt < Date.now()) {
     throw new Error("Generated MRMS manifest expired.");
   }
+  if (!generatedManifestCoversActivePlace(manifest)) {
+    throw new Error("Generated MRMS coverage unavailable for active place.");
+  }
 }
 
 function normalizeGeneratedMrmsFrame(frame, context) {
@@ -1839,6 +1842,7 @@ function normalizeGeneratedMrmsFrame(frame, context) {
     manifestGeneratedAt: context.manifestGeneratedAt,
     manifestExpiresAt: context.manifestExpiresAt,
     sample: context.sample,
+    coverageBounds: generatedCoverageBounds(frame?.coverageBounds),
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : 14
   };
   if (Number.isFinite(minZoom)) normalized.minZoom = minZoom;
@@ -1873,6 +1877,68 @@ function generatedFrameTimestamp(frame) {
 function generatedManifestTimestamp(value) {
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function generatedManifestCoversActivePlace(manifest) {
+  const place = state.activePlace;
+  if (!place) return true;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  const areas = generatedManifestCoverageAreas(manifest);
+  if (!areas.length) return true;
+  return areas.some((bounds) => generatedBoundsContainPoint(bounds, latitude, longitude));
+}
+
+function generatedManifestCoverageAreas(manifest) {
+  const areas = Array.isArray(manifest?.coverageAreas)
+    ? manifest.coverageAreas
+      .map((area) => generatedCoverageBounds(area?.bounds || area))
+      .filter(Boolean)
+    : [];
+  const manifestBounds = generatedCoverageBounds(manifest?.coverageBounds);
+  if (manifestBounds && !areas.some((area) => generatedBoundsEqual(area, manifestBounds))) {
+    areas.push(manifestBounds);
+  }
+  return areas;
+}
+
+function generatedCoverageBounds(value) {
+  if (Array.isArray(value) && value.length === 4) {
+    return generatedCoverageBounds({
+      minLat: value[0],
+      minLon: value[1],
+      maxLat: value[2],
+      maxLon: value[3]
+    });
+  }
+  if (!value || typeof value !== "object") return null;
+  const minLat = Number(value.minLat);
+  const minLon = normalizeMapLongitude(value.minLon);
+  const maxLat = Number(value.maxLat);
+  const maxLon = normalizeMapLongitude(value.maxLon);
+  if (![minLat, minLon, maxLat, maxLon].every(Number.isFinite)) return null;
+  return {
+    minLat: Math.min(minLat, maxLat),
+    minLon,
+    maxLat: Math.max(minLat, maxLat),
+    maxLon
+  };
+}
+
+function generatedBoundsContainPoint(bounds, latitude, longitude) {
+  if (!bounds) return false;
+  if (latitude < bounds.minLat || latitude > bounds.maxLat) return false;
+  if (bounds.minLon <= bounds.maxLon) return longitude >= bounds.minLon && longitude <= bounds.maxLon;
+  return longitude >= bounds.minLon || longitude <= bounds.maxLon;
+}
+
+function generatedBoundsEqual(a, b) {
+  return a && b &&
+    Math.abs(a.minLat - b.minLat) < 0.00001 &&
+    Math.abs(a.minLon - b.minLon) < 0.00001 &&
+    Math.abs(a.maxLat - b.maxLat) < 0.00001 &&
+    Math.abs(a.maxLon - b.maxLon) < 0.00001;
 }
 
 function resolveGeneratedRadarUrl(template, manifestUrl) {
