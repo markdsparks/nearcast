@@ -791,6 +791,15 @@ html[data-sky] body {
   animation: sky-lightning-flash 10s ease infinite;
 }
 
+:root[data-sky-motion="still"] .sky-star,
+:root[data-sky-motion="still"] .sky-sun-rays,
+:root[data-sky-motion="still"] .sky-shoot,
+:root[data-sky-motion="still"] .sky-moon-glow,
+:root[data-sky-motion="still"] .sky-cloud,
+:root[data-sky-motion="still"] .sky-rain-sheet,
+:root[data-sky-motion="still"] .sky-rain-layer,
+:root[data-sky-motion="still"] .sky-snow,
+:root[data-sky-motion="still"] .sky-lightning,
 :root.sky-motion-paused-for-map .sky-star,
 :root.sky-motion-paused-for-map .sky-sun-rays,
 :root.sky-motion-paused-for-map .sky-shoot,

@@ -1,4 +1,4 @@
-const VERSION = "3.0.39";
+const VERSION = "3.0.40";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6,6 +6,7 @@ const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
+const SKY_MOTION_MODE_KEY = "nearcast-sky-motion-mode";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
@@ -137,6 +138,11 @@ if (mapDiagnosticQueryFlag !== null) {
   localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, sanitizeMapDiagnosticMode(mapDiagnosticQueryFlag));
 }
 
+const skyMotionQueryFlag = queryValue("skyMotion", "skymotion", "sky");
+const initialSkyMotionPreference = skyMotionQueryFlag !== null
+  ? sanitizeSkyMotionPreference(skyMotionQueryFlag)
+  : sanitizeSkyMotionPreference(localStorage.getItem(SKY_MOTION_MODE_KEY));
+
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 let mapLibreAssetPromise = null;
 let mapLibreCssPromise = null;
@@ -152,6 +158,7 @@ const state = {
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
+  skyMotionPreference: initialSkyMotionPreference,
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -173,6 +180,8 @@ const state = {
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
+
+syncSkyMotionPreference();
 
 function defaultUserContext() {
   return { actions: {}, updatedAt: 0 };
@@ -2318,8 +2327,10 @@ function updateFloatingChrome(options = {}) {
 
 function init() {
   initPerfDiagnostics();
+  initSkyMotionPreferenceListeners();
   initViewportGeometrySync();
   document.getElementById("appVersion").textContent = `v${VERSION}`;
+  syncSkyMotionPreference();
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
@@ -3197,6 +3208,62 @@ function sanitizeMapRendererPreference(value) {
 function sanitizeMapDiagnosticMode(value) {
   const mode = String(value || "").toLowerCase();
   return Object.prototype.hasOwnProperty.call(MAP_DIAGNOSTIC_MODES, mode) ? mode : "full";
+}
+
+function sanitizeSkyMotionPreference(value) {
+  const mode = String(value || "").toLowerCase();
+  if (["full", "on", "motion", "animated"].includes(mode)) return "full";
+  if (["still", "static", "off", "none", "0"].includes(mode)) return "still";
+  return "auto";
+}
+
+function mediaQueryMatches(query) {
+  try {
+    return Boolean(window.matchMedia?.(query).matches);
+  } catch {
+    return false;
+  }
+}
+
+function devicePrefersStillSkyMotion() {
+  const touchDevice = Number(navigator.maxTouchPoints || 0) > 0;
+  const compactTouchViewport = touchDevice && Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 900;
+  return (
+    mediaQueryMatches("(pointer: coarse)") ||
+    mediaQueryMatches("(display-mode: standalone)") ||
+    navigator.standalone === true ||
+    compactTouchViewport
+  );
+}
+
+function effectiveSkyMotionMode() {
+  if (mediaQueryMatches("(prefers-reduced-motion: reduce)")) return "still";
+  if (state.skyMotionPreference === "full") return "full";
+  if (state.skyMotionPreference === "still") return "still";
+  return devicePrefersStillSkyMotion() ? "still" : "full";
+}
+
+function syncSkyMotionPreference() {
+  const root = document.documentElement;
+  root.dataset.skyMotionPreference = state.skyMotionPreference;
+  root.dataset.skyMotion = effectiveSkyMotionMode();
+}
+
+function initSkyMotionPreferenceListeners() {
+  ["(prefers-reduced-motion: reduce)", "(pointer: coarse)", "(display-mode: standalone)"].forEach((query) => {
+    let media;
+    try {
+      media = window.matchMedia?.(query);
+    } catch {
+      media = null;
+    }
+    if (!media) return;
+    const sync = () => syncSkyMotionPreference();
+    if (typeof media.addEventListener === "function") media.addEventListener("change", sync);
+    else if (typeof media.addListener === "function") media.addListener(sync);
+  });
+  window.addEventListener("resize", syncSkyMotionPreference, { passive: true });
+  window.addEventListener("pageshow", syncSkyMotionPreference);
 }
 
 function timeFormatMetaText() {
