@@ -2632,7 +2632,12 @@ function toggleRadarPlayback() {
 // scrolls out of view. A manual pause disables scroll-triggered auto-play until
 // the user presses Play again in this session. Immersive mode drives itself.
 let mapInView = false;
+let mapNearView = false;
 let mapViewObserver = null;
+
+function syncSkyMotionForMap() {
+  document.documentElement.classList.toggle("sky-motion-paused-for-map", Boolean(mapState.immersive || mapNearView));
+}
 
 function maybeAutoPlayRadar() {
   if (mapState.immersive || !mapInView) return;
@@ -2648,6 +2653,8 @@ function initMapAutoPlay() {
   mapViewObserver = new IntersectionObserver((entries) => {
     const entry = entries[entries.length - 1];
     mapInView = entry.isIntersecting && entry.intersectionRatio >= 0.4;
+    mapNearView = Boolean(entry.isIntersecting || mapViewNearViewport());
+    syncSkyMotionForMap();
     if (mapInView) {
       maybeAutoPlayRadar();
     } else if (!mapState.immersive) {
@@ -2659,7 +2666,10 @@ function initMapAutoPlay() {
   // Don't keep the loop running in a backgrounded tab.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") stopRadarPlayback();
-    else maybeAutoPlayRadar();
+    else {
+      syncSkyMotionForMap();
+      maybeAutoPlayRadar();
+    }
   });
 }
 
@@ -3266,6 +3276,7 @@ function enterImmersiveMap() {
   clearMapLibreInteractionState();
   mapState.immersive = true;
   document.body.classList.add("map-immersive-active");
+  syncSkyMotionForMap();
 
   mapState._normalEls = {
     baseTileLayer: els.baseTileLayer,
@@ -3332,6 +3343,7 @@ function exitImmersiveMap() {
   Object.assign(els, mapState._normalEls);
   mapState._normalEls = null;
   mapState.immersive = false;
+  syncSkyMotionForMap();
   els.frameSlider.max = String(Math.max(0, mapState.frames.length - 1));
   els.frameSlider.value = String(mapState.frameIndex);
   updateRangeProgress(els.frameSlider);
