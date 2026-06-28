@@ -62,6 +62,10 @@ Current spike status:
   at z6-z14 under `radar/mrms/sample-mrms-banded-max/`, centered on the strongest
   CONUS radar cell in the local test frame, and exposes them through
   `radar/mrms/manifest.json` for the app's `mrms-generated` provider.
+- The first banded contour pass used a fixed dark separator color; on-device
+  MapLibre resampling made those edges read as a gray-purple bleed. The current
+  sample uses thinner same-hue shade contours plus a tile URL version query so
+  mobile clients fetch the cleaner tiles.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 

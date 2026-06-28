@@ -648,9 +648,10 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
       const separatorAlpha = bandSeparatorAlpha(dbz, style) * thresholdFade;
       if (separatorAlpha > 0) {
         const strokeAlpha = Math.min(1, separatorAlpha * style.separatorAlpha);
-        pixels[outIndex] = Math.round(style.separatorColor[0] * strokeAlpha + pixels[outIndex] * (1 - strokeAlpha));
-        pixels[outIndex + 1] = Math.round(style.separatorColor[1] * strokeAlpha + pixels[outIndex + 1] * (1 - strokeAlpha));
-        pixels[outIndex + 2] = Math.round(style.separatorColor[2] * strokeAlpha + pixels[outIndex + 2] * (1 - strokeAlpha));
+        const strokeColor = separatorStrokeColor(pixels[outIndex], pixels[outIndex + 1], pixels[outIndex + 2], style);
+        pixels[outIndex] = Math.round(strokeColor[0] * strokeAlpha + pixels[outIndex] * (1 - strokeAlpha));
+        pixels[outIndex + 1] = Math.round(strokeColor[1] * strokeAlpha + pixels[outIndex + 1] * (1 - strokeAlpha));
+        pixels[outIndex + 2] = Math.round(strokeColor[2] * strokeAlpha + pixels[outIndex + 2] * (1 - strokeAlpha));
       }
       pixels[outIndex + 3] = basemap ? 255 : color[3];
       radarPixels += 1;
@@ -670,9 +671,10 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   const tileOut = args["tile-out"] || `radar/mrms/${frameId}`;
   const manifestOut = args["manifest-out"] || DEFAULT_TILE_MANIFEST_OUT;
   const tileUrl = args["tile-url"] || manifestRelativeTileUrl(manifestOut, tileOut);
+  const tileVersion = args["tile-version"] ? `?v=${encodeURIComponent(args["tile-version"])}` : "";
   const tileTemplate = tileUrl.endsWith("/")
-    ? `${tileUrl}{z}/{x}/{y}.png`
-    : `${tileUrl.replace(/\/+$/g, "")}/{z}/{x}/{y}.png`;
+    ? `${tileUrl}{z}/{x}/{y}.png${tileVersion}`
+    : `${tileUrl.replace(/\/+$/g, "")}/{z}/{x}/{y}.png${tileVersion}`;
   const layers = args["layered-manifest"] ? [
     { url: tileTemplate, opacity: numberArg(args.opacity, 0.82) }
   ] : null;
@@ -781,6 +783,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       frameId,
       frameTime,
       tileTemplate,
+      tileVersion: args["tile-version"] || null,
       tileSize,
       tileRadius: radius,
       zooms,
@@ -830,12 +833,23 @@ function transparentRadarColor(dbz, threshold, style) {
   const separatorAlpha = bandSeparatorAlpha(dbz, style) * thresholdFade;
   if (separatorAlpha > 0) {
     const strokeAlpha = Math.min(1, separatorAlpha * style.separatorAlpha);
-    r = Math.round(style.separatorColor[0] * strokeAlpha + r * (1 - strokeAlpha));
-    g = Math.round(style.separatorColor[1] * strokeAlpha + g * (1 - strokeAlpha));
-    b = Math.round(style.separatorColor[2] * strokeAlpha + b * (1 - strokeAlpha));
+    const strokeColor = separatorStrokeColor(r, g, b, style);
+    r = Math.round(strokeColor[0] * strokeAlpha + r * (1 - strokeAlpha));
+    g = Math.round(strokeColor[1] * strokeAlpha + g * (1 - strokeAlpha));
+    b = Math.round(strokeColor[2] * strokeAlpha + b * (1 - strokeAlpha));
   }
   const alpha = Math.round(Math.min(1, base[3] / 255 * thresholdFade * style.alphaScale) * 255);
   return [r, g, b, alpha];
+}
+
+function separatorStrokeColor(r, g, b, style) {
+  if (style.separatorMode === "color") return style.separatorColor;
+  const shade = style.separatorShade;
+  return [
+    Math.max(0, Math.min(255, Math.round(r * shade))),
+    Math.max(0, Math.min(255, Math.round(g * shade))),
+    Math.max(0, Math.min(255, Math.round(b * shade)))
+  ];
 }
 
 function composeComparison(panels, panelWidth, panelHeight) {
@@ -1641,9 +1655,11 @@ function radarStyle(name, options = {}) {
       fadeAbove: numberArg(options["fade-above"], 1.25),
       bandBase: numberArg(options["band-base"], 5),
       bandStep: numberArg(options["band-step"], 7.5),
-      bandFeather: numberArg(options["band-feather"], 0.04),
-      separatorAlpha: numberArg(options["separator-alpha"], 0.22),
-      separatorWidth: numberArg(options["separator-width"], 0.28),
+      bandFeather: numberArg(options["band-feather"], 0.02),
+      separatorAlpha: numberArg(options["separator-alpha"], 0.12),
+      separatorWidth: numberArg(options["separator-width"], 0.16),
+      separatorMode: String(options["separator-mode"] || "shade"),
+      separatorShade: numberArg(options["separator-shade"], 0.74),
       separatorColor: parseRgb(options["separator-color"], [20, 31, 42])
     };
   }
@@ -1660,6 +1676,8 @@ function radarStyle(name, options = {}) {
       bandFeather: numberArg(options["band-feather"], 0.4),
       separatorAlpha: numberArg(options["separator-alpha"], 0),
       separatorWidth: numberArg(options["separator-width"], 0),
+      separatorMode: String(options["separator-mode"] || "shade"),
+      separatorShade: numberArg(options["separator-shade"], 0.74),
       separatorColor: parseRgb(options["separator-color"], [20, 31, 42])
     };
   }
@@ -1675,6 +1693,8 @@ function radarStyle(name, options = {}) {
     bandFeather: 0,
     separatorAlpha: 0,
     separatorWidth: 0,
+    separatorMode: "shade",
+    separatorShade: 0.74,
     separatorColor: [20, 31, 42]
   };
 }
@@ -1871,6 +1891,8 @@ Options:
   --band-feather=0.04        Banded style band transition width.
   --separator-alpha=0.22     Banded style intensity-line strength.
   --separator-width=0.28     Banded style intensity-line width in dBZ.
+  --separator-mode=shade     Banded contour mode: shade or color.
+  --separator-shade=0.74     Shade multiplier for same-hue contours.
   --compare                  Render continuous, banded, smoothed, and resolved panels.
   --compare-current-zooms    Render current NOAA WMS vs MRMS styles over a zoom ladder.
   --zooms=7.4,8,9,10,11      Zoom ladder for --compare-current-zooms.
@@ -1881,6 +1903,7 @@ Options:
   --tile-radius=2            Tile radius around the selected center for each zoom.
   --tile-out=radar/mrms/id   Generated tile directory.
   --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.
+  --tile-version=clean1      Optional query string cache buster for tile URLs.
   --frame-time=ISO           Frame time to publish in the generated manifest.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
