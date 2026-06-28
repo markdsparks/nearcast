@@ -1,9 +1,134 @@
 {
   "provider": "mrms-generated",
+  "product": "MergedReflectivityQCComposite_00.50",
+  "region": "CONUS",
   "style": "banded",
-  "generatedAt": null,
-  "minZoom": 4,
+  "generatedAt": "2026-06-28T18:13:52.030Z",
+  "minZoom": 6,
   "maxZoom": 14,
+  "tileSize": 256,
+  "tileRadius": 2,
+  "center": {
+    "lat": 43.005,
+    "lon": -93.305
+  },
   "attribution": "NOAA MRMS · Nearcast",
-  "frames": []
+  "frames": [
+    {
+      "id": "sample-mrms-banded-max",
+      "label": "Generated MRMS",
+      "time": "2026-06-28T14:05:00.000Z",
+      "timestamp": 1782655500000,
+      "url": "./sample-mrms-banded-max/{z}/{x}/{y}.png",
+      "minZoom": 6,
+      "maxZoom": 14,
+      "sourceLabel": "Radar",
+      "style": "banded"
+    }
+  ],
+  "coverage": {
+    "generatedTiles": 225,
+    "radarTiles": 200,
+    "zooms": [
+      {
+        "z": 6,
+        "centerX": 15,
+        "centerY": 23,
+        "minX": 13,
+        "maxX": 17,
+        "minY": 21,
+        "maxY": 25,
+        "tiles": 25,
+        "radarTiles": 18
+      },
+      {
+        "z": 7,
+        "centerX": 30,
+        "centerY": 47,
+        "minX": 28,
+        "maxX": 32,
+        "minY": 45,
+        "maxY": 49,
+        "tiles": 25,
+        "radarTiles": 16
+      },
+      {
+        "z": 8,
+        "centerX": 61,
+        "centerY": 94,
+        "minX": 59,
+        "maxX": 63,
+        "minY": 92,
+        "maxY": 96,
+        "tiles": 25,
+        "radarTiles": 18
+      },
+      {
+        "z": 9,
+        "centerX": 123,
+        "centerY": 188,
+        "minX": 121,
+        "maxX": 125,
+        "minY": 186,
+        "maxY": 190,
+        "tiles": 25,
+        "radarTiles": 23
+      },
+      {
+        "z": 10,
+        "centerX": 246,
+        "centerY": 376,
+        "minX": 244,
+        "maxX": 248,
+        "minY": 374,
+        "maxY": 378,
+        "tiles": 25,
+        "radarTiles": 25
+      },
+      {
+        "z": 11,
+        "centerX": 493,
+        "centerY": 752,
+        "minX": 491,
+        "maxX": 495,
+        "minY": 750,
+        "maxY": 754,
+        "tiles": 25,
+        "radarTiles": 25
+      },
+      {
+        "z": 12,
+        "centerX": 986,
+        "centerY": 1504,
+        "minX": 984,
+        "maxX": 988,
+        "minY": 1502,
+        "maxY": 1506,
+        "tiles": 25,
+        "radarTiles": 25
+      },
+      {
+        "z": 13,
+        "centerX": 1972,
+        "centerY": 3009,
+        "minX": 1970,
+        "maxX": 1974,
+        "minY": 3007,
+        "maxY": 3011,
+        "tiles": 25,
+        "radarTiles": 25
+      },
+      {
+        "z": 14,
+        "centerX": 3945,
+        "centerY": 6019,
+        "minX": 3943,
+        "maxX": 3947,
+        "minY": 6017,
+        "maxY": 6021,
+        "tiles": 25,
+        "radarTiles": 25
+      }
+    ]
+  }
 }

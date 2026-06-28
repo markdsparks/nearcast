@@ -57,6 +57,11 @@ Current spike status:
   `radar/mrms/manifest.json`, normalizes it into the existing radar frame model,
   and falls back to the current NOAA/RainViewer path if the manifest is empty or
   unavailable.
+- The MRMS prototype can now generate a bounded slippy tile set directly from
+  decoded numeric values. The checked-in sample publishes transparent PNG tiles
+  at z6-z14 under `radar/mrms/sample-mrms-banded-max/`, centered on the strongest
+  CONUS radar cell in the local test frame, and exposes them through
+  `radar/mrms/manifest.json` for the app's `mrms-generated` provider.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import path from "node:path";
 import zlib from "node:zlib";
 
 const BUCKET_URL = "https://noaa-mrms-pds.s3.amazonaws.com/";
@@ -13,6 +14,10 @@ const DEFAULT_WIDTH = 900;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_OUT = "/tmp/nearcast-mrms-preview.png";
 const DEFAULT_STYLE = "continuous";
+const DEFAULT_TILE_SIZE = 256;
+const DEFAULT_TILE_RADIUS = 2;
+const DEFAULT_TILE_ZOOMS = [6, 7, 8, 9, 10, 11, 12, 13];
+const DEFAULT_TILE_MANIFEST_OUT = "radar/mrms/manifest.json";
 const CURRENT_MAP_ZOOMS = [7.4, 7.6, 8, 9, 10, 11, 12, 13, 14];
 const CURRENT_MAP_RADAR_MAX_ZOOM = 8;
 const CURRENT_MAP_WMS_TILE_SIZE = 512;
@@ -95,10 +100,39 @@ async function main() {
       : numberArg(args.lon, DEFAULT_LON);
   const zoom = numberArg(args.zoom, DEFAULT_ZOOM);
   const threshold = numberArg(args.threshold, 5);
-  const styleName = normalizeStyle(args.style || DEFAULT_STYLE);
+  const generatingTiles = Boolean(args["generate-tiles"] || args["tile-set"]);
+  const styleName = normalizeStyle(args.style || (generatingTiles ? "banded" : DEFAULT_STYLE));
   const smooth = numberArg(args.smooth, defaultSmoothForStyle(styleName));
   const style = radarStyle(styleName, args);
   const compare = Boolean(args.compare);
+
+  if (generatingTiles) {
+    const output = generateTileSet({
+      values,
+      grid: parsed.grid,
+      centerLat,
+      centerLon,
+      threshold,
+      smooth,
+      style,
+      args
+    });
+    console.log(JSON.stringify({
+      ...summary,
+      stats,
+      render: {
+        ...output.summary,
+        centerLat,
+        centerLon,
+        threshold,
+        smooth,
+        style: style.name,
+        focus: args.focus || "manual",
+        focusBounds
+      }
+    }, null, 2));
+    return;
+  }
 
   if (args["compare-current-zooms"]) {
     const output = await renderCurrentZoomComparison({
@@ -627,6 +661,183 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
   return { pixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
 }
 
+function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth, style, args }) {
+  const zooms = parseIntegerZoomList(args["tile-zooms"] || args.zooms, DEFAULT_TILE_ZOOMS);
+  const tileSize = Math.max(64, Math.min(512, Math.round(numberArg(args["tile-size"], DEFAULT_TILE_SIZE))));
+  const radius = Math.max(0, Math.min(8, Math.round(numberArg(args["tile-radius"], DEFAULT_TILE_RADIUS))));
+  const frameTime = generatedFrameIso(args);
+  const frameId = cleanTileSegment(args["frame-id"] || frameIdForIso(frameTime));
+  const tileOut = args["tile-out"] || `radar/mrms/${frameId}`;
+  const manifestOut = args["manifest-out"] || DEFAULT_TILE_MANIFEST_OUT;
+  const tileUrl = args["tile-url"] || manifestRelativeTileUrl(manifestOut, tileOut);
+  const tileTemplate = tileUrl.endsWith("/")
+    ? `${tileUrl}{z}/{x}/{y}.png`
+    : `${tileUrl.replace(/\/+$/g, "")}/{z}/{x}/{y}.png`;
+  const layers = args["layered-manifest"] ? [
+    { url: tileTemplate, opacity: numberArg(args.opacity, 0.82) }
+  ] : null;
+  const perZoom = [];
+  let totalTiles = 0;
+  let radarTiles = 0;
+  let radarPixels = 0;
+  let maxRenderedDbz = -Infinity;
+
+  zooms.forEach((z) => {
+    const centerTile = tileForLatLon(centerLat, centerLon, z, tileSize);
+    const worldTiles = 2 ** z;
+    const zoomSummary = {
+      z,
+      centerX: centerTile.x,
+      centerY: centerTile.y,
+      minX: null,
+      maxX: null,
+      minY: null,
+      maxY: null,
+      tiles: 0,
+      radarTiles: 0
+    };
+
+    for (let rawX = centerTile.x - radius; rawX <= centerTile.x + radius; rawX += 1) {
+      for (let y = centerTile.y - radius; y <= centerTile.y + radius; y += 1) {
+        if (y < 0 || y >= worldTiles) continue;
+        const x = wrapTileX(rawX, worldTiles);
+        const rendered = renderRadarTile({
+          values,
+          grid,
+          z,
+          x,
+          y,
+          tileSize,
+          threshold,
+          smooth,
+          style
+        });
+        const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
+        zoomSummary.tiles += 1;
+        zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
+        zoomSummary.maxX = zoomSummary.maxX === null ? x : Math.max(zoomSummary.maxX, x);
+        zoomSummary.minY = zoomSummary.minY === null ? y : Math.min(zoomSummary.minY, y);
+        zoomSummary.maxY = zoomSummary.maxY === null ? y : Math.max(zoomSummary.maxY, y);
+        totalTiles += 1;
+        radarPixels += rendered.radarPixels;
+        if (rendered.radarPixels) {
+          radarTiles += 1;
+          zoomSummary.radarTiles += 1;
+        }
+        if (Number.isFinite(rendered.maxRenderedDbz) && rendered.maxRenderedDbz > maxRenderedDbz) {
+          maxRenderedDbz = rendered.maxRenderedDbz;
+        }
+      }
+    }
+    perZoom.push(zoomSummary);
+  });
+
+  const manifest = {
+    provider: "mrms-generated",
+    product: args.product || DEFAULT_PRODUCT,
+    region: args.region || DEFAULT_REGION,
+    style: style.name,
+    generatedAt: new Date().toISOString(),
+    minZoom: Math.min(...zooms),
+    maxZoom: Math.max(...zooms),
+    tileSize,
+    tileRadius: radius,
+    center: {
+      lat: round(centerLat, 5),
+      lon: round(centerLon, 5)
+    },
+    attribution: "NOAA MRMS · Nearcast",
+    frames: [
+      {
+        id: frameId,
+        label: "Generated MRMS",
+        time: frameTime,
+        timestamp: new Date(frameTime).getTime(),
+        url: layers ? undefined : tileTemplate,
+        layers: layers || undefined,
+        minZoom: Math.min(...zooms),
+        maxZoom: Math.max(...zooms),
+        sourceLabel: "Radar",
+        style: style.name
+      }
+    ],
+    coverage: {
+      generatedTiles: totalTiles,
+      radarTiles,
+      zooms: perZoom
+    }
+  };
+
+  fs.mkdirSync(path.dirname(manifestOut), { recursive: true });
+  fs.writeFileSync(manifestOut, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  return {
+    manifest,
+    summary: {
+      out: tileOut,
+      manifestOut,
+      frameId,
+      frameTime,
+      tileTemplate,
+      tileSize,
+      tileRadius: radius,
+      zooms,
+      totalTiles,
+      radarTiles,
+      radarPixels,
+      maxRenderedDbz: round(maxRenderedDbz, 1),
+      coverage: perZoom
+    }
+  };
+}
+
+function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, style }) {
+  const pixels = new Uint8ClampedArray(tileSize * tileSize * 4);
+  const worldSize = tileSize * (2 ** z);
+  let radarPixels = 0;
+  let maxRenderedDbz = -Infinity;
+
+  for (let py = 0; py < tileSize; py += 1) {
+    for (let px = 0; px < tileSize; px += 1) {
+      const worldX = x * tileSize + px + 0.5;
+      const worldY = y * tileSize + py + 0.5;
+      const { lon, lat } = worldToLonLat(worldX, worldY, worldSize);
+      const dbz = sampleGrid(values, grid, lat, lon, smooth);
+      const color = transparentRadarColor(dbz, threshold, style);
+      if (!color) continue;
+      const outIndex = (py * tileSize + px) * 4;
+      pixels[outIndex] = color[0];
+      pixels[outIndex + 1] = color[1];
+      pixels[outIndex + 2] = color[2];
+      pixels[outIndex + 3] = color[3];
+      radarPixels += 1;
+      if (dbz > maxRenderedDbz) maxRenderedDbz = dbz;
+    }
+  }
+
+  return { pixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+}
+
+function transparentRadarColor(dbz, threshold, style) {
+  const thresholdFade = smoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+  if (!Number.isFinite(dbz) || thresholdFade <= 0) return null;
+  const base = radarColor(dbz, style);
+  let r = base[0];
+  let g = base[1];
+  let b = base[2];
+  const separatorAlpha = bandSeparatorAlpha(dbz, style) * thresholdFade;
+  if (separatorAlpha > 0) {
+    const strokeAlpha = Math.min(1, separatorAlpha * style.separatorAlpha);
+    r = Math.round(style.separatorColor[0] * strokeAlpha + r * (1 - strokeAlpha));
+    g = Math.round(style.separatorColor[1] * strokeAlpha + g * (1 - strokeAlpha));
+    b = Math.round(style.separatorColor[2] * strokeAlpha + b * (1 - strokeAlpha));
+  }
+  const alpha = Math.round(Math.min(1, base[3] / 255 * thresholdFade * style.alphaScale) * 255);
+  return [r, g, b, alpha];
+}
+
 function composeComparison(panels, panelWidth, panelHeight) {
   const gutter = 18;
   const width = panels.length * panelWidth + (panels.length - 1) * gutter;
@@ -1119,6 +1330,62 @@ function parseZoomList(value, fallback) {
   return zooms.length ? zooms : fallback;
 }
 
+function parseIntegerZoomList(value, fallback) {
+  const zooms = parseZoomList(value, fallback)
+    .map((zoom) => Math.round(zoom))
+    .filter((zoom) => zoom >= 0 && zoom <= 18);
+  return [...new Set(zooms)].sort((a, b) => a - b);
+}
+
+function generatedFrameIso(options = {}) {
+  const explicit = options["frame-time"] || options.time || options["observed-at"];
+  if (explicit) {
+    const parsed = new Date(explicit);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+
+  const sourceObservedAt = observedTimeFromKey(options.url || options.file || "");
+  if (sourceObservedAt) return sourceObservedAt.toISOString();
+  return new Date().toISOString();
+}
+
+function frameIdForIso(value) {
+  const date = new Date(value);
+  const safeIso = Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+  return `sample-${safeIso
+    .replace(/\.\d{3}Z$/, "Z")
+    .replace(/[-:]/g, "")
+    .replace("T", "-")
+    .replace("Z", "z")}`;
+}
+
+function cleanTileSegment(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || frameIdForIso(new Date().toISOString());
+}
+
+function manifestRelativeTileUrl(manifestOut, tileOut) {
+  const manifestDir = path.dirname(manifestOut || DEFAULT_TILE_MANIFEST_OUT);
+  const relative = path.relative(manifestDir, tileOut || ".");
+  const cleanRelative = relative ? relative.split(path.sep).join("/") : ".";
+  return cleanRelative.startsWith(".") ? cleanRelative : `./${cleanRelative}`;
+}
+
+function tileForLatLon(lat, lon, zoom, tileSize = DEFAULT_TILE_SIZE) {
+  const worldSize = tileSize * (2 ** zoom);
+  const world = lonLatToWorld(lon, lat, worldSize);
+  return {
+    x: Math.floor(world.x / tileSize),
+    y: Math.floor(world.y / tileSize)
+  };
+}
+
+function wrapTileX(x, worldTiles) {
+  return ((x % worldTiles) + worldTiles) % worldTiles;
+}
+
 function parseBounds(value) {
   if (!value) return null;
   const parts = String(value).split(",").map((item) => Number(item.trim()));
@@ -1609,6 +1876,12 @@ Options:
   --zooms=7.4,8,9,10,11      Zoom ladder for --compare-current-zooms.
   --wms-time=ISO             Pin the current NOAA WMS comparison frame time.
   --svg-out=/tmp/file.svg    Also write a labeled SVG sheet for zoom comparisons.
+  --generate-tiles           Write generated MRMS slippy tiles plus a manifest.
+  --tile-zooms=6,7,8,9       Integer source zooms for --generate-tiles.
+  --tile-radius=2            Tile radius around the selected center for each zoom.
+  --tile-out=radar/mrms/id   Generated tile directory.
+  --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.
+  --frame-time=ISO           Frame time to publish in the generated manifest.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
   --out=/tmp/file.png        Output PNG path.

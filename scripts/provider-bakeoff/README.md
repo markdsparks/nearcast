@@ -53,10 +53,26 @@ The adapter needs to provide:
   "frames": [
     {
       "time": "2026-06-28T17:36:07Z",
-      "url": "20260628-173607/{z}/{x}/{y}.webp"
+      "url": "./sample-mrms-banded-max/{z}/{x}/{y}.png"
     }
   ]
 }
+```
+
+Generate a bounded test tile set with:
+
+```sh
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
+  --generate-tiles \
+  --style=banded \
+  --focus=max \
+  --bounds=25,-125,49,-70 \
+  --tile-zooms=6,7,8,9,10,11,12,13,14 \
+  --tile-radius=2 \
+  --frame-id=sample-mrms-banded-max \
+  --tile-out=radar/mrms/sample-mrms-banded-max \
+  --manifest-out=radar/mrms/manifest.json
 ```
 
 ## Test matrix
