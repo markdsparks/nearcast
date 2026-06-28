@@ -1,4 +1,4 @@
-const VERSION = "3.0.37";
+const VERSION = "3.0.38";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -89,6 +89,18 @@ const MAP_DIAGNOSTIC_MODES = {
   blank: {
     label: "Blank GL",
     meta: "Empty WebGL canvas"
+  },
+  nosky: {
+    label: "No sky",
+    meta: "Blank map, sky hidden"
+  },
+  nomotion: {
+    label: "No motion",
+    meta: "Blank map, animations off"
+  },
+  noblur: {
+    label: "No blur",
+    meta: "Blank map, blur effects off"
   },
   quiet: {
     label: "Quiet shell",
@@ -3228,9 +3240,13 @@ function mapDiagnosticMetaText() {
 
 function syncMapDiagnosticRootState() {
   const root = document.documentElement;
+  const mode = state.mapDiagnosticMode;
   if (state.mapDiagnosticMode === "full") root.removeAttribute("data-map-diagnostic-mode");
   else root.dataset.mapDiagnosticMode = state.mapDiagnosticMode;
-  root.classList.toggle("map-diagnostic-quiet-shell", state.mapDiagnosticMode === "quiet");
+  root.classList.toggle("map-diagnostic-no-sky", mode === "quiet" || mode === "nosky");
+  root.classList.toggle("map-diagnostic-no-motion", mode === "quiet" || mode === "nomotion");
+  root.classList.toggle("map-diagnostic-no-blur", mode === "quiet" || mode === "noblur");
+  root.classList.toggle("map-diagnostic-quiet-shell", mode === "quiet");
 }
 
 function updateMapDiagnosticModeControl() {

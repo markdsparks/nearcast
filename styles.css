@@ -664,28 +664,28 @@ html[data-sky] body {
   height: 100%;
 }
 
-:root.map-diagnostic-quiet-shell #skyCanvas {
+:root.map-diagnostic-no-sky #skyCanvas {
   display: none;
 }
 
-:root.map-diagnostic-quiet-shell *,
-:root.map-diagnostic-quiet-shell *::before,
-:root.map-diagnostic-quiet-shell *::after {
+:root.map-diagnostic-no-motion *,
+:root.map-diagnostic-no-motion *::before,
+:root.map-diagnostic-no-motion *::after {
   animation: none !important;
   transition: none !important;
 }
 
-:root.map-diagnostic-quiet-shell .shell,
-:root.map-diagnostic-quiet-shell .topbar,
-:root.map-diagnostic-quiet-shell .app-menu-toggle,
-:root.map-diagnostic-quiet-shell .manual-refresh-button,
-:root.map-diagnostic-quiet-shell .app-menu,
-:root.map-diagnostic-quiet-shell .weather-card,
-:root.map-diagnostic-quiet-shell .map-diagnostic-readout,
-:root.map-diagnostic-quiet-shell .immersive-map,
-:root.map-diagnostic-quiet-shell .imm-controls,
-:root.map-diagnostic-quiet-shell .map-legend,
-:root.map-diagnostic-quiet-shell .day-sheet {
+:root.map-diagnostic-no-blur .shell,
+:root.map-diagnostic-no-blur .topbar,
+:root.map-diagnostic-no-blur .app-menu-toggle,
+:root.map-diagnostic-no-blur .manual-refresh-button,
+:root.map-diagnostic-no-blur .app-menu,
+:root.map-diagnostic-no-blur .weather-card,
+:root.map-diagnostic-no-blur .map-diagnostic-readout,
+:root.map-diagnostic-no-blur .immersive-map,
+:root.map-diagnostic-no-blur .imm-controls,
+:root.map-diagnostic-no-blur .map-legend,
+:root.map-diagnostic-no-blur .day-sheet {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   filter: none !important;
