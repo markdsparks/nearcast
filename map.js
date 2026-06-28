@@ -10,6 +10,7 @@ const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
+const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
@@ -561,13 +562,6 @@ function mapLibreWeatherTileTemplate(template) {
     .replace("{bbox}", "{bbox-epsg-3857}");
 }
 
-function mapLibreWeatherSlotIds(slotIndex) {
-  return {
-    sourceId: `${MAPLIBRE_WEATHER_PREFIX}-source-${slotIndex}`,
-    layerId: `${MAPLIBRE_WEATHER_PREFIX}-layer-${slotIndex}`
-  };
-}
-
 function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
 }
@@ -656,117 +650,128 @@ function renderMapLibreWeather(index = mapState.frameIndex) {
 function syncMapLibreWeatherSlots(record, specs = []) {
   const map = record?.map;
   if (!map || !map.isStyleLoaded?.()) return;
-  if (!record.weatherSlots) record.weatherSlots = [];
+  if (!record.weatherEntries) record.weatherEntries = new Map();
+  record.weatherRenderSeq = (record.weatherRenderSeq || 0) + 1;
 
-  const deferred = [];
-  specs.forEach((spec, slotIndex) => {
-    const existing = record.weatherSlots[slotIndex];
-    const sourceSignature = mapLibreWeatherSourceSignature(spec);
-    if (!existing || existing.sourceSignature === sourceSignature) {
-      syncMapLibreWeatherSlot(record, slotIndex, spec);
-      return;
-    }
-    deferred.push({ slotIndex, spec });
+  const liveKeys = new Set(specs.map((spec) => spec.key));
+  record.liveWeatherKeys = liveKeys;
+
+  specs.forEach((spec) => {
+    const entry = ensureMapLibreWeatherEntry(record, spec);
+    if (!entry) return;
+    entry.frameIndex = spec.frameIndex;
+    entry.lastUsedAt = record.weatherRenderSeq;
+    entry.hideSeq = 0;
+    setMapLibreWeatherEntryOpacity(record, entry, mapLibreWeatherOpacity(spec));
   });
 
-  // Promote any already-preloaded current frame before recycling the previous
-  // visible slot. Removing a visible raster source first causes a one-frame
-  // blank flash in MapLibre during radar playback.
-  deferred.forEach(({ slotIndex }) => {
-    const existing = record.weatherSlots[slotIndex];
-    if (existing?.layerId && map.getLayer(existing.layerId)) {
-      map.setPaintProperty(existing.layerId, "raster-opacity", 0);
-    }
+  record.weatherEntries.forEach((entry, key) => {
+    if (liveKeys.has(key)) return;
+    if (entry.visible) scheduleMapLibreWeatherEntryHide(record, entry);
+    else setMapLibreWeatherEntryOpacity(record, entry, 0);
   });
 
-  if (deferred.length) {
-    scheduleMapLibreWeatherSlotSwaps(record, deferred);
-  }
-
-  for (let slotIndex = specs.length; slotIndex < record.weatherSlots.length; slotIndex += 1) {
-    removeMapLibreWeatherSlot(record, slotIndex);
-  }
-  record.weatherSlots.length = specs.length;
+  pruneMapLibreWeatherEntries(record);
 }
 
 function mapLibreWeatherSourceSignature(spec) {
   return `${spec.template}|${spec.maxZoom}|${spec.attribution}`;
 }
 
-function scheduleMapLibreWeatherSlotSwaps(record, swaps) {
-  record.pendingWeatherSwaps = swaps;
-  if (record.weatherSwapRaf) return;
-  record.weatherSwapRaf = requestAnimationFrame(() => {
-    record.weatherSwapRaf = 0;
-    const pending = record.pendingWeatherSwaps || [];
-    record.pendingWeatherSwaps = [];
-    pending.forEach(({ slotIndex, spec }) => syncMapLibreWeatherSlot(record, slotIndex, spec));
+function ensureMapLibreWeatherEntry(record, spec) {
+  const map = record?.map;
+  if (!map || !spec?.key) return null;
+  let entry = record.weatherEntries.get(spec.key);
+  const sourceSignature = mapLibreWeatherSourceSignature(spec);
+  if (entry && entry.sourceSignature === sourceSignature && map.getLayer(entry.layerId) && map.getSource(entry.sourceId)) {
+    return entry;
+  }
+
+  if (entry) removeMapLibreWeatherEntry(record, entry);
+  const id = record.weatherEntrySeq = (record.weatherEntrySeq || 0) + 1;
+  const sourceId = `${MAPLIBRE_WEATHER_PREFIX}-source-${id}`;
+  const layerId = `${MAPLIBRE_WEATHER_PREFIX}-layer-${id}`;
+  map.addSource(sourceId, {
+    type: "raster",
+    tiles: [spec.template],
+    tileSize: 256,
+    minzoom: MAP_MIN_ZOOM,
+    maxzoom: spec.maxZoom,
+    attribution: spec.attribution
+  });
+  map.addLayer({
+    id: layerId,
+    type: "raster",
+    source: sourceId,
+    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec))
+  }, mapLibreWeatherBeforeLayer(map));
+
+  entry = {
+    key: spec.key,
+    sourceId,
+    layerId,
+    sourceSignature,
+    frameIndex: spec.frameIndex,
+    visible: mapLibreWeatherOpacity(spec) > MAPLIBRE_WEATHER_PRELOAD_OPACITY,
+    lastUsedAt: record.weatherRenderSeq || 0,
+    hideSeq: 0
+  };
+  record.weatherEntries.set(spec.key, entry);
+  return entry;
+}
+
+function setMapLibreWeatherEntryOpacity(record, entry, opacity) {
+  if (!record?.map?.getLayer(entry.layerId)) return;
+  record.map.setPaintProperty(entry.layerId, "raster-opacity", opacity);
+  entry.visible = opacity > MAPLIBRE_WEATHER_PRELOAD_OPACITY;
+}
+
+function scheduleMapLibreWeatherEntryHide(record, entry) {
+  const hideSeq = record.weatherRenderSeq || 0;
+  entry.hideSeq = hideSeq;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (!record.weatherEntries?.has(entry.key)) return;
+      if (record.liveWeatherKeys?.has(entry.key)) return;
+      if (entry.hideSeq !== hideSeq) return;
+      setMapLibreWeatherEntryOpacity(record, entry, 0);
+      pruneMapLibreWeatherEntries(record);
+    });
   });
 }
 
-function syncMapLibreWeatherSlot(record, slotIndex, spec) {
-  const map = record.map;
-  const { sourceId, layerId } = mapLibreWeatherSlotIds(slotIndex);
-  const sourceSignature = mapLibreWeatherSourceSignature(spec);
-  const existing = record.weatherSlots[slotIndex];
+function pruneMapLibreWeatherEntries(record) {
+  if (!record?.weatherEntries || record.weatherEntries.size <= MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT) return;
+  const entries = [...record.weatherEntries.values()]
+    .filter((entry) => !entry.visible && !record.liveWeatherKeys?.has(entry.key))
+    .sort((a, b) => (a.lastUsedAt || 0) - (b.lastUsedAt || 0));
 
-  if (!existing || existing.sourceSignature !== sourceSignature) {
-    removeMapLibreWeatherSlot(record, slotIndex);
-    map.addSource(sourceId, {
-      type: "raster",
-      tiles: [spec.template],
-      tileSize: 256,
-      minzoom: MAP_MIN_ZOOM,
-      maxzoom: spec.maxZoom,
-      attribution: spec.attribution
-    });
-    map.addLayer({
-      id: layerId,
-      type: "raster",
-      source: sourceId,
-      paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec))
-    }, mapLibreWeatherBeforeLayer(map));
-  } else if (map.getLayer(layerId)) {
-    map.setPaintProperty(layerId, "raster-opacity", mapLibreWeatherOpacity(spec));
+  while (record.weatherEntries.size > MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT && entries.length) {
+    removeMapLibreWeatherEntry(record, entries.shift());
   }
-
-  record.weatherSlots[slotIndex] = {
-    sourceId,
-    layerId,
-    frameIndex: spec.frameIndex,
-    key: spec.key,
-    sourceSignature
-  };
 }
 
-function removeMapLibreWeatherSlot(record, slotIndex) {
+function removeMapLibreWeatherEntry(record, entry) {
   const map = record?.map;
-  if (!map) return;
-  const slot = record.weatherSlots?.[slotIndex] || mapLibreWeatherSlotIds(slotIndex);
-  if (slot.layerId && map.getLayer(slot.layerId)) map.removeLayer(slot.layerId);
-  if (slot.sourceId && map.getSource(slot.sourceId)) map.removeSource(slot.sourceId);
-  if (record.weatherSlots) record.weatherSlots[slotIndex] = null;
+  if (!map || !entry) return;
+  if (entry.layerId && map.getLayer(entry.layerId)) map.removeLayer(entry.layerId);
+  if (entry.sourceId && map.getSource(entry.sourceId)) map.removeSource(entry.sourceId);
+  record.weatherEntries?.delete(entry.key);
 }
 
 function clearMapLibreWeatherRecord(record) {
-  if (!record?.weatherSlots) return;
-  if (record.weatherSwapRaf) {
-    cancelAnimationFrame(record.weatherSwapRaf);
-    record.weatherSwapRaf = 0;
-  }
-  record.pendingWeatherSwaps = [];
-  for (let slotIndex = 0; slotIndex < record.weatherSlots.length; slotIndex += 1) {
-    removeMapLibreWeatherSlot(record, slotIndex);
-  }
-  record.weatherSlots = [];
+  if (!record?.weatherEntries) return;
+  [...record.weatherEntries.values()].forEach((entry) => removeMapLibreWeatherEntry(record, entry));
+  record.weatherEntries.clear();
+  record.liveWeatherKeys = new Set();
 }
 
 function mapLibreBufferedRadarFrameReady(frameIndex) {
   const record = mapLibreCurrentRecord();
   if (!mapLibreRecordReady(record)) return false;
-  const slot = record.weatherSlots?.find((item) => item?.frameIndex === frameIndex);
-  if (!slot) return false;
-  return record.map.isSourceLoaded?.(slot.sourceId) || false;
+  const entry = [...(record.weatherEntries?.values() || [])].find((item) => item?.frameIndex === frameIndex);
+  if (!entry) return false;
+  return record.map.isSourceLoaded?.(entry.sourceId) || false;
 }
 
 function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
@@ -914,7 +919,10 @@ function ensureMapLibreMap() {
     rendered: false,
     fallbackTimer: 0,
     lastError: "",
-    weatherSlots: [],
+    weatherEntries: new Map(),
+    weatherEntrySeq: 0,
+    weatherRenderSeq: 0,
+    liveWeatherKeys: new Set(),
     markerEntries: new Map()
   };
   mapLibreRecords.set(container, record);
@@ -2259,6 +2267,8 @@ function waitForBufferedRadarFrame(frameIndex, now) {
     mapState.frameWaitIndex = frameIndex;
     mapState.frameWaitStart = now;
   }
+
+  if (mapRendererIsGl()) return false;
 
   // Don't freeze forever on a failed or slow tile. Most frames are ready well
   // before this; this only keeps first-pass playback from outrunning warm tiles.
