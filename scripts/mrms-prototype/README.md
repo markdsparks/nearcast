@@ -75,6 +75,16 @@ node scripts/mrms-prototype/render-mrms-preview.mjs \
   --style=resolved \
   --compare \
   --out=/tmp/nearcast-mrms-style-compare-z11.png
+
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --focus=edge \
+  --bounds=25,-125,49,-70 \
+  --width=220 \
+  --height=320 \
+  --compare-current-zooms \
+  --zooms=7.4,7.6,8,9,10,11,12,13,14 \
+  --out=/tmp/nearcast-radar-current-vs-latest-mrms-conus-edge-zooms.png \
+  --svg-out=/tmp/nearcast-radar-current-vs-latest-mrms-conus-edge-zooms.svg
 ```
 
 What the renderer currently supports:
@@ -90,6 +100,11 @@ What the renderer currently supports:
   subtle intensity separator lines.
 - `--style=resolved` for a more polished, high-specificity field style.
 - `--compare` for side-by-side continuous, banded, smoothed, and resolved panels.
+- `--compare-current-zooms` for a zoom ladder that compares the current
+  Nearcast-style NOAA WMS radar column against MRMS raw, banded, and resolved
+  columns.
+- `--bounds=minLat,minLon,maxLat,maxLon` to constrain `--focus=max` or
+  `--focus=edge` to the current map source's useful coverage.
 - Simple radar colorization into a PNG preview.
 
 Early read:
@@ -109,6 +124,10 @@ Early read:
   dBZ transitions legible with wider discrete color bands plus subtle separator
   isolines. This may preserve more meaning while avoiding both the blurry read
   of a fully continuous gradient and the fake precision of dense contour rings.
+- The current-vs-MRMS zoom ladder should be generated with a fresh MRMS frame,
+  not an old local file, when the goal is visual comparison against live NOAA
+  WMS. Pin `--wms-time` only when the WMS source actually exposes the same
+  timestamp as the local MRMS frame.
 
 Current local heavy-tool gap:
 

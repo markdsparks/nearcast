@@ -47,6 +47,11 @@ Current spike status:
   structure. `banded` starts from the raw radar read and adds discrete dBZ bands
   plus subtle separator isolines so gradients feel intentional instead of
   blurry.
+- Current-vs-MRMS zoom comparison is now supported by the prototype renderer.
+  The useful diagnostic is a bounded CONUS precip edge, rendered as rows from
+  z7.4 upward with columns for current NOAA WMS, MRMS raw, MRMS banded, and
+  MRMS resolved. This directly shows where the current WMS path becomes blocky
+  as Nearcast overzooms its capped radar source.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 

@@ -13,6 +13,18 @@ const DEFAULT_WIDTH = 900;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_OUT = "/tmp/nearcast-mrms-preview.png";
 const DEFAULT_STYLE = "continuous";
+const CURRENT_MAP_ZOOMS = [7.4, 7.6, 8, 9, 10, 11, 12, 13, 14];
+const CURRENT_MAP_RADAR_MAX_ZOOM = 8;
+const CURRENT_MAP_WMS_TILE_SIZE = 512;
+const CURRENT_MAP_WEATHER_OPACITY = 0.78;
+const CURRENT_MAP_SOFTEN_START_DELTA = 0.5;
+const CURRENT_MAP_SOFTEN_FULL_DELTA = 6;
+const NWS_RADAR_CONFIG = {
+  layer: "conus_bref_qcd",
+  style: "radar_reflectivity",
+  endpoint: "https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows",
+  attribution: "NOAA/NWS MRMS"
+};
 const PNG_SIGNATURE = "89504e470d0a1a0a";
 const RADAR_RAMP = [
   { value: 5, color: [108, 201, 255, 90] },
@@ -63,13 +75,14 @@ async function main() {
   const embeddedPng = grib.subarray(pngSection.offset + 5, pngSection.offset + pngSection.length);
   const decodedPng = decodePngGrayscale16(embeddedPng);
   const values = decodeGridValues(decodedPng.samples, parsed.dataRepresentation);
-  const stats = gridValueStats(values, parsed.grid);
+  const focusBounds = parseBounds(args.bounds || args["focus-bounds"]);
+  const stats = gridValueStats(values, parsed.grid, focusBounds);
 
   const width = numberArg(args.width, DEFAULT_WIDTH);
   const height = numberArg(args.height, DEFAULT_HEIGHT);
   const focusMax = args.focus === "max";
   const focusEdge = args.focus === "edge";
-  const focus = focusEdge ? edgeFocus(values, parsed.grid) : null;
+  const focus = focusEdge ? edgeFocus(values, parsed.grid, focusBounds) : null;
   const centerLat = focusEdge && Number.isFinite(focus?.lat)
     ? focus.lat
     : focusMax && Number.isFinite(stats.maxLat)
@@ -86,6 +99,45 @@ async function main() {
   const smooth = numberArg(args.smooth, defaultSmoothForStyle(styleName));
   const style = radarStyle(styleName, args);
   const compare = Boolean(args.compare);
+
+  if (args["compare-current-zooms"]) {
+    const output = await renderCurrentZoomComparison({
+      values,
+      grid: parsed.grid,
+      centerLat,
+      centerLon,
+      width,
+      height,
+      threshold,
+      args
+    });
+    const outPath = args.out || DEFAULT_OUT;
+    fs.writeFileSync(outPath, encodePngRgba(output.width, output.height, output.pixels));
+    if (args["svg-out"]) {
+      fs.writeFileSync(args["svg-out"], zoomComparisonSvg(output));
+    }
+    console.log(JSON.stringify({
+      ...summary,
+      stats,
+      render: {
+        out: outPath,
+        svgOut: args["svg-out"] || null,
+        centerLat,
+        centerLon,
+        width: output.width,
+        height: output.height,
+        panelWidth: width,
+        panelHeight: height,
+        threshold,
+        focus: args.focus || "manual",
+        focusBounds,
+        currentMap: output.currentMap,
+        columns: output.columns,
+        zooms: output.zooms
+      }
+    }, null, 2));
+    return;
+  }
 
   if (compare) {
     const variants = comparisonVariants(styleName, smooth, args);
@@ -122,6 +174,7 @@ async function main() {
         panelHeight: height,
         threshold,
         focus: args.focus || "manual",
+        focusBounds,
         compare: panels.map((panel) => ({
           label: panel.label,
           style: panel.style.name,
@@ -166,7 +219,8 @@ async function main() {
       radarPixels: output.radarPixels,
       maxRenderedDbz: round(output.maxRenderedDbz, 1),
       transparent: Boolean(args.transparent),
-      focus: args.focus || "manual"
+      focus: args.focus || "manual",
+      focusBounds
     }
   }, null, 2));
 }
@@ -373,6 +427,134 @@ function decodePngGrayscale16(buffer) {
   return { width, height, bitDepth, colorType, samples };
 }
 
+function decodePngRgba(buffer) {
+  if (buffer.subarray(0, 8).toString("hex") !== PNG_SIGNATURE) throw new Error("not a PNG");
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let palette = [];
+  let transparency = [];
+  const idatChunks = [];
+
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const data = buffer.subarray(dataStart, dataEnd);
+
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      const compression = data[10];
+      const filter = data[11];
+      const interlace = data[12];
+      if (compression !== 0 || filter !== 0 || interlace !== 0) {
+        throw new Error(`unsupported PNG compression/filter/interlace: ${compression}/${filter}/${interlace}`);
+      }
+    } else if (type === "PLTE") {
+      palette = [];
+      for (let i = 0; i < data.length; i += 3) {
+        palette.push([data[i], data[i + 1], data[i + 2], 255]);
+      }
+    } else if (type === "tRNS") {
+      transparency = [...data];
+    } else if (type === "IDAT") {
+      idatChunks.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+
+  const channels = pngChannels(colorType);
+  const bitsPerPixel = bitDepth * channels;
+  const rowBytes = Math.ceil(width * bitsPerPixel / 8);
+  const bytesPerPixel = Math.max(1, Math.ceil(bitsPerPixel / 8));
+  const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+  const expected = (rowBytes + 1) * height;
+  if (inflated.length !== expected) throw new Error(`unexpected PNG data length ${inflated.length}; expected ${expected}`);
+
+  const recon = Buffer.alloc(rowBytes * height);
+  let inOffset = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[inOffset++];
+    const rowStart = y * rowBytes;
+    for (let x = 0; x < rowBytes; x += 1) {
+      const raw = inflated[inOffset++];
+      const left = x >= bytesPerPixel ? recon[rowStart + x - bytesPerPixel] : 0;
+      const up = y > 0 ? recon[rowStart + x - rowBytes] : 0;
+      const upLeft = y > 0 && x >= bytesPerPixel ? recon[rowStart + x - rowBytes - bytesPerPixel] : 0;
+      recon[rowStart + x] = (raw + pngFilterPredictor(filter, left, up, upLeft)) & 0xff;
+    }
+  }
+
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * rowBytes;
+    for (let x = 0; x < width; x += 1) {
+      const out = (y * width + x) * 4;
+      if (colorType === 6 && bitDepth === 8) {
+        const source = rowStart + x * 4;
+        pixels[out] = recon[source];
+        pixels[out + 1] = recon[source + 1];
+        pixels[out + 2] = recon[source + 2];
+        pixels[out + 3] = recon[source + 3];
+      } else if (colorType === 2 && bitDepth === 8) {
+        const source = rowStart + x * 3;
+        pixels[out] = recon[source];
+        pixels[out + 1] = recon[source + 1];
+        pixels[out + 2] = recon[source + 2];
+        pixels[out + 3] = 255;
+      } else if (colorType === 3 && bitDepth === 8) {
+        const colorIndex = recon[rowStart + x];
+        const color = palette[colorIndex] || [0, 0, 0, 0];
+        pixels[out] = color[0];
+        pixels[out + 1] = color[1];
+        pixels[out + 2] = color[2];
+        pixels[out + 3] = transparency[colorIndex] ?? color[3];
+      } else if (colorType === 4 && bitDepth === 8) {
+        const source = rowStart + x * 2;
+        pixels[out] = recon[source];
+        pixels[out + 1] = recon[source];
+        pixels[out + 2] = recon[source];
+        pixels[out + 3] = recon[source + 1];
+      } else if (colorType === 0 && bitDepth === 8) {
+        const gray = recon[rowStart + x];
+        pixels[out] = gray;
+        pixels[out + 1] = gray;
+        pixels[out + 2] = gray;
+        pixels[out + 3] = 255;
+      } else if (colorType === 0 && bitDepth === 16) {
+        const source = rowStart + x * 2;
+        const gray = recon[source];
+        pixels[out] = gray;
+        pixels[out + 1] = gray;
+        pixels[out + 2] = gray;
+        pixels[out + 3] = 255;
+      } else {
+        throw new Error(`unsupported PNG colorType=${colorType} bitDepth=${bitDepth}`);
+      }
+    }
+  }
+
+  return { width, height, bitDepth, colorType, pixels };
+}
+
+function pngChannels(colorType) {
+  if (colorType === 0) return 1;
+  if (colorType === 2) return 3;
+  if (colorType === 3) return 1;
+  if (colorType === 4) return 2;
+  if (colorType === 6) return 4;
+  throw new Error(`unsupported PNG color type ${colorType}`);
+}
+
 function pngFilterPredictor(filter, left, up, upLeft) {
   if (filter === 0) return 0;
   if (filter === 1) return left;
@@ -479,7 +661,504 @@ function copyPanel(source, target, panelWidth, panelHeight, targetWidth, xOffset
   }
 }
 
-function gridValueStats(values, grid) {
+async function renderCurrentZoomComparison({ values, grid, centerLat, centerLon, width, height, threshold, args }) {
+  const zooms = parseZoomList(args.zooms, CURRENT_MAP_ZOOMS);
+  const columns = [
+    { key: "current", label: "Current NOAA WMS" },
+    { key: "continuous", label: "MRMS raw" },
+    { key: "banded", label: "MRMS banded" },
+    { key: "resolved", label: "MRMS resolved" }
+  ];
+  const currentTime = args["wms-time"] || await latestNwsRadarTime(args);
+  const tileCache = new Map();
+  const rows = [];
+
+  for (const zoom of zooms) {
+    const panels = [];
+    panels.push({
+      key: "current",
+      label: "Current NOAA WMS",
+      output: await renderCurrentWmsViewport({
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height,
+        time: currentTime,
+        tileCache
+      })
+    });
+
+    panels.push({
+      key: "continuous",
+      label: "MRMS raw",
+      output: renderViewport({
+        values,
+        grid,
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height,
+        threshold,
+        smooth: 0.05,
+        style: radarStyle("continuous", args),
+        basemap: true
+      })
+    });
+
+    panels.push({
+      key: "banded",
+      label: "MRMS banded",
+      output: renderViewport({
+        values,
+        grid,
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height,
+        threshold,
+        smooth: defaultSmoothForStyle("banded"),
+        style: radarStyle("banded", args),
+        basemap: true
+      })
+    });
+
+    panels.push({
+      key: "resolved",
+      label: "MRMS resolved",
+      output: renderViewport({
+        values,
+        grid,
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height,
+        threshold,
+        smooth: defaultSmoothForStyle("resolved"),
+        style: radarStyle("resolved", args),
+        basemap: true
+      })
+    });
+
+    rows.push({ zoom, panels });
+  }
+
+  return {
+    ...composeZoomGrid(rows, width, height),
+    rows,
+    columns,
+    zooms,
+    currentMap: {
+      source: "NOAA/NWS WMS",
+      time: currentTime,
+      radarMaxZoom: CURRENT_MAP_RADAR_MAX_ZOOM,
+      wmsTileSize: CURRENT_MAP_WMS_TILE_SIZE,
+      tileRequests: tileCache.size
+    }
+  };
+}
+
+async function latestNwsRadarTime(argsForWms = {}) {
+  if (argsForWms["wms-time"]) return argsForWms["wms-time"];
+  const params = new URLSearchParams({
+    SERVICE: "WMS",
+    VERSION: "1.3.0",
+    REQUEST: "GetCapabilities"
+  });
+  const url = `${NWS_RADAR_CONFIG.endpoint}?${params.toString()}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText} from ${url}`);
+  const xml = await response.text();
+  const times = layerTimesFromCapabilities(xml, NWS_RADAR_CONFIG.layer);
+  const selected = selectRecentTimes(times).at(-1);
+  if (!selected) throw new Error(`no WMS times found for ${NWS_RADAR_CONFIG.layer}`);
+  return selected;
+}
+
+function layerTimesFromCapabilities(xml, layerName) {
+  const nameNeedle = `<Name>${layerName}</Name>`;
+  const nameIndex = String(xml).indexOf(nameNeedle);
+  const search = nameIndex >= 0 ? String(xml).slice(nameIndex, nameIndex + 60000) : String(xml);
+  const match = search.match(/<Dimension\b[^>]*\bname=(["'])time\1[^>]*>([\s\S]*?)<\/Dimension>/i) ||
+    search.match(/<Extent\b[^>]*\bname=(["'])time\1[^>]*>([\s\S]*?)<\/Extent>/i);
+  return String(match?.[2] || "")
+    .split(",")
+    .map((time) => time.trim())
+    .filter(Boolean);
+}
+
+function selectRecentTimes(times) {
+  const parsed = times
+    .map((time) => ({ time, timestamp: new Date(time).getTime() }))
+    .filter((item) => Number.isFinite(item.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  const recent = parsed.filter((item) => item.timestamp >= cutoff);
+  return (recent.length ? recent : parsed).slice(-30).map((item) => item.time);
+}
+
+async function renderCurrentWmsViewport({ centerLat, centerLon, zoom, width, height, time, tileCache }) {
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const radar = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      paintSoftBasemap(pixels, (y * width + x) * 4, x, y, width, height);
+    }
+  }
+
+  const sourceZoom = currentWeatherSourceZoom(zoom);
+  const tileZoom = currentWeatherTileZoom(zoom, sourceZoom);
+  const sourceScale = 2 ** (zoom - tileZoom);
+  const worldSize = 256 * (2 ** zoom);
+  const center = lonLatToWorld(centerLon, centerLat, worldSize);
+  const topLeft = {
+    x: center.x - width / 2,
+    y: center.y - height / 2
+  };
+  const sourceTopLeft = {
+    x: topLeft.x / sourceScale,
+    y: topLeft.y / sourceScale
+  };
+  const worldTiles = 2 ** tileZoom;
+  const startX = Math.floor(sourceTopLeft.x / 256);
+  const endX = Math.floor((sourceTopLeft.x + width / sourceScale) / 256);
+  const startY = Math.floor(sourceTopLeft.y / 256);
+  const endY = Math.floor((sourceTopLeft.y + height / sourceScale) / 256);
+  const tiles = new Map();
+
+  for (let tileX = startX; tileX <= endX; tileX += 1) {
+    for (let tileY = startY; tileY <= endY; tileY += 1) {
+      if (tileY < 0 || tileY >= worldTiles) continue;
+      const wrappedX = ((tileX % worldTiles) + worldTiles) % worldTiles;
+      const key = `${tileZoom}/${wrappedX}/${tileY}`;
+      tiles.set(`${tileX}/${tileY}`, await fetchWmsTile(tileZoom, wrappedX, tileY, time, tileCache));
+      if (!tiles.get(`${tileX}/${tileY}`)) tiles.delete(`${tileX}/${tileY}`);
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = (topLeft.x + x + 0.5) / sourceScale;
+      const sourceY = (topLeft.y + y + 0.5) / sourceScale;
+      const tileX = Math.floor(sourceX / 256);
+      const tileY = Math.floor(sourceY / 256);
+      const tile = tiles.get(`${tileX}/${tileY}`);
+      if (!tile) continue;
+      const localX = (sourceX - tileX * 256) * (tile.width / 256);
+      const localY = (sourceY - tileY * 256) * (tile.height / 256);
+      const sample = sampleRgbaBilinear(tile.pixels, tile.width, tile.height, localX, localY);
+      const index = (y * width + x) * 4;
+      radar[index] = sample[0];
+      radar[index + 1] = sample[1];
+      radar[index + 2] = sample[2];
+      radar[index + 3] = sample[3];
+    }
+  }
+
+  const blurRadius = currentWeatherBlurPx(zoom, sourceZoom);
+  const layer = blurRgba(radar, width, height, blurRadius);
+  const tone = currentWeatherVisualTone(zoom, sourceZoom);
+  const opacity = CURRENT_MAP_WEATHER_OPACITY * tone.opacity;
+  compositeWeatherLayer(pixels, layer, width, height, opacity, tone);
+  return {
+    pixels,
+    radarPixels: countAlphaPixels(layer),
+    maxRenderedDbz: null,
+    sourceZoom,
+    tileZoom,
+    blurRadius,
+    opacity
+  };
+}
+
+async function fetchWmsTile(z, x, y, time, tileCache) {
+  const url = nwsRadarTileUrl(z, x, y, time);
+  if (tileCache.has(url)) return tileCache.get(url);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const decoded = decodePngRgba(buffer);
+    tileCache.set(url, decoded);
+    return decoded;
+  } catch (error) {
+    console.warn(`WMS tile failed: ${error.message}`);
+    tileCache.set(url, null);
+    return null;
+  }
+}
+
+function nwsRadarTileUrl(z, x, y, time) {
+  const params = new URLSearchParams({
+    SERVICE: "WMS",
+    VERSION: "1.3.0",
+    REQUEST: "GetMap",
+    LAYERS: NWS_RADAR_CONFIG.layer,
+    STYLES: NWS_RADAR_CONFIG.style,
+    CRS: "EPSG:3857",
+    BBOX: tileBbox3857(z, x, y),
+    WIDTH: String(CURRENT_MAP_WMS_TILE_SIZE),
+    HEIGHT: String(CURRENT_MAP_WMS_TILE_SIZE),
+    FORMAT: "image/png",
+    TRANSPARENT: "true",
+    TIME: time,
+    TILED: "true"
+  });
+  return `${NWS_RADAR_CONFIG.endpoint}?${params.toString()}`;
+}
+
+function currentWeatherSourceZoom(zoom) {
+  return Math.min(Math.max(Math.floor(zoom + 0.5), 4), CURRENT_MAP_RADAR_MAX_ZOOM);
+}
+
+function currentWeatherTileZoom(zoom, sourceZoom = currentWeatherSourceZoom(zoom)) {
+  return Math.min(Math.max(Math.floor(zoom + 0.0001), 4), sourceZoom);
+}
+
+function currentWeatherOverzoomAmount(zoom, sourceZoom) {
+  return Math.max(0, zoom - sourceZoom);
+}
+
+function currentWeatherSofteningAmount(zoom, sourceZoom) {
+  const overzoom = currentWeatherOverzoomAmount(zoom, sourceZoom);
+  if (overzoom <= CURRENT_MAP_SOFTEN_START_DELTA) return 0;
+  return Math.min(Math.max(
+    (overzoom - CURRENT_MAP_SOFTEN_START_DELTA) / (CURRENT_MAP_SOFTEN_FULL_DELTA - CURRENT_MAP_SOFTEN_START_DELTA),
+    0
+  ), 1);
+}
+
+function currentWeatherVisualTone(zoom, sourceZoom) {
+  const t = currentWeatherSofteningAmount(zoom, sourceZoom);
+  return {
+    opacity: 1 - 0.34 * t,
+    saturation: Math.max(0.88, 1 - t * 0.12),
+    contrast: Math.max(0.88, 1 - t * 0.12)
+  };
+}
+
+function currentWeatherBlurPx(zoom, sourceZoom) {
+  const overzoom = currentWeatherOverzoomAmount(zoom, sourceZoom);
+  return Math.min(Math.max(0.75 + overzoom * 0.48, 0.75), 7.25);
+}
+
+function compositeWeatherLayer(base, layer, width, height, opacity, tone) {
+  for (let i = 0; i < width * height; i += 1) {
+    const index = i * 4;
+    const alpha = layer[index + 3] / 255 * opacity;
+    if (alpha <= 0) continue;
+    const color = toneColor(layer[index], layer[index + 1], layer[index + 2], tone);
+    base[index] = Math.round(color[0] * alpha + base[index] * (1 - alpha));
+    base[index + 1] = Math.round(color[1] * alpha + base[index + 1] * (1 - alpha));
+    base[index + 2] = Math.round(color[2] * alpha + base[index + 2] * (1 - alpha));
+    base[index + 3] = 255;
+  }
+}
+
+function toneColor(r, g, b, tone) {
+  const gray = r * 0.299 + g * 0.587 + b * 0.114;
+  const saturated = [
+    gray + (r - gray) * tone.saturation,
+    gray + (g - gray) * tone.saturation,
+    gray + (b - gray) * tone.saturation
+  ];
+  return saturated.map((channel) => Math.max(0, Math.min(255, (channel - 128) * tone.contrast + 128)));
+}
+
+function countAlphaPixels(rgba) {
+  let count = 0;
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] > 0) count += 1;
+  }
+  return count;
+}
+
+function sampleRgbaBilinear(pixels, width, height, x, y) {
+  if (x < 0 || y < 0 || x >= width - 1 || y >= height - 1) return [0, 0, 0, 0];
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const xFrac = x - x0;
+  const yFrac = y - y0;
+  const a = rgbaAt(pixels, width, x0, y0);
+  const b = rgbaAt(pixels, width, x0 + 1, y0);
+  const c = rgbaAt(pixels, width, x0, y0 + 1);
+  const d = rgbaAt(pixels, width, x0 + 1, y0 + 1);
+  return [0, 1, 2, 3].map((channel) => {
+    const top = a[channel] * (1 - xFrac) + b[channel] * xFrac;
+    const bottom = c[channel] * (1 - xFrac) + d[channel] * xFrac;
+    return Math.round(top * (1 - yFrac) + bottom * yFrac);
+  });
+}
+
+function rgbaAt(pixels, width, x, y) {
+  const index = (y * width + x) * 4;
+  return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
+}
+
+function blurRgba(source, width, height, radius) {
+  const r = Math.max(0, Math.round(radius));
+  if (r < 1) return source;
+  const horizontal = new Float32Array(source.length);
+  const target = new Uint8ClampedArray(source.length);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      blurAccum(source, horizontal, width, height, x, y, r, true);
+    }
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      blurAccum(horizontal, target, width, height, x, y, r, false);
+    }
+  }
+  return target;
+}
+
+function blurAccum(source, target, width, height, x, y, radius, horizontal) {
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let alpha = 0;
+  let samples = 0;
+  for (let offset = -radius; offset <= radius; offset += 1) {
+    const sx = horizontal ? x + offset : x;
+    const sy = horizontal ? y : y + offset;
+    if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+    const index = (sy * width + sx) * 4;
+    const a = source[index + 3] / 255;
+    red += source[index] * a;
+    green += source[index + 1] * a;
+    blue += source[index + 2] * a;
+    alpha += source[index + 3];
+    samples += 1;
+  }
+  const outIndex = (y * width + x) * 4;
+  const outAlpha = samples ? alpha / samples : 0;
+  const alphaNorm = outAlpha / 255;
+  target[outIndex] = alphaNorm ? red / samples / alphaNorm : 0;
+  target[outIndex + 1] = alphaNorm ? green / samples / alphaNorm : 0;
+  target[outIndex + 2] = alphaNorm ? blue / samples / alphaNorm : 0;
+  target[outIndex + 3] = outAlpha;
+}
+
+function composeZoomGrid(rows, panelWidth, panelHeight) {
+  const gutter = 12;
+  const columns = rows[0]?.panels?.length || 0;
+  const width = columns * panelWidth + (columns - 1) * gutter;
+  const height = rows.length * panelHeight + (rows.length - 1) * gutter;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const index = i * 4;
+    pixels[index] = 246;
+    pixels[index + 1] = 247;
+    pixels[index + 2] = 248;
+    pixels[index + 3] = 255;
+  }
+
+  rows.forEach((row, rowIndex) => {
+    row.panels.forEach((panel, columnIndex) => {
+      const xOffset = columnIndex * (panelWidth + gutter);
+      const yOffset = rowIndex * (panelHeight + gutter);
+      copyPanelAt(panel.output.pixels, pixels, panelWidth, panelHeight, width, xOffset, yOffset);
+    });
+  });
+
+  return { width, height, pixels };
+}
+
+function copyPanelAt(source, target, panelWidth, panelHeight, targetWidth, xOffset, yOffset) {
+  for (let y = 0; y < panelHeight; y += 1) {
+    const sourceStart = y * panelWidth * 4;
+    const targetStart = ((y + yOffset) * targetWidth + xOffset) * 4;
+    target.set(source.subarray(sourceStart, sourceStart + panelWidth * 4), targetStart);
+  }
+}
+
+function zoomComparisonSvg(output) {
+  const panelWidth = output.rows[0]?.panels?.[0]?.output?.pixels ? Number(output.rows[0].panels[0].output.width || 0) : 0;
+  const inferredPanelWidth = panelWidth || Math.round((output.width - 12 * (output.columns.length - 1)) / output.columns.length);
+  const inferredPanelHeight = Math.round((output.height - 12 * (output.rows.length - 1)) / output.rows.length);
+  const left = 86;
+  const top = 42;
+  const gutter = 12;
+  const columnGap = 12;
+  const rowGap = 12;
+  const width = left + output.columns.length * inferredPanelWidth + (output.columns.length - 1) * columnGap;
+  const height = top + output.rows.length * inferredPanelHeight + (output.rows.length - 1) * rowGap + 28;
+  const imageHref = `data:image/png;base64,${encodePngRgba(output.width, output.height, output.pixels).toString("base64")}`;
+
+  const columnLabels = output.columns.map((column, index) => {
+    const x = left + index * (inferredPanelWidth + columnGap) + inferredPanelWidth / 2;
+    return `<text x="${x}" y="24" text-anchor="middle">${escapeXml(column.label)}</text>`;
+  }).join("");
+  const rowLabels = output.rows.map((row, index) => {
+    const y = top + index * (inferredPanelHeight + rowGap) + inferredPanelHeight / 2;
+    return `<text x="72" y="${y + 5}" text-anchor="end">z${formatZoom(row.zoom)}</text>`;
+  }).join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="#f6f7f8"/>
+  <style>
+    text { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #253142; }
+  </style>
+  ${columnLabels}
+  ${rowLabels}
+  <image x="${left}" y="${top}" width="${output.width}" height="${output.height}" href="${imageHref}"/>
+  <text x="${left}" y="${height - 8}" font-weight="500">Current column recreates Nearcast's capped NOAA WMS radar source; MRMS columns render from decoded numeric values.</text>
+</svg>
+`;
+}
+
+function parseZoomList(value, fallback) {
+  if (!value) return fallback;
+  const zooms = String(value).split(",").map((item) => Number(item.trim())).filter(Number.isFinite);
+  return zooms.length ? zooms : fallback;
+}
+
+function parseBounds(value) {
+  if (!value) return null;
+  const parts = String(value).split(",").map((item) => Number(item.trim()));
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) {
+    throw new Error("--bounds expects minLat,minLon,maxLat,maxLon");
+  }
+  const [aLat, aLon, bLat, bLon] = parts;
+  return {
+    minLat: Math.min(aLat, bLat),
+    minLon: Math.min(aLon, bLon),
+    maxLat: Math.max(aLat, bLat),
+    maxLon: Math.max(aLon, bLon)
+  };
+}
+
+function formatZoom(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function tileBbox3857(z, x, y) {
+  const earthRadius = 6378137;
+  const origin = Math.PI * earthRadius;
+  const tileSize = 256;
+  const resolution = (2 * origin) / (tileSize * 2 ** z);
+  const minX = -origin + x * tileSize * resolution;
+  const maxX = -origin + (x + 1) * tileSize * resolution;
+  const maxY = origin - y * tileSize * resolution;
+  const minY = origin - (y + 1) * tileSize * resolution;
+  return [minX, minY, maxX, maxY].join(",");
+}
+
+function gridValueStats(values, grid, bounds = null) {
   let minDbz = Infinity;
   let maxDbz = -Infinity;
   let maxIndex = -1;
@@ -487,6 +1166,7 @@ function gridValueStats(values, grid) {
   let precipCells = 0;
 
   for (let i = 0; i < values.length; i += 1) {
+    if (bounds && !gridIndexInBounds(grid, i, bounds)) continue;
     const value = cleanDbz(values[i]);
     if (!Number.isFinite(value)) continue;
     validCells += 1;
@@ -502,7 +1182,7 @@ function gridValueStats(values, grid) {
   return {
     validCells,
     precipCells,
-    precipPercent: round(precipCells / values.length * 100, 3),
+    precipPercent: round(precipCells / (validCells || values.length) * 100, 3),
     minDbz: round(minDbz, 1),
     maxDbz: round(maxDbz, 1),
     maxLat: round(position.lat, 4),
@@ -510,13 +1190,14 @@ function gridValueStats(values, grid) {
   };
 }
 
-function edgeFocus(values, grid) {
+function edgeFocus(values, grid, bounds = null) {
   let bestScore = -Infinity;
   let bestIndex = -1;
   for (let row = 1; row < grid.nj - 1; row += 2) {
     const rowOffset = row * grid.ni;
     for (let col = 1; col < grid.ni - 1; col += 2) {
       const index = rowOffset + col;
+      if (bounds && !gridPointInBounds(gridPosition(grid, index), bounds)) continue;
       const value = cleanDbz(values[index]);
       if (!Number.isFinite(value) || value < 12 || value > 55) continue;
       const right = cleanDbz(values[index + 2]);
@@ -539,6 +1220,18 @@ function edgeFocus(values, grid) {
     ...gridPosition(grid, bestIndex),
     score: bestScore
   };
+}
+
+function gridIndexInBounds(grid, index, bounds) {
+  return gridPointInBounds(gridPosition(grid, index), bounds);
+}
+
+function gridPointInBounds(point, bounds) {
+  if (!bounds) return true;
+  return point.lat >= bounds.minLat &&
+    point.lat <= bounds.maxLat &&
+    point.lon >= bounds.minLon &&
+    point.lon <= bounds.maxLon;
 }
 
 function gridPosition(grid, index) {
@@ -903,6 +1596,7 @@ Options:
   --height=900               Output image height.
   --focus=max                Center on the strongest decoded radar cell.
   --focus=edge               Center on a high-gradient precip edge.
+  --bounds=25,-125,49,-70    Optional focus bounds: minLat,minLon,maxLat,maxLon.
   --style=continuous         Visual style: continuous, banded, or resolved.
   --threshold=5              Minimum dBZ to draw.
   --smooth=1.15              Data-space smoothing radius; resolved defaults to 2.15.
@@ -911,6 +1605,10 @@ Options:
   --separator-alpha=0.22     Banded style intensity-line strength.
   --separator-width=0.28     Banded style intensity-line width in dBZ.
   --compare                  Render continuous, banded, smoothed, and resolved panels.
+  --compare-current-zooms    Render current NOAA WMS vs MRMS styles over a zoom ladder.
+  --zooms=7.4,8,9,10,11      Zoom ladder for --compare-current-zooms.
+  --wms-time=ISO             Pin the current NOAA WMS comparison frame time.
+  --svg-out=/tmp/file.svg    Also write a labeled SVG sheet for zoom comparisons.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
   --out=/tmp/file.png        Output PNG path.
