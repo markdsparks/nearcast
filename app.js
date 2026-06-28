@@ -1,4 +1,4 @@
-const VERSION = "3.0.39";
+const VERSION = "3.0.42";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -270,8 +270,10 @@ let floatingChromeRaf = 0;
 let floatingChromeUpTravel = 0;
 
 const MAP_MIN_ZOOM = 4;
-const MAP_MAX_ZOOM = 10;
+const MAP_MAX_ZOOM = 18; // street-level basemap zoom; weather sources stay capped separately.
 const RADAR_TILE_MAX_ZOOM = 8; // cap radar source tiles so they upscale smoothly past z8
+const WEATHER_SOURCE_SOFTEN_START_DELTA = 2;
+const WEATHER_SOURCE_SOFTEN_FULL_DELTA = 8;
 const RADAR_PRECIP_SAMPLE_ZOOM = 8;
 const RADAR_PRECIP_CENTER_RADIUS_PX = 4;
 const RADAR_PRECIP_NEARBY_RADIUS_PX = 13;

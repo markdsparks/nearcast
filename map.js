@@ -490,6 +490,7 @@ function finishMapLibreInteraction(map) {
   const resumePlayback = mapLibreInteraction.resumePlayback;
   mapLibreInteraction.active = false;
   mapLibreInteraction.resumePlayback = false;
+  renderMapLegend();
   renderMapLibreOverlays({ forceRadar: true });
   requestAnimationFrame(() => setMapLibreRadarSuspended(false));
   if (resumePlayback && mapState.frames.length && !mapState.playing) {
@@ -583,12 +584,16 @@ function mapLibreStyle() {
         type: "raster",
         tiles: mapLibreCartoTileUrls(style.base),
         tileSize: 256,
+        minzoom: MAP_MIN_ZOOM,
+        maxzoom: MAP_MAX_ZOOM,
         attribution: "CARTO, OpenStreetMap contributors"
       },
       "nearcast-labels": {
         type: "raster",
         tiles: mapLibreCartoTileUrls(style.labels),
-        tileSize: 256
+        tileSize: 256,
+        minzoom: MAP_MIN_ZOOM,
+        maxzoom: MAP_MAX_ZOOM
       }
     },
     layers: [
@@ -634,7 +639,8 @@ function mapLibreWeatherLayerPaint(opacity) {
 }
 
 function mapLibreWeatherOpacity(spec) {
-  return spec?.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec?.opacity ?? 0.78;
+  const opacity = spec?.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec?.opacity ?? 0.78;
+  return weatherVisualOpacity(opacity, spec?.maxZoom || MAP_MAX_ZOOM);
 }
 
 function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
@@ -2496,12 +2502,12 @@ function renderXfade(index, viewport = null) {
     const f = frames[s];
     const frame = mapState.frames[f];
     const url = frameUrl(frame);
+    const sourceZoom = weatherFrameSourceZoom(frame || MAP_MAX_ZOOM);
     if (url) {
-      const sourceZoom = weatherFrameSourceZoom(frame || MAP_MAX_ZOOM);
       renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
-      pane.style.filter = radarBlurFilter(sourceZoom);
+      pane.style.filter = weatherVisualFilter(sourceZoom);
     }
-    pane.style.opacity = f === cur ? "0.78" : "0"; // hard cut; next preloads hidden
+    pane.style.opacity = f === cur ? String(weatherVisualOpacity(0.78, sourceZoom)) : "0"; // hard cut; next preloads hidden
   }
   while (els.weatherTileLayer.children.length > 2) {
     els.weatherTileLayer.lastElementChild.remove();
@@ -2717,7 +2723,13 @@ function setFrameLabel(label) {
 function renderMapLegend() {
   if (!els.mapLegend) return;
   const isForecast = activeMapSource() === "forecast";
-  const sourceNote = mapState.forecastUnavailable && mapState.timelineKind === "precip" ? "Forecast map unavailable here" : "";
+  const sourceNotes = [];
+  if (mapState.forecastUnavailable && mapState.timelineKind === "precip") {
+    sourceNotes.push("Forecast map unavailable here");
+  }
+  const resolutionNote = weatherResolutionLegendNote();
+  if (resolutionNote) sourceNotes.push(resolutionNote);
+  const sourceNote = sourceNotes.join(" · ");
   const legend = isForecast
     ? {
         title: "Forecast precipitation",
@@ -2766,13 +2778,48 @@ function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
   return mapTileSourceZoom(weatherFrameMaxZoom(frameOrMaxZoom));
 }
 
-// Radar tiles are coarse (capped source zoom + low-res precip data), so soften
-// them in proportion to how much they're being upscaled — bilinear alone leaves
-// hard cell blocks at high zoom. Returns a CSS filter string for a weather pane.
-function radarBlurFilter(sourceZoom) {
-  const scale = 2 ** (mapState.zoom - sourceZoom);
-  const px = Math.min(Math.max(scale * 0.68, 0.75), 3.0);
-  return `blur(${px.toFixed(2)}px)`;
+function weatherOverzoomAmount(sourceZoom) {
+  const source = Number.isFinite(Number(sourceZoom)) ? Number(sourceZoom) : MAP_MAX_ZOOM;
+  return Math.max(0, mapState.zoom - source);
+}
+
+function weatherSourceSofteningAmount(sourceZoom) {
+  const overzoom = weatherOverzoomAmount(sourceZoom);
+  const start = Number.isFinite(Number(WEATHER_SOURCE_SOFTEN_START_DELTA))
+    ? Number(WEATHER_SOURCE_SOFTEN_START_DELTA)
+    : 2;
+  const full = Math.max(start + 1, Number.isFinite(Number(WEATHER_SOURCE_SOFTEN_FULL_DELTA))
+    ? Number(WEATHER_SOURCE_SOFTEN_FULL_DELTA)
+    : 8);
+  if (overzoom <= start) return 0;
+  return Math.min(Math.max((overzoom - start) / (full - start), 0), 1);
+}
+
+function weatherVisualOpacity(baseOpacity, sourceZoom) {
+  const base = Math.min(Math.max(Number(baseOpacity) || 0, 0), 1);
+  if (base <= MAPLIBRE_WEATHER_PRELOAD_OPACITY * 1.5) return base;
+  const t = weatherSourceSofteningAmount(sourceZoom);
+  return Number((base * (1 - 0.34 * t)).toFixed(3));
+}
+
+// Weather tiles are source-capped, so close street zoom should read like a
+// smoothed field over the basemap instead of false block-level precision.
+function weatherVisualFilter(sourceZoom) {
+  const overzoom = weatherOverzoomAmount(sourceZoom);
+  const t = weatherSourceSofteningAmount(sourceZoom);
+  const px = Math.min(Math.max(0.75 + overzoom * 0.48, 0.75), 7.25);
+  const saturation = Math.max(0.88, 1 - t * 0.1);
+  return `blur(${px.toFixed(2)}px) saturate(${saturation.toFixed(2)})`;
+}
+
+function weatherResolutionLegendNote() {
+  const frame = mapState.frames[mapState.frameIndex];
+  if (!frame) return "";
+  const sourceZoom = weatherFrameSourceZoom(frame);
+  if (weatherSourceSofteningAmount(sourceZoom) <= 0) return "";
+  return activeMapSource(frame) === "forecast"
+    ? "Forecast guidance is smoothed at street zoom"
+    : "Radar is smoothed at street zoom";
 }
 
 function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
@@ -2788,6 +2835,7 @@ function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
       }
       record.map.zoomTo(newZoom, options);
       syncMapLibreStateAndOverlays(record.map);
+      renderMapLegend();
       return;
     }
   }
@@ -2813,6 +2861,7 @@ function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
   }
 
   mapState.zoom = newZoom;
+  renderMapLegend();
   renderTileMap();
 }
 
@@ -2921,8 +2970,8 @@ function renderWeatherLayers(layers, frameOrMaxZoom, viewport = null) {
       pane.className = "tile-sublayer";
       els.weatherTileLayer.appendChild(pane);
     }
-    pane.style.opacity = String(layer.opacity);
-    pane.style.filter = radarBlurFilter(sourceZoom);
+    pane.style.opacity = String(weatherVisualOpacity(layer.opacity, sourceZoom));
+    pane.style.filter = weatherVisualFilter(sourceZoom);
     renderTileLayer(pane, tileViewport, ({ z, x, y }) => weatherTileUrl(layer.url, z, x, y), { sourceZoom });
   });
 }
