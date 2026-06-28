@@ -13,6 +13,22 @@ zoom flicker, scattered HUD, city labels hidden under storms.
 | 3 | Immersive zoom flicker / blank | 1 — engine | ✅ v1.10.89 deferred-purge; v1.10.90 realign kept tiles |
 | 4 | HUD looks scattered | 2 — HUD | ✅ shipped v1.10.99 (simplified immersive HUD + interaction fixes); refined v1.10.128 (one precipitation timeline) |
 | 5 | City names hidden under storms | 3 — basemap/labels | ✅ spiked v1.10.103 (CARTO no-label base + labels layer) |
+| 6 | z7.5-z13 radar looks pixelated/blurry | 4 — radar substrate | ▶️ WMS diagnostics exhausted; see `docs/radar-substrate-spike.md` |
+
+## Phase 4 — radar substrate (#6) — ACTIVE
+
+The deep-zoom map work proved that changing map zoom, WMS tile size, source zoom
+caps, and presentation curves does not fix the ugly middle zoom band. The
+current NOAA/NWS WMS path is useful as a fallback, but it is not the right
+substrate for beautiful radar at every zoom.
+
+Next work is split into:
+
+- Commercial provider bake-off, starting with Xweather MapsGL.
+- Raw NOAA MRMS prototype, starting from the public AWS dataset and generating
+  our own weather tiles from numeric data.
+
+Decision details live in `docs/radar-substrate-spike.md`.
 
 ## Phase 2 — HUD redesign (#4) — SHIPPED v1.10.99
 
