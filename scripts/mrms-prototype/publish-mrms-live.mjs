@@ -10,6 +10,7 @@ const DEFAULT_TTL_MINUTES = 30;
 const DEFAULT_TILE_ZOOMS = "6,7,8,9,10,11,12,13";
 const DEFAULT_OUT_DIR = "radar/mrms/live";
 const DEFAULT_MANIFEST_OUT = "radar/mrms/manifest.json";
+const DEFAULT_SKIP_MIN_FRESH_MINUTES = 8;
 
 const PROFILES = {
   "metro-east": {
@@ -49,10 +50,87 @@ async function main() {
   const frames = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
   const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
   const tileZooms = args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS;
+  const skipMinFreshMinutes = Math.max(0, numberArg(args["skip-min-fresh-minutes"], DEFAULT_SKIP_MIN_FRESH_MINUTES));
+  const checkedAt = new Date().toISOString();
+
+  const generator = path.join(path.dirname(new URL(import.meta.url).pathname), "generate-mrms-timeline.mjs");
+  const commandArgs = buildGeneratorArgs({
+    generator,
+    frames,
+    outDir,
+    manifestOut,
+    tileBounds,
+    profile,
+    tileZooms,
+    ttlMinutes,
+    tileVersion
+  });
+
+  const resolveResult = runGenerator([...commandArgs, "--resolve-only"], "timeline source resolve");
+  const publishPlan = parseJsonOutput(resolveResult.stdout, "timeline source resolve");
+  const current = await loadCurrentManifest();
+  const skipDecision = shouldSkipPublish({ currentManifest: current.manifest, publishPlan, skipMinFreshMinutes });
+
+  if (skipDecision.skip) {
+    const summary = {
+      skipped: true,
+      reason: skipDecision.reason,
+      profile: profile.id,
+      manifestSource: current.source,
+      checkedAt,
+      expiresAt: current.manifest?.expiresAt || null,
+      publishFingerprint: publishPlan.publishFingerprint,
+      sourceSignature: publishPlan.source?.signature || null,
+      skipMinFreshMinutes
+    };
+    writeSummary(summary);
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
 
   if (booleanArg(args.clean, true)) cleanPublishOutDir(outDir);
 
-  const generator = path.join(path.dirname(new URL(import.meta.url).pathname), "generate-mrms-timeline.mjs");
+  runGenerator(commandArgs, "timeline generation");
+
+  const manifest = JSON.parse(fs.readFileSync(manifestOut, "utf8"));
+  manifest.publish = {
+    profile: profile.id,
+    profileLabel: profile.label,
+    checkedAt,
+    skipped: false,
+    reason: skipDecision.reason,
+    sourceChanged: Boolean(current.manifest?.publishFingerprint && current.manifest.publishFingerprint !== publishPlan.publishFingerprint),
+    previousExpiresAt: current.manifest?.expiresAt || null,
+    previousManifestSource: current.source,
+    skipMinFreshMinutes
+  };
+  atomicWriteJson(manifestOut, manifest);
+  validateLiveManifest(manifest, { profile, tileBounds, manifestOut });
+  const summary = {
+    skipped: false,
+    reason: skipDecision.reason,
+    profile: profile.id,
+    coverage: manifest.coverageBounds,
+    manifestOut,
+    outDir,
+    frameCount: manifest.frames.length,
+    generatedAt: manifest.generatedAt,
+    expiresAt: manifest.expiresAt,
+    minZoom: manifest.minZoom,
+    maxZoom: manifest.maxZoom,
+    generatedTiles: manifest.coverage?.generatedTiles || 0,
+    candidateTiles: manifest.coverage?.candidateTiles || 0,
+    radarTiles: manifest.coverage?.radarTiles || 0,
+    generationMs: manifest.metrics?.generationMs || null,
+    publishFingerprint: manifest.publishFingerprint || publishPlan.publishFingerprint,
+    sourceSignature: manifest.source?.signature || publishPlan.source?.signature || null,
+    tileVersion
+  };
+  writeSummary(summary);
+  console.log(JSON.stringify(summary, null, 2));
+}
+
+function buildGeneratorArgs({ generator, frames, outDir, manifestOut, tileBounds, profile, tileZooms, ttlMinutes, tileVersion }) {
   const commandArgs = [
     generator,
     `--frames=${frames}`,
@@ -84,6 +162,10 @@ async function main() {
   if (booleanArg(args["skip-empty-tiles"], false)) commandArgs.push("--skip-empty-tiles");
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
 
+  return commandArgs;
+}
+
+function runGenerator(commandArgs, label) {
   const result = spawnSync(process.execPath, commandArgs, {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -91,30 +173,23 @@ async function main() {
   });
   if (result.status !== 0) {
     throw new Error([
-      "timeline generation failed",
+      `${label} failed`,
       result.stdout,
       result.stderr
     ].filter(Boolean).join("\n"));
   }
+  return result;
+}
 
-  const manifest = JSON.parse(fs.readFileSync(manifestOut, "utf8"));
-  validateLiveManifest(manifest, { profile, tileBounds, manifestOut });
-  const summary = {
-    profile: profile.id,
-    coverage: manifest.coverageBounds,
-    manifestOut,
-    outDir,
-    frameCount: manifest.frames.length,
-    generatedAt: manifest.generatedAt,
-    expiresAt: manifest.expiresAt,
-    minZoom: manifest.minZoom,
-    maxZoom: manifest.maxZoom,
-    generatedTiles: manifest.coverage?.generatedTiles || 0,
-    candidateTiles: manifest.coverage?.candidateTiles || 0,
-    radarTiles: manifest.coverage?.radarTiles || 0,
-    tileVersion
-  };
-  console.log(JSON.stringify(summary, null, 2));
+function parseJsonOutput(stdout, label) {
+  const text = String(stdout || "").trim();
+  const jsonStart = text.indexOf("{");
+  if (jsonStart === -1) throw new Error(`${label} did not emit JSON`);
+  try {
+    return JSON.parse(text.slice(jsonStart));
+  } catch (error) {
+    throw new Error(`${label} emitted invalid JSON: ${error.message}`);
+  }
 }
 
 function resolveProfile(name) {
@@ -195,6 +270,79 @@ function parseBoundsObject(value) {
   };
 }
 
+async function loadCurrentManifest() {
+  const file = args["current-manifest-file"];
+  if (file) {
+    try {
+      return {
+        manifest: JSON.parse(fs.readFileSync(file, "utf8")),
+        source: { kind: "file", value: file, status: "ok" }
+      };
+    } catch (error) {
+      return {
+        manifest: null,
+        source: { kind: "file", value: file, status: "unavailable", error: error.message }
+      };
+    }
+  }
+
+  const url = args["current-manifest-url"] || process.env.MRMS_CURRENT_MANIFEST_URL;
+  if (!url) return { manifest: null, source: null };
+
+  try {
+    const response = await fetch(url, {
+      headers: { "cache-control": "no-cache" }
+    });
+    if (!response.ok) {
+      return {
+        manifest: null,
+        source: { kind: "url", value: url, status: response.status }
+      };
+    }
+    return {
+      manifest: await response.json(),
+      source: { kind: "url", value: url, status: response.status }
+    };
+  } catch (error) {
+    return {
+      manifest: null,
+      source: { kind: "url", value: url, status: "error", error: error.message }
+    };
+  }
+}
+
+function shouldSkipPublish({ currentManifest, publishPlan, skipMinFreshMinutes }) {
+  if (!currentManifest) return { skip: false, reason: "missing-current-manifest" };
+  if (currentManifest.provider !== "mrms-generated") return { skip: false, reason: "current-provider-different" };
+  if (!currentManifest.publishFingerprint || !publishPlan.publishFingerprint) return { skip: false, reason: "missing-publish-fingerprint" };
+  if (currentManifest.publishFingerprint !== publishPlan.publishFingerprint) {
+    return { skip: false, reason: "source-or-config-changed" };
+  }
+  if (!manifestFreshEnough(currentManifest, skipMinFreshMinutes)) {
+    return { skip: false, reason: "manifest-near-expiry" };
+  }
+  return { skip: true, reason: "source-unchanged-and-fresh" };
+}
+
+function manifestFreshEnough(manifest, skipMinFreshMinutes) {
+  const expiresAt = Date.parse(manifest?.expiresAt);
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt - Date.now() >= skipMinFreshMinutes * 60 * 1000;
+}
+
+function writeSummary(summary) {
+  const summaryOut = args["summary-out"];
+  if (!summaryOut) return;
+  fs.mkdirSync(path.dirname(summaryOut), { recursive: true });
+  atomicWriteJson(summaryOut, summary);
+}
+
+function atomicWriteJson(file, value) {
+  const temp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(temp, file);
+}
+
 function liveTileVersion(profileId) {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
   return `mrms-${profileId}-${stamp}`;
@@ -237,6 +385,11 @@ Options:
   --ttl-minutes=30           Live manifest freshness window.
   --out-dir=radar/mrms/live  Generated tile root.
   --manifest-out=PATH        Manifest to publish for the app.
+  --current-manifest-url=URL Compare against the currently deployed manifest before rendering.
+  --current-manifest-file=PATH
+                              Compare against a local manifest before rendering.
+  --skip-min-fresh-minutes=8 Keep the current manifest if unchanged and this fresh.
+  --summary-out=PATH         Write a machine-readable publish summary for CI.
   --skip-empty-tiles         Write only tiles with radar pixels.
   --clean=false              Keep existing output directory contents.
 `);

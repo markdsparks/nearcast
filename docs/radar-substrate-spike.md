@@ -90,6 +90,13 @@ but generated future forecast maps can use the same shape later:
 - `coverageBounds`: the broad geographic area this manifest can safely serve.
 - `coverageAreas[]`: one or more named generated packs. The app can check the
   active place against these before choosing generated tiles.
+- `source`: the upstream source objects used to generate the pack, plus a stable
+  source signature.
+- `renderConfig`: the render inputs that shape the generated output, including
+  product, coverage, zooms, style, and freshness window.
+- `publishFingerprint`: stable source-plus-render hash used by CI to skip
+  wasteful tile generation/deploys when the current manifest is still fresh.
+- `metrics`: generation duration and tile counts for operational visibility.
 - `sample`: `true` for checked-in or manual test packs that may be stale.
 - `expiresAt`: freshness guard for live generated packs.
 
@@ -106,6 +113,13 @@ creates `radar/mrms/live/` tiles, writes a live `radar/mrms/manifest.json`, and
 is designed to run immediately before a static Cloudflare deploy. The scheduled
 GitHub Actions workflow publishes those generated files as deployment assets
 without committing them back to Git.
+
+The wrapper now does a source-delta check before rendering. It resolves the
+candidate MRMS objects, builds the same manifest fingerprint that a full render
+would produce, and compares it with the currently deployed generated manifest.
+When the source objects and render profile match and the deployed manifest is
+still fresh enough, the workflow keeps the existing static asset snapshot and
+skips deploy.
 
 The first live profile intentionally stops at z13. Wider regions or z14+ tiles
 are possible, but they need a more deliberate tile budget, object storage, or
@@ -173,6 +187,8 @@ Prototype shape:
    outside generated coverage instead of showing a blank local tile set.
 10. Run the live publisher in CI before deploy so the deployed static asset
     snapshot includes fresh generated tiles without storing them in Git history.
+11. Keep source and render fingerprints in the manifest so future observed and
+    forecast producers can avoid regenerating identical static tile snapshots.
 
 Why this is different from WMS:
 

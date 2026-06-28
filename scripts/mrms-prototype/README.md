@@ -162,6 +162,35 @@ Defaults:
 deploys those generated files as static Cloudflare assets without committing
 them.
 
+Before rendering, the publisher can run a cheap source-resolution pass and
+compare it to the current deployed manifest:
+
+```bash
+node scripts/mrms-prototype/publish-mrms-live.mjs \
+  --profile=metro-east \
+  --current-manifest-url=https://getnearcast.app/radar/mrms/manifest.json \
+  --summary-out=/tmp/nearcast-mrms-publish-summary.json
+```
+
+The generated manifest includes:
+
+- `source`: NOAA MRMS objects used for the frame set, plus a source signature.
+- `renderConfig`: the coverage, zoom, style, and freshness inputs that affect
+  the generated output.
+- `publishFingerprint`: a stable hash of source plus render config. The
+  publisher uses this to skip wasteful regeneration when nothing meaningful has
+  changed.
+- `metrics`: generation time and tile-count totals for CI/ops visibility.
+
+For dry inspection without writing tiles:
+
+```bash
+node scripts/mrms-prototype/generate-mrms-timeline.mjs \
+  --frames=6 \
+  --tile-bounds=38.35,-90.65,39.25,-89.25 \
+  --resolve-only
+```
+
 ## Success bar
 
 - The same weather moment looks materially better than NOAA WMS from z7.5 to

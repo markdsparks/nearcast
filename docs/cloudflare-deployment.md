@@ -53,10 +53,15 @@ deployment by `.github/workflows/publish-generated-mrms.yml`:
 
 1. Check out the repo.
 2. Run `scripts/mrms-prototype/publish-mrms-live.mjs`.
-3. Generate regional tiles into the untracked `radar/mrms/live/` directory.
-4. Replace `radar/mrms/manifest.json` in the build workspace with a live
+3. Resolve the latest MRMS source objects and compare their publish fingerprint
+   against the currently deployed generated manifest.
+4. Skip tile generation and deploy when the source objects, render profile, and
+   current manifest freshness are still valid.
+5. Generate regional tiles into the untracked `radar/mrms/live/` directory when
+   the live manifest is missing, stale, or different.
+6. Replace `radar/mrms/manifest.json` in the build workspace with a live
    manifest containing `expiresAt`, frames, tile URLs, and coverage metadata.
-5. Run `npx --yes wrangler deploy`.
+7. Run `npx --yes wrangler deploy`.
 
 This workflow does not commit generated radar tiles. It publishes them as part
 of the static asset deployment snapshot, which keeps Git history from becoming a
@@ -71,6 +76,12 @@ Required GitHub variable for scheduled publishing:
 
 - `ENABLE_MRMS_PUBLISH=true`
 
+Optional GitHub variable:
+
+- `MRMS_CURRENT_MANIFEST_URL`: deployed generated-radar manifest to compare
+  before rendering. Defaults to
+  `https://getnearcast.app/radar/mrms/manifest.json`.
+
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
 secrets are configured.
@@ -82,6 +93,13 @@ Default live profile:
 - Zooms: `6-13`
 - Frames: `6`
 - Freshness window: `30` minutes
+
+The publisher uses a source-delta guard before it renders. It compares the
+candidate MRMS source objects plus the render profile with the deployed
+manifest's `publishFingerprint`. If that fingerprint matches and the deployed
+manifest is not near expiry, the workflow exits successfully and skips the
+Cloudflare deploy. The default freshness buffer is 8 minutes and can be
+overridden with `--skip-min-fresh-minutes`.
 
 The workflow also supports manual dispatch, so a test run can be triggered
 without waiting for the schedule.

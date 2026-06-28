@@ -36,6 +36,7 @@ jobs:
       MRMS_PROFILE: ${{ github.event.inputs.profile || 'metro-east' }}
       MRMS_FRAMES: ${{ github.event.inputs.frames || '6' }}
       MRMS_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || '30' }}
+      MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,17 +45,28 @@ jobs:
           node-version: "22"
 
       - name: Generate live MRMS radar tiles
+        id: publish
         run: |
           node scripts/mrms-prototype/publish-mrms-live.mjs \
             --profile="$MRMS_PROFILE" \
             --frames="$MRMS_FRAMES" \
-            --ttl-minutes="$MRMS_TTL_MINUTES"
+            --ttl-minutes="$MRMS_TTL_MINUTES" \
+            --current-manifest-url="$MRMS_CURRENT_MANIFEST_URL" \
+            --summary-out=/tmp/nearcast-mrms-publish-summary.json
+          SKIPPED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/nearcast-mrms-publish-summary.json','utf8')); process.stdout.write(s.skipped ? 'true' : 'false');")
+          echo "skipped=$SKIPPED" >> "$GITHUB_OUTPUT"
+
+      - name: Skip deploy when radar source is unchanged
+        if: steps.publish.outputs.skipped == 'true'
+        run: echo "MRMS source and render profile are unchanged; keeping current deployed radar manifest."
 
       - name: Verify generated manifest
+        if: steps.publish.outputs.skipped != 'true'
         run: |
           node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
 
       - name: Deploy static assets with generated radar
+        if: steps.publish.outputs.skipped != 'true'
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "Missing CLOUDFLARE_API_TOKEN secret."

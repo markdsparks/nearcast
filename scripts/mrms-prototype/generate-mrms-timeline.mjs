@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const BUCKET_URL = "https://noaa-mrms-pds.s3.amazonaws.com/";
@@ -27,6 +28,7 @@ async function main() {
     return;
   }
 
+  const startedAt = Date.now();
   const region = cleanSegment(args.region || DEFAULT_REGION);
   const product = cleanSegment(args.product || DEFAULT_PRODUCT);
   const frameLimit = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
@@ -34,6 +36,22 @@ async function main() {
   const manifestOut = args["manifest-out"] || DEFAULT_MANIFEST_OUT;
   const sources = await resolveSources({ region, product, frameLimit });
   if (!sources.length) throw new Error("no MRMS frame sources resolved");
+  const sourcePlan = buildSourcePlan({ sources, region, product });
+  const renderConfig = buildRenderConfig({ region, product, frameLimit });
+  const publishFingerprint = hashJson({ source: sourcePlan, renderConfig });
+
+  if (booleanArg(args["resolve-only"], false)) {
+    console.log(JSON.stringify({
+      provider: "mrms-generated",
+      product,
+      region,
+      frameCount: sources.length,
+      source: sourcePlan,
+      renderConfig,
+      publishFingerprint
+    }, null, 2));
+    return;
+  }
 
   fs.mkdirSync(outDir, { recursive: true });
   fs.mkdirSync(path.dirname(manifestOut), { recursive: true });
@@ -49,7 +67,11 @@ async function main() {
     region,
     product,
     outDir,
-    manifestOut
+    manifestOut,
+    sourcePlan,
+    renderConfig,
+    publishFingerprint,
+    startedAt
   });
   atomicWriteJson(manifestOut, manifest);
 
@@ -62,6 +84,8 @@ async function main() {
     frameCount: manifest.frames.length,
     generatedAt: manifest.generatedAt,
     expiresAt: manifest.expiresAt,
+    publishFingerprint: manifest.publishFingerprint,
+    sourceSignature: manifest.source?.signature,
     sample: manifest.sample,
     frames: manifest.frames.map((frame) => ({
       id: frame.id,
@@ -92,30 +116,38 @@ async function resolveSources({ region, product, frameLimit }) {
     daysBack: numberArg(args["days-back"], 1),
     maxKeys: numberArg(args["max-keys"], 1000)
   });
-  return objects.slice(0, frameLimit).map((object, index) => sourceFromUrl(object.url, object.observedAt, index));
+  return objects.slice(0, frameLimit).map((object, index) => sourceFromUrl(object.url, object.observedAt, index, object));
 }
 
 function sourceFromFile(file, frameTime, index) {
   const observedAt = parseTime(frameTime) || observedTimeFromKey(file) || fallbackFrameTime(index);
+  const stat = statFile(file);
   return {
     kind: "file",
     value: file,
+    key: path.basename(file),
+    size: stat?.size || null,
+    lastModified: stat?.mtime || null,
     timestamp: observedAt.getTime(),
     observedAt: observedAt.toISOString()
   };
 }
 
-function sourceFromUrl(url, frameTime, index) {
+function sourceFromUrl(url, frameTime, index, object = {}) {
   const observedAt = parseTime(frameTime) || observedTimeFromKey(url) || fallbackFrameTime(index);
   return {
     kind: "url",
     value: url,
+    key: object.key || keyFromSourceUrl(url),
+    size: Number.isFinite(Number(object.size)) ? Number(object.size) : null,
+    lastModified: object.lastModified || null,
     timestamp: observedAt.getTime(),
     observedAt: observedAt.toISOString()
   };
 }
 
 function renderFrame({ source, region, product, outDir, manifestOut }) {
+  const startedAt = Date.now();
   const frameId = cleanTileSegment(args["frame-prefix"] ? `${args["frame-prefix"]}-${frameIdForIso(source.observedAt)}` : frameIdForIso(source.observedAt));
   const tileOut = path.join(outDir, frameId);
   const tempManifestOut = path.join(outDir, `.manifest-${frameId}.json`);
@@ -161,6 +193,22 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
   }
 
   const manifest = JSON.parse(fs.readFileSync(tempManifestOut, "utf8"));
+  const sourceObject = sourceObjectForManifest(source);
+  manifest.source = {
+    provider: "noaa-mrms-pds",
+    product,
+    region,
+    objects: [sourceObject],
+    signature: hashJson({ product, region, objects: [sourceObject] })
+  };
+  manifest.frames = (manifest.frames || []).map((frame) => ({
+    ...frame,
+    sourceObject
+  }));
+  manifest.metrics = {
+    ...(manifest.metrics || {}),
+    generationMs: Date.now() - startedAt
+  };
   try {
     fs.unlinkSync(tempManifestOut);
   } catch {
@@ -169,7 +217,7 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
   return { frameId, tileOut, manifest };
 }
 
-function combineFrameManifests({ manifests, region, product, outDir, manifestOut }) {
+function combineFrameManifests({ manifests, region, product, outDir, manifestOut, sourcePlan, renderConfig, publishFingerprint, startedAt }) {
   const frames = manifests
     .flatMap((manifest) => manifest.frames || [])
     .filter((frame) => Number.isFinite(Number(frame.timestamp)))
@@ -193,6 +241,9 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
     sample: booleanArg(args.sample, false),
     generatedAt,
     expiresAt,
+    source: sourcePlan,
+    renderConfig,
+    publishFingerprint,
     minZoom: minNumber(manifests.map((manifest) => manifest.minZoom)),
     maxZoom: maxNumber(manifests.map((manifest) => manifest.maxZoom)),
     tileSize: first.tileSize || 256,
@@ -208,6 +259,14 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
       generatedTiles,
       candidateTiles,
       radarTiles
+    },
+    metrics: {
+      generationMs: Number.isFinite(startedAt) ? Date.now() - startedAt : null,
+      frameCount: frames.length,
+      generatedTiles,
+      candidateTiles,
+      radarTiles,
+      tileBudget: candidateTiles
     }
   };
 }
@@ -283,10 +342,95 @@ Options:
   --coverage-id=metro-east   Optional id for explicit coverage metadata.
   --coverage-label=NAME      Optional label for explicit coverage metadata.
   --skip-empty-tiles         Do not write transparent no-radar tiles.
+  --resolve-only             Resolve candidate source objects and fingerprint without rendering tiles.
   --tile-version=mrms1       Optional cache-buster query string for tile URLs.
   --ttl-minutes=15           Manifest freshness window for live generated data.
   --sample                   Mark output as a non-live sample; the app will allow stale samples.
 `);
+}
+
+function buildSourcePlan({ sources, region, product }) {
+  const objects = sources
+    .map(sourceObjectForManifest)
+    .sort((a, b) => String(a.observedAt).localeCompare(String(b.observedAt)) || String(a.key || a.value).localeCompare(String(b.key || b.value)));
+  return {
+    provider: "noaa-mrms-pds",
+    product,
+    region,
+    frameCount: objects.length,
+    objects,
+    signature: hashJson({ product, region, objects })
+  };
+}
+
+function sourceObjectForManifest(source) {
+  return {
+    kind: source.kind,
+    value: source.kind === "file" ? path.resolve(source.value) : source.value,
+    key: source.key || (source.kind === "url" ? keyFromSourceUrl(source.value) : path.basename(source.value)),
+    observedAt: source.observedAt,
+    timestamp: source.timestamp,
+    size: Number.isFinite(Number(source.size)) ? Number(source.size) : null,
+    lastModified: source.lastModified || null
+  };
+}
+
+function buildRenderConfig({ region, product, frameLimit }) {
+  return {
+    region,
+    product,
+    frameLimit,
+    style: args.style || "banded",
+    focus: args.focus || "max",
+    focusBounds: parseBounds(args.bounds || args["focus-bounds"] || "25,-125,49,-70"),
+    tileBounds: parseBounds(args["tile-bounds"] || args["coverage-bounds"]),
+    coverageId: args["coverage-id"] || null,
+    coverageLabel: args["coverage-label"] || null,
+    tileZooms: splitList(args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS).map((item) => Number(item)).filter(Number.isFinite),
+    tileRadius: numberArg(args["tile-radius"], Number(DEFAULT_TILE_RADIUS)),
+    skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
+    sample: booleanArg(args.sample, false),
+    ttlMinutes: numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)
+  };
+}
+
+function statFile(file) {
+  try {
+    const stat = fs.statSync(file);
+    return {
+      size: stat.size,
+      mtime: stat.mtime.toISOString()
+    };
+  } catch {
+    return null;
+  }
+}
+
+function keyFromSourceUrl(value) {
+  try {
+    const url = new URL(value);
+    return decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  } catch {
+    return path.basename(String(value || ""));
+  }
+}
+
+function hashJson(value) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(stableValue(value)))
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableValue(value[key])])
+  );
 }
 
 function splitList(value) {
