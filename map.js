@@ -514,6 +514,7 @@ function syncMapLibreStateAndOverlays(map, options = {}) {
 
 function renderMapLibreOverlays(options = {}) {
   const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
+  syncMapZoomDebugReadout();
   syncMapLibreBaseLayerVisibility(mapLibreCurrentRecord());
   if (shouldRenderRadar) {
     renderMapLibreWeather(mapState.frameIndex);
@@ -1033,6 +1034,22 @@ function syncMapLibreDiagnosticReadout(record) {
     <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))}</span>
     <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;
+}
+
+function syncMapZoomDebugReadout() {
+  document.querySelectorAll(".map-zoom-debug").forEach((node) => {
+    if (node.parentElement !== els.weatherMap) node.remove();
+  });
+  if (!els.weatherMap || !mapState.initialized || !state.activePlace) return;
+  let readout = els.weatherMap.querySelector(":scope > .map-zoom-debug");
+  if (!readout) {
+    readout = document.createElement("div");
+    readout.className = "map-zoom-debug";
+    readout.setAttribute("aria-hidden", "true");
+    els.weatherMap.appendChild(readout);
+  }
+  const zoom = Number(mapState.zoom);
+  readout.textContent = `Zoom ${Number.isFinite(zoom) ? zoom.toFixed(2) : "--"}`;
 }
 
 function ensureMapLibreDiagnosticRaf(record) {
@@ -2879,6 +2896,7 @@ function renderTileMap() {
   if (!mapState.initialized || !state.activePlace) return;
   const rect = els.weatherMap.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  syncMapZoomDebugReadout();
   if (mapRendererIsGl()) {
     renderMapLibreMap();
     return;
