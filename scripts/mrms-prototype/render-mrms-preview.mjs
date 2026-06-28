@@ -83,7 +83,7 @@ async function main() {
   const zoom = numberArg(args.zoom, DEFAULT_ZOOM);
   const threshold = numberArg(args.threshold, 5);
   const styleName = normalizeStyle(args.style || DEFAULT_STYLE);
-  const smooth = numberArg(args.smooth, styleName === "resolved" ? 2.15 : 1.15);
+  const smooth = numberArg(args.smooth, defaultSmoothForStyle(styleName));
   const style = radarStyle(styleName, args);
   const compare = Boolean(args.compare);
 
@@ -429,6 +429,13 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
       pixels[outIndex] = Math.round(color[0] * alpha + pixels[outIndex] * (1 - alpha));
       pixels[outIndex + 1] = Math.round(color[1] * alpha + pixels[outIndex + 1] * (1 - alpha));
       pixels[outIndex + 2] = Math.round(color[2] * alpha + pixels[outIndex + 2] * (1 - alpha));
+      const separatorAlpha = bandSeparatorAlpha(dbz, style) * thresholdFade;
+      if (separatorAlpha > 0) {
+        const strokeAlpha = Math.min(1, separatorAlpha * style.separatorAlpha);
+        pixels[outIndex] = Math.round(style.separatorColor[0] * strokeAlpha + pixels[outIndex] * (1 - strokeAlpha));
+        pixels[outIndex + 1] = Math.round(style.separatorColor[1] * strokeAlpha + pixels[outIndex + 1] * (1 - strokeAlpha));
+        pixels[outIndex + 2] = Math.round(style.separatorColor[2] * strokeAlpha + pixels[outIndex + 2] * (1 - strokeAlpha));
+      }
       pixels[outIndex + 3] = basemap ? 255 : color[3];
       radarPixels += 1;
       if (dbz > maxRenderedDbz) maxRenderedDbz = dbz;
@@ -657,11 +664,30 @@ function mix(a, b, t) {
 
 function normalizeStyle(value) {
   const next = String(value || DEFAULT_STYLE).toLowerCase();
-  if (next === "resolved" || next === "field" || next === "contour" || next === "contoured") return "resolved";
+  if (next === "resolved" || next === "field") return "resolved";
+  if (next === "banded" || next === "stepped" || next === "contour" || next === "contoured" || next === "raw-banded") {
+    return "banded";
+  }
   return "continuous";
 }
 
 function radarStyle(name, options = {}) {
+  if (name === "banded") {
+    return {
+      name,
+      ramp: RADAR_RAMP,
+      alphaScale: numberArg(options.alpha, 1.02),
+      fadeBelow: numberArg(options["fade-below"], 2.5),
+      fadeAbove: numberArg(options["fade-above"], 1.25),
+      bandBase: numberArg(options["band-base"], 5),
+      bandStep: numberArg(options["band-step"], 7.5),
+      bandFeather: numberArg(options["band-feather"], 0.04),
+      separatorAlpha: numberArg(options["separator-alpha"], 0.22),
+      separatorWidth: numberArg(options["separator-width"], 0.28),
+      separatorColor: parseRgb(options["separator-color"], [20, 31, 42])
+    };
+  }
+
   if (name === "resolved") {
     return {
       name,
@@ -671,7 +697,10 @@ function radarStyle(name, options = {}) {
       fadeAbove: numberArg(options["fade-above"], 1.75),
       bandBase: numberArg(options["band-base"], 5),
       bandStep: numberArg(options["band-step"], 0),
-      bandFeather: numberArg(options["band-feather"], 0.4)
+      bandFeather: numberArg(options["band-feather"], 0.4),
+      separatorAlpha: numberArg(options["separator-alpha"], 0),
+      separatorWidth: numberArg(options["separator-width"], 0),
+      separatorColor: parseRgb(options["separator-color"], [20, 31, 42])
     };
   }
 
@@ -683,8 +712,17 @@ function radarStyle(name, options = {}) {
     fadeAbove: numberArg(options["fade-above"], 2),
     bandBase: 5,
     bandStep: 0,
-    bandFeather: 0
+    bandFeather: 0,
+    separatorAlpha: 0,
+    separatorWidth: 0,
+    separatorColor: [20, 31, 42]
   };
+}
+
+function defaultSmoothForStyle(styleName) {
+  if (styleName === "resolved") return 2.15;
+  if (styleName === "banded") return 0.05;
+  return 1.15;
 }
 
 function comparisonVariants(styleName, smooth, argsForStyle) {
@@ -695,8 +733,13 @@ function comparisonVariants(styleName, smooth, argsForStyle) {
       style: radarStyle("continuous", argsForStyle)
     },
     {
+      label: "banded",
+      smooth: styleName === "banded" ? smooth : 0.05,
+      style: radarStyle("banded", argsForStyle)
+    },
+    {
       label: "smoothed",
-      smooth,
+      smooth: styleName === "continuous" ? smooth : 1.15,
       style: radarStyle("continuous", argsForStyle)
     },
     {
@@ -705,6 +748,16 @@ function comparisonVariants(styleName, smooth, argsForStyle) {
       style: radarStyle("resolved", argsForStyle)
     }
   ];
+}
+
+function bandSeparatorAlpha(value, style) {
+  if (!Number.isFinite(value) || !style.bandStep || !style.separatorAlpha || !style.separatorWidth) return 0;
+  if (value < style.bandBase + style.bandStep * 0.35) return 0;
+  const bandPosition = (value - style.bandBase) / style.bandStep;
+  const fraction = bandPosition - Math.floor(bandPosition);
+  const distance = Math.min(fraction, 1 - fraction) * style.bandStep;
+  if (distance > style.separatorWidth) return 0;
+  return 1 - smoothstep(0, style.separatorWidth, distance);
 }
 
 function paintSoftBasemap(pixels, index, x, y, width, height) {
@@ -850,12 +903,14 @@ Options:
   --height=900               Output image height.
   --focus=max                Center on the strongest decoded radar cell.
   --focus=edge               Center on a high-gradient precip edge.
-  --style=continuous         Visual style: continuous or resolved.
+  --style=continuous         Visual style: continuous, banded, or resolved.
   --threshold=5              Minimum dBZ to draw.
   --smooth=1.15              Data-space smoothing radius; resolved defaults to 2.15.
-  --band-step=0              Resolved style contour band size; 0 disables bands.
-  --band-feather=0.4         Resolved style band transition width.
-  --compare                  Render continuous, smoothed, and resolved panels.
+  --band-step=7.5            Banded style contour band size; resolved defaults to 0.
+  --band-feather=0.04        Banded style band transition width.
+  --separator-alpha=0.22     Banded style intensity-line strength.
+  --separator-width=0.28     Banded style intensity-line width in dBZ.
+  --compare                  Render continuous, banded, smoothed, and resolved panels.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
   --out=/tmp/file.png        Output PNG path.
@@ -865,6 +920,14 @@ Options:
 function numberArg(value, fallback) {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
+}
+
+function parseRgb(value, fallback) {
+  if (!value) return fallback;
+  const parts = String(value).split(",").map((part) => Number(part.trim()));
+  return parts.length === 3 && parts.every((part) => Number.isFinite(part))
+    ? parts.map((part) => Math.max(0, Math.min(255, Math.round(part))))
+    : fallback;
 }
 
 function cleanSegment(value) {

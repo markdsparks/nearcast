@@ -42,10 +42,11 @@ Current spike status:
 - Early visual finding: raw MRMS lets us smooth in data-space before
   colorization, but deep zoom still needs product/style tuning because the
   source grid resolution remains visible at storm edges.
-- Current best visual target is the MRMS `resolved` preview style: a saturated
-  green/yellow/orange field with stronger opacity and smooth source-space
-  sampling. It gives a more premium, specific-looking radar layer while avoiding
-  obvious contour rings by default.
+- Current visual target has split into two candidates. `resolved` gives a more
+  premium green/yellow/orange weather-field look, but may hide raw radar
+  structure. `banded` starts from the raw radar read and adds discrete dBZ bands
+  plus subtle separator isolines so gradients feel intentional instead of
+  blurry.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 
