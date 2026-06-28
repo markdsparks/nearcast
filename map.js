@@ -8,6 +8,8 @@ const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
+const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
+const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
@@ -342,11 +344,12 @@ function syncMapLibrePreviewHitbox(container) {
 }
 
 function clearClassicLayersForMapLibre() {
-  [els.baseTileLayer, els.labelTileLayer].forEach((layer) => {
+  [els.baseTileLayer, els.weatherTileLayer, els.labelTileLayer].forEach((layer) => {
     if (!layer) return;
     layer.innerHTML = "";
     layer.style.transform = "";
   });
+  clearMapMarkerNodes();
 }
 
 function mapLibrePlaceKey(place = state.activePlace) {
@@ -468,9 +471,8 @@ function syncMapLibreStateAndOverlays(map, options = {}) {
 function renderMapLibreOverlays(options = {}) {
   const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
   if (shouldRenderRadar) {
-    if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex);
-    else renderWeatherTiles();
-    renderMapMarkers();
+    renderMapLibreWeather(mapState.frameIndex);
+    renderMapLibreMarkers();
     if (mapState.immersive) renderStormImpactOverlay();
     mapLibreInteraction.needsRadarRender = false;
   } else {
@@ -549,6 +551,268 @@ function mapLibreStyle() {
   };
 }
 
+function mapLibreCurrentRecord() {
+  return els.weatherMap ? mapLibreRecords.get(els.weatherMap) : null;
+}
+
+function mapLibreWeatherTileTemplate(template) {
+  return String(template || "")
+    .replace("%7Bbbox%7D", "{bbox-epsg-3857}")
+    .replace("{bbox}", "{bbox-epsg-3857}");
+}
+
+function mapLibreWeatherSlotIds(slotIndex) {
+  return {
+    sourceId: `${MAPLIBRE_WEATHER_PREFIX}-source-${slotIndex}`,
+    layerId: `${MAPLIBRE_WEATHER_PREFIX}-layer-${slotIndex}`
+  };
+}
+
+function mapLibreWeatherBeforeLayer(map) {
+  return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
+}
+
+function mapLibreWeatherLayerPaint(opacity) {
+  return {
+    "raster-opacity": opacity,
+    "raster-fade-duration": 0,
+    "raster-resampling": "linear"
+  };
+}
+
+function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
+  if (!mapState.frames.length) return [];
+  const N = mapState.frames.length;
+  const cur = ((index % N) + N) % N;
+
+  if (shouldBufferRadarPlayback(cur)) {
+    const next = nextPlaybackIndexFrom(cur);
+    const frames = mapState.xfadeFrames;
+    for (const need of [cur, next]) {
+      if (frames[0] !== need && frames[1] !== need) {
+        const other = need === cur ? next : cur;
+        frames[frames[0] === other ? 1 : 0] = need;
+      }
+    }
+
+    return frames
+      .map((frameIndex) => mapLibreWeatherSpecForFrame(frameIndex, {
+        opacity: frameIndex === cur ? 0.78 : MAPLIBRE_WEATHER_PRELOAD_OPACITY,
+        preload: frameIndex !== cur
+      }))
+      .filter(Boolean);
+  }
+
+  const frame = mapState.frames[cur];
+  const layers = frame?.layers || (frame?.url ? [{ url: frame.url, opacity: 0.78 }] : []);
+  return layers
+    .map((layer, layerIndex) => mapLibreWeatherSpecForLayer(frame, layer, {
+      frameIndex: cur,
+      layerIndex,
+      preload: false
+    }))
+    .filter(Boolean);
+}
+
+function mapLibreWeatherSpecForFrame(frameIndex, options = {}) {
+  const frame = mapState.frames[frameIndex];
+  if (!frame) return null;
+  return mapLibreWeatherSpecForLayer(frame, {
+    url: frame.url,
+    opacity: options.opacity ?? 0.78
+  }, {
+    frameIndex,
+    layerIndex: 0,
+    preload: Boolean(options.preload)
+  });
+}
+
+function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
+  const template = mapLibreWeatherTileTemplate(layer?.url);
+  if (!template) return null;
+  const opacity = Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 0.78;
+  return {
+    key: `${options.frameIndex}:${options.layerIndex}:${template}`,
+    frameIndex: options.frameIndex,
+    template,
+    opacity: Math.max(0, Math.min(opacity, 1)),
+    preload: Boolean(options.preload),
+    maxZoom: weatherFrameMaxZoom(frame),
+    attribution: frame?.attribution || ""
+  };
+}
+
+function renderMapLibreWeather(index = mapState.frameIndex) {
+  const record = mapLibreCurrentRecord();
+  if (!mapLibreRecordReady(record)) return;
+  const specs = mapLibreWeatherLayerSpecs(index);
+  syncMapLibreWeatherSlots(record, specs);
+}
+
+function syncMapLibreWeatherSlots(record, specs = []) {
+  const map = record?.map;
+  if (!map || !map.isStyleLoaded?.()) return;
+  if (!record.weatherSlots) record.weatherSlots = [];
+
+  specs.forEach((spec, slotIndex) => syncMapLibreWeatherSlot(record, slotIndex, spec));
+  for (let slotIndex = specs.length; slotIndex < record.weatherSlots.length; slotIndex += 1) {
+    removeMapLibreWeatherSlot(record, slotIndex);
+  }
+  record.weatherSlots.length = specs.length;
+}
+
+function syncMapLibreWeatherSlot(record, slotIndex, spec) {
+  const map = record.map;
+  const { sourceId, layerId } = mapLibreWeatherSlotIds(slotIndex);
+  const sourceSignature = `${spec.template}|${spec.maxZoom}|${spec.attribution}`;
+  const existing = record.weatherSlots[slotIndex];
+
+  if (!existing || existing.sourceSignature !== sourceSignature) {
+    removeMapLibreWeatherSlot(record, slotIndex);
+    map.addSource(sourceId, {
+      type: "raster",
+      tiles: [spec.template],
+      tileSize: 256,
+      minzoom: MAP_MIN_ZOOM,
+      maxzoom: spec.maxZoom,
+      attribution: spec.attribution
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      paint: mapLibreWeatherLayerPaint(spec.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec.opacity)
+    }, mapLibreWeatherBeforeLayer(map));
+  } else if (map.getLayer(layerId)) {
+    map.setPaintProperty(layerId, "raster-opacity", spec.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec.opacity);
+  }
+
+  record.weatherSlots[slotIndex] = {
+    sourceId,
+    layerId,
+    frameIndex: spec.frameIndex,
+    key: spec.key,
+    sourceSignature
+  };
+}
+
+function removeMapLibreWeatherSlot(record, slotIndex) {
+  const map = record?.map;
+  if (!map) return;
+  const slot = record.weatherSlots?.[slotIndex] || mapLibreWeatherSlotIds(slotIndex);
+  if (slot.layerId && map.getLayer(slot.layerId)) map.removeLayer(slot.layerId);
+  if (slot.sourceId && map.getSource(slot.sourceId)) map.removeSource(slot.sourceId);
+  if (record.weatherSlots) record.weatherSlots[slotIndex] = null;
+}
+
+function clearMapLibreWeatherRecord(record) {
+  if (!record?.weatherSlots) return;
+  for (let slotIndex = 0; slotIndex < record.weatherSlots.length; slotIndex += 1) {
+    removeMapLibreWeatherSlot(record, slotIndex);
+  }
+  record.weatherSlots = [];
+}
+
+function mapLibreBufferedRadarFrameReady(frameIndex) {
+  const record = mapLibreCurrentRecord();
+  if (!mapLibreRecordReady(record)) return false;
+  const slot = record.weatherSlots?.find((item) => item?.frameIndex === frameIndex);
+  if (!slot) return false;
+  return record.map.isSourceLoaded?.(slot.sourceId) || record.map.areTilesLoaded?.() || false;
+}
+
+function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
+  if (!mapLibreRecordReadyForMarkers(record) || !state.activePlace || !window.maplibregl) {
+    clearMapLibreMarkers(record);
+    return;
+  }
+  if (!record.markerEntries) record.markerEntries = new Map();
+
+  const liveKeys = new Set();
+  const placedBounds = [];
+  const activeLayout = mapLibreMarkerLayout(record, state.activePlace);
+  if (activeLayout) {
+    upsertMapLibreMarker(record, state.activePlace, liveKeys);
+    placedBounds.push(activeLayout.bounds);
+  }
+
+  if (mapState.immersive) {
+    state.savedPlaces
+      .filter((place) => !isActiveMapPlace(place))
+      .forEach((place) => {
+        const layout = mapLibreMarkerLayout(record, place);
+        if (!layout || mapBoundsOverlapAny(layout.bounds, placedBounds)) return;
+        upsertMapLibreMarker(record, place, liveKeys);
+        placedBounds.push(layout.bounds);
+      });
+  }
+
+  record.markerEntries.forEach((entry, key) => {
+    if (liveKeys.has(key)) return;
+    entry.marker.remove();
+    record.markerEntries.delete(key);
+  });
+}
+
+function mapLibreMarkerLayout(record, place) {
+  if (!record?.map || !place) return null;
+  const longitude = Number(place.longitude);
+  const latitude = Number(place.latitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const size = record.map.getContainer()?.getBoundingClientRect?.();
+  const point = record.map.project([longitude, latitude]);
+  if (!point || !size) return null;
+  if (point.x < -90 || point.x > size.width + 90 || point.y < -90 || point.y > size.height + 90) return null;
+
+  const data = mapMarkerData(place);
+  const width = estimateMapMarkerWidth(data.name, data.tempText, data.impactText);
+  const height = data.tempText || data.impactText ? 31 : 29;
+  return {
+    point,
+    bounds: mapMarkerBounds(point.x, point.y, width, height)
+  };
+}
+
+function upsertMapLibreMarker(record, place, liveKeys) {
+  const data = mapMarkerData(place);
+  liveKeys.add(data.key);
+  let entry = record.markerEntries.get(data.key);
+  if (!entry) {
+    const element = document.createElement("div");
+    element.dataset.markerKey = data.key;
+    applyMapLibreMarkerData(element, data);
+    const marker = new maplibregl.Marker({
+      element,
+      anchor: "bottom"
+    })
+      .setLngLat([Number(place.longitude), Number(place.latitude)])
+      .addTo(record.map);
+    entry = { marker, element, signature: "" };
+    record.markerEntries.set(data.key, entry);
+  } else {
+    entry.marker.setLngLat([Number(place.longitude), Number(place.latitude)]);
+  }
+
+  if (entry.signature !== data.signature) {
+    applyMapLibreMarkerData(entry.element, data);
+    entry.signature = data.signature;
+  }
+}
+
+function applyMapLibreMarkerData(element, data) {
+  const preserved = Array.from(element.classList)
+    .filter((className) => className === "nearcast-gl-marker" || className.startsWith("maplibregl-"));
+  element.className = [data.className, "nearcast-gl-marker", ...preserved].join(" ");
+  if (data.tempText || data.impactText) element.innerHTML = data.content;
+  else element.textContent = data.name;
+}
+
+function clearMapLibreMarkers(record) {
+  if (!record?.markerEntries) return;
+  record.markerEntries.forEach((entry) => entry.marker.remove());
+  record.markerEntries.clear();
+}
+
 function ensureMapLibreMap() {
   if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return null;
   const container = els.weatherMap;
@@ -601,7 +865,9 @@ function ensureMapLibreMap() {
     loaded: false,
     rendered: false,
     fallbackTimer: 0,
-    lastError: ""
+    lastError: "",
+    weatherSlots: [],
+    markerEntries: new Map()
   };
   mapLibreRecords.set(container, record);
 
@@ -628,12 +894,16 @@ function ensureMapLibreMap() {
     requestAnimationFrame(() => {
       if (mapLibreRecords.get(container) !== record) return;
       map.resize();
+      renderMapLibreOverlays({ forceRadar: true });
       map.triggerRepaint?.();
       markRenderedIfSourcesLoaded();
     });
   });
   map.on("idle", () => {
     markRenderedIfSourcesLoaded();
+    if (mapLibreRecords.get(container) === record && state.mapRenderer === "gl") {
+      renderMapLibreMarkers(record);
+    }
   });
   map.on("sourcedata", (event) => {
     if (event.sourceId === "nearcast-base" || event.sourceId === "nearcast-labels") {
@@ -680,6 +950,10 @@ function mapLibreRecordReady(record) {
   return Boolean(record?.loaded && record.map?.isStyleLoaded?.());
 }
 
+function mapLibreRecordReadyForMarkers(record) {
+  return Boolean(record?.loaded && record.map);
+}
+
 function syncMapLibreCamera(record, options = {}) {
   if (!record?.map || !state.activePlace) return;
   const placeKey = mapLibrePlaceKey();
@@ -701,14 +975,18 @@ function renderMapLibreMap() {
 }
 
 function clearMapLibreWeather() {
-  // Weather animation is rendered by the classic DOM tile panes even when the
-  // base map is WebGL, so there are no MapLibre weather sources to clear.
+  mapLibreRecords.forEach((record) => {
+    clearMapLibreWeatherRecord(record);
+    clearMapLibreMarkers(record);
+  });
 }
 
 function destroyMapLibreRecord(container) {
   const record = mapLibreRecords.get(container);
   if (!record) return;
   if (record.fallbackTimer) clearTimeout(record.fallbackTimer);
+  clearMapLibreWeatherRecord(record);
+  clearMapLibreMarkers(record);
   record.map.remove();
   record.surface?.remove();
   container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
@@ -852,6 +1130,10 @@ function refreshInlineMap(forceFrames = false, options = {}) {
 
 function renderMapMarkers() {
   if (!mapState.initialized || !els.markerLayer) return;
+  if (mapRendererIsGl()) {
+    renderMapLibreMarkers();
+    return;
+  }
   const markerNodes = mapMarkerNodes();
   const liveKeys = new Set();
   if (!state.activePlace) {
@@ -1654,7 +1936,12 @@ function showFrame(index) {
   syncMapSourceFromFrame(frame);
   setFrameLabel(frame.label);
   updateTimelineEraVisuals();
-  renderWeatherTiles();
+  if (mapRendererIsGl()) {
+    renderMapLibreWeather(nextIndex);
+    renderMapLibreMarkers();
+  } else {
+    renderWeatherTiles();
+  }
   perfEnd("showFrame", perf);
 }
 
@@ -1911,7 +2198,10 @@ function radarPaneReady(frameIndex) {
 }
 
 function waitForBufferedRadarFrame(frameIndex, now) {
-  if (radarPaneReady(frameIndex)) {
+  const ready = mapRendererIsGl()
+    ? mapLibreBufferedRadarFrameReady(frameIndex)
+    : radarPaneReady(frameIndex);
+  if (ready) {
     mapState.frameWaitIndex = null;
     mapState.frameWaitStart = 0;
     return true;
@@ -1944,8 +2234,12 @@ function startRadarPlayback(options = {}) {
   mapState.frameWaitStart = 0;
   const shouldBuffer = shouldBufferRadarPlayback(mapState.frameIndex);
   mapState.xfadeFrames = shouldBuffer ? [mapState.frameIndex, null] : [null, null];
-  if (shouldBuffer && els.weatherTileLayer) {
-    renderXfade(mapState.frameIndex); // show current + preload next immediately
+  if (shouldBuffer) {
+    if (mapRendererIsGl()) {
+      renderMapLibreWeather(mapState.frameIndex); // show current + preload next immediately
+    } else if (els.weatherTileLayer) {
+      renderXfade(mapState.frameIndex); // show current + preload next immediately
+    }
   }
   mapState.timer = requestAnimationFrame(playbackTick);
 }
@@ -1975,14 +2269,16 @@ function playbackTick(now) {
     }
     const idx = nextPlaybackIndexFrom(mapState.frameIndex, bounds);
     if (shouldBufferRadarPlayback(mapState.frameIndex)) {
-      renderXfade(mapState.frameIndex); // keep the upcoming hidden pane warming
+      if (mapRendererIsGl()) renderMapLibreWeather(mapState.frameIndex);
+      else renderXfade(mapState.frameIndex); // keep the upcoming hidden pane warming
       if (!waitForBufferedRadarFrame(idx, now)) {
         mapState.playAccum = interval;
         mapState.timer = requestAnimationFrame(playbackTick);
         return;
       }
       mapState.frameIndex = idx;
-      renderXfade(idx); // hard swap to idx, preload idx+1
+      if (mapRendererIsGl()) renderMapLibreWeather(idx);
+      else renderXfade(idx); // hard swap to idx, preload idx+1
       els.frameSlider.value = String(idx);
       updateRangeProgress(els.frameSlider);
       syncMapSourceFromFrame(mapState.frames[idx]);
@@ -2501,15 +2797,7 @@ function mapMarkerKey(place) {
   return `place:${lat},${lon}`;
 }
 
-function renderMapMarker(place, options = {}) {
-  if (!state.activePlace) return;
-  const viewport = options.viewport || getMapViewport();
-  const layout = options.layout || mapMarkerLayout(place, viewport);
-  if (!layout) return null;
-
-  const { left, top } = layout;
-  const markerNodes = options.markerNodes || mapMarkerNodes();
-  const liveKeys = options.liveKeys || new Set();
+function mapMarkerData(place) {
   const key = mapMarkerKey(place);
   const isActive = isActiveMapPlace(place);
   const impact = stormImpactForPlace(place);
@@ -2523,22 +2811,44 @@ function renderMapMarker(place, options = {}) {
   const content = tempText || impactText
     ? `<span>${escapeHtml(name)}</span>${tempText ? `<strong>${escapeHtml(tempText)}</strong>` : ""}${impactText ? `<small>${escapeHtml(impactText)}</small>` : ""}`
     : escapeHtml(name);
-  const signature = `${className}|${content}`;
+  return {
+    key,
+    isActive,
+    impact,
+    name,
+    tempText,
+    impactText,
+    className,
+    content,
+    signature: `${className}|${content}`
+  };
+}
 
-  let marker = markerNodes.get(key);
+function renderMapMarker(place, options = {}) {
+  if (!state.activePlace) return;
+  const viewport = options.viewport || getMapViewport();
+  const layout = options.layout || mapMarkerLayout(place, viewport);
+  if (!layout) return null;
+
+  const { left, top } = layout;
+  const markerNodes = options.markerNodes || mapMarkerNodes();
+  const liveKeys = options.liveKeys || new Set();
+  const markerData = mapMarkerData(place);
+
+  let marker = markerNodes.get(markerData.key);
   if (!marker || !marker.isConnected) {
     marker = document.createElement("div");
-    marker.dataset.markerKey = key;
+    marker.dataset.markerKey = markerData.key;
     els.markerLayer.appendChild(marker);
-    markerNodes.set(key, marker);
+    markerNodes.set(markerData.key, marker);
   }
-  liveKeys.add(key);
+  liveKeys.add(markerData.key);
 
-  if (marker.dataset.signature !== signature) {
-    marker.className = className;
-    if (tempText || impactText) marker.innerHTML = content;
-    else marker.textContent = name;
-    marker.dataset.signature = signature;
+  if (marker.dataset.signature !== markerData.signature) {
+    marker.className = markerData.className;
+    if (markerData.tempText || markerData.impactText) marker.innerHTML = markerData.content;
+    else marker.textContent = markerData.name;
+    marker.dataset.signature = markerData.signature;
   }
 
   marker.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0) translate(-50%, -100%)`;

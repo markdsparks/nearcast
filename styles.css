@@ -6247,7 +6247,8 @@ body.map-immersive-active #mapLegend {
   -webkit-tap-highlight-color: transparent;
 }
 
-.tile-map.is-gl-renderer > .tile-layer:not(.weather-layer),
+.tile-map.is-gl-renderer > .tile-layer,
+.tile-map.is-gl-renderer > .marker-layer,
 .tile-map.is-gl-renderer > .impact-layer {
   display: none;
 }
@@ -6500,6 +6501,10 @@ body.map-immersive-active #mapLegend {
   height: 12px;
   transform: translateX(-50%) rotate(45deg);
   background: var(--btn-bg);
+}
+
+.nearcast-gl-marker {
+  pointer-events: none;
 }
 
 .map-loading {
