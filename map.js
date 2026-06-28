@@ -30,7 +30,7 @@ function mapDiagnosticIsActive() {
 }
 
 function mapDiagnosticAllowsRadar() {
-  return !["base", "markers"].includes(mapDiagnosticMode());
+  return !["blank", "base", "base-no-labels", "markers"].includes(mapDiagnosticMode());
 }
 
 function mapDiagnosticAllowsMarkers() {
@@ -43,6 +43,14 @@ function mapDiagnosticUsesStrictLayerSet() {
 
 function mapDiagnosticModeLabel() {
   return MAP_DIAGNOSTIC_MODES?.[mapDiagnosticMode()]?.label || "Full stack";
+}
+
+function mapDiagnosticBaseVisibility() {
+  const mode = mapDiagnosticMode();
+  return {
+    base: mode !== "blank",
+    labels: mode !== "blank" && mode !== "base-no-labels"
+  };
 }
 
 window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
@@ -504,6 +512,7 @@ function syncMapLibreStateAndOverlays(map, options = {}) {
 
 function renderMapLibreOverlays(options = {}) {
   const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
+  syncMapLibreBaseLayerVisibility(mapLibreCurrentRecord());
   if (shouldRenderRadar) {
     renderMapLibreWeather(mapState.frameIndex);
     renderMapLibreMarkers();
@@ -513,6 +522,21 @@ function renderMapLibreOverlays(options = {}) {
     mapLibreInteraction.needsRadarRender = true;
   }
   syncMapLibreDiagnosticReadout(mapLibreCurrentRecord());
+}
+
+function syncMapLibreBaseLayerVisibility(record) {
+  const map = record?.map;
+  if (!map?.isStyleLoaded?.()) return;
+  const visibility = mapDiagnosticBaseVisibility();
+  setMapLibreLayerVisibility(map, MAPLIBRE_BASE_LAYER_ID, visibility.base);
+  setMapLibreLayerVisibility(map, MAPLIBRE_LABEL_LAYER_ID, visibility.labels);
+}
+
+function setMapLibreLayerVisibility(map, layerId, visible) {
+  if (!map?.getLayer?.(layerId)) return;
+  const next = visible ? "visible" : "none";
+  if (map.getLayoutProperty?.(layerId, "visibility") === next) return;
+  map.setLayoutProperty(layerId, "visibility", next);
 }
 
 function mapLibreTileStyle() {
@@ -950,7 +974,10 @@ function mapLibreDiagnosticStats(record) {
     loaded: Boolean(record?.loaded),
     rendered: Boolean(record?.rendered),
     mode: mapDiagnosticMode(),
-    fps: Math.round(record?.diagnosticFps || 0),
+    fps: Math.round(record?.diagnosticGlFps || 0),
+    glFps: Math.round(record?.diagnosticGlFps || 0),
+    uiFps: Math.round(record?.diagnosticUiFps || 0),
+    movesPerSecond: Math.round(record?.diagnosticMovesPerSecond || 0),
     tilesLoaded: record?.map?.areTilesLoaded?.() || false,
     weatherEntries: entries.length,
     visibleWeatherEntries: entries.filter((entry) => entry.visible).length,
@@ -983,34 +1010,78 @@ function syncMapLibreDiagnosticReadout(record) {
   const readout = record.container.querySelector(":scope > .map-diagnostic-readout");
   if (!active) {
     readout?.remove();
+    stopMapLibreDiagnosticRaf(record);
     return;
   }
+  ensureMapLibreDiagnosticRaf(record);
   const stats = mapLibreDiagnosticStats(record);
   const nextReadout = ensureMapLibreDiagnosticReadout(record);
   if (!nextReadout) return;
-  const fps = stats.fps ? `${stats.fps} fps` : "fps warming";
+  const uiFps = stats.uiFps ? `ui ${stats.uiFps}` : "ui warming";
+  const glFps = stats.glFps ? `gl ${stats.glFps}` : "gl warming";
   const loaded = stats.tilesLoaded ? "tiles ready" : "tiles loading";
   nextReadout.innerHTML = `
     <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
-    <span>${escapeHtml(fps)} · radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers}</span>
-    <span>z${escapeHtml(String(stats.zoom))} · layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
+    <span>${escapeHtml(uiFps)} fps · ${escapeHtml(glFps)} fps · moves ${stats.movesPerSecond}/s</span>
+    <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))}</span>
+    <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;
+}
+
+function ensureMapLibreDiagnosticRaf(record) {
+  if (!record || record.diagnosticRaf) return;
+  record.diagnosticUiWindowStart = performance.now();
+  record.diagnosticUiFrameCount = 0;
+  record.diagnosticMoveWindowStart = performance.now();
+  record.diagnosticMoveCount = 0;
+  const tick = (now) => {
+    if (!record.container?.isConnected || !mapDiagnosticIsActive()) {
+      record.diagnosticRaf = 0;
+      return;
+    }
+    record.diagnosticUiFrameCount = (record.diagnosticUiFrameCount || 0) + 1;
+    const elapsed = now - (record.diagnosticUiWindowStart || now);
+    if (elapsed >= 650) {
+      record.diagnosticUiFps = record.diagnosticUiFrameCount * 1000 / elapsed;
+      record.diagnosticUiWindowStart = now;
+      record.diagnosticUiFrameCount = 0;
+
+      const moveElapsed = now - (record.diagnosticMoveWindowStart || now);
+      if (moveElapsed > 0) record.diagnosticMovesPerSecond = (record.diagnosticMoveCount || 0) * 1000 / moveElapsed;
+      record.diagnosticMoveWindowStart = now;
+      record.diagnosticMoveCount = 0;
+      syncMapLibreDiagnosticReadout(record);
+    }
+    record.diagnosticRaf = requestAnimationFrame(tick);
+  };
+  record.diagnosticRaf = requestAnimationFrame(tick);
+}
+
+function stopMapLibreDiagnosticRaf(record) {
+  if (!record?.diagnosticRaf) return;
+  cancelAnimationFrame(record.diagnosticRaf);
+  record.diagnosticRaf = 0;
+}
+
+function countMapLibreDiagnosticMove(record) {
+  if (!record || (!mapDiagnosticIsActive() && !perfState.enabled)) return;
+  record.diagnosticMoveCount = (record.diagnosticMoveCount || 0) + 1;
 }
 
 function recordMapLibreRenderFrame(record) {
   if (!record || (!mapDiagnosticIsActive() && !perfState.enabled)) return;
   const now = performance.now();
-  record.diagnosticFrameCount = (record.diagnosticFrameCount || 0) + 1;
-  if (!record.diagnosticWindowStart) {
-    record.diagnosticWindowStart = now;
-    record.diagnosticFrameCount = 0;
+  record.diagnosticGlFrameCount = (record.diagnosticGlFrameCount || 0) + 1;
+  if (!record.diagnosticGlWindowStart) {
+    record.diagnosticGlWindowStart = now;
+    record.diagnosticGlFrameCount = 0;
     return;
   }
-  const elapsed = now - record.diagnosticWindowStart;
+  const elapsed = now - record.diagnosticGlWindowStart;
   if (elapsed < 650) return;
-  record.diagnosticFps = record.diagnosticFrameCount * 1000 / elapsed;
-  record.diagnosticWindowStart = now;
-  record.diagnosticFrameCount = 0;
+  record.diagnosticGlFps = record.diagnosticGlFrameCount * 1000 / elapsed;
+  record.diagnosticGlWindowStart = now;
+  record.diagnosticGlFrameCount = 0;
   syncMapLibreDiagnosticReadout(record);
   if (perfState.enabled) {
     const stats = mapLibreDiagnosticStats(record);
@@ -1021,11 +1092,17 @@ function recordMapLibreRenderFrame(record) {
 function applyMapDiagnosticModePreference() {
   updateMapDiagnosticModeControl?.();
   mapLibreRecords.forEach((record) => {
-    record.diagnosticFrameCount = 0;
-    record.diagnosticWindowStart = 0;
-    record.diagnosticFps = 0;
+    record.diagnosticGlFrameCount = 0;
+    record.diagnosticGlWindowStart = 0;
+    record.diagnosticGlFps = 0;
+    record.diagnosticUiFrameCount = 0;
+    record.diagnosticUiWindowStart = 0;
+    record.diagnosticUiFps = 0;
+    record.diagnosticMoveCount = 0;
+    record.diagnosticMovesPerSecond = 0;
     clearMapLibreWeatherRecord(record);
     clearMapLibreMarkers(record);
+    syncMapLibreBaseLayerVisibility(record);
     syncMapLibreDiagnosticReadout(record);
   });
   if (!mapState.initialized || !state.activePlace) return;
@@ -1093,7 +1170,11 @@ function ensureMapLibreMap() {
     weatherEntrySeq: 0,
     weatherRenderSeq: 0,
     liveWeatherKeys: new Set(),
-    markerEntries: new Map()
+    markerEntries: new Map(),
+    diagnosticRaf: 0,
+    diagnosticGlFps: 0,
+    diagnosticUiFps: 0,
+    diagnosticMovesPerSecond: 0
   };
   mapLibreRecords.set(container, record);
 
@@ -1142,8 +1223,14 @@ function ensureMapLibreMap() {
   map.on("render", () => recordMapLibreRenderFrame(record));
   map.on("movestart", () => beginMapLibreInteraction(map));
   map.on("zoomstart", () => beginMapLibreInteraction(map));
-  map.on("move", () => syncMapLibreStateAndOverlays(map));
-  map.on("zoom", () => syncMapLibreStateAndOverlays(map));
+  map.on("move", () => {
+    countMapLibreDiagnosticMove(record);
+    syncMapLibreStateAndOverlays(map);
+  });
+  map.on("zoom", () => {
+    countMapLibreDiagnosticMove(record);
+    syncMapLibreStateAndOverlays(map);
+  });
   map.on("moveend", () => scheduleMapLibreSettle(map));
   map.on("zoomend", () => scheduleMapLibreSettle(map));
   map.on("click", (event) => {
@@ -1216,6 +1303,7 @@ function destroyMapLibreRecord(container) {
   const record = mapLibreRecords.get(container);
   if (!record) return;
   if (record.fallbackTimer) clearTimeout(record.fallbackTimer);
+  stopMapLibreDiagnosticRaf(record);
   clearMapLibreWeatherRecord(record);
   clearMapLibreMarkers(record);
   container.querySelector(":scope > .map-diagnostic-readout")?.remove();

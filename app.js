@@ -1,4 +1,4 @@
-const VERSION = "3.0.35";
+const VERSION = "3.0.36";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -85,6 +85,14 @@ const MAP_DIAGNOSTIC_MODES = {
   full: {
     label: "Full stack",
     meta: "Normal WebGL map"
+  },
+  blank: {
+    label: "Blank GL",
+    meta: "Empty WebGL canvas"
+  },
+  "base-no-labels": {
+    label: "Base no labels",
+    meta: "Basemap without labels"
   },
   base: {
     label: "Basemap only",
