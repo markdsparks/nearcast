@@ -12,6 +12,7 @@ const DEFAULT_ZOOM = 11;
 const DEFAULT_WIDTH = 900;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_OUT = "/tmp/nearcast-mrms-preview.png";
+const DEFAULT_STYLE = "continuous";
 const PNG_SIGNATURE = "89504e470d0a1a0a";
 const RADAR_RAMP = [
   { value: 5, color: [108, 201, 255, 90] },
@@ -22,6 +23,17 @@ const RADAR_RAMP = [
   { value: 55, color: [239, 64, 64, 235] },
   { value: 65, color: [187, 76, 232, 240] },
   { value: 75, color: [255, 224, 255, 245] }
+];
+const RESOLVED_RAMP = [
+  { value: 4, color: [5, 83, 30, 175] },
+  { value: 12, color: [19, 125, 39, 195] },
+  { value: 20, color: [49, 174, 75, 215] },
+  { value: 28, color: [252, 224, 60, 225] },
+  { value: 36, color: [247, 155, 36, 235] },
+  { value: 44, color: [235, 76, 35, 242] },
+  { value: 54, color: [203, 24, 28, 245] },
+  { value: 64, color: [156, 55, 178, 248] },
+  { value: 74, color: [245, 227, 255, 250] }
 ];
 
 const args = parseArgs(process.argv.slice(2));
@@ -70,7 +82,58 @@ async function main() {
       : numberArg(args.lon, DEFAULT_LON);
   const zoom = numberArg(args.zoom, DEFAULT_ZOOM);
   const threshold = numberArg(args.threshold, 5);
-  const smooth = numberArg(args.smooth, 1.15);
+  const styleName = normalizeStyle(args.style || DEFAULT_STYLE);
+  const smooth = numberArg(args.smooth, styleName === "resolved" ? 2.15 : 1.15);
+  const style = radarStyle(styleName, args);
+  const compare = Boolean(args.compare);
+
+  if (compare) {
+    const variants = comparisonVariants(styleName, smooth, args);
+    const panels = variants.map((variant) => ({
+      ...variant,
+      output: renderViewport({
+        values,
+        grid: parsed.grid,
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height,
+        threshold,
+        smooth: variant.smooth,
+        style: variant.style,
+        basemap: !args.transparent
+      })
+    }));
+    const sheet = composeComparison(panels, width, height);
+    const outPath = args.out || DEFAULT_OUT;
+    fs.writeFileSync(outPath, encodePngRgba(sheet.width, sheet.height, sheet.pixels));
+    console.log(JSON.stringify({
+      ...summary,
+      stats,
+      render: {
+        out: outPath,
+        centerLat,
+        centerLon,
+        zoom,
+        width: sheet.width,
+        height: sheet.height,
+        panelWidth: width,
+        panelHeight: height,
+        threshold,
+        focus: args.focus || "manual",
+        compare: panels.map((panel) => ({
+          label: panel.label,
+          style: panel.style.name,
+          smooth: panel.smooth,
+          radarPixels: panel.output.radarPixels,
+          maxRenderedDbz: round(panel.output.maxRenderedDbz, 1)
+        }))
+      }
+    }, null, 2));
+    return;
+  }
+
   const output = renderViewport({
     values,
     grid: parsed.grid,
@@ -81,6 +144,7 @@ async function main() {
     height,
     threshold,
     smooth,
+    style,
     basemap: !args.transparent
   });
 
@@ -98,6 +162,7 @@ async function main() {
       height,
       threshold,
       smooth,
+      style: style.name,
       radarPixels: output.radarPixels,
       maxRenderedDbz: round(output.maxRenderedDbz, 1),
       transparent: Boolean(args.transparent),
@@ -337,7 +402,7 @@ function decodeGridValues(samples, representation) {
   return values;
 }
 
-function renderViewport({ values, grid, centerLat, centerLon, zoom, width, height, threshold, smooth, basemap }) {
+function renderViewport({ values, grid, centerLat, centerLon, zoom, width, height, threshold, smooth, style, basemap }) {
   const pixels = new Uint8ClampedArray(width * height * 4);
   const worldSize = 512 * (2 ** zoom);
   const center = lonLatToWorld(centerLon, centerLat, worldSize);
@@ -353,14 +418,14 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
       const worldY = center.y + y - height / 2;
       const { lon, lat } = worldToLonLat(worldX, worldY, worldSize);
       const dbz = sampleGrid(values, grid, lat, lon, smooth);
-      const thresholdFade = smoothstep(threshold - 3, threshold + 2, dbz);
+      const thresholdFade = smoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
       if (!Number.isFinite(dbz) || thresholdFade <= 0) {
         if (!basemap) pixels[outIndex + 3] = 0;
         continue;
       }
 
-      const color = radarColor(dbz);
-      const alpha = color[3] / 255 * thresholdFade;
+      const color = radarColor(dbz, style);
+      const alpha = Math.min(1, color[3] / 255 * thresholdFade * style.alphaScale);
       pixels[outIndex] = Math.round(color[0] * alpha + pixels[outIndex] * (1 - alpha));
       pixels[outIndex + 1] = Math.round(color[1] * alpha + pixels[outIndex + 1] * (1 - alpha));
       pixels[outIndex + 2] = Math.round(color[2] * alpha + pixels[outIndex + 2] * (1 - alpha));
@@ -371,6 +436,40 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
   }
 
   return { pixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+}
+
+function composeComparison(panels, panelWidth, panelHeight) {
+  const gutter = 18;
+  const width = panels.length * panelWidth + (panels.length - 1) * gutter;
+  const height = panelHeight;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+
+  for (let i = 0; i < panels.length; i += 1) {
+    const xOffset = i * (panelWidth + gutter);
+    copyPanel(panels[i].output.pixels, pixels, panelWidth, panelHeight, width, xOffset);
+  }
+
+  for (let x = panelWidth; x < width; x += panelWidth + gutter) {
+    for (let y = 0; y < height; y += 1) {
+      for (let gx = x; gx < Math.min(x + gutter, width); gx += 1) {
+        const index = (y * width + gx) * 4;
+        pixels[index] = 244;
+        pixels[index + 1] = 246;
+        pixels[index + 2] = 248;
+        pixels[index + 3] = 255;
+      }
+    }
+  }
+
+  return { width, height, pixels };
+}
+
+function copyPanel(source, target, panelWidth, panelHeight, targetWidth, xOffset) {
+  for (let y = 0; y < panelHeight; y += 1) {
+    const sourceStart = y * panelWidth * 4;
+    const targetStart = (y * targetWidth + xOffset) * 4;
+    target.set(source.subarray(sourceStart, sourceStart + panelWidth * 4), targetStart);
+  }
 }
 
 function gridValueStats(values, grid) {
@@ -511,17 +610,101 @@ function smoothstep(edge0, edge1, value) {
   return t * t * (3 - 2 * t);
 }
 
-function radarColor(value) {
-  if (value <= RADAR_RAMP[0].value) return RADAR_RAMP[0].color;
-  for (let i = 1; i < RADAR_RAMP.length; i += 1) {
-    const prev = RADAR_RAMP[i - 1];
-    const next = RADAR_RAMP[i];
+function radarColor(value, style) {
+  const styledValue = contourValue(value, style);
+  return rampColor(styledValue, style.ramp);
+}
+
+function contourValue(value, style) {
+  if (!Number.isFinite(value) || !style.bandStep) return value;
+  const base = style.bandBase;
+  const step = style.bandStep;
+  if (value <= base) return value;
+
+  const rawBand = (value - base) / step;
+  const bandIndex = Math.floor(rawBand);
+  const fraction = rawBand - bandIndex;
+  const current = base + bandIndex * step + step * 0.5;
+  const previous = Math.max(base, current - step);
+  const next = current + step;
+  const feather = style.bandFeather;
+
+  if (feather > 0 && fraction < feather) {
+    return mix(previous, current, smoothstep(0, feather, fraction));
+  }
+  if (feather > 0 && fraction > 1 - feather) {
+    return mix(current, next, smoothstep(1 - feather, 1, fraction));
+  }
+  return current;
+}
+
+function rampColor(value, ramp) {
+  if (value <= ramp[0].value) return ramp[0].color;
+  for (let i = 1; i < ramp.length; i += 1) {
+    const prev = ramp[i - 1];
+    const next = ramp[i];
     if (value <= next.value) {
-      const t = (value - prev.value) / (next.value - prev.value);
+      const t = smoothstep(0, 1, (value - prev.value) / (next.value - prev.value));
       return prev.color.map((channel, index) => Math.round(channel + (next.color[index] - channel) * t));
     }
   }
-  return RADAR_RAMP[RADAR_RAMP.length - 1].color;
+  return ramp[ramp.length - 1].color;
+}
+
+function mix(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function normalizeStyle(value) {
+  const next = String(value || DEFAULT_STYLE).toLowerCase();
+  if (next === "resolved" || next === "field" || next === "contour" || next === "contoured") return "resolved";
+  return "continuous";
+}
+
+function radarStyle(name, options = {}) {
+  if (name === "resolved") {
+    return {
+      name,
+      ramp: RESOLVED_RAMP,
+      alphaScale: numberArg(options.alpha, 1.04),
+      fadeBelow: numberArg(options["fade-below"], 5),
+      fadeAbove: numberArg(options["fade-above"], 1.75),
+      bandBase: numberArg(options["band-base"], 5),
+      bandStep: numberArg(options["band-step"], 0),
+      bandFeather: numberArg(options["band-feather"], 0.4)
+    };
+  }
+
+  return {
+    name: "continuous",
+    ramp: RADAR_RAMP,
+    alphaScale: numberArg(options.alpha, 1),
+    fadeBelow: numberArg(options["fade-below"], 3),
+    fadeAbove: numberArg(options["fade-above"], 2),
+    bandBase: 5,
+    bandStep: 0,
+    bandFeather: 0
+  };
+}
+
+function comparisonVariants(styleName, smooth, argsForStyle) {
+  return [
+    {
+      label: "continuous",
+      smooth: 0.05,
+      style: radarStyle("continuous", argsForStyle)
+    },
+    {
+      label: "smoothed",
+      smooth,
+      style: radarStyle("continuous", argsForStyle)
+    },
+    {
+      label: "resolved",
+      smooth: Math.max(smooth, 2.15),
+      style: radarStyle("resolved", argsForStyle)
+    }
+  ];
 }
 
 function paintSoftBasemap(pixels, index, x, y, width, height) {
@@ -667,8 +850,12 @@ Options:
   --height=900               Output image height.
   --focus=max                Center on the strongest decoded radar cell.
   --focus=edge               Center on a high-gradient precip edge.
+  --style=continuous         Visual style: continuous or resolved.
   --threshold=5              Minimum dBZ to draw.
-  --smooth=1.15              Data-space smoothing radius in source cells.
+  --smooth=1.15              Data-space smoothing radius; resolved defaults to 2.15.
+  --band-step=0              Resolved style contour band size; 0 disables bands.
+  --band-feather=0.4         Resolved style band transition width.
+  --compare                  Render continuous, smoothed, and resolved panels.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
   --out=/tmp/file.png        Output PNG path.

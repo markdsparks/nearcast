@@ -58,8 +58,16 @@ node scripts/mrms-prototype/render-mrms-preview.mjs \
   --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
   --focus=edge \
   --zoom=11 \
-  --smooth=1.35 \
+  --style=resolved \
   --out=/tmp/nearcast-mrms-edge-z11.png
+
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
+  --focus=edge \
+  --zoom=11 \
+  --style=resolved \
+  --compare \
+  --out=/tmp/nearcast-mrms-style-compare-z11.png
 ```
 
 What the renderer currently supports:
@@ -71,6 +79,8 @@ What the renderer currently supports:
 - Bilinear data-space sampling into a local Web Mercator viewport.
 - Optional Gaussian data-space smoothing before threshold/color.
 - `--focus=max` and `--focus=edge` to quickly find hard visual test cases.
+- `--style=resolved` for a more polished, high-specificity field style.
+- `--compare` for side-by-side continuous, smoothed, and resolved panels.
 - Simple radar colorization into a PNG preview.
 
 Early read:
@@ -83,6 +93,12 @@ Early read:
 - A small data-space smoothing kernel makes edges more intentional, but deep
   zoom still needs product/style tuning because the public MRMS source grid is
   finite resolution.
+- The best current visual direction is the `resolved` style: saturated green to
+  yellow/orange field rendering with stronger opacity and smoother source-space
+  sampling. It looks more like a premium radar product without pretending the
+  raw grid has road-level certainty.
+- Explicit contour bands (`--band-step`) are available, but they are not the
+  default because obvious rings make the image feel manufactured.
 
 Current local heavy-tool gap:
 
