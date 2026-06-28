@@ -29,10 +29,19 @@ Current spike status:
 - Provider bake-off scaffold added in `scripts/provider-bakeoff/README.md`.
 - MRMS S3 discovery harness added in
   `scripts/mrms-prototype/list-mrms.mjs`.
+- MRMS single-frame render harness added in
+  `scripts/mrms-prototype/render-mrms-preview.mjs` for PNG-compressed GRIB2
+  products.
 - Public MRMS listing works from the local environment. The `CONUS/` catalog
   includes radar candidates such as `MergedReflectivityQCComposite_00.50`,
   `ReflectivityAtLowestAltitude_00.50`, `PrecipRate_00.00`, and
   `SeamlessHSR_00.00`.
+- First inspected `MergedReflectivityQCComposite_00.50` frames are GRIB2 grid
+  template `3.0` plus PNG-compressed data template `5.41`: `7000 x 3500`,
+  `0.01` degree spacing, 16-bit encoded values, no bitmap.
+- Early visual finding: raw MRMS lets us smooth in data-space before
+  colorization, but deep zoom still needs product/style tuning because the
+  source grid resolution remains visible at storm edges.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 
@@ -96,6 +105,8 @@ Why this is different from WMS:
 - WMS sends us already-colored pixels.
 - Raw MRMS gives us values, so we can interpolate in data-space, smooth before
   colorization, tune alpha, generate contours, and avoid blocky color cells.
+- It does not create unlimited precision. At close zoom, styling must be honest
+  about the finite MRMS grid while avoiding ugly raster artifacts.
 
 Prototype acceptance checklist:
 
@@ -151,8 +162,8 @@ Tile/render output options:
    `radarProvider = noaa-wms | xweather-mapsgl`.
 3. Use `scripts/mrms-prototype/list-mrms.mjs` to select the first MRMS product
    frames for visual comparison.
-4. Add a minimal MRMS decode/render harness once the decode toolchain is
-   selected.
+4. Use the MRMS preview renderer to compare `MergedReflectivityQCComposite`,
+   `ReflectivityAtLowestAltitude`, and `PrecipRate` at z9, z11, and z13.
 5. Test both tracks against the same places and zoom bands:
    z7.5, z9, z11, z13, z16, z18.
 6. Decide:

@@ -38,16 +38,62 @@ Good first products to compare:
 
 ## Step 2: decode
 
-Current local tool gap:
+The first practical decode path is now dependency-free for the initial MRMS
+reflectivity products we inspected:
+
+```bash
+curl -L --max-time 30 -o /tmp/nearcast-mrms-reflectivity.grib2.gz \
+  "https://noaa-mrms-pds.s3.amazonaws.com/CONUS/MergedReflectivityQCComposite_00.50/20260628/MRMS_MergedReflectivityQCComposite_00.50_20260628-140037.grib2.gz"
+
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
+  --probe
+
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
+  --zoom=11 \
+  --out=/tmp/nearcast-mrms-preview.png
+
+node scripts/mrms-prototype/render-mrms-preview.mjs \
+  --file=/tmp/nearcast-mrms-reflectivity.grib2.gz \
+  --focus=edge \
+  --zoom=11 \
+  --smooth=1.35 \
+  --out=/tmp/nearcast-mrms-edge-z11.png
+```
+
+What the renderer currently supports:
+
+- GRIB2 grid definition template `3.0` latitude/longitude grids.
+- GRIB2 data representation template `5.41` PNG-compressed values.
+- Embedded 16-bit grayscale PNG extraction and decoding.
+- GRIB scale-factor conversion back to dBZ-like values.
+- Bilinear data-space sampling into a local Web Mercator viewport.
+- Optional Gaussian data-space smoothing before threshold/color.
+- `--focus=max` and `--focus=edge` to quickly find hard visual test cases.
+- Simple radar colorization into a PNG preview.
+
+Early read:
+
+- The `MergedReflectivityQCComposite_00.50` product inspected here uses a
+  `7000 x 3500` grid at roughly `0.01` degree spacing.
+- It stores values as GRIB2 template `5.41`, with a 16-bit grayscale PNG payload.
+- No-echo values need to be normalized before interpolation; otherwise edge
+  rendering stair-steps badly.
+- A small data-space smoothing kernel makes edges more intentional, but deep
+  zoom still needs product/style tuning because the public MRMS source grid is
+  finite resolution.
+
+Current local heavy-tool gap:
 
 - `wgrib2` is not installed.
 - `gdal_translate` is not installed.
 - Python `pygrib`, `eccodes`, `cfgrib`, `PIL`, and `osgeo` are not installed.
 - Python `numpy` is installed.
 
-The preferred next spike is to add a local/container decode path using either
-`wgrib2` or ecCodes, then output a single PNG/WebP viewport for Maryville at
-z9, z11, and z13 before we generate tiles.
+The dependency-free path is enough for the first visual quality spike. We may
+still want `wgrib2` or ecCodes before production if we need broader product
+support, reprojection, metadata validation, or automated tile generation.
 
 ## Success bar
 
