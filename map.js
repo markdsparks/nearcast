@@ -1167,6 +1167,26 @@ function applyRadarSourceZoomPreference() {
   syncMapZoomDebugReadout();
 }
 
+function applyRadarProviderPreference() {
+  clearMapLibreWeather();
+  if (!mapState.initialized || !state.activePlace) return;
+  renderMapLegend();
+  const timelineKind = mapState.immersive
+    ? "precip"
+    : mapState.timelineKind === "forecast" ? "forecast" : "radar";
+  if (timelineKind === "forecast") {
+    renderTileMap();
+    if (mapState.frames.length) showFrame(mapState.frameIndex);
+    return;
+  }
+  loadMapFrames(true, {
+    timelineKind,
+    focusNow: timelineKind === "precip",
+    focusLatest: timelineKind === "radar",
+    resumePlayback: mapState.playing
+  });
+}
+
 function ensureMapLibreMap() {
   if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return null;
   const container = els.weatherMap;
@@ -1721,6 +1741,16 @@ function rainViewerTileUrl(data, frame) {
 }
 
 async function fetchRadarFrames() {
+  const provider = radarProviderPreference();
+  if (provider === "mrms-generated") {
+    try {
+      const generatedFrames = await fetchGeneratedMrmsRadarFrames();
+      if (generatedFrames.length) return generatedFrames;
+    } catch {
+      /* Generated MRMS is still a spike path; fall through to the proven sources. */
+    }
+  }
+
   try {
     const nwsFrames = await fetchNwsRadarFrames();
     if (nwsFrames.length) return nwsFrames;
@@ -1728,6 +1758,109 @@ async function fetchRadarFrames() {
     /* RainViewer remains the global/fallback radar source for this spike. */
   }
   return fetchRainViewerFrames();
+}
+
+function radarProviderPreference() {
+  return sanitizeRadarProvider?.(state.radarProvider) || "auto";
+}
+
+function generatedMrmsManifestUrl() {
+  try {
+    return localStorage.getItem(RADAR_MANIFEST_URL_KEY) || MRMS_RADAR_MANIFEST_URL;
+  } catch {
+    return MRMS_RADAR_MANIFEST_URL;
+  }
+}
+
+async function fetchGeneratedMrmsRadarFrames() {
+  const manifestUrl = generatedMrmsManifestUrl();
+  const response = await fetch(manifestUrl, { cache: "no-store" });
+  if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
+  const manifest = await response.json();
+  return normalizeGeneratedMrmsFrames(manifest, manifestUrl);
+}
+
+function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
+  const frames = Array.isArray(manifest?.frames)
+    ? manifest.frames
+    : Array.isArray(manifest?.radarFrames) ? manifest.radarFrames : [];
+  const manifestMaxZoom = Number(manifest?.maxZoom ?? manifest?.maxzoom);
+  const manifestMinZoom = Number(manifest?.minZoom ?? manifest?.minzoom);
+  const attribution = manifest?.attribution || "NOAA MRMS · Nearcast";
+  const style = manifest?.style || "banded";
+
+  return frames
+    .map((frame) => normalizeGeneratedMrmsFrame(frame, {
+      manifestUrl,
+      manifestMaxZoom,
+      manifestMinZoom,
+      attribution,
+      style
+    }))
+    .filter(Boolean)
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function normalizeGeneratedMrmsFrame(frame, context) {
+  const timestamp = generatedFrameTimestamp(frame);
+  const layers = Array.isArray(frame?.layers) ? frame.layers : [];
+  const firstLayerTemplate = layers
+    .map((layer) => layer?.url || layer?.tileUrl || layer?.template)
+    .find(Boolean);
+  const template = frame?.url || frame?.tileUrl || frame?.template || firstLayerTemplate;
+  if (!Number.isFinite(timestamp) || (!template && !layers.length)) return null;
+  const maxZoom = Number(frame?.maxZoom ?? frame?.maxzoom ?? context.manifestMaxZoom);
+  const minZoom = Number(frame?.minZoom ?? frame?.minzoom ?? context.manifestMinZoom);
+  const normalized = {
+    label: frame?.label || radarTimelineLabel(timestamp),
+    time: frame?.time || new Date(timestamp).toISOString(),
+    timestamp,
+    url: resolveGeneratedRadarUrl(template, context.manifestUrl),
+    source: "radar",
+    sourceLabel: frame?.sourceLabel || "Radar",
+    attribution: frame?.attribution || context.attribution,
+    provider: "mrms-generated",
+    style: frame?.style || context.style,
+    maxZoom: Number.isFinite(maxZoom) ? maxZoom : 14
+  };
+  if (Number.isFinite(minZoom)) normalized.minZoom = minZoom;
+  if (layers.length) {
+    normalized.layers = layers
+      .map((layer) => normalizeGeneratedMrmsLayer(layer, normalized.url, context.manifestUrl))
+      .filter(Boolean);
+  }
+  return normalized;
+}
+
+function normalizeGeneratedMrmsLayer(layer, fallbackUrl, manifestUrl) {
+  const template = layer?.url || layer?.tileUrl || layer?.template || fallbackUrl;
+  if (!template) return null;
+  const opacity = Number(layer?.opacity);
+  return {
+    url: resolveGeneratedRadarUrl(template, manifestUrl),
+    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(opacity, 1)) : 0.78
+  };
+}
+
+function generatedFrameTimestamp(frame) {
+  if (Number.isFinite(Number(frame?.timestamp))) {
+    const raw = Number(frame.timestamp);
+    return raw < 100000000000 ? raw * 1000 : raw;
+  }
+  const value = frame?.time || frame?.validTime || frame?.observedAt;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : NaN;
+}
+
+function resolveGeneratedRadarUrl(template, manifestUrl) {
+  if (!template) return "";
+  const value = String(template);
+  if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
+  try {
+    return new URL(value, new URL(manifestUrl, window.location.href)).toString();
+  } catch {
+    return value;
+  }
 }
 
 function radarPrecipSignalKey(signal) {

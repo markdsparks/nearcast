@@ -40,6 +40,25 @@ The adapter needs to provide:
 - A way to sample or query precipitation near a lat/lon, or a documented
   fallback to the current radar-truth sampling.
 
+`mrms-generated` now enters through the same frame contract by reading
+`radar/mrms/manifest.json`. A generated manifest should expose frames like:
+
+```json
+{
+  "provider": "mrms-generated",
+  "style": "banded",
+  "generatedAt": "2026-06-28T17:36:07Z",
+  "minZoom": 4,
+  "maxZoom": 14,
+  "frames": [
+    {
+      "time": "2026-06-28T17:36:07Z",
+      "url": "20260628-173607/{z}/{x}/{y}.webp"
+    }
+  ]
+}
+```
+
 ## Test matrix
 
 Use the same places, frames, and zoom bands for every provider:

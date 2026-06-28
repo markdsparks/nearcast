@@ -1,0 +1,9 @@
+{
+  "provider": "mrms-generated",
+  "style": "banded",
+  "generatedAt": null,
+  "minZoom": 4,
+  "maxZoom": 14,
+  "attribution": "NOAA MRMS · Nearcast",
+  "frames": []
+}

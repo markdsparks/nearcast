@@ -52,6 +52,11 @@ Current spike status:
   z7.4 upward with columns for current NOAA WMS, MRMS raw, MRMS banded, and
   MRMS resolved. This directly shows where the current WMS path becomes blocky
   as Nearcast overzooms its capped radar source.
+- App-side integration has started behind `radarProvider = auto | noaa-wms |
+  mrms-generated`. The app reads a generated-MRMS manifest from
+  `radar/mrms/manifest.json`, normalizes it into the existing radar frame model,
+  and falls back to the current NOAA/RainViewer path if the manifest is empty or
+  unavailable.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 
@@ -109,6 +114,8 @@ Prototype shape:
 4. Render a single local test viewport first, then tile it.
 5. Add zoom-aware styling before colorization, not after rasterization.
 6. Compare against the same z7.5-z13 test band.
+7. Publish a manifest whose frames use `{z}/{x}/{y}` tile templates that the
+   app can consume through the `mrms-generated` provider.
 
 Why this is different from WMS:
 
@@ -147,6 +154,8 @@ Nearcast app:
 - Keeps MapLibre as the map shell.
 - Loads radar as a custom raster/vector-like layer from our generated tiles.
 - Keeps existing NOAA WMS as fallback.
+- Does not decode GRIB2 in the browser; it consumes a small generated manifest
+  plus pre-rendered tiles.
 
 Radar processing job:
 

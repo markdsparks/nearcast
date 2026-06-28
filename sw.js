@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v3045";
-const ASSET_VERSION = "3.0.45";
+const CACHE = "nearcast-v3046";
+const ASSET_VERSION = "3.0.46";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -104,6 +104,7 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("tile.openstreetmap") ||
     url.hostname.includes("basemaps.cartocdn.com") ||
     url.hostname.includes("tilecache") ||
+    url.pathname.includes("/radar/mrms/") ||
     url.pathname.includes("/v2/radar/") ||
     url.pathname.includes("/nowcast/")
   ) {

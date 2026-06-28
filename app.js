@@ -1,4 +1,4 @@
-const VERSION = "3.0.45";
+const VERSION = "3.0.46";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6,7 +6,10 @@ const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
+const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
+const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
+const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
@@ -143,6 +146,16 @@ if (radarSourceZoomQueryFlag !== null) {
   localStorage.setItem(RADAR_SOURCE_ZOOM_KEY, sanitizeRadarSourceZoom(radarSourceZoomQueryFlag));
 }
 
+const radarProviderQueryFlag = queryValue("radarProvider", "radarprovider", "radar");
+if (radarProviderQueryFlag !== null) {
+  localStorage.setItem(RADAR_PROVIDER_KEY, sanitizeRadarProvider(radarProviderQueryFlag));
+}
+
+const radarManifestQueryFlag = queryValue("radarManifest", "radarmanifest", "mrmsManifest", "mrmsmanifest");
+if (radarManifestQueryFlag) {
+  localStorage.setItem(RADAR_MANIFEST_URL_KEY, radarManifestQueryFlag);
+}
+
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 let mapLibreAssetPromise = null;
 let mapLibreCssPromise = null;
@@ -158,6 +171,7 @@ const state = {
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
+  radarProvider: sanitizeRadarProvider(localStorage.getItem(RADAR_PROVIDER_KEY)),
   radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
   sunriseMs: null,
   sunsetMs: null,
@@ -559,6 +573,8 @@ const els = {
   mapRendererMeta: document.querySelector("#mapRendererMeta"),
   mapDiagnosticMode: document.querySelector("#mapDiagnosticMode"),
   mapDiagnosticMeta: document.querySelector("#mapDiagnosticMeta"),
+  radarProvider: document.querySelector("#radarProvider"),
+  radarProviderMeta: document.querySelector("#radarProviderMeta"),
   radarSourceZoom: document.querySelector("#radarSourceZoom"),
   radarSourceMeta: document.querySelector("#radarSourceMeta"),
   forecastView: document.querySelector("#forecastView"),
@@ -2632,6 +2648,9 @@ function bindEvents() {
   if (els.mapDiagnosticMode) {
     els.mapDiagnosticMode.addEventListener("change", () => setMapDiagnosticMode(els.mapDiagnosticMode.value));
   }
+  if (els.radarProvider) {
+    els.radarProvider.addEventListener("change", () => setRadarProvider(els.radarProvider.value));
+  }
   if (els.radarSourceZoom) {
     els.radarSourceZoom.addEventListener("change", () => setRadarSourceZoom(els.radarSourceZoom.value));
   }
@@ -3222,6 +3241,13 @@ function sanitizeRadarSourceZoom(value) {
   return "auto";
 }
 
+function sanitizeRadarProvider(value) {
+  const mode = String(value || "auto").toLowerCase();
+  if (mode === "mrms" || mode === "mrms-generated" || mode === "generated") return "mrms-generated";
+  if (mode === "noaa" || mode === "noaa-wms" || mode === "wms") return "noaa-wms";
+  return "auto";
+}
+
 function timeFormatMetaText() {
   if (state.timeFormat === "12") return "Always show 6:00 PM";
   if (state.timeFormat === "24") return "Always show 18:00";
@@ -3262,14 +3288,36 @@ function mapDiagnosticMetaText() {
 }
 
 function radarSourceMetaText() {
-  if (state.radarSourceZoom === "10") return "Forcing NOAA WMS z10";
-  if (state.radarSourceZoom === "12") return "Forcing NOAA WMS z12";
+  if (state.radarSourceZoom === "10") return "Forcing radar z10";
+  if (state.radarSourceZoom === "12") return "Forcing radar z12";
+  if (state.radarProvider === "mrms-generated") return "Auto: generated max zoom";
   return `Auto: NOAA WMS z${RADAR_TILE_MAX_ZOOM}`;
 }
 
+function radarProviderMetaText() {
+  if (state.radarProvider === "mrms-generated") return "Generated MRMS, NOAA fallback";
+  if (state.radarProvider === "noaa-wms") return "NOAA WMS with RainViewer fallback";
+  return "Auto: NOAA WMS";
+}
+
+function updateRadarProviderControl() {
+  if (els.radarProvider) els.radarProvider.value = state.radarProvider;
+  if (els.radarProviderMeta) els.radarProviderMeta.textContent = radarProviderMetaText();
+}
+
 function updateRadarSourceZoomControl() {
+  updateRadarProviderControl();
   if (els.radarSourceZoom) els.radarSourceZoom.value = state.radarSourceZoom;
   if (els.radarSourceMeta) els.radarSourceMeta.textContent = radarSourceMetaText();
+}
+
+function setRadarProvider(value) {
+  const next = sanitizeRadarProvider(value);
+  if (next === state.radarProvider) return;
+  state.radarProvider = next;
+  localStorage.setItem(RADAR_PROVIDER_KEY, next);
+  updateRadarProviderControl();
+  if (typeof applyRadarProviderPreference === "function") applyRadarProviderPreference();
 }
 
 function setRadarSourceZoom(value) {
