@@ -580,6 +580,10 @@ function mapLibreWeatherLayerPaint(opacity) {
   };
 }
 
+function mapLibreWeatherOpacity(spec) {
+  return spec?.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec?.opacity ?? 0.78;
+}
+
 function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
   if (!mapState.frames.length) return [];
   const N = mapState.frames.length;
@@ -654,17 +658,56 @@ function syncMapLibreWeatherSlots(record, specs = []) {
   if (!map || !map.isStyleLoaded?.()) return;
   if (!record.weatherSlots) record.weatherSlots = [];
 
-  specs.forEach((spec, slotIndex) => syncMapLibreWeatherSlot(record, slotIndex, spec));
+  const deferred = [];
+  specs.forEach((spec, slotIndex) => {
+    const existing = record.weatherSlots[slotIndex];
+    const sourceSignature = mapLibreWeatherSourceSignature(spec);
+    if (!existing || existing.sourceSignature === sourceSignature) {
+      syncMapLibreWeatherSlot(record, slotIndex, spec);
+      return;
+    }
+    deferred.push({ slotIndex, spec });
+  });
+
+  // Promote any already-preloaded current frame before recycling the previous
+  // visible slot. Removing a visible raster source first causes a one-frame
+  // blank flash in MapLibre during radar playback.
+  deferred.forEach(({ slotIndex }) => {
+    const existing = record.weatherSlots[slotIndex];
+    if (existing?.layerId && map.getLayer(existing.layerId)) {
+      map.setPaintProperty(existing.layerId, "raster-opacity", 0);
+    }
+  });
+
+  if (deferred.length) {
+    scheduleMapLibreWeatherSlotSwaps(record, deferred);
+  }
+
   for (let slotIndex = specs.length; slotIndex < record.weatherSlots.length; slotIndex += 1) {
     removeMapLibreWeatherSlot(record, slotIndex);
   }
   record.weatherSlots.length = specs.length;
 }
 
+function mapLibreWeatherSourceSignature(spec) {
+  return `${spec.template}|${spec.maxZoom}|${spec.attribution}`;
+}
+
+function scheduleMapLibreWeatherSlotSwaps(record, swaps) {
+  record.pendingWeatherSwaps = swaps;
+  if (record.weatherSwapRaf) return;
+  record.weatherSwapRaf = requestAnimationFrame(() => {
+    record.weatherSwapRaf = 0;
+    const pending = record.pendingWeatherSwaps || [];
+    record.pendingWeatherSwaps = [];
+    pending.forEach(({ slotIndex, spec }) => syncMapLibreWeatherSlot(record, slotIndex, spec));
+  });
+}
+
 function syncMapLibreWeatherSlot(record, slotIndex, spec) {
   const map = record.map;
   const { sourceId, layerId } = mapLibreWeatherSlotIds(slotIndex);
-  const sourceSignature = `${spec.template}|${spec.maxZoom}|${spec.attribution}`;
+  const sourceSignature = mapLibreWeatherSourceSignature(spec);
   const existing = record.weatherSlots[slotIndex];
 
   if (!existing || existing.sourceSignature !== sourceSignature) {
@@ -681,10 +724,10 @@ function syncMapLibreWeatherSlot(record, slotIndex, spec) {
       id: layerId,
       type: "raster",
       source: sourceId,
-      paint: mapLibreWeatherLayerPaint(spec.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec.opacity)
+      paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec))
     }, mapLibreWeatherBeforeLayer(map));
   } else if (map.getLayer(layerId)) {
-    map.setPaintProperty(layerId, "raster-opacity", spec.preload ? MAPLIBRE_WEATHER_PRELOAD_OPACITY : spec.opacity);
+    map.setPaintProperty(layerId, "raster-opacity", mapLibreWeatherOpacity(spec));
   }
 
   record.weatherSlots[slotIndex] = {
@@ -707,6 +750,11 @@ function removeMapLibreWeatherSlot(record, slotIndex) {
 
 function clearMapLibreWeatherRecord(record) {
   if (!record?.weatherSlots) return;
+  if (record.weatherSwapRaf) {
+    cancelAnimationFrame(record.weatherSwapRaf);
+    record.weatherSwapRaf = 0;
+  }
+  record.pendingWeatherSwaps = [];
   for (let slotIndex = 0; slotIndex < record.weatherSlots.length; slotIndex += 1) {
     removeMapLibreWeatherSlot(record, slotIndex);
   }
@@ -718,7 +766,7 @@ function mapLibreBufferedRadarFrameReady(frameIndex) {
   if (!mapLibreRecordReady(record)) return false;
   const slot = record.weatherSlots?.find((item) => item?.frameIndex === frameIndex);
   if (!slot) return false;
-  return record.map.isSourceLoaded?.(slot.sourceId) || record.map.areTilesLoaded?.() || false;
+  return record.map.isSourceLoaded?.(slot.sourceId) || false;
 }
 
 function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
