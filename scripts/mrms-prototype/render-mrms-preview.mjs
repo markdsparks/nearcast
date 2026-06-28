@@ -1655,9 +1655,9 @@ function radarStyle(name, options = {}) {
       fadeAbove: numberArg(options["fade-above"], 1.25),
       bandBase: numberArg(options["band-base"], 5),
       bandStep: numberArg(options["band-step"], 7.5),
-      bandFeather: numberArg(options["band-feather"], 0.02),
-      separatorAlpha: numberArg(options["separator-alpha"], 0.12),
-      separatorWidth: numberArg(options["separator-width"], 0.16),
+      bandFeather: numberArg(options["band-feather"], 0),
+      separatorAlpha: numberArg(options["separator-alpha"], 0),
+      separatorWidth: numberArg(options["separator-width"], 0),
       separatorMode: String(options["separator-mode"] || "shade"),
       separatorShade: numberArg(options["separator-shade"], 0.74),
       separatorColor: parseRgb(options["separator-color"], [20, 31, 42])
@@ -1888,9 +1888,9 @@ Options:
   --threshold=5              Minimum dBZ to draw.
   --smooth=1.15              Data-space smoothing radius; resolved defaults to 2.15.
   --band-step=7.5            Banded style contour band size; resolved defaults to 0.
-  --band-feather=0.04        Banded style band transition width.
-  --separator-alpha=0.22     Banded style intensity-line strength.
-  --separator-width=0.28     Banded style intensity-line width in dBZ.
+  --band-feather=0           Banded style band transition width.
+  --separator-alpha=0        Banded style intensity-line strength.
+  --separator-width=0        Banded style intensity-line width in dBZ.
   --separator-mode=shade     Banded contour mode: shade or color.
   --separator-shade=0.74     Shade multiplier for same-hue contours.
   --compare                  Render continuous, banded, smoothed, and resolved panels.

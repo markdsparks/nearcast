@@ -73,7 +73,7 @@ node scripts/mrms-prototype/render-mrms-preview.mjs \
   --frame-id=sample-mrms-banded-max \
   --tile-out=radar/mrms/sample-mrms-banded-max \
   --manifest-out=radar/mrms/manifest.json \
-  --tile-version=clean-contour-1
+  --tile-version=no-border-1
 ```
 
 ## Test matrix

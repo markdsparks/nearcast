@@ -44,9 +44,9 @@ Current spike status:
   source grid resolution remains visible at storm edges.
 - Current visual target has split into two candidates. `resolved` gives a more
   premium green/yellow/orange weather-field look, but may hide raw radar
-  structure. `banded` starts from the raw radar read and adds discrete dBZ bands
-  plus subtle separator isolines so gradients feel intentional instead of
-  blurry.
+  structure. `banded` starts from the raw radar read and uses discrete dBZ bands
+  with no separate outline stroke, so color regions meet directly instead of
+  creating a border halo.
 - Current-vs-MRMS zoom comparison is now supported by the prototype renderer.
   The useful diagnostic is a bounded CONUS precip edge, rendered as rows from
   z7.4 upward with columns for current NOAA WMS, MRMS raw, MRMS banded, and
@@ -62,10 +62,10 @@ Current spike status:
   at z6-z14 under `radar/mrms/sample-mrms-banded-max/`, centered on the strongest
   CONUS radar cell in the local test frame, and exposes them through
   `radar/mrms/manifest.json` for the app's `mrms-generated` provider.
-- The first banded contour pass used a fixed dark separator color; on-device
+- The first banded contour passes used a separate separator stroke; on-device
   MapLibre resampling made those edges read as a gray-purple bleed. The current
-  sample uses thinner same-hue shade contours plus a tile URL version query so
-  mobile clients fetch the cleaner tiles.
+  sample removes the outline entirely and uses a tile URL version query so
+  mobile clients fetch the no-border tiles.
 - App behavior is unchanged until a provider key or decoded MRMS render proves
   better than the current fallback.
 
