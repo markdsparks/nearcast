@@ -1,4 +1,4 @@
-const VERSION = "3.0.36";
+const VERSION = "3.0.37";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -89,6 +89,10 @@ const MAP_DIAGNOSTIC_MODES = {
   blank: {
     label: "Blank GL",
     meta: "Empty WebGL canvas"
+  },
+  quiet: {
+    label: "Quiet shell",
+    meta: "Blank map, no sky effects"
   },
   "base-no-labels": {
     label: "Base no labels",
@@ -3222,7 +3226,15 @@ function mapDiagnosticMetaText() {
   return MAP_DIAGNOSTIC_MODES[state.mapDiagnosticMode]?.meta || MAP_DIAGNOSTIC_MODES.full.meta;
 }
 
+function syncMapDiagnosticRootState() {
+  const root = document.documentElement;
+  if (state.mapDiagnosticMode === "full") root.removeAttribute("data-map-diagnostic-mode");
+  else root.dataset.mapDiagnosticMode = state.mapDiagnosticMode;
+  root.classList.toggle("map-diagnostic-quiet-shell", state.mapDiagnosticMode === "quiet");
+}
+
 function updateMapDiagnosticModeControl() {
+  syncMapDiagnosticRootState();
   if (els.mapDiagnosticMode) els.mapDiagnosticMode.value = state.mapDiagnosticMode;
   if (els.mapDiagnosticMeta) els.mapDiagnosticMeta.textContent = mapDiagnosticMetaText();
   updateMapRendererButtons();

@@ -30,7 +30,7 @@ function mapDiagnosticIsActive() {
 }
 
 function mapDiagnosticAllowsRadar() {
-  return !["blank", "base", "base-no-labels", "markers"].includes(mapDiagnosticMode());
+  return !["blank", "quiet", "base", "base-no-labels", "markers"].includes(mapDiagnosticMode());
 }
 
 function mapDiagnosticAllowsMarkers() {
@@ -48,8 +48,8 @@ function mapDiagnosticModeLabel() {
 function mapDiagnosticBaseVisibility() {
   const mode = mapDiagnosticMode();
   return {
-    base: mode !== "blank",
-    labels: mode !== "blank" && mode !== "base-no-labels"
+    base: mode !== "blank" && mode !== "quiet",
+    labels: mode !== "blank" && mode !== "quiet" && mode !== "base-no-labels"
   };
 }
 

@@ -664,6 +664,33 @@ html[data-sky] body {
   height: 100%;
 }
 
+:root.map-diagnostic-quiet-shell #skyCanvas {
+  display: none;
+}
+
+:root.map-diagnostic-quiet-shell *,
+:root.map-diagnostic-quiet-shell *::before,
+:root.map-diagnostic-quiet-shell *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+:root.map-diagnostic-quiet-shell .shell,
+:root.map-diagnostic-quiet-shell .topbar,
+:root.map-diagnostic-quiet-shell .app-menu-toggle,
+:root.map-diagnostic-quiet-shell .manual-refresh-button,
+:root.map-diagnostic-quiet-shell .app-menu,
+:root.map-diagnostic-quiet-shell .weather-card,
+:root.map-diagnostic-quiet-shell .map-diagnostic-readout,
+:root.map-diagnostic-quiet-shell .immersive-map,
+:root.map-diagnostic-quiet-shell .imm-controls,
+:root.map-diagnostic-quiet-shell .map-legend,
+:root.map-diagnostic-quiet-shell .day-sheet {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+}
+
 .sky-star {
   animation: sky-twinkle linear infinite;
 }
