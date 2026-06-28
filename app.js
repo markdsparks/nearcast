@@ -1,4 +1,4 @@
-const VERSION = "3.0.46";
+const VERSION = "3.0.47";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3307,7 +3307,11 @@ function updateRadarProviderControl() {
 
 function updateRadarSourceZoomControl() {
   updateRadarProviderControl();
-  if (els.radarSourceZoom) els.radarSourceZoom.value = state.radarSourceZoom;
+  if (els.radarSourceZoom) {
+    const autoOption = els.radarSourceZoom.querySelector?.("option[value=\"auto\"]");
+    if (autoOption) autoOption.textContent = state.radarProvider === "mrms-generated" ? "Auto MRMS" : "Auto z8";
+    els.radarSourceZoom.value = state.radarSourceZoom;
+  }
   if (els.radarSourceMeta) els.radarSourceMeta.textContent = radarSourceMetaText();
 }
 

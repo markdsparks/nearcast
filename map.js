@@ -1017,6 +1017,7 @@ function radarSourceZoomOverride() {
 }
 
 function radarSourceZoomLabel() {
+  if (!radarSourceZoomOverride() && radarProviderPreference() === "mrms-generated") return "Radar auto MRMS";
   return `Radar z${radarSourceZoomOverride() || RADAR_TILE_MAX_ZOOM}`;
 }
 
@@ -1855,12 +1856,43 @@ function generatedFrameTimestamp(frame) {
 function resolveGeneratedRadarUrl(template, manifestUrl) {
   if (!template) return "";
   const value = String(template);
-  if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
+  if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return restoreTileTemplateTokens(value);
   try {
-    return new URL(value, new URL(manifestUrl, window.location.href)).toString();
+    const protectedValue = protectTileTemplateTokens(value);
+    const resolved = new URL(protectedValue, new URL(manifestUrl, window.location.href)).toString();
+    return restoreTileTemplateTokens(resolved);
   } catch {
-    return value;
+    return restoreTileTemplateTokens(value);
   }
+}
+
+const TILE_TEMPLATE_TOKENS = [
+  ["{z}", "__NEARCAST_TILE_Z__"],
+  ["{x}", "__NEARCAST_TILE_X__"],
+  ["{y}", "__NEARCAST_TILE_Y__"],
+  ["{bbox}", "__NEARCAST_TILE_BBOX__"],
+  ["{bbox-epsg-3857}", "__NEARCAST_TILE_BBOX_3857__"]
+];
+
+function protectTileTemplateTokens(value) {
+  let output = String(value || "");
+  TILE_TEMPLATE_TOKENS.forEach(([token, marker]) => {
+    output = output.split(token).join(marker);
+  });
+  return output;
+}
+
+function restoreTileTemplateTokens(value) {
+  let output = String(value || "");
+  TILE_TEMPLATE_TOKENS.forEach(([token, marker]) => {
+    output = output.split(marker).join(token);
+  });
+  return output
+    .replace(/%7Bz%7D/gi, "{z}")
+    .replace(/%7Bx%7D/gi, "{x}")
+    .replace(/%7By%7D/gi, "{y}")
+    .replace(/%7Bbbox%7D/gi, "{bbox}")
+    .replace(/%7Bbbox-epsg-3857%7D/gi, "{bbox-epsg-3857}");
 }
 
 function radarPrecipSignalKey(signal) {
