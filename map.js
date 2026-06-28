@@ -1010,6 +1010,16 @@ function mapLibreDiagnosticStats(record) {
   };
 }
 
+function radarSourceZoomOverride() {
+  const value = String(state?.radarSourceZoom || "auto");
+  if (value === "10" || value === "12") return Number(value);
+  return null;
+}
+
+function radarSourceZoomLabel() {
+  return `Radar z${radarSourceZoomOverride() || RADAR_TILE_MAX_ZOOM}`;
+}
+
 function ensureMapLibreDiagnosticReadout(record) {
   const container = record?.container;
   if (!container) return null;
@@ -1043,7 +1053,7 @@ function syncMapLibreDiagnosticReadout(record) {
   nextReadout.innerHTML = `
     <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
     <span>${escapeHtml(uiFps)} fps · ${escapeHtml(glFps)} fps · moves ${stats.movesPerSecond}/s</span>
-    <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))}</span>
+    <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))} · ${escapeHtml(radarSourceZoomLabel())}</span>
     <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;
 }
@@ -1061,7 +1071,7 @@ function syncMapZoomDebugReadout() {
     els.weatherMap.appendChild(readout);
   }
   const zoom = Number(mapState.zoom);
-  readout.textContent = `Zoom ${Number.isFinite(zoom) ? zoom.toFixed(2) : "--"}`;
+  readout.textContent = `Zoom ${Number.isFinite(zoom) ? zoom.toFixed(2) : "--"} · ${radarSourceZoomLabel()}`;
 }
 
 function ensureMapLibreDiagnosticRaf(record) {
@@ -1146,6 +1156,15 @@ function applyMapDiagnosticModePreference() {
     renderTileMap();
     if (mapState.frames.length) showFrame(mapState.frameIndex);
   }
+}
+
+function applyRadarSourceZoomPreference() {
+  clearMapLibreWeather();
+  if (!mapState.initialized || !state.activePlace) return;
+  renderMapLegend();
+  renderTileMap();
+  if (mapState.frames.length) showFrame(mapState.frameIndex);
+  syncMapZoomDebugReadout();
 }
 
 function ensureMapLibreMap() {
@@ -2799,7 +2818,9 @@ function weatherFrameMaxZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
   }
 
   const frame = frameOrMaxZoom || {};
-  return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frame.maxZoom || MAP_MAX_ZOOM), MAP_MAX_ZOOM));
+  const forcedRadarZoom = frame.source === "radar" ? radarSourceZoomOverride() : null;
+  const maxZoom = forcedRadarZoom || frame.maxZoom || MAP_MAX_ZOOM;
+  return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(maxZoom), MAP_MAX_ZOOM));
 }
 
 function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {

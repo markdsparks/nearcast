@@ -1,4 +1,4 @@
-const VERSION = "3.0.44";
+const VERSION = "3.0.45";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6,6 +6,7 @@ const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
+const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
@@ -137,6 +138,11 @@ if (mapDiagnosticQueryFlag !== null) {
   localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, sanitizeMapDiagnosticMode(mapDiagnosticQueryFlag));
 }
 
+const radarSourceZoomQueryFlag = queryValue("radarSourceZoom", "radarsourcezoom", "radarZoom", "radarzoom");
+if (radarSourceZoomQueryFlag !== null) {
+  localStorage.setItem(RADAR_SOURCE_ZOOM_KEY, sanitizeRadarSourceZoom(radarSourceZoomQueryFlag));
+}
+
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 let mapLibreAssetPromise = null;
 let mapLibreCssPromise = null;
@@ -152,6 +158,7 @@ const state = {
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
+  radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -552,6 +559,8 @@ const els = {
   mapRendererMeta: document.querySelector("#mapRendererMeta"),
   mapDiagnosticMode: document.querySelector("#mapDiagnosticMode"),
   mapDiagnosticMeta: document.querySelector("#mapDiagnosticMeta"),
+  radarSourceZoom: document.querySelector("#radarSourceZoom"),
+  radarSourceMeta: document.querySelector("#radarSourceMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2329,6 +2338,7 @@ function init() {
   updateTimeFormatButtons();
   updateMapRendererButtons();
   updateMapDiagnosticModeControl();
+  updateRadarSourceZoomControl();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
   initMetricTipListeners();
@@ -2621,6 +2631,9 @@ function bindEvents() {
   });
   if (els.mapDiagnosticMode) {
     els.mapDiagnosticMode.addEventListener("change", () => setMapDiagnosticMode(els.mapDiagnosticMode.value));
+  }
+  if (els.radarSourceZoom) {
+    els.radarSourceZoom.addEventListener("change", () => setRadarSourceZoom(els.radarSourceZoom.value));
   }
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
@@ -3202,6 +3215,13 @@ function sanitizeMapDiagnosticMode(value) {
   return Object.prototype.hasOwnProperty.call(MAP_DIAGNOSTIC_MODES, mode) ? mode : "full";
 }
 
+function sanitizeRadarSourceZoom(value) {
+  const mode = String(value || "auto").toLowerCase();
+  if (mode === "10" || mode === "z10") return "10";
+  if (mode === "12" || mode === "z12") return "12";
+  return "auto";
+}
+
 function timeFormatMetaText() {
   if (state.timeFormat === "12") return "Always show 6:00 PM";
   if (state.timeFormat === "24") return "Always show 18:00";
@@ -3241,6 +3261,26 @@ function mapDiagnosticMetaText() {
   return MAP_DIAGNOSTIC_MODES[state.mapDiagnosticMode]?.meta || MAP_DIAGNOSTIC_MODES.full.meta;
 }
 
+function radarSourceMetaText() {
+  if (state.radarSourceZoom === "10") return "Forcing NOAA WMS z10";
+  if (state.radarSourceZoom === "12") return "Forcing NOAA WMS z12";
+  return `Auto: NOAA WMS z${RADAR_TILE_MAX_ZOOM}`;
+}
+
+function updateRadarSourceZoomControl() {
+  if (els.radarSourceZoom) els.radarSourceZoom.value = state.radarSourceZoom;
+  if (els.radarSourceMeta) els.radarSourceMeta.textContent = radarSourceMetaText();
+}
+
+function setRadarSourceZoom(value) {
+  const next = sanitizeRadarSourceZoom(value);
+  if (next === state.radarSourceZoom) return;
+  state.radarSourceZoom = next;
+  localStorage.setItem(RADAR_SOURCE_ZOOM_KEY, next);
+  updateRadarSourceZoomControl();
+  if (typeof applyRadarSourceZoomPreference === "function") applyRadarSourceZoomPreference();
+}
+
 function syncMapDiagnosticRootState() {
   const root = document.documentElement;
   const mode = state.mapDiagnosticMode;
@@ -3256,6 +3296,7 @@ function updateMapDiagnosticModeControl() {
   syncMapDiagnosticRootState();
   if (els.mapDiagnosticMode) els.mapDiagnosticMode.value = state.mapDiagnosticMode;
   if (els.mapDiagnosticMeta) els.mapDiagnosticMeta.textContent = mapDiagnosticMetaText();
+  updateRadarSourceZoomControl();
   updateMapRendererButtons();
 }
 
