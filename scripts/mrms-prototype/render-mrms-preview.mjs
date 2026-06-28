@@ -666,6 +666,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   const zooms = parseIntegerZoomList(args["tile-zooms"] || args.zooms, DEFAULT_TILE_ZOOMS);
   const tileSize = Math.max(64, Math.min(512, Math.round(numberArg(args["tile-size"], DEFAULT_TILE_SIZE))));
   const radius = Math.max(0, Math.min(8, Math.round(numberArg(args["tile-radius"], DEFAULT_TILE_RADIUS))));
+  const tileBounds = parseBounds(args["tile-bounds"] || args["coverage-bounds"]);
+  const skipEmptyTiles = booleanArg(args["skip-empty-tiles"], false);
   const frameTime = generatedFrameIso(args);
   const frameId = cleanTileSegment(args["frame-id"] || frameIdForIso(frameTime));
   const tileOut = args["tile-out"] || `radar/mrms/${frameId}`;
@@ -680,6 +682,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   ] : null;
   const perZoom = [];
   let totalTiles = 0;
+  let candidateTiles = 0;
   let radarTiles = 0;
   let radarPixels = 0;
   let maxRenderedDbz = -Infinity;
@@ -687,6 +690,14 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   zooms.forEach((z) => {
     const centerTile = tileForLatLon(centerLat, centerLon, z, tileSize);
     const worldTiles = 2 ** z;
+    const range = tileBounds
+      ? tileRangeForBounds(tileBounds, z, tileSize)
+      : {
+          minX: centerTile.x - radius,
+          maxX: centerTile.x + radius,
+          minY: centerTile.y - radius,
+          maxY: centerTile.y + radius
+        };
     const zoomSummary = {
       z,
       centerX: centerTile.x,
@@ -699,8 +710,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       radarTiles: 0
     };
 
-    for (let rawX = centerTile.x - radius; rawX <= centerTile.x + radius; rawX += 1) {
-      for (let y = centerTile.y - radius; y <= centerTile.y + radius; y += 1) {
+    for (let rawX = range.minX; rawX <= range.maxX; rawX += 1) {
+      for (let y = range.minY; y <= range.maxY; y += 1) {
         if (y < 0 || y >= worldTiles) continue;
         const x = wrapTileX(rawX, worldTiles);
         const rendered = renderRadarTile({
@@ -714,15 +725,18 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           smooth,
           style
         });
-        const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
-        zoomSummary.tiles += 1;
+        candidateTiles += 1;
         zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
         zoomSummary.maxX = zoomSummary.maxX === null ? x : Math.max(zoomSummary.maxX, x);
         zoomSummary.minY = zoomSummary.minY === null ? y : Math.min(zoomSummary.minY, y);
         zoomSummary.maxY = zoomSummary.maxY === null ? y : Math.max(zoomSummary.maxY, y);
-        totalTiles += 1;
+        if (!skipEmptyTiles || rendered.radarPixels) {
+          const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
+          zoomSummary.tiles += 1;
+          totalTiles += 1;
+        }
         radarPixels += rendered.radarPixels;
         if (rendered.radarPixels) {
           radarTiles += 1;
@@ -741,15 +755,20 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     product: args.product || DEFAULT_PRODUCT,
     region: args.region || DEFAULT_REGION,
     style: style.name,
+    mode: tileBounds ? "bounds" : "radius",
+    sample: booleanArg(args.sample, false),
     generatedAt: new Date().toISOString(),
+    expiresAt: generatedExpiresAt(args),
     minZoom: Math.min(...zooms),
     maxZoom: Math.max(...zooms),
     tileSize,
     tileRadius: radius,
+    skipEmptyTiles,
     center: {
       lat: round(centerLat, 5),
       lon: round(centerLon, 5)
     },
+    coverageBounds: tileBounds,
     attribution: "NOAA MRMS · Nearcast",
     frames: [
       {
@@ -767,6 +786,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     ],
     coverage: {
       generatedTiles: totalTiles,
+      candidateTiles,
       radarTiles,
       zooms: perZoom
     }
@@ -786,8 +806,10 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       tileVersion: args["tile-version"] || null,
       tileSize,
       tileRadius: radius,
+      skipEmptyTiles,
       zooms,
       totalTiles,
+      candidateTiles,
       radarTiles,
       radarPixels,
       maxRenderedDbz: round(maxRenderedDbz, 1),
@@ -1396,6 +1418,17 @@ function tileForLatLon(lat, lon, zoom, tileSize = DEFAULT_TILE_SIZE) {
   };
 }
 
+function tileRangeForBounds(bounds, zoom, tileSize = DEFAULT_TILE_SIZE) {
+  const nw = tileForLatLon(bounds.maxLat, bounds.minLon, zoom, tileSize);
+  const se = tileForLatLon(bounds.minLat, bounds.maxLon, zoom, tileSize);
+  return {
+    minX: Math.min(nw.x, se.x),
+    maxX: Math.max(nw.x, se.x),
+    minY: Math.min(nw.y, se.y),
+    maxY: Math.max(nw.y, se.y)
+  };
+}
+
 function wrapTileX(x, worldTiles) {
   return ((x % worldTiles) + worldTiles) % worldTiles;
 }
@@ -1901,10 +1934,15 @@ Options:
   --generate-tiles           Write generated MRMS slippy tiles plus a manifest.
   --tile-zooms=6,7,8,9       Integer source zooms for --generate-tiles.
   --tile-radius=2            Tile radius around the selected center for each zoom.
+  --tile-bounds=minLat,minLon,maxLat,maxLon
+                              Generate every tile intersecting these bounds.
+  --skip-empty-tiles         Only write tiles with rendered radar pixels.
   --tile-out=radar/mrms/id   Generated tile directory.
   --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.
   --tile-version=clean1      Optional query string cache buster for tile URLs.
   --frame-time=ISO           Frame time to publish in the generated manifest.
+  --ttl-minutes=15           Set manifest expiresAt to now plus this many minutes.
+  --sample                   Mark the generated manifest as a non-live sample.
   --transparent              Output radar only, no soft local basemap.
   --probe                    Print GRIB2 structure without rendering.
   --out=/tmp/file.png        Output PNG path.
@@ -1914,6 +1952,25 @@ Options:
 function numberArg(value, fallback) {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
+}
+
+function booleanArg(value, fallback = false) {
+  if (value === undefined) return fallback;
+  if (value === true) return true;
+  return !["0", "false", "no", "off"].includes(String(value).trim().toLowerCase());
+}
+
+function generatedExpiresAt(options = {}) {
+  const explicit = options["expires-at"] || options.expiresAt;
+  if (explicit) {
+    const parsed = new Date(explicit);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  const ttlMinutes = numberArg(options["ttl-minutes"], NaN);
+  if (Number.isFinite(ttlMinutes) && ttlMinutes > 0) {
+    return new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
+  }
+  return null;
 }
 
 function parseRgb(value, fallback) {

@@ -62,12 +62,19 @@ Current spike status:
   at z6-z14 under `radar/mrms/sample-mrms-banded-max/`, centered on the strongest
   CONUS radar cell in the local test frame, and exposes them through
   `radar/mrms/manifest.json` for the app's `mrms-generated` provider.
+- The production-shaped wrapper
+  `scripts/mrms-prototype/generate-mrms-timeline.mjs` can discover latest MRMS
+  objects or accept local files/URLs, render each source frame into its own tile
+  folder, and publish one combined manifest atomically. Live manifests can carry
+  `expiresAt`; sample manifests are marked with `sample: true` so the app can
+  distinguish testing data from live radar.
 - The first banded contour passes used a separate separator stroke; on-device
   MapLibre resampling made those edges read as a gray-purple bleed. The current
   sample removes the outline entirely and uses a tile URL version query so
   mobile clients fetch the no-border tiles.
-- App behavior is unchanged until a provider key or decoded MRMS render proves
-  better than the current fallback.
+- Default app behavior remains unchanged; generated MRMS is still selected via
+  the radar-provider setting and falls back to NOAA/RainViewer if a live
+  generated manifest is unavailable or stale.
 
 ### Track A: commercial provider bake-off
 
@@ -125,6 +132,8 @@ Prototype shape:
 6. Compare against the same z7.5-z13 test band.
 7. Publish a manifest whose frames use `{z}/{x}/{y}` tile templates that the
    app can consume through the `mrms-generated` provider.
+8. For live usage, publish multiple recent frames through the timeline wrapper
+   with an `expiresAt` freshness window and atomic manifest replacement.
 
 Why this is different from WMS:
 

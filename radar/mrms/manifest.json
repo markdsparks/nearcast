@@ -3,15 +3,20 @@
   "product": "MergedReflectivityQCComposite_00.50",
   "region": "CONUS",
   "style": "banded",
-  "generatedAt": "2026-06-28T21:32:45.282Z",
+  "mode": "radius",
+  "sample": true,
+  "generatedAt": "2026-06-28T21:48:12.343Z",
+  "expiresAt": null,
   "minZoom": 6,
   "maxZoom": 14,
   "tileSize": 256,
   "tileRadius": 2,
+  "skipEmptyTiles": false,
   "center": {
     "lat": 43.005,
     "lon": -93.305
   },
+  "coverageBounds": null,
   "attribution": "NOAA MRMS · Nearcast",
   "frames": [
     {
@@ -28,6 +33,7 @@
   ],
   "coverage": {
     "generatedTiles": 225,
+    "candidateTiles": 225,
     "radarTiles": 200,
     "zooms": [
       {

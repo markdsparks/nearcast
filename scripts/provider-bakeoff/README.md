@@ -73,7 +73,20 @@ node scripts/mrms-prototype/render-mrms-preview.mjs \
   --frame-id=sample-mrms-banded-max \
   --tile-out=radar/mrms/sample-mrms-banded-max \
   --manifest-out=radar/mrms/manifest.json \
-  --tile-version=no-border-1
+  --tile-version=no-border-1 \
+  --sample
+```
+
+Generate a production-shaped rolling manifest with one or more latest frames:
+
+```sh
+node scripts/mrms-prototype/generate-mrms-timeline.mjs \
+  --frames=6 \
+  --out-dir=radar/mrms/live \
+  --manifest-out=radar/mrms/manifest.json \
+  --tile-bounds=37,-92,40,-88 \
+  --skip-empty-tiles \
+  --ttl-minutes=15
 ```
 
 ## Test matrix

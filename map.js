@@ -1748,7 +1748,7 @@ async function fetchRadarFrames() {
       const generatedFrames = await fetchGeneratedMrmsRadarFrames();
       if (generatedFrames.length) return generatedFrames;
     } catch {
-      /* Generated MRMS is still a spike path; fall through to the proven sources. */
+      /* Generated MRMS is optional; fall through to the proven sources if it is unavailable or stale. */
     }
   }
 
@@ -1778,6 +1778,7 @@ async function fetchGeneratedMrmsRadarFrames() {
   const response = await fetch(manifestUrl, { cache: "no-store" });
   if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
   const manifest = await response.json();
+  validateGeneratedMrmsManifest(manifest);
   return normalizeGeneratedMrmsFrames(manifest, manifestUrl);
 }
 
@@ -1789,6 +1790,9 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
   const manifestMinZoom = Number(manifest?.minZoom ?? manifest?.minzoom);
   const attribution = manifest?.attribution || "NOAA MRMS · Nearcast";
   const style = manifest?.style || "banded";
+  const manifestGeneratedAt = generatedManifestTimestamp(manifest?.generatedAt);
+  const manifestExpiresAt = generatedManifestTimestamp(manifest?.expiresAt);
+  const sample = Boolean(manifest?.sample);
 
   return frames
     .map((frame) => normalizeGeneratedMrmsFrame(frame, {
@@ -1796,10 +1800,20 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
       manifestMaxZoom,
       manifestMinZoom,
       attribution,
-      style
+      style,
+      manifestGeneratedAt,
+      manifestExpiresAt,
+      sample
     }))
     .filter(Boolean)
     .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function validateGeneratedMrmsManifest(manifest) {
+  const expiresAt = generatedManifestTimestamp(manifest?.expiresAt);
+  if (!manifest?.sample && Number.isFinite(expiresAt) && expiresAt < Date.now()) {
+    throw new Error("Generated MRMS manifest expired.");
+  }
 }
 
 function normalizeGeneratedMrmsFrame(frame, context) {
@@ -1822,6 +1836,9 @@ function normalizeGeneratedMrmsFrame(frame, context) {
     attribution: frame?.attribution || context.attribution,
     provider: "mrms-generated",
     style: frame?.style || context.style,
+    manifestGeneratedAt: context.manifestGeneratedAt,
+    manifestExpiresAt: context.manifestExpiresAt,
+    sample: context.sample,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : 14
   };
   if (Number.isFinite(minZoom)) normalized.minZoom = minZoom;
@@ -1851,6 +1868,11 @@ function generatedFrameTimestamp(frame) {
   const value = frame?.time || frame?.validTime || frame?.observedAt;
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : NaN;
+}
+
+function generatedManifestTimestamp(value) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function resolveGeneratedRadarUrl(template, manifestUrl) {
