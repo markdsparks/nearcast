@@ -21,6 +21,39 @@ const mapLibreInteraction = {
   needsRadarRender: false
 };
 
+function mapDiagnosticMode() {
+  return sanitizeMapDiagnosticMode?.(state.mapDiagnosticMode) || "full";
+}
+
+function mapDiagnosticIsActive() {
+  return mapDiagnosticMode() !== "full";
+}
+
+function mapDiagnosticAllowsRadar() {
+  return !["base", "markers"].includes(mapDiagnosticMode());
+}
+
+function mapDiagnosticAllowsMarkers() {
+  return ["full", "markers", "current-markers"].includes(mapDiagnosticMode());
+}
+
+function mapDiagnosticUsesStrictLayerSet() {
+  return mapDiagnosticIsActive();
+}
+
+function mapDiagnosticModeLabel() {
+  return MAP_DIAGNOSTIC_MODES?.[mapDiagnosticMode()]?.label || "Full stack";
+}
+
+window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
+  return {
+    mode: mapDiagnosticMode(),
+    renderer: state.mapRenderer,
+    immersive: Boolean(mapState.immersive),
+    records: [...mapLibreRecords.values()].map(mapLibreDiagnosticStats)
+  };
+};
+
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
   mapState.initialized = true;
@@ -479,6 +512,7 @@ function renderMapLibreOverlays(options = {}) {
   } else {
     mapLibreInteraction.needsRadarRender = true;
   }
+  syncMapLibreDiagnosticReadout(mapLibreCurrentRecord());
 }
 
 function mapLibreTileStyle() {
@@ -582,6 +616,16 @@ function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
   if (!mapState.frames.length) return [];
   const N = mapState.frames.length;
   const cur = ((index % N) + N) % N;
+  const diagnosticMode = mapDiagnosticMode();
+  if (!mapDiagnosticAllowsRadar()) return [];
+
+  if (diagnosticMode === "current" || diagnosticMode === "current-markers") {
+    return mapLibreCurrentFrameWeatherSpecs(cur);
+  }
+
+  if (diagnosticMode === "buffer") {
+    return mapLibreBufferedFrameWeatherSpecs(cur);
+  }
 
   if (shouldBufferRadarPlayback(cur)) {
     const next = nextPlaybackIndexFrom(cur);
@@ -608,6 +652,33 @@ function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
       frameIndex: cur,
       layerIndex,
       preload: false
+    }))
+    .filter(Boolean);
+}
+
+function mapLibreCurrentFrameWeatherSpecs(frameIndex) {
+  const frame = mapState.frames[frameIndex];
+  const layers = frame?.layers || (frame?.url ? [{ url: frame.url, opacity: 0.78 }] : []);
+  return layers
+    .map((layer, layerIndex) => mapLibreWeatherSpecForLayer(frame, layer, {
+      frameIndex,
+      layerIndex,
+      preload: false
+    }))
+    .filter(Boolean);
+}
+
+function mapLibreBufferedFrameWeatherSpecs(frameIndex) {
+  const frame = mapState.frames[frameIndex];
+  if (!frame) return [];
+  if (activeMapSource(frame) !== "radar") return mapLibreCurrentFrameWeatherSpecs(frameIndex);
+  const bounds = playbackBounds();
+  const next = nextPlaybackIndexFrom(frameIndex, bounds);
+  return [frameIndex, next]
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+    .map((value) => mapLibreWeatherSpecForFrame(value, {
+      opacity: value === frameIndex ? 0.78 : MAPLIBRE_WEATHER_PRELOAD_OPACITY,
+      preload: value !== frameIndex
     }))
     .filter(Boolean);
 }
@@ -667,11 +738,14 @@ function syncMapLibreWeatherSlots(record, specs = []) {
 
   record.weatherEntries.forEach((entry, key) => {
     if (liveKeys.has(key)) return;
-    if (entry.visible) scheduleMapLibreWeatherEntryHide(record, entry);
+    if (mapDiagnosticUsesStrictLayerSet()) {
+      removeMapLibreWeatherEntry(record, entry);
+    } else if (entry.visible) scheduleMapLibreWeatherEntryHide(record, entry);
     else setMapLibreWeatherEntryOpacity(record, entry, 0);
   });
 
   pruneMapLibreWeatherEntries(record);
+  syncMapLibreDiagnosticReadout(record);
 }
 
 function mapLibreWeatherSourceSignature(spec) {
@@ -775,8 +849,9 @@ function mapLibreBufferedRadarFrameReady(frameIndex) {
 }
 
 function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
-  if (!mapLibreRecordReadyForMarkers(record) || !state.activePlace || !window.maplibregl) {
+  if (!mapDiagnosticAllowsMarkers() || !mapLibreRecordReadyForMarkers(record) || !state.activePlace || !window.maplibregl) {
     clearMapLibreMarkers(record);
+    syncMapLibreDiagnosticReadout(record);
     return;
   }
   if (!record.markerEntries) record.markerEntries = new Map();
@@ -805,6 +880,7 @@ function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
     entry.marker.remove();
     record.markerEntries.delete(key);
   });
+  syncMapLibreDiagnosticReadout(record);
 }
 
 function mapLibreMarkerLayout(record, place) {
@@ -864,6 +940,99 @@ function clearMapLibreMarkers(record) {
   if (!record?.markerEntries) return;
   record.markerEntries.forEach((entry) => entry.marker.remove());
   record.markerEntries.clear();
+  syncMapLibreDiagnosticReadout(record);
+}
+
+function mapLibreDiagnosticStats(record) {
+  const entries = [...(record?.weatherEntries?.values?.() || [])];
+  const style = record?.map?.getStyle?.();
+  return {
+    loaded: Boolean(record?.loaded),
+    rendered: Boolean(record?.rendered),
+    mode: mapDiagnosticMode(),
+    fps: Math.round(record?.diagnosticFps || 0),
+    tilesLoaded: record?.map?.areTilesLoaded?.() || false,
+    weatherEntries: entries.length,
+    visibleWeatherEntries: entries.filter((entry) => entry.visible).length,
+    markers: record?.markerEntries?.size || 0,
+    layers: style?.layers?.length || 0,
+    sources: Object.keys(style?.sources || {}).length,
+    zoom: Number(mapState.zoom?.toFixed ? mapState.zoom.toFixed(2) : mapState.zoom),
+    immersive: Boolean(mapState.immersive),
+    lastError: record?.lastError || ""
+  };
+}
+
+function ensureMapLibreDiagnosticReadout(record) {
+  const container = record?.container;
+  if (!container) return null;
+  let readout = container.querySelector(":scope > .map-diagnostic-readout");
+  if (!readout) {
+    readout = document.createElement("div");
+    readout.className = "map-diagnostic-readout";
+    readout.setAttribute("aria-hidden", "true");
+    container.appendChild(readout);
+  }
+  return readout;
+}
+
+function syncMapLibreDiagnosticReadout(record) {
+  if (!record?.container) return;
+  record.container.dataset.mapDiagnosticMode = mapDiagnosticMode();
+  const active = mapDiagnosticIsActive();
+  const readout = record.container.querySelector(":scope > .map-diagnostic-readout");
+  if (!active) {
+    readout?.remove();
+    return;
+  }
+  const stats = mapLibreDiagnosticStats(record);
+  const nextReadout = ensureMapLibreDiagnosticReadout(record);
+  if (!nextReadout) return;
+  const fps = stats.fps ? `${stats.fps} fps` : "fps warming";
+  const loaded = stats.tilesLoaded ? "tiles ready" : "tiles loading";
+  nextReadout.innerHTML = `
+    <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
+    <span>${escapeHtml(fps)} · radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers}</span>
+    <span>z${escapeHtml(String(stats.zoom))} · layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
+  `;
+}
+
+function recordMapLibreRenderFrame(record) {
+  if (!record || (!mapDiagnosticIsActive() && !perfState.enabled)) return;
+  const now = performance.now();
+  record.diagnosticFrameCount = (record.diagnosticFrameCount || 0) + 1;
+  if (!record.diagnosticWindowStart) {
+    record.diagnosticWindowStart = now;
+    record.diagnosticFrameCount = 0;
+    return;
+  }
+  const elapsed = now - record.diagnosticWindowStart;
+  if (elapsed < 650) return;
+  record.diagnosticFps = record.diagnosticFrameCount * 1000 / elapsed;
+  record.diagnosticWindowStart = now;
+  record.diagnosticFrameCount = 0;
+  syncMapLibreDiagnosticReadout(record);
+  if (perfState.enabled) {
+    const stats = mapLibreDiagnosticStats(record);
+    perfRecord("map", "maplibre-render", 0, stats, 0);
+  }
+}
+
+function applyMapDiagnosticModePreference() {
+  updateMapDiagnosticModeControl?.();
+  mapLibreRecords.forEach((record) => {
+    record.diagnosticFrameCount = 0;
+    record.diagnosticWindowStart = 0;
+    record.diagnosticFps = 0;
+    clearMapLibreWeatherRecord(record);
+    clearMapLibreMarkers(record);
+    syncMapLibreDiagnosticReadout(record);
+  });
+  if (!mapState.initialized || !state.activePlace) return;
+  if (mapRendererIsGl()) {
+    renderTileMap();
+    if (mapState.frames.length) showFrame(mapState.frameIndex);
+  }
 }
 
 function ensureMapLibreMap() {
@@ -912,6 +1081,7 @@ function ensureMapLibreMap() {
 
   record = {
     map,
+    container,
     surface,
     theme,
     placeKey: "",
@@ -969,6 +1139,7 @@ function ensureMapLibreMap() {
   map.on("error", (event) => {
     record.lastError = event?.error?.message || event?.message || "MapLibre source error";
   });
+  map.on("render", () => recordMapLibreRenderFrame(record));
   map.on("movestart", () => beginMapLibreInteraction(map));
   map.on("zoomstart", () => beginMapLibreInteraction(map));
   map.on("move", () => syncMapLibreStateAndOverlays(map));
@@ -988,6 +1159,7 @@ function ensureMapLibreMap() {
     fallbackMapLibreRenderer(record.lastError || "WebGL map tiles did not finish loading");
   }, mapState.immersive ? MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS : MAPLIBRE_LOAD_TIMEOUT_MS);
 
+  syncMapLibreDiagnosticReadout(record);
   return record;
 }
 
@@ -996,7 +1168,10 @@ function fallbackMapLibreRenderer(reason = "WebGL map unavailable") {
   console.warn(`[Nearcast] Falling back to Classic map: ${reason}`);
   state.mapRenderer = "classic";
   try { localStorage.setItem(MAP_RENDERER_KEY, "classic"); } catch {}
+  state.mapDiagnosticMode = "full";
+  try { localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full"); } catch {}
   if (typeof updateMapRendererButtons === "function") updateMapRendererButtons();
+  if (typeof updateMapDiagnosticModeControl === "function") updateMapDiagnosticModeControl();
   destroyMapLibreMaps();
   renderTileMap();
   if (mapState.frames.length) showFrame(mapState.frameIndex);
@@ -1043,10 +1218,12 @@ function destroyMapLibreRecord(container) {
   if (record.fallbackTimer) clearTimeout(record.fallbackTimer);
   clearMapLibreWeatherRecord(record);
   clearMapLibreMarkers(record);
+  container.querySelector(":scope > .map-diagnostic-readout")?.remove();
   record.map.remove();
   record.surface?.remove();
   container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
   container.classList.remove("is-gl-renderer");
+  container.removeAttribute("data-map-diagnostic-mode");
   mapLibreRecords.delete(container);
 }
 
@@ -1055,7 +1232,9 @@ function destroyMapLibreMaps() {
   [...mapLibreRecords.keys()].forEach(destroyMapLibreRecord);
   document.querySelectorAll(".tile-map.is-gl-renderer").forEach((container) => {
     container.querySelector(":scope > .maplibre-open-hitbox")?.remove();
+    container.querySelector(":scope > .map-diagnostic-readout")?.remove();
     container.classList.remove("is-gl-renderer");
+    container.removeAttribute("data-map-diagnostic-mode");
   });
   document.querySelectorAll(".maplibre-open-hitbox").forEach((hitbox) => hitbox.remove());
 }

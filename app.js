@@ -1,10 +1,11 @@
-const VERSION = "3.0.34";
+const VERSION = "3.0.35";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
+const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
@@ -80,6 +81,38 @@ if (["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLow
   localStorage.setItem(MAP_RENDERER_KEY, String(mapRendererQueryFlag).toLowerCase() === "classic" ? "classic" : "gl");
 }
 
+const MAP_DIAGNOSTIC_MODES = {
+  full: {
+    label: "Full stack",
+    meta: "Normal WebGL map"
+  },
+  base: {
+    label: "Basemap only",
+    meta: "No radar or markers"
+  },
+  markers: {
+    label: "Markers only",
+    meta: "Basemap plus places"
+  },
+  current: {
+    label: "Current radar",
+    meta: "One radar frame, no markers"
+  },
+  "current-markers": {
+    label: "Radar + markers",
+    meta: "One radar frame plus places"
+  },
+  buffer: {
+    label: "Current + next",
+    meta: "Two radar frames, no markers"
+  }
+};
+
+const mapDiagnosticQueryFlag = queryValue("mapPerf", "mapperf", "mapDiag", "mapdiag");
+if (mapDiagnosticQueryFlag !== null) {
+  localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, sanitizeMapDiagnosticMode(mapDiagnosticQueryFlag));
+}
+
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);
 let mapLibreAssetPromise = null;
 let mapLibreCssPromise = null;
@@ -94,6 +127,7 @@ const state = {
   theme: localStorage.getItem("weather-theme") || "auto",
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
+  mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -489,6 +523,8 @@ const els = {
   timeFormatMeta: document.querySelector("#timeFormatMeta"),
   mapRendererButtons: document.querySelectorAll("[data-map-renderer]"),
   mapRendererMeta: document.querySelector("#mapRendererMeta"),
+  mapDiagnosticMode: document.querySelector("#mapDiagnosticMode"),
+  mapDiagnosticMeta: document.querySelector("#mapDiagnosticMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -1858,6 +1894,9 @@ function initPerfDiagnostics() {
     },
     measure(name, fn, threshold = PERF_RENDER_WARN_MS) {
       return perfMeasure(name, fn, threshold);
+    },
+    get map() {
+      return typeof window.nearcastMapDiagnostics === "function" ? window.nearcastMapDiagnostics() : null;
     }
   };
   if (perfState.enabled) {
@@ -2262,6 +2301,7 @@ function init() {
   updateUnitButton();
   updateTimeFormatButtons();
   updateMapRendererButtons();
+  updateMapDiagnosticModeControl();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
   initMetricTipListeners();
@@ -2552,6 +2592,9 @@ function bindEvents() {
   els.mapRendererButtons.forEach((button) => {
     bindTapAction(button, () => setMapRendererPreference(button.dataset.mapRenderer));
   });
+  if (els.mapDiagnosticMode) {
+    els.mapDiagnosticMode.addEventListener("change", () => setMapDiagnosticMode(els.mapDiagnosticMode.value));
+  }
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
@@ -3127,6 +3170,11 @@ function sanitizeMapRendererPreference(value) {
   return value === "gl" ? "gl" : "classic";
 }
 
+function sanitizeMapDiagnosticMode(value) {
+  const mode = String(value || "").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(MAP_DIAGNOSTIC_MODES, mode) ? mode : "full";
+}
+
 function timeFormatMetaText() {
   if (state.timeFormat === "12") return "Always show 6:00 PM";
   if (state.timeFormat === "24") return "Always show 18:00";
@@ -3152,6 +3200,7 @@ function setTimeFormatPreference(value) {
 }
 
 function mapRendererMetaText() {
+  if (state.mapDiagnosticMode !== "full") return `Testing: ${MAP_DIAGNOSTIC_MODES[state.mapDiagnosticMode]?.label || "Map"}`;
   if (state.mapRenderer === "gl") {
     if (window.maplibregl) return "Experimental WebGL map";
     if (mapLibreAssetStatus === "loading") return "Loading WebGL map";
@@ -3159,6 +3208,29 @@ function mapRendererMetaText() {
     return "Tap to load WebGL map";
   }
   return "Stable Nearcast map";
+}
+
+function mapDiagnosticMetaText() {
+  return MAP_DIAGNOSTIC_MODES[state.mapDiagnosticMode]?.meta || MAP_DIAGNOSTIC_MODES.full.meta;
+}
+
+function updateMapDiagnosticModeControl() {
+  if (els.mapDiagnosticMode) els.mapDiagnosticMode.value = state.mapDiagnosticMode;
+  if (els.mapDiagnosticMeta) els.mapDiagnosticMeta.textContent = mapDiagnosticMetaText();
+  updateMapRendererButtons();
+}
+
+function setMapDiagnosticMode(value) {
+  const next = sanitizeMapDiagnosticMode(value);
+  if (next === state.mapDiagnosticMode) return;
+  state.mapDiagnosticMode = next;
+  localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, next);
+  updateMapDiagnosticModeControl();
+  if (next !== "full" && state.mapRenderer !== "gl") {
+    setMapRendererPreference("gl");
+  } else if (typeof applyMapDiagnosticModePreference === "function") {
+    applyMapDiagnosticModePreference();
+  }
 }
 
 function ensureMapLibreStylesheet() {
@@ -3232,6 +3304,11 @@ function ensureMapLibreAssets(options = {}) {
     } else if (!ready && state.mapRenderer === "gl") {
       state.mapRenderer = "classic";
       localStorage.setItem(MAP_RENDERER_KEY, "classic");
+      if (state.mapDiagnosticMode !== "full") {
+        state.mapDiagnosticMode = "full";
+        localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full");
+        updateMapDiagnosticModeControl();
+      }
       updateMapRendererButtons();
       if (typeof applyMapRendererPreference === "function") applyMapRendererPreference();
     }
@@ -3253,6 +3330,11 @@ function setMapRendererPreference(value) {
   if (next === state.mapRenderer) return;
   state.mapRenderer = next;
   localStorage.setItem(MAP_RENDERER_KEY, next);
+  if (next === "classic" && state.mapDiagnosticMode !== "full") {
+    state.mapDiagnosticMode = "full";
+    localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full");
+    updateMapDiagnosticModeControl();
+  }
   updateMapRendererButtons();
   if (next === "gl") {
     ensureMapLibreAssets({ renderAfterLoad: true });
