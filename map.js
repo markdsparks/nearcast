@@ -631,11 +631,14 @@ function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
 }
 
-function mapLibreWeatherLayerPaint(opacity) {
+function mapLibreWeatherLayerPaint(opacity, sourceZoom = MAP_MAX_ZOOM) {
+  const tone = weatherVisualTone(sourceZoom);
   return {
     "raster-opacity": opacity,
     "raster-fade-duration": 0,
-    "raster-resampling": "linear"
+    "raster-resampling": "linear",
+    "raster-saturation": tone.mapLibreSaturation,
+    "raster-contrast": tone.mapLibreContrast
   };
 }
 
@@ -765,7 +768,7 @@ function syncMapLibreWeatherSlots(record, specs = []) {
     entry.frameIndex = spec.frameIndex;
     entry.lastUsedAt = record.weatherRenderSeq;
     entry.hideSeq = 0;
-    setMapLibreWeatherEntryOpacity(record, entry, mapLibreWeatherOpacity(spec));
+    setMapLibreWeatherEntryVisual(record, entry, spec);
   });
 
   record.weatherEntries.forEach((entry, key) => {
@@ -809,7 +812,7 @@ function ensureMapLibreWeatherEntry(record, spec) {
     id: layerId,
     type: "raster",
     source: sourceId,
-    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec))
+    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec), spec.maxZoom)
   }, mapLibreWeatherBeforeLayer(map));
 
   entry = {
@@ -830,6 +833,15 @@ function setMapLibreWeatherEntryOpacity(record, entry, opacity) {
   if (!record?.map?.getLayer(entry.layerId)) return;
   record.map.setPaintProperty(entry.layerId, "raster-opacity", opacity);
   entry.visible = opacity > MAPLIBRE_WEATHER_PRELOAD_OPACITY;
+}
+
+function setMapLibreWeatherEntryVisual(record, entry, spec) {
+  if (!record?.map?.getLayer(entry.layerId)) return;
+  const sourceZoom = spec?.maxZoom || MAP_MAX_ZOOM;
+  const tone = weatherVisualTone(sourceZoom);
+  setMapLibreWeatherEntryOpacity(record, entry, mapLibreWeatherOpacity(spec));
+  record.map.setPaintProperty(entry.layerId, "raster-saturation", tone.mapLibreSaturation);
+  record.map.setPaintProperty(entry.layerId, "raster-contrast", tone.mapLibreContrast);
 }
 
 function scheduleMapLibreWeatherEntryHide(record, entry) {
@@ -2074,8 +2086,8 @@ function buildNwsRadarFrame(config, time) {
     STYLES: config.style,
     CRS: "EPSG:3857",
     BBOX: "{bbox}",
-    WIDTH: "256",
-    HEIGHT: "256",
+    WIDTH: String(RADAR_WMS_TILE_SIZE),
+    HEIGHT: String(RADAR_WMS_TILE_SIZE),
     FORMAT: "image/png",
     TRANSPARENT: "true",
     TIME: time,
@@ -2090,9 +2102,8 @@ function buildNwsRadarFrame(config, time) {
     source: "radar",
     sourceLabel: "Radar",
     attribution: "NOAA/NWS MRMS",
-    // Cap below MAP_MAX_ZOOM so radar tiles upscale (browser/GPU resampling
-    // softens them) instead of the WMS server rendering MRMS's ~1km grid as
-    // hard blocks at close zoom. Also means fewer, larger tiles per frame.
+    // Cap below MAP_MAX_ZOOM so radar tiles upscale, but ask WMS for a denser
+    // PNG per tile so the z8-z13 overzoom band has cleaner source pixels.
     maxZoom: RADAR_TILE_MAX_ZOOM
   };
 }
@@ -2792,7 +2803,8 @@ function weatherFrameMaxZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
 }
 
 function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
-  return mapTileSourceZoom(weatherFrameMaxZoom(frameOrMaxZoom));
+  const max = weatherFrameMaxZoom(frameOrMaxZoom);
+  return Math.min(Math.max(Math.floor(mapState.zoom + 0.5), MAP_MIN_ZOOM), max);
 }
 
 function weatherOverzoomAmount(sourceZoom) {
@@ -2815,18 +2827,27 @@ function weatherSourceSofteningAmount(sourceZoom) {
 function weatherVisualOpacity(baseOpacity, sourceZoom) {
   const base = Math.min(Math.max(Number(baseOpacity) || 0, 0), 1);
   if (base <= MAPLIBRE_WEATHER_PRELOAD_OPACITY * 1.5) return base;
+  return Number((base * weatherVisualTone(sourceZoom).opacity).toFixed(3));
+}
+
+function weatherVisualTone(sourceZoom) {
   const t = weatherSourceSofteningAmount(sourceZoom);
-  return Number((base * (1 - 0.34 * t)).toFixed(3));
+  return {
+    opacity: 1 - 0.34 * t,
+    cssSaturation: Math.max(0.88, 1 - t * 0.12),
+    cssContrast: Math.max(0.88, 1 - t * 0.12),
+    mapLibreSaturation: Number((-0.16 * t).toFixed(3)),
+    mapLibreContrast: Number((-0.12 * t).toFixed(3))
+  };
 }
 
 // Weather tiles are source-capped, so close street zoom should read like a
 // smoothed field over the basemap instead of false block-level precision.
 function weatherVisualFilter(sourceZoom) {
   const overzoom = weatherOverzoomAmount(sourceZoom);
-  const t = weatherSourceSofteningAmount(sourceZoom);
+  const tone = weatherVisualTone(sourceZoom);
   const px = Math.min(Math.max(0.75 + overzoom * 0.48, 0.75), 7.25);
-  const saturation = Math.max(0.88, 1 - t * 0.1);
-  return `blur(${px.toFixed(2)}px) saturate(${saturation.toFixed(2)})`;
+  return `blur(${px.toFixed(2)}px) saturate(${tone.cssSaturation.toFixed(2)}) contrast(${tone.cssContrast.toFixed(2)})`;
 }
 
 function weatherResolutionLegendNote() {
