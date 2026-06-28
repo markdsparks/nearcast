@@ -24,6 +24,18 @@ Success means:
 
 Run these in parallel.
 
+Current spike status:
+
+- Provider bake-off scaffold added in `scripts/provider-bakeoff/README.md`.
+- MRMS S3 discovery harness added in
+  `scripts/mrms-prototype/list-mrms.mjs`.
+- Public MRMS listing works from the local environment. The `CONUS/` catalog
+  includes radar candidates such as `MergedReflectivityQCComposite_00.50`,
+  `ReflectivityAtLowestAltitude_00.50`, `PrecipRate_00.00`, and
+  `SeamlessHSR_00.00`.
+- App behavior is unchanged until a provider key or decoded MRMS render proves
+  better than the current fallback.
+
 ### Track A: commercial provider bake-off
 
 Purpose: determine whether we should buy the radar rendering substrate instead
@@ -137,12 +149,13 @@ Tile/render output options:
    terms.
 2. Build an isolated provider adapter behind a feature flag:
    `radarProvider = noaa-wms | xweather-mapsgl`.
-3. Build a minimal MRMS decode harness outside the app:
-   `scripts/mrms-prototype/README.md` plus a decode script once the toolchain is
+3. Use `scripts/mrms-prototype/list-mrms.mjs` to select the first MRMS product
+   frames for visual comparison.
+4. Add a minimal MRMS decode/render harness once the decode toolchain is
    selected.
-4. Test both tracks against the same places and zoom bands:
+5. Test both tracks against the same places and zoom bands:
    z7.5, z9, z11, z13, z16, z18.
-5. Decide:
+6. Decide:
    - Buy if provider quality is clearly better and terms are acceptable.
    - Build if raw MRMS output is close and control matters.
    - Hybrid if provider wins now but raw MRMS is viable as a strategic fallback.
