@@ -39,7 +39,16 @@ jobs:
       MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
       MRMS_SKIP_EMPTY_TILES: ${{ vars.MRMS_SKIP_EMPTY_TILES || 'true' }}
       MRMS_ASSET_FILE_LIMIT: ${{ vars.MRMS_ASSET_FILE_LIMIT || '19500' }}
+      MRMS_TILE_UPLOAD_MODE: ${{ vars.MRMS_TILE_UPLOAD_MODE || 'static' }}
       MRMS_TILE_URL_BASE: ${{ vars.MRMS_TILE_URL_BASE || '' }}
+      MRMS_R2_BUCKET: ${{ vars.MRMS_R2_BUCKET || '' }}
+      MRMS_R2_PREFIX: ${{ vars.MRMS_R2_PREFIX || 'mrms' }}
+      MRMS_R2_ENDPOINT: ${{ vars.MRMS_R2_ENDPOINT || '' }}
+      MRMS_R2_CACHE_CONTROL: ${{ vars.MRMS_R2_CACHE_CONTROL || 'public, max-age=86400, immutable' }}
+      MRMS_R2_UPLOAD_CONCURRENCY: ${{ vars.MRMS_R2_UPLOAD_CONCURRENCY || '24' }}
+      MRMS_R2_PRUNE_OLDER_THAN_MINUTES: ${{ vars.MRMS_R2_PRUNE_OLDER_THAN_MINUTES || '360' }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +63,11 @@ jobs:
           if [ "$MRMS_SKIP_EMPTY_TILES" != "false" ]; then
             EXTRA_ARGS+=(--skip-empty-tiles)
           fi
-          if [ -n "$MRMS_TILE_URL_BASE" ]; then
+          if [ "$MRMS_TILE_UPLOAD_MODE" = "r2" ]; then
+            if [ -z "$MRMS_TILE_URL_BASE" ]; then
+              echo "MRMS_TILE_URL_BASE is required when MRMS_TILE_UPLOAD_MODE=r2."
+              exit 1
+            fi
             EXTRA_ARGS+=(--tile-url-base="$MRMS_TILE_URL_BASE")
           fi
           node scripts/mrms-prototype/publish-mrms-live.mjs \
@@ -75,6 +88,33 @@ jobs:
         if: steps.publish.outputs.skipped != 'true'
         run: |
           node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
+
+      - name: Upload generated radar tiles to R2
+        if: steps.publish.outputs.skipped != 'true' && env.MRMS_TILE_UPLOAD_MODE == 'r2'
+        run: |
+          if [ -z "$MRMS_R2_BUCKET" ]; then
+            echo "MRMS_R2_BUCKET is required when MRMS_TILE_UPLOAD_MODE=r2."
+            exit 1
+          fi
+          if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
+            echo "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets are required when MRMS_TILE_UPLOAD_MODE=r2."
+            exit 1
+          fi
+          ENDPOINT="$MRMS_R2_ENDPOINT"
+          if [ -z "$ENDPOINT" ]; then
+            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          node scripts/mrms-prototype/upload-mrms-r2.mjs \
+            --dir=radar/mrms/live \
+            --bucket="$MRMS_R2_BUCKET" \
+            --prefix="$MRMS_R2_PREFIX" \
+            --endpoint="$ENDPOINT" \
+            --access-key-id="$R2_ACCESS_KEY_ID" \
+            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+            --cache-control="$MRMS_R2_CACHE_CONTROL" \
+            --concurrency="$MRMS_R2_UPLOAD_CONCURRENCY" \
+            --prune-older-than-minutes="$MRMS_R2_PRUNE_OLDER_THAN_MINUTES" \
+            --delete-local
 
       - name: Verify generated asset budget
         if: steps.publish.outputs.skipped != 'true'

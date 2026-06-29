@@ -216,8 +216,26 @@ https://radar.example.com/mrms/great-falls/20260629-022439z/{z}/{x}/{y}.png?v=..
 ```
 
 This changes only the manifest contract. The renderer still writes local tile
-files so a separate upload step can sync them to R2/CDN before the app consumes
-the external URLs.
+files first. The GitHub Actions workflow can then upload those files to R2 and
+remove the local tile directory before Worker deploy when
+`MRMS_TILE_UPLOAD_MODE=r2`.
+
+R2 upload dry run:
+
+```bash
+node scripts/mrms-prototype/upload-mrms-r2.mjs \
+  --dir=radar/mrms/live \
+  --bucket=nearcast-radar \
+  --prefix=mrms \
+  --dry-run
+```
+
+Production R2 mode expects:
+
+- `MRMS_TILE_UPLOAD_MODE=r2`
+- `MRMS_TILE_URL_BASE`, for example `https://radar.getnearcast.app/mrms`
+- `MRMS_R2_BUCKET`
+- `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` as GitHub secrets
 
 The GitHub Actions publisher also checks generated file count before deploying:
 
@@ -226,9 +244,10 @@ node scripts/mrms-prototype/check-mrms-asset-budget.mjs --limit=19500
 ```
 
 That budget leaves room under the current Workers static asset file ceiling for
-the app shell. If we need more regions, longer history, or future forecast
-tiles at the same time, the sustainable path is to move generated tiles to
-R2/CDN-backed object storage and keep the manifest/index contract unchanged.
+the app shell. In R2 upload mode, local tile PNGs are removed before this check,
+so the Worker asset budget applies mostly to the app shell and radar manifests.
+That is the sustainable path for more regions, longer history, and future
+forecast tiles.
 
 For dry inspection without writing tiles:
 

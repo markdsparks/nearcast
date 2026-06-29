@@ -78,6 +78,8 @@ Required GitHub secrets:
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`: only required when `MRMS_TILE_UPLOAD_MODE=r2`.
+- `R2_SECRET_ACCESS_KEY`: only required when `MRMS_TILE_UPLOAD_MODE=r2`.
 
 Required GitHub variable for scheduled publishing:
 
@@ -102,6 +104,20 @@ Optional GitHub variable:
   frame URLs point at `${MRMS_TILE_URL_BASE}/<profile>/<frame>/<z>/<x>/<y>.png`
   instead of relative Worker static asset URLs. Leave unset until an upload
   target, such as R2 behind a public/custom domain, is ready.
+- `MRMS_TILE_UPLOAD_MODE`: defaults to `static`. Set to `r2` to upload
+  generated tile PNGs to R2 and remove them from the Worker static asset bundle
+  before deploy.
+- `MRMS_R2_BUCKET`: R2 bucket name used when `MRMS_TILE_UPLOAD_MODE=r2`.
+- `MRMS_R2_PREFIX`: object key prefix for generated radar tiles. Defaults to
+  `mrms`; this should match the path in `MRMS_TILE_URL_BASE`.
+- `MRMS_R2_ENDPOINT`: optional S3-compatible R2 endpoint override. Defaults to
+  `https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com`.
+- `MRMS_R2_CACHE_CONTROL`: defaults to
+  `public, max-age=86400, immutable` because frame ids and tile-version query
+  strings make generated tile URLs immutable.
+- `MRMS_R2_UPLOAD_CONCURRENCY`: defaults to `24`.
+- `MRMS_R2_PRUNE_OLDER_THAN_MINUTES`: defaults to `360`. Older R2 tile objects
+  under the configured prefix are pruned after a successful upload.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
@@ -152,9 +168,9 @@ Multi-pack static deploys:
   as transparent radar, not as unavailable weather, because the manifest and
   coverage metadata remain the source of truth.
 - The manifest can point tiles at an external origin via `MRMS_TILE_URL_BASE`.
-  The workflow still writes local tiles for now; the next storage step is to
-  upload those local files to R2/CDN before deploy, then remove local tile PNGs
-  from the Worker asset bundle.
+  When `MRMS_TILE_UPLOAD_MODE=r2`, the workflow uploads local tiles to R2, then
+  removes `radar/mrms/live/` before the Worker deploy so the Worker carries only
+  the app shell, index, and manifests.
 - If every pack in the deployed index has the same source/render fingerprint and
   is still fresh enough, the workflow skips the whole deploy. If any pack
   changed, the publisher regenerates all requested packs so the static deploy

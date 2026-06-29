@@ -129,8 +129,9 @@ Worker deploy.
 The publisher now has a storage seam via `--tile-url-base`: frame templates can
 point at an external public origin while manifests and indexes keep the same
 shape. That makes R2/CDN a storage swap instead of an app-side map rewrite. The
-remaining production work is the upload step and then pruning local tile PNGs
-from the Worker static asset bundle.
+workflow can now run that swap with `MRMS_TILE_UPLOAD_MODE=r2`: upload generated
+tiles to R2, prune older R2 objects, and remove local tile PNGs before the
+Worker static asset deploy.
 
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
