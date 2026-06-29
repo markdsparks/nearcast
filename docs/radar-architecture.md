@@ -341,6 +341,12 @@ Current scaffold:
 - `scripts/radar-generation-publisher-smoke.mjs` verifies object planning,
   local R2 mirroring, injected-client R2 upload, expired-pack pruning, pack
   replacement, and index output without Cloudflare credentials.
+- `scripts/radar-generation-preview-fixture.mjs` creates a tiny non-live
+  preview render result for credentialed R2 upload checks.
+- `.github/workflows/radar-generation-r2-preview.yml` manually uploads that
+  preview fixture under `radar/mrms/on-demand-preview/...` and writes
+  `radar/mrms/on-demand-preview/index.json`, leaving the live app index and
+  deploy path untouched.
 
 Still missing before activation:
 

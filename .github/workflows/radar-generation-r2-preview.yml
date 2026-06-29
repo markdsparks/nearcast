@@ -1,0 +1,130 @@
+name: Preview radar generation R2 upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      latitude:
+        description: Preview center latitude
+        required: false
+        default: "47.505"
+      longitude:
+        description: Preview center longitude
+        required: false
+        default: "-111.300"
+      zoom:
+        description: Preview viewport zoom
+        required: false
+        default: "10"
+      bounds:
+        description: Preview bounds as minLat,minLon,maxLat,maxLon
+        required: false
+        default: "46.9,-112.4,48.2,-110.2"
+      tileZooms:
+        description: Fixture source zooms
+        required: false
+        default: "8,9,10"
+      ttlMinutes:
+        description: Preview freshness window
+        required: false
+        default: "60"
+      publicBaseUrl:
+        description: Public R2/custom-domain origin
+        required: false
+        default: "https://radar.getnearcast.app"
+      indexKey:
+        description: Mutable preview index object key
+        required: false
+        default: "radar/mrms/on-demand-preview/index.json"
+      sourceSignature:
+        description: Optional immutable preview source segment
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: radar-generation-r2-preview
+  cancel-in-progress: false
+
+jobs:
+  upload-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RADAR_GENERATION_R2_BUCKET: ${{ vars.RADAR_GENERATION_R2_BUCKET || vars.MRMS_R2_BUCKET || 'nearcast-radar' }}
+      RADAR_GENERATION_R2_ENDPOINT: ${{ vars.RADAR_GENERATION_R2_ENDPOINT || vars.MRMS_R2_ENDPOINT || '' }}
+      RADAR_GENERATION_R2_UPLOAD_CONCURRENCY: ${{ vars.RADAR_GENERATION_R2_UPLOAD_CONCURRENCY || vars.MRMS_R2_UPLOAD_CONCURRENCY || '4' }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Create preview artifact fixture
+        run: |
+          SOURCE_SIGNATURE="${{ github.event.inputs.sourceSignature }}"
+          if [ -z "$SOURCE_SIGNATURE" ]; then
+            SOURCE_SIGNATURE="preview-${GITHUB_RUN_ID}"
+          fi
+          node scripts/radar-generation-preview-fixture.mjs \
+            --artifact-root=/tmp/nearcast-radar-preview-artifacts \
+            --result-out=/tmp/nearcast-radar-preview-result.json \
+            --public-base-url="${{ github.event.inputs.publicBaseUrl }}" \
+            --source-signature="$SOURCE_SIGNATURE" \
+            --lat="${{ github.event.inputs.latitude }}" \
+            --lon="${{ github.event.inputs.longitude }}" \
+            --zoom="${{ github.event.inputs.zoom }}" \
+            --bounds="${{ github.event.inputs.bounds }}" \
+            --tile-zooms="${{ github.event.inputs.tileZooms }}" \
+            --ttl-minutes="${{ github.event.inputs.ttlMinutes }}"
+
+      - name: Plan preview publish
+        run: |
+          node scripts/radar-generation-publisher.mjs \
+            --render-result=/tmp/nearcast-radar-preview-result.json \
+            --index-out=/tmp/nearcast-radar-preview-index/${{ github.event.inputs.indexKey }} \
+            --index-key="${{ github.event.inputs.indexKey }}" \
+            --upload-mode=dry-run \
+            --public-base-url="${{ github.event.inputs.publicBaseUrl }}"
+
+      - name: Install R2 upload dependency
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
+      - name: Upload preview artifacts to R2
+        run: |
+          if [ -z "$RADAR_GENERATION_R2_BUCKET" ]; then
+            echo "RADAR_GENERATION_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && [ -z "$RADAR_GENERATION_R2_ENDPOINT" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID or RADAR_GENERATION_R2_ENDPOINT is required."
+            exit 1
+          fi
+          if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
+            echo "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets are required."
+            exit 1
+          fi
+          ENDPOINT="$RADAR_GENERATION_R2_ENDPOINT"
+          if [ -z "$ENDPOINT" ]; then
+            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          node scripts/radar-generation-publisher.mjs \
+            --render-result=/tmp/nearcast-radar-preview-result.json \
+            --index-out=/tmp/nearcast-radar-preview-index/${{ github.event.inputs.indexKey }} \
+            --index-key="${{ github.event.inputs.indexKey }}" \
+            --upload-mode=r2 \
+            --bucket="$RADAR_GENERATION_R2_BUCKET" \
+            --endpoint="$ENDPOINT" \
+            --access-key-id="$R2_ACCESS_KEY_ID" \
+            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+            --concurrency="$RADAR_GENERATION_R2_UPLOAD_CONCURRENCY" \
+            --public-base-url="${{ github.event.inputs.publicBaseUrl }}"
+
+      - name: Print preview index URL
+        run: |
+          echo "Preview index: ${{ github.event.inputs.publicBaseUrl }}/${{ github.event.inputs.indexKey }}"

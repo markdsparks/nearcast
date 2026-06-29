@@ -163,6 +163,19 @@ Smoke test:
 node scripts/radar-generation-publisher-smoke.mjs
 ```
 
+Manual preview R2 upload:
+
+```bash
+gh workflow run "Preview radar generation R2 upload"
+```
+
+This workflow uploads a tiny preview artifact set under
+`radar/mrms/on-demand-preview/...` and writes its mutable preview index to
+`radar/mrms/on-demand-preview/index.json`. It uses the repository R2 secrets and
+`MRMS_R2_BUCKET` fallback variable, installs `@aws-sdk/client-s3` only for the
+workflow run, and does not deploy the app or modify the live
+`radar/mrms/index.json`.
+
 Activation checklist:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
