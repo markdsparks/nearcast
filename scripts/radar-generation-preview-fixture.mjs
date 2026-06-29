@@ -359,6 +359,8 @@ Options:
   --bounds=minLat,minLon,maxLat,maxLon
                              Preview coverage bounds. Defaults to Great Falls.
   --tile-zooms=8,9,10        Source zooms to represent in the fixture.
+  --ttl-minutes=15           Fixture freshness window.
+  --max-candidate-tiles=160  Candidate-tile safety cap.
   --output-prefix=KEY        Object prefix. Defaults to radar/mrms/on-demand-preview.
 `);
 }

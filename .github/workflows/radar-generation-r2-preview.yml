@@ -19,10 +19,22 @@ on:
         description: Preview bounds as minLat,minLon,maxLat,maxLon
         required: false
         default: "46.9,-112.4,48.2,-110.2"
+      renderMode:
+        description: real or fixture
+        required: false
+        default: "real"
       tileZooms:
-        description: Fixture source zooms
+        description: Preview source zooms
         required: false
         default: "8,9,10"
+      frames:
+        description: Recent MRMS frames for real mode
+        required: false
+        default: "1"
+      maxCandidateTiles:
+        description: Candidate-tile cap
+        required: false
+        default: "160"
       ttlMinutes:
         description: Preview freshness window
         required: false
@@ -36,7 +48,7 @@ on:
         required: false
         default: "radar/mrms/on-demand-preview/index.json"
       sourceSignature:
-        description: Optional immutable preview source segment
+        description: Optional fixture source segment
         required: false
         default: ""
 
@@ -65,23 +77,47 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Create preview artifact fixture
+      - name: Create preview render result
         run: |
-          SOURCE_SIGNATURE="${{ github.event.inputs.sourceSignature }}"
-          if [ -z "$SOURCE_SIGNATURE" ]; then
-            SOURCE_SIGNATURE="preview-${GITHUB_RUN_ID}"
+          MODE="${{ github.event.inputs.renderMode }}"
+          if [ "$MODE" = "fixture" ]; then
+            SOURCE_SIGNATURE="${{ github.event.inputs.sourceSignature }}"
+            if [ -z "$SOURCE_SIGNATURE" ]; then
+              SOURCE_SIGNATURE="preview-${GITHUB_RUN_ID}"
+            fi
+            node scripts/radar-generation-preview-fixture.mjs \
+              --artifact-root=/tmp/nearcast-radar-preview-artifacts \
+              --result-out=/tmp/nearcast-radar-preview-result.json \
+              --public-base-url="${{ github.event.inputs.publicBaseUrl }}" \
+              --source-signature="$SOURCE_SIGNATURE" \
+              --lat="${{ github.event.inputs.latitude }}" \
+              --lon="${{ github.event.inputs.longitude }}" \
+              --zoom="${{ github.event.inputs.zoom }}" \
+              --bounds="${{ github.event.inputs.bounds }}" \
+              --tile-zooms="${{ github.event.inputs.tileZooms }}" \
+              --max-candidate-tiles="${{ github.event.inputs.maxCandidateTiles }}" \
+              --ttl-minutes="${{ github.event.inputs.ttlMinutes }}"
+          elif [ "$MODE" = "real" ]; then
+            node scripts/radar-generation-preview-plan.mjs \
+              --plan-out=/tmp/nearcast-radar-preview-plan.json \
+              --lat="${{ github.event.inputs.latitude }}" \
+              --lon="${{ github.event.inputs.longitude }}" \
+              --zoom="${{ github.event.inputs.zoom }}" \
+              --bounds="${{ github.event.inputs.bounds }}" \
+              --tile-zooms="${{ github.event.inputs.tileZooms }}" \
+              --frames="${{ github.event.inputs.frames }}" \
+              --max-candidate-tiles="${{ github.event.inputs.maxCandidateTiles }}" \
+              --ttl-minutes="${{ github.event.inputs.ttlMinutes }}"
+            node scripts/radar-generation-renderer.mjs \
+              --plan=/tmp/nearcast-radar-preview-plan.json \
+              --artifact-root=/tmp/nearcast-radar-preview-artifacts \
+              --public-base-url="${{ github.event.inputs.publicBaseUrl }}" \
+              > /tmp/nearcast-radar-preview-result.json
+            node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('/tmp/nearcast-radar-preview-result.json','utf8')); console.log(JSON.stringify({state:r.state, sourceSignature:r.sourceSignature, manifestKey:r.materialized?.manifestKey, indexPackKey:r.materialized?.indexPackKey, generatedTiles:r.pack?.metrics?.generatedTiles, radarTiles:r.pack?.metrics?.radarTiles, dataTiles:r.pack?.metrics?.dataTiles, candidateTiles:r.pack?.metrics?.candidateTiles}, null, 2));"
+          else
+            echo "renderMode must be real or fixture."
+            exit 1
           fi
-          node scripts/radar-generation-preview-fixture.mjs \
-            --artifact-root=/tmp/nearcast-radar-preview-artifacts \
-            --result-out=/tmp/nearcast-radar-preview-result.json \
-            --public-base-url="${{ github.event.inputs.publicBaseUrl }}" \
-            --source-signature="$SOURCE_SIGNATURE" \
-            --lat="${{ github.event.inputs.latitude }}" \
-            --lon="${{ github.event.inputs.longitude }}" \
-            --zoom="${{ github.event.inputs.zoom }}" \
-            --bounds="${{ github.event.inputs.bounds }}" \
-            --tile-zooms="${{ github.event.inputs.tileZooms }}" \
-            --ttl-minutes="${{ github.event.inputs.ttlMinutes }}"
 
       - name: Plan preview publish
         run: |

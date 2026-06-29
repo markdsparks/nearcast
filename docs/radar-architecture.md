@@ -341,10 +341,13 @@ Current scaffold:
 - `scripts/radar-generation-publisher-smoke.mjs` verifies object planning,
   local R2 mirroring, injected-client R2 upload, expired-pack pruning, pack
   replacement, and index output without Cloudflare credentials.
-- `scripts/radar-generation-preview-fixture.mjs` creates a tiny non-live
+- `scripts/radar-generation-preview-plan.mjs` creates a bounded non-live
+  preview render plan for the existing MRMS renderer.
+- `scripts/radar-generation-preview-fixture.mjs` still creates a tiny synthetic
   preview render result for credentialed R2 upload checks.
-- `.github/workflows/radar-generation-r2-preview.yml` manually uploads that
-  preview fixture under `radar/mrms/on-demand-preview/...` and writes
+- `.github/workflows/radar-generation-r2-preview.yml` manually runs either the
+  bounded real MRMS preview render or the fixture path, uploads artifacts under
+  `radar/mrms/on-demand-preview/...`, and writes
   `radar/mrms/on-demand-preview/index.json`, leaving the live app index and
   deploy path untouched.
 

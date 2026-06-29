@@ -169,12 +169,13 @@ Manual preview R2 upload:
 gh workflow run "Preview radar generation R2 upload"
 ```
 
-This workflow uploads a tiny preview artifact set under
-`radar/mrms/on-demand-preview/...` and writes its mutable preview index to
-`radar/mrms/on-demand-preview/index.json`. It uses the repository R2 secrets and
-`MRMS_R2_BUCKET` fallback variable, installs `@aws-sdk/client-s3` only for the
-workflow run, and does not deploy the app or modify the live
-`radar/mrms/index.json`.
+This workflow defaults to a bounded real MRMS render for Great Falls, uploads
+the preview artifact set under `radar/mrms/on-demand-preview/...`, and writes
+its mutable preview index to `radar/mrms/on-demand-preview/index.json`. It uses
+the repository R2 secrets and `MRMS_R2_BUCKET` fallback variable, installs
+`@aws-sdk/client-s3` only for the workflow run, and does not deploy the app or
+modify the live `radar/mrms/index.json`. Set `renderMode=fixture` for the tiny
+synthetic upload smoke path.
 
 Activation checklist:
 
