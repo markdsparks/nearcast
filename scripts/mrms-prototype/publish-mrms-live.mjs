@@ -67,6 +67,7 @@ async function main() {
   const tileZooms = args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS;
   const tileUrlBase = profileTileUrlBase(profile);
   const skipMinFreshMinutes = Math.max(0, numberArg(args["skip-min-fresh-minutes"], DEFAULT_SKIP_MIN_FRESH_MINUTES));
+  const forcePublish = booleanArg(args["force-publish"], false);
   const checkedAt = new Date().toISOString();
 
   const generator = path.join(path.dirname(new URL(import.meta.url).pathname), "generate-mrms-timeline.mjs");
@@ -86,7 +87,9 @@ async function main() {
   const resolveResult = runGenerator([...commandArgs, "--resolve-only"], "timeline source resolve");
   const publishPlan = parseJsonOutput(resolveResult.stdout, "timeline source resolve");
   const current = await loadCurrentManifest();
-  const skipDecision = shouldSkipPublish({ currentManifest: current.manifest, publishPlan, skipMinFreshMinutes });
+  const skipDecision = forcePublish
+    ? { skip: false, reason: "forced-publish" }
+    : shouldSkipPublish({ currentManifest: current.manifest, publishPlan, skipMinFreshMinutes });
 
   if (skipDecision.skip) {
     const summary = {
@@ -166,6 +169,7 @@ async function publishProfileSet(profiles) {
   const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
   const tileZooms = args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS;
   const skipMinFreshMinutes = Math.max(0, numberArg(args["skip-min-fresh-minutes"], DEFAULT_SKIP_MIN_FRESH_MINUTES));
+  const forcePublish = booleanArg(args["force-publish"], false);
   const checkedAt = new Date().toISOString();
   const generator = path.join(path.dirname(new URL(import.meta.url).pathname), "generate-mrms-timeline.mjs");
   const current = await loadCurrentIndex();
@@ -203,11 +207,13 @@ async function publishProfileSet(profiles) {
     };
   });
 
-  const skipDecision = shouldSkipProfileSetPublish({
-    currentIndex: current.index,
-    plans,
-    skipMinFreshMinutes
-  });
+  const skipDecision = forcePublish
+    ? { skip: false, reason: "forced-publish" }
+    : shouldSkipProfileSetPublish({
+        currentIndex: current.index,
+        plans,
+        skipMinFreshMinutes
+      });
 
   if (skipDecision.skip) {
     const summary = {
@@ -743,6 +749,7 @@ Options:
                               Compare against a local manifest before rendering.
   --current-index-url=URL    Compare a multi-pack run against the currently deployed index.
   --current-index-file=PATH  Compare a multi-pack run against a local index.
+  --force-publish            Regenerate and deploy even when the current source is fresh.
   --skip-min-fresh-minutes=8 Keep the current manifest if unchanged and this fresh.
   --summary-out=PATH         Write a machine-readable publish summary for CI.
   --skip-empty-tiles         Write only tiles with radar pixels.

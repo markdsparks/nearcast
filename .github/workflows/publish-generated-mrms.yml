@@ -19,6 +19,10 @@ on:
         description: Generated source zooms
         required: false
         default: "6,7,8,9,10,11,12,13"
+      forcePublish:
+        description: Regenerate and deploy even when the current radar source is fresh
+        required: false
+        default: "false"
   schedule:
     - cron: "*/15 * * * *"
 
@@ -52,6 +56,7 @@ jobs:
       MRMS_R2_CACHE_CONTROL: ${{ vars.MRMS_R2_CACHE_CONTROL || 'public, max-age=86400, immutable' }}
       MRMS_R2_UPLOAD_CONCURRENCY: ${{ vars.MRMS_R2_UPLOAD_CONCURRENCY || '24' }}
       MRMS_R2_PRUNE_OLDER_THAN_MINUTES: ${{ vars.MRMS_R2_PRUNE_OLDER_THAN_MINUTES || '360' }}
+      MRMS_FORCE_PUBLISH: ${{ github.event.inputs.forcePublish || 'false' }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
@@ -74,6 +79,9 @@ jobs:
               exit 1
             fi
             EXTRA_ARGS+=(--tile-url-base="$MRMS_TILE_URL_BASE")
+          fi
+          if [ "$MRMS_FORCE_PUBLISH" = "true" ]; then
+            EXTRA_ARGS+=(--force-publish)
           fi
           node scripts/mrms-prototype/publish-mrms-live.mjs \
             --profiles="$MRMS_PROFILES" \

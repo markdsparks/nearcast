@@ -11,9 +11,11 @@ const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
+const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
+let mapLibreGeneratedRadarProtocolRegistered = false;
 const mapLibreInteraction = {
   active: false,
   settleTimer: 0,
@@ -627,6 +629,61 @@ function mapLibreWeatherTileTemplate(template) {
     .replace("{bbox}", "{bbox-epsg-3857}");
 }
 
+function ensureMapLibreGeneratedRadarProtocol() {
+  const maplibre = window.maplibregl;
+  if (mapLibreGeneratedRadarProtocolRegistered || !maplibre?.addProtocol) return;
+  maplibre.addProtocol(MAPLIBRE_GENERATED_RADAR_PROTOCOL, async (params, abortController) => {
+    const url = mapLibreGeneratedRadarUrl(params?.url);
+    if (!url) return { data: new ArrayBuffer(0) };
+    const response = await fetch(url, { signal: abortController?.signal });
+    if (response.status === 404 || response.status === 410) {
+      return {
+        data: new ArrayBuffer(0),
+        cacheControl: response.headers.get("Cache-Control"),
+        expires: response.headers.get("Expires")
+      };
+    }
+    if (!response.ok) {
+      throw new Error(`Generated radar tile failed: ${response.status}`);
+    }
+    return {
+      data: await response.arrayBuffer(),
+      cacheControl: response.headers.get("Cache-Control"),
+      expires: response.headers.get("Expires")
+    };
+  });
+  mapLibreGeneratedRadarProtocolRegistered = true;
+}
+
+function mapLibreGeneratedRadarUrl(url) {
+  const value = String(url || "");
+  if (!value.startsWith(`${MAPLIBRE_GENERATED_RADAR_PROTOCOL}://`)) return "";
+  return value.replace(`${MAPLIBRE_GENERATED_RADAR_PROTOCOL}:`, "https:");
+}
+
+function mapLibreGeneratedRadarTileTemplate(template, frame) {
+  if (frame?.provider !== "mrms-generated") return template;
+  if (!/^https:\/\//i.test(template)) return template;
+  ensureMapLibreGeneratedRadarProtocol();
+  return template.replace(/^https:/i, `${MAPLIBRE_GENERATED_RADAR_PROTOCOL}:`);
+}
+
+function mapLibreSourceBounds(bounds) {
+  if (!bounds) return null;
+  const minLat = Number(bounds.minLat);
+  const minLon = Number(bounds.minLon);
+  const maxLat = Number(bounds.maxLat);
+  const maxLon = Number(bounds.maxLon);
+  if (![minLat, minLon, maxLat, maxLon].every(Number.isFinite)) return null;
+  if (minLon > maxLon) return null;
+  return [
+    Math.max(-180, minLon),
+    Math.max(-85.051129, Math.min(minLat, maxLat)),
+    Math.min(180, maxLon),
+    Math.min(85.051129, Math.max(minLat, maxLat))
+  ];
+}
+
 function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
 }
@@ -732,16 +789,21 @@ function mapLibreWeatherSpecForFrame(frameIndex, options = {}) {
 }
 
 function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
-  const template = mapLibreWeatherTileTemplate(layer?.url);
+  const rawTemplate = mapLibreWeatherTileTemplate(layer?.url);
+  const template = mapLibreGeneratedRadarTileTemplate(rawTemplate, frame);
   if (!template) return null;
   const opacity = Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 0.78;
+  const minZoom = weatherFrameMinZoom(frame);
+  const maxZoom = Math.max(minZoom, weatherFrameMaxZoom(frame));
   return {
     key: `${options.frameIndex}:${options.layerIndex}:${template}`,
     frameIndex: options.frameIndex,
     template,
     opacity: Math.max(0, Math.min(opacity, 1)),
     preload: Boolean(options.preload),
-    maxZoom: weatherFrameMaxZoom(frame),
+    minZoom,
+    maxZoom,
+    bounds: mapLibreSourceBounds(frame?.coverageBounds),
     attribution: frame?.attribution || ""
   };
 }
@@ -784,7 +846,8 @@ function syncMapLibreWeatherSlots(record, specs = []) {
 }
 
 function mapLibreWeatherSourceSignature(spec) {
-  return `${spec.template}|${spec.maxZoom}|${spec.attribution}`;
+  const bounds = Array.isArray(spec.bounds) ? spec.bounds.join(",") : "";
+  return `${spec.template}|${spec.minZoom}|${spec.maxZoom}|${bounds}|${spec.attribution}`;
 }
 
 function ensureMapLibreWeatherEntry(record, spec) {
@@ -800,14 +863,16 @@ function ensureMapLibreWeatherEntry(record, spec) {
   const id = record.weatherEntrySeq = (record.weatherEntrySeq || 0) + 1;
   const sourceId = `${MAPLIBRE_WEATHER_PREFIX}-source-${id}`;
   const layerId = `${MAPLIBRE_WEATHER_PREFIX}-layer-${id}`;
-  map.addSource(sourceId, {
+  const sourceOptions = {
     type: "raster",
     tiles: [spec.template],
     tileSize: 256,
-    minzoom: MAP_MIN_ZOOM,
+    minzoom: spec.minZoom,
     maxzoom: spec.maxZoom,
     attribution: spec.attribution
-  });
+  };
+  if (Array.isArray(spec.bounds)) sourceOptions.bounds = spec.bounds;
+  map.addSource(sourceId, sourceOptions);
   map.addLayer({
     id: layerId,
     type: "raster",
@@ -3153,6 +3218,18 @@ function weatherFrameMaxZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
   const forcedRadarZoom = frame.source === "radar" ? radarSourceZoomOverride() : null;
   const maxZoom = forcedRadarZoom || frame.maxZoom || MAP_MAX_ZOOM;
   return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(maxZoom), MAP_MAX_ZOOM));
+}
+
+function weatherFrameMinZoom(frameOrMinZoom = MAP_MIN_ZOOM) {
+  if (typeof frameOrMinZoom === "number") {
+    return Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(frameOrMinZoom || MAP_MIN_ZOOM), MAP_MAX_ZOOM));
+  }
+
+  const frame = frameOrMinZoom || {};
+  const minZoom = Number(frame.minZoom ?? frame.minzoom);
+  return Number.isFinite(minZoom)
+    ? Math.max(MAP_MIN_ZOOM, Math.min(Math.floor(minZoom), MAP_MAX_ZOOM))
+    : MAP_MIN_ZOOM;
 }
 
 function weatherFrameSourceZoom(frameOrMaxZoom = MAP_MAX_ZOOM) {
