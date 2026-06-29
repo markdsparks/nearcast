@@ -1,0 +1,156 @@
+name: Verify radar generation queue
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-radar-generation-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RADAR_GENERATION_PLANS_R2_PREFIX: radar/mrms/plans
+      RADAR_GENERATION_MAX_CANDIDATE_TILES: "220"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build unique queue verification payload
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const runId = Number(process.env.GITHUB_RUN_ID || Date.now());
+          const offset = (runId % 700) / 10000;
+          const latitude = Number((35.2 + offset).toFixed(4));
+          const longitude = Number((-90.2 - offset).toFixed(4));
+          const payload = {
+            provider: "nearcast-radar-capability-request",
+            version: 1,
+            viewport: {
+              center: { latitude, longitude },
+              activePoint: { latitude, longitude },
+              zoom: 10,
+              bounds: {
+                minLat: Number((latitude - 0.08).toFixed(4)),
+                minLon: Number((longitude - 0.08).toFixed(4)),
+                maxLat: Number((latitude + 0.08).toFixed(4)),
+                maxLon: Number((longitude + 0.08).toFixed(4))
+              },
+              key: `${latitude.toFixed(2)},${longitude.toFixed(2)},z10`
+            },
+            preferences: {
+              radarProvider: "auto",
+              mapRenderer: "gl",
+              timelineKind: "radar",
+              immersive: false
+            },
+            generation: {
+              request: true,
+              reason: "queue-consumer-verification"
+            }
+          };
+          fs.writeFileSync("/tmp/radar-generation-payload.json", JSON.stringify(payload));
+          console.log(JSON.stringify({ latitude, longitude, key: payload.viewport.key }, null, 2));
+          NODE
+
+      - name: Request preview generation
+        run: |
+          curl -fsS -X POST https://getnearcast.app/api/radar/capability \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/radar-generation-payload.json \
+            > /tmp/radar-generation-capability.json
+          cat /tmp/radar-generation-capability.json
+
+      - name: Compute expected private plan object
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { buildRadarGenerationPlan } from "./workers/radar-generation-consumer.mjs";
+          const payload = JSON.parse(fs.readFileSync("/tmp/radar-generation-payload.json", "utf8"));
+          const capability = JSON.parse(fs.readFileSync("/tmp/radar-generation-capability.json", "utf8"));
+          const generationState = capability?.generation?.state || "";
+          if (!["queued", "deduped"].includes(generationState)) {
+            throw new Error(`Expected queued or deduped generation state, got ${generationState || "missing"}`);
+          }
+          if (!capability?.generation?.requestId || !capability?.generation?.dedupeKey) {
+            throw new Error("Capability response did not include requestId and dedupeKey.");
+          }
+          const message = {
+            requestId: capability.generation.requestId,
+            dedupeKey: capability.generation.dedupeKey,
+            requestedAt: capability.generation.queuedAt || capability.checkedAt || new Date().toISOString(),
+            viewport: capability.viewport,
+            preferences: payload.preferences,
+            reason: payload.generation.reason,
+            enhancedReason: capability.enhanced?.reason || ""
+          };
+          const planResult = buildRadarGenerationPlan(message, process.env);
+          if (!planResult.accepted) {
+            throw new Error(`Expected accepted render plan, got ${planResult.reason}`);
+          }
+          const prefix = process.env.RADAR_GENERATION_PLANS_R2_PREFIX || "radar/mrms/plans";
+          const objectPath = `nearcast-radar-state/${prefix}/${planResult.plan.output.planKey}`;
+          fs.writeFileSync("/tmp/radar-generation-message.json", JSON.stringify(message, null, 2));
+          fs.writeFileSync("/tmp/radar-generation-plan-path.txt", objectPath);
+          console.log(JSON.stringify({
+            generationState,
+            requestId: message.requestId,
+            dedupeKey: message.dedupeKey,
+            planKey: planResult.plan.output.planKey,
+            objectPath
+          }, null, 2));
+          NODE
+
+      - name: Fetch persisted render plan from private R2
+        run: |
+          OBJECT_PATH="$(cat /tmp/radar-generation-plan-path.txt)"
+          FOUND=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if npx --yes wrangler r2 object get "$OBJECT_PATH" --remote --file /tmp/radar-generation-plan.json; then
+              FOUND=1
+              break
+            fi
+            echo "Plan not visible yet; retry $attempt."
+            sleep 5
+          done
+          if [ "$FOUND" != "1" ]; then
+            echo "Plan object was not found at $OBJECT_PATH"
+            exit 1
+          fi
+
+      - name: Verify persisted render plan
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const message = JSON.parse(fs.readFileSync("/tmp/radar-generation-message.json", "utf8"));
+          const plan = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan.json", "utf8"));
+          if (plan.provider !== "nearcast-radar-generation-plan") {
+            throw new Error(`Unexpected plan provider ${plan.provider}`);
+          }
+          if (plan.requestId !== message.requestId) {
+            throw new Error(`Plan requestId mismatch: ${plan.requestId} !== ${message.requestId}`);
+          }
+          if (plan.dedupeKey !== message.dedupeKey) {
+            throw new Error(`Plan dedupeKey mismatch: ${plan.dedupeKey} !== ${message.dedupeKey}`);
+          }
+          if (!plan.output?.manifestKeyTemplate || !plan.output?.tilePrefixTemplate) {
+            throw new Error("Plan is missing output templates.");
+          }
+          console.log(JSON.stringify({
+            requestId: plan.requestId,
+            planKey: plan.output.planKey,
+            candidateTiles: plan.coverage?.candidateTiles,
+            tileBounds: plan.coverage?.tileBounds
+          }, null, 2));
+          NODE

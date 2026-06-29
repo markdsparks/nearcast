@@ -324,16 +324,23 @@ Current scaffold:
 - Preview deploys bind `RADAR_GENERATION_QUEUE` as a producer and store
   request-state/budget records in a private radar-state R2 bucket. This keeps
   on-demand acceptance testable without adding a KV namespace yet.
+- The active Worker also consumes `RADAR_GENERATION_QUEUE` messages and stores
+  bounded render plans in private R2. This makes queue acceptance observable as
+  durable work without activating the expensive renderer yet.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
   deduped, limited, KV-backed request state, R2-backed request state, Worker
-  endpoint routing, and static asset passthrough locally without Cloudflare.
-- `workers/radar-generation-consumer.mjs` implements the dormant queue-side
-  contract. It validates accepted generation messages, normalizes viewport
+  endpoint routing, Worker queue handling, and static asset passthrough locally
+  without Cloudflare.
+- `workers/radar-generation-consumer.mjs` implements the queue-side contract.
+  It validates accepted generation messages, normalizes viewport
   bounds, estimates candidate tile counts, rejects over-budget jobs, and emits a
   stable render plan with source-signature-scoped output key templates.
 - `scripts/radar-generation-consumer-smoke.mjs` verifies valid planning,
   invalid payload rejection, tile-budget rejection, stable output keys, queue
-  ack behavior, and optional plan storage locally without Cloudflare.
+  ack behavior, and KV/R2 plan storage locally without Cloudflare.
+- `.github/workflows/verify-radar-generation-queue.yml` posts a unique
+  no-pack viewport to the live capability endpoint and verifies the expected
+  render plan appears in the private state bucket.
 - `scripts/radar-generation-renderer.mjs` executes a persisted render plan
   offline. It resolves and pins the MRMS source, substitutes the source
   signature into output keys, runs the bounded timeline generator, and writes a
@@ -390,7 +397,6 @@ Current scaffold:
 Still missing before broad activation:
 
 - Cloudflare endpoint verification after deploy.
-- Queue consumer deployment wiring.
 - Production queue/renderer R2 credential wiring and bucket policy review.
 - Worker or job wiring to run the consumer, renderer, and publisher together.
 - App-side enhanced-layer refresh after a generated pack becomes ready.

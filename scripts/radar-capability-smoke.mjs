@@ -75,6 +75,39 @@ const passthrough = await worker.fetch(new Request("https://getnearcast.app/inde
 assert.equal(passthrough.status, 200);
 assert.equal(await passthrough.text(), "asset passthrough");
 
+const workerPlanStore = createR2PlanBucket();
+const workerQueueMessage = createQueueMessage({
+  requestId: "worker-queue-smoke",
+  dedupeKey: "radar-generation:v1:auto:radar:35.20:-90.20:z10",
+  requestedAt: "2026-06-29T18:30:00Z",
+  viewport: {
+    center: { latitude: 35.2, longitude: -90.2 },
+    activePoint: { latitude: 35.2, longitude: -90.2 },
+    zoom: 10,
+    bounds: { minLat: 35.0, minLon: -90.4, maxLat: 35.4, maxLon: -90.0 },
+    key: "35.20,-90.20,z10"
+  },
+  preferences: {
+    radarProvider: "auto",
+    mapRenderer: "gl",
+    timelineKind: "radar",
+    immersive: false
+  },
+  reason: "worker-queue-smoke",
+  enhancedReason: "no-fresh-index-pack"
+});
+const workerQueue = await worker.queue({
+  messages: [workerQueueMessage]
+}, {
+  RADAR_GENERATION_MAX_CANDIDATE_TILES: "220",
+  RADAR_GENERATION_PLANS_R2: workerPlanStore,
+  RADAR_GENERATION_PLANS_R2_PREFIX: "radar/mrms/plans-smoke"
+}, {});
+assert.equal(workerQueue.accepted, 1);
+assert.equal(workerQueueMessage.acked, true);
+assert.equal(workerPlanStore.records.length, 1);
+assert.ok(workerPlanStore.records[0].key.startsWith("radar/mrms/plans-smoke/"));
+
 let externalFetchCount = 0;
 const externalIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";
 const externalIndex = {
@@ -204,6 +237,7 @@ assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
+  workerQueue: workerQueue.accepted,
   external: externalReady.body.enhanced.packId,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
@@ -274,6 +308,33 @@ function createR2Bucket() {
         body: String(body),
         options
       });
+    }
+  };
+}
+
+function createR2PlanBucket() {
+  return {
+    records: [],
+    async put(key, body, options = {}) {
+      this.records.push({
+        key,
+        value: JSON.parse(String(body)),
+        options
+      });
+    }
+  };
+}
+
+function createQueueMessage(body) {
+  return {
+    body,
+    acked: false,
+    retried: false,
+    ack() {
+      this.acked = true;
+    },
+    retry() {
+      this.retried = true;
     }
   };
 }

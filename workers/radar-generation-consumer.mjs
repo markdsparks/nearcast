@@ -8,6 +8,8 @@ const DEFAULT_MAX_CANDIDATE_TILES = 220;
 const DEFAULT_TILE_SIZE = 256;
 const DEFAULT_TTL_MINUTES = 15;
 const DEFAULT_OUTPUT_PREFIX = "radar/mrms/on-demand";
+const DEFAULT_PLAN_R2_PREFIX = "radar/mrms/plans";
+const RADAR_GENERATION_PLANS_R2_PREFIX_ENV = "RADAR_GENERATION_PLANS_R2_PREFIX";
 const MERCATOR_MAX_LAT = 85.05113;
 
 export default {
@@ -47,15 +49,61 @@ export async function handleRadarGenerationQueue(batch, env = {}, ctx = {}) {
 }
 
 export async function handleRadarGenerationMessage(message, env = {}) {
-  const result = buildRadarGenerationPlan(message, env);
+  let result = buildRadarGenerationPlan(message, env);
   if (!result.accepted) return result;
-  const store = env?.RADAR_GENERATION_PLANS;
-  if (store?.put) {
-    await store.put(result.plan.output.planKey, JSON.stringify(result.plan), {
+  const store = generationPlanStore(env);
+  if (store) {
+    await store.putJson(result.plan.output.planKey, result.plan, {
       expirationTtl: result.plan.render.ttlMinutes * 60
     });
+    result = {
+      ...result,
+      stored: true,
+      planStore: store.kind,
+      planStorageKey: store.storageKey(result.plan.output.planKey)
+    };
   }
   return result;
+}
+
+function generationPlanStore(env = {}) {
+  const kv = env?.RADAR_GENERATION_PLANS;
+  if (kv?.put) return kvPlanStore(kv);
+  const r2 = env?.RADAR_GENERATION_PLANS_R2;
+  if (r2?.put) return r2PlanStore(r2, env);
+  return null;
+}
+
+function kvPlanStore(namespace) {
+  return {
+    kind: "kv",
+    storageKey(key) {
+      return key;
+    },
+    async putJson(key, value, options = {}) {
+      return namespace.put(key, JSON.stringify(value), options);
+    }
+  };
+}
+
+function r2PlanStore(bucket, env = {}) {
+  const prefix = cleanKeyPrefix(env?.[RADAR_GENERATION_PLANS_R2_PREFIX_ENV] || DEFAULT_PLAN_R2_PREFIX);
+  return {
+    kind: "r2",
+    storageKey(key) {
+      return joinKey(prefix, key);
+    },
+    async putJson(key, value) {
+      return bucket.put(this.storageKey(key), JSON.stringify(value), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+        customMetadata: {
+          provider: value?.provider || PLAN_PROVIDER,
+          requestId: value?.requestId || "",
+          plannedAt: value?.plannedAt || ""
+        }
+      });
+    }
+  };
 }
 
 export function buildRadarGenerationPlan(message, env = {}) {

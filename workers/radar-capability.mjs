@@ -1,3 +1,5 @@
+import { handleRadarGenerationQueue } from "./radar-generation-consumer.mjs";
+
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
@@ -19,6 +21,9 @@ export default {
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
+  },
+  async queue(batch, env = {}, ctx = {}) {
+    return handleRadarGenerationQueue(batch, env, ctx);
   }
 };
 

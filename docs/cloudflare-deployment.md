@@ -27,6 +27,10 @@ The deploy is configured by `wrangler.toml`:
   `RADAR_GENERATION_REQUESTS_R2_PREFIX`.
 - `RADAR_GENERATION_QUEUE` is a producer binding for the
   `nearcast-radar-generation-preview` queue.
+- The same queue is also consumed by the Worker to validate accepted messages
+  and persist bounded render plans.
+- `RADAR_GENERATION_PLANS_R2` stores preview render plans in the private
+  `nearcast-radar-state` R2 bucket under `RADAR_GENERATION_PLANS_R2_PREFIX`.
 
 Use `npx wrangler deploy` so Wrangler applies both the Worker script and the
 static asset binding from repository config.
@@ -91,6 +95,7 @@ The Worker can:
   or the preview R2 request store.
 - Apply soft hourly generation budgets before accepting queue work.
 - Send a viewport warming message to `RADAR_GENERATION_QUEUE` after dedupe.
+- Consume preview queue messages and persist render plans to private R2.
 
 Default preview-worker budget caps are intentionally conservative:
 
@@ -111,12 +116,12 @@ Smoke test:
 node scripts/radar-capability-smoke.mjs
 ```
 
-## Dormant radar generation consumer
+## Radar generation consumer
 
-`workers/radar-generation-consumer.mjs` contains the inactive queue-side
-contract for accepted generation requests. It does not render, upload, or
-publish radar yet. Its job is to validate a `RADAR_GENERATION_QUEUE` message and
-turn it into a bounded render plan the future renderer can execute.
+`workers/radar-generation-consumer.mjs` contains the queue-side contract for
+accepted generation requests. It does not render, upload, or publish radar yet.
+Its job is to validate a `RADAR_GENERATION_QUEUE` message and turn it into a
+bounded render plan the future renderer can execute.
 
 The consumer can:
 
@@ -127,13 +132,24 @@ The consumer can:
 - Reject over-budget jobs with `tile-budget-exceeded`.
 - Produce stable plan/output key templates that include a future
   `{sourceSignature}` segment so rendered tile objects can remain immutable.
-- Optionally persist accepted plans to `RADAR_GENERATION_PLANS`.
+- Persist accepted plans to `RADAR_GENERATION_PLANS` or the preview
+  `RADAR_GENERATION_PLANS_R2` plan store.
 
 Smoke test:
 
 ```bash
 node scripts/radar-generation-consumer-smoke.mjs
 ```
+
+Live preview verification:
+
+```bash
+gh workflow run "Verify radar generation queue"
+```
+
+That workflow posts a unique no-pack viewport to `/api/radar/capability`, waits
+for the preview queue consumer, and verifies the expected private R2 render plan
+object exists.
 
 ## Dormant radar generation renderer
 
@@ -256,6 +272,7 @@ Completed in repo:
   `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json`.
 - `RADAR_GENERATION_REQUESTS_R2` stores request state in R2.
 - `RADAR_GENERATION_QUEUE` can enqueue accepted preview warming requests.
+- `RADAR_GENERATION_PLANS_R2` stores accepted render plans in private R2.
 - `Deploy Cloudflare app` provisions `nearcast-radar-generation-preview` before
   deploying the Worker.
 - `Deploy Cloudflare app` provisions the private `nearcast-radar-state` bucket
@@ -274,16 +291,14 @@ Next:
    `?radarCapabilityEndpoint=/api/radar/capability`.
 4. Verify fallback behavior remains unchanged.
 5. Run or refresh a preview R2 radar upload so the endpoint has a fresh pack.
-6. Post a no-fresh-pack viewport with `generation.request=true` and verify the
-   endpoint returns `queued`, then `deduped` on repeat.
-7. Run the generation consumer smoke test with preview budget values.
-8. Run the renderer smoke test with preview artifact settings.
-9. Run the publisher smoke test against a local R2 mirror.
-10. Verify credentialed R2 upload against the preview bucket with explicit
+6. Run `Verify radar generation queue` and confirm the private render plan is
+   persisted.
+7. Run the renderer smoke test with preview artifact settings.
+8. Run the publisher smoke test against a local R2 mirror.
+9. Verify credentialed R2 upload against the preview bucket with explicit
    manual execution.
-11. Deploy a queue consumer only after the render job path is ready to turn
-   accepted messages into artifacts.
-12. Verify endpoint-driven enhanced radar before making the endpoint the
+10. Wire the persisted plan to the renderer/publisher job path.
+11. Verify endpoint-driven enhanced radar before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher

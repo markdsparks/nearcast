@@ -105,6 +105,30 @@ assert.equal(badQueueMessage.acked, true);
 assert.equal(queueMessage.retried, false);
 assert.equal(planStore.records.length, 1);
 assert.equal(planStore.records[0].key, planned.plan.output.planKey);
+assert.equal(queueResult.results[0].stored, true);
+assert.equal(queueResult.results[0].planStore, "kv");
+
+const r2PlanStore = createR2Bucket();
+const r2QueueMessage = createQueueMessage(baseMessage);
+const r2QueueResult = await handleRadarGenerationQueue({
+  messages: [r2QueueMessage]
+}, {
+  ...env,
+  RADAR_GENERATION_PLANS_R2: r2PlanStore,
+  RADAR_GENERATION_PLANS_R2_PREFIX: "radar/mrms/plans-smoke"
+});
+assert.equal(r2QueueResult.accepted, 1);
+assert.equal(r2QueueResult.rejected, 0);
+assert.equal(r2QueueResult.results[0].stored, true);
+assert.equal(r2QueueResult.results[0].planStore, "r2");
+assert.equal(
+  r2QueueResult.results[0].planStorageKey,
+  `radar/mrms/plans-smoke/${planned.plan.output.planKey}`
+);
+assert.equal(r2QueueMessage.acked, true);
+assert.equal(r2PlanStore.records.length, 1);
+assert.equal(r2PlanStore.records[0].key, `radar/mrms/plans-smoke/${planned.plan.output.planKey}`);
+assert.equal(r2PlanStore.records[0].value.requestId, baseMessage.requestId);
 
 console.log(JSON.stringify({
   planned: planned.plan.output.jobKey,
@@ -114,7 +138,8 @@ console.log(JSON.stringify({
   queue: {
     accepted: queueResult.accepted,
     rejected: queueResult.rejected,
-    storedPlans: planStore.records.length
+    storedPlans: planStore.records.length,
+    r2StoredPlans: r2PlanStore.records.length
   }
 }, null, 2));
 
@@ -139,6 +164,19 @@ function createPlanStore() {
       this.records.push({
         key,
         value: JSON.parse(value),
+        options
+      });
+    }
+  };
+}
+
+function createR2Bucket() {
+  return {
+    records: [],
+    async put(key, body, options = {}) {
+      this.records.push({
+        key,
+        value: JSON.parse(String(body)),
         options
       });
     }
