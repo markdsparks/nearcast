@@ -34,26 +34,38 @@ const NWS_RADAR_CONFIG = {
 };
 const PNG_SIGNATURE = "89504e470d0a1a0a";
 const RADAR_RAMP = [
-  { value: 5, color: [54, 245, 92, 170] },
-  { value: 12, color: [22, 224, 78, 210] },
-  { value: 20, color: [0, 184, 65, 238] },
-  { value: 28, color: [0, 116, 44, 248] },
-  { value: 34, color: [255, 214, 0, 255] },
-  { value: 43, color: [255, 151, 0, 255] },
-  { value: 54, color: [245, 55, 38, 255] },
+  { value: 5, color: [76, 193, 255, 160] },
+  { value: 10, color: [76, 193, 255, 190] },
+  { value: 12, color: [46, 245, 92, 215] },
+  { value: 20, color: [0, 190, 68, 240] },
+  { value: 28, color: [0, 118, 44, 250] },
+  { value: 30, color: [0, 118, 44, 252] },
+  { value: 31, color: [255, 204, 0, 255] },
+  { value: 36, color: [255, 214, 0, 255] },
+  { value: 43, color: [255, 143, 0, 255] },
+  { value: 54, color: [246, 48, 36, 255] },
   { value: 65, color: [190, 39, 232, 255] },
   { value: 75, color: [255, 232, 255, 255] }
 ];
+const STEPPED_RAMP = [
+  { value: 10, color: [76, 193, 255, 190] },
+  { value: 18, color: [43, 245, 91, 220] },
+  { value: 28, color: [0, 181, 64, 245] },
+  { value: 36, color: [255, 204, 0, 255] },
+  { value: 45, color: [255, 143, 0, 255] },
+  { value: 56, color: [246, 48, 36, 255] },
+  { value: 68, color: [190, 39, 232, 255] },
+  { value: 80, color: [255, 232, 255, 255] }
+];
 const RESOLVED_RAMP = [
-  { value: 4, color: [54, 245, 92, 190] },
-  { value: 10, color: [0, 198, 70, 230] },
-  { value: 18, color: [0, 128, 48, 250] },
-  { value: 26, color: [0, 75, 30, 255] },
-  { value: 32, color: [255, 214, 0, 255] },
-  { value: 40, color: [255, 151, 0, 255] },
-  { value: 50, color: [244, 55, 36, 255] },
-  { value: 62, color: [190, 39, 230, 255] },
-  { value: 74, color: [246, 228, 255, 255] }
+  { value: 8, color: [76, 193, 255, 198] },
+  { value: 16, color: [43, 245, 91, 225] },
+  { value: 28, color: [0, 181, 64, 248] },
+  { value: 36, color: [255, 204, 0, 255] },
+  { value: 45, color: [255, 143, 0, 255] },
+  { value: 56, color: [246, 48, 36, 255] },
+  { value: 68, color: [190, 39, 232, 255] },
+  { value: 80, color: [246, 228, 255, 255] }
 ];
 
 const args = parseArgs(process.argv.slice(2));
@@ -1737,7 +1749,7 @@ function smoothstep(edge0, edge1, value) {
 
 function radarColor(value, style) {
   const styledValue = contourValue(value, style);
-  return rampColor(styledValue, style.ramp);
+  return style.steppedRamp ? steppedRampColor(styledValue, style.ramp) : rampColor(styledValue, style.ramp);
 }
 
 function contourValue(value, style) {
@@ -1776,6 +1788,14 @@ function rampColor(value, ramp) {
   return ramp[ramp.length - 1].color;
 }
 
+function steppedRampColor(value, ramp) {
+  if (value <= ramp[0].value) return ramp[0].color;
+  for (let i = 1; i < ramp.length; i += 1) {
+    if (value <= ramp[i].value) return ramp[i].color;
+  }
+  return ramp[ramp.length - 1].color;
+}
+
 function mix(a, b, t) {
   return a + (b - a) * t;
 }
@@ -1793,7 +1813,8 @@ function radarStyle(name, options = {}) {
   if (name === "banded") {
     return {
       name,
-      ramp: RADAR_RAMP,
+      ramp: STEPPED_RAMP,
+      steppedRamp: true,
       alphaScale: numberArg(options.alpha, 1.22),
       fadeBelow: numberArg(options["fade-below"], 2.5),
       fadeAbove: numberArg(options["fade-above"], 1.25),
@@ -1812,6 +1833,7 @@ function radarStyle(name, options = {}) {
     return {
       name,
       ramp: RESOLVED_RAMP,
+      steppedRamp: true,
       alphaScale: numberArg(options.alpha, 1.22),
       fadeBelow: numberArg(options["fade-below"], 5),
       fadeAbove: numberArg(options["fade-above"], 1.75),
@@ -1829,6 +1851,7 @@ function radarStyle(name, options = {}) {
   return {
     name: "continuous",
     ramp: RADAR_RAMP,
+    steppedRamp: false,
     alphaScale: numberArg(options.alpha, 1.16),
     fadeBelow: numberArg(options["fade-below"], 3),
     fadeAbove: numberArg(options["fade-above"], 2),

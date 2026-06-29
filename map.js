@@ -32,27 +32,40 @@ const mapLibreInteraction = {
 };
 
 const MAPLIBRE_RADAR_RAMP = [
-  { value: 5, color: [54, 245, 92, 170] },
-  { value: 12, color: [22, 224, 78, 210] },
-  { value: 20, color: [0, 184, 65, 238] },
-  { value: 28, color: [0, 116, 44, 248] },
-  { value: 34, color: [255, 214, 0, 255] },
-  { value: 43, color: [255, 151, 0, 255] },
-  { value: 54, color: [245, 55, 38, 255] },
+  { value: 5, color: [76, 193, 255, 160] },
+  { value: 10, color: [76, 193, 255, 190] },
+  { value: 12, color: [46, 245, 92, 215] },
+  { value: 20, color: [0, 190, 68, 240] },
+  { value: 28, color: [0, 118, 44, 250] },
+  { value: 30, color: [0, 118, 44, 252] },
+  { value: 31, color: [255, 204, 0, 255] },
+  { value: 36, color: [255, 214, 0, 255] },
+  { value: 43, color: [255, 143, 0, 255] },
+  { value: 54, color: [246, 48, 36, 255] },
   { value: 65, color: [190, 39, 232, 255] },
   { value: 75, color: [255, 232, 255, 255] }
 ];
 
+const MAPLIBRE_RADAR_STEPPED_RAMP = [
+  { value: 10, color: [76, 193, 255, 190] },
+  { value: 18, color: [43, 245, 91, 220] },
+  { value: 28, color: [0, 181, 64, 245] },
+  { value: 36, color: [255, 204, 0, 255] },
+  { value: 45, color: [255, 143, 0, 255] },
+  { value: 56, color: [246, 48, 36, 255] },
+  { value: 68, color: [190, 39, 232, 255] },
+  { value: 80, color: [255, 232, 255, 255] }
+];
+
 const MAPLIBRE_RADAR_RESOLVED_RAMP = [
-  { value: 4, color: [54, 245, 92, 190] },
-  { value: 10, color: [0, 198, 70, 230] },
-  { value: 18, color: [0, 128, 48, 250] },
-  { value: 26, color: [0, 75, 30, 255] },
-  { value: 32, color: [255, 214, 0, 255] },
-  { value: 40, color: [255, 151, 0, 255] },
-  { value: 50, color: [244, 55, 36, 255] },
-  { value: 62, color: [190, 39, 230, 255] },
-  { value: 74, color: [246, 228, 255, 255] }
+  { value: 8, color: [76, 193, 255, 198] },
+  { value: 16, color: [43, 245, 91, 225] },
+  { value: 28, color: [0, 181, 64, 248] },
+  { value: 36, color: [255, 204, 0, 255] },
+  { value: 45, color: [255, 143, 0, 255] },
+  { value: 56, color: [246, 48, 36, 255] },
+  { value: 68, color: [190, 39, 232, 255] },
+  { value: 80, color: [246, 228, 255, 255] }
 ];
 
 function mapDiagnosticMode() {
@@ -972,6 +985,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
   if (styleName === "resolved" || styleName === "field") {
     return {
       ramp: MAPLIBRE_RADAR_RESOLVED_RAMP,
+      steppedRamp: true,
       alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
       fadeBelow: 5,
       fadeAbove: 1.75,
@@ -983,6 +997,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
   if (styleName === "continuous") {
     return {
       ramp: MAPLIBRE_RADAR_RAMP,
+      steppedRamp: false,
       alphaScale: mapLibreRadarAlphaScale(encoding, 1.16),
       fadeBelow: 3,
       fadeAbove: 2,
@@ -992,7 +1007,8 @@ function mapLibreRadarStyle(name, encoding = {}) {
     };
   }
   return {
-    ramp: MAPLIBRE_RADAR_RAMP,
+    ramp: MAPLIBRE_RADAR_STEPPED_RAMP,
+    steppedRamp: true,
     alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
     fadeBelow: 2.5,
     fadeAbove: 1.25,
@@ -1008,7 +1024,8 @@ function mapLibreRadarAlphaScale(encoding = {}, minimum = 1) {
 }
 
 function mapLibreRadarColor(value, style) {
-  return mapLibreRampColor(mapLibreRadarContourValue(value, style), style.ramp);
+  const styledValue = mapLibreRadarContourValue(value, style);
+  return style.steppedRamp ? mapLibreSteppedRampColor(styledValue, style.ramp) : mapLibreRampColor(styledValue, style.ramp);
 }
 
 function mapLibreRadarContourValue(value, style) {
@@ -1038,6 +1055,14 @@ function mapLibreRampColor(value, ramp) {
       const t = mapLibreSmoothstep(0, 1, (value - prev.value) / (next.value - prev.value));
       return prev.color.map((channel, index) => Math.round(channel + (next.color[index] - channel) * t));
     }
+  }
+  return ramp[ramp.length - 1].color;
+}
+
+function mapLibreSteppedRampColor(value, ramp) {
+  if (value <= ramp[0].value) return ramp[0].color;
+  for (let i = 1; i < ramp.length; i += 1) {
+    if (value <= ramp[i].value) return ramp[i].color;
   }
   return ramp[ramp.length - 1].color;
 }
@@ -4560,8 +4585,8 @@ function renderMapLegend() {
       }
     : {
         title: "Radar intensity",
-        colors: ["#7ec8ff", "#36b16a", "#f0d846", "#f08a30", "#c83f6b"],
-        labels: ["Light", "Moderate", "Steady", "Heavy", "Severe"]
+        colors: ["#4cc1ff", "#2bf55b", "#ffcc00", "#ff8f00", "#f63024"],
+        labels: ["Very light", "Light", "Steady", "Heavy", "Severe"]
       };
 
   els.mapLegend.innerHTML = `
