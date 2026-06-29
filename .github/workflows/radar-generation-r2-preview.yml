@@ -188,6 +188,16 @@ jobs:
             --concurrency="$RADAR_GENERATION_R2_UPLOAD_CONCURRENCY" \
             --public-base-url="${{ github.event.inputs.publicBaseUrl }}"
 
+      - name: Verify preview artifacts are public
+        run: |
+          INDEX_URL="${{ github.event.inputs.publicBaseUrl }}/${{ github.event.inputs.indexKey }}"
+          PACK_ID=$(node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('/tmp/nearcast-radar-preview-result.json','utf8')); if(!r.pack?.id) process.exit(1); process.stdout.write(r.pack.id);")
+          node scripts/mrms-prototype/verify-mrms-public-tiles.mjs \
+            --index="$INDEX_URL" \
+            --pack-id="$PACK_ID" \
+            --max-probes=96 \
+            --timeout=3000
+
       - name: Print preview index URL
         run: |
           echo "Preview index: ${{ github.event.inputs.publicBaseUrl }}/${{ github.event.inputs.indexKey }}"

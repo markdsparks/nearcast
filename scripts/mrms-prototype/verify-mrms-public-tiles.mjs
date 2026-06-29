@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import path from "node:path";
 
 const DEFAULT_MANIFEST = "radar/mrms/manifest.json";
 const DEFAULT_MAX_PROBES = 96;
@@ -15,12 +16,13 @@ async function main() {
     return;
   }
 
-  const manifestPath = args.manifest || DEFAULT_MANIFEST;
   const maxProbes = Math.max(1, integerArg(args["max-probes"], DEFAULT_MAX_PROBES));
   const timeoutMs = Math.max(250, integerArg(args.timeout, DEFAULT_TIMEOUT_MS));
   const frameLimit = Math.max(1, integerArg(args.frames || args["frame-limit"], DEFAULT_FRAME_LIMIT));
-  const manifest = await loadJson(manifestPath);
-  const manifestBaseUrl = args["manifest-url"] || (/^https?:\/\//i.test(manifestPath) ? manifestPath : "");
+  const source = await resolveManifestSource(args);
+  const manifest = source.manifest;
+  const manifestPath = source.manifestPath;
+  const manifestBaseUrl = args["manifest-url"] || source.manifestBaseUrl;
   const metrics = manifest.metrics || manifest.coverage || {};
   const expectedTiles = Number(metrics.dataTiles ?? metrics.radarTiles ?? metrics.generatedTiles);
 
@@ -45,6 +47,8 @@ async function main() {
   const summary = {
     provider: "nearcast-mrms-public-tile-verify",
     ok: Boolean(firstOk),
+    index: source.indexPath || "",
+    packId: source.packId || "",
     manifest: manifestPath,
     generatedAt: manifest.generatedAt || "",
     expiresAt: manifest.expiresAt || "",
@@ -59,6 +63,75 @@ async function main() {
   };
   console.log(JSON.stringify(summary, null, 2));
   if (!firstOk) process.exit(1);
+}
+
+async function resolveManifestSource(args) {
+  const indexPath = args.index || args["index-url"] || "";
+  if (indexPath) {
+    const index = await loadJson(indexPath);
+    const pack = selectIndexPack(index, args["pack-id"]);
+    if (!pack) {
+      throw new Error(args["pack-id"]
+        ? `pack not found in index: ${args["pack-id"]}`
+        : "no usable generated-radar pack found in index");
+    }
+    const manifestPath = resolveReference(packManifestUrl(pack), indexPath);
+    return {
+      indexPath,
+      packId: pack.id || "",
+      manifestPath,
+      manifestBaseUrl: /^https?:\/\//i.test(manifestPath) ? manifestPath : "",
+      manifest: await loadJson(manifestPath)
+    };
+  }
+
+  const manifestPath = args.manifest || DEFAULT_MANIFEST;
+  return {
+    indexPath: "",
+    packId: "",
+    manifestPath,
+    manifestBaseUrl: /^https?:\/\//i.test(manifestPath) ? manifestPath : "",
+    manifest: await loadJson(manifestPath)
+  };
+}
+
+function selectIndexPack(index, packId = "") {
+  const packs = generatedRadarPacks(index);
+  const requested = String(packId || "").trim();
+  if (requested) return packs.find((pack) => pack.id === requested) || null;
+  const defaultPack = String(index?.defaultPack || "").trim();
+  if (defaultPack) {
+    const selected = packs.find((pack) => pack.id === defaultPack && !packExpired(pack));
+    if (selected) return selected;
+  }
+  return packs.find((pack) => !packExpired(pack)) || packs[0] || null;
+}
+
+function generatedRadarPacks(index) {
+  const packs = Array.isArray(index?.packs)
+    ? index.packs
+    : Array.isArray(index?.manifests) ? index.manifests : [];
+  return packs.filter((pack) => pack && packManifestUrl(pack));
+}
+
+function packManifestUrl(pack) {
+  return pack?.manifestUrl || pack?.manifest || pack?.url || pack?.href || "";
+}
+
+function packExpired(pack) {
+  if (pack?.sample) return false;
+  const expiresAt = Date.parse(pack?.expiresAt || "");
+  return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+function resolveReference(value, basePathOrUrl) {
+  const ref = String(value || "").trim();
+  if (!ref) return ref;
+  if (/^https?:\/\//i.test(ref)) return ref;
+  if (/^https?:\/\//i.test(basePathOrUrl)) {
+    return new URL(ref, basePathOrUrl).toString();
+  }
+  return path.resolve(path.dirname(basePathOrUrl || DEFAULT_MANIFEST), ref);
 }
 
 function publicTileProbeUrls(manifest, { maxProbes, frameLimit, manifestBaseUrl }) {
@@ -218,8 +291,11 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`Usage:
   node scripts/mrms-prototype/verify-mrms-public-tiles.mjs --manifest=radar/mrms/manifest.json
+  node scripts/mrms-prototype/verify-mrms-public-tiles.mjs --index=https://radar.example/radar/mrms/index.json
 
 Options:
+  --index=PATH_OR_URL          Generated-radar index to inspect.
+  --pack-id=ID                 Specific pack id to verify from the index.
   --manifest=PATH_OR_URL       Manifest to inspect. Defaults to radar/mrms/manifest.json.
   --manifest-url=URL           Base URL for resolving relative tile templates.
   --max-probes=96              Maximum public tile URLs to probe.

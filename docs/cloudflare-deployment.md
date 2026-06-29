@@ -177,6 +177,11 @@ the repository R2 secrets and `MRMS_R2_BUCKET` fallback variable, installs
 modify the live `radar/mrms/index.json`. Set `renderMode=fixture` for the tiny
 synthetic upload smoke path.
 
+After upload, the workflow verifies the app-facing preview index, resolves the
+new pack manifest, and probes public encoded/generated tile URLs. A preview run
+that uploads objects but cannot serve them through the public origin fails
+instead of handing the app a broken generated-radar pack.
+
 The preview defaults render source zooms `8,9,10,11,12` for the Great Falls
 test bounds. That costs more than the original z8-z10 smoke pack, but it keeps
 deep zoom from relying on aggressive overzooming. The workflow also fetches the
