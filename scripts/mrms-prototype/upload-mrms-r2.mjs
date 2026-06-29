@@ -216,9 +216,9 @@ class R2Client {
   }
 
   objectUrl(key = "", query = "") {
-    const bucketPath = encodeKeyPath(this.bucket);
-    const objectPath = key ? `/${encodeKeyPath(key)}` : "";
-    return new URL(`${this.endpoint}/${bucketPath}${objectPath}${query ? `?${query}` : ""}`);
+    const endpoint = new URL(this.endpoint);
+    const objectPath = key ? `/${encodeKeyPath(key)}` : "/";
+    return new URL(`${endpoint.protocol}//${this.bucket}.${endpoint.host}${objectPath}${query ? `?${query}` : ""}`);
   }
 }
 
