@@ -13,11 +13,6 @@ const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 
 const args = parseArgs(process.argv.slice(2));
 
-main().catch((error) => {
-  console.error(`MRMS R2 upload failed: ${error.message}`);
-  process.exit(1);
-});
-
 async function main() {
   if (args.help) {
     printHelp();
@@ -480,3 +475,8 @@ Options:
   --dry-run                     Print planned keys without uploading.
 `);
 }
+
+main().catch((error) => {
+  console.error(`MRMS R2 upload failed: ${error.message}`);
+  process.exit(1);
+});
