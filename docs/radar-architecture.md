@@ -315,15 +315,23 @@ Current scaffold:
   needs authenticated identity and a stronger atomic throttle.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
   deduped, and limited states locally without Cloudflare.
+- `workers/radar-generation-consumer.mjs` implements the dormant queue-side
+  contract. It validates accepted generation messages, normalizes viewport
+  bounds, estimates candidate tile counts, rejects over-budget jobs, and emits a
+  stable render plan with source-signature-scoped output key templates.
+- `scripts/radar-generation-consumer-smoke.mjs` verifies valid planning,
+  invalid payload rejection, tile-budget rejection, stable output keys, queue
+  ack behavior, and optional plan storage locally without Cloudflare.
 
 Still missing before activation:
 
 - Worker activation in `wrangler.toml`.
 - Request-state storage binding.
 - Preview budget values.
-- Queue binding and consumer.
-- Render job that turns a queued viewport into encoded tiles plus a manifest.
+- Queue binding and consumer deployment wiring.
+- Renderer execution from the queued render plan.
 - R2 manifest/index update path.
+- App-side enhanced-layer refresh after a generated pack becomes ready.
 
 ### Phase 4: Scale controls
 

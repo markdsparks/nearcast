@@ -88,6 +88,30 @@ Smoke test:
 node scripts/radar-capability-smoke.mjs
 ```
 
+## Dormant radar generation consumer
+
+`workers/radar-generation-consumer.mjs` contains the inactive queue-side
+contract for accepted generation requests. It does not render, upload, or
+publish radar yet. Its job is to validate a `RADAR_GENERATION_QUEUE` message and
+turn it into a bounded render plan the future renderer can execute.
+
+The consumer can:
+
+- Validate required request id, dedupe key, and viewport center fields.
+- Normalize viewport bounds into a renderable `--tile-bounds` value.
+- Select conservative encoded-tile render defaults for current-frame MRMS.
+- Estimate candidate slippy-tile counts before any decode/render work starts.
+- Reject over-budget jobs with `tile-budget-exceeded`.
+- Produce stable plan/output key templates that include a future
+  `{sourceSignature}` segment so rendered tile objects can remain immutable.
+- Optionally persist accepted plans to `RADAR_GENERATION_PLANS`.
+
+Smoke test:
+
+```bash
+node scripts/radar-generation-consumer-smoke.mjs
+```
+
 Activation checklist:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
@@ -95,12 +119,13 @@ Activation checklist:
 2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
 3. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
 4. Confirm budget limits for the preview environment.
-5. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+5. Run the generation consumer smoke test with preview budget values.
+6. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-6. Deploy to a preview Worker URL first.
-7. Point the app at the endpoint with
+7. Deploy to a preview Worker URL first.
+8. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-8. Verify fallback behavior remains unchanged before making the endpoint the
+9. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher
