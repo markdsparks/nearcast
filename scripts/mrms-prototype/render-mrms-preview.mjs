@@ -34,25 +34,26 @@ const NWS_RADAR_CONFIG = {
 };
 const PNG_SIGNATURE = "89504e470d0a1a0a";
 const RADAR_RAMP = [
-  { value: 5, color: [108, 201, 255, 90] },
-  { value: 15, color: [45, 205, 112, 150] },
-  { value: 25, color: [38, 173, 80, 180] },
-  { value: 35, color: [250, 220, 78, 205] },
-  { value: 45, color: [245, 132, 43, 220] },
-  { value: 55, color: [239, 64, 64, 235] },
-  { value: 65, color: [187, 76, 232, 240] },
-  { value: 75, color: [255, 224, 255, 245] }
+  { value: 5, color: [101, 239, 123, 145] },
+  { value: 12, color: [58, 224, 94, 180] },
+  { value: 20, color: [28, 187, 76, 215] },
+  { value: 28, color: [6, 129, 51, 232] },
+  { value: 35, color: [250, 222, 54, 238] },
+  { value: 45, color: [248, 149, 38, 243] },
+  { value: 55, color: [238, 66, 52, 248] },
+  { value: 65, color: [183, 65, 222, 250] },
+  { value: 75, color: [255, 232, 255, 253] }
 ];
 const RESOLVED_RAMP = [
-  { value: 4, color: [5, 83, 30, 175] },
-  { value: 12, color: [19, 125, 39, 195] },
-  { value: 20, color: [49, 174, 75, 215] },
-  { value: 28, color: [252, 224, 60, 225] },
-  { value: 36, color: [247, 155, 36, 235] },
-  { value: 44, color: [235, 76, 35, 242] },
-  { value: 54, color: [203, 24, 28, 245] },
-  { value: 64, color: [156, 55, 178, 248] },
-  { value: 74, color: [245, 227, 255, 250] }
+  { value: 4, color: [63, 226, 93, 175] },
+  { value: 10, color: [27, 170, 67, 205] },
+  { value: 18, color: [7, 107, 43, 232] },
+  { value: 26, color: [3, 75, 33, 242] },
+  { value: 32, color: [252, 226, 56, 244] },
+  { value: 40, color: [248, 153, 37, 247] },
+  { value: 50, color: [236, 71, 42, 250] },
+  { value: 62, color: [172, 56, 214, 252] },
+  { value: 74, color: [246, 228, 255, 253] }
 ];
 
 const args = parseArgs(process.argv.slice(2));
@@ -1793,7 +1794,7 @@ function radarStyle(name, options = {}) {
     return {
       name,
       ramp: RADAR_RAMP,
-      alphaScale: numberArg(options.alpha, 1.02),
+      alphaScale: numberArg(options.alpha, 1.12),
       fadeBelow: numberArg(options["fade-below"], 2.5),
       fadeAbove: numberArg(options["fade-above"], 1.25),
       bandBase: numberArg(options["band-base"], 5),
@@ -1811,7 +1812,7 @@ function radarStyle(name, options = {}) {
     return {
       name,
       ramp: RESOLVED_RAMP,
-      alphaScale: numberArg(options.alpha, 1.04),
+      alphaScale: numberArg(options.alpha, 1.12),
       fadeBelow: numberArg(options["fade-below"], 5),
       fadeAbove: numberArg(options["fade-above"], 1.75),
       bandBase: numberArg(options["band-base"], 5),
@@ -1828,7 +1829,7 @@ function radarStyle(name, options = {}) {
   return {
     name: "continuous",
     ramp: RADAR_RAMP,
-    alphaScale: numberArg(options.alpha, 1),
+    alphaScale: numberArg(options.alpha, 1.08),
     fadeBelow: numberArg(options["fade-below"], 3),
     fadeAbove: numberArg(options["fade-above"], 2),
     bandBase: 5,
