@@ -68,6 +68,7 @@ jobs:
       RADAR_GENERATION_R2_BUCKET: ${{ vars.RADAR_GENERATION_R2_BUCKET || vars.MRMS_R2_BUCKET || 'nearcast-radar' }}
       RADAR_GENERATION_R2_ENDPOINT: ${{ vars.RADAR_GENERATION_R2_ENDPOINT || vars.MRMS_R2_ENDPOINT || '' }}
       RADAR_GENERATION_R2_UPLOAD_CONCURRENCY: ${{ vars.RADAR_GENERATION_R2_UPLOAD_CONCURRENCY || vars.MRMS_R2_UPLOAD_CONCURRENCY || '4' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
@@ -130,6 +131,19 @@ jobs:
 
       - name: Install R2 upload dependency
         run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
+      - name: Configure R2 CORS for browser preview
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Skipping R2 CORS configuration because CLOUDFLARE_API_TOKEN is not set."
+            exit 0
+          fi
+          if [ -z "$RADAR_GENERATION_R2_BUCKET" ]; then
+            echo "RADAR_GENERATION_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          npx --yes wrangler r2 bucket cors set "$RADAR_GENERATION_R2_BUCKET" \
+            --file config/radar-r2-cors.json
 
       - name: Upload preview artifacts to R2
         run: |

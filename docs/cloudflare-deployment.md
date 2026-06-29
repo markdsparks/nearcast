@@ -177,6 +177,27 @@ the repository R2 secrets and `MRMS_R2_BUCKET` fallback variable, installs
 modify the live `radar/mrms/index.json`. Set `renderMode=fixture` for the tiny
 synthetic upload smoke path.
 
+To test that preview pack in the app without changing the default user path,
+open the app with:
+
+```text
+?map=gl&radar=mrms-generated&radarIndex=preview
+```
+
+The shorthand stores
+`https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json` in
+`nearcast-radar-index-url` and clears any older
+`nearcast-radar-manifest-url` override. Use `radarIndex=off` to remove the
+index override and return to the default generated-radar routing. In the browser
+console, `window.nearcastUseRadarPreviewIndex(true)` and
+`window.nearcastUseRadarPreviewIndex(false)` toggle the same setting, clear the
+manifest override, and refresh the radar timeline.
+
+The preview index is loaded from the `radar.getnearcast.app` R2 custom domain,
+so the bucket must allow browser reads from the app origin. The workflow applies
+`config/radar-r2-cors.json` before uploading preview objects when
+`CLOUDFLARE_API_TOKEN` is available.
+
 Activation checklist:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the

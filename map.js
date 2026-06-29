@@ -99,6 +99,7 @@ window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
 window.nearcastRadarDiagnostics = radarDiagnosticsSnapshot;
 window.nearcastRadarCapability = (options = {}) => resolveRadarViewportCapability(options);
 window.nearcastRequestRadarGeneration = (options = {}) => requestRadarViewportGeneration(options);
+window.nearcastUseRadarPreviewIndex = (enabled = true) => setGeneratedMrmsIndexUrlOverride(enabled ? "preview" : "");
 
 function radarDiagnosticsSnapshot() {
   return {
@@ -107,7 +108,9 @@ function radarDiagnosticsSnapshot() {
     generated: {
       manifestUrl: mapState.generatedRadarManifestUrl || "",
       selectionKey: mapState.generatedRadarSelectionKey || "",
-      viewportKey: mapState.generatedRadarViewportKey || ""
+      viewportKey: mapState.generatedRadarViewportKey || "",
+      indexUrl: generatedMrmsIndexUrl(),
+      indexOverride: generatedMrmsIndexUrlOverride()
     },
     capability: mapState.radarCapability || null,
     capabilityHistory: [...(mapState.radarCapabilityLog || [])],
@@ -2345,6 +2348,55 @@ function generatedMrmsManifestUrlOverride() {
   }
 }
 
+function generatedMrmsIndexUrlOverride() {
+  try {
+    const key = typeof RADAR_INDEX_URL_KEY === "string"
+      ? RADAR_INDEX_URL_KEY
+      : "nearcast-radar-index-url";
+    return normalizeGeneratedMrmsIndexUrl(localStorage.getItem(key));
+  } catch {
+    return "";
+  }
+}
+
+function setGeneratedMrmsIndexUrlOverride(value) {
+  const key = typeof RADAR_INDEX_URL_KEY === "string"
+    ? RADAR_INDEX_URL_KEY
+    : "nearcast-radar-index-url";
+  const normalized = normalizeGeneratedMrmsIndexUrl(value);
+  try {
+    localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
+    if (normalized) localStorage.setItem(key, normalized);
+    else localStorage.removeItem(key);
+  } catch {
+    /* Storage can be unavailable in private or embedded contexts. */
+  }
+  clearGeneratedRadarSelection();
+  recordRadarSourceDecision("radar.index-override-updated", {
+    indexUrl: normalized || generatedMrmsIndexUrl()
+  });
+  if (typeof loadMapFrames === "function") {
+    loadMapFrames(true, { timelineKind: "radar", preserveExisting: true }).catch((error) => {
+      recordRadarSourceDecision("radar.index-override-refresh-failed", {
+        reason: radarDecisionErrorMessage(error)
+      });
+    });
+  }
+  scheduleGeneratedRadarViewportRefresh("index-override");
+  return normalized || "";
+}
+
+function normalizeGeneratedMrmsIndexUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw || ["0", "off", "local", "none"].includes(raw.toLowerCase())) return "";
+  if (["preview", "r2-preview", "ondemand-preview", "on-demand-preview"].includes(raw.toLowerCase())) {
+    return typeof MRMS_RADAR_PREVIEW_INDEX_URL === "string" && MRMS_RADAR_PREVIEW_INDEX_URL
+      ? MRMS_RADAR_PREVIEW_INDEX_URL
+      : "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json";
+  }
+  return raw;
+}
+
 async function resolveRadarViewportCapability(options = {}) {
   const base = baseRadarViewportCapability();
   const endpoint = radarCapabilityEndpointUrl();
@@ -2704,6 +2756,8 @@ async function resolveGeneratedMrmsManifestSelection(options = {}) {
 }
 
 function generatedMrmsIndexUrl() {
+  const override = generatedMrmsIndexUrlOverride();
+  if (override) return override;
   return typeof MRMS_RADAR_INDEX_URL === "string" && MRMS_RADAR_INDEX_URL
     ? MRMS_RADAR_INDEX_URL
     : "radar/mrms/index.json";

@@ -350,6 +350,15 @@ Current scaffold:
   `radar/mrms/on-demand-preview/...`, and writes
   `radar/mrms/on-demand-preview/index.json`, leaving the live app index and
   deploy path untouched.
+- The app can load the preview index for engineering tests with
+  `?map=gl&radar=mrms-generated&radarIndex=preview` or
+  `window.nearcastUseRadarPreviewIndex(true)`. The preview toggle clears any
+  sticky explicit manifest override so stale local-storage settings do not pin
+  the app to the legacy fallback manifest. The default user path still uses the
+  live static index and fallback chain.
+- `config/radar-r2-cors.json` lets the preview R2 custom domain serve index,
+  manifest, encoded-data, and tile objects to the app origin. The manual preview
+  upload workflow applies it when `CLOUDFLARE_API_TOKEN` is present.
 
 Still missing before activation:
 

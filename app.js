@@ -1,4 +1,4 @@
-const VERSION = "3.0.59";
+const VERSION = "3.0.61";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -9,10 +9,12 @@ const MAP_RENDERER_CHOICE_KEY = "nearcast-map-renderer-choice";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
 const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
 const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
+const RADAR_INDEX_URL_KEY = "nearcast-radar-index-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const RADAR_CAPABILITY_ENDPOINT_KEY = "nearcast-radar-capability-endpoint";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_INDEX_URL = "radar/mrms/index.json";
+const MRMS_RADAR_PREVIEW_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
@@ -156,8 +158,24 @@ if (radarProviderQueryFlag !== null) {
 }
 
 const radarManifestQueryFlag = queryValue("radarManifest", "radarmanifest", "mrmsManifest", "mrmsmanifest");
-if (radarManifestQueryFlag) {
-  localStorage.setItem(RADAR_MANIFEST_URL_KEY, radarManifestQueryFlag);
+if (radarManifestQueryFlag !== null) {
+  const value = String(radarManifestQueryFlag || "").trim();
+  if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
+    localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
+  } else {
+    localStorage.setItem(RADAR_MANIFEST_URL_KEY, value);
+  }
+}
+
+const radarIndexQueryFlag = queryValue("radarIndex", "radarindex", "mrmsIndex", "mrmsindex");
+if (radarIndexQueryFlag !== null) {
+  const value = String(radarIndexQueryFlag || "").trim();
+  localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
+  if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
+    localStorage.removeItem(RADAR_INDEX_URL_KEY);
+  } else {
+    localStorage.setItem(RADAR_INDEX_URL_KEY, value);
+  }
 }
 
 const radarCapabilityEndpointQueryFlag = queryValue("radarCapabilityEndpoint", "radarcapabilityendpoint", "radarCapability", "radarcapability");
