@@ -200,6 +200,11 @@ open the app with:
 ?map=gl&radar=mrms-generated&radarIndex=preview
 ```
 
+For engineering quality checks, add `mapPerf=current`. The MapLibre diagnostic
+readout then shows the selected pack, source zoom band, overzoom, candidate
+counts, coverage overlap, and tile/data counts while keeping the default user
+experience unchanged.
+
 The shorthand stores
 `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json` in
 `nearcast-radar-index-url` and clears any older

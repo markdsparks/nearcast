@@ -1,4 +1,4 @@
-const VERSION = "3.0.61";
+const VERSION = "3.0.62";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -227,6 +227,11 @@ const state = {
   userContext: loadUserContext()
 };
 
+if (state.mapDiagnosticMode !== "full" && state.mapRenderer !== "gl") {
+  state.mapRenderer = "gl";
+  localStorage.setItem(MAP_RENDERER_KEY, "gl");
+}
+
 function defaultUserContext() {
   return { actions: {}, updatedAt: 0 };
 }
@@ -303,6 +308,7 @@ const mapState = {
   generatedRadarManifestUrl: "",
   generatedRadarSelectionKey: "",
   generatedRadarViewportKey: "",
+  generatedRadarIndexSelection: null,
   generatedRadarRefreshTimer: 0,
   generatedRadarRefreshSeq: 0,
   radarCapability: null,
@@ -3468,10 +3474,14 @@ function ensureMapLibreAssets(options = {}) {
         script.id = MAPLIBRE_SCRIPT_ID;
         script.src = MAPLIBRE_SCRIPT_URL;
         script.async = true;
-        document.body.appendChild(script);
+      }
+      if (window.maplibregl) {
+        resolve(true);
+        return;
       }
       script.addEventListener("load", () => resolve(true), { once: true });
       script.addEventListener("error", () => resolve(false), { once: true });
+      if (!script.isConnected) document.body.appendChild(script);
     }).then((loaded) => Promise.all([Promise.resolve(loaded), cssPromise])).then(([scriptLoaded, cssLoaded]) => {
       const ready = scriptLoaded && cssLoaded && Boolean(window.maplibregl);
       mapLibreAssetStatus = ready ? "ready" : "error";

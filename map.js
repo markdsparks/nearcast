@@ -17,6 +17,7 @@ const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
+const GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT = 6;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
@@ -110,7 +111,8 @@ function radarDiagnosticsSnapshot() {
       selectionKey: mapState.generatedRadarSelectionKey || "",
       viewportKey: mapState.generatedRadarViewportKey || "",
       indexUrl: generatedMrmsIndexUrl(),
-      indexOverride: generatedMrmsIndexUrlOverride()
+      indexOverride: generatedMrmsIndexUrlOverride(),
+      indexSelection: mapState.generatedRadarIndexSelection || null
     },
     capability: mapState.radarCapability || null,
     capabilityHistory: [...(mapState.radarCapabilityLog || [])],
@@ -150,7 +152,8 @@ function recordRadarSourceDecision(event, detail = {}) {
     generated: {
       manifestUrl: mapState.generatedRadarManifestUrl || "",
       selectionKey: mapState.generatedRadarSelectionKey || "",
-      viewportKey: mapState.generatedRadarViewportKey || ""
+      viewportKey: mapState.generatedRadarViewportKey || "",
+      indexSelection: mapState.generatedRadarIndexSelection || null
     },
     detail
   };
@@ -1434,6 +1437,84 @@ function clearMapLibreMarkers(record) {
   syncMapLibreDiagnosticReadout(record);
 }
 
+function radarQualityDiagnosticStats(record = null) {
+  const frame = mapState.frames[mapState.frameIndex] || null;
+  const currentZoom = Number.isFinite(Number(mapState.zoom)) ? Number(mapState.zoom) : null;
+  const frameMinZoom = frame ? weatherFrameMinZoom(frame) : null;
+  const frameMaxZoom = frame ? weatherFrameMaxZoom(frame) : null;
+  const sourceZoom = frame ? weatherFrameSourceZoom(frame) : null;
+  const selection = mapState.generatedRadarIndexSelection || null;
+  const selected = selection?.selected || mapState.radarCapability?.enhanced?.quality || null;
+  const enhanced = mapState.radarCapability?.enhanced || {};
+  const metrics = selected?.metrics || enhanced.metrics || null;
+  const coverage = selected?.score?.coverage || null;
+  const renderer = frame?.dataUrl ? "encoded-radar" : (frame?.provider === "mrms-generated" ? "generated-radar" : activeMapSource(frame));
+  const overzoom = Number.isFinite(sourceZoom) ? weatherOverzoomAmount(sourceZoom) : null;
+  return {
+    renderer: renderer || enhanced.kind || "",
+    selectionSource: enhanced.selectionSource || (selection?.selected ? "index" : ""),
+    state: enhanced.state || (selected ? "ready" : "unavailable"),
+    packId: selected?.id || enhanced.packId || "",
+    label: selected?.label || enhanced.label || "",
+    currentZoom: roundedDiagnosticNumber(currentZoom, 2),
+    frameMinZoom,
+    frameMaxZoom,
+    sourceZoom,
+    overzoom: roundedDiagnosticNumber(overzoom, 2),
+    selectedMinZoom: selected?.minZoom ?? null,
+    selectedMaxZoom: selected?.maxZoom ?? null,
+    coverageBounds: selected?.coverageBounds || enhanced.coverageBounds || null,
+    score: selected?.score || null,
+    metrics,
+    packCount: selection?.packCount ?? enhanced.packCount ?? null,
+    freshPackCount: selection?.freshPackCount ?? enhanced.freshPackCount ?? null,
+    rejectedPackCount: selection?.rejectedPackCount ?? null,
+    candidateCount: Array.isArray(selection?.candidates) ? selection.candidates.length : 0,
+    visibleWeatherEntries: [...(record?.weatherEntries?.values?.() || [])].filter((entry) => entry.visible).length,
+    manifestUrl: enhanced.manifestUrl || mapState.generatedRadarManifestUrl || "",
+    coverageValue: coverage ? roundedDiagnosticNumber(coverage.value, 3) : null,
+    viewportOverlap: coverage ? roundedDiagnosticNumber(coverage.viewportOverlap, 3) : null
+  };
+}
+
+function roundedDiagnosticNumber(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = 10 ** Math.max(0, digits);
+  return Math.round(number * factor) / factor;
+}
+
+function radarQualityDiagnosticLine(quality) {
+  if (!quality) return "";
+  const pack = quality.packId ? `pack ${shortDiagnosticId(quality.packId)}` : (quality.selectionSource || quality.renderer || "radar");
+  const band = Number.isFinite(quality.frameMinZoom) && Number.isFinite(quality.frameMaxZoom)
+    ? `z${quality.frameMinZoom}-${quality.frameMaxZoom}`
+    : "z--";
+  const source = Number.isFinite(quality.sourceZoom) ? `source z${quality.sourceZoom}` : "source z--";
+  const overzoom = Number.isFinite(quality.overzoom) ? `over ${quality.overzoom.toFixed(1)}` : "over --";
+  return `quality ${quality.state || "unknown"} · ${pack} · ${band} · ${source} · ${overzoom}`;
+}
+
+function radarCostDiagnosticLine(quality) {
+  if (!quality) return "";
+  const metrics = quality.metrics || {};
+  const generatedTiles = Number(metrics.generatedTiles || metrics.radarTiles || 0);
+  const dataTiles = Number(metrics.dataTiles || 0);
+  const candidateText = Number.isFinite(Number(quality.freshPackCount)) && Number.isFinite(Number(quality.packCount))
+    ? `packs ${quality.freshPackCount}/${quality.packCount}`
+    : `packs ${quality.candidateCount || 0}`;
+  const overlap = Number.isFinite(Number(quality.viewportOverlap))
+    ? `overlap ${Math.round(Number(quality.viewportOverlap) * 100)}%`
+    : "overlap --";
+  return `${candidateText} · tiles ${generatedTiles || "--"} · data ${dataTiles || "--"} · ${overlap}`;
+}
+
+function shortDiagnosticId(value) {
+  const text = String(value || "");
+  if (text.length <= 18) return text;
+  return `${text.slice(0, 8)}...${text.slice(-6)}`;
+}
+
 function mapLibreDiagnosticStats(record) {
   const entries = [...(record?.weatherEntries?.values?.() || [])];
   const style = record?.map?.getStyle?.();
@@ -1453,6 +1534,7 @@ function mapLibreDiagnosticStats(record) {
     sources: Object.keys(style?.sources || {}).length,
     zoom: Number(mapState.zoom?.toFixed ? mapState.zoom.toFixed(2) : mapState.zoom),
     immersive: Boolean(mapState.immersive),
+    radarQuality: radarQualityDiagnosticStats(record),
     lastError: record?.lastError || ""
   };
 }
@@ -1498,10 +1580,14 @@ function syncMapLibreDiagnosticReadout(record) {
   const uiFps = stats.uiFps ? `ui ${stats.uiFps}` : "ui warming";
   const glFps = stats.glFps ? `gl ${stats.glFps}` : "gl warming";
   const loaded = stats.tilesLoaded ? "tiles ready" : "tiles loading";
+  const radarQuality = radarQualityDiagnosticLine(stats.radarQuality);
+  const radarCost = radarCostDiagnosticLine(stats.radarQuality);
   nextReadout.innerHTML = `
     <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
     <span>${escapeHtml(uiFps)} fps · ${escapeHtml(glFps)} fps · moves ${stats.movesPerSecond}/s</span>
     <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))} · ${escapeHtml(radarSourceZoomLabel())}</span>
+    ${radarQuality ? `<span>${escapeHtml(radarQuality)}</span>` : ""}
+    ${radarCost ? `<span>${escapeHtml(radarCost)}</span>` : ""}
     <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;
 }
@@ -2432,6 +2518,7 @@ async function requestRadarViewportGeneration(options = {}) {
 async function resolveLocalRadarViewportCapability(base, options = {}) {
   const explicit = generatedMrmsManifestUrlOverride();
   if (explicit) {
+    rememberGeneratedMrmsIndexSelection(null);
     const capability = radarCapabilityWithEnhanced(base, {
       state: "ready",
       kind: "generated-radar",
@@ -2451,12 +2538,14 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
     const response = await fetch(indexUrl, { cache: "no-store" });
     if (!response.ok) throw new Error("Generated MRMS index unavailable.");
     const index = await response.json();
-    const packs = generatedMrmsIndexPacks(index);
-    const freshPackCount = packs.filter((pack) => !generatedMrmsIndexPackExpired(pack)).length;
-    const pack = selectGeneratedMrmsIndexPack(index);
+    const selection = selectGeneratedMrmsIndexPack(index, { indexUrl });
+    const pack = selection.pack;
     const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
     if (manifestUrl) {
       const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+      const quality = selection.selected
+        ? { ...selection.selected, manifestUrl: resolved }
+        : generatedMrmsIndexPackDiagnosticSummary(pack, null, { indexUrl, manifestUrl: resolved });
       const capability = radarCapabilityWithEnhanced(base, {
         state: "ready",
         kind: Number(pack?.metrics?.dataTiles || 0) > 0 ? "encoded-radar" : "generated-radar",
@@ -2469,14 +2558,18 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
         expiresAt: pack?.expiresAt || "",
         coverageBounds: generatedCoverageBounds(pack?.coverageBounds),
         metrics: pack?.metrics || null,
+        quality,
         reason: "fresh-index-pack"
       });
       recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
         indexUrl,
         packId: pack?.id || pack?.label || "",
         manifestUrl: resolved,
-        packCount: packs.length,
-        freshPackCount,
+        packCount: selection.packCount,
+        freshPackCount: selection.freshPackCount,
+        rejectedPackCount: selection.rejectedPackCount,
+        candidates: selection.candidates,
+        quality,
         expiresAt: pack?.expiresAt || "",
         coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
       });
@@ -2485,16 +2578,21 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
     const capability = radarCapabilityUnavailable(base, {
       reason: "no-fresh-index-pack",
       indexUrl,
-      packCount: packs.length,
-      freshPackCount
+      packCount: selection.packCount,
+      freshPackCount: selection.freshPackCount,
+      rejectedPackCount: selection.rejectedPackCount,
+      candidates: selection.candidates
     });
     recordRadarSourceDecision("radar.enhanced-index-no-match", {
       indexUrl,
-      packCount: packs.length,
-      freshPackCount
+      packCount: selection.packCount,
+      freshPackCount: selection.freshPackCount,
+      rejectedPackCount: selection.rejectedPackCount,
+      candidates: selection.candidates
     });
     if (options.allowLegacy === false) return rememberRadarCapability(radarCapabilityWithGenerationState(capability, options));
   } catch (error) {
+    rememberGeneratedMrmsIndexSelection(null);
     const capability = radarCapabilityUnavailable(base, {
       reason: "index-unavailable",
       indexUrl,
@@ -2509,12 +2607,14 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
   }
 
   if (options.allowLegacy === false) {
+    rememberGeneratedMrmsIndexSelection(null);
     return rememberRadarCapability(radarCapabilityWithGenerationState(radarCapabilityUnavailable(base, {
       reason: "legacy-disabled-for-viewport-refresh",
       indexUrl
     }), options));
   }
 
+  rememberGeneratedMrmsIndexSelection(null);
   const capability = radarCapabilityWithEnhanced(base, {
     state: "ready",
     kind: "generated-radar",
@@ -2671,6 +2771,7 @@ function radarCapabilityWithEnhanced(base, enhanced) {
       generatedAt: enhanced.generatedAt || "",
       expiresAt: enhanced.expiresAt || "",
       metrics: enhanced.metrics || null,
+      quality: enhanced.quality || null,
       reason: enhanced.reason || "enhanced-layer-ready"
     },
     generation: {
@@ -2691,6 +2792,8 @@ function radarCapabilityUnavailable(base, detail = {}) {
       indexUrl: detail.indexUrl || "",
       packCount: Number.isFinite(Number(detail.packCount)) ? Number(detail.packCount) : null,
       freshPackCount: Number.isFinite(Number(detail.freshPackCount)) ? Number(detail.freshPackCount) : null,
+      rejectedPackCount: Number.isFinite(Number(detail.rejectedPackCount)) ? Number(detail.rejectedPackCount) : null,
+      candidates: Array.isArray(detail.candidates) ? detail.candidates : [],
       error: detail.error || ""
     },
     generation: {
@@ -2763,17 +2866,149 @@ function generatedMrmsIndexUrl() {
     : "radar/mrms/index.json";
 }
 
-function selectGeneratedMrmsIndexPack(index) {
-  const context = generatedMrmsSelectionContext();
-  const packs = generatedMrmsIndexPacks(index)
-    .filter((pack) => !generatedMrmsIndexPackExpired(pack))
+function selectGeneratedMrmsIndexPack(index, options = {}) {
+  const selection = generatedMrmsIndexPackSelection(index, options);
+  rememberGeneratedMrmsIndexSelection(selection);
+  return selection;
+}
+
+function generatedMrmsIndexPackSelection(index, options = {}) {
+  const context = options.context || generatedMrmsSelectionContext();
+  const indexUrl = options.indexUrl || generatedMrmsIndexUrl();
+  const packs = generatedMrmsIndexPacks(index);
+  const freshPacks = packs.filter((pack) => !generatedMrmsIndexPackExpired(pack));
+  const candidates = freshPacks
     .map((pack) => ({
       pack,
       score: generatedMrmsIndexPackScore(pack, context)
     }))
     .filter((item) => item.score)
     .sort(compareGeneratedMrmsIndexPackScores);
-  return packs[0]?.pack || null;
+  const selected = candidates[0] || null;
+  return {
+    at: new Date().toISOString(),
+    indexUrl,
+    context: generatedMrmsSelectionContextSummary(context),
+    packCount: packs.length,
+    freshPackCount: freshPacks.length,
+    expiredPackCount: Math.max(0, packs.length - freshPacks.length),
+    rejectedPackCount: Math.max(0, freshPacks.length - candidates.length),
+    pack: selected?.pack || null,
+    selected: selected
+      ? generatedMrmsIndexPackDiagnosticSummary(selected.pack, selected.score, { indexUrl })
+      : null,
+    candidates: candidates
+      .slice(0, GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT)
+      .map((item) => generatedMrmsIndexPackDiagnosticSummary(item.pack, item.score, { indexUrl }))
+  };
+}
+
+function rememberGeneratedMrmsIndexSelection(selection) {
+  mapState.generatedRadarIndexSelection = selection
+    ? {
+      at: selection.at || new Date().toISOString(),
+      indexUrl: selection.indexUrl || "",
+      context: selection.context || null,
+      packCount: selection.packCount ?? null,
+      freshPackCount: selection.freshPackCount ?? null,
+      expiredPackCount: selection.expiredPackCount ?? null,
+      rejectedPackCount: selection.rejectedPackCount ?? null,
+      selected: selection.selected || null,
+      candidates: Array.isArray(selection.candidates) ? selection.candidates : []
+    }
+    : null;
+  return selection;
+}
+
+function generatedMrmsSelectionContextSummary(context) {
+  return {
+    activePoint: generatedPointDiagnosticSummary(context?.activePoint),
+    centerPoint: generatedPointDiagnosticSummary(context?.centerPoint),
+    viewportBounds: generatedBoundsDiagnosticSummary(context?.viewportBounds),
+    zoom: roundedDiagnosticNumber(context?.zoom, 2)
+  };
+}
+
+function generatedPointDiagnosticSummary(point) {
+  if (!point) return null;
+  const latitude = Number(point.latitude);
+  const longitude = normalizeMapLongitude(point.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    latitude: roundedDiagnosticNumber(latitude, 4),
+    longitude: roundedDiagnosticNumber(longitude, 4)
+  };
+}
+
+function generatedBoundsDiagnosticSummary(bounds) {
+  const normalized = generatedCoverageBounds(bounds);
+  if (!normalized) return null;
+  return {
+    minLat: roundedDiagnosticNumber(normalized.minLat, 4),
+    minLon: roundedDiagnosticNumber(normalized.minLon, 4),
+    maxLat: roundedDiagnosticNumber(normalized.maxLat, 4),
+    maxLon: roundedDiagnosticNumber(normalized.maxLon, 4)
+  };
+}
+
+function generatedMrmsIndexPackDiagnosticSummary(pack, score = null, options = {}) {
+  if (!pack) return null;
+  const manifestUrl = options.manifestUrl || resolveGeneratedRadarUrl(generatedMrmsIndexPackManifestUrl(pack), options.indexUrl || generatedMrmsIndexUrl());
+  const zoomWindow = generatedMrmsIndexPackZoomWindow(pack);
+  const metrics = pack?.metrics || {};
+  return {
+    id: pack?.id || pack?.label || "",
+    label: pack?.label || "",
+    manifestUrl,
+    minZoom: zoomWindow.minZoom,
+    maxZoom: zoomWindow.maxZoom,
+    generatedAt: pack?.generatedAt || "",
+    expiresAt: pack?.expiresAt || "",
+    coverageBounds: generatedBoundsDiagnosticSummary(pack?.coverageBounds),
+    metrics: {
+      candidateTiles: diagnosticMetricNumber(metrics.candidateTiles),
+      generatedTiles: diagnosticMetricNumber(metrics.generatedTiles),
+      radarTiles: diagnosticMetricNumber(metrics.radarTiles),
+      dataTiles: diagnosticMetricNumber(metrics.dataTiles),
+      uploadedObjects: diagnosticMetricNumber(metrics.uploadedObjects || metrics.uploaded)
+    },
+    score: score ? generatedMrmsIndexPackScoreSummary(score) : null
+  };
+}
+
+function generatedMrmsIndexPackScoreSummary(score) {
+  return {
+    value: roundedDiagnosticNumber(score.value, 3),
+    zoom: roundedDiagnosticNumber(score.zoom, 3),
+    maxZoomBonus: roundedDiagnosticNumber(score.maxZoomBonus, 3),
+    overzoom: roundedDiagnosticNumber(score.overzoom, 2),
+    underzoom: roundedDiagnosticNumber(score.underzoom, 2),
+    area: roundedDiagnosticNumber(score.area, 4),
+    freshness: score.freshness || 0,
+    coverage: score.coverage
+      ? {
+        value: roundedDiagnosticNumber(score.coverage.value, 3),
+        relevant: Boolean(score.coverage.relevant),
+        centerCovered: Boolean(score.coverage.centerCovered),
+        activeCovered: Boolean(score.coverage.activeCovered),
+        viewportOverlap: roundedDiagnosticNumber(score.coverage.viewportOverlap, 3)
+      }
+      : null
+  };
+}
+
+function diagnosticMetricNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function generatedMrmsIndexPackZoomWindow(pack) {
+  const minZoom = Number(pack?.minZoom ?? pack?.minzoom);
+  const maxZoom = Number(pack?.maxZoom ?? pack?.maxzoom);
+  return {
+    minZoom: Number.isFinite(minZoom) ? minZoom : null,
+    maxZoom: Number.isFinite(maxZoom) ? maxZoom : null
+  };
 }
 
 function generatedMrmsIndexPacks(index) {
@@ -2797,13 +3032,25 @@ function generatedMrmsIndexPackScore(pack, context = generatedMrmsSelectionConte
   const coverage = generatedCoverageScoreForAreas(areas, context);
   if (!coverage.relevant) return null;
   const zoom = generatedMrmsIndexPackZoomScore(pack, context.zoom);
+  const { minZoom, maxZoom } = generatedMrmsIndexPackZoomWindow(pack);
+  const currentZoom = Number(context.zoom);
+  const overzoom = Number.isFinite(currentZoom) && Number.isFinite(maxZoom)
+    ? Math.max(0, currentZoom - maxZoom)
+    : 0;
+  const underzoom = Number.isFinite(currentZoom) && Number.isFinite(minZoom)
+    ? Math.max(0, minZoom - currentZoom)
+    : 0;
+  const maxZoomBonus = Number.isFinite(maxZoom) ? Math.min(maxZoom, MAP_MAX_ZOOM) * 18 : 0;
   const dataTiles = Number(pack?.metrics?.dataTiles || 0);
   const area = generatedMrmsIndexPackArea(pack);
   const freshness = generatedManifestTimestamp(pack?.expiresAt) || 0;
   return {
-    value: coverage.value * 1000 + zoom * 100 + (dataTiles > 0 ? 25 : 0),
+    value: coverage.value * 1000 + zoom * 140 + maxZoomBonus - overzoom * 85 - underzoom * 45 + (dataTiles > 0 ? 35 : 0),
     coverage,
     zoom,
+    maxZoomBonus,
+    overzoom,
+    underzoom,
     area,
     freshness
   };
@@ -3007,6 +3254,7 @@ function clearGeneratedRadarSelection() {
   mapState.generatedRadarManifestUrl = "";
   mapState.generatedRadarSelectionKey = "";
   mapState.generatedRadarViewportKey = "";
+  mapState.generatedRadarIndexSelection = null;
 }
 
 function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {

@@ -75,7 +75,7 @@ const currentPack = {
   id: "current-pack",
   manifestUrl: "radar/mrms/current/manifest.json",
   generatedAt: "2026-06-29T16:00:00.000Z",
-  expiresAt: "2026-06-29T19:00:00.000Z",
+  expiresAt: "2099-06-29T19:00:00.000Z",
   coverageBounds: { minLat: 40, minLon: -100, maxLat: 41, maxLon: -99 }
 };
 const merged = mergeGeneratedRadarIndex({

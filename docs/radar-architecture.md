@@ -260,6 +260,11 @@ Initial local implementation:
 - Generated MRMS selection now flows through the capability object before
   loading a manifest, preserving existing fallback behavior while creating the
   seam for a future Worker-backed endpoint.
+- Generated MRMS index selection records bounded quality diagnostics: selected
+  pack, ranked candidate summaries, source zoom range, overzoom, coverage
+  overlap, and tile/data counts. These are exposed through
+  `window.nearcastRadarDiagnostics()` and the existing MapLibre diagnostic
+  readout when `mapPerf` is active.
 - A capability endpoint can be tested by setting
   `?radarCapabilityEndpoint=/api/radar/capability` or the
   `nearcast-radar-capability-endpoint` localStorage key. When no endpoint is
@@ -356,6 +361,9 @@ Current scaffold:
   sticky explicit manifest override so stale local-storage settings do not pin
   the app to the legacy fallback manifest. The default user path still uses the
   live static index and fallback chain.
+- Add `mapPerf=current` while testing preview quality to show the internal
+  readout for selected pack, source zoom, overzoom, candidate counts, coverage,
+  and tile/data counts without adding normal user-facing controls.
 - `config/radar-r2-cors.json` lets the preview R2 custom domain serve index,
   manifest, encoded-data, and tile objects to the app origin. The manual preview
   upload workflow applies it when `CLOUDFLARE_API_TOKEN` is present.
