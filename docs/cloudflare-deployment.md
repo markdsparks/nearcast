@@ -98,6 +98,10 @@ Optional GitHub variable:
 - `MRMS_ASSET_FILE_LIMIT`: generated-radar file budget before deploy. Defaults
   to `19500`, leaving headroom under the current 20000-file Workers static
   asset limit for the app shell and manifests.
+- `MRMS_TILE_URL_BASE`: optional public tile URL root. When set, generated
+  frame URLs point at `${MRMS_TILE_URL_BASE}/<profile>/<frame>/<z>/<x>/<y>.png`
+  instead of relative Worker static asset URLs. Leave unset until an upload
+  target, such as R2 behind a public/custom domain, is ready.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
@@ -147,6 +151,10 @@ Multi-pack static deploys:
 - Empty radar tiles are skipped by default. Missing generated tiles should read
   as transparent radar, not as unavailable weather, because the manifest and
   coverage metadata remain the source of truth.
+- The manifest can point tiles at an external origin via `MRMS_TILE_URL_BASE`.
+  The workflow still writes local tiles for now; the next storage step is to
+  upload those local files to R2/CDN before deploy, then remove local tile PNGs
+  from the Worker asset bundle.
 - If every pack in the deployed index has the same source/render fingerprint and
   is still fresh enough, the workflow skips the whole deploy. If any pack
   changed, the publisher regenerates all requested packs so the static deploy

@@ -39,6 +39,7 @@ jobs:
       MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
       MRMS_SKIP_EMPTY_TILES: ${{ vars.MRMS_SKIP_EMPTY_TILES || 'true' }}
       MRMS_ASSET_FILE_LIMIT: ${{ vars.MRMS_ASSET_FILE_LIMIT || '19500' }}
+      MRMS_TILE_URL_BASE: ${{ vars.MRMS_TILE_URL_BASE || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +53,9 @@ jobs:
           EXTRA_ARGS=()
           if [ "$MRMS_SKIP_EMPTY_TILES" != "false" ]; then
             EXTRA_ARGS+=(--skip-empty-tiles)
+          fi
+          if [ -n "$MRMS_TILE_URL_BASE" ]; then
+            EXTRA_ARGS+=(--tile-url-base="$MRMS_TILE_URL_BASE")
           fi
           node scripts/mrms-prototype/publish-mrms-live.mjs \
             --profiles="$MRMS_PROFILES" \

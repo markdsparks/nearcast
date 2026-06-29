@@ -149,6 +149,7 @@ before deployment:
 node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls --skip-empty-tiles
+node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls --tile-url-base=https://radar.example.com/mrms
 ```
 
 Defaults:
@@ -206,6 +207,17 @@ multi-profile run, the first profile stays at `radar/mrms/manifest.json` for
 compatibility, additional manifests live under `radar/mrms/packs/<profile>/`,
 and tiles live under `radar/mrms/live/<profile>/`. The same shape can later
 point to many R2/CDN packs for different U.S. regions.
+
+When `--tile-url-base` is provided, the publisher appends the profile id and
+each frame id to that public root. A generated frame URL becomes:
+
+```text
+https://radar.example.com/mrms/great-falls/20260629-022439z/{z}/{x}/{y}.png?v=...
+```
+
+This changes only the manifest contract. The renderer still writes local tile
+files so a separate upload step can sync them to R2/CDN before the app consumes
+the external URLs.
 
 The GitHub Actions publisher also checks generated file count before deploying:
 

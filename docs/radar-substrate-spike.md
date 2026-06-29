@@ -126,6 +126,12 @@ future forecast tiles should move the same manifest/index contract onto
 R2/CDN-backed object storage instead of stuffing every tile into one static
 Worker deploy.
 
+The publisher now has a storage seam via `--tile-url-base`: frame templates can
+point at an external public origin while manifests and indexes keep the same
+shape. That makes R2/CDN a storage swap instead of an app-side map rewrite. The
+remaining production work is the upload step and then pruning local tile PNGs
+from the Worker static asset bundle.
+
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
 the same manifest contract, it can enter the map as a normal precipitation

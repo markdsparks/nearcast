@@ -151,7 +151,12 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
   const frameId = cleanTileSegment(args["frame-prefix"] ? `${args["frame-prefix"]}-${frameIdForIso(source.observedAt)}` : frameIdForIso(source.observedAt));
   const tileOut = path.join(outDir, frameId);
   const tempManifestOut = path.join(outDir, `.manifest-${frameId}.json`);
-  const tileUrl = manifestRelativeTileUrl(manifestOut, tileOut);
+  const tileUrl = frameTileUrl({
+    tileUrlBase: args["tile-url-base"] || args["tile-base-url"],
+    frameId,
+    manifestOut,
+    tileOut
+  });
   const renderScript = path.join(path.dirname(new URL(import.meta.url).pathname), "render-mrms-preview.mjs");
   const commandArgs = [
     renderScript,
@@ -249,7 +254,11 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
     tileSize: first.tileSize || 256,
     tileRadius: first.tileRadius,
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
-    outDir: manifestRelativeTileUrl(manifestOut, outDir),
+    outDir: manifestTileOutDirUrl({
+      tileUrlBase: args["tile-url-base"] || args["tile-base-url"],
+      manifestOut,
+      outDir
+    }),
     coverageBounds,
     coverageAreas,
     attribution: first.attribution || "NOAA MRMS · Nearcast",
@@ -334,6 +343,7 @@ Options:
   --region=CONUS             MRMS region prefix.
   --product=NAME             MRMS product. Defaults to MergedReflectivityQCComposite_00.50.
   --out-dir=radar/mrms/live  Output tile root. Each frame gets its own child folder.
+  --tile-url-base=URL        Public URL root for tile templates.
   --manifest-out=PATH        Combined manifest path.
   --tile-zooms=6,...,14      Source zooms to generate.
   --tile-radius=2            Tile radius around focus when tile-bounds is omitted.
@@ -386,6 +396,7 @@ function buildRenderConfig({ region, product, frameLimit }) {
     tileBounds: parseBounds(args["tile-bounds"] || args["coverage-bounds"]),
     coverageId: args["coverage-id"] || null,
     coverageLabel: args["coverage-label"] || null,
+    tileUrlBase: cleanPublicUrl(args["tile-url-base"] || args["tile-base-url"]) || null,
     tileZooms: splitList(args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS).map((item) => Number(item)).filter(Number.isFinite),
     tileRadius: numberArg(args["tile-radius"], Number(DEFAULT_TILE_RADIUS)),
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
@@ -502,6 +513,28 @@ function manifestRelativeTileUrl(manifestOut, tileOut) {
   const relative = path.relative(manifestDir, tileOut || ".");
   const cleanRelative = relative ? relative.split(path.sep).join("/") : ".";
   return cleanRelative.startsWith(".") ? cleanRelative : `./${cleanRelative}`;
+}
+
+function frameTileUrl({ tileUrlBase, frameId, manifestOut, tileOut }) {
+  if (tileUrlBase) return joinPublicUrl(tileUrlBase, frameId);
+  return manifestRelativeTileUrl(manifestOut, tileOut);
+}
+
+function manifestTileOutDirUrl({ tileUrlBase, manifestOut, outDir }) {
+  if (tileUrlBase) return cleanPublicUrl(tileUrlBase);
+  return manifestRelativeTileUrl(manifestOut, outDir);
+}
+
+function joinPublicUrl(base, ...parts) {
+  const cleanBase = cleanPublicUrl(base);
+  const cleanParts = parts
+    .map((part) => String(part || "").trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  return [cleanBase, ...cleanParts].filter(Boolean).join("/");
+}
+
+function cleanPublicUrl(value) {
+  return String(value || "").trim().replace(/\/+$/g, "");
 }
 
 function generatedExpiresAt(options = {}, fromIso = new Date().toISOString()) {

@@ -65,6 +65,7 @@ async function main() {
   const frames = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
   const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
   const tileZooms = args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS;
+  const tileUrlBase = profileTileUrlBase(profile);
   const skipMinFreshMinutes = Math.max(0, numberArg(args["skip-min-fresh-minutes"], DEFAULT_SKIP_MIN_FRESH_MINUTES));
   const checkedAt = new Date().toISOString();
 
@@ -78,7 +79,8 @@ async function main() {
     profile,
     tileZooms,
     ttlMinutes,
-    tileVersion
+    tileVersion,
+    tileUrlBase
   });
 
   const resolveResult = runGenerator([...commandArgs, "--resolve-only"], "timeline source resolve");
@@ -175,6 +177,7 @@ async function publishProfileSet(profiles) {
     const profileOutDir = path.join(outDirRoot, profile.id);
     const tileBounds = profile.tileBounds;
     const tileVersion = args["tile-version"] || liveTileVersion(profile.id);
+    const tileUrlBase = profileTileUrlBase(profile);
     const commandArgs = buildGeneratorArgs({
       generator,
       frames,
@@ -184,7 +187,8 @@ async function publishProfileSet(profiles) {
       profile,
       tileZooms,
       ttlMinutes,
-      tileVersion
+      tileVersion,
+      tileUrlBase
     });
     const resolveResult = runGenerator([...commandArgs, "--resolve-only"], `timeline source resolve for ${profile.id}`);
     return {
@@ -193,6 +197,7 @@ async function publishProfileSet(profiles) {
       outDir: profileOutDir,
       tileBounds,
       tileVersion,
+      tileUrlBase,
       commandArgs,
       publishPlan: parseJsonOutput(resolveResult.stdout, `timeline source resolve for ${profile.id}`)
     };
@@ -293,7 +298,7 @@ async function publishProfileSet(profiles) {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-function buildGeneratorArgs({ generator, frames, outDir, manifestOut, tileBounds, profile, tileZooms, ttlMinutes, tileVersion }) {
+function buildGeneratorArgs({ generator, frames, outDir, manifestOut, tileBounds, profile, tileZooms, ttlMinutes, tileVersion, tileUrlBase }) {
   const commandArgs = [
     generator,
     `--frames=${frames}`,
@@ -308,6 +313,7 @@ function buildGeneratorArgs({ generator, frames, outDir, manifestOut, tileBounds
     `--focus-bounds=${args["focus-bounds"] || profile.focusBounds}`,
     `--max-keys=${args["max-keys"] || 1200}`
   ];
+  if (tileUrlBase) commandArgs.push(`--tile-url-base=${tileUrlBase}`);
 
   passThrough(commandArgs, [
     "date",
@@ -372,6 +378,12 @@ function resolveProfiles(value) {
       seen.add(profile.id);
       return true;
     });
+}
+
+function profileTileUrlBase(profile) {
+  const base = args["tile-url-base"] || args["tile-base-url"];
+  if (!base) return "";
+  return joinPublicUrl(base, profile.id);
 }
 
 function passThrough(commandArgs, names) {
@@ -652,6 +664,14 @@ function relativeUrl(fromFile, toFile) {
   return relative.startsWith(".") ? relative : `./${relative || path.basename(toFile)}`;
 }
 
+function joinPublicUrl(base, ...parts) {
+  const cleanBase = String(base || "").trim().replace(/\/+$/g, "");
+  const cleanParts = parts
+    .map((part) => String(part || "").trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  return [cleanBase, ...cleanParts].filter(Boolean).join("/");
+}
+
 function minIso(values) {
   const times = values.map((value) => Date.parse(value)).filter(Number.isFinite);
   return times.length ? new Date(Math.min(...times)).toISOString() : null;
@@ -715,6 +735,7 @@ Options:
   --tile-zooms=6,...,13      Generated source zooms. z14+ is expensive for regional jobs.
   --ttl-minutes=30           Live manifest freshness window.
   --out-dir=radar/mrms/live  Generated tile root.
+  --tile-url-base=URL        Public tile root. The profile id is appended.
   --manifest-out=PATH        Manifest to publish for the app.
   --index-out=PATH           Location-aware generated radar index path.
   --current-manifest-url=URL Compare against the currently deployed manifest before rendering.
