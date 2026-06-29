@@ -1,0 +1,319 @@
+name: Process radar generation plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      planObjectPath:
+        description: Private R2 plan object path, either bucket/key or key.
+        required: true
+      uploadMode:
+        description: Publish mode for the rendered artifact set.
+        required: false
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - r2
+      publicBaseUrl:
+        description: Public R2/custom-domain origin.
+        required: false
+        default: https://radar.getnearcast.app
+      indexKey:
+        description: Mutable preview index object key.
+        required: false
+        default: radar/mrms/on-demand-preview/index.json
+      verifyPublic:
+        description: Verify the uploaded pack through the public origin.
+        required: false
+        default: true
+        type: boolean
+      allowEmptyPublish:
+        description: Allow r2 publish when the render produced zero radar tiles.
+        required: false
+        default: false
+        type: boolean
+      sample:
+        description: Mark generated output as sample data.
+        required: false
+        default: false
+        type: boolean
+      maxPacks:
+        description: Maximum packs to keep in the merged preview index.
+        required: false
+        default: "80"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: process-radar-generation-plan
+  cancel-in-progress: false
+
+jobs:
+  process-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RADAR_GENERATION_R2_BUCKET: ${{ vars.RADAR_GENERATION_R2_BUCKET || vars.MRMS_R2_BUCKET || 'nearcast-radar' }}
+      RADAR_GENERATION_STATE_R2_BUCKET: ${{ vars.RADAR_GENERATION_STATE_R2_BUCKET || 'nearcast-radar-state' }}
+      RADAR_GENERATION_R2_ENDPOINT: ${{ vars.RADAR_GENERATION_R2_ENDPOINT || vars.MRMS_R2_ENDPOINT || '' }}
+      RADAR_GENERATION_R2_UPLOAD_CONCURRENCY: ${{ vars.RADAR_GENERATION_R2_UPLOAD_CONCURRENCY || vars.MRMS_R2_UPLOAD_CONCURRENCY || '4' }}
+      PLAN_OBJECT_PATH: ${{ github.event.inputs.planObjectPath }}
+      UPLOAD_MODE: ${{ github.event.inputs.uploadMode }}
+      PUBLIC_BASE_URL: ${{ github.event.inputs.publicBaseUrl }}
+      INDEX_KEY: ${{ github.event.inputs.indexKey }}
+      VERIFY_PUBLIC: ${{ github.event.inputs.verifyPublic }}
+      ALLOW_EMPTY_PUBLISH: ${{ github.event.inputs.allowEmptyPublish }}
+      SAMPLE: ${{ github.event.inputs.sample }}
+      MAX_PACKS: ${{ github.event.inputs.maxPacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Normalize private plan object path
+        run: |
+          set -euo pipefail
+          if [ -z "$PLAN_OBJECT_PATH" ]; then
+            echo "planObjectPath is required."
+            exit 1
+          fi
+          OBJECT_PATH="${PLAN_OBJECT_PATH#/}"
+          FIRST_SEGMENT="${OBJECT_PATH%%/*}"
+          if [ "$FIRST_SEGMENT" != "$RADAR_GENERATION_STATE_R2_BUCKET" ]; then
+            OBJECT_PATH="$RADAR_GENERATION_STATE_R2_BUCKET/$OBJECT_PATH"
+          fi
+          echo "$OBJECT_PATH" > /tmp/radar-generation-plan-object-path.txt
+          echo "Private plan object: $OBJECT_PATH"
+
+      - name: Fetch persisted render plan from private R2
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN is required to read the private plan object."
+            exit 1
+          fi
+          OBJECT_PATH="$(cat /tmp/radar-generation-plan-object-path.txt)"
+          FOUND=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if npx --yes wrangler r2 object get "$OBJECT_PATH" --remote --file /tmp/radar-generation-plan.json; then
+              FOUND=1
+              break
+            fi
+            echo "Plan not visible yet; retry $attempt."
+            sleep 5
+          done
+          if [ "$FOUND" != "1" ]; then
+            echo "Plan object was not found at $OBJECT_PATH"
+            exit 1
+          fi
+
+      - name: Print render plan summary
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const plan = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan.json", "utf8"));
+          console.log(JSON.stringify({
+            requestId: plan.requestId,
+            dedupeKey: plan.dedupeKey,
+            reason: plan.reason,
+            planKey: plan.output?.planKey,
+            outputPrefix: plan.output?.prefixTemplate,
+            tileBounds: plan.coverage?.tileBounds,
+            candidateTiles: plan.coverage?.candidateTiles,
+            tileZooms: plan.render?.tileZooms,
+            ttlMinutes: plan.render?.ttlMinutes
+          }, null, 2));
+          NODE
+
+      - name: Render radar artifacts from plan
+        run: |
+          set -euo pipefail
+          ARGS=(
+            scripts/radar-generation-renderer.mjs
+            --plan=/tmp/radar-generation-plan.json
+            --artifact-root=/tmp/nearcast-radar-generation-artifacts
+            --public-base-url="$PUBLIC_BASE_URL"
+          )
+          if [ "$SAMPLE" = "true" ]; then
+            ARGS+=(--sample)
+          fi
+          node "${ARGS[@]}" > /tmp/radar-generation-result.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const result = JSON.parse(fs.readFileSync("/tmp/radar-generation-result.json", "utf8"));
+          const metrics = result.pack?.metrics || {};
+          const counts = ["dataTiles", "radarTiles", "generatedTiles"]
+            .map((key) => Number(metrics[key]))
+            .filter(Number.isFinite);
+          const renderedTiles = counts.length ? Math.max(...counts) : 0;
+          fs.writeFileSync("/tmp/radar-generation-rendered-tile-count.txt", String(renderedTiles));
+          console.log(JSON.stringify({
+            state: result.state,
+            sourceSignature: result.sourceSignature,
+            packId: result.pack?.id,
+            manifestKey: result.materialized?.manifestKey,
+            indexPackKey: result.materialized?.indexPackKey,
+            generatedTiles: metrics.generatedTiles,
+            radarTiles: metrics.radarTiles,
+            dataTiles: metrics.dataTiles,
+            candidateTiles: metrics.candidateTiles
+          }, null, 2));
+          NODE
+
+      - name: Block empty R2 publish unless explicitly allowed
+        run: |
+          set -euo pipefail
+          TILE_COUNT="$(cat /tmp/radar-generation-rendered-tile-count.txt)"
+          if [ "$UPLOAD_MODE" = "r2" ] && [ "$ALLOW_EMPTY_PUBLISH" != "true" ] && [ "$TILE_COUNT" -le 0 ]; then
+            echo "Render produced zero radar tiles. Re-run with allowEmptyPublish=true to publish this pack anyway."
+            exit 1
+          fi
+          echo "Rendered tile count guard passed: $TILE_COUNT"
+
+      - name: Load current preview index
+        run: |
+          set -euo pipefail
+          INDEX_URL="${PUBLIC_BASE_URL%/}/${INDEX_KEY#/}"
+          CURRENT_INDEX="/tmp/radar-generation-current-index.json"
+          rm -f "$CURRENT_INDEX"
+          if curl --fail --silent --show-error --location "$INDEX_URL" --output "$CURRENT_INDEX"; then
+            node -e "const fs=require('fs'); const i=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); console.log(JSON.stringify({currentPacks:i.packs?.length||0, expiresAt:i.expiresAt||''}, null, 2));" "$CURRENT_INDEX"
+          else
+            echo "No current preview index found at $INDEX_URL; publishing will create a fresh index."
+          fi
+
+      - name: Plan publish
+        run: |
+          set -euo pipefail
+          node scripts/radar-generation-publisher.mjs \
+            --render-result=/tmp/radar-generation-result.json \
+            --current-index=/tmp/radar-generation-current-index.json \
+            --index-out=/tmp/nearcast-radar-generation-index/"$INDEX_KEY" \
+            --index-key="$INDEX_KEY" \
+            --upload-mode=dry-run \
+            --max-packs="$MAX_PACKS" \
+            --public-base-url="$PUBLIC_BASE_URL" \
+            > /tmp/radar-generation-publication-plan.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const publication = JSON.parse(fs.readFileSync("/tmp/radar-generation-publication-plan.json", "utf8"));
+          console.log(JSON.stringify({
+            uploadMode: publication.uploadMode,
+            packId: publication.packId,
+            objectCount: publication.objectCount,
+            bytes: publication.bytes,
+            indexKey: publication.indexKey,
+            sourceSignature: publication.sourceSignature,
+            sampleKeys: publication.upload?.sampleKeys || []
+          }, null, 2));
+          NODE
+
+      - name: Install R2 upload dependency
+        if: ${{ github.event.inputs.uploadMode == 'r2' }}
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
+      - name: Configure R2 CORS for browser preview
+        if: ${{ github.event.inputs.uploadMode == 'r2' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Skipping R2 CORS configuration because CLOUDFLARE_API_TOKEN is not set."
+            exit 0
+          fi
+          if [ -z "$RADAR_GENERATION_R2_BUCKET" ]; then
+            echo "RADAR_GENERATION_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          npx --yes wrangler r2 bucket cors set "$RADAR_GENERATION_R2_BUCKET" \
+            --file config/radar-r2-cors.json
+
+      - name: Upload radar artifacts to R2
+        if: ${{ github.event.inputs.uploadMode == 'r2' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RADAR_GENERATION_R2_BUCKET" ]; then
+            echo "RADAR_GENERATION_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && [ -z "$RADAR_GENERATION_R2_ENDPOINT" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID or RADAR_GENERATION_R2_ENDPOINT is required."
+            exit 1
+          fi
+          if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
+            echo "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets are required."
+            exit 1
+          fi
+          ENDPOINT="$RADAR_GENERATION_R2_ENDPOINT"
+          if [ -z "$ENDPOINT" ]; then
+            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          node scripts/radar-generation-publisher.mjs \
+            --render-result=/tmp/radar-generation-result.json \
+            --current-index=/tmp/radar-generation-current-index.json \
+            --index-out=/tmp/nearcast-radar-generation-index/"$INDEX_KEY" \
+            --index-key="$INDEX_KEY" \
+            --upload-mode=r2 \
+            --bucket="$RADAR_GENERATION_R2_BUCKET" \
+            --endpoint="$ENDPOINT" \
+            --access-key-id="$R2_ACCESS_KEY_ID" \
+            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+            --concurrency="$RADAR_GENERATION_R2_UPLOAD_CONCURRENCY" \
+            --max-packs="$MAX_PACKS" \
+            --public-base-url="$PUBLIC_BASE_URL" \
+            > /tmp/radar-generation-publication.json
+
+      - name: Verify public radar artifacts
+        if: ${{ github.event.inputs.uploadMode == 'r2' && github.event.inputs.verifyPublic == 'true' }}
+        run: |
+          set -euo pipefail
+          INDEX_URL="${PUBLIC_BASE_URL%/}/${INDEX_KEY#/}"
+          PACK_ID=$(node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('/tmp/radar-generation-result.json','utf8')); if(!r.pack?.id) process.exit(1); process.stdout.write(r.pack.id);")
+          node scripts/mrms-prototype/verify-mrms-public-tiles.mjs \
+            --index="$INDEX_URL" \
+            --pack-id="$PACK_ID" \
+            --max-probes=96 \
+            --timeout=3000
+
+      - name: Print final summary
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const read = (file) => fs.existsSync(file)
+            ? JSON.parse(fs.readFileSync(file, "utf8"))
+            : null;
+          const result = read("/tmp/radar-generation-result.json");
+          const publication = read("/tmp/radar-generation-publication.json")
+            || read("/tmp/radar-generation-publication-plan.json");
+          const indexUrl = `${process.env.PUBLIC_BASE_URL.replace(/\/+$/g, "")}/${process.env.INDEX_KEY.replace(/^\/+/g, "")}`;
+          console.log(JSON.stringify({
+            requestId: result?.requestId || "",
+            packId: result?.pack?.id || publication?.packId || "",
+            uploadMode: publication?.uploadMode || process.env.UPLOAD_MODE,
+            uploaded: publication?.upload?.uploaded ?? 0,
+            objectCount: publication?.objectCount ?? 0,
+            bytes: publication?.bytes ?? 0,
+            indexUrl,
+            manifestUrl: result?.pack?.manifestUrl || ""
+          }, null, 2));
+          NODE
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-generation-plan-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            /tmp/radar-generation-plan.json
+            /tmp/radar-generation-result.json
+            /tmp/radar-generation-publication-plan.json
+            /tmp/radar-generation-publication.json

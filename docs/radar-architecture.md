@@ -327,6 +327,9 @@ Current scaffold:
 - The active Worker also consumes `RADAR_GENERATION_QUEUE` messages and stores
   bounded render plans in private R2. This makes queue acceptance observable as
   durable work without activating the expensive renderer yet.
+- Queued preview render plans publish under
+  `radar/mrms/on-demand-preview/...`, keeping manual on-demand experiments out
+  of the future production `on-demand` namespace.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
   deduped, limited, KV-backed request state, R2-backed request state, Worker
   endpoint routing, Worker queue handling, and static asset passthrough locally
@@ -369,6 +372,12 @@ Current scaffold:
   `radar/mrms/on-demand-preview/...`, and writes
   `radar/mrms/on-demand-preview/index.json`, leaving the live app index and
   deploy path untouched.
+- `.github/workflows/process-radar-generation-plan.yml` is the manual bridge
+  from the live queue path to the renderer/publisher path. It fetches a private
+  render plan from the `nearcast-radar-state` bucket, renders the bounded MRMS
+  artifact set, plans the preview-index merge, and can either stop at `dry-run`
+  or upload to R2. It blocks empty R2 publishes by default so a no-precip test
+  viewport does not create a misleading enhanced pack.
 - A real Great Falls preview upload has verified the R2 object layout through
   the public origin: preview index, pack manifest, and encoded tile URLs are
   externally readable after upload.
@@ -396,9 +405,8 @@ Current scaffold:
 
 Still missing before broad activation:
 
-- Cloudflare endpoint verification after deploy.
 - Production queue/renderer R2 credential wiring and bucket policy review.
-- Worker or job wiring to run the consumer, renderer, and publisher together.
+- Automatic job wiring from a stored queue plan to the renderer/publisher.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 
 ### Phase 4: Scale controls
