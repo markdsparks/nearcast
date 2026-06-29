@@ -1,0 +1,14 @@
+.git/
+.github/
+.wrangler/
+.claude/
+.local-design/
+node_modules/
+docs/
+scripts/
+.DS_Store
+.gitignore
+.assetsignore
+wrangler.toml
+package.json
+package-lock.json
