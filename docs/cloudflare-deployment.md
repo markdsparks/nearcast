@@ -23,7 +23,7 @@ The deploy is configured by `wrangler.toml`:
 - `RADAR_GENERATION_INDEX_URL` points the capability endpoint at the R2 preview
   generated-radar index.
 - `RADAR_GENERATION_REQUESTS_R2` stores preview dedupe and budget records in
-  the existing `nearcast-radar` R2 bucket under
+  the private `nearcast-radar-state` R2 bucket under
   `RADAR_GENERATION_REQUESTS_R2_PREFIX`.
 - `RADAR_GENERATION_QUEUE` is a producer binding for the
   `nearcast-radar-generation-preview` queue.
@@ -258,6 +258,8 @@ Completed in repo:
 - `RADAR_GENERATION_QUEUE` can enqueue accepted preview warming requests.
 - `Deploy Cloudflare app` provisions `nearcast-radar-generation-preview` before
   deploying the Worker.
+- `Deploy Cloudflare app` provisions the private `nearcast-radar-state` bucket
+  before deploying the Worker.
 - `Deploy Cloudflare app` can deploy the app/control-plane without rendering
   MRMS.
 - `scripts/radar-capability-smoke.mjs` verifies endpoint routing and normal

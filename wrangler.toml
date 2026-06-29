@@ -7,7 +7,7 @@ directory = "."
 
 [[r2_buckets]]
 binding = "RADAR_GENERATION_REQUESTS_R2"
-bucket_name = "nearcast-radar"
+bucket_name = "nearcast-radar-state"
 
 [[queues.producers]]
 binding = "RADAR_GENERATION_QUEUE"

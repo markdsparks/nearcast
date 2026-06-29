@@ -322,7 +322,7 @@ Current scaffold:
   queueing work. These are preview safety rails; broad production use still
   needs authenticated identity and a stronger atomic throttle.
 - Preview deploys bind `RADAR_GENERATION_QUEUE` as a producer and store
-  request-state/budget records in the existing radar R2 bucket. This keeps
+  request-state/budget records in a private radar-state R2 bucket. This keeps
   on-demand acceptance testable without adding a KV namespace yet.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
   deduped, limited, KV-backed request state, R2-backed request state, Worker
@@ -384,7 +384,8 @@ Current scaffold:
 - `.github/workflows/deploy-cloudflare-app.yml` deploys app/control-plane
   changes without running MRMS generation, so Worker activation is no longer
   coupled to the generated-radar publisher. It also ensures the preview
-  generation queue exists before deploying the capability Worker.
+  generation queue and private state bucket exist before deploying the
+  capability Worker.
 
 Still missing before broad activation:
 
