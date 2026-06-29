@@ -3,6 +3,10 @@ const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
+const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
+const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
+const DEFAULT_GENERATION_GLOBAL_HOURLY_LIMIT = 60;
+const DEFAULT_GENERATION_VIEWPORT_HOURLY_LIMIT = 3;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -216,6 +220,16 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
       queuedAt: existing.queuedAt || ""
     };
   }
+  const budget = await generationBudgetState(requestStore, dedupeKey, env);
+  if (!budget.accepted) {
+    return {
+      state: "limited",
+      requestId: null,
+      reason: `${budget.scope}-budget-exhausted`,
+      retryAfterSeconds: budget.retryAfterSeconds,
+      budget: budgetSummary(budget)
+    };
+  }
   const requestId = randomId();
   const queuedAt = new Date().toISOString();
   const message = {
@@ -237,11 +251,12 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     preferences: payload.preferences || {},
     reason: payload.generation?.reason || "viewport"
   };
-  const putPromise = requestStore.put(dedupeKey, JSON.stringify(record), {
-    expirationTtl: GENERATION_DEDUPE_TTL_SECONDS
-  });
-  if (ctx?.waitUntil) ctx.waitUntil(putPromise);
-  else await putPromise;
+  await Promise.all([
+    requestStore.put(dedupeKey, JSON.stringify(record), {
+      expirationTtl: GENERATION_DEDUPE_TTL_SECONDS
+    }),
+    ...generationBudgetWrites(requestStore, budget, queuedAt)
+  ]);
   return { state: "queued", requestId, reason: "queued-for-generation", dedupeKey };
 }
 
@@ -274,6 +289,85 @@ function generationDedupeKey(capability, payload = {}) {
   const provider = payload?.preferences?.radarProvider || "auto";
   const timeline = payload?.preferences?.timelineKind || "radar";
   return ["radar-generation", "v1", provider, timeline, lat, lon, `z${zoom}`].join(":");
+}
+
+async function generationBudgetState(requestStore, dedupeKey, env = {}) {
+  const config = generationBudgetConfig(env);
+  const bucket = Math.floor(Date.now() / (GENERATION_BUDGET_WINDOW_SECONDS * 1000));
+  const scopes = [
+    { scope: "global", limit: config.globalHourlyLimit, key: generationBudgetKey("global", "all", bucket) },
+    { scope: "viewport", limit: config.viewportHourlyLimit, key: generationBudgetKey("viewport", dedupeKey, bucket) }
+  ];
+  const records = await Promise.all(scopes.map(async (entry) => {
+    const record = await readGenerationRequest(requestStore, entry.key);
+    const count = Math.max(0, Math.floor(finiteNumber(record?.count, 0)));
+    return {
+      ...entry,
+      bucket,
+      count,
+      remaining: Math.max(0, entry.limit - count),
+      record: record && typeof record === "object" ? record : null
+    };
+  }));
+  const exhausted = records.find((entry) => entry.limit <= 0 || entry.count >= entry.limit);
+  if (exhausted) {
+    return {
+      accepted: false,
+      ...exhausted,
+      retryAfterSeconds: budgetRetryAfterSeconds(bucket)
+    };
+  }
+  return { accepted: true, bucket, records };
+}
+
+function generationBudgetConfig(env = {}) {
+  return {
+    globalHourlyLimit: nonNegativeInteger(
+      env.RADAR_GENERATION_GLOBAL_HOURLY_LIMIT,
+      DEFAULT_GENERATION_GLOBAL_HOURLY_LIMIT
+    ),
+    viewportHourlyLimit: nonNegativeInteger(
+      env.RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT,
+      DEFAULT_GENERATION_VIEWPORT_HOURLY_LIMIT
+    )
+  };
+}
+
+function generationBudgetWrites(requestStore, budget, queuedAt) {
+  if (!budget?.accepted) return [];
+  return budget.records.map((entry) => {
+    const next = {
+      provider: "nearcast-radar-generation-budget",
+      version: 1,
+      scope: entry.scope,
+      bucket: entry.bucket,
+      count: entry.count + 1,
+      limit: entry.limit,
+      updatedAt: queuedAt,
+      expiresAt: new Date((entry.bucket + 1) * GENERATION_BUDGET_WINDOW_SECONDS * 1000).toISOString()
+    };
+    return requestStore.put(entry.key, JSON.stringify(next), {
+      expirationTtl: GENERATION_BUDGET_EXPIRATION_SECONDS
+    });
+  });
+}
+
+function generationBudgetKey(scope, value, bucket) {
+  return ["radar-generation-budget", "v1", scope, value, bucket].join(":");
+}
+
+function budgetRetryAfterSeconds(bucket) {
+  const windowEnd = (bucket + 1) * GENERATION_BUDGET_WINDOW_SECONDS * 1000;
+  return Math.max(1, Math.ceil((windowEnd - Date.now()) / 1000));
+}
+
+function budgetSummary(budget) {
+  return {
+    scope: budget.scope,
+    limit: budget.limit,
+    remaining: budget.remaining,
+    windowSeconds: GENERATION_BUDGET_WINDOW_SECONDS
+  };
 }
 
 function normalizeViewport(viewport = {}) {
@@ -430,6 +524,13 @@ function normalizeLongitude(value) {
 function finiteNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function nonNegativeInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return fallback;
+  return Math.floor(number);
 }
 
 function timestamp(value) {

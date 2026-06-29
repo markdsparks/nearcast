@@ -82,12 +82,7 @@ assert.equal(unsupported.body.generation.state, "unsupported");
 
 const queueEnv = {
   ...env,
-  RADAR_GENERATION_QUEUE: {
-    messages: [],
-    async send(message) {
-      this.messages.push(message);
-    }
-  }
+  RADAR_GENERATION_QUEUE: createQueue()
 };
 
 const queueOnly = await capability(outsidePayload, queueEnv);
@@ -117,12 +112,40 @@ assert.equal(deduped.body.generation.state, "deduped");
 assert.equal(deduped.body.generation.requestId, queued.body.generation.requestId);
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
+const budgetEnv = {
+  ...env,
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_REQUESTS: createRequestStore(),
+  RADAR_GENERATION_GLOBAL_HOURLY_LIMIT: "1"
+};
+const budgetQueued = await capability(outsidePayload, budgetEnv);
+assert.equal(budgetQueued.status, 200);
+assert.equal(budgetQueued.body.generation.state, "queued");
+
+const secondBudgetPayload = {
+  ...outsidePayload,
+  viewport: {
+    center: { latitude: 36, longitude: -90 },
+    activePoint: { latitude: 36, longitude: -90 },
+    zoom: 10,
+    bounds: { minLat: 35.8, minLon: -90.2, maxLat: 36.2, maxLon: -89.8 },
+    key: "36.00,-90.00,z10"
+  }
+};
+const budgetLimited = await capability(secondBudgetPayload, budgetEnv);
+assert.equal(budgetLimited.status, 200);
+assert.equal(budgetLimited.body.generation.state, "limited");
+assert.equal(budgetLimited.body.generation.reason, "global-budget-exhausted");
+assert.equal(budgetLimited.body.generation.budget.scope, "global");
+assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
+
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
   queued: queued.body.generation.state,
   deduped: deduped.body.generation.state,
+  limited: budgetLimited.body.generation.reason,
   requestId: queued.body.generation.requestId
 }, null, 2));
 
@@ -148,6 +171,15 @@ function createRequestStore() {
     },
     async put(key, value) {
       store.set(key, value);
+    }
+  };
+}
+
+function createQueue() {
+  return {
+    messages: [],
+    async send(message) {
+      this.messages.push(message);
     }
   };
 }

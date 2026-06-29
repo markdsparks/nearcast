@@ -68,7 +68,19 @@ The Worker can:
 - Report `unsupported` for generation requests when no queue binding exists.
 - Report `unsupported` when the queue exists without request-state storage.
 - Dedupe recent viewport warming requests through `RADAR_GENERATION_REQUESTS`.
+- Apply soft hourly generation budgets before accepting queue work.
 - Send a viewport warming message to `RADAR_GENERATION_QUEUE` after dedupe.
+
+Default dormant-worker budget caps are intentionally conservative:
+
+- `RADAR_GENERATION_GLOBAL_HOURLY_LIMIT`: defaults to `60` accepted generation
+  requests per hour.
+- `RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT`: defaults to `3` accepted generation
+  requests per deduped viewport per hour.
+
+These counters use the same request-state storage and are a soft safety rail,
+not a final abuse-control system. Production activation should still add
+authenticated request identity and a stronger atomic throttle before broad use.
 
 Smoke test:
 
@@ -82,12 +94,13 @@ Activation checklist:
    current Wrangler version.
 2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
 3. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
-4. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+4. Confirm budget limits for the preview environment.
+5. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-5. Deploy to a preview Worker URL first.
-6. Point the app at the endpoint with
+6. Deploy to a preview Worker URL first.
+7. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-7. Verify fallback behavior remains unchanged before making the endpoint the
+8. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher

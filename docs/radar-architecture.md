@@ -310,13 +310,17 @@ Current scaffold:
 - It reports generation as `unsupported` without queue and request-state
   bindings, queues only when both are present, and dedupes repeated viewport
   requests for a short window.
-- `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, and queued
-  states locally without Cloudflare.
+- It applies soft hourly global and per-viewport generation budgets before
+  queueing work. These are preview safety rails; broad production use still
+  needs authenticated identity and a stronger atomic throttle.
+- `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
+  deduped, and limited states locally without Cloudflare.
 
 Still missing before activation:
 
 - Worker activation in `wrangler.toml`.
 - Request-state storage binding.
+- Preview budget values.
 - Queue binding and consumer.
 - Render job that turns a queued viewport into encoded tiles plus a manifest.
 - R2 manifest/index update path.
