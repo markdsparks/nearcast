@@ -88,6 +88,9 @@ Optional GitHub variable:
   `https://getnearcast.app/radar/mrms/manifest.json`.
 - `MRMS_PROFILE`: scheduled publish profile. Defaults to `metro-east`; useful
   temporary values include `great-falls` for testing active Montana weather.
+- `MRMS_PROFILES`: comma-separated scheduled publish profiles. When set, this
+  takes precedence over `MRMS_PROFILE` and publishes multiple generated packs
+  into one `radar/mrms/index.json`.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
@@ -126,6 +129,18 @@ The app checks this index first. If a pack covers the active place, the app
 loads that pack's manifest. If the index is missing, stale, or has no matching
 coverage, the app falls back through the legacy generated manifest path and then
 to NOAA/RainViewer.
+
+Multi-pack static deploys:
+
+- The first profile remains the compatibility manifest at
+  `radar/mrms/manifest.json`.
+- Additional profiles write pack manifests under
+  `radar/mrms/packs/<profile>/manifest.json`.
+- All pack tiles are written under `radar/mrms/live/<profile>/`.
+- If every pack in the deployed index has the same source/render fingerprint and
+  is still fresh enough, the workflow skips the whole deploy. If any pack
+  changed, the publisher regenerates all requested packs so the static deploy
+  snapshot stays complete.
 
 The workflow also supports manual dispatch, so a test run can be triggered
 without waiting for the schedule.

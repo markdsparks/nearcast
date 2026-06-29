@@ -112,7 +112,11 @@ The companion index contract is intentionally smaller:
 
 Today the publisher writes one pack into the index. In the production shape,
 this can become many observed or forecast packs backed by R2/object storage
-without changing the app's map integration again.
+without changing the app's map integration again. As an interim step, the
+static publisher can already publish multiple profiles in one deployment:
+the first profile remains the legacy `radar/mrms/manifest.json`, additional
+profile manifests live under `radar/mrms/packs/<profile>/`, and the index routes
+active places to the correct pack.
 
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes

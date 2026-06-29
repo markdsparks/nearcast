@@ -50,7 +50,13 @@ async function main() {
     return;
   }
 
-  const profile = resolveProfile(args.profile || DEFAULT_PROFILE);
+  const profiles = resolveProfiles(args.profiles || args.profile || DEFAULT_PROFILE);
+  if (profiles.length > 1) {
+    await publishProfileSet(profiles);
+    return;
+  }
+
+  const profile = profiles[0];
   const outDir = args["out-dir"] || DEFAULT_OUT_DIR;
   const manifestOut = args["manifest-out"] || DEFAULT_MANIFEST_OUT;
   const indexOut = args["index-out"] || DEFAULT_INDEX_OUT;
@@ -115,7 +121,14 @@ async function main() {
     skipMinFreshMinutes
   };
   atomicWriteJson(manifestOut, manifest);
-  const index = writeGeneratedRadarIndex({ manifest, profile, manifestOut, indexOut, checkedAt });
+  const index = writeGeneratedRadarIndex({
+    packs: [generatedRadarPack({ manifest, profile, manifestOut, indexOut })],
+    defaultPack: profile.id,
+    indexOut,
+    generatedAt: manifest.generatedAt,
+    expiresAt: manifest.expiresAt,
+    checkedAt
+  });
   validateLiveManifest(manifest, { profile, tileBounds, manifestOut });
   const summary = {
     skipped: false,
@@ -138,6 +151,143 @@ async function main() {
     sourceSignature: manifest.source?.signature || publishPlan.source?.signature || null,
     indexPackCount: index.packs.length,
     tileVersion
+  };
+  writeSummary(summary);
+  console.log(JSON.stringify(summary, null, 2));
+}
+
+async function publishProfileSet(profiles) {
+  const outDirRoot = args["out-dir"] || DEFAULT_OUT_DIR;
+  const manifestOut = args["manifest-out"] || DEFAULT_MANIFEST_OUT;
+  const indexOut = args["index-out"] || DEFAULT_INDEX_OUT;
+  const frames = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
+  const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
+  const tileZooms = args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS;
+  const skipMinFreshMinutes = Math.max(0, numberArg(args["skip-min-fresh-minutes"], DEFAULT_SKIP_MIN_FRESH_MINUTES));
+  const checkedAt = new Date().toISOString();
+  const generator = path.join(path.dirname(new URL(import.meta.url).pathname), "generate-mrms-timeline.mjs");
+  const current = await loadCurrentIndex();
+
+  const plans = profiles.map((profile, index) => {
+    const profileManifestOut = index === 0
+      ? manifestOut
+      : path.join(path.dirname(indexOut), "packs", profile.id, "manifest.json");
+    const profileOutDir = path.join(outDirRoot, profile.id);
+    const tileBounds = profile.tileBounds;
+    const tileVersion = args["tile-version"] || liveTileVersion(profile.id);
+    const commandArgs = buildGeneratorArgs({
+      generator,
+      frames,
+      outDir: profileOutDir,
+      manifestOut: profileManifestOut,
+      tileBounds,
+      profile,
+      tileZooms,
+      ttlMinutes,
+      tileVersion
+    });
+    const resolveResult = runGenerator([...commandArgs, "--resolve-only"], `timeline source resolve for ${profile.id}`);
+    return {
+      profile,
+      manifestOut: profileManifestOut,
+      outDir: profileOutDir,
+      tileBounds,
+      tileVersion,
+      commandArgs,
+      publishPlan: parseJsonOutput(resolveResult.stdout, `timeline source resolve for ${profile.id}`)
+    };
+  });
+
+  const skipDecision = shouldSkipProfileSetPublish({
+    currentIndex: current.index,
+    plans,
+    skipMinFreshMinutes
+  });
+
+  if (skipDecision.skip) {
+    const summary = {
+      skipped: true,
+      reason: skipDecision.reason,
+      profiles: plans.map((plan) => plan.profile.id),
+      indexSource: current.source,
+      checkedAt,
+      expiresAt: current.index?.expiresAt || null,
+      skipMinFreshMinutes
+    };
+    writeSummary(summary);
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+
+  if (booleanArg(args.clean, true)) {
+    cleanPublishOutDir(outDirRoot);
+    cleanGeneratedPackManifestDir(indexOut);
+  }
+
+  const packs = [];
+  const manifests = [];
+  for (const plan of plans) {
+    runGenerator(plan.commandArgs, `timeline generation for ${plan.profile.id}`);
+    const manifest = JSON.parse(fs.readFileSync(plan.manifestOut, "utf8"));
+    manifest.publish = {
+      profile: plan.profile.id,
+      profileLabel: plan.profile.label,
+      profiles: plans.map((item) => item.profile.id),
+      indexVersion: GENERATED_RADAR_INDEX_VERSION,
+      checkedAt,
+      skipped: false,
+      reason: skipDecision.reason,
+      sourceChanged: generatedRadarIndexPackChanged(current.index, plan),
+      previousManifestSource: current.source,
+      skipMinFreshMinutes
+    };
+    atomicWriteJson(plan.manifestOut, manifest);
+    validateLiveManifest(manifest, {
+      profile: plan.profile,
+      tileBounds: plan.tileBounds,
+      manifestOut: plan.manifestOut
+    });
+    packs.push(generatedRadarPack({
+      manifest,
+      profile: plan.profile,
+      manifestOut: plan.manifestOut,
+      indexOut
+    }));
+    manifests.push({ manifest, plan });
+  }
+
+  const expiresAt = minIso(manifests.map((item) => item.manifest.expiresAt));
+  const generatedAt = maxIso(manifests.map((item) => item.manifest.generatedAt));
+  const index = writeGeneratedRadarIndex({
+    packs,
+    defaultPack: plans[0].profile.id,
+    indexOut,
+    generatedAt,
+    expiresAt,
+    checkedAt
+  });
+  const summary = {
+    skipped: false,
+    reason: skipDecision.reason,
+    profiles: plans.map((plan) => plan.profile.id),
+    manifestOut,
+    indexOut,
+    outDir: outDirRoot,
+    generatedAt,
+    expiresAt,
+    indexPackCount: index.packs.length,
+    frameCount: manifests.reduce((sum, item) => sum + item.manifest.frames.length, 0),
+    generatedTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.generatedTiles || 0), 0),
+    candidateTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.candidateTiles || 0), 0),
+    radarTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.radarTiles || 0), 0),
+    packs: packs.map((pack) => ({
+      id: pack.id,
+      manifestUrl: pack.manifestUrl,
+      frameCount: pack.frameCount,
+      generatedTiles: pack.metrics?.generatedTiles || 0,
+      radarTiles: pack.metrics?.radarTiles || 0,
+      publishFingerprint: pack.publishFingerprint
+    }))
   };
   writeSummary(summary);
   console.log(JSON.stringify(summary, null, 2));
@@ -212,6 +362,18 @@ function resolveProfile(name) {
   return profile;
 }
 
+function resolveProfiles(value) {
+  const names = splitList(value || DEFAULT_PROFILE);
+  const seen = new Set();
+  return names
+    .map(resolveProfile)
+    .filter((profile) => {
+      if (seen.has(profile.id)) return false;
+      seen.add(profile.id);
+      return true;
+    });
+}
+
 function passThrough(commandArgs, names) {
   names.forEach((name) => {
     if (args[name] !== undefined) commandArgs.push(`--${name}=${args[name]}`);
@@ -231,6 +393,20 @@ function cleanPublishOutDir(outDir) {
   }
   fs.rmSync(resolved, { recursive: true, force: true });
   fs.mkdirSync(resolved, { recursive: true });
+}
+
+function cleanGeneratedPackManifestDir(indexOut) {
+  const packDir = path.resolve(path.dirname(indexOut), "packs");
+  const cwd = process.cwd();
+  const allowedRoots = [
+    path.resolve(cwd, "radar/mrms/packs"),
+    path.resolve("/tmp")
+  ];
+  const allowed = allowedRoots.some((root) => packDir === root || packDir.startsWith(`${root}${path.sep}`));
+  if (!allowed) {
+    throw new Error(`refusing to clean non-generated pack path: ${packDir}`);
+  }
+  fs.rmSync(packDir, { recursive: true, force: true });
 }
 
 function validateLiveManifest(manifest, { profile, tileBounds, manifestOut }) {
@@ -324,6 +500,59 @@ async function loadCurrentManifest() {
   }
 }
 
+async function loadCurrentIndex() {
+  const file = args["current-index-file"];
+  if (file) {
+    try {
+      return {
+        index: JSON.parse(fs.readFileSync(file, "utf8")),
+        source: { kind: "file", value: file, status: "ok" }
+      };
+    } catch (error) {
+      return {
+        index: null,
+        source: { kind: "file", value: file, status: "unavailable", error: error.message }
+      };
+    }
+  }
+
+  const url = args["current-index-url"] || process.env.MRMS_CURRENT_INDEX_URL || currentIndexUrlFromManifestUrl();
+  if (!url) return { index: null, source: null };
+
+  try {
+    const response = await fetch(url, {
+      headers: { "cache-control": "no-cache" }
+    });
+    if (!response.ok) {
+      return {
+        index: null,
+        source: { kind: "url", value: url, status: response.status }
+      };
+    }
+    return {
+      index: await response.json(),
+      source: { kind: "url", value: url, status: response.status }
+    };
+  } catch (error) {
+    return {
+      index: null,
+      source: { kind: "url", value: url, status: "error", error: error.message }
+    };
+  }
+}
+
+function currentIndexUrlFromManifestUrl() {
+  const manifestUrl = args["current-manifest-url"] || process.env.MRMS_CURRENT_MANIFEST_URL;
+  if (!manifestUrl) return null;
+  try {
+    const url = new URL(manifestUrl);
+    url.pathname = url.pathname.replace(/\/manifest\.json$/i, "/index.json");
+    return url.toString();
+  } catch {
+    return String(manifestUrl).replace(/\/manifest\.json$/i, "/index.json");
+  }
+}
+
 function shouldSkipPublish({ currentManifest, publishPlan, skipMinFreshMinutes }) {
   if (!currentManifest) return { skip: false, reason: "missing-current-manifest" };
   if (currentManifest.provider !== "mrms-generated") return { skip: false, reason: "current-provider-different" };
@@ -340,6 +569,33 @@ function shouldSkipPublish({ currentManifest, publishPlan, skipMinFreshMinutes }
   return { skip: true, reason: "source-unchanged-and-fresh" };
 }
 
+function shouldSkipProfileSetPublish({ currentIndex, plans, skipMinFreshMinutes }) {
+  if (!currentIndex) return { skip: false, reason: "missing-current-index" };
+  if (currentIndex.provider !== "nearcast-generated-radar-index") return { skip: false, reason: "current-index-provider-different" };
+  if (currentIndex.version !== GENERATED_RADAR_INDEX_VERSION) return { skip: false, reason: "current-index-version-different" };
+  const packs = Array.isArray(currentIndex.packs) ? currentIndex.packs : [];
+  for (const plan of plans) {
+    const pack = packs.find((item) => item?.id === plan.profile.id);
+    if (!pack) return { skip: false, reason: `missing-pack-${plan.profile.id}` };
+    if (!pack.publishFingerprint || !plan.publishPlan.publishFingerprint) {
+      return { skip: false, reason: `missing-pack-fingerprint-${plan.profile.id}` };
+    }
+    if (pack.publishFingerprint !== plan.publishPlan.publishFingerprint) {
+      return { skip: false, reason: `pack-changed-${plan.profile.id}` };
+    }
+    if (!manifestFreshEnough(pack, skipMinFreshMinutes)) {
+      return { skip: false, reason: `pack-near-expiry-${plan.profile.id}` };
+    }
+  }
+  return { skip: true, reason: "all-packs-unchanged-and-fresh" };
+}
+
+function generatedRadarIndexPackChanged(index, plan) {
+  const packs = Array.isArray(index?.packs) ? index.packs : [];
+  const pack = packs.find((item) => item?.id === plan.profile.id);
+  return Boolean(pack?.publishFingerprint && pack.publishFingerprint !== plan.publishPlan.publishFingerprint);
+}
+
 function manifestFreshEnough(manifest, skipMinFreshMinutes) {
   const expiresAt = Date.parse(manifest?.expiresAt);
   if (!Number.isFinite(expiresAt)) return false;
@@ -353,43 +609,57 @@ function writeSummary(summary) {
   atomicWriteJson(summaryOut, summary);
 }
 
-function writeGeneratedRadarIndex({ manifest, profile, manifestOut, indexOut, checkedAt }) {
+function writeGeneratedRadarIndex({ packs, defaultPack, indexOut, generatedAt, expiresAt, checkedAt }) {
   const index = {
     provider: "nearcast-generated-radar-index",
     version: GENERATED_RADAR_INDEX_VERSION,
-    generatedAt: manifest.generatedAt,
+    generatedAt,
     updatedAt: checkedAt,
-    expiresAt: manifest.expiresAt,
-    defaultPack: profile.id,
-    packs: [{
-      id: profile.id,
-      label: profile.label,
-      provider: manifest.provider,
-      product: manifest.product,
-      region: manifest.region,
-      style: manifest.style,
-      manifestUrl: relativeUrl(indexOut, manifestOut),
-      generatedAt: manifest.generatedAt,
-      expiresAt: manifest.expiresAt,
-      sample: Boolean(manifest.sample),
-      minZoom: manifest.minZoom,
-      maxZoom: manifest.maxZoom,
-      frameCount: Array.isArray(manifest.frames) ? manifest.frames.length : 0,
-      coverageBounds: manifest.coverageBounds,
-      coverageAreas: manifest.coverageAreas || [],
-      publishFingerprint: manifest.publishFingerprint || null,
-      sourceSignature: manifest.source?.signature || null,
-      metrics: manifest.metrics || manifest.coverage || null
-    }]
+    expiresAt,
+    defaultPack,
+    packs
   };
   fs.mkdirSync(path.dirname(indexOut), { recursive: true });
   atomicWriteJson(indexOut, index);
   return index;
 }
 
+function generatedRadarPack({ manifest, profile, manifestOut, indexOut }) {
+  return {
+    id: profile.id,
+    label: profile.label,
+    provider: manifest.provider,
+    product: manifest.product,
+    region: manifest.region,
+    style: manifest.style,
+    manifestUrl: relativeUrl(indexOut, manifestOut),
+    generatedAt: manifest.generatedAt,
+    expiresAt: manifest.expiresAt,
+    sample: Boolean(manifest.sample),
+    minZoom: manifest.minZoom,
+    maxZoom: manifest.maxZoom,
+    frameCount: Array.isArray(manifest.frames) ? manifest.frames.length : 0,
+    coverageBounds: manifest.coverageBounds,
+    coverageAreas: manifest.coverageAreas || [],
+    publishFingerprint: manifest.publishFingerprint || null,
+    sourceSignature: manifest.source?.signature || null,
+    metrics: manifest.metrics || manifest.coverage || null
+  };
+}
+
 function relativeUrl(fromFile, toFile) {
   const relative = path.relative(path.dirname(fromFile), toFile).split(path.sep).join("/");
   return relative.startsWith(".") ? relative : `./${relative || path.basename(toFile)}`;
+}
+
+function minIso(values) {
+  const times = values.map((value) => Date.parse(value)).filter(Number.isFinite);
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+function maxIso(values) {
+  const times = values.map((value) => Date.parse(value)).filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
 }
 
 function atomicWriteJson(file, value) {
@@ -415,6 +685,11 @@ function parseArgs(argv) {
   return parsed;
 }
 
+function splitList(value) {
+  if (!value) return [];
+  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function numberArg(value, fallback) {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
@@ -434,6 +709,7 @@ function printHelp() {
 
 Options:
   --profile=metro-east       Coverage profile. Known: ${Object.keys(PROFILES).join(", ")}.
+  --profiles=a,b             Publish multiple generated packs into one location-aware index.
   --tile-bounds=a,b,c,d      Override profile coverage bounds.
   --frames=6                 Number of latest MRMS frames to publish.
   --tile-zooms=6,...,13      Generated source zooms. z14+ is expensive for regional jobs.
@@ -444,6 +720,8 @@ Options:
   --current-manifest-url=URL Compare against the currently deployed manifest before rendering.
   --current-manifest-file=PATH
                               Compare against a local manifest before rendering.
+  --current-index-url=URL    Compare a multi-pack run against the currently deployed index.
+  --current-index-file=PATH  Compare a multi-pack run against a local index.
   --skip-min-fresh-minutes=8 Keep the current manifest if unchanged and this fresh.
   --summary-out=PATH         Write a machine-readable publish summary for CI.
   --skip-empty-tiles         Write only tiles with radar pixels.

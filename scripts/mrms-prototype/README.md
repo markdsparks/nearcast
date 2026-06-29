@@ -147,6 +147,7 @@ before deployment:
 
 ```bash
 node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east
+node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls
 ```
 
 Defaults:
@@ -197,9 +198,11 @@ The generated index includes one or more location-aware packs:
 - `packs[].expiresAt`, `frameCount`, and `metrics`: routing and operations
   metadata.
 
-The app checks this index before loading the legacy manifest path. Today the
-publisher writes one active pack; the same shape can later point to many R2/CDN
-packs for different U.S. regions.
+The app checks this index before loading the legacy manifest path. In a
+multi-profile run, the first profile stays at `radar/mrms/manifest.json` for
+compatibility, additional manifests live under `radar/mrms/packs/<profile>/`,
+and tiles live under `radar/mrms/live/<profile>/`. The same shape can later
+point to many R2/CDN packs for different U.S. regions.
 
 For dry inspection without writing tiles:
 
