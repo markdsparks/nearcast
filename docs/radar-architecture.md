@@ -359,6 +359,10 @@ Current scaffold:
 - `config/radar-r2-cors.json` lets the preview R2 custom domain serve index,
   manifest, encoded-data, and tile objects to the app origin. The manual preview
   upload workflow applies it when `CLOUDFLARE_API_TOKEN` is present.
+- The preview workflow now uses z8-z12 source tiles by default and merges with
+  the current preview index. That supports a quality ladder: broad packs for
+  search/pan continuity, plus smaller high-zoom packs when deep zoom exposes
+  too much overzoom softness.
 
 Still missing before activation:
 

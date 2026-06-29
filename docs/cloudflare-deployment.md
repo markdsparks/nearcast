@@ -177,6 +177,22 @@ the repository R2 secrets and `MRMS_R2_BUCKET` fallback variable, installs
 modify the live `radar/mrms/index.json`. Set `renderMode=fixture` for the tiny
 synthetic upload smoke path.
 
+The preview defaults render source zooms `8,9,10,11,12` for the Great Falls
+test bounds. That costs more than the original z8-z10 smoke pack, but it keeps
+deep zoom from relying on aggressive overzooming. The workflow also fetches the
+current preview index before publish and merges fresh packs into it, so a broad
+pack and a tighter high-zoom pack can coexist during engineering tests.
+
+For a tighter city-center fidelity check, run:
+
+```bash
+gh workflow run "Preview radar generation R2 upload" \
+  -f bounds=47.35,-111.55,47.65,-111.05 \
+  -f zoom=12 \
+  -f tileZooms=10,11,12,13 \
+  -f maxCandidateTiles=1000
+```
+
 To test that preview pack in the app without changing the default user path,
 open the app with:
 

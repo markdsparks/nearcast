@@ -26,7 +26,7 @@ on:
       tileZooms:
         description: Preview source zooms
         required: false
-        default: "8,9,10"
+        default: "8,9,10,11,12"
       frames:
         description: Recent MRMS frames for real mode
         required: false
@@ -34,7 +34,7 @@ on:
       maxCandidateTiles:
         description: Candidate-tile cap
         required: false
-        default: "160"
+        default: "1000"
       ttlMinutes:
         description: Preview freshness window
         required: false
@@ -62,7 +62,7 @@ concurrency:
 jobs:
   upload-preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       RADAR_GENERATION_R2_BUCKET: ${{ vars.RADAR_GENERATION_R2_BUCKET || vars.MRMS_R2_BUCKET || 'nearcast-radar' }}
@@ -120,10 +120,22 @@ jobs:
             exit 1
           fi
 
+      - name: Load current preview index
+        run: |
+          INDEX_URL="${{ github.event.inputs.publicBaseUrl }}/${{ github.event.inputs.indexKey }}"
+          CURRENT_INDEX="/tmp/nearcast-radar-preview-current-index.json"
+          rm -f "$CURRENT_INDEX"
+          if curl --fail --silent --show-error --location "$INDEX_URL" --output "$CURRENT_INDEX"; then
+            node -e "const fs=require('fs'); const i=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); console.log(JSON.stringify({currentPacks:i.packs?.length||0, expiresAt:i.expiresAt||''}, null, 2));" "$CURRENT_INDEX"
+          else
+            echo "No current preview index found at $INDEX_URL; publishing a fresh preview index."
+          fi
+
       - name: Plan preview publish
         run: |
           node scripts/radar-generation-publisher.mjs \
             --render-result=/tmp/nearcast-radar-preview-result.json \
+            --current-index=/tmp/nearcast-radar-preview-current-index.json \
             --index-out=/tmp/nearcast-radar-preview-index/${{ github.event.inputs.indexKey }} \
             --index-key="${{ github.event.inputs.indexKey }}" \
             --upload-mode=dry-run \
@@ -165,6 +177,7 @@ jobs:
           fi
           node scripts/radar-generation-publisher.mjs \
             --render-result=/tmp/nearcast-radar-preview-result.json \
+            --current-index=/tmp/nearcast-radar-preview-current-index.json \
             --index-out=/tmp/nearcast-radar-preview-index/${{ github.event.inputs.indexKey }} \
             --index-key="${{ github.event.inputs.indexKey }}" \
             --upload-mode=r2 \
