@@ -57,6 +57,7 @@ jobs:
       MRMS_R2_CACHE_CONTROL: ${{ vars.MRMS_R2_CACHE_CONTROL || 'public, max-age=86400, immutable' }}
       MRMS_R2_UPLOAD_CONCURRENCY: ${{ vars.MRMS_R2_UPLOAD_CONCURRENCY || '24' }}
       MRMS_R2_PRUNE_OLDER_THAN_MINUTES: ${{ vars.MRMS_R2_PRUNE_OLDER_THAN_MINUTES || '360' }}
+      MRMS_PUBLIC_TILE_VERIFY_MODE: ${{ vars.MRMS_PUBLIC_TILE_VERIFY_MODE || 'warn' }}
       MRMS_FORCE_PUBLISH: ${{ github.event.inputs.forcePublish || 'false' }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -137,6 +138,17 @@ jobs:
             --concurrency="$MRMS_R2_UPLOAD_CONCURRENCY" \
             --prune-older-than-minutes="$MRMS_R2_PRUNE_OLDER_THAN_MINUTES" \
             --delete-local
+
+      - name: Verify generated radar tiles are public
+        if: steps.publish.outputs.skipped != 'true' && env.MRMS_TILE_UPLOAD_MODE == 'r2'
+        run: |
+          if node scripts/mrms-prototype/verify-mrms-public-tiles.mjs --manifest=radar/mrms/manifest.json; then
+            exit 0
+          fi
+          if [ "$MRMS_PUBLIC_TILE_VERIFY_MODE" = "strict" ]; then
+            exit 1
+          fi
+          echo "::warning::Generated MRMS public tile verification failed; continuing because MRMS_PUBLIC_TILE_VERIFY_MODE=$MRMS_PUBLIC_TILE_VERIFY_MODE."
 
       - name: Remove R2 upload dependencies
         if: always() && env.MRMS_TILE_UPLOAD_MODE == 'r2'

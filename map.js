@@ -15,6 +15,10 @@ const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
+const GENERATED_RADAR_TILE_PREFLIGHT_FRAME_LIMIT = 3;
+const GENERATED_RADAR_TILE_PREFLIGHT_MAX_URLS = 48;
+const GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS = 1600;
+const GENERATED_RADAR_TILE_PREFLIGHT_CACHE_MS = 2 * 60 * 1000;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT = 6;
@@ -24,6 +28,7 @@ let mapLibreOverlayForceRadar = false;
 let mapLibreGeneratedRadarProtocolRegistered = false;
 let mapLibreGeneratedRadarDataProtocolRegistered = false;
 const mapLibreEncodedRadarTileCache = new Map();
+const generatedRadarTilePreflightCache = new Map();
 const mapLibreInteraction = {
   active: false,
   settleTimer: 0,
@@ -2860,6 +2865,7 @@ async function fetchGeneratedMrmsRadarFrames() {
   const manifest = await response.json();
   validateGeneratedMrmsManifest(manifest);
   const frames = normalizeGeneratedMrmsFrames(manifest, selection.manifestUrl);
+  await preflightGeneratedMrmsTiles(frames, manifest);
   if (frames.length) {
     mapState.generatedRadarManifestUrl = selection.manifestUrl;
     mapState.generatedRadarSelectionKey = selection.key;
@@ -2875,6 +2881,229 @@ async function fetchGeneratedMrmsRadarFrames() {
     });
   }
   return frames;
+}
+
+async function preflightGeneratedMrmsTiles(frames, manifest) {
+  if (!Array.isArray(frames) || !frames.length) {
+    throw new Error("Generated MRMS manifest has no usable frames.");
+  }
+
+  const metrics = manifest?.metrics || manifest?.coverage || {};
+  const expectedTiles = Number(metrics.dataTiles ?? metrics.radarTiles ?? metrics.generatedTiles);
+  if (Number.isFinite(expectedTiles) && expectedTiles <= 0) {
+    throw new Error("Generated MRMS manifest has no public radar tiles.");
+  }
+
+  const cacheKey = generatedMrmsTilePreflightCacheKey(frames, manifest);
+  const cached = generatedRadarTilePreflightCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < GENERATED_RADAR_TILE_PREFLIGHT_CACHE_MS) {
+    recordRadarSourceDecision(cached.ok ? "radar.enhanced-tile-preflight-cache-ok" : "radar.enhanced-tile-preflight-cache-failed", {
+      probes: cached.probes,
+      generatedTiles: Number.isFinite(expectedTiles) ? expectedTiles : null
+    });
+    if (!cached.ok) throw new Error(cached.error || "Generated MRMS public tiles unreachable.");
+    return;
+  }
+
+  const urls = generatedMrmsTilePreflightUrls(frames);
+  if (!urls.length) throw new Error("Generated MRMS tile preflight had no probe URLs.");
+
+  recordRadarSourceDecision("radar.enhanced-tile-preflight-start", {
+    probes: urls.length,
+    frameCount: frames.length,
+    generatedTiles: Number.isFinite(expectedTiles) ? expectedTiles : null
+  });
+
+  const ok = await generatedMrmsAnyTileAvailable(urls);
+  generatedRadarTilePreflightCache.set(cacheKey, {
+    ok,
+    checkedAt: Date.now(),
+    probes: urls.length,
+    error: ok ? "" : `Generated MRMS public tiles unreachable (${urls.length} probes).`
+  });
+  pruneGeneratedMrmsTilePreflightCache();
+  recordRadarSourceDecision(ok ? "radar.enhanced-tile-preflight-ok" : "radar.enhanced-tile-preflight-failed", {
+    probes: urls.length,
+    frameCount: frames.length,
+    generatedTiles: Number.isFinite(expectedTiles) ? expectedTiles : null
+  });
+  if (!ok) throw new Error(`Generated MRMS public tiles unreachable (${urls.length} probes).`);
+}
+
+function generatedMrmsTilePreflightUrls(frames) {
+  const urls = [];
+  const seen = new Set();
+  const recentFrames = frames
+    .slice(-GENERATED_RADAR_TILE_PREFLIGHT_FRAME_LIMIT)
+    .reverse();
+
+  for (const frame of recentFrames) {
+    const template = generatedMrmsPreflightTileTemplate(frame);
+    if (!template) continue;
+    for (const z of generatedMrmsPreflightZooms(frame)) {
+      for (const coord of generatedMrmsPreflightTileCoords(frame, z)) {
+        const url = weatherTileUrl(template, z, coord.x, coord.y);
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        urls.push(url);
+        if (urls.length >= GENERATED_RADAR_TILE_PREFLIGHT_MAX_URLS) return urls;
+      }
+    }
+  }
+  return urls;
+}
+
+function generatedMrmsTilePreflightCacheKey(frames, manifest) {
+  const latest = frames[frames.length - 1] || {};
+  return [
+    manifest?.generatedAt || "",
+    manifest?.expiresAt || "",
+    latest.dataUrl || latest.url || "",
+    latest.timestamp || ""
+  ].join("|");
+}
+
+function pruneGeneratedMrmsTilePreflightCache() {
+  while (generatedRadarTilePreflightCache.size > 12) {
+    generatedRadarTilePreflightCache.delete(generatedRadarTilePreflightCache.keys().next().value);
+  }
+}
+
+function generatedMrmsPreflightTileTemplate(frame) {
+  if (frame?.dataUrl) return frame.dataUrl;
+  if (frame?.url) return frame.url;
+  const layer = (frame?.layers || []).find((item) => item?.dataUrl || item?.url);
+  return layer?.dataUrl || layer?.url || "";
+}
+
+function generatedMrmsPreflightZooms(frame) {
+  const minZoom = weatherFrameMinZoom(frame);
+  const maxZoom = weatherFrameMaxZoom(frame);
+  const currentZoom = Math.min(Math.max(weatherFrameSourceZoom(frame), minZoom), maxZoom);
+  return [
+    currentZoom,
+    Math.min(maxZoom, Math.max(minZoom, 8)),
+    Math.min(maxZoom, Math.max(minZoom, 10)),
+    maxZoom,
+    minZoom
+  ].filter((value, index, list) => Number.isFinite(value) && list.indexOf(value) === index);
+}
+
+function generatedMrmsPreflightTileCoords(frame, z) {
+  const coords = [];
+  const seen = new Set();
+  const worldTiles = 2 ** z;
+  const context = generatedMrmsSelectionContext();
+  const frameBounds = generatedCoverageBounds(frame?.coverageBounds);
+  const viewportBounds = generatedCoverageBounds(context?.viewportBounds);
+  const sampleBounds = generatedBoundsIntersectionSimple(frameBounds, viewportBounds) || frameBounds;
+
+  generatedMrmsTileCoordsForBounds(sampleBounds, z).forEach(addCoord);
+  [context?.activePoint, context?.centerPoint].forEach((point) => {
+    generatedMrmsTileCoordsForPoint(point, z).forEach(addCoord);
+  });
+
+  return coords;
+
+  function addCoord(coord) {
+    if (!coord) return;
+    const x = ((coord.x % worldTiles) + worldTiles) % worldTiles;
+    const y = Math.max(0, Math.min(worldTiles - 1, coord.y));
+    const key = `${x}/${y}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    coords.push({ x, y });
+  }
+}
+
+function generatedMrmsTileCoordsForBounds(bounds, z) {
+  if (!bounds) return [];
+  const worldTiles = 2 ** z;
+  const nw = projectLatLon(bounds.maxLat, bounds.minLon, z);
+  const se = projectLatLon(bounds.minLat, bounds.maxLon, z);
+  const minX = Math.floor(Math.min(nw.x, se.x) / 256);
+  const maxX = Math.floor(Math.max(nw.x, se.x) / 256);
+  const minY = Math.max(0, Math.floor(Math.min(nw.y, se.y) / 256));
+  const maxY = Math.min(worldTiles - 1, Math.floor(Math.max(nw.y, se.y) / 256));
+  const xs = generatedIntegerSamples(minX, maxX);
+  const ys = generatedIntegerSamples(minY, maxY);
+  const coords = [];
+  xs.forEach((x) => ys.forEach((y) => coords.push({ x, y })));
+  return coords;
+}
+
+function generatedMrmsTileCoordsForPoint(point, z) {
+  const latitude = Number(point?.latitude);
+  const longitude = Number(point?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+  const projected = projectLatLon(latitude, longitude, z);
+  const tileX = Math.floor(projected.x / 256);
+  const tileY = Math.floor(projected.y / 256);
+  const coords = [];
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) {
+      coords.push({ x: tileX + dx, y: tileY + dy });
+    }
+  }
+  return coords;
+}
+
+function generatedIntegerSamples(min, max) {
+  const start = Math.ceil(Math.min(min, max));
+  const end = Math.floor(Math.max(min, max));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+  if (end - start <= 2) {
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }
+  return [start, Math.floor((start + end) / 2), end];
+}
+
+function generatedBoundsIntersectionSimple(a, b) {
+  if (!a || !b) return null;
+  const minLat = Math.max(a.minLat, b.minLat);
+  const maxLat = Math.min(a.maxLat, b.maxLat);
+  const minLon = Math.max(a.minLon, b.minLon);
+  const maxLon = Math.min(a.maxLon, b.maxLon);
+  if (!(minLat < maxLat && minLon < maxLon)) return null;
+  return { minLat, minLon, maxLat, maxLon };
+}
+
+async function generatedMrmsAnyTileAvailable(urls) {
+  const checks = urls.map((url) => generatedMrmsTileAvailable(url).catch(() => false));
+  const results = await Promise.all(checks);
+  return results.some(Boolean);
+}
+
+async function generatedMrmsTileAvailable(url) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS)
+    : 0;
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: controller?.signal
+    });
+    if (response.ok) return true;
+    if (![405, 501].includes(response.status)) return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const fallbackController = typeof AbortController === "function" ? new AbortController() : null;
+  const fallbackTimer = fallbackController
+    ? setTimeout(() => fallbackController.abort(), GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS)
+    : 0;
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: fallbackController?.signal
+    });
+    return response.ok;
+  } finally {
+    if (fallbackTimer) clearTimeout(fallbackTimer);
+  }
 }
 
 async function resolveGeneratedMrmsManifestUrl() {
