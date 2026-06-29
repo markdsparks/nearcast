@@ -48,6 +48,11 @@ Recommended routing:
 - `radar/mrms/index.json` is no-cache for the same reason. It is the
   location-aware generated-radar catalog the app checks before loading a
   specific generated manifest.
+- Radar capability endpoints are opt-in while the app remains static. For
+  engineering tests, set `?radarCapabilityEndpoint=/api/radar/capability` or
+  `localStorage["nearcast-radar-capability-endpoint"]`. Without that setting,
+  the app uses the local static manifest/index resolver and never calls a
+  backend capability endpoint.
 
 ## Generated MRMS radar publisher
 
@@ -205,6 +210,8 @@ on-demand generation instead of full static app redeploys.
 
 - Workers paid plan.
 - Weather API proxy.
+- Radar capability Worker endpoint.
+- Queue-backed radar generation worker.
 - Push subscription endpoints.
 - Scheduled rain checks.
 - Auth or server-side user storage.

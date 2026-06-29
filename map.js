@@ -98,6 +98,7 @@ window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
 
 window.nearcastRadarDiagnostics = radarDiagnosticsSnapshot;
 window.nearcastRadarCapability = (options = {}) => resolveRadarViewportCapability(options);
+window.nearcastRequestRadarGeneration = (options = {}) => requestRadarViewportGeneration(options);
 
 function radarDiagnosticsSnapshot() {
   return {
@@ -1665,7 +1666,7 @@ function generatedRadarRefreshOptions(timelineKind) {
   };
 }
 
-async function refreshGeneratedRadarForViewport() {
+async function refreshGeneratedRadarForViewport(reason = "viewport") {
   if (!shouldRefreshGeneratedRadarForViewport()) return;
   const timelineKind = generatedRadarRefreshTimelineKind();
   if (!timelineKind) return;
@@ -1673,7 +1674,11 @@ async function refreshGeneratedRadarForViewport() {
   if (viewportKey && viewportKey === mapState.generatedRadarViewportKey) return;
   const seq = ++mapState.generatedRadarRefreshSeq;
   try {
-    const selection = await resolveGeneratedMrmsManifestSelection({ allowLegacy: false });
+    const selection = await resolveGeneratedMrmsManifestSelection({
+      allowLegacy: false,
+      requestGeneration: true,
+      reason
+    });
     if (seq !== mapState.generatedRadarRefreshSeq) return;
     if (!selection?.key) {
       if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey) {
@@ -2342,6 +2347,37 @@ function generatedMrmsManifestUrlOverride() {
 
 async function resolveRadarViewportCapability(options = {}) {
   const base = baseRadarViewportCapability();
+  const endpoint = radarCapabilityEndpointUrl();
+  const explicit = generatedMrmsManifestUrlOverride();
+  if (endpoint && !explicit && !options.localOnly) {
+    try {
+      const capability = await fetchRadarCapabilityEndpoint(endpoint, base, options);
+      recordRadarSourceDecision("radar.capability-endpoint-selected", {
+        endpoint: capability?.endpoint || endpoint,
+        enhancedState: capability?.enhanced?.state || "",
+        generationState: capability?.generation?.state || ""
+      });
+      return rememberRadarCapability(capability);
+    } catch (error) {
+      recordRadarSourceDecision("radar.capability-endpoint-unavailable", {
+        endpoint,
+        reason: radarDecisionErrorMessage(error)
+      });
+    }
+  }
+  return resolveLocalRadarViewportCapability(base, options);
+}
+
+async function requestRadarViewportGeneration(options = {}) {
+  return resolveRadarViewportCapability({
+    ...options,
+    allowLegacy: false,
+    requestGeneration: true,
+    reason: options.reason || "manual-diagnostic-request"
+  });
+}
+
+async function resolveLocalRadarViewportCapability(base, options = {}) {
   const explicit = generatedMrmsManifestUrlOverride();
   if (explicit) {
     const capability = radarCapabilityWithEnhanced(base, {
@@ -2405,7 +2441,7 @@ async function resolveRadarViewportCapability(options = {}) {
       packCount: packs.length,
       freshPackCount
     });
-    if (options.allowLegacy === false) return rememberRadarCapability(capability);
+    if (options.allowLegacy === false) return rememberRadarCapability(radarCapabilityWithGenerationState(capability, options));
   } catch (error) {
     const capability = radarCapabilityUnavailable(base, {
       reason: "index-unavailable",
@@ -2416,15 +2452,15 @@ async function resolveRadarViewportCapability(options = {}) {
       indexUrl,
       reason: radarDecisionErrorMessage(error)
     });
-    if (options.allowLegacy === false) return rememberRadarCapability(capability);
+    if (options.allowLegacy === false) return rememberRadarCapability(radarCapabilityWithGenerationState(capability, options));
     /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
   }
 
   if (options.allowLegacy === false) {
-    return rememberRadarCapability(radarCapabilityUnavailable(base, {
+    return rememberRadarCapability(radarCapabilityWithGenerationState(radarCapabilityUnavailable(base, {
       reason: "legacy-disabled-for-viewport-refresh",
       indexUrl
-    }));
+    }), options));
   }
 
   const capability = radarCapabilityWithEnhanced(base, {
@@ -2439,6 +2475,98 @@ async function resolveRadarViewportCapability(options = {}) {
     manifestUrl: MRMS_RADAR_MANIFEST_URL
   });
   return rememberRadarCapability(capability);
+}
+
+function radarCapabilityEndpointUrl() {
+  try {
+    const key = typeof RADAR_CAPABILITY_ENDPOINT_KEY === "string"
+      ? RADAR_CAPABILITY_ENDPOINT_KEY
+      : "nearcast-radar-capability-endpoint";
+    return String(localStorage.getItem(key) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function fetchRadarCapabilityEndpoint(endpoint, base, options = {}) {
+  const url = resolveRadarCapabilityEndpointUrl(endpoint);
+  if (!url) throw new Error("Radar capability endpoint URL is invalid.");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    cache: "no-store",
+    body: JSON.stringify(radarCapabilityRequestPayload(base, options))
+  });
+  if (!response.ok) throw new Error(`Radar capability endpoint failed with ${response.status}.`);
+  const capability = normalizeRadarCapabilityResponse(await response.json(), base, url);
+  if (capability?.provider !== "nearcast-radar-capabilities") {
+    throw new Error("Radar capability endpoint returned an invalid provider.");
+  }
+  return capability;
+}
+
+function resolveRadarCapabilityEndpointUrl(endpoint) {
+  try {
+    return new URL(endpoint, window.location.href).toString();
+  } catch {
+    return "";
+  }
+}
+
+function radarCapabilityRequestPayload(base, options = {}) {
+  return {
+    provider: "nearcast-radar-capability-request",
+    version: 1,
+    requestedAt: new Date().toISOString(),
+    viewport: base?.viewport || null,
+    preferences: {
+      radarProvider: radarProviderPreference(),
+      mapRenderer: state.mapRenderer,
+      timelineKind: mapState.timelineKind,
+      immersive: Boolean(mapState.immersive)
+    },
+    generation: {
+      request: Boolean(options.requestGeneration),
+      reason: options.reason || "capability-resolution"
+    }
+  };
+}
+
+function normalizeRadarCapabilityResponse(value, base, endpoint) {
+  const capability = value && typeof value === "object" ? value : {};
+  const enhanced = capability.enhanced && typeof capability.enhanced === "object"
+    ? capability.enhanced
+    : {};
+  const generation = capability.generation && typeof capability.generation === "object"
+    ? capability.generation
+    : {};
+  return {
+    ...base,
+    ...capability,
+    provider: capability.provider || "nearcast-radar-capabilities",
+    version: Number.isFinite(Number(capability.version)) ? Number(capability.version) : 1,
+    checkedAt: capability.checkedAt || new Date().toISOString(),
+    endpoint,
+    viewport: capability.viewport || base.viewport,
+    immediate: capability.immediate || base.immediate,
+    enhanced: {
+      ...base.enhanced,
+      ...enhanced,
+      state: enhanced.state || "unavailable",
+      manifestUrl: enhanced.manifestUrl || null,
+      reason: enhanced.reason || "endpoint-response"
+    },
+    generation: {
+      ...base.generation,
+      ...generation,
+      state: generation.state || "not-requested",
+      requestId: generation.requestId || null,
+      reason: generation.reason || "endpoint-response"
+    }
+  };
 }
 
 function baseRadarViewportCapability(context = generatedMrmsSelectionContext()) {
@@ -2517,6 +2645,18 @@ function radarCapabilityUnavailable(base, detail = {}) {
       state: "not-requested",
       requestId: null,
       reason: "local-static-resolver"
+    }
+  };
+}
+
+function radarCapabilityWithGenerationState(capability, options = {}) {
+  if (!options.requestGeneration) return capability;
+  return {
+    ...capability,
+    generation: {
+      state: "unsupported",
+      requestId: null,
+      reason: "no-capability-endpoint-configured"
     }
   };
 }

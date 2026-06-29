@@ -1,4 +1,4 @@
-const VERSION = "3.0.58";
+const VERSION = "3.0.59";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -10,6 +10,7 @@ const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
 const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
 const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
+const RADAR_CAPABILITY_ENDPOINT_KEY = "nearcast-radar-capability-endpoint";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_INDEX_URL = "radar/mrms/index.json";
 const MAPLIBRE_CSS_ID = "maplibreCss";
@@ -157,6 +158,16 @@ if (radarProviderQueryFlag !== null) {
 const radarManifestQueryFlag = queryValue("radarManifest", "radarmanifest", "mrmsManifest", "mrmsmanifest");
 if (radarManifestQueryFlag) {
   localStorage.setItem(RADAR_MANIFEST_URL_KEY, radarManifestQueryFlag);
+}
+
+const radarCapabilityEndpointQueryFlag = queryValue("radarCapabilityEndpoint", "radarcapabilityendpoint", "radarCapability", "radarcapability");
+if (radarCapabilityEndpointQueryFlag !== null) {
+  const value = String(radarCapabilityEndpointQueryFlag || "").trim();
+  if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
+    localStorage.removeItem(RADAR_CAPABILITY_ENDPOINT_KEY);
+  } else {
+    localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, value);
+  }
 }
 
 const windFieldStoredFlag = localStorage.getItem(WIND_FIELD_STORAGE_KEY);

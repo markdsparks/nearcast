@@ -253,11 +253,45 @@ Good cost shape:
 Initial local implementation:
 
 - `map.js` exposes `window.nearcastRadarCapability()` for engineering checks.
+- `map.js` exposes `window.nearcastRequestRadarGeneration()` to exercise the
+  future warming path for the current viewport.
 - The resolver returns the target capability shape from today's local
   `radar/mrms/index.json` and legacy manifest fallback.
 - Generated MRMS selection now flows through the capability object before
   loading a manifest, preserving existing fallback behavior while creating the
   seam for a future Worker-backed endpoint.
+- A capability endpoint can be tested by setting
+  `?radarCapabilityEndpoint=/api/radar/capability` or the
+  `nearcast-radar-capability-endpoint` localStorage key. When no endpoint is
+  configured, the app stays local/static and generation requests report
+  `unsupported`.
+
+Endpoint request shape:
+
+```json
+{
+  "provider": "nearcast-radar-capability-request",
+  "version": 1,
+  "requestedAt": "2026-06-29T16:50:00Z",
+  "viewport": {
+    "center": { "latitude": 47.505, "longitude": -111.300 },
+    "activePoint": { "latitude": 47.505, "longitude": -111.300 },
+    "zoom": 10,
+    "bounds": { "minLat": 46.9, "minLon": -112.4, "maxLat": 48.2, "maxLon": -110.2 },
+    "key": "47.50,-111.30,z10"
+  },
+  "preferences": {
+    "radarProvider": "auto",
+    "mapRenderer": "gl",
+    "timelineKind": "radar",
+    "immersive": false
+  },
+  "generation": {
+    "request": true,
+    "reason": "viewport"
+  }
+}
+```
 
 ### Phase 3: On-demand prototype
 
