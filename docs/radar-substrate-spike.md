@@ -118,6 +118,14 @@ the first profile remains the legacy `radar/mrms/manifest.json`, additional
 profile manifests live under `radar/mrms/packs/<profile>/`, and the index routes
 active places to the correct pack.
 
+In the current Workers static-assets setup, generated radar PNGs count toward
+the deploy file limit. The live workflow skips transparent empty tiles by
+default and checks generated asset count before deploy. This keeps the spike
+usable on the current hosting shape, but broader history, many regions, and
+future forecast tiles should move the same manifest/index contract onto
+R2/CDN-backed object storage instead of stuffing every tile into one static
+Worker deploy.
+
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
 the same manifest contract, it can enter the map as a normal precipitation

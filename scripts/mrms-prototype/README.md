@@ -148,6 +148,7 @@ before deployment:
 ```bash
 node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls
+node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls --skip-empty-tiles
 ```
 
 Defaults:
@@ -159,6 +160,8 @@ Defaults:
 - Manifest: `radar/mrms/manifest.json`
 - Index: `radar/mrms/index.json`
 - Tile root: `radar/mrms/live/`
+- Empty tiles: skipped in CI by default so transparent no-radar PNGs do not
+  consume static asset slots.
 
 Useful profiles:
 
@@ -203,6 +206,17 @@ multi-profile run, the first profile stays at `radar/mrms/manifest.json` for
 compatibility, additional manifests live under `radar/mrms/packs/<profile>/`,
 and tiles live under `radar/mrms/live/<profile>/`. The same shape can later
 point to many R2/CDN packs for different U.S. regions.
+
+The GitHub Actions publisher also checks generated file count before deploying:
+
+```bash
+node scripts/mrms-prototype/check-mrms-asset-budget.mjs --limit=19500
+```
+
+That budget leaves room under the current Workers static asset file ceiling for
+the app shell. If we need more regions, longer history, or future forecast
+tiles at the same time, the sustainable path is to move generated tiles to
+R2/CDN-backed object storage and keep the manifest/index contract unchanged.
 
 For dry inspection without writing tiles:
 

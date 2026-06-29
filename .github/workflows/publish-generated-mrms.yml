@@ -37,6 +37,8 @@ jobs:
       MRMS_FRAMES: ${{ github.event.inputs.frames || '6' }}
       MRMS_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || '30' }}
       MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
+      MRMS_SKIP_EMPTY_TILES: ${{ vars.MRMS_SKIP_EMPTY_TILES || 'true' }}
+      MRMS_ASSET_FILE_LIMIT: ${{ vars.MRMS_ASSET_FILE_LIMIT || '19500' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,12 +49,17 @@ jobs:
       - name: Generate live MRMS radar tiles
         id: publish
         run: |
+          EXTRA_ARGS=()
+          if [ "$MRMS_SKIP_EMPTY_TILES" != "false" ]; then
+            EXTRA_ARGS+=(--skip-empty-tiles)
+          fi
           node scripts/mrms-prototype/publish-mrms-live.mjs \
             --profiles="$MRMS_PROFILES" \
             --frames="$MRMS_FRAMES" \
             --ttl-minutes="$MRMS_TTL_MINUTES" \
             --current-manifest-url="$MRMS_CURRENT_MANIFEST_URL" \
-            --summary-out=/tmp/nearcast-mrms-publish-summary.json
+            --summary-out=/tmp/nearcast-mrms-publish-summary.json \
+            "${EXTRA_ARGS[@]}"
           SKIPPED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/nearcast-mrms-publish-summary.json','utf8')); process.stdout.write(s.skipped ? 'true' : 'false');")
           echo "skipped=$SKIPPED" >> "$GITHUB_OUTPUT"
 
@@ -64,6 +71,11 @@ jobs:
         if: steps.publish.outputs.skipped != 'true'
         run: |
           node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
+
+      - name: Verify generated asset budget
+        if: steps.publish.outputs.skipped != 'true'
+        run: |
+          node scripts/mrms-prototype/check-mrms-asset-budget.mjs --limit="$MRMS_ASSET_FILE_LIMIT"
 
       - name: Deploy static assets with generated radar
         if: steps.publish.outputs.skipped != 'true'

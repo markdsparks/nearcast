@@ -66,7 +66,9 @@ deployment by `.github/workflows/publish-generated-mrms.yml`:
    manifest containing `expiresAt`, frames, tile URLs, and coverage metadata.
 7. Write `radar/mrms/index.json`, a generated-radar catalog that points active
    places to the correct manifest by coverage bounds.
-8. Run `npx --yes wrangler deploy`.
+8. Verify the generated radar file count stays below the configured static
+   asset budget.
+9. Run `npx --yes wrangler deploy`.
 
 This workflow does not commit generated radar tiles. It publishes them as part
 of the static asset deployment snapshot, which keeps Git history from becoming a
@@ -91,6 +93,11 @@ Optional GitHub variable:
 - `MRMS_PROFILES`: comma-separated scheduled publish profiles. When set, this
   takes precedence over `MRMS_PROFILE` and publishes multiple generated packs
   into one `radar/mrms/index.json`.
+- `MRMS_SKIP_EMPTY_TILES`: defaults to `true`. Empty radar tiles are not
+  uploaded, which avoids spending Cloudflare asset slots on transparent PNGs.
+- `MRMS_ASSET_FILE_LIMIT`: generated-radar file budget before deploy. Defaults
+  to `19500`, leaving headroom under the current 20000-file Workers static
+  asset limit for the app shell and manifests.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
@@ -137,10 +144,17 @@ Multi-pack static deploys:
 - Additional profiles write pack manifests under
   `radar/mrms/packs/<profile>/manifest.json`.
 - All pack tiles are written under `radar/mrms/live/<profile>/`.
+- Empty radar tiles are skipped by default. Missing generated tiles should read
+  as transparent radar, not as unavailable weather, because the manifest and
+  coverage metadata remain the source of truth.
 - If every pack in the deployed index has the same source/render fingerprint and
   is still fresh enough, the workflow skips the whole deploy. If any pack
   changed, the publisher regenerates all requested packs so the static deploy
   snapshot stays complete.
+- Before deploy, `scripts/mrms-prototype/check-mrms-asset-budget.mjs` counts
+  generated radar files. If the requested profiles/frames exceed the static
+  asset budget, the workflow fails before Wrangler instead of producing a late
+  Cloudflare API error.
 
 The workflow also supports manual dispatch, so a test run can be triggered
 without waiting for the schedule.
