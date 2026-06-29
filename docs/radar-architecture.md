@@ -307,14 +307,16 @@ Current scaffold:
   `/api/radar/capability` control-plane endpoint.
 - The endpoint can resolve ready enhanced packs from the deployed
   `radar/mrms/index.json` through an assets binding.
-- It reports generation as `unsupported` without a queue binding and `queued`
-  when `RADAR_GENERATION_QUEUE` is present.
+- It reports generation as `unsupported` without queue and request-state
+  bindings, queues only when both are present, and dedupes repeated viewport
+  requests for a short window.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, and queued
   states locally without Cloudflare.
 
 Still missing before activation:
 
 - Worker activation in `wrangler.toml`.
+- Request-state storage binding.
 - Queue binding and consumer.
 - Render job that turns a queued viewport into encoded tiles plus a manifest.
 - R2 manifest/index update path.

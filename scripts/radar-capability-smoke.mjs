@@ -90,17 +90,39 @@ const queueEnv = {
   }
 };
 
-const queued = await capability(outsidePayload, queueEnv);
+const queueOnly = await capability(outsidePayload, queueEnv);
+assert.equal(queueOnly.status, 200);
+assert.equal(queueOnly.body.enhanced.state, "unavailable");
+assert.equal(queueOnly.body.generation.state, "unsupported");
+assert.equal(queueOnly.body.generation.reason, "request-state-binding-unavailable");
+assert.equal(queueEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
+
+const queuedEnv = {
+  ...queueEnv,
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+
+const queued = await capability(outsidePayload, queuedEnv);
 assert.equal(queued.status, 200);
 assert.equal(queued.body.enhanced.state, "unavailable");
 assert.equal(queued.body.generation.state, "queued");
-assert.equal(queueEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
-assert.equal(queueEnv.RADAR_GENERATION_QUEUE.messages[0].viewport.key, "35.00,-90.00,z10");
+assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
+assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].viewport.key, "35.00,-90.00,z10");
+assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].dedupeKey, queued.body.generation.dedupeKey);
+
+const deduped = await capability(outsidePayload, queuedEnv);
+assert.equal(deduped.status, 200);
+assert.equal(deduped.body.enhanced.state, "unavailable");
+assert.equal(deduped.body.generation.state, "deduped");
+assert.equal(deduped.body.generation.requestId, queued.body.generation.requestId);
+assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   unsupported: unsupported.body.generation.state,
+  queueOnly: queueOnly.body.generation.reason,
   queued: queued.body.generation.state,
+  deduped: deduped.body.generation.state,
   requestId: queued.body.generation.requestId
 }, null, 2));
 
@@ -113,5 +135,19 @@ async function capability(payload, capabilityEnv = env) {
   return {
     status: response.status,
     body: await response.json()
+  };
+}
+
+function createRequestStore() {
+  const store = new Map();
+  return {
+    async get(key, options = {}) {
+      const value = store.get(key);
+      if (!value) return null;
+      return options?.type === "json" ? JSON.parse(value) : value;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    }
   };
 }

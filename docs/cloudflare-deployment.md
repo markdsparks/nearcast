@@ -66,8 +66,9 @@ The Worker can:
 - Read the deployed `radar/mrms/index.json` through the assets binding.
 - Return the same `nearcast-radar-capabilities` shape the app already consumes.
 - Report `unsupported` for generation requests when no queue binding exists.
-- Send a viewport warming message to `RADAR_GENERATION_QUEUE` when that binding
-  exists.
+- Report `unsupported` when the queue exists without request-state storage.
+- Dedupe recent viewport warming requests through `RADAR_GENERATION_REQUESTS`.
+- Send a viewport warming message to `RADAR_GENERATION_QUEUE` after dedupe.
 
 Smoke test:
 
@@ -80,12 +81,13 @@ Activation checklist:
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
    current Wrangler version.
 2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
-3. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+3. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
+4. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-4. Deploy to a preview Worker URL first.
-5. Point the app at the endpoint with
+5. Deploy to a preview Worker URL first.
+6. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-6. Verify fallback behavior remains unchanged before making the endpoint the
+7. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher

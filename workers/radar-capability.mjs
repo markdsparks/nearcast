@@ -2,6 +2,7 @@ const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
+const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -200,19 +201,79 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
   if (!queue?.send) {
     return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable" };
   }
+  const requestStore = env?.RADAR_GENERATION_REQUESTS;
+  if (!requestStore?.get || !requestStore?.put) {
+    return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable" };
+  }
+  const dedupeKey = generationDedupeKey(capability, payload);
+  const existing = await readGenerationRequest(requestStore, dedupeKey);
+  if (existing && !generationRequestExpired(existing)) {
+    return {
+      state: "deduped",
+      requestId: existing.requestId || null,
+      reason: "recent-generation-request",
+      dedupeKey,
+      queuedAt: existing.queuedAt || ""
+    };
+  }
   const requestId = randomId();
+  const queuedAt = new Date().toISOString();
   const message = {
     requestId,
-    requestedAt: new Date().toISOString(),
+    dedupeKey,
+    requestedAt: queuedAt,
     viewport: capability.viewport,
     preferences: payload.preferences || {},
     reason: payload.generation?.reason || "viewport",
     enhancedReason: capability.enhanced?.reason || ""
   };
-  const sendPromise = queue.send(message);
-  if (ctx?.waitUntil) ctx.waitUntil(sendPromise);
-  else await sendPromise;
-  return { state: "queued", requestId, reason: "queued-for-generation" };
+  await queue.send(message);
+  const record = {
+    requestId,
+    dedupeKey,
+    queuedAt,
+    expiresAt: new Date(Date.now() + GENERATION_DEDUPE_TTL_SECONDS * 1000).toISOString(),
+    viewport: capability.viewport,
+    preferences: payload.preferences || {},
+    reason: payload.generation?.reason || "viewport"
+  };
+  const putPromise = requestStore.put(dedupeKey, JSON.stringify(record), {
+    expirationTtl: GENERATION_DEDUPE_TTL_SECONDS
+  });
+  if (ctx?.waitUntil) ctx.waitUntil(putPromise);
+  else await putPromise;
+  return { state: "queued", requestId, reason: "queued-for-generation", dedupeKey };
+}
+
+async function readGenerationRequest(requestStore, dedupeKey) {
+  try {
+    const value = await requestStore.get(dedupeKey, { type: "json" });
+    if (value && typeof value === "object") return value;
+  } catch {
+    try {
+      const text = await requestStore.get(dedupeKey);
+      if (text) return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function generationRequestExpired(record) {
+  const expiresAt = timestamp(record?.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+function generationDedupeKey(capability, payload = {}) {
+  const viewport = capability?.viewport || {};
+  const center = viewport.center || viewport.activePoint || {};
+  const lat = Number.isFinite(center.latitude) ? center.latitude.toFixed(2) : "na";
+  const lon = Number.isFinite(center.longitude) ? center.longitude.toFixed(2) : "na";
+  const zoom = Number.isFinite(viewport.zoom) ? Math.round(viewport.zoom * 2) / 2 : "na";
+  const provider = payload?.preferences?.radarProvider || "auto";
+  const timeline = payload?.preferences?.timelineKind || "radar";
+  return ["radar-generation", "v1", provider, timeline, lat, lon, `z${zoom}`].join(":");
 }
 
 function normalizeViewport(viewport = {}) {
