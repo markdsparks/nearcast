@@ -15,6 +15,10 @@ on:
         description: Manifest freshness window
         required: false
         default: "30"
+      tileZooms:
+        description: Generated source zooms
+        required: false
+        default: "6,7,8,9,10,11,12,13"
   schedule:
     - cron: "*/15 * * * *"
 
@@ -36,6 +40,7 @@ jobs:
       MRMS_PROFILES: ${{ github.event.inputs.profile || vars.MRMS_PROFILES || vars.MRMS_PROFILE || 'metro-east' }}
       MRMS_FRAMES: ${{ github.event.inputs.frames || '6' }}
       MRMS_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || '30' }}
+      MRMS_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_TILE_ZOOMS || '6,7,8,9,10,11,12,13' }}
       MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
       MRMS_SKIP_EMPTY_TILES: ${{ vars.MRMS_SKIP_EMPTY_TILES || 'true' }}
       MRMS_ASSET_FILE_LIMIT: ${{ vars.MRMS_ASSET_FILE_LIMIT || '19500' }}
@@ -74,6 +79,7 @@ jobs:
             --profiles="$MRMS_PROFILES" \
             --frames="$MRMS_FRAMES" \
             --ttl-minutes="$MRMS_TTL_MINUTES" \
+            --tile-zooms="$MRMS_TILE_ZOOMS" \
             --current-manifest-url="$MRMS_CURRENT_MANIFEST_URL" \
             --summary-out=/tmp/nearcast-mrms-publish-summary.json \
             "${EXTRA_ARGS[@]}"
