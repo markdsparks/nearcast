@@ -250,6 +250,15 @@ Good cost shape:
 - Route current generated index selection through that contract.
 - Keep current fallback behavior unchanged.
 
+Initial local implementation:
+
+- `map.js` exposes `window.nearcastRadarCapability()` for engineering checks.
+- The resolver returns the target capability shape from today's local
+  `radar/mrms/index.json` and legacy manifest fallback.
+- Generated MRMS selection now flows through the capability object before
+  loading a manifest, preserving existing fallback behavior while creating the
+  seam for a future Worker-backed endpoint.
+
 ### Phase 3: On-demand prototype
 
 - Add an authenticated capability endpoint.

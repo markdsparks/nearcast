@@ -15,6 +15,7 @@ const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
+const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
@@ -96,6 +97,7 @@ window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
 };
 
 window.nearcastRadarDiagnostics = radarDiagnosticsSnapshot;
+window.nearcastRadarCapability = (options = {}) => resolveRadarViewportCapability(options);
 
 function radarDiagnosticsSnapshot() {
   return {
@@ -106,8 +108,21 @@ function radarDiagnosticsSnapshot() {
       selectionKey: mapState.generatedRadarSelectionKey || "",
       viewportKey: mapState.generatedRadarViewportKey || ""
     },
+    capability: mapState.radarCapability || null,
+    capabilityHistory: [...(mapState.radarCapabilityLog || [])],
     context: safeGeneratedSelectionContext()
   };
+}
+
+function rememberRadarCapability(capability) {
+  mapState.radarCapability = capability || null;
+  if (!capability) return capability;
+  if (!Array.isArray(mapState.radarCapabilityLog)) mapState.radarCapabilityLog = [];
+  mapState.radarCapabilityLog.push(capability);
+  while (mapState.radarCapabilityLog.length > RADAR_CAPABILITY_LOG_LIMIT) {
+    mapState.radarCapabilityLog.shift();
+  }
+  return capability;
 }
 
 function safeGeneratedSelectionContext() {
@@ -2325,8 +2340,190 @@ function generatedMrmsManifestUrlOverride() {
   }
 }
 
+async function resolveRadarViewportCapability(options = {}) {
+  const base = baseRadarViewportCapability();
+  const explicit = generatedMrmsManifestUrlOverride();
+  if (explicit) {
+    const capability = radarCapabilityWithEnhanced(base, {
+      state: "ready",
+      kind: "generated-radar",
+      manifestUrl: explicit,
+      selectionSource: "override",
+      selectionKey: `override:${explicit}`,
+      reason: "explicit-manifest-override"
+    });
+    recordRadarSourceDecision("radar.enhanced-override-selected", {
+      manifestUrl: explicit
+    });
+    return rememberRadarCapability(capability);
+  }
+
+  const indexUrl = generatedMrmsIndexUrl();
+  try {
+    const response = await fetch(indexUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("Generated MRMS index unavailable.");
+    const index = await response.json();
+    const packs = generatedMrmsIndexPacks(index);
+    const freshPackCount = packs.filter((pack) => !generatedMrmsIndexPackExpired(pack)).length;
+    const pack = selectGeneratedMrmsIndexPack(index);
+    const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
+    if (manifestUrl) {
+      const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+      const capability = radarCapabilityWithEnhanced(base, {
+        state: "ready",
+        kind: Number(pack?.metrics?.dataTiles || 0) > 0 ? "encoded-radar" : "generated-radar",
+        manifestUrl: resolved,
+        selectionSource: "index",
+        selectionKey: generatedMrmsIndexPackSelectionKey(pack, resolved),
+        packId: pack?.id || "",
+        label: pack?.label || "",
+        generatedAt: pack?.generatedAt || "",
+        expiresAt: pack?.expiresAt || "",
+        coverageBounds: generatedCoverageBounds(pack?.coverageBounds),
+        metrics: pack?.metrics || null,
+        reason: "fresh-index-pack"
+      });
+      recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
+        indexUrl,
+        packId: pack?.id || pack?.label || "",
+        manifestUrl: resolved,
+        packCount: packs.length,
+        freshPackCount,
+        expiresAt: pack?.expiresAt || "",
+        coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
+      });
+      return rememberRadarCapability(capability);
+    }
+    const capability = radarCapabilityUnavailable(base, {
+      reason: "no-fresh-index-pack",
+      indexUrl,
+      packCount: packs.length,
+      freshPackCount
+    });
+    recordRadarSourceDecision("radar.enhanced-index-no-match", {
+      indexUrl,
+      packCount: packs.length,
+      freshPackCount
+    });
+    if (options.allowLegacy === false) return rememberRadarCapability(capability);
+  } catch (error) {
+    const capability = radarCapabilityUnavailable(base, {
+      reason: "index-unavailable",
+      indexUrl,
+      error: radarDecisionErrorMessage(error)
+    });
+    recordRadarSourceDecision("radar.enhanced-index-unavailable", {
+      indexUrl,
+      reason: radarDecisionErrorMessage(error)
+    });
+    if (options.allowLegacy === false) return rememberRadarCapability(capability);
+    /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
+  }
+
+  if (options.allowLegacy === false) {
+    return rememberRadarCapability(radarCapabilityUnavailable(base, {
+      reason: "legacy-disabled-for-viewport-refresh",
+      indexUrl
+    }));
+  }
+
+  const capability = radarCapabilityWithEnhanced(base, {
+    state: "ready",
+    kind: "generated-radar",
+    manifestUrl: MRMS_RADAR_MANIFEST_URL,
+    selectionSource: "legacy",
+    selectionKey: `legacy:${MRMS_RADAR_MANIFEST_URL}`,
+    reason: "legacy-manifest-compatibility"
+  });
+  recordRadarSourceDecision("radar.enhanced-legacy-selected", {
+    manifestUrl: MRMS_RADAR_MANIFEST_URL
+  });
+  return rememberRadarCapability(capability);
+}
+
+function baseRadarViewportCapability(context = generatedMrmsSelectionContext()) {
+  return {
+    provider: "nearcast-radar-capabilities",
+    version: 1,
+    checkedAt: new Date().toISOString(),
+    viewport: radarCapabilityViewport(context),
+    immediate: {
+      kind: "fallback-radar",
+      label: "Radar",
+      manifestUrl: null
+    },
+    enhanced: {
+      state: "unavailable",
+      kind: null,
+      manifestUrl: null,
+      reason: "not-resolved"
+    },
+    generation: {
+      state: "not-requested",
+      requestId: null,
+      reason: "local-static-resolver"
+    }
+  };
+}
+
+function radarCapabilityViewport(context) {
+  return {
+    center: context?.centerPoint || context?.activePoint || null,
+    activePoint: context?.activePoint || null,
+    zoom: Number.isFinite(Number(context?.zoom)) ? Number(context.zoom) : null,
+    bounds: context?.viewportBounds || null,
+    key: generatedRadarViewportKey()
+  };
+}
+
+function radarCapabilityWithEnhanced(base, enhanced) {
+  return {
+    ...base,
+    enhanced: {
+      state: enhanced.state || "ready",
+      kind: enhanced.kind || "generated-radar",
+      label: enhanced.label || "Radar",
+      manifestUrl: enhanced.manifestUrl || null,
+      selectionSource: enhanced.selectionSource || "",
+      selectionKey: enhanced.selectionKey || "",
+      packId: enhanced.packId || "",
+      coverageBounds: enhanced.coverageBounds || null,
+      generatedAt: enhanced.generatedAt || "",
+      expiresAt: enhanced.expiresAt || "",
+      metrics: enhanced.metrics || null,
+      reason: enhanced.reason || "enhanced-layer-ready"
+    },
+    generation: {
+      state: "not-needed",
+      requestId: null,
+      reason: enhanced.reason || "enhanced-layer-ready"
+    }
+  };
+}
+
+function radarCapabilityUnavailable(base, detail = {}) {
+  return {
+    ...base,
+    enhanced: {
+      ...base.enhanced,
+      state: "unavailable",
+      reason: detail.reason || "enhanced-layer-unavailable",
+      indexUrl: detail.indexUrl || "",
+      packCount: Number.isFinite(Number(detail.packCount)) ? Number(detail.packCount) : null,
+      freshPackCount: Number.isFinite(Number(detail.freshPackCount)) ? Number(detail.freshPackCount) : null,
+      error: detail.error || ""
+    },
+    generation: {
+      state: "not-requested",
+      requestId: null,
+      reason: "local-static-resolver"
+    }
+  };
+}
+
 async function fetchGeneratedMrmsRadarFrames() {
   const selection = await resolveGeneratedMrmsManifestSelection();
+  if (!selection?.manifestUrl) throw new Error("Generated MRMS capability unavailable.");
   const response = await fetch(selection.manifestUrl, { cache: "no-store" });
   if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
   const manifest = await response.json();
@@ -2351,69 +2548,18 @@ async function fetchGeneratedMrmsRadarFrames() {
 
 async function resolveGeneratedMrmsManifestUrl() {
   const selection = await resolveGeneratedMrmsManifestSelection();
-  return selection.manifestUrl;
+  return selection?.manifestUrl || "";
 }
 
 async function resolveGeneratedMrmsManifestSelection(options = {}) {
-  const explicit = generatedMrmsManifestUrlOverride();
-  if (explicit) {
-    recordRadarSourceDecision("radar.enhanced-override-selected", {
-      manifestUrl: explicit
-    });
-    return {
-      source: "override",
-      manifestUrl: explicit,
-      key: `override:${explicit}`
-    };
-  }
-
-  const indexUrl = generatedMrmsIndexUrl();
-  try {
-    const response = await fetch(indexUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error("Generated MRMS index unavailable.");
-    const index = await response.json();
-    const packs = generatedMrmsIndexPacks(index);
-    const freshPackCount = packs.filter((pack) => !generatedMrmsIndexPackExpired(pack)).length;
-    const pack = selectGeneratedMrmsIndexPack(index);
-    const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
-    if (manifestUrl) {
-      const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
-      recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
-        indexUrl,
-        packId: pack?.id || pack?.label || "",
-        manifestUrl: resolved,
-        packCount: packs.length,
-        freshPackCount,
-        expiresAt: pack?.expiresAt || "",
-        coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
-      });
-      return {
-        source: "index",
-        manifestUrl: resolved,
-        key: generatedMrmsIndexPackSelectionKey(pack, resolved)
-      };
-    }
-    recordRadarSourceDecision("radar.enhanced-index-no-match", {
-      indexUrl,
-      packCount: packs.length,
-      freshPackCount
-    });
-  } catch (error) {
-    recordRadarSourceDecision("radar.enhanced-index-unavailable", {
-      indexUrl,
-      reason: radarDecisionErrorMessage(error)
-    });
-    /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
-  }
-
-  if (options.allowLegacy === false) return null;
-  recordRadarSourceDecision("radar.enhanced-legacy-selected", {
-    manifestUrl: MRMS_RADAR_MANIFEST_URL
-  });
+  const capability = await resolveRadarViewportCapability(options);
+  const enhanced = capability?.enhanced;
+  if (enhanced?.state !== "ready" || !enhanced.manifestUrl) return null;
   return {
-    source: "legacy",
-    manifestUrl: MRMS_RADAR_MANIFEST_URL,
-    key: `legacy:${MRMS_RADAR_MANIFEST_URL}`
+    source: enhanced.selectionSource || "capability",
+    manifestUrl: enhanced.manifestUrl,
+    key: enhanced.selectionKey || `${enhanced.selectionSource || "capability"}:${enhanced.manifestUrl}`,
+    capability
   };
 }
 
