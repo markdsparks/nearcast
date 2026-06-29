@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { handleRadarCapabilityRequest } from "../workers/radar-capability.mjs";
+import worker, { handleRadarCapabilityRequest } from "../workers/radar-capability.mjs";
 
 const futureExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
@@ -60,6 +60,20 @@ assert.equal(ready.body.enhanced.state, "ready");
 assert.equal(ready.body.enhanced.kind, "encoded-radar");
 assert.equal(ready.body.enhanced.indexUrl, "https://getnearcast.app/radar/mrms/index.json");
 assert.equal(ready.body.generation.state, "not-needed");
+
+const workerReady = await workerCapability(basePayload, env);
+assert.equal(workerReady.status, 200);
+assert.equal(workerReady.body.enhanced.state, "ready");
+
+const passthrough = await worker.fetch(new Request("https://getnearcast.app/index.html"), {
+  ASSETS: {
+    async fetch() {
+      return new Response("asset passthrough", { status: 200 });
+    }
+  }
+}, {});
+assert.equal(passthrough.status, 200);
+assert.equal(await passthrough.text(), "asset passthrough");
 
 let externalFetchCount = 0;
 const externalIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";
@@ -170,6 +184,7 @@ assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
+  workerReady: workerReady.body.enhanced.state,
   external: externalReady.body.enhanced.packId,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
@@ -181,6 +196,18 @@ console.log(JSON.stringify({
 
 async function capability(payload, capabilityEnv = env) {
   const response = await handleRadarCapabilityRequest(new Request("https://getnearcast.app/api/radar/capability", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }), capabilityEnv, {});
+  return {
+    status: response.status,
+    body: await response.json()
+  };
+}
+
+async function workerCapability(payload, capabilityEnv = env) {
+  const response = await worker.fetch(new Request("https://getnearcast.app/api/radar/capability", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)

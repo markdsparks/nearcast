@@ -1,5 +1,9 @@
 name = "nearcast"
+main = "workers/radar-capability.mjs"
 compatibility_date = "2026-06-22"
 
 [assets]
 directory = "."
+
+[vars]
+RADAR_GENERATION_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json"

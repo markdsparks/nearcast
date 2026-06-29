@@ -1,8 +1,9 @@
 # Cloudflare deployment
 
-Nearcast should remain static until a backend feature earns the added surface
-area. The current Cloudflare dashboard path is Workers Builds with static
-assets, not a Worker script and not a Pages-only project.
+Nearcast still serves static app assets, but the Cloudflare deploy now includes
+a thin Worker script for the opt-in radar capability endpoint. The default app
+experience remains static unless a user or engineering test explicitly points
+the app at `/api/radar/capability`.
 
 ## Workers static assets project
 
@@ -11,18 +12,28 @@ assets, not a Worker script and not a Pages-only project.
 - Project name: `nearcast`
 - Build command: leave empty
 - Deploy command: `npx wrangler deploy`
-- Environment variables: none
+- Environment variables: configured in `wrangler.toml`
 
 The deploy is configured by `wrangler.toml`:
 
 - Worker name: `nearcast`
+- Worker entry point: `workers/radar-capability.mjs`
 - Compatibility date: `2026-06-22`
 - Static assets directory: `.`
+- `RADAR_GENERATION_INDEX_URL` points the capability endpoint at the R2 preview
+  generated-radar index.
 
-If the dashboard deploy command still includes `--assets .`, that is also fine
-because it points at the same static asset root. The repository config exists so
-Wrangler does not fail on the required compatibility date or warn about an
-undefined Worker name.
+Use `npx wrangler deploy` so Wrangler applies both the Worker script and the
+static asset binding from repository config.
+
+Manual app/control-plane deploys can run without rendering radar:
+
+```bash
+gh workflow run "Deploy Cloudflare app"
+```
+
+That workflow exists so app shell and capability Worker changes do not need to
+ride on `.github/workflows/publish-generated-mrms.yml`.
 
 Use the generated `*.workers.dev` URL only for verification. The durable app
 origin should be the custom domain before users install the PWA.
@@ -54,11 +65,12 @@ Recommended routing:
   the app uses the local static manifest/index resolver and never calls a
   backend capability endpoint.
 
-## Dormant radar capability Worker
+## Radar capability Worker
 
 `workers/radar-capability.mjs` contains the first control-plane Worker for
-`/api/radar/capability`. It is intentionally not active in `wrangler.toml` yet,
-so production remains an assets-only deploy.
+`/api/radar/capability`. It is configured in `wrangler.toml`, but the app only
+calls it when `?radarCapabilityEndpoint=/api/radar/capability` or
+`localStorage["nearcast-radar-capability-endpoint"]` is set.
 
 The Worker can:
 
@@ -74,7 +86,7 @@ The Worker can:
 - Apply soft hourly generation budgets before accepting queue work.
 - Send a viewport warming message to `RADAR_GENERATION_QUEUE` after dedupe.
 
-Default dormant-worker budget caps are intentionally conservative:
+Default preview-worker budget caps are intentionally conservative:
 
 - `RADAR_GENERATION_GLOBAL_HOURLY_LIMIT`: defaults to `60` accepted generation
   requests per hour.
@@ -227,27 +239,37 @@ so the bucket must allow browser reads from the app origin. The workflow applies
 `config/radar-r2-cors.json` before uploading preview objects when
 `CLOUDFLARE_API_TOKEN` is available.
 
-Activation checklist:
+Preview activation checklist:
+
+Completed in repo:
+
+- `main = "workers/radar-capability.mjs"` is set in `wrangler.toml`.
+- `RADAR_GENERATION_INDEX_URL` points at
+  `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json`.
+- `Deploy Cloudflare app` can deploy the app/control-plane without rendering
+  MRMS.
+- `scripts/radar-capability-smoke.mjs` verifies endpoint routing and normal
+  asset passthrough locally.
+
+Next:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
    current Wrangler version.
-2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
-3. Set `RADAR_GENERATION_INDEX_URL` to the preview R2 index, such as
-   `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json`,
-   while validating the end-to-end control plane.
-4. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
-5. Confirm budget limits for the preview environment.
-6. Run the generation consumer smoke test with preview budget values.
-7. Run the renderer smoke test with preview artifact settings.
-8. Run the publisher smoke test against a local R2 mirror.
-9. Verify credentialed R2 upload against the preview bucket with explicit
-   manual execution.
-10. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
-   ready to consume messages and request budgets/rate limits are in place.
-11. Deploy to a preview Worker URL first.
-12. Point the app at the endpoint with
+2. Deploy to Cloudflare with `Deploy Cloudflare app`.
+3. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-13. Verify fallback behavior remains unchanged before making the endpoint the
+4. Verify fallback behavior remains unchanged.
+5. Run or refresh a preview R2 radar upload so the endpoint has a fresh pack.
+6. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
+7. Confirm budget limits for the preview environment.
+8. Run the generation consumer smoke test with preview budget values.
+9. Run the renderer smoke test with preview artifact settings.
+10. Run the publisher smoke test against a local R2 mirror.
+11. Verify credentialed R2 upload against the preview bucket with explicit
+   manual execution.
+12. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+   ready to consume messages and request budgets/rate limits are in place.
+13. Verify endpoint-driven enhanced radar before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher

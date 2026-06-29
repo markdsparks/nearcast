@@ -308,7 +308,7 @@ Endpoint request shape:
 
 Current scaffold:
 
-- `workers/radar-capability.mjs` implements the dormant
+- `workers/radar-capability.mjs` is configured as the opt-in
   `/api/radar/capability` control-plane endpoint.
 - The endpoint can resolve ready enhanced packs from the deployed
   `radar/mrms/index.json` through an assets binding.
@@ -322,7 +322,8 @@ Current scaffold:
   queueing work. These are preview safety rails; broad production use still
   needs authenticated identity and a stronger atomic throttle.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
-  deduped, and limited states locally without Cloudflare.
+  deduped, limited, Worker endpoint routing, and static asset passthrough
+  locally without Cloudflare.
 - `workers/radar-generation-consumer.mjs` implements the dormant queue-side
   contract. It validates accepted generation messages, normalizes viewport
   bounds, estimates candidate tile counts, rejects over-budget jobs, and emits a
@@ -377,11 +378,13 @@ Current scaffold:
   the current preview index. That supports a quality ladder: broad packs for
   search/pan continuity, plus smaller high-zoom packs when deep zoom exposes
   too much overzoom softness.
+- `.github/workflows/deploy-cloudflare-app.yml` deploys app/control-plane
+  changes without running MRMS generation, so Worker activation is no longer
+  coupled to the generated-radar publisher.
 
-Still missing before activation:
+Still missing before broad activation:
 
-- Worker activation in `wrangler.toml`.
-- `RADAR_GENERATION_INDEX_URL` configuration in the preview Worker environment.
+- Cloudflare endpoint verification after deploy.
 - Request-state storage binding.
 - Preview budget values.
 - Queue binding and consumer deployment wiring.
