@@ -301,6 +301,24 @@ Endpoint request shape:
 - Publish to R2 and return a manifest URL.
 - Let the app switch to enhanced without reload.
 
+Current scaffold:
+
+- `workers/radar-capability.mjs` implements the dormant
+  `/api/radar/capability` control-plane endpoint.
+- The endpoint can resolve ready enhanced packs from the deployed
+  `radar/mrms/index.json` through an assets binding.
+- It reports generation as `unsupported` without a queue binding and `queued`
+  when `RADAR_GENERATION_QUEUE` is present.
+- `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, and queued
+  states locally without Cloudflare.
+
+Still missing before activation:
+
+- Worker activation in `wrangler.toml`.
+- Queue binding and consumer.
+- Render job that turns a queued viewport into encoded tiles plus a manifest.
+- R2 manifest/index update path.
+
 ### Phase 4: Scale controls
 
 - Dedupe jobs by source frame, product, render profile, zoom range, and viewport

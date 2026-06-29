@@ -54,6 +54,40 @@ Recommended routing:
   the app uses the local static manifest/index resolver and never calls a
   backend capability endpoint.
 
+## Dormant radar capability Worker
+
+`workers/radar-capability.mjs` contains the first control-plane Worker for
+`/api/radar/capability`. It is intentionally not active in `wrangler.toml` yet,
+so production remains an assets-only deploy.
+
+The Worker can:
+
+- Serve static assets through `env.ASSETS` when activated as the main Worker.
+- Read the deployed `radar/mrms/index.json` through the assets binding.
+- Return the same `nearcast-radar-capabilities` shape the app already consumes.
+- Report `unsupported` for generation requests when no queue binding exists.
+- Send a viewport warming message to `RADAR_GENERATION_QUEUE` when that binding
+  exists.
+
+Smoke test:
+
+```bash
+node scripts/radar-capability-smoke.mjs
+```
+
+Activation checklist:
+
+1. Confirm Workers static assets expose the expected `ASSETS` binding with the
+   current Wrangler version.
+2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
+3. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+   ready to consume messages and request budgets/rate limits are in place.
+4. Deploy to a preview Worker URL first.
+5. Point the app at the endpoint with
+   `?radarCapabilityEndpoint=/api/radar/capability`.
+6. Verify fallback behavior remains unchanged before making the endpoint the
+   default.
+
 ## Generated MRMS radar publisher
 
 The app still deploys as static assets. Live generated radar is produced before
