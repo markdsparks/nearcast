@@ -137,9 +137,43 @@ assert.ok(fs.existsSync(path.join(r2LocalDir, "radar/mrms/index.json")));
 const uploadedIndex = JSON.parse(fs.readFileSync(path.join(r2LocalDir, "radar/mrms/index.json"), "utf8"));
 assert.ok(uploadedIndex.packs.some((item) => item.id === pack.id));
 
+const fakeR2Client = createFakeR2Client();
+const r2Published = await publishRadarGenerationArtifacts({
+  renderResult,
+  currentIndex: merged,
+  indexOut,
+  uploadMode: "r2",
+  r2Client: fakeR2Client,
+  bucket: "nearcast-radar-preview",
+  endpoint: "https://r2.example.test",
+  concurrency: "2",
+  publicBaseUrl: "https://radar.example.test"
+});
+assert.equal(r2Published.upload.mode, "r2");
+assert.equal(r2Published.upload.uploaded, 5);
+assert.equal(r2Published.upload.bucket, "nearcast-radar-preview");
+assert.equal(r2Published.upload.endpoint, "https://r2.example.test");
+assert.equal(r2Published.upload.concurrency, 2);
+assert.equal(fakeR2Client.puts.length, 5);
+assert.ok(fakeR2Client.puts.some((item) => (
+  item.key === "radar/mrms/index.json"
+  && item.cacheControl === "no-store"
+  && item.contentType === "application/json"
+)));
+assert.ok(fakeR2Client.puts.some((item) => (
+  item.key === materialized.manifestKey
+  && item.cacheControl.includes("immutable")
+  && item.contentType === "application/json"
+)));
+assert.ok(fakeR2Client.puts.some((item) => (
+  item.key === `${materialized.tilePrefix}/8/1/2.png`
+  && item.contentType === "image/png"
+)));
+
 console.log(JSON.stringify({
   objectCount: published.objectCount,
   uploaded: published.upload.uploaded,
+  r2Uploaded: r2Published.upload.uploaded,
   packId: published.packId,
   indexPacks: published.index.packs.length,
   sampleKeys: published.upload.sampleKeys.slice(0, 4)
@@ -223,4 +257,18 @@ function writeJson(file, value) {
 function writeFile(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, value);
+}
+
+function createFakeR2Client() {
+  return {
+    bucket: "nearcast-radar-preview",
+    endpoint: "https://r2.example.test",
+    puts: [],
+    async putObject(object) {
+      this.puts.push({
+        ...object,
+        bodyText: Buffer.isBuffer(object.body) ? object.body.toString("utf8") : String(object.body || "")
+      });
+    }
+  };
 }

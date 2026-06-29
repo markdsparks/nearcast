@@ -139,8 +139,11 @@ node scripts/radar-generation-renderer-smoke.mjs
 
 `scripts/radar-generation-publisher.mjs` publishes a renderer result into the
 generated-radar index contract without activating production upload. It supports
-`dry-run` planning and `local-r2` mirroring for smoke tests; credentialed R2
-upload is intentionally still outside the dormant path.
+`dry-run` planning, `local-r2` mirroring for smoke tests, and explicit
+credentialed `r2` upload for preview/manual execution. The script is still not
+connected to the automatic queue or scheduled MRMS publisher. Manual `r2` runs
+require `@aws-sdk/client-s3` in the execution environment, matching the existing
+generated-MRMS R2 uploader.
 
 The publisher can:
 
@@ -151,6 +154,8 @@ The publisher can:
 - Prune expired packs and cap retained pack count.
 - Write the mutable `radar/mrms/index.json` object separately from immutable
   source-scoped artifacts.
+- Upload the planned object set to R2 when bucket, endpoint, and access
+  credentials are provided explicitly.
 
 Smoke test:
 
@@ -168,7 +173,8 @@ Activation checklist:
 5. Run the generation consumer smoke test with preview budget values.
 6. Run the renderer smoke test with preview artifact settings.
 7. Run the publisher smoke test against a local R2 mirror.
-8. Add credentialed R2 upload for the planned object set.
+8. Install the temporary R2 SDK dependency and verify credentialed R2 upload
+   against a preview bucket with explicit manual execution.
 9. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
 10. Deploy to a preview Worker URL first.

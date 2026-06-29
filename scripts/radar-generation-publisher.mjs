@@ -11,6 +11,7 @@ const DEFAULT_INDEX_KEY = "radar/mrms/index.json";
 const DEFAULT_ARTIFACT_CACHE_CONTROL = "public, max-age=86400, immutable";
 const DEFAULT_INDEX_CACHE_CONTROL = "no-store";
 const DEFAULT_MAX_PACKS = 80;
+const DEFAULT_R2_CONCURRENCY = 16;
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -34,6 +35,11 @@ async function main() {
     artifactRoot: args["artifact-root"],
     uploadMode: args["upload-mode"],
     r2LocalDir: args["r2-local-dir"],
+    bucket: args.bucket || process.env.RADAR_GENERATION_R2_BUCKET || process.env.MRMS_R2_BUCKET,
+    endpoint: args.endpoint || process.env.RADAR_GENERATION_R2_ENDPOINT || process.env.MRMS_R2_ENDPOINT || endpointForAccount(args["account-id"] || process.env.CLOUDFLARE_ACCOUNT_ID || process.env.R2_ACCOUNT_ID),
+    accessKeyId: args["access-key-id"] || process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: args["secret-access-key"] || process.env.R2_SECRET_ACCESS_KEY,
+    concurrency: args.concurrency || process.env.RADAR_GENERATION_R2_UPLOAD_CONCURRENCY || process.env.MRMS_R2_UPLOAD_CONCURRENCY,
     maxPacks: args["max-packs"],
     publicBaseUrl: args["public-base-url"]
   });
@@ -65,7 +71,18 @@ export async function publishRadarGenerationArtifacts(options = {}) {
     cacheControl: DEFAULT_INDEX_CACHE_CONTROL
   });
   const plannedObjects = [...objects, indexObject].sort((a, b) => a.key.localeCompare(b.key));
-  const upload = await publishObjects(plannedObjects, { uploadMode, r2LocalDir: options.r2LocalDir });
+  const upload = await publishObjects(plannedObjects, {
+    uploadMode,
+    r2LocalDir: options.r2LocalDir,
+    r2: {
+      bucket: options.bucket,
+      endpoint: cleanEndpoint(options.endpoint),
+      accessKeyId: options.accessKeyId,
+      secretAccessKey: options.secretAccessKey,
+      concurrency: positiveInteger(options.concurrency, DEFAULT_R2_CONCURRENCY),
+      client: options.r2Client || null
+    }
+  });
   return {
     provider: PUBLICATION_PROVIDER,
     version: 1,
@@ -128,7 +145,7 @@ export function artifactObjects({ artifactRoot, materialized }) {
   return [...unique.values()];
 }
 
-async function publishObjects(objects, { uploadMode, r2LocalDir }) {
+async function publishObjects(objects, { uploadMode, r2LocalDir, r2 = {} }) {
   if (uploadMode === "dry-run") {
     return {
       mode: uploadMode,
@@ -151,7 +168,84 @@ async function publishObjects(objects, { uploadMode, r2LocalDir }) {
       sampleKeys: objects.slice(0, 8).map((object) => object.key)
     };
   }
+  if (uploadMode === "r2") {
+    const client = r2.client || await createR2Client(r2);
+    let uploaded = 0;
+    await mapLimit(objects, r2.concurrency || DEFAULT_R2_CONCURRENCY, async (object) => {
+      await client.putObject({
+        key: object.key,
+        body: fs.readFileSync(object.file),
+        cacheControl: object.cacheControl,
+        contentType: object.contentType
+      });
+      uploaded += 1;
+    });
+    return {
+      mode: uploadMode,
+      bucket: r2.bucket || client.bucket || "",
+      endpoint: r2.endpoint || client.endpoint || "",
+      uploaded,
+      concurrency: r2.concurrency || DEFAULT_R2_CONCURRENCY,
+      sampleKeys: objects.slice(0, 8).map((object) => object.key)
+    };
+  }
   throw new Error(`unsupported upload mode: ${uploadMode}`);
+}
+
+async function createR2Client(r2 = {}) {
+  if (!r2.bucket) throw new Error("missing --bucket or RADAR_GENERATION_R2_BUCKET");
+  if (!r2.endpoint) throw new Error("missing --endpoint or CLOUDFLARE_ACCOUNT_ID");
+  if (!r2.accessKeyId) throw new Error("missing --access-key-id or R2_ACCESS_KEY_ID");
+  if (!r2.secretAccessKey) throw new Error("missing --secret-access-key or R2_SECRET_ACCESS_KEY");
+  const sdk = await loadAwsSdk();
+  return new R2Client({
+    endpoint: r2.endpoint,
+    bucket: r2.bucket,
+    accessKeyId: r2.accessKeyId,
+    secretAccessKey: r2.secretAccessKey,
+    sdk
+  });
+}
+
+class R2Client {
+  constructor({ endpoint, bucket, accessKeyId, secretAccessKey, sdk }) {
+    this.endpoint = endpoint;
+    this.bucket = bucket;
+    this.sdk = sdk;
+    this.client = new sdk.S3Client({
+      region: "auto",
+      endpoint,
+      credentials: {
+        accessKeyId,
+        secretAccessKey
+      }
+    });
+  }
+
+  async putObject({ key, body, cacheControl, contentType }) {
+    await this.sendWithRetry(new this.sdk.PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: body,
+      CacheControl: cacheControl,
+      ContentType: contentType
+    }));
+  }
+
+  async sendWithRetry(command) {
+    const attempts = 4;
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await this.client.send(command);
+      } catch (error) {
+        lastError = error;
+        if (attempt === attempts || !shouldRetry(error)) break;
+        await sleep(250 * (2 ** (attempt - 1)));
+      }
+    }
+    throw lastError;
+  }
 }
 
 function normalizeRenderResult(value, options = {}) {
@@ -265,6 +359,39 @@ function contentTypeForFile(file) {
   return "application/octet-stream";
 }
 
+async function mapLimit(items, limit, worker) {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function loadAwsSdk() {
+  try {
+    return await import("@aws-sdk/client-s3");
+  } catch (error) {
+    throw new Error(`missing @aws-sdk/client-s3 dependency for R2 upload: ${error.message}`);
+  }
+}
+
+function endpointForAccount(accountId) {
+  return accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "";
+}
+
+function cleanEndpoint(value) {
+  return String(value || "").trim().replace(/\/+$/g, "");
+}
+
+function shouldRetry(error) {
+  const status = error?.$metadata?.httpStatusCode || error?.status;
+  return !status || status === 429 || status >= 500;
+}
+
 function positiveInteger(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
   const number = Math.floor(Number(value));
@@ -304,10 +431,15 @@ function parseArgs(argv) {
   return parsed;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function printHelp() {
   console.log(`Usage:
   node scripts/radar-generation-publisher.mjs --render-result=/tmp/render-result.json --index-out=/tmp/radar/mrms/index.json
   node scripts/radar-generation-publisher.mjs --render-result=/tmp/render-result.json --upload-mode=local-r2 --r2-local-dir=/tmp/r2
+  node scripts/radar-generation-publisher.mjs --render-result=/tmp/render-result.json --upload-mode=r2 --bucket=nearcast-radar
 
 Options:
   --render-result=PATH        JSON result from scripts/radar-generation-renderer.mjs.
@@ -315,9 +447,17 @@ Options:
   --index-out=PATH            Output merged generated-radar index path.
   --index-key=KEY             Object key for the merged index. Defaults to radar/mrms/index.json.
   --artifact-root=PATH        Override materialized artifact root.
-  --upload-mode=MODE          dry-run or local-r2. Defaults to dry-run.
+  --upload-mode=MODE          dry-run, local-r2, or r2. Defaults to dry-run.
   --r2-local-dir=PATH         Local mirror root for upload-mode=local-r2 smoke tests.
+  --bucket=NAME               R2 bucket. Also reads RADAR_GENERATION_R2_BUCKET or MRMS_R2_BUCKET.
+  --endpoint=URL              R2 S3 endpoint. Defaults from CLOUDFLARE_ACCOUNT_ID.
+  --account-id=ID             Cloudflare account id for default endpoint.
+  --access-key-id=KEY         R2 access key id. Also reads R2_ACCESS_KEY_ID.
+  --secret-access-key=KEY     R2 secret access key. Also reads R2_SECRET_ACCESS_KEY.
+  --concurrency=16            Concurrent R2 putObject requests.
   --public-base-url=URL       Public origin used to rewrite pack manifestUrl.
   --max-packs=80              Maximum packs to keep in the merged index.
+
+R2 mode requires @aws-sdk/client-s3 in the execution environment.
 `);
 }

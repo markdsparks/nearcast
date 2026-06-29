@@ -330,14 +330,17 @@ Current scaffold:
   contract with a fake generator, so it does not depend on NOAA network access
   or real GRIB2 decoding.
 - `scripts/radar-generation-publisher.mjs` publishes a render result into the
-  generated-radar index contract in `dry-run` or `local-r2` mode. It collects
-  sparse artifact files, preserves exact on-demand object keys, rewrites public
-  manifest URLs, merges the source-scoped pack into the index, prunes expired
-  packs, and writes the mutable `radar/mrms/index.json` separately from
-  immutable pack artifacts.
+  generated-radar index contract in `dry-run`, `local-r2`, or explicit `r2`
+  mode. It collects sparse artifact files, preserves exact on-demand object
+  keys, rewrites public manifest URLs, merges the source-scoped pack into the
+  index, prunes expired packs, uploads the planned object set when credentials
+  are provided manually, and writes the mutable `radar/mrms/index.json`
+  separately from immutable pack artifacts. Manual `r2` runs require the same
+  temporary `@aws-sdk/client-s3` dependency used by the current generated-MRMS
+  R2 uploader.
 - `scripts/radar-generation-publisher-smoke.mjs` verifies object planning,
-  local R2 mirroring, expired-pack pruning, pack replacement, and index output
-  without Cloudflare credentials.
+  local R2 mirroring, injected-client R2 upload, expired-pack pruning, pack
+  replacement, and index output without Cloudflare credentials.
 
 Still missing before activation:
 
@@ -345,7 +348,8 @@ Still missing before activation:
 - Request-state storage binding.
 - Preview budget values.
 - Queue binding and consumer deployment wiring.
-- Credentialed R2 upload for the planned object set.
+- Preview R2 credentials, bucket policy, and manual end-to-end upload
+  verification.
 - Worker or job wiring to run the consumer, renderer, and publisher together.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 
