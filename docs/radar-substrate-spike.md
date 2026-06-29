@@ -139,6 +139,12 @@ path fetches the encoded tile, colorizes it on the user's device, and passes a
 normal PNG tile back into the raster layer. This is an incremental bridge
 toward client-side weather-field rendering without breaking current clients.
 
+The app's generated-radar index selection is now viewport-aware. It ranks packs
+by whether they cover the current map center, the searched place, the visible
+viewport overlap, zoom fit, compactness, and freshness. After a pan or zoom
+settles, Nearcast can opportunistically switch to a better generated pack while
+keeping the existing weather layer visible until replacement frames are ready.
+
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
 the same manifest contract, it can enter the map as a normal precipitation

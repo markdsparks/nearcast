@@ -264,6 +264,7 @@ function endMapGesture(el = els.weatherMap) {
   dragState.active = false;
   pinchState.active = false;
   finishAnchoredMapPan({ render: shouldRender });
+  if (shouldRender) scheduleGeneratedRadarViewportRefresh("pan");
   if (el) el.style.cursor = "grab";
   if (shouldResumePlayback) {
     requestAnimationFrame(() => {
@@ -522,6 +523,7 @@ function finishMapLibreInteraction(map) {
   mapLibreInteraction.resumePlayback = false;
   renderMapLegend();
   renderMapLibreOverlays({ forceRadar: true });
+  scheduleGeneratedRadarViewportRefresh("gl-settle");
   requestAnimationFrame(() => setMapLibreRadarSuspended(false));
   if (resumePlayback && mapState.frames.length && !mapState.playing) {
     requestAnimationFrame(() => {
@@ -1534,6 +1536,46 @@ function applyRadarProviderPreference() {
   });
 }
 
+function scheduleGeneratedRadarViewportRefresh(reason = "viewport") {
+  if (!shouldRefreshGeneratedRadarForViewport()) return;
+  if (mapState.generatedRadarRefreshTimer) clearTimeout(mapState.generatedRadarRefreshTimer);
+  mapState.generatedRadarRefreshTimer = setTimeout(() => {
+    mapState.generatedRadarRefreshTimer = 0;
+    refreshGeneratedRadarForViewport(reason);
+  }, 300);
+}
+
+function shouldRefreshGeneratedRadarForViewport() {
+  if (!mapState.initialized || !state.activePlace) return false;
+  if (mapState.timelineKind !== "radar") return false;
+  if (radarProviderPreference() !== "mrms-generated") return false;
+  if (generatedMrmsManifestUrlOverride()) return false;
+  return true;
+}
+
+async function refreshGeneratedRadarForViewport() {
+  if (!shouldRefreshGeneratedRadarForViewport()) return;
+  const viewportKey = generatedRadarViewportKey();
+  if (viewportKey && viewportKey === mapState.generatedRadarViewportKey) return;
+  const seq = ++mapState.generatedRadarRefreshSeq;
+  try {
+    const selection = await resolveGeneratedMrmsManifestSelection({ allowLegacy: false });
+    if (seq !== mapState.generatedRadarRefreshSeq || !selection?.key) return;
+    if (selection.key === mapState.generatedRadarSelectionKey) {
+      mapState.generatedRadarViewportKey = viewportKey;
+      return;
+    }
+    await loadMapFrames(true, {
+      timelineKind: "radar",
+      focusLatest: true,
+      resumePlayback: mapState.playing,
+      preserveExisting: true
+    });
+  } catch {
+    /* Viewport refresh is opportunistic; keep the current weather layer visible. */
+  }
+}
+
 function ensureMapLibreMap() {
   if (!mapRendererIsGl() || !els.weatherMap || !state.activePlace) return null;
   const container = els.weatherMap;
@@ -1931,8 +1973,9 @@ async function loadMapFrames(force = false, options = {}) {
   }
 
   const shouldResumePlayback = Boolean(options.resumePlayback || mapState.playing);
+  const preserveExisting = Boolean(options.preserveExisting && mapState.frames.length);
   setMapLoading(true);
-  clearMapLayers({ renderStatic: false });
+  if (!preserveExisting) clearMapLayers({ renderStatic: false });
   mapState.timelineKind = timelineKind;
 
   try {
@@ -1942,8 +1985,10 @@ async function loadMapFrames(force = false, options = {}) {
     mapState.forecastUnavailable = timeline.forecastUnavailable;
 
     if (!mapState.frames.length) {
-      setFrameLabel(timeline.emptyLabel || "No frames");
-      updateTimelineEraVisuals();
+      if (!preserveExisting) {
+        setFrameLabel(timeline.emptyLabel || "No frames");
+        updateTimelineEraVisuals();
+      }
       return;
     }
 
@@ -1954,8 +1999,10 @@ async function loadMapFrames(force = false, options = {}) {
     if (shouldResumePlayback) startRadarPlayback();
     else maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
   } catch (error) {
-    setFrameLabel("Map data unavailable");
-    updateTimelineEraVisuals();
+    if (!preserveExisting) {
+      setFrameLabel("Map data unavailable");
+      updateTimelineEraVisuals();
+    }
   } finally {
     setMapLoading(false);
   }
@@ -2096,6 +2143,7 @@ async function fetchRadarFrames() {
     } catch {
       /* Generated MRMS is optional; fall through to the proven sources if it is unavailable or stale. */
     }
+    clearGeneratedRadarSelection();
   }
 
   try {
@@ -2120,17 +2168,34 @@ function generatedMrmsManifestUrlOverride() {
 }
 
 async function fetchGeneratedMrmsRadarFrames() {
-  const manifestUrl = await resolveGeneratedMrmsManifestUrl();
-  const response = await fetch(manifestUrl, { cache: "no-store" });
+  const selection = await resolveGeneratedMrmsManifestSelection();
+  const response = await fetch(selection.manifestUrl, { cache: "no-store" });
   if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
   const manifest = await response.json();
   validateGeneratedMrmsManifest(manifest);
-  return normalizeGeneratedMrmsFrames(manifest, manifestUrl);
+  const frames = normalizeGeneratedMrmsFrames(manifest, selection.manifestUrl);
+  if (frames.length) {
+    mapState.generatedRadarManifestUrl = selection.manifestUrl;
+    mapState.generatedRadarSelectionKey = selection.key;
+    mapState.generatedRadarViewportKey = generatedRadarViewportKey();
+  }
+  return frames;
 }
 
 async function resolveGeneratedMrmsManifestUrl() {
+  const selection = await resolveGeneratedMrmsManifestSelection();
+  return selection.manifestUrl;
+}
+
+async function resolveGeneratedMrmsManifestSelection(options = {}) {
   const explicit = generatedMrmsManifestUrlOverride();
-  if (explicit) return explicit;
+  if (explicit) {
+    return {
+      source: "override",
+      manifestUrl: explicit,
+      key: `override:${explicit}`
+    };
+  }
 
   const indexUrl = generatedMrmsIndexUrl();
   try {
@@ -2139,12 +2204,24 @@ async function resolveGeneratedMrmsManifestUrl() {
     const index = await response.json();
     const pack = selectGeneratedMrmsIndexPack(index);
     const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
-    if (manifestUrl) return resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+    if (manifestUrl) {
+      const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+      return {
+        source: "index",
+        manifestUrl: resolved,
+        key: generatedMrmsIndexPackSelectionKey(pack, resolved)
+      };
+    }
   } catch {
     /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
   }
 
-  return MRMS_RADAR_MANIFEST_URL;
+  if (options.allowLegacy === false) return null;
+  return {
+    source: "legacy",
+    manifestUrl: MRMS_RADAR_MANIFEST_URL,
+    key: `legacy:${MRMS_RADAR_MANIFEST_URL}`
+  };
 }
 
 function generatedMrmsIndexUrl() {
@@ -2154,11 +2231,16 @@ function generatedMrmsIndexUrl() {
 }
 
 function selectGeneratedMrmsIndexPack(index) {
+  const context = generatedMrmsSelectionContext();
   const packs = generatedMrmsIndexPacks(index)
     .filter((pack) => !generatedMrmsIndexPackExpired(pack))
-    .filter((pack) => generatedMrmsIndexPackCoversActivePlace(pack))
-    .sort(compareGeneratedMrmsIndexPacks);
-  return packs[0] || null;
+    .map((pack) => ({
+      pack,
+      score: generatedMrmsIndexPackScore(pack, context)
+    }))
+    .filter((item) => item.score)
+    .sort(compareGeneratedMrmsIndexPackScores);
+  return packs[0]?.pack || null;
 }
 
 function generatedMrmsIndexPacks(index) {
@@ -2177,21 +2259,48 @@ function generatedMrmsIndexPackExpired(pack) {
   return !pack?.sample && Number.isFinite(expiresAt) && expiresAt < Date.now();
 }
 
-function generatedMrmsIndexPackCoversActivePlace(pack) {
-  const place = state.activePlace;
-  if (!place) return true;
-  const latitude = Number(place.latitude);
-  const longitude = normalizeMapLongitude(place.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+function generatedMrmsIndexPackScore(pack, context = generatedMrmsSelectionContext()) {
   const areas = generatedManifestCoverageAreas(pack);
-  if (!areas.length) return true;
-  return areas.some((bounds) => generatedBoundsContainPoint(bounds, latitude, longitude));
+  const coverage = generatedCoverageScoreForAreas(areas, context);
+  if (!coverage.relevant) return null;
+  const zoom = generatedMrmsIndexPackZoomScore(pack, context.zoom);
+  const dataTiles = Number(pack?.metrics?.dataTiles || 0);
+  const area = generatedMrmsIndexPackArea(pack);
+  const freshness = generatedManifestTimestamp(pack?.expiresAt) || 0;
+  return {
+    value: coverage.value * 1000 + zoom * 100 + (dataTiles > 0 ? 25 : 0),
+    coverage,
+    zoom,
+    area,
+    freshness
+  };
 }
 
-function compareGeneratedMrmsIndexPacks(a, b) {
-  const areaDelta = generatedMrmsIndexPackArea(a) - generatedMrmsIndexPackArea(b);
+function compareGeneratedMrmsIndexPackScores(a, b) {
+  const scoreDelta = b.score.value - a.score.value;
+  if (Math.abs(scoreDelta) > 0.00001) return scoreDelta;
+  const areaDelta = a.score.area - b.score.area;
   if (Math.abs(areaDelta) > 0.00001) return areaDelta;
-  return (generatedManifestTimestamp(b?.expiresAt) || 0) - (generatedManifestTimestamp(a?.expiresAt) || 0);
+  return b.score.freshness - a.score.freshness;
+}
+
+function generatedMrmsIndexPackZoomScore(pack, zoom) {
+  const minZoom = Number(pack?.minZoom ?? pack?.minzoom);
+  const maxZoom = Number(pack?.maxZoom ?? pack?.maxzoom);
+  if (!Number.isFinite(zoom)) return 0.5;
+  if (Number.isFinite(minZoom) && zoom < minZoom) return Math.max(0, 0.75 - (minZoom - zoom) * 0.12);
+  if (Number.isFinite(maxZoom) && zoom > maxZoom) return Math.max(0, 1 - (zoom - maxZoom) * 0.16);
+  return 1;
+}
+
+function generatedMrmsIndexPackSelectionKey(pack, manifestUrl) {
+  return [
+    manifestUrl,
+    pack?.id || "",
+    pack?.publishFingerprint || "",
+    pack?.sourceSignature || "",
+    pack?.expiresAt || ""
+  ].join("|");
 }
 
 function generatedMrmsIndexPackArea(pack) {
@@ -2207,6 +2316,164 @@ function generatedLongitudeSpan(bounds) {
   return 360 - bounds.minLon + bounds.maxLon;
 }
 
+function generatedMrmsSelectionContext() {
+  const activePoint = generatedPointForPlace(state.activePlace);
+  const viewport = generatedCurrentMapViewport();
+  return {
+    activePoint,
+    centerPoint: viewport?.center || activePoint,
+    viewportBounds: viewport?.bounds || null,
+    zoom: Number.isFinite(Number(mapState.zoom)) ? Number(mapState.zoom) : null
+  };
+}
+
+function generatedPointForPlace(place) {
+  if (!place) return null;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+function generatedCurrentMapViewport() {
+  if (!mapState.initialized || !state.activePlace || !els.weatherMap) return null;
+  const rect = els.weatherMap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const zoom = clampMapZoom(mapState.zoom);
+  const viewport = getMapViewport();
+  if (!Number.isFinite(viewport?.center?.x) || !Number.isFinite(viewport?.center?.y)) return null;
+  const halfWidth = viewport.width / 2;
+  const halfHeight = viewport.height / 2;
+  const corners = [
+    { x: viewport.center.x - halfWidth, y: viewport.center.y - halfHeight },
+    { x: viewport.center.x + halfWidth, y: viewport.center.y - halfHeight },
+    { x: viewport.center.x + halfWidth, y: viewport.center.y + halfHeight },
+    { x: viewport.center.x - halfWidth, y: viewport.center.y + halfHeight }
+  ].map((point) => unprojectWorldPoint(point, zoom));
+  const center = unprojectWorldPoint(viewport.center, zoom);
+  return {
+    center,
+    bounds: generatedBoundsFromPoints(corners)
+  };
+}
+
+function generatedBoundsFromPoints(points) {
+  const valid = (points || []).filter((point) =>
+    point &&
+    Number.isFinite(Number(point.latitude)) &&
+    Number.isFinite(normalizeMapLongitude(point.longitude))
+  );
+  if (!valid.length) return null;
+  const latitudes = valid.map((point) => Number(point.latitude));
+  const longitudes = valid.map((point) => normalizeMapLongitude(point.longitude));
+  const lonBounds = generatedLongitudeBounds(longitudes);
+  return {
+    minLat: Math.max(-85.0511, Math.min(...latitudes)),
+    minLon: lonBounds.minLon,
+    maxLat: Math.min(85.0511, Math.max(...latitudes)),
+    maxLon: lonBounds.maxLon
+  };
+}
+
+function generatedLongitudeBounds(longitudes) {
+  const values = longitudes.map(normalizeMapLongitude).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!values.length) return { minLon: -180, maxLon: 180 };
+  if (values.length === 1) return { minLon: values[0], maxLon: values[0] };
+  let largestGap = -Infinity;
+  let largestGapIndex = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const current = values[index];
+    const next = index === values.length - 1 ? values[0] + 360 : values[index + 1];
+    const gap = next - current;
+    if (gap > largestGap) {
+      largestGap = gap;
+      largestGapIndex = index;
+    }
+  }
+  const coverageSpan = 360 - largestGap;
+  if (coverageSpan >= 359.999) return { minLon: -180, maxLon: 180 };
+  return {
+    minLon: normalizeMapLongitude(values[(largestGapIndex + 1) % values.length]),
+    maxLon: normalizeMapLongitude(values[largestGapIndex])
+  };
+}
+
+function generatedCoverageScoreForAreas(areas, context) {
+  if (!areas.length) {
+    return {
+      relevant: true,
+      value: 4,
+      centerCovered: true,
+      activeCovered: true,
+      viewportOverlap: 1
+    };
+  }
+  const centerCovered = context.centerPoint
+    ? areas.some((bounds) => generatedBoundsContainPoint(bounds, context.centerPoint.latitude, context.centerPoint.longitude))
+    : false;
+  const activeCovered = context.activePoint
+    ? areas.some((bounds) => generatedBoundsContainPoint(bounds, context.activePoint.latitude, context.activePoint.longitude))
+    : false;
+  const viewportOverlap = context.viewportBounds
+    ? Math.min(1, areas.reduce((sum, bounds) => sum + generatedBoundsOverlapRatio(bounds, context.viewportBounds), 0))
+    : 0;
+  const relevant = centerCovered || activeCovered || viewportOverlap >= 0.08;
+  return {
+    relevant,
+    value: (centerCovered ? 3 : 0) + (activeCovered ? 0.75 : 0) + viewportOverlap,
+    centerCovered,
+    activeCovered,
+    viewportOverlap
+  };
+}
+
+function generatedBoundsOverlapRatio(bounds, target) {
+  const targetArea = generatedBoundsArea(target);
+  if (!targetArea) return 0;
+  return generatedBoundsIntersectionArea(bounds, target) / targetArea;
+}
+
+function generatedBoundsIntersectionArea(a, b) {
+  if (!a || !b) return 0;
+  const latOverlap = Math.max(0, Math.min(a.maxLat, b.maxLat) - Math.max(a.minLat, b.minLat));
+  if (!latOverlap) return 0;
+  let lonOverlap = 0;
+  generatedLongitudeSegments(a).forEach((segA) => {
+    generatedLongitudeSegments(b).forEach((segB) => {
+      lonOverlap += Math.max(0, Math.min(segA.max, segB.max) - Math.max(segA.min, segB.min));
+    });
+  });
+  return latOverlap * lonOverlap;
+}
+
+function generatedBoundsArea(bounds) {
+  if (!bounds) return 0;
+  return Math.max(0, bounds.maxLat - bounds.minLat) * generatedLongitudeSpan(bounds);
+}
+
+function generatedLongitudeSegments(bounds) {
+  if (!bounds) return [];
+  if (bounds.minLon <= bounds.maxLon) return [{ min: bounds.minLon, max: bounds.maxLon }];
+  return [
+    { min: bounds.minLon, max: 180 },
+    { min: -180, max: bounds.maxLon }
+  ];
+}
+
+function generatedRadarViewportKey() {
+  const context = generatedMrmsSelectionContext();
+  const point = context.centerPoint || context.activePoint;
+  if (!point) return "";
+  const zoom = Number.isFinite(context.zoom) ? context.zoom : 0;
+  return `${point.latitude.toFixed(2)},${point.longitude.toFixed(2)},z${Math.round(zoom * 2) / 2}`;
+}
+
+function clearGeneratedRadarSelection() {
+  mapState.generatedRadarManifestUrl = "";
+  mapState.generatedRadarSelectionKey = "";
+  mapState.generatedRadarViewportKey = "";
+}
+
 function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
   const frames = Array.isArray(manifest?.frames)
     ? manifest.frames
@@ -2218,6 +2485,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
   const dataEncoding = normalizeGeneratedMrmsDataEncoding(manifest?.dataEncoding);
   const manifestGeneratedAt = generatedManifestTimestamp(manifest?.generatedAt);
   const manifestExpiresAt = generatedManifestTimestamp(manifest?.expiresAt);
+  const coverageBounds = generatedCoverageBounds(manifest?.coverageBounds);
   const sample = Boolean(manifest?.sample);
 
   return frames
@@ -2230,6 +2498,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
       dataEncoding,
       manifestGeneratedAt,
       manifestExpiresAt,
+      coverageBounds,
       sample
     }))
     .filter(Boolean)
@@ -2241,8 +2510,8 @@ function validateGeneratedMrmsManifest(manifest) {
   if (!manifest?.sample && Number.isFinite(expiresAt) && expiresAt < Date.now()) {
     throw new Error("Generated MRMS manifest expired.");
   }
-  if (!generatedManifestCoversActivePlace(manifest)) {
-    throw new Error("Generated MRMS coverage unavailable for active place.");
+  if (!generatedManifestCoversCurrentMapView(manifest)) {
+    throw new Error("Generated MRMS coverage unavailable for current map view.");
   }
 }
 
@@ -2273,7 +2542,7 @@ function normalizeGeneratedMrmsFrame(frame, context) {
     manifestGeneratedAt: context.manifestGeneratedAt,
     manifestExpiresAt: context.manifestExpiresAt,
     sample: context.sample,
-    coverageBounds: generatedCoverageBounds(frame?.coverageBounds),
+    coverageBounds: generatedCoverageBounds(frame?.coverageBounds) || context.coverageBounds,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : 14
   };
   if (Number.isFinite(minZoom)) normalized.minZoom = minZoom;
@@ -2340,6 +2609,13 @@ function generatedManifestCoversActivePlace(manifest) {
   const areas = generatedManifestCoverageAreas(manifest);
   if (!areas.length) return true;
   return areas.some((bounds) => generatedBoundsContainPoint(bounds, latitude, longitude));
+}
+
+function generatedManifestCoversCurrentMapView(manifest) {
+  const areas = generatedManifestCoverageAreas(manifest);
+  if (!areas.length) return true;
+  const score = generatedCoverageScoreForAreas(areas, generatedMrmsSelectionContext());
+  return score.relevant;
 }
 
 function generatedManifestCoverageAreas(manifest) {
@@ -3612,6 +3888,7 @@ function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
       record.map.zoomTo(newZoom, options);
       syncMapLibreStateAndOverlays(record.map);
       renderMapLegend();
+      scheduleGeneratedRadarViewportRefresh("zoom");
       return;
     }
   }
@@ -3639,6 +3916,7 @@ function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
   mapState.zoom = newZoom;
   renderMapLegend();
   renderTileMap();
+  scheduleGeneratedRadarViewportRefresh("zoom");
 }
 
 function getMapViewport() {

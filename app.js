@@ -1,4 +1,4 @@
-const VERSION = "3.0.52";
+const VERSION = "3.0.53";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -269,6 +269,11 @@ const mapState = {
   timelineKind: "radar",
   nowIndex: 0,
   forecastUnavailable: false,
+  generatedRadarManifestUrl: "",
+  generatedRadarSelectionKey: "",
+  generatedRadarViewportKey: "",
+  generatedRadarRefreshTimer: 0,
+  generatedRadarRefreshSeq: 0,
   stormImpact: {
     status: "idle",
     analysis: null,

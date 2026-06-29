@@ -233,6 +233,11 @@ The generated manifest exposes that template as `frames[].dataUrl` with a
 renderer and colorizes it client-side; older clients and the classic renderer
 continue to use the colored `url` template.
 
+The deployed `radar/mrms/index.json` is a routing layer, not just a list. The app
+scores packs against the current map viewport, searched place, zoom level,
+coverage area, and freshness, then keeps the current layer visible while a
+better generated pack loads after pan or zoom.
+
 This changes only the manifest contract. The renderer still writes local tile
 files first. The GitHub Actions workflow can then upload those files to R2 and
 remove the local tile directory before Worker deploy when

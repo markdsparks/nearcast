@@ -171,6 +171,9 @@ Multi-pack static deploys:
 - When encoded tiles are enabled, each frame stores color fallback PNGs at the
   frame root and data tiles under `data/`. The manifest points MapLibre at
   `dataUrl` first and keeps `url` as the fallback.
+- The app scores index packs against the current viewport and zoom, not only
+  the active place. This lets search, pan, and hyperzoom choose the most
+  relevant pack without exposing pack/provider details in the UI.
 - Empty radar tiles are skipped by default. Missing generated tiles should read
   as transparent radar, not as unavailable weather, because the manifest and
   coverage metadata remain the source of truth.
