@@ -1365,7 +1365,7 @@ function radarSourceZoomOverride() {
 }
 
 function radarSourceZoomLabel() {
-  if (!radarSourceZoomOverride() && radarProviderPreference() === "mrms-generated") return "Radar auto MRMS";
+  if (!radarSourceZoomOverride() && radarProviderAllowsGenerated()) return "Radar auto MRMS";
   return `Radar z${radarSourceZoomOverride() || RADAR_TILE_MAX_ZOOM}`;
 }
 
@@ -1548,7 +1548,7 @@ function scheduleGeneratedRadarViewportRefresh(reason = "viewport") {
 function shouldRefreshGeneratedRadarForViewport() {
   if (!mapState.initialized || !state.activePlace) return false;
   if (mapState.timelineKind !== "radar") return false;
-  if (radarProviderPreference() !== "mrms-generated") return false;
+  if (!radarProviderAllowsGenerated()) return false;
   if (generatedMrmsManifestUrlOverride()) return false;
   return true;
 }
@@ -1572,7 +1572,15 @@ async function refreshGeneratedRadarForViewport() {
       preserveExisting: true
     });
   } catch {
-    /* Viewport refresh is opportunistic; keep the current weather layer visible. */
+    if (radarProviderPreference() === "auto") {
+      clearGeneratedRadarSelection();
+      await loadMapFrames(true, {
+        timelineKind: "radar",
+        focusLatest: true,
+        resumePlayback: mapState.playing,
+        preserveExisting: true
+      });
+    }
   }
 }
 
@@ -1718,7 +1726,6 @@ function fallbackMapLibreRenderer(reason = "WebGL map unavailable") {
   if (state.mapRenderer !== "gl") return;
   console.warn(`[Nearcast] Falling back to Classic map: ${reason}`);
   state.mapRenderer = "classic";
-  try { localStorage.setItem(MAP_RENDERER_KEY, "classic"); } catch {}
   state.mapDiagnosticMode = "full";
   try { localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full"); } catch {}
   if (typeof updateMapRendererButtons === "function") updateMapRendererButtons();
@@ -2136,7 +2143,7 @@ function rainViewerTileUrl(data, frame) {
 
 async function fetchRadarFrames() {
   const provider = radarProviderPreference();
-  if (provider === "mrms-generated") {
+  if (radarProviderAllowsGenerated(provider)) {
     try {
       const generatedFrames = await fetchGeneratedMrmsRadarFrames();
       if (generatedFrames.length) return generatedFrames;
@@ -2157,6 +2164,10 @@ async function fetchRadarFrames() {
 
 function radarProviderPreference() {
   return sanitizeRadarProvider?.(state.radarProvider) || "auto";
+}
+
+function radarProviderAllowsGenerated(provider = radarProviderPreference()) {
+  return provider !== "noaa-wms";
 }
 
 function generatedMrmsManifestUrlOverride() {

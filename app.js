@@ -1,10 +1,11 @@
-const VERSION = "3.0.53";
+const VERSION = "3.0.55";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
+const MAP_RENDERER_CHOICE_KEY = "nearcast-map-renderer-choice";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
 const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
 const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
@@ -84,6 +85,7 @@ else if (windFieldQueryFlag === "0") localStorage.setItem(WIND_FIELD_STORAGE_KEY
 const mapRendererQueryFlag = queryValue("mapRenderer", "maprenderer", "map");
 if (["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLowerCase())) {
   localStorage.setItem(MAP_RENDERER_KEY, String(mapRendererQueryFlag).toLowerCase() === "classic" ? "classic" : "gl");
+  localStorage.setItem(MAP_RENDERER_CHOICE_KEY, "explicit");
 }
 
 const MAP_DIAGNOSTIC_MODES = {
@@ -170,7 +172,7 @@ const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
   theme: localStorage.getItem("weather-theme") || "auto",
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
-  mapRenderer: sanitizeMapRendererPreference(localStorage.getItem(MAP_RENDERER_KEY)),
+  mapRenderer: storedMapRendererPreference(),
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
   radarProvider: sanitizeRadarProvider(localStorage.getItem(RADAR_PROVIDER_KEY)),
   radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
@@ -3232,7 +3234,17 @@ function sanitizeTimeFormatPreference(value) {
 }
 
 function sanitizeMapRendererPreference(value) {
-  return value === "gl" ? "gl" : "classic";
+  return value === "classic" ? "classic" : "gl";
+}
+
+function storedMapRendererPreference() {
+  const stored = localStorage.getItem(MAP_RENDERER_KEY);
+  const choice = localStorage.getItem(MAP_RENDERER_CHOICE_KEY);
+  if (stored === "classic" && choice !== "explicit") {
+    try { localStorage.removeItem(MAP_RENDERER_KEY); } catch {}
+    return "gl";
+  }
+  return sanitizeMapRendererPreference(stored);
 }
 
 function sanitizeMapDiagnosticMode(value) {
@@ -3297,13 +3309,14 @@ function radarSourceMetaText() {
   if (state.radarSourceZoom === "10") return "Forcing radar z10";
   if (state.radarSourceZoom === "12") return "Forcing radar z12";
   if (state.radarProvider === "mrms-generated") return "Auto: generated max zoom";
+  if (state.radarProvider === "auto") return "Auto: generated where covered";
   return `Auto: NOAA WMS z${RADAR_TILE_MAX_ZOOM}`;
 }
 
 function radarProviderMetaText() {
   if (state.radarProvider === "mrms-generated") return "Generated MRMS, NOAA fallback";
   if (state.radarProvider === "noaa-wms") return "NOAA WMS with RainViewer fallback";
-  return "Auto: NOAA WMS";
+  return "Auto: generated MRMS where available";
 }
 
 function updateRadarProviderControl() {
@@ -3315,7 +3328,9 @@ function updateRadarSourceZoomControl() {
   updateRadarProviderControl();
   if (els.radarSourceZoom) {
     const autoOption = els.radarSourceZoom.querySelector?.("option[value=\"auto\"]");
-    if (autoOption) autoOption.textContent = state.radarProvider === "mrms-generated" ? "Auto MRMS" : "Auto z8";
+    if (autoOption) {
+      autoOption.textContent = state.radarProvider === "noaa-wms" ? "Auto z8" : "Auto MRMS";
+    }
     els.radarSourceZoom.value = state.radarSourceZoom;
   }
   if (els.radarSourceMeta) els.radarSourceMeta.textContent = radarSourceMetaText();
@@ -3441,7 +3456,6 @@ function ensureMapLibreAssets(options = {}) {
       applyMapRendererPreference();
     } else if (!ready && state.mapRenderer === "gl") {
       state.mapRenderer = "classic";
-      localStorage.setItem(MAP_RENDERER_KEY, "classic");
       if (state.mapDiagnosticMode !== "full") {
         state.mapDiagnosticMode = "full";
         localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full");
@@ -3465,9 +3479,14 @@ function updateMapRendererButtons() {
 
 function setMapRendererPreference(value) {
   const next = sanitizeMapRendererPreference(value);
-  if (next === state.mapRenderer) return;
+  if (next === state.mapRenderer) {
+    localStorage.setItem(MAP_RENDERER_KEY, next);
+    localStorage.setItem(MAP_RENDERER_CHOICE_KEY, "explicit");
+    return;
+  }
   state.mapRenderer = next;
   localStorage.setItem(MAP_RENDERER_KEY, next);
+  localStorage.setItem(MAP_RENDERER_CHOICE_KEY, "explicit");
   if (next === "classic" && state.mapDiagnosticMode !== "full") {
     state.mapDiagnosticMode = "full";
     localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, "full");
