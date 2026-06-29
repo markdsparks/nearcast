@@ -1,4 +1,4 @@
-const VERSION = "3.0.49";
+const VERSION = "3.0.50";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -10,6 +10,7 @@ const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
 const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
+const MRMS_RADAR_INDEX_URL = "radar/mrms/index.json";
 const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;

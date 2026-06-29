@@ -45,6 +45,9 @@ Recommended routing:
   Cloudflare/browser caches during rollout.
 - `radar/mrms/manifest.json` is also no-cache because generated radar freshness
   comes from that manifest, not the app shell.
+- `radar/mrms/index.json` is no-cache for the same reason. It is the
+  location-aware generated-radar catalog the app checks before loading a
+  specific generated manifest.
 
 ## Generated MRMS radar publisher
 
@@ -61,7 +64,9 @@ deployment by `.github/workflows/publish-generated-mrms.yml`:
    the live manifest is missing, stale, or different.
 6. Replace `radar/mrms/manifest.json` in the build workspace with a live
    manifest containing `expiresAt`, frames, tile URLs, and coverage metadata.
-7. Run `npx --yes wrangler deploy`.
+7. Write `radar/mrms/index.json`, a generated-radar catalog that points active
+   places to the correct manifest by coverage bounds.
+8. Run `npx --yes wrangler deploy`.
 
 This workflow does not commit generated radar tiles. It publishes them as part
 of the static asset deployment snapshot, which keeps Git history from becoming a
@@ -106,7 +111,21 @@ candidate MRMS source objects plus the render profile with the deployed
 manifest's `publishFingerprint`. If that fingerprint matches and the deployed
 manifest is not near expiry, the workflow exits successfully and skips the
 Cloudflare deploy. The default freshness buffer is 8 minutes and can be
-overridden with `--skip-min-fresh-minutes`.
+overridden with `--skip-min-fresh-minutes`. The first run after the
+location-aware index contract was introduced forces a publish when the deployed
+manifest does not yet advertise the current index version.
+
+Generated radar index shape:
+
+- `provider`: `nearcast-generated-radar-index`
+- `packs[]`: generated radar packs with `id`, `label`, `manifestUrl`,
+  `coverageBounds`, `coverageAreas`, `expiresAt`, `frameCount`, and operational
+  metrics.
+
+The app checks this index first. If a pack covers the active place, the app
+loads that pack's manifest. If the index is missing, stale, or has no matching
+coverage, the app falls back through the legacy generated manifest path and then
+to NOAA/RainViewer.
 
 The workflow also supports manual dispatch, so a test run can be triggered
 without waiting for the schedule.

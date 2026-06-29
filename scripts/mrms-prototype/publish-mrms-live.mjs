@@ -10,7 +10,9 @@ const DEFAULT_TTL_MINUTES = 30;
 const DEFAULT_TILE_ZOOMS = "6,7,8,9,10,11,12,13";
 const DEFAULT_OUT_DIR = "radar/mrms/live";
 const DEFAULT_MANIFEST_OUT = "radar/mrms/manifest.json";
+const DEFAULT_INDEX_OUT = "radar/mrms/index.json";
 const DEFAULT_SKIP_MIN_FRESH_MINUTES = 8;
+const GENERATED_RADAR_INDEX_VERSION = 1;
 
 const PROFILES = {
   "metro-east": {
@@ -51,6 +53,7 @@ async function main() {
   const profile = resolveProfile(args.profile || DEFAULT_PROFILE);
   const outDir = args["out-dir"] || DEFAULT_OUT_DIR;
   const manifestOut = args["manifest-out"] || DEFAULT_MANIFEST_OUT;
+  const indexOut = args["index-out"] || DEFAULT_INDEX_OUT;
   const tileBounds = args["tile-bounds"] || args["coverage-bounds"] || profile.tileBounds;
   const tileVersion = args["tile-version"] || liveTileVersion(profile.id);
   const frames = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
@@ -102,6 +105,7 @@ async function main() {
   manifest.publish = {
     profile: profile.id,
     profileLabel: profile.label,
+    indexVersion: GENERATED_RADAR_INDEX_VERSION,
     checkedAt,
     skipped: false,
     reason: skipDecision.reason,
@@ -111,6 +115,7 @@ async function main() {
     skipMinFreshMinutes
   };
   atomicWriteJson(manifestOut, manifest);
+  const index = writeGeneratedRadarIndex({ manifest, profile, manifestOut, indexOut, checkedAt });
   validateLiveManifest(manifest, { profile, tileBounds, manifestOut });
   const summary = {
     skipped: false,
@@ -118,6 +123,7 @@ async function main() {
     profile: profile.id,
     coverage: manifest.coverageBounds,
     manifestOut,
+    indexOut,
     outDir,
     frameCount: manifest.frames.length,
     generatedAt: manifest.generatedAt,
@@ -130,6 +136,7 @@ async function main() {
     generationMs: manifest.metrics?.generationMs || null,
     publishFingerprint: manifest.publishFingerprint || publishPlan.publishFingerprint,
     sourceSignature: manifest.source?.signature || publishPlan.source?.signature || null,
+    indexPackCount: index.packs.length,
     tileVersion
   };
   writeSummary(summary);
@@ -320,6 +327,9 @@ async function loadCurrentManifest() {
 function shouldSkipPublish({ currentManifest, publishPlan, skipMinFreshMinutes }) {
   if (!currentManifest) return { skip: false, reason: "missing-current-manifest" };
   if (currentManifest.provider !== "mrms-generated") return { skip: false, reason: "current-provider-different" };
+  if (currentManifest.publish?.indexVersion !== GENERATED_RADAR_INDEX_VERSION) {
+    return { skip: false, reason: "missing-location-index" };
+  }
   if (!currentManifest.publishFingerprint || !publishPlan.publishFingerprint) return { skip: false, reason: "missing-publish-fingerprint" };
   if (currentManifest.publishFingerprint !== publishPlan.publishFingerprint) {
     return { skip: false, reason: "source-or-config-changed" };
@@ -341,6 +351,45 @@ function writeSummary(summary) {
   if (!summaryOut) return;
   fs.mkdirSync(path.dirname(summaryOut), { recursive: true });
   atomicWriteJson(summaryOut, summary);
+}
+
+function writeGeneratedRadarIndex({ manifest, profile, manifestOut, indexOut, checkedAt }) {
+  const index = {
+    provider: "nearcast-generated-radar-index",
+    version: GENERATED_RADAR_INDEX_VERSION,
+    generatedAt: manifest.generatedAt,
+    updatedAt: checkedAt,
+    expiresAt: manifest.expiresAt,
+    defaultPack: profile.id,
+    packs: [{
+      id: profile.id,
+      label: profile.label,
+      provider: manifest.provider,
+      product: manifest.product,
+      region: manifest.region,
+      style: manifest.style,
+      manifestUrl: relativeUrl(indexOut, manifestOut),
+      generatedAt: manifest.generatedAt,
+      expiresAt: manifest.expiresAt,
+      sample: Boolean(manifest.sample),
+      minZoom: manifest.minZoom,
+      maxZoom: manifest.maxZoom,
+      frameCount: Array.isArray(manifest.frames) ? manifest.frames.length : 0,
+      coverageBounds: manifest.coverageBounds,
+      coverageAreas: manifest.coverageAreas || [],
+      publishFingerprint: manifest.publishFingerprint || null,
+      sourceSignature: manifest.source?.signature || null,
+      metrics: manifest.metrics || manifest.coverage || null
+    }]
+  };
+  fs.mkdirSync(path.dirname(indexOut), { recursive: true });
+  atomicWriteJson(indexOut, index);
+  return index;
+}
+
+function relativeUrl(fromFile, toFile) {
+  const relative = path.relative(path.dirname(fromFile), toFile).split(path.sep).join("/");
+  return relative.startsWith(".") ? relative : `./${relative || path.basename(toFile)}`;
 }
 
 function atomicWriteJson(file, value) {
@@ -391,6 +440,7 @@ Options:
   --ttl-minutes=30           Live manifest freshness window.
   --out-dir=radar/mrms/live  Generated tile root.
   --manifest-out=PATH        Manifest to publish for the app.
+  --index-out=PATH           Location-aware generated radar index path.
   --current-manifest-url=URL Compare against the currently deployed manifest before rendering.
   --current-manifest-file=PATH
                               Compare against a local manifest before rendering.

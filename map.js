@@ -1765,21 +1765,100 @@ function radarProviderPreference() {
   return sanitizeRadarProvider?.(state.radarProvider) || "auto";
 }
 
-function generatedMrmsManifestUrl() {
+function generatedMrmsManifestUrlOverride() {
   try {
-    return localStorage.getItem(RADAR_MANIFEST_URL_KEY) || MRMS_RADAR_MANIFEST_URL;
+    return String(localStorage.getItem(RADAR_MANIFEST_URL_KEY) || "").trim();
   } catch {
-    return MRMS_RADAR_MANIFEST_URL;
+    return "";
   }
 }
 
 async function fetchGeneratedMrmsRadarFrames() {
-  const manifestUrl = generatedMrmsManifestUrl();
+  const manifestUrl = await resolveGeneratedMrmsManifestUrl();
   const response = await fetch(manifestUrl, { cache: "no-store" });
   if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
   const manifest = await response.json();
   validateGeneratedMrmsManifest(manifest);
   return normalizeGeneratedMrmsFrames(manifest, manifestUrl);
+}
+
+async function resolveGeneratedMrmsManifestUrl() {
+  const explicit = generatedMrmsManifestUrlOverride();
+  if (explicit) return explicit;
+
+  const indexUrl = generatedMrmsIndexUrl();
+  try {
+    const response = await fetch(indexUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("Generated MRMS index unavailable.");
+    const index = await response.json();
+    const pack = selectGeneratedMrmsIndexPack(index);
+    const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
+    if (manifestUrl) return resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+  } catch {
+    /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
+  }
+
+  return MRMS_RADAR_MANIFEST_URL;
+}
+
+function generatedMrmsIndexUrl() {
+  return typeof MRMS_RADAR_INDEX_URL === "string" && MRMS_RADAR_INDEX_URL
+    ? MRMS_RADAR_INDEX_URL
+    : "radar/mrms/index.json";
+}
+
+function selectGeneratedMrmsIndexPack(index) {
+  const packs = generatedMrmsIndexPacks(index)
+    .filter((pack) => !generatedMrmsIndexPackExpired(pack))
+    .filter((pack) => generatedMrmsIndexPackCoversActivePlace(pack))
+    .sort(compareGeneratedMrmsIndexPacks);
+  return packs[0] || null;
+}
+
+function generatedMrmsIndexPacks(index) {
+  const packs = Array.isArray(index?.packs)
+    ? index.packs
+    : Array.isArray(index?.manifests) ? index.manifests : [];
+  return packs.filter((pack) => pack && generatedMrmsIndexPackManifestUrl(pack));
+}
+
+function generatedMrmsIndexPackManifestUrl(pack) {
+  return pack?.manifestUrl || pack?.manifest || pack?.url || pack?.href || "";
+}
+
+function generatedMrmsIndexPackExpired(pack) {
+  const expiresAt = generatedManifestTimestamp(pack?.expiresAt);
+  return !pack?.sample && Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+function generatedMrmsIndexPackCoversActivePlace(pack) {
+  const place = state.activePlace;
+  if (!place) return true;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  const areas = generatedManifestCoverageAreas(pack);
+  if (!areas.length) return true;
+  return areas.some((bounds) => generatedBoundsContainPoint(bounds, latitude, longitude));
+}
+
+function compareGeneratedMrmsIndexPacks(a, b) {
+  const areaDelta = generatedMrmsIndexPackArea(a) - generatedMrmsIndexPackArea(b);
+  if (Math.abs(areaDelta) > 0.00001) return areaDelta;
+  return (generatedManifestTimestamp(b?.expiresAt) || 0) - (generatedManifestTimestamp(a?.expiresAt) || 0);
+}
+
+function generatedMrmsIndexPackArea(pack) {
+  const areas = generatedManifestCoverageAreas(pack);
+  return areas.length
+    ? Math.min(...areas.map((bounds) => Math.abs((bounds.maxLat - bounds.minLat) * generatedLongitudeSpan(bounds))))
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function generatedLongitudeSpan(bounds) {
+  if (!bounds) return 360;
+  if (bounds.minLon <= bounds.maxLon) return bounds.maxLon - bounds.minLon;
+  return 360 - bounds.minLon + bounds.maxLon;
 }
 
 function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {

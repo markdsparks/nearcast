@@ -63,7 +63,7 @@ jobs:
       - name: Verify generated manifest
         if: steps.publish.outputs.skipped != 'true'
         run: |
-          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
+          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
 
       - name: Deploy static assets with generated radar
         if: steps.publish.outputs.skipped != 'true'

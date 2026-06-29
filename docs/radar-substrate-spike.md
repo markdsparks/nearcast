@@ -57,6 +57,10 @@ Current spike status:
   `radar/mrms/manifest.json`, normalizes it into the existing radar frame model,
   and falls back to the current NOAA/RainViewer path if the manifest is empty or
   unavailable.
+- The app now checks `radar/mrms/index.json` before the legacy manifest. The
+  index is a location-aware catalog of generated packs, so the app can choose a
+  generated manifest by active-place coverage instead of assuming there is only
+  one generated region.
 - The MRMS prototype can now generate a bounded slippy tile set directly from
   decoded numeric values. The checked-in sample publishes transparent PNG tiles
   at z6-z14 under `radar/mrms/sample-mrms-banded-max/`, centered on the strongest
@@ -99,6 +103,16 @@ but generated future forecast maps can use the same shape later:
 - `metrics`: generation duration and tile counts for operational visibility.
 - `sample`: `true` for checked-in or manual test packs that may be stale.
 - `expiresAt`: freshness guard for live generated packs.
+
+The companion index contract is intentionally smaller:
+
+- `provider`: `nearcast-generated-radar-index`
+- `packs[]`: available generated packs with `manifestUrl`, coverage metadata,
+  freshness metadata, and tile/generation metrics.
+
+Today the publisher writes one pack into the index. In the production shape,
+this can become many observed or forecast packs backed by R2/object storage
+without changing the app's map integration again.
 
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes

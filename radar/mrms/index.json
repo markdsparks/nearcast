@@ -1,0 +1,48 @@
+{
+  "provider": "nearcast-generated-radar-index",
+  "version": 1,
+  "generatedAt": "2026-06-28T22:03:06.510Z",
+  "updatedAt": "2026-06-28T22:03:06.510Z",
+  "expiresAt": null,
+  "defaultPack": "sample-mrms-banded-max",
+  "packs": [
+    {
+      "id": "sample-mrms-banded-max",
+      "label": "Generated sample",
+      "provider": "mrms-generated",
+      "product": "MergedReflectivityQCComposite_00.50",
+      "region": "CONUS",
+      "style": "banded",
+      "manifestUrl": "./manifest.json",
+      "generatedAt": "2026-06-28T22:03:06.510Z",
+      "expiresAt": null,
+      "sample": true,
+      "minZoom": 6,
+      "maxZoom": 14,
+      "frameCount": 1,
+      "coverageBounds": {
+        "minLat": 42.9725,
+        "minLon": -93.36182,
+        "maxLat": 43.05283,
+        "maxLon": -93.25195
+      },
+      "coverageAreas": [
+        {
+          "id": "sample-mrms-banded-max",
+          "label": "Generated focus area",
+          "bounds": {
+            "minLat": 42.9725,
+            "minLon": -93.36182,
+            "maxLat": 43.05283,
+            "maxLon": -93.25195
+          }
+        }
+      ],
+      "metrics": {
+        "generatedTiles": 225,
+        "candidateTiles": 225,
+        "radarTiles": 200
+      }
+    }
+  ]
+}

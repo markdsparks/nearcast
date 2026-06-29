@@ -156,6 +156,7 @@ Defaults:
 - Frames: `6`
 - Zooms: `6-13`
 - Manifest: `radar/mrms/manifest.json`
+- Index: `radar/mrms/index.json`
 - Tile root: `radar/mrms/live/`
 
 Useful profiles:
@@ -187,6 +188,18 @@ The generated manifest includes:
   publisher uses this to skip wasteful regeneration when nothing meaningful has
   changed.
 - `metrics`: generation time and tile-count totals for CI/ops visibility.
+
+The generated index includes one or more location-aware packs:
+
+- `provider`: `nearcast-generated-radar-index`
+- `packs[].manifestUrl`: manifest to load for that generated coverage area.
+- `packs[].coverageBounds` / `coverageAreas`: where the pack is safe to use.
+- `packs[].expiresAt`, `frameCount`, and `metrics`: routing and operations
+  metadata.
+
+The app checks this index before loading the legacy manifest path. Today the
+publisher writes one active pack; the same shape can later point to many R2/CDN
+packs for different U.S. regions.
 
 For dry inspection without writing tiles:
 
