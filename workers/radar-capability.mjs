@@ -2,6 +2,7 @@ const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
+const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
 const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
 const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
@@ -30,7 +31,7 @@ export async function handleRadarCapabilityRequest(request, env = {}, ctx = {}) 
   const indexResult = await loadGeneratedRadarIndex(request, env);
   const selected = indexResult.index ? selectGeneratedRadarPack(indexResult.index, base.viewport) : null;
   const capability = selected
-    ? capabilityWithEnhanced(base, selected, request)
+    ? capabilityWithEnhanced(base, selected, request, indexResult)
     : capabilityUnavailable(base, indexResult);
   capability.generation = await generationState(capability, payload, env, ctx);
   return jsonResponse(capability);
@@ -73,20 +74,54 @@ function baseCapability(payload = {}) {
 }
 
 async function loadGeneratedRadarIndex(request, env = {}) {
-  if (!env?.ASSETS?.fetch) {
-    return { reason: "asset-binding-unavailable", indexUrl: absoluteUrl(RADAR_INDEX_PATH, request.url) };
+  const externalIndexUrl = configuredGeneratedRadarIndexUrl(request, env);
+  if (externalIndexUrl) {
+    const fetcher = generatedRadarIndexFetch(env);
+    if (!fetcher) return { reason: "external-index-fetch-unavailable", indexUrl: externalIndexUrl };
+    return fetchGeneratedRadarIndex(externalIndexUrl, fetcher, {
+      loadedReason: "external-index-loaded",
+      unavailableReason: "external-index-unavailable",
+      errorReason: "external-index-error"
+    });
   }
+
   const indexUrl = absoluteUrl(RADAR_INDEX_PATH, request.url);
+  if (!env?.ASSETS?.fetch) {
+    return { reason: "asset-binding-unavailable", indexUrl };
+  }
+  return fetchGeneratedRadarIndex(indexUrl, env.ASSETS.fetch.bind(env.ASSETS), {
+    loadedReason: "index-loaded",
+    unavailableReason: "index-unavailable",
+    errorReason: "index-error"
+  });
+}
+
+async function fetchGeneratedRadarIndex(indexUrl, fetcher, reasons) {
   try {
-    const response = await env.ASSETS.fetch(new Request(indexUrl, { method: "GET" }));
+    const response = await fetcher(new Request(indexUrl, { method: "GET" }));
     if (!response.ok) {
-      return { reason: "index-unavailable", indexUrl, status: response.status };
+      return { reason: reasons.unavailableReason, indexUrl, status: response.status };
     }
     const index = await response.json();
-    return { reason: "index-loaded", indexUrl, index };
+    return { reason: reasons.loadedReason, indexUrl, index };
   } catch (error) {
-    return { reason: "index-error", indexUrl, error: error?.message || String(error) };
+    return { reason: reasons.errorReason, indexUrl, error: error?.message || String(error) };
   }
+}
+
+function configuredGeneratedRadarIndexUrl(request, env = {}) {
+  const value = typeof env?.[RADAR_GENERATION_INDEX_URL_ENV] === "string"
+    ? env[RADAR_GENERATION_INDEX_URL_ENV].trim()
+    : "";
+  return value ? absoluteUrl(value, request.url) : "";
+}
+
+function generatedRadarIndexFetch(env = {}) {
+  const configured = env?.RADAR_GENERATION_INDEX_FETCH;
+  if (typeof configured === "function") return configured;
+  if (configured?.fetch) return configured.fetch.bind(configured);
+  if (globalThis.fetch) return globalThis.fetch.bind(globalThis);
+  return null;
 }
 
 function selectGeneratedRadarPack(index, viewport) {
@@ -142,9 +177,10 @@ function comparePackScores(a, b) {
   return b.score.freshness - a.score.freshness;
 }
 
-function capabilityWithEnhanced(base, selected, request) {
+function capabilityWithEnhanced(base, selected, request, indexResult = {}) {
   const { pack, score } = selected;
-  const manifestUrl = absoluteUrl(packManifestUrl(pack), absoluteUrl(RADAR_INDEX_PATH, request.url));
+  const indexUrl = indexResult.indexUrl || absoluteUrl(RADAR_INDEX_PATH, request.url);
+  const manifestUrl = absoluteUrl(packManifestUrl(pack), indexUrl);
   return {
     ...base,
     enhanced: {
@@ -152,6 +188,7 @@ function capabilityWithEnhanced(base, selected, request) {
       kind: Number(pack?.metrics?.dataTiles || 0) > 0 ? "encoded-radar" : "generated-radar",
       label: pack?.label || "Radar",
       manifestUrl,
+      indexUrl,
       selectionSource: "index",
       selectionKey: [
         manifestUrl,
@@ -179,12 +216,13 @@ function capabilityWithEnhanced(base, selected, request) {
 function capabilityUnavailable(base, indexResult = {}) {
   const packs = generatedRadarPacks(indexResult.index);
   const freshPackCount = packs.filter((pack) => !packExpired(pack)).length;
+  const indexLoaded = indexResult.reason === "index-loaded" || indexResult.reason === "external-index-loaded";
   return {
     ...base,
     enhanced: {
       ...base.enhanced,
       state: "unavailable",
-      reason: indexResult.reason === "index-loaded" ? "no-fresh-index-pack" : indexResult.reason || "index-unavailable",
+      reason: indexLoaded ? "no-fresh-index-pack" : indexResult.reason || "index-unavailable",
       indexUrl: indexResult.indexUrl || "",
       packCount: packs.length || null,
       freshPackCount: Number.isFinite(freshPackCount) ? freshPackCount : null,

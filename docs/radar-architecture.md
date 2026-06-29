@@ -312,6 +312,9 @@ Current scaffold:
   `/api/radar/capability` control-plane endpoint.
 - The endpoint can resolve ready enhanced packs from the deployed
   `radar/mrms/index.json` through an assets binding.
+- The endpoint can also read an external generated-radar index by setting
+  `RADAR_GENERATION_INDEX_URL`, which lets preview/on-demand packs published to
+  R2 be discovered without a static app deploy.
 - It reports generation as `unsupported` without queue and request-state
   bindings, queues only when both are present, and dedupes repeated viewport
   requests for a short window.
@@ -355,6 +358,9 @@ Current scaffold:
   `radar/mrms/on-demand-preview/...`, and writes
   `radar/mrms/on-demand-preview/index.json`, leaving the live app index and
   deploy path untouched.
+- A real Great Falls preview upload has verified the R2 object layout through
+  the public origin: preview index, pack manifest, and encoded tile URLs are
+  externally readable after upload.
 - The app can load the preview index for engineering tests with
   `?map=gl&radar=mrms-generated&radarIndex=preview` or
   `window.nearcastUseRadarPreviewIndex(true)`. The preview toggle clears any
@@ -375,11 +381,11 @@ Current scaffold:
 Still missing before activation:
 
 - Worker activation in `wrangler.toml`.
+- `RADAR_GENERATION_INDEX_URL` configuration in the preview Worker environment.
 - Request-state storage binding.
 - Preview budget values.
 - Queue binding and consumer deployment wiring.
-- Preview R2 credentials, bucket policy, and manual end-to-end upload
-  verification.
+- Production queue/renderer R2 credential wiring and bucket policy review.
 - Worker or job wiring to run the consumer, renderer, and publisher together.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 

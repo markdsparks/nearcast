@@ -58,7 +58,36 @@ assert.equal(ready.status, 200);
 assert.equal(ready.body.provider, "nearcast-radar-capabilities");
 assert.equal(ready.body.enhanced.state, "ready");
 assert.equal(ready.body.enhanced.kind, "encoded-radar");
+assert.equal(ready.body.enhanced.indexUrl, "https://getnearcast.app/radar/mrms/index.json");
 assert.equal(ready.body.generation.state, "not-needed");
+
+let externalFetchCount = 0;
+const externalIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";
+const externalIndex = {
+  ...index,
+  packs: [{
+    ...index.packs[0],
+    id: "external-great-falls",
+    manifestUrl: "encoded-current-v1/external-great-falls/manifest.json"
+  }]
+};
+const externalReady = await capability(basePayload, {
+  RADAR_GENERATION_INDEX_URL: externalIndexUrl,
+  async RADAR_GENERATION_INDEX_FETCH(request) {
+    externalFetchCount += 1;
+    assert.equal(request.url, externalIndexUrl);
+    return Response.json(externalIndex);
+  }
+});
+assert.equal(externalReady.status, 200);
+assert.equal(externalReady.body.enhanced.state, "ready");
+assert.equal(externalReady.body.enhanced.packId, "external-great-falls");
+assert.equal(externalReady.body.enhanced.indexUrl, externalIndexUrl);
+assert.equal(
+  externalReady.body.enhanced.manifestUrl,
+  "https://radar.example.test/radar/mrms/on-demand-preview/encoded-current-v1/external-great-falls/manifest.json"
+);
+assert.equal(externalFetchCount, 1);
 
 const outsidePayload = {
   ...basePayload,
@@ -141,6 +170,7 @@ assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
+  external: externalReady.body.enhanced.packId,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
   queued: queued.body.generation.state,

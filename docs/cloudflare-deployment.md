@@ -64,6 +64,9 @@ The Worker can:
 
 - Serve static assets through `env.ASSETS` when activated as the main Worker.
 - Read the deployed `radar/mrms/index.json` through the assets binding.
+- Prefer `RADAR_GENERATION_INDEX_URL` when set, allowing the control plane to
+  resolve fresh generated packs from an external R2 index without deploying app
+  assets.
 - Return the same `nearcast-radar-capabilities` shape the app already consumes.
 - Report `unsupported` for generation requests when no queue binding exists.
 - Report `unsupported` when the queue exists without request-state storage.
@@ -229,19 +232,22 @@ Activation checklist:
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
    current Wrangler version.
 2. Add `main = "workers/radar-capability.mjs"` to `wrangler.toml`.
-3. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
-4. Confirm budget limits for the preview environment.
-5. Run the generation consumer smoke test with preview budget values.
-6. Run the renderer smoke test with preview artifact settings.
-7. Run the publisher smoke test against a local R2 mirror.
-8. Install the temporary R2 SDK dependency and verify credentialed R2 upload
-   against a preview bucket with explicit manual execution.
-9. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+3. Set `RADAR_GENERATION_INDEX_URL` to the preview R2 index, such as
+   `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json`,
+   while validating the end-to-end control plane.
+4. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
+5. Confirm budget limits for the preview environment.
+6. Run the generation consumer smoke test with preview budget values.
+7. Run the renderer smoke test with preview artifact settings.
+8. Run the publisher smoke test against a local R2 mirror.
+9. Verify credentialed R2 upload against the preview bucket with explicit
+   manual execution.
+10. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-10. Deploy to a preview Worker URL first.
-11. Point the app at the endpoint with
+11. Deploy to a preview Worker URL first.
+12. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-12. Verify fallback behavior remains unchanged before making the endpoint the
+13. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher
