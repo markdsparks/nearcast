@@ -158,6 +158,12 @@ Defaults:
 - Manifest: `radar/mrms/manifest.json`
 - Tile root: `radar/mrms/live/`
 
+Useful profiles:
+
+- `metro-east`: Maryville/Edwardsville/St. Louis test coverage.
+- `great-falls`: Great Falls, Montana test coverage.
+- `swaledale`: Swaledale, Iowa test coverage.
+
 `radar/mrms/live/` is intentionally ignored by Git. The GitHub Actions publisher
 deploys those generated files as static Cloudflare assets without committing
 them.

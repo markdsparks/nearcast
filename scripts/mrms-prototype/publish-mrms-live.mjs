@@ -26,6 +26,12 @@ const PROFILES = {
     label: "Swaledale",
     tileBounds: "42.7,-93.8,43.4,-92.7",
     focusBounds: "39,-98,46,-88"
+  },
+  "great-falls": {
+    id: "great-falls",
+    label: "Great Falls",
+    tileBounds: "46.9,-112.4,48.2,-110.2",
+    focusBounds: "45,-114,49,-108"
   }
 };
 

@@ -81,6 +81,8 @@ Optional GitHub variable:
 - `MRMS_CURRENT_MANIFEST_URL`: deployed generated-radar manifest to compare
   before rendering. Defaults to
   `https://getnearcast.app/radar/mrms/manifest.json`.
+- `MRMS_PROFILE`: scheduled publish profile. Defaults to `metro-east`; useful
+  temporary values include `great-falls` for testing active Montana weather.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
 workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
@@ -93,6 +95,11 @@ Default live profile:
 - Zooms: `6-13`
 - Frames: `6`
 - Freshness window: `30` minutes
+
+Additional test profiles:
+
+- `great-falls`: `46.9,-112.4,48.2,-110.2`
+- `swaledale`: `42.7,-93.8,43.4,-92.7`
 
 The publisher uses a source-delta guard before it renders. It compares the
 candidate MRMS source objects plus the render profile with the deployed
