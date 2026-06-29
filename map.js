@@ -32,27 +32,27 @@ const mapLibreInteraction = {
 };
 
 const MAPLIBRE_RADAR_RAMP = [
-  { value: 5, color: [101, 239, 123, 145] },
-  { value: 12, color: [58, 224, 94, 180] },
-  { value: 20, color: [28, 187, 76, 215] },
-  { value: 28, color: [6, 129, 51, 232] },
-  { value: 35, color: [250, 222, 54, 238] },
-  { value: 45, color: [248, 149, 38, 243] },
-  { value: 55, color: [238, 66, 52, 248] },
-  { value: 65, color: [183, 65, 222, 250] },
-  { value: 75, color: [255, 232, 255, 253] }
+  { value: 5, color: [54, 245, 92, 170] },
+  { value: 12, color: [22, 224, 78, 210] },
+  { value: 20, color: [0, 184, 65, 238] },
+  { value: 28, color: [0, 116, 44, 248] },
+  { value: 34, color: [255, 214, 0, 255] },
+  { value: 43, color: [255, 151, 0, 255] },
+  { value: 54, color: [245, 55, 38, 255] },
+  { value: 65, color: [190, 39, 232, 255] },
+  { value: 75, color: [255, 232, 255, 255] }
 ];
 
 const MAPLIBRE_RADAR_RESOLVED_RAMP = [
-  { value: 4, color: [63, 226, 93, 175] },
-  { value: 10, color: [27, 170, 67, 205] },
-  { value: 18, color: [7, 107, 43, 232] },
-  { value: 26, color: [3, 75, 33, 242] },
-  { value: 32, color: [252, 226, 56, 244] },
-  { value: 40, color: [248, 153, 37, 247] },
-  { value: 50, color: [236, 71, 42, 250] },
-  { value: 62, color: [172, 56, 214, 252] },
-  { value: 74, color: [246, 228, 255, 253] }
+  { value: 4, color: [54, 245, 92, 190] },
+  { value: 10, color: [0, 198, 70, 230] },
+  { value: 18, color: [0, 128, 48, 250] },
+  { value: 26, color: [0, 75, 30, 255] },
+  { value: 32, color: [255, 214, 0, 255] },
+  { value: 40, color: [255, 151, 0, 255] },
+  { value: 50, color: [244, 55, 36, 255] },
+  { value: 62, color: [190, 39, 230, 255] },
+  { value: 74, color: [246, 228, 255, 255] }
 ];
 
 function mapDiagnosticMode() {
@@ -972,7 +972,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
   if (styleName === "resolved" || styleName === "field") {
     return {
       ramp: MAPLIBRE_RADAR_RESOLVED_RAMP,
-      alphaScale: mapLibreRadarAlphaScale(encoding, 1.12),
+      alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
       fadeBelow: 5,
       fadeAbove: 1.75,
       bandBase: 5,
@@ -983,7 +983,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
   if (styleName === "continuous") {
     return {
       ramp: MAPLIBRE_RADAR_RAMP,
-      alphaScale: mapLibreRadarAlphaScale(encoding, 1.08),
+      alphaScale: mapLibreRadarAlphaScale(encoding, 1.16),
       fadeBelow: 3,
       fadeAbove: 2,
       bandBase: 5,
@@ -993,7 +993,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
   }
   return {
     ramp: MAPLIBRE_RADAR_RAMP,
-    alphaScale: mapLibreRadarAlphaScale(encoding, 1.12),
+    alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
     fadeBelow: 2.5,
     fadeAbove: 1.25,
     bandBase: 5,
@@ -1068,8 +1068,8 @@ function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
 }
 
-function mapLibreWeatherLayerPaint(opacity, sourceZoom = MAP_MAX_ZOOM) {
-  const tone = weatherVisualTone(sourceZoom);
+function mapLibreWeatherLayerPaint(opacity, sourceZoom = MAP_MAX_ZOOM, options = {}) {
+  const tone = weatherVisualTone(sourceZoom, options);
   return {
     "raster-opacity": opacity,
     "raster-fade-duration": 0,
@@ -1085,7 +1085,7 @@ function mapLibreWeatherOpacity(spec) {
 }
 
 function weatherFrameDefaultOpacity(frame) {
-  return frame?.provider === "mrms-generated" ? 0.88 : 0.78;
+  return frame?.provider === "mrms-generated" ? 0.94 : 0.78;
 }
 
 function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
@@ -1192,6 +1192,7 @@ function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
     frameIndex: options.frameIndex,
     template,
     renderer: dataTemplate ? "encoded-radar" : "raster",
+    generatedRadar: frame?.provider === "mrms-generated",
     dataEncoding: layer?.dataEncoding || frame?.dataEncoding || null,
     opacity: Math.max(0, Math.min(opacity, 1)),
     preload: Boolean(options.preload),
@@ -1272,7 +1273,7 @@ function ensureMapLibreWeatherEntry(record, spec) {
     id: layerId,
     type: "raster",
     source: sourceId,
-    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec), spec.maxZoom)
+    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec), spec.maxZoom, spec)
   }, mapLibreWeatherBeforeLayer(map));
 
   entry = {
@@ -1298,7 +1299,7 @@ function setMapLibreWeatherEntryOpacity(record, entry, opacity) {
 function setMapLibreWeatherEntryVisual(record, entry, spec) {
   if (!record?.map?.getLayer(entry.layerId)) return;
   const sourceZoom = spec?.maxZoom || MAP_MAX_ZOOM;
-  const tone = weatherVisualTone(sourceZoom);
+  const tone = weatherVisualTone(sourceZoom, spec);
   setMapLibreWeatherEntryOpacity(record, entry, mapLibreWeatherOpacity(spec));
   record.map.setPaintProperty(entry.layerId, "raster-saturation", tone.mapLibreSaturation);
   record.map.setPaintProperty(entry.layerId, "raster-contrast", tone.mapLibreContrast);
@@ -3356,7 +3357,7 @@ function normalizeGeneratedMrmsLayer(layer, fallbackUrl, manifestUrl) {
     url: template ? resolveGeneratedRadarUrl(template, manifestUrl) : "",
     dataUrl: dataTemplate ? resolveGeneratedRadarUrl(dataTemplate, manifestUrl) : "",
     dataEncoding: normalizeGeneratedMrmsDataEncoding(layer?.dataEncoding),
-    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(opacity, 1)) : 0.88
+    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(opacity, 1)) : 0.94
   };
 }
 
@@ -4326,7 +4327,7 @@ function renderXfade(index, viewport = null) {
     const sourceZoom = weatherFrameSourceZoom(frame || MAP_MAX_ZOOM);
     if (url) {
       renderTileLayer(pane, vp, ({ z, x, y }) => weatherTileUrl(url, z, x, y), { sourceZoom });
-      pane.style.filter = weatherVisualFilter(sourceZoom);
+      pane.style.filter = weatherVisualFilter(sourceZoom, frame);
     }
     pane.style.opacity = f === cur ? String(weatherVisualOpacity(weatherFrameDefaultOpacity(frame), sourceZoom)) : "0"; // hard cut; next preloads hidden
   }
@@ -4637,22 +4638,23 @@ function weatherVisualOpacity(baseOpacity, sourceZoom) {
   return Number((base * weatherVisualTone(sourceZoom).opacity).toFixed(3));
 }
 
-function weatherVisualTone(sourceZoom) {
+function weatherVisualTone(sourceZoom, options = {}) {
   const t = weatherSourceSofteningAmount(sourceZoom);
+  const generatedBoost = options?.generatedRadar || options?.provider === "mrms-generated" ? 1 : 0;
   return {
-    opacity: 1 - 0.14 * t,
-    cssSaturation: 1 + t * 0.08,
-    cssContrast: 1 + t * 0.04,
-    mapLibreSaturation: Number((0.1 * t).toFixed(3)),
-    mapLibreContrast: Number((0.06 * t).toFixed(3))
+    opacity: 1 - 0.1 * t,
+    cssSaturation: 1 + generatedBoost * 0.16 + t * 0.1,
+    cssContrast: 1 + generatedBoost * 0.08 + t * 0.06,
+    mapLibreSaturation: Number((generatedBoost * 0.22 + 0.12 * t).toFixed(3)),
+    mapLibreContrast: Number((generatedBoost * 0.1 + 0.07 * t).toFixed(3))
   };
 }
 
 // Weather tiles are source-capped, so close street zoom should read like a
 // smoothed field over the basemap instead of false block-level precision.
-function weatherVisualFilter(sourceZoom) {
+function weatherVisualFilter(sourceZoom, options = {}) {
   const overzoom = weatherOverzoomAmount(sourceZoom);
-  const tone = weatherVisualTone(sourceZoom);
+  const tone = weatherVisualTone(sourceZoom, options);
   const px = Math.min(Math.max(0.75 + overzoom * 0.48, 0.75), 7.25);
   return `blur(${px.toFixed(2)}px) saturate(${tone.cssSaturation.toFixed(2)}) contrast(${tone.cssContrast.toFixed(2)})`;
 }
@@ -4819,7 +4821,7 @@ function renderWeatherLayers(layers, frameOrMaxZoom, viewport = null) {
       els.weatherTileLayer.appendChild(pane);
     }
     pane.style.opacity = String(weatherVisualOpacity(layer.opacity, sourceZoom));
-    pane.style.filter = weatherVisualFilter(sourceZoom);
+    pane.style.filter = weatherVisualFilter(sourceZoom, frameOrMaxZoom);
     renderTileLayer(pane, tileViewport, ({ z, x, y }) => weatherTileUrl(layer.url, z, x, y), { sourceZoom });
   });
 }
