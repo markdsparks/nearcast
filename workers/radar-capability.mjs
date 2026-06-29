@@ -3,6 +3,8 @@ const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
+const RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV = "RADAR_GENERATION_REQUESTS_R2_PREFIX";
+const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
 const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
 const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
@@ -243,8 +245,8 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
   if (!queue?.send) {
     return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable" };
   }
-  const requestStore = env?.RADAR_GENERATION_REQUESTS;
-  if (!requestStore?.get || !requestStore?.put) {
+  const requestStore = generationRequestStore(env);
+  if (!requestStore) {
     return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable" };
   }
   const dedupeKey = generationDedupeKey(capability, payload);
@@ -290,7 +292,7 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     reason: payload.generation?.reason || "viewport"
   };
   await Promise.all([
-    requestStore.put(dedupeKey, JSON.stringify(record), {
+    requestStore.putJson(dedupeKey, record, {
       expirationTtl: GENERATION_DEDUPE_TTL_SECONDS
     }),
     ...generationBudgetWrites(requestStore, budget, queuedAt)
@@ -299,18 +301,86 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
 }
 
 async function readGenerationRequest(requestStore, dedupeKey) {
-  try {
-    const value = await requestStore.get(dedupeKey, { type: "json" });
-    if (value && typeof value === "object") return value;
-  } catch {
-    try {
-      const text = await requestStore.get(dedupeKey);
-      if (text) return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
+  return requestStore.getJson(dedupeKey);
+}
+
+function generationRequestStore(env = {}) {
+  const kv = env?.RADAR_GENERATION_REQUESTS;
+  if (kv?.get && kv?.put) return kvGenerationRequestStore(kv);
+  const r2 = env?.RADAR_GENERATION_REQUESTS_R2;
+  if (r2?.get && r2?.put) return r2GenerationRequestStore(r2, env);
   return null;
+}
+
+function kvGenerationRequestStore(namespace) {
+  return {
+    kind: "kv",
+    async getJson(key) {
+      try {
+        const value = await namespace.get(key, { type: "json" });
+        if (value && typeof value === "object") return value;
+      } catch {
+        try {
+          const text = await namespace.get(key);
+          if (text) return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    },
+    async putJson(key, value, options = {}) {
+      return namespace.put(key, JSON.stringify(value), options);
+    }
+  };
+}
+
+function r2GenerationRequestStore(bucket, env = {}) {
+  const prefix = cleanStoragePrefix(
+    env?.[RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV] || DEFAULT_GENERATION_REQUESTS_R2_PREFIX
+  );
+  return {
+    kind: "r2",
+    async getJson(key) {
+      const object = await bucket.get(generationRequestStorageKey(prefix, key));
+      if (!object) return null;
+      try {
+        if (typeof object.json === "function") return await object.json();
+      } catch {
+        /* Fall through to text parsing for R2-compatible test doubles. */
+      }
+      try {
+        const text = typeof object.text === "function" ? await object.text() : "";
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
+    },
+    async putJson(key, value) {
+      return bucket.put(generationRequestStorageKey(prefix, key), JSON.stringify(value), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+        customMetadata: {
+          provider: value?.provider || "nearcast-radar-generation-request",
+          expiresAt: value?.expiresAt || ""
+        }
+      });
+    }
+  };
+}
+
+function generationRequestStorageKey(prefix, key) {
+  const name = String(key || "request")
+    .replace(/[\\/]+/g, "_")
+    .replace(/[^a-zA-Z0-9._:-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "request";
+  return [prefix, `${name}.json`].filter(Boolean).join("/");
+}
+
+function cleanStoragePrefix(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\/{2,}/g, "/");
 }
 
 function generationRequestExpired(record) {
@@ -384,7 +454,7 @@ function generationBudgetWrites(requestStore, budget, queuedAt) {
       updatedAt: queuedAt,
       expiresAt: new Date((entry.bucket + 1) * GENERATION_BUDGET_WINDOW_SECONDS * 1000).toISOString()
     };
-    return requestStore.put(entry.key, JSON.stringify(next), {
+    return requestStore.putJson(entry.key, next, {
       expirationTtl: GENERATION_BUDGET_EXPIRATION_SECONDS
     });
   });

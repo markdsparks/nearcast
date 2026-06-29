@@ -35,5 +35,13 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure radar generation preview queue
+        run: |
+          if npx --yes wrangler queues list | grep -q 'nearcast-radar-generation-preview'; then
+            echo "Queue already exists."
+          else
+            npx --yes wrangler queues create nearcast-radar-generation-preview
+          fi
+
       - name: Deploy app and radar capability Worker
         run: npx --yes wrangler deploy

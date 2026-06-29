@@ -155,6 +155,25 @@ assert.equal(deduped.body.generation.state, "deduped");
 assert.equal(deduped.body.generation.requestId, queued.body.generation.requestId);
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
+const r2RequestStore = createR2Bucket();
+const r2QueuedEnv = {
+  ...env,
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_REQUESTS_R2: r2RequestStore,
+  RADAR_GENERATION_REQUESTS_R2_PREFIX: "radar/mrms/request-state-smoke"
+};
+const r2Queued = await capability(outsidePayload, r2QueuedEnv);
+assert.equal(r2Queued.status, 200);
+assert.equal(r2Queued.body.generation.state, "queued");
+assert.equal(r2QueuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
+assert.ok([...r2RequestStore.objects.keys()].some((key) => key.startsWith("radar/mrms/request-state-smoke/")));
+
+const r2Deduped = await capability(outsidePayload, r2QueuedEnv);
+assert.equal(r2Deduped.status, 200);
+assert.equal(r2Deduped.body.generation.state, "deduped");
+assert.equal(r2Deduped.body.generation.requestId, r2Queued.body.generation.requestId);
+assert.equal(r2QueuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
+
 const budgetEnv = {
   ...env,
   RADAR_GENERATION_QUEUE: createQueue(),
@@ -190,6 +209,8 @@ console.log(JSON.stringify({
   queueOnly: queueOnly.body.generation.reason,
   queued: queued.body.generation.state,
   deduped: deduped.body.generation.state,
+  r2Queued: r2Queued.body.generation.state,
+  r2Deduped: r2Deduped.body.generation.state,
   limited: budgetLimited.body.generation.reason,
   requestId: queued.body.generation.requestId
 }, null, 2));
@@ -228,6 +249,31 @@ function createRequestStore() {
     },
     async put(key, value) {
       store.set(key, value);
+    }
+  };
+}
+
+function createR2Bucket() {
+  const objects = new Map();
+  return {
+    objects,
+    async get(key) {
+      const value = objects.get(key);
+      if (!value) return null;
+      return {
+        async json() {
+          return JSON.parse(value.body);
+        },
+        async text() {
+          return value.body;
+        }
+      };
+    },
+    async put(key, body, options = {}) {
+      objects.set(key, {
+        body: String(body),
+        options
+      });
     }
   };
 }

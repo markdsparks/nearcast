@@ -321,9 +321,12 @@ Current scaffold:
 - It applies soft hourly global and per-viewport generation budgets before
   queueing work. These are preview safety rails; broad production use still
   needs authenticated identity and a stronger atomic throttle.
+- Preview deploys bind `RADAR_GENERATION_QUEUE` as a producer and store
+  request-state/budget records in the existing radar R2 bucket. This keeps
+  on-demand acceptance testable without adding a KV namespace yet.
 - `scripts/radar-capability-smoke.mjs` verifies ready, unsupported, queued,
-  deduped, limited, Worker endpoint routing, and static asset passthrough
-  locally without Cloudflare.
+  deduped, limited, KV-backed request state, R2-backed request state, Worker
+  endpoint routing, and static asset passthrough locally without Cloudflare.
 - `workers/radar-generation-consumer.mjs` implements the dormant queue-side
   contract. It validates accepted generation messages, normalizes viewport
   bounds, estimates candidate tile counts, rejects over-budget jobs, and emits a
@@ -380,14 +383,13 @@ Current scaffold:
   too much overzoom softness.
 - `.github/workflows/deploy-cloudflare-app.yml` deploys app/control-plane
   changes without running MRMS generation, so Worker activation is no longer
-  coupled to the generated-radar publisher.
+  coupled to the generated-radar publisher. It also ensures the preview
+  generation queue exists before deploying the capability Worker.
 
 Still missing before broad activation:
 
 - Cloudflare endpoint verification after deploy.
-- Request-state storage binding.
-- Preview budget values.
-- Queue binding and consumer deployment wiring.
+- Queue consumer deployment wiring.
 - Production queue/renderer R2 credential wiring and bucket policy review.
 - Worker or job wiring to run the consumer, renderer, and publisher together.
 - App-side enhanced-layer refresh after a generated pack becomes ready.

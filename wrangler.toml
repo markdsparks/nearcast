@@ -5,5 +5,16 @@ compatibility_date = "2026-06-22"
 [assets]
 directory = "."
 
+[[r2_buckets]]
+binding = "RADAR_GENERATION_REQUESTS_R2"
+bucket_name = "nearcast-radar"
+
+[[queues.producers]]
+binding = "RADAR_GENERATION_QUEUE"
+queue = "nearcast-radar-generation-preview"
+
 [vars]
 RADAR_GENERATION_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json"
+RADAR_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state"
+RADAR_GENERATION_GLOBAL_HOURLY_LIMIT = "20"
+RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT = "2"

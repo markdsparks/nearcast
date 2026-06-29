@@ -22,6 +22,11 @@ The deploy is configured by `wrangler.toml`:
 - Static assets directory: `.`
 - `RADAR_GENERATION_INDEX_URL` points the capability endpoint at the R2 preview
   generated-radar index.
+- `RADAR_GENERATION_REQUESTS_R2` stores preview dedupe and budget records in
+  the existing `nearcast-radar` R2 bucket under
+  `RADAR_GENERATION_REQUESTS_R2_PREFIX`.
+- `RADAR_GENERATION_QUEUE` is a producer binding for the
+  `nearcast-radar-generation-preview` queue.
 
 Use `npx wrangler deploy` so Wrangler applies both the Worker script and the
 static asset binding from repository config.
@@ -82,7 +87,8 @@ The Worker can:
 - Return the same `nearcast-radar-capabilities` shape the app already consumes.
 - Report `unsupported` for generation requests when no queue binding exists.
 - Report `unsupported` when the queue exists without request-state storage.
-- Dedupe recent viewport warming requests through `RADAR_GENERATION_REQUESTS`.
+- Dedupe recent viewport warming requests through `RADAR_GENERATION_REQUESTS`
+  or the preview R2 request store.
 - Apply soft hourly generation budgets before accepting queue work.
 - Send a viewport warming message to `RADAR_GENERATION_QUEUE` after dedupe.
 
@@ -92,6 +98,8 @@ Default preview-worker budget caps are intentionally conservative:
   requests per hour.
 - `RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT`: defaults to `3` accepted generation
   requests per deduped viewport per hour.
+- Current preview config sets those to `20` global and `2` per viewport per
+  hour.
 
 These counters use the same request-state storage and are a soft safety rail,
 not a final abuse-control system. Production activation should still add
@@ -246,10 +254,14 @@ Completed in repo:
 - `main = "workers/radar-capability.mjs"` is set in `wrangler.toml`.
 - `RADAR_GENERATION_INDEX_URL` points at
   `https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json`.
+- `RADAR_GENERATION_REQUESTS_R2` stores request state in R2.
+- `RADAR_GENERATION_QUEUE` can enqueue accepted preview warming requests.
+- `Deploy Cloudflare app` provisions `nearcast-radar-generation-preview` before
+  deploying the Worker.
 - `Deploy Cloudflare app` can deploy the app/control-plane without rendering
   MRMS.
 - `scripts/radar-capability-smoke.mjs` verifies endpoint routing and normal
-  asset passthrough locally.
+  asset passthrough locally, plus KV and R2-backed request-state behavior.
 
 Next:
 
@@ -260,16 +272,16 @@ Next:
    `?radarCapabilityEndpoint=/api/radar/capability`.
 4. Verify fallback behavior remains unchanged.
 5. Run or refresh a preview R2 radar upload so the endpoint has a fresh pack.
-6. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
-7. Confirm budget limits for the preview environment.
-8. Run the generation consumer smoke test with preview budget values.
-9. Run the renderer smoke test with preview artifact settings.
-10. Run the publisher smoke test against a local R2 mirror.
-11. Verify credentialed R2 upload against the preview bucket with explicit
+6. Post a no-fresh-pack viewport with `generation.request=true` and verify the
+   endpoint returns `queued`, then `deduped` on repeat.
+7. Run the generation consumer smoke test with preview budget values.
+8. Run the renderer smoke test with preview artifact settings.
+9. Run the publisher smoke test against a local R2 mirror.
+10. Verify credentialed R2 upload against the preview bucket with explicit
    manual execution.
-12. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
-   ready to consume messages and request budgets/rate limits are in place.
-13. Verify endpoint-driven enhanced radar before making the endpoint the
+11. Deploy a queue consumer only after the render job path is ready to turn
+   accepted messages into artifacts.
+12. Verify endpoint-driven enhanced radar before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher
