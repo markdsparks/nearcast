@@ -2,14 +2,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 
 const DEFAULT_DIR = "radar/mrms/live";
 const DEFAULT_PREFIX = "mrms";
 const DEFAULT_CACHE_CONTROL = "public, max-age=86400, immutable";
 const DEFAULT_CONCURRENCY = 24;
 const DEFAULT_PRUNE_OLDER_THAN_MINUTES = 360;
-const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -79,7 +77,8 @@ async function main() {
     return;
   }
 
-  const client = new R2Client({ endpoint, bucket, accessKeyId, secretAccessKey });
+  const sdk = await loadAwsSdk();
+  const client = new R2Client({ endpoint, bucket, accessKeyId, secretAccessKey, sdk });
   const uploadedKeys = new Set();
   await mapLimit(planned, concurrency, async (item, index) => {
     const body = fs.readFileSync(item.file);
@@ -118,51 +117,62 @@ async function main() {
 }
 
 class R2Client {
-  constructor({ endpoint, bucket, accessKeyId, secretAccessKey }) {
-    this.endpoint = endpoint;
+  constructor({ endpoint, bucket, accessKeyId, secretAccessKey, sdk }) {
     this.bucket = bucket;
-    this.accessKeyId = accessKeyId;
-    this.secretAccessKey = secretAccessKey;
-  }
-
-  async putObject({ key, body, cacheControl, contentType }) {
-    const headers = {
-      "cache-control": cacheControl,
-      "content-type": contentType
-    };
-    await this.requestWithRetry({ method: "PUT", key, headers, body });
-  }
-
-  async listObjects({ prefix, continuationToken }) {
-    const query = canonicalQueryString({
-      "list-type": "2",
-      prefix,
-      ...(continuationToken ? { "continuation-token": continuationToken } : {})
-    });
-    const response = await this.requestWithRetry({ method: "GET", query, expectText: true });
-    return parseListObjectsXml(response.text);
-  }
-
-  async deleteObjects(keys) {
-    if (!keys.length) return;
-    const body = Buffer.from(deleteObjectsXml(keys), "utf8");
-    await this.requestWithRetry({
-      method: "POST",
-      query: "delete=",
-      body,
-      headers: {
-        "content-md5": crypto.createHash("md5").update(body).digest("base64"),
-        "content-type": "application/xml"
+    this.sdk = sdk;
+    this.client = new sdk.S3Client({
+      region: "auto",
+      endpoint,
+      credentials: {
+        accessKeyId,
+        secretAccessKey
       }
     });
   }
 
-  async requestWithRetry(request) {
+  async putObject({ key, body, cacheControl, contentType }) {
+    await this.sendWithRetry(new this.sdk.PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: body,
+      CacheControl: cacheControl,
+      ContentType: contentType
+    }));
+  }
+
+  async listObjects({ prefix, continuationToken }) {
+    const response = await this.sendWithRetry(new this.sdk.ListObjectsV2Command({
+      Bucket: this.bucket,
+      Prefix: prefix,
+      ContinuationToken: continuationToken || undefined
+    }));
+    return {
+      objects: (response.Contents || []).map((object) => ({
+        key: object.Key || "",
+        lastModified: object.LastModified ? object.LastModified.toISOString() : "",
+        lastModifiedMs: object.LastModified ? object.LastModified.getTime() : NaN
+      })).filter((object) => object.key),
+      nextContinuationToken: response.NextContinuationToken || ""
+    };
+  }
+
+  async deleteObjects(keys) {
+    if (!keys.length) return;
+    await this.sendWithRetry(new this.sdk.DeleteObjectsCommand({
+      Bucket: this.bucket,
+      Delete: {
+        Quiet: true,
+        Objects: keys.map((key) => ({ Key: key }))
+      }
+    }));
+  }
+
+  async sendWithRetry(command) {
     const attempts = 4;
     let lastError = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await this.request(request);
+        return await this.client.send(command);
       } catch (error) {
         lastError = error;
         if (attempt === attempts || !shouldRetry(error)) break;
@@ -170,55 +180,6 @@ class R2Client {
       }
     }
     throw lastError;
-  }
-
-  async request({ method, key = "", query = "", headers = {}, body, expectText = false }) {
-    const payload = body || Buffer.alloc(0);
-    const payloadHash = body ? sha256Hex(payload) : EMPTY_SHA256;
-    const now = new Date();
-    const amzDate = amzDateFor(now);
-    const dateStamp = amzDate.slice(0, 8);
-    const url = this.objectUrl(key, query);
-    const signedHeaders = {
-      ...lowercaseHeaders(headers),
-      host: url.host,
-      "x-amz-content-sha256": payloadHash,
-      "x-amz-date": amzDate
-    };
-    const authorization = signAwsV4({
-      method,
-      pathname: url.pathname,
-      query,
-      headers: signedHeaders,
-      payloadHash,
-      accessKeyId: this.accessKeyId,
-      secretAccessKey: this.secretAccessKey,
-      dateStamp,
-      amzDate
-    });
-
-    const response = await fetch(url, {
-      method,
-      headers: {
-        ...signedHeaders,
-        authorization
-      },
-      body: body || undefined
-    });
-
-    const text = expectText || !response.ok ? await response.text() : "";
-    if (!response.ok) {
-      const error = new Error(`${method} ${url.pathname}${url.search} failed: ${response.status} ${response.statusText}${text ? `: ${text.slice(0, 500)}` : ""}`);
-      error.status = response.status;
-      throw error;
-    }
-    return { response, text };
-  }
-
-  objectUrl(key = "", query = "") {
-    const endpoint = new URL(this.endpoint);
-    const objectPath = key ? `/${encodeKeyPath(key)}` : "/";
-    return new URL(`${endpoint.protocol}//${this.bucket}.${endpoint.host}${objectPath}${query ? `?${query}` : ""}`);
   }
 }
 
@@ -268,67 +229,12 @@ async function mapLimit(items, limit, worker) {
   await Promise.all(workers);
 }
 
-function signAwsV4({ method, pathname, query, headers, payloadHash, accessKeyId, secretAccessKey, dateStamp, amzDate }) {
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${normalizeHeader(headers[name])}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalRequest = [
-    method,
-    pathname,
-    query || "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash
-  ].join("\n");
-  const scope = `${dateStamp}/auto/s3/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    scope,
-    sha256Hex(canonicalRequest)
-  ].join("\n");
-  const signingKey = awsSigningKey(secretAccessKey, dateStamp);
-  const signature = hmacHex(signingKey, stringToSign);
-  return `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-}
-
-function awsSigningKey(secretAccessKey, dateStamp) {
-  const dateKey = hmacBuffer(`AWS4${secretAccessKey}`, dateStamp);
-  const regionKey = hmacBuffer(dateKey, "auto");
-  const serviceKey = hmacBuffer(regionKey, "s3");
-  return hmacBuffer(serviceKey, "aws4_request");
-}
-
-function parseListObjectsXml(xml) {
-  return {
-    objects: blocksForTag(xml, "Contents").map((block) => {
-      const key = decodeXml(textForTag(block, "Key"));
-      const lastModified = textForTag(block, "LastModified");
-      return {
-        key,
-        lastModified,
-        lastModifiedMs: Date.parse(lastModified)
-      };
-    }).filter((object) => object.key),
-    nextContinuationToken: decodeXml(textForTag(xml, "NextContinuationToken"))
-  };
-}
-
-function deleteObjectsXml(keys) {
-  const objects = keys.map((key) => `<Object><Key>${escapeXml(key)}</Key></Object>`).join("");
-  return `<?xml version="1.0" encoding="UTF-8"?><Delete><Quiet>true</Quiet>${objects}</Delete>`;
-}
-
-function blocksForTag(xml, tag) {
-  const pattern = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g");
-  return [...String(xml || "").matchAll(pattern)].map((match) => match[1]);
-}
-
-function textForTag(xml, tag) {
-  const match = String(xml || "").match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
-  return match ? match[1].trim() : "";
+async function loadAwsSdk() {
+  try {
+    return await import("@aws-sdk/client-s3");
+  } catch (error) {
+    throw new Error(`missing @aws-sdk/client-s3 dependency for R2 upload: ${error.message}`);
+  }
 }
 
 function parseArgs(argv) {
@@ -359,35 +265,6 @@ function joinKey(prefix, relativePath) {
   return [cleanKeyPrefix(prefix), cleanKeyPrefix(relativePath)].filter(Boolean).join("/");
 }
 
-function encodeKeyPath(value) {
-  return String(value || "")
-    .split("/")
-    .map((segment) => encodeRfc3986(segment))
-    .join("/");
-}
-
-function canonicalQueryString(params) {
-  return Object.entries(params)
-    .filter(([, value]) => value !== undefined && value !== null)
-    .flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => [key, item]) : [[key, value]])
-    .map(([key, value]) => [encodeRfc3986(key), encodeRfc3986(String(value))])
-    .sort(([ak, av], [bk, bv]) => ak.localeCompare(bk) || av.localeCompare(bv))
-    .map(([key, value]) => `${key}=${value}`)
-    .join("&");
-}
-
-function encodeRfc3986(value) {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
-function lowercaseHeaders(headers) {
-  return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]));
-}
-
-function normalizeHeader(value) {
-  return String(value).trim().replace(/\s+/g, " ");
-}
-
 function contentTypeForFile(file) {
   if (file.endsWith(".png")) return "image/png";
   if (file.endsWith(".json")) return "application/json";
@@ -395,7 +272,8 @@ function contentTypeForFile(file) {
 }
 
 function shouldRetry(error) {
-  return !error.status || error.status === 429 || error.status >= 500;
+  const status = error?.$metadata?.httpStatusCode || error?.status;
+  return !status || status === 429 || status >= 500;
 }
 
 function chunks(items, size) {
@@ -404,22 +282,6 @@ function chunks(items, size) {
     result.push(items.slice(index, index + size));
   }
   return result;
-}
-
-function sha256Hex(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function hmacBuffer(key, value) {
-  return crypto.createHmac("sha256", key).update(value).digest();
-}
-
-function hmacHex(key, value) {
-  return crypto.createHmac("sha256", key).update(value).digest("hex");
-}
-
-function amzDateFor(date) {
-  return date.toISOString().replace(/[:-]|\.\d{3}/g, "");
 }
 
 function numberArg(value, fallback) {
@@ -431,24 +293,6 @@ function booleanArg(value, fallback = false) {
   if (value === undefined) return fallback;
   if (value === true) return true;
   return !["0", "false", "no", "off"].includes(String(value).trim().toLowerCase());
-}
-
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function decodeXml(value) {
-  return String(value || "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 function sleep(ms) {

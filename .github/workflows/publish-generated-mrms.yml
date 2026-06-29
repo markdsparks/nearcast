@@ -89,6 +89,10 @@ jobs:
         run: |
           node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
 
+      - name: Install R2 upload dependencies
+        if: steps.publish.outputs.skipped != 'true' && env.MRMS_TILE_UPLOAD_MODE == 'r2'
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
       - name: Upload generated radar tiles to R2
         if: steps.publish.outputs.skipped != 'true' && env.MRMS_TILE_UPLOAD_MODE == 'r2'
         run: |
@@ -115,6 +119,10 @@ jobs:
             --concurrency="$MRMS_R2_UPLOAD_CONCURRENCY" \
             --prune-older-than-minutes="$MRMS_R2_PRUNE_OLDER_THAN_MINUTES" \
             --delete-local
+
+      - name: Remove R2 upload dependencies
+        if: always() && env.MRMS_TILE_UPLOAD_MODE == 'r2'
+        run: rm -rf node_modules
 
       - name: Verify generated asset budget
         if: steps.publish.outputs.skipped != 'true'
