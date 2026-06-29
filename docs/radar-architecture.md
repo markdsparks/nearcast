@@ -322,6 +322,13 @@ Current scaffold:
 - `scripts/radar-generation-consumer-smoke.mjs` verifies valid planning,
   invalid payload rejection, tile-budget rejection, stable output keys, queue
   ack behavior, and optional plan storage locally without Cloudflare.
+- `scripts/radar-generation-renderer.mjs` executes a persisted render plan
+  offline. It resolves and pins the MRMS source, substitutes the source
+  signature into output keys, runs the bounded timeline generator, and writes a
+  generated manifest plus an index-pack artifact.
+- `scripts/radar-generation-renderer-smoke.mjs` verifies that render execution
+  contract with a fake generator, so it does not depend on NOAA network access
+  or real GRIB2 decoding.
 
 Still missing before activation:
 
@@ -329,8 +336,8 @@ Still missing before activation:
 - Request-state storage binding.
 - Preview budget values.
 - Queue binding and consumer deployment wiring.
-- Renderer execution from the queued render plan.
-- R2 manifest/index update path.
+- R2 upload for rendered tile, manifest, and pack artifacts.
+- Generated-radar index merge/update path for on-demand packs.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 
 ### Phase 4: Scale controls

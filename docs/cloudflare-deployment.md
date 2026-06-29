@@ -112,6 +112,29 @@ Smoke test:
 node scripts/radar-generation-consumer-smoke.mjs
 ```
 
+## Dormant radar generation renderer
+
+`scripts/radar-generation-renderer.mjs` executes a persisted render plan without
+activating the Worker queue. It is still an offline scaffold: it writes local
+artifacts and does not upload to R2 or update the live generated-radar index.
+
+The renderer can:
+
+- Read a `nearcast-radar-generation-plan` JSON document.
+- Resolve the latest MRMS source through the existing timeline generator.
+- Pin the exact resolved source object before the bounded render run starts.
+- Substitute the resolved source signature into manifest, tile, and pack keys.
+- Run `scripts/mrms-prototype/generate-mrms-timeline.mjs` with the plan's
+  viewport bounds, zooms, encoded-tile settings, and TTL.
+- Write a generated manifest plus an index-pack artifact that the capability
+  resolver can later consume.
+
+Smoke test:
+
+```bash
+node scripts/radar-generation-renderer-smoke.mjs
+```
+
 Activation checklist:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
@@ -120,12 +143,13 @@ Activation checklist:
 3. Add `RADAR_GENERATION_REQUESTS` storage for request dedupe/budgeting.
 4. Confirm budget limits for the preview environment.
 5. Run the generation consumer smoke test with preview budget values.
-6. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+6. Run the renderer smoke test with preview artifact settings.
+7. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-7. Deploy to a preview Worker URL first.
-8. Point the app at the endpoint with
+8. Deploy to a preview Worker URL first.
+9. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-9. Verify fallback behavior remains unchanged before making the endpoint the
+10. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher
