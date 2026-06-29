@@ -150,6 +150,8 @@ node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls --skip-empty-tiles
 node scripts/mrms-prototype/publish-mrms-live.mjs --profiles=metro-east,great-falls --tile-url-base=https://radar.example.com/mrms
+node scripts/mrms-prototype/publish-mrms-live.mjs --profile=metro-east --encoded-tiles
+node scripts/mrms-prototype/generate-mrms-timeline.mjs --frames=1 --lat=38.7237 --lon=-89.9559 --tile-radius=1 --encoded-tiles --sample
 ```
 
 Defaults:
@@ -163,6 +165,11 @@ Defaults:
 - Tile root: `radar/mrms/live/`
 - Empty tiles: skipped in CI by default so transparent no-radar PNGs do not
   consume static asset slots.
+- Encoded tiles: optional compact `data/{z}/{x}/{y}.png` dBZ-value tiles that
+  let the browser colorize generated radar on the user's device while keeping
+  the existing colored PNG tiles as fallback.
+- Targeted fixtures: `--lat` and `--lon` switch the timeline wrapper from
+  max-storm focus to a fixed point unless `--focus` is explicitly provided.
 
 Useful profiles:
 
@@ -214,6 +221,17 @@ each frame id to that public root. A generated frame URL becomes:
 ```text
 https://radar.example.com/mrms/great-falls/20260629-022439z/{z}/{x}/{y}.png?v=...
 ```
+
+When `--encoded-tiles` is enabled, the same frame also advertises:
+
+```text
+https://radar.example.com/mrms/great-falls/20260629-022439z/data/{z}/{x}/{y}.png?v=...
+```
+
+The generated manifest exposes that template as `frames[].dataUrl` with a
+`frames[].dataEncoding` object. Nearcast prefers `dataUrl` in the MapLibre
+renderer and colorizes it client-side; older clients and the classic renderer
+continue to use the colored `url` template.
 
 This changes only the manifest contract. The renderer still writes local tile
 files first. The GitHub Actions workflow can then upload those files to R2 and

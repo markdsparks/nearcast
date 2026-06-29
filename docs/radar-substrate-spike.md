@@ -133,6 +133,12 @@ workflow can now run that swap with `MRMS_TILE_UPLOAD_MODE=r2`: upload generated
 tiles to R2, prune older R2 objects, and remove local tile PNGs before the
 Worker static asset deploy.
 
+The generator can now publish encoded dBZ value tiles beside the colored PNG
+fallback. Frames advertise these as `dataUrl` plus `dataEncoding`; the MapLibre
+path fetches the encoded tile, colorizes it on the user's device, and passes a
+normal PNG tile back into the raster layer. This is an incremental bridge
+toward client-side weather-field rendering without breaking current clients.
+
 The app should not care whether a generated frame came from observed MRMS,
 future HRRR/NBM/QPF guidance, or a commercial provider bake-off. If it exposes
 the same manifest contract, it can enter the map as a normal precipitation

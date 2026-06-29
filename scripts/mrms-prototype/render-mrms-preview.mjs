@@ -18,6 +18,8 @@ const DEFAULT_TILE_SIZE = 256;
 const DEFAULT_TILE_RADIUS = 2;
 const DEFAULT_TILE_ZOOMS = [6, 7, 8, 9, 10, 11, 12, 13];
 const DEFAULT_TILE_MANIFEST_OUT = "radar/mrms/manifest.json";
+const DEFAULT_ENCODED_DBZ_MIN = 0;
+const DEFAULT_ENCODED_DBZ_MAX = 80;
 const CURRENT_MAP_ZOOMS = [7.4, 7.6, 8, 9, 10, 11, 12, 13, 14];
 const CURRENT_MAP_RADAR_MAX_ZOOM = 8;
 const CURRENT_MAP_WMS_TILE_SIZE = 512;
@@ -668,6 +670,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   const radius = Math.max(0, Math.min(8, Math.round(numberArg(args["tile-radius"], DEFAULT_TILE_RADIUS))));
   const tileBounds = parseBounds(args["tile-bounds"] || args["coverage-bounds"]);
   const skipEmptyTiles = booleanArg(args["skip-empty-tiles"], false);
+  const encodedTiles = booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false);
+  const dataEncoding = encodedTiles ? radarDataEncoding(args, threshold, smooth, style) : null;
   const frameTime = generatedFrameIso(args);
   const frameId = cleanTileSegment(args["frame-id"] || frameIdForIso(frameTime));
   const tileOut = args["tile-out"] || `radar/mrms/${frameId}`;
@@ -677,6 +681,15 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   const tileTemplate = tileUrl.endsWith("/")
     ? `${tileUrl}{z}/{x}/{y}.png${tileVersion}`
     : `${tileUrl.replace(/\/+$/g, "")}/{z}/{x}/{y}.png${tileVersion}`;
+  const encodedTileOut = args["encoded-tile-out"] || path.join(tileOut, "data");
+  const encodedTileUrl = args["encoded-tile-url"] || (args["tile-url"]
+    ? `${tileUrl.replace(/\/+$/g, "")}/data`
+    : manifestRelativeTileUrl(manifestOut, encodedTileOut));
+  const encodedTileTemplate = encodedTiles
+    ? encodedTileUrl.endsWith("/")
+      ? `${encodedTileUrl}{z}/{x}/{y}.png${tileVersion}`
+      : `${encodedTileUrl.replace(/\/+$/g, "")}/{z}/{x}/{y}.png${tileVersion}`
+    : null;
   const layers = args["layered-manifest"] ? [
     { url: tileTemplate, opacity: numberArg(args.opacity, 0.82) }
   ] : null;
@@ -684,6 +697,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   let totalTiles = 0;
   let candidateTiles = 0;
   let radarTiles = 0;
+  let dataTiles = 0;
   let radarPixels = 0;
   let maxRenderedDbz = -Infinity;
 
@@ -725,7 +739,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           tileSize,
           threshold,
           smooth,
-          style
+          style,
+          dataEncoding
         });
         candidateTiles += 1;
         zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
@@ -736,6 +751,12 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
           fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
+          if (encodedTiles && rendered.dataPixels) {
+            const dataOutPath = path.join(encodedTileOut, String(z), String(x), `${y}.png`);
+            fs.mkdirSync(path.dirname(dataOutPath), { recursive: true });
+            fs.writeFileSync(dataOutPath, encodePngRgba(tileSize, tileSize, rendered.dataPixels));
+            dataTiles += 1;
+          }
           zoomSummary.tiles += 1;
           totalTiles += 1;
         }
@@ -794,13 +815,16 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
         maxZoom: Math.max(...zooms),
         coverageBounds,
         sourceLabel: "Radar",
-        style: style.name
+        style: style.name,
+        dataUrl: encodedTileTemplate || undefined,
+        dataEncoding: dataEncoding || undefined
       }
     ],
     coverage: {
       generatedTiles: totalTiles,
       candidateTiles,
       radarTiles,
+      dataTiles,
       zooms: perZoom
     }
   };
@@ -816,14 +840,17 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       frameId,
       frameTime,
       tileTemplate,
+      encodedTileTemplate,
       tileVersion: args["tile-version"] || null,
       tileSize,
       tileRadius: radius,
       skipEmptyTiles,
+      encodedTiles,
       zooms,
       totalTiles,
       candidateTiles,
       radarTiles,
+      dataTiles,
       radarPixels,
       maxRenderedDbz: round(maxRenderedDbz, 1),
       coverageBounds,
@@ -832,8 +859,9 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   };
 }
 
-function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, style }) {
+function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, style, dataEncoding = null }) {
   const pixels = new Uint8ClampedArray(tileSize * tileSize * 4);
+  const dataPixels = dataEncoding ? new Uint8ClampedArray(tileSize * tileSize * 4) : null;
   const worldSize = tileSize * (2 ** z);
   let radarPixels = 0;
   let maxRenderedDbz = -Infinity;
@@ -845,6 +873,16 @@ function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, s
       const { lon, lat } = worldToLonLat(worldX, worldY, worldSize);
       const dbz = sampleGrid(values, grid, lat, lon, smooth);
       const color = transparentRadarColor(dbz, threshold, style);
+      if (dataPixels && dataEncoding) {
+        const encodedValue = encodeRadarDataValue(dbz, dataEncoding);
+        if (encodedValue > 0) {
+          const outIndex = (py * tileSize + px) * 4;
+          dataPixels[outIndex] = encodedValue;
+          dataPixels[outIndex + 1] = 0;
+          dataPixels[outIndex + 2] = 0;
+          dataPixels[outIndex + 3] = 255;
+        }
+      }
       if (!color) continue;
       const outIndex = (py * tileSize + px) * 4;
       pixels[outIndex] = color[0];
@@ -856,7 +894,30 @@ function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, s
     }
   }
 
-  return { pixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+  return { pixels, dataPixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+}
+
+function radarDataEncoding(options, threshold, smooth, style) {
+  return {
+    type: "uint8-dbz",
+    channel: "r",
+    min: numberArg(options["encoded-min"], DEFAULT_ENCODED_DBZ_MIN),
+    max: numberArg(options["encoded-max"], DEFAULT_ENCODED_DBZ_MAX),
+    threshold,
+    smooth,
+    style: style.name,
+    alpha: style.alphaScale,
+    ramp: style.name
+  };
+}
+
+function encodeRadarDataValue(dbz, encoding) {
+  if (!Number.isFinite(dbz)) return 0;
+  const min = Number.isFinite(encoding.min) ? encoding.min : DEFAULT_ENCODED_DBZ_MIN;
+  const max = Number.isFinite(encoding.max) && encoding.max > min ? encoding.max : DEFAULT_ENCODED_DBZ_MAX;
+  if (dbz <= min) return 0;
+  const normalized = Math.max(0, Math.min(1, (dbz - min) / (max - min)));
+  return Math.max(1, Math.min(255, 1 + Math.round(normalized * 254)));
 }
 
 function transparentRadarColor(dbz, threshold, style) {
@@ -1986,6 +2047,7 @@ Options:
   --tile-bounds=minLat,minLon,maxLat,maxLon
                               Generate every tile intersecting these bounds.
   --skip-empty-tiles         Only write tiles with rendered radar pixels.
+  --encoded-tiles            Also write data/{z}/{x}/{y}.png value tiles for client-side colorization.
   --tile-out=radar/mrms/id   Generated tile directory.
   --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.
   --tile-version=clean1      Optional query string cache buster for tile URLs.

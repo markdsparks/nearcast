@@ -12,16 +12,44 @@ const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
+const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
+const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
+const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
 let mapLibreGeneratedRadarProtocolRegistered = false;
+let mapLibreGeneratedRadarDataProtocolRegistered = false;
+const mapLibreEncodedRadarTileCache = new Map();
 const mapLibreInteraction = {
   active: false,
   settleTimer: 0,
   resumePlayback: false,
   needsRadarRender: false
 };
+
+const MAPLIBRE_RADAR_RAMP = [
+  { value: 5, color: [108, 201, 255, 90] },
+  { value: 15, color: [45, 205, 112, 150] },
+  { value: 25, color: [38, 173, 80, 180] },
+  { value: 35, color: [250, 220, 78, 205] },
+  { value: 45, color: [245, 132, 43, 220] },
+  { value: 55, color: [239, 64, 64, 235] },
+  { value: 65, color: [187, 76, 232, 240] },
+  { value: 75, color: [255, 224, 255, 245] }
+];
+
+const MAPLIBRE_RADAR_RESOLVED_RAMP = [
+  { value: 4, color: [5, 83, 30, 175] },
+  { value: 12, color: [19, 125, 39, 195] },
+  { value: 20, color: [49, 174, 75, 215] },
+  { value: 28, color: [252, 224, 60, 225] },
+  { value: 36, color: [247, 155, 36, 235] },
+  { value: 44, color: [235, 76, 35, 242] },
+  { value: 54, color: [203, 24, 28, 245] },
+  { value: 64, color: [156, 55, 178, 248] },
+  { value: 74, color: [245, 227, 255, 250] }
+];
 
 function mapDiagnosticMode() {
   return sanitizeMapDiagnosticMode?.(state.mapDiagnosticMode) || "full";
@@ -655,6 +683,18 @@ function ensureMapLibreGeneratedRadarProtocol() {
   mapLibreGeneratedRadarProtocolRegistered = true;
 }
 
+function ensureMapLibreGeneratedRadarDataProtocol() {
+  const maplibre = window.maplibregl;
+  if (mapLibreGeneratedRadarDataProtocolRegistered || !maplibre?.addProtocol) return;
+  maplibre.addProtocol(MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL, async (params, abortController) => {
+    const request = mapLibreGeneratedRadarDataRequest(params?.url);
+    if (!request.url) return { data: mapLibreEmptyPngArrayBuffer() };
+    const data = await colorizeMapLibreEncodedRadarTile(request, abortController?.signal);
+    return { data };
+  });
+  mapLibreGeneratedRadarDataProtocolRegistered = true;
+}
+
 function mapLibreGeneratedRadarUrl(url) {
   const value = String(url || "");
   if (!value.startsWith(`${MAPLIBRE_GENERATED_RADAR_PROTOCOL}://`)) return "";
@@ -666,6 +706,236 @@ function mapLibreGeneratedRadarTileTemplate(template, frame) {
   if (!/^https:\/\//i.test(template)) return template;
   ensureMapLibreGeneratedRadarProtocol();
   return template.replace(/^https:/i, `${MAPLIBRE_GENERATED_RADAR_PROTOCOL}:`);
+}
+
+function mapLibreGeneratedRadarDataTileTemplate(template, frame, layer = {}) {
+  if (frame?.provider !== "mrms-generated" || !template || !/^https?:\/\//i.test(template)) return "";
+  ensureMapLibreGeneratedRadarDataProtocol();
+  const encoding = layer.dataEncoding || frame.dataEncoding || {};
+  const sourceScheme = template.match(/^(https?):/i)?.[1]?.toLowerCase() || "https";
+  const params = new URLSearchParams({
+    ncStyle: layer.style || frame.style || encoding.style || "banded",
+    ncMin: String(Number.isFinite(Number(encoding.min)) ? Number(encoding.min) : 0),
+    ncMax: String(Number.isFinite(Number(encoding.max)) ? Number(encoding.max) : 80),
+    ncThreshold: String(Number.isFinite(Number(encoding.threshold)) ? Number(encoding.threshold) : 5),
+    ncAlpha: String(Number.isFinite(Number(encoding.alpha)) ? Number(encoding.alpha) : 1.02)
+  });
+  if (sourceScheme !== "https") params.set("ncScheme", sourceScheme);
+  const separator = template.includes("?") ? "&" : "?";
+  return `${template.replace(/^https?:/i, `${MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL}:`)}${separator}${params.toString()}`;
+}
+
+function mapLibreGeneratedRadarDataRequest(url) {
+  const value = String(url || "");
+  if (!value.startsWith(`${MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL}://`)) return { url: "" };
+  const protectedUrl = value.replace(`${MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL}:`, "https:");
+  try {
+    const parsed = new URL(protectedUrl);
+    const encoding = {
+      style: parsed.searchParams.get("ncStyle") || "banded",
+      min: Number(parsed.searchParams.get("ncMin")),
+      max: Number(parsed.searchParams.get("ncMax")),
+      threshold: Number(parsed.searchParams.get("ncThreshold")),
+      alpha: Number(parsed.searchParams.get("ncAlpha"))
+    };
+    const sourceScheme = parsed.searchParams.get("ncScheme");
+    ["ncStyle", "ncMin", "ncMax", "ncThreshold", "ncAlpha", "ncScheme"].forEach((key) => parsed.searchParams.delete(key));
+    if (sourceScheme === "http") parsed.protocol = "http:";
+    return {
+      url: parsed.toString(),
+      encoding
+    };
+  } catch {
+    return {
+      url: protectedUrl,
+      encoding: {}
+    };
+  }
+}
+
+async function colorizeMapLibreEncodedRadarTile(request, signal) {
+  const cacheKey = `${request.url}|${JSON.stringify(request.encoding || {})}`;
+  const cached = mapLibreEncodedRadarTileCache.get(cacheKey);
+  if (cached) return cached;
+  const promise = colorizeMapLibreEncodedRadarTileUncached(request, signal)
+    .catch(() => mapLibreEmptyPngArrayBuffer());
+  mapLibreEncodedRadarTileCache.set(cacheKey, promise);
+  pruneMapLibreEncodedRadarTileCache();
+  return promise;
+}
+
+async function colorizeMapLibreEncodedRadarTileUncached(request, signal) {
+  const response = await fetch(request.url, { signal });
+  if (response.status === 404 || response.status === 410) return mapLibreEmptyPngArrayBuffer();
+  if (!response.ok) throw new Error(`Generated radar data tile failed: ${response.status}`);
+  const blob = await response.blob();
+  const bitmap = await decodeMapLibreRadarDataBlob(blob);
+  const canvas = createMapLibreRadarCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Encoded radar tile canvas unavailable.");
+  ctx.drawImage(bitmap, 0, 0);
+  if (typeof bitmap.close === "function") bitmap.close();
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  colorizeMapLibreRadarImageData(imageData, request.encoding || {});
+  ctx.putImageData(imageData, 0, 0);
+  const outBlob = await mapLibreRadarCanvasToBlob(canvas);
+  return outBlob.arrayBuffer();
+}
+
+function pruneMapLibreEncodedRadarTileCache() {
+  while (mapLibreEncodedRadarTileCache.size > MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT) {
+    mapLibreEncodedRadarTileCache.delete(mapLibreEncodedRadarTileCache.keys().next().value);
+  }
+}
+
+function mapLibreEmptyPngArrayBuffer() {
+  const binary = atob(MAPLIBRE_ENCODED_RADAR_EMPTY_PNG);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+async function decodeMapLibreRadarDataBlob(blob) {
+  if ("createImageBitmap" in window) return createImageBitmap(blob);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Generated radar data tile decode failed."));
+    };
+    image.src = url;
+  });
+}
+
+function createMapLibreRadarCanvas(width, height) {
+  if (typeof OffscreenCanvas === "function") return new OffscreenCanvas(width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function mapLibreRadarCanvasToBlob(canvas) {
+  if (typeof canvas.convertToBlob === "function") return canvas.convertToBlob({ type: "image/png" });
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Generated radar tile encode failed."));
+    }, "image/png");
+  });
+}
+
+function colorizeMapLibreRadarImageData(imageData, encoding) {
+  const min = Number.isFinite(Number(encoding.min)) ? Number(encoding.min) : 0;
+  const max = Number.isFinite(Number(encoding.max)) && Number(encoding.max) > min ? Number(encoding.max) : 80;
+  const threshold = Number.isFinite(Number(encoding.threshold)) ? Number(encoding.threshold) : 5;
+  const style = mapLibreRadarStyle(encoding.style || "banded", encoding);
+  const data = imageData.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const encoded = data[index];
+    if (encoded <= 0 || data[index + 3] < 1) {
+      data[index] = 0;
+      data[index + 1] = 0;
+      data[index + 2] = 0;
+      data[index + 3] = 0;
+      continue;
+    }
+    const dbz = min + ((encoded - 1) / 254) * (max - min);
+    const thresholdFade = mapLibreSmoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+    if (thresholdFade <= 0) {
+      data[index] = 0;
+      data[index + 1] = 0;
+      data[index + 2] = 0;
+      data[index + 3] = 0;
+      continue;
+    }
+    const color = mapLibreRadarColor(dbz, style);
+    data[index] = color[0];
+    data[index + 1] = color[1];
+    data[index + 2] = color[2];
+    data[index + 3] = Math.round(Math.min(1, color[3] / 255 * thresholdFade * style.alphaScale) * 255);
+  }
+}
+
+function mapLibreRadarStyle(name, encoding = {}) {
+  const styleName = String(name || "banded").toLowerCase();
+  if (styleName === "resolved" || styleName === "field") {
+    return {
+      ramp: MAPLIBRE_RADAR_RESOLVED_RAMP,
+      alphaScale: Number.isFinite(Number(encoding.alpha)) ? Number(encoding.alpha) : 1.04,
+      fadeBelow: 5,
+      fadeAbove: 1.75,
+      bandBase: 5,
+      bandStep: 0,
+      bandFeather: 0.4
+    };
+  }
+  if (styleName === "continuous") {
+    return {
+      ramp: MAPLIBRE_RADAR_RAMP,
+      alphaScale: Number.isFinite(Number(encoding.alpha)) ? Number(encoding.alpha) : 1,
+      fadeBelow: 3,
+      fadeAbove: 2,
+      bandBase: 5,
+      bandStep: 0,
+      bandFeather: 0
+    };
+  }
+  return {
+    ramp: MAPLIBRE_RADAR_RAMP,
+    alphaScale: Number.isFinite(Number(encoding.alpha)) ? Number(encoding.alpha) : 1.02,
+    fadeBelow: 2.5,
+    fadeAbove: 1.25,
+    bandBase: 5,
+    bandStep: 7.5,
+    bandFeather: 0
+  };
+}
+
+function mapLibreRadarColor(value, style) {
+  return mapLibreRampColor(mapLibreRadarContourValue(value, style), style.ramp);
+}
+
+function mapLibreRadarContourValue(value, style) {
+  if (!Number.isFinite(value) || !style.bandStep) return value;
+  if (value <= style.bandBase) return value;
+  const rawBand = (value - style.bandBase) / style.bandStep;
+  const bandIndex = Math.floor(rawBand);
+  const fraction = rawBand - bandIndex;
+  const current = style.bandBase + bandIndex * style.bandStep + style.bandStep * 0.5;
+  const previous = Math.max(style.bandBase, current - style.bandStep);
+  const next = current + style.bandStep;
+  if (style.bandFeather > 0 && fraction < style.bandFeather) {
+    return previous + (current - previous) * mapLibreSmoothstep(0, style.bandFeather, fraction);
+  }
+  if (style.bandFeather > 0 && fraction > 1 - style.bandFeather) {
+    return current + (next - current) * mapLibreSmoothstep(1 - style.bandFeather, 1, fraction);
+  }
+  return current;
+}
+
+function mapLibreRampColor(value, ramp) {
+  if (value <= ramp[0].value) return ramp[0].color;
+  for (let i = 1; i < ramp.length; i += 1) {
+    const prev = ramp[i - 1];
+    const next = ramp[i];
+    if (value <= next.value) {
+      const t = mapLibreSmoothstep(0, 1, (value - prev.value) / (next.value - prev.value));
+      return prev.color.map((channel, index) => Math.round(channel + (next.color[index] - channel) * t));
+    }
+  }
+  return ramp[ramp.length - 1].color;
+}
+
+function mapLibreSmoothstep(edge0, edge1, value) {
+  if (!Number.isFinite(value)) return 0;
+  const t = Math.max(0, Math.min((value - edge0) / (edge1 - edge0), 1));
+  return t * t * (3 - 2 * t);
 }
 
 function mapLibreSourceBounds(bounds) {
@@ -738,7 +1008,9 @@ function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
   }
 
   const frame = mapState.frames[cur];
-  const layers = frame?.layers || (frame?.url ? [{ url: frame.url, opacity: 0.78 }] : []);
+  const layers = frame?.layers || ((frame?.url || frame?.dataUrl)
+    ? [{ url: frame.url, dataUrl: frame.dataUrl, dataEncoding: frame.dataEncoding, opacity: 0.78 }]
+    : []);
   return layers
     .map((layer, layerIndex) => mapLibreWeatherSpecForLayer(frame, layer, {
       frameIndex: cur,
@@ -750,7 +1022,9 @@ function mapLibreWeatherLayerSpecs(index = mapState.frameIndex) {
 
 function mapLibreCurrentFrameWeatherSpecs(frameIndex) {
   const frame = mapState.frames[frameIndex];
-  const layers = frame?.layers || (frame?.url ? [{ url: frame.url, opacity: 0.78 }] : []);
+  const layers = frame?.layers || ((frame?.url || frame?.dataUrl)
+    ? [{ url: frame.url, dataUrl: frame.dataUrl, dataEncoding: frame.dataEncoding, opacity: 0.78 }]
+    : []);
   return layers
     .map((layer, layerIndex) => mapLibreWeatherSpecForLayer(frame, layer, {
       frameIndex,
@@ -780,6 +1054,8 @@ function mapLibreWeatherSpecForFrame(frameIndex, options = {}) {
   if (!frame) return null;
   return mapLibreWeatherSpecForLayer(frame, {
     url: frame.url,
+    dataUrl: frame.dataUrl,
+    dataEncoding: frame.dataEncoding,
     opacity: options.opacity ?? 0.78
   }, {
     frameIndex,
@@ -790,7 +1066,9 @@ function mapLibreWeatherSpecForFrame(frameIndex, options = {}) {
 
 function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
   const rawTemplate = mapLibreWeatherTileTemplate(layer?.url);
-  const template = mapLibreGeneratedRadarTileTemplate(rawTemplate, frame);
+  const rawDataTemplate = mapLibreWeatherTileTemplate(layer?.dataUrl || frame?.dataUrl);
+  const dataTemplate = mapLibreGeneratedRadarDataTileTemplate(rawDataTemplate, frame, layer);
+  const template = dataTemplate || mapLibreGeneratedRadarTileTemplate(rawTemplate, frame);
   if (!template) return null;
   const opacity = Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 0.78;
   const minZoom = weatherFrameMinZoom(frame);
@@ -799,6 +1077,8 @@ function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
     key: `${options.frameIndex}:${options.layerIndex}:${template}`,
     frameIndex: options.frameIndex,
     template,
+    renderer: dataTemplate ? "encoded-radar" : "raster",
+    dataEncoding: layer?.dataEncoding || frame?.dataEncoding || null,
     opacity: Math.max(0, Math.min(opacity, 1)),
     preload: Boolean(options.preload),
     minZoom,
@@ -847,7 +1127,8 @@ function syncMapLibreWeatherSlots(record, specs = []) {
 
 function mapLibreWeatherSourceSignature(spec) {
   const bounds = Array.isArray(spec.bounds) ? spec.bounds.join(",") : "";
-  return `${spec.template}|${spec.minZoom}|${spec.maxZoom}|${bounds}|${spec.attribution}`;
+  const dataEncoding = spec.dataEncoding ? JSON.stringify(spec.dataEncoding) : "";
+  return `${spec.renderer}|${spec.template}|${spec.minZoom}|${spec.maxZoom}|${bounds}|${spec.attribution}|${dataEncoding}`;
 }
 
 function ensureMapLibreWeatherEntry(record, spec) {
@@ -1934,6 +2215,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
   const manifestMinZoom = Number(manifest?.minZoom ?? manifest?.minzoom);
   const attribution = manifest?.attribution || "NOAA MRMS · Nearcast";
   const style = manifest?.style || "banded";
+  const dataEncoding = normalizeGeneratedMrmsDataEncoding(manifest?.dataEncoding);
   const manifestGeneratedAt = generatedManifestTimestamp(manifest?.generatedAt);
   const manifestExpiresAt = generatedManifestTimestamp(manifest?.expiresAt);
   const sample = Boolean(manifest?.sample);
@@ -1945,6 +2227,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
       manifestMinZoom,
       attribution,
       style,
+      dataEncoding,
       manifestGeneratedAt,
       manifestExpiresAt,
       sample
@@ -1970,14 +2253,18 @@ function normalizeGeneratedMrmsFrame(frame, context) {
     .map((layer) => layer?.url || layer?.tileUrl || layer?.template)
     .find(Boolean);
   const template = frame?.url || frame?.tileUrl || frame?.template || firstLayerTemplate;
-  if (!Number.isFinite(timestamp) || (!template && !layers.length)) return null;
+  const dataTemplate = frame?.dataUrl || frame?.dataTileUrl || frame?.encodedUrl || frame?.encodedTileUrl;
+  if (!Number.isFinite(timestamp) || (!template && !dataTemplate && !layers.length)) return null;
   const maxZoom = Number(frame?.maxZoom ?? frame?.maxzoom ?? context.manifestMaxZoom);
   const minZoom = Number(frame?.minZoom ?? frame?.minzoom ?? context.manifestMinZoom);
+  const frameDataEncoding = normalizeGeneratedMrmsDataEncoding(frame?.dataEncoding, context.dataEncoding);
   const normalized = {
     label: frame?.label || radarTimelineLabel(timestamp),
     time: frame?.time || new Date(timestamp).toISOString(),
     timestamp,
-    url: resolveGeneratedRadarUrl(template, context.manifestUrl),
+    url: template ? resolveGeneratedRadarUrl(template, context.manifestUrl) : "",
+    dataUrl: dataTemplate ? resolveGeneratedRadarUrl(dataTemplate, context.manifestUrl) : "",
+    dataEncoding: frameDataEncoding,
     source: "radar",
     sourceLabel: frame?.sourceLabel || "Radar",
     attribution: frame?.attribution || context.attribution,
@@ -2000,11 +2287,32 @@ function normalizeGeneratedMrmsFrame(frame, context) {
 
 function normalizeGeneratedMrmsLayer(layer, fallbackUrl, manifestUrl) {
   const template = layer?.url || layer?.tileUrl || layer?.template || fallbackUrl;
-  if (!template) return null;
+  const dataTemplate = layer?.dataUrl || layer?.dataTileUrl || layer?.encodedUrl || layer?.encodedTileUrl;
+  if (!template && !dataTemplate) return null;
   const opacity = Number(layer?.opacity);
   return {
-    url: resolveGeneratedRadarUrl(template, manifestUrl),
+    url: template ? resolveGeneratedRadarUrl(template, manifestUrl) : "",
+    dataUrl: dataTemplate ? resolveGeneratedRadarUrl(dataTemplate, manifestUrl) : "",
+    dataEncoding: normalizeGeneratedMrmsDataEncoding(layer?.dataEncoding),
     opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(opacity, 1)) : 0.78
+  };
+}
+
+function normalizeGeneratedMrmsDataEncoding(value, fallback = null) {
+  const source = value && typeof value === "object" ? value : fallback;
+  if (!source || typeof source !== "object") return null;
+  const min = Number(source.min);
+  const max = Number(source.max);
+  const threshold = Number(source.threshold);
+  const alpha = Number(source.alpha);
+  return {
+    type: source.type || "uint8-dbz",
+    channel: source.channel || "r",
+    min: Number.isFinite(min) ? min : 0,
+    max: Number.isFinite(max) && max > (Number.isFinite(min) ? min : 0) ? max : 80,
+    threshold: Number.isFinite(threshold) ? threshold : 5,
+    alpha: Number.isFinite(alpha) ? alpha : 1.02,
+    style: source.style || source.ramp || "banded"
   };
 }
 

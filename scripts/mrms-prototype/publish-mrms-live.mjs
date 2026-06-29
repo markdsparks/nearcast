@@ -151,6 +151,7 @@ async function main() {
     generatedTiles: manifest.coverage?.generatedTiles || 0,
     candidateTiles: manifest.coverage?.candidateTiles || 0,
     radarTiles: manifest.coverage?.radarTiles || 0,
+    dataTiles: manifest.coverage?.dataTiles || 0,
     generationMs: manifest.metrics?.generationMs || null,
     publishFingerprint: manifest.publishFingerprint || publishPlan.publishFingerprint,
     sourceSignature: manifest.source?.signature || publishPlan.source?.signature || null,
@@ -291,12 +292,14 @@ async function publishProfileSet(profiles) {
     generatedTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.generatedTiles || 0), 0),
     candidateTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.candidateTiles || 0), 0),
     radarTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.radarTiles || 0), 0),
+    dataTiles: manifests.reduce((sum, item) => sum + Number(item.manifest.coverage?.dataTiles || 0), 0),
     packs: packs.map((pack) => ({
       id: pack.id,
       manifestUrl: pack.manifestUrl,
       frameCount: pack.frameCount,
       generatedTiles: pack.metrics?.generatedTiles || 0,
       radarTiles: pack.metrics?.radarTiles || 0,
+      dataTiles: pack.metrics?.dataTiles || 0,
       publishFingerprint: pack.publishFingerprint
     }))
   };
@@ -330,11 +333,15 @@ function buildGeneratorArgs({ generator, frames, outDir, manifestOut, tileBounds
     "url",
     "frame-time",
     "frame-times",
+    "focus",
+    "lat",
+    "lon",
     "product",
     "region",
     "style"
   ]);
   if (booleanArg(args["skip-empty-tiles"], false)) commandArgs.push("--skip-empty-tiles");
+  if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false)) commandArgs.push("--encoded-tiles");
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
 
   return commandArgs;
@@ -737,6 +744,8 @@ Options:
   --profile=metro-east       Coverage profile. Known: ${Object.keys(PROFILES).join(", ")}.
   --profiles=a,b             Publish multiple generated packs into one location-aware index.
   --tile-bounds=a,b,c,d      Override profile coverage bounds.
+  --lat=38.7237              Fixed focus latitude when tile-bounds is omitted.
+  --lon=-89.9559             Fixed focus longitude when tile-bounds is omitted.
   --frames=6                 Number of latest MRMS frames to publish.
   --tile-zooms=6,...,13      Generated source zooms. z14+ is expensive for regional jobs.
   --ttl-minutes=30           Live manifest freshness window.
@@ -753,6 +762,7 @@ Options:
   --skip-min-fresh-minutes=8 Keep the current manifest if unchanged and this fresh.
   --summary-out=PATH         Write a machine-readable publish summary for CI.
   --skip-empty-tiles         Write only tiles with radar pixels.
+  --encoded-tiles            Also publish compact data tiles for client-side colorization.
   --clean=false              Keep existing output directory contents.
 `);
 }

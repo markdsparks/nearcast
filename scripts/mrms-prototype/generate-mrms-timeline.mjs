@@ -165,7 +165,7 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
     `--region=${region}`,
     `--product=${product}`,
     `--style=${args.style || "banded"}`,
-    `--focus=${args.focus || "max"}`,
+    `--focus=${args.focus || (args.lat || args.lon ? "point" : "max")}`,
     `--bounds=${args.bounds || args["focus-bounds"] || "25,-125,49,-70"}`,
     `--tile-zooms=${args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS}`,
     `--tile-radius=${args["tile-radius"] || DEFAULT_TILE_RADIUS}`,
@@ -178,10 +178,13 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
     `--tile-version=${args["tile-version"] || buildTileVersion()}`
   ];
 
+  if (args.lat) commandArgs.push(`--lat=${args.lat}`);
+  if (args.lon) commandArgs.push(`--lon=${args.lon}`);
   if (args["tile-bounds"] || args["coverage-bounds"]) {
     commandArgs.push(`--tile-bounds=${args["tile-bounds"] || args["coverage-bounds"]}`);
   }
   if (booleanArg(args["skip-empty-tiles"], false)) commandArgs.push("--skip-empty-tiles");
+  if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false)) commandArgs.push("--encoded-tiles");
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
 
   const result = spawnSync(process.execPath, commandArgs, {
@@ -232,6 +235,7 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
   const generatedTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.generatedTiles || 0), 0);
   const candidateTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.candidateTiles || 0), 0);
   const radarTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.radarTiles || 0), 0);
+  const dataTiles = manifests.reduce((sum, manifest) => sum + Number(manifest.coverage?.dataTiles || 0), 0);
   const first = manifests[0] || {};
   const explicitCoverageBounds = parseBounds(args["tile-bounds"] || args["coverage-bounds"]);
   const coverageAreas = combinedCoverageAreas(manifests, explicitCoverageBounds);
@@ -267,7 +271,8 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
       frameCount: frames.length,
       generatedTiles,
       candidateTiles,
-      radarTiles
+      radarTiles,
+      dataTiles
     },
     metrics: {
       generationMs: Number.isFinite(startedAt) ? Date.now() - startedAt : null,
@@ -275,6 +280,7 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
       generatedTiles,
       candidateTiles,
       radarTiles,
+      dataTiles,
       tileBudget: candidateTiles
     }
   };
@@ -349,9 +355,12 @@ Options:
   --tile-radius=2            Tile radius around focus when tile-bounds is omitted.
   --tile-bounds=minLat,minLon,maxLat,maxLon
                               Generate a bounded coverage area.
+  --lat=38.7237              Fixed focus latitude when tile-bounds is omitted.
+  --lon=-89.9559             Fixed focus longitude when tile-bounds is omitted.
   --coverage-id=metro-east   Optional id for explicit coverage metadata.
   --coverage-label=NAME      Optional label for explicit coverage metadata.
   --skip-empty-tiles         Do not write transparent no-radar tiles.
+  --encoded-tiles            Also publish compact data tiles for client-side colorization.
   --resolve-only             Resolve candidate source objects and fingerprint without rendering tiles.
   --tile-version=mrms1       Optional cache-buster query string for tile URLs.
   --ttl-minutes=15           Manifest freshness window for live generated data.
@@ -391,7 +400,13 @@ function buildRenderConfig({ region, product, frameLimit }) {
     product,
     frameLimit,
     style: args.style || "banded",
-    focus: args.focus || "max",
+    focus: args.focus || (args.lat || args.lon ? "point" : "max"),
+    center: args.lat || args.lon
+      ? {
+          lat: Number.isFinite(Number(args.lat)) ? Number(args.lat) : null,
+          lon: Number.isFinite(Number(args.lon)) ? Number(args.lon) : null
+        }
+      : null,
     focusBounds: parseBounds(args.bounds || args["focus-bounds"] || "25,-125,49,-70"),
     tileBounds: parseBounds(args["tile-bounds"] || args["coverage-bounds"]),
     coverageId: args["coverage-id"] || null,
@@ -400,6 +415,7 @@ function buildRenderConfig({ region, product, frameLimit }) {
     tileZooms: splitList(args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS).map((item) => Number(item)).filter(Number.isFinite),
     tileRadius: numberArg(args["tile-radius"], Number(DEFAULT_TILE_RADIUS)),
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
+    encodedTiles: booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false),
     sample: booleanArg(args.sample, false),
     ttlMinutes: numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)
   };

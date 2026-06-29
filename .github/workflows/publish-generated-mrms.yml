@@ -47,6 +47,7 @@ jobs:
       MRMS_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_TILE_ZOOMS || '6,7,8,9,10,11,12,13' }}
       MRMS_CURRENT_MANIFEST_URL: ${{ vars.MRMS_CURRENT_MANIFEST_URL || 'https://getnearcast.app/radar/mrms/manifest.json' }}
       MRMS_SKIP_EMPTY_TILES: ${{ vars.MRMS_SKIP_EMPTY_TILES || 'true' }}
+      MRMS_ENCODED_TILES: ${{ vars.MRMS_ENCODED_TILES || 'true' }}
       MRMS_ASSET_FILE_LIMIT: ${{ vars.MRMS_ASSET_FILE_LIMIT || '19500' }}
       MRMS_TILE_UPLOAD_MODE: ${{ vars.MRMS_TILE_UPLOAD_MODE || 'static' }}
       MRMS_TILE_URL_BASE: ${{ vars.MRMS_TILE_URL_BASE || '' }}
@@ -72,6 +73,9 @@ jobs:
           EXTRA_ARGS=()
           if [ "$MRMS_SKIP_EMPTY_TILES" != "false" ]; then
             EXTRA_ARGS+=(--skip-empty-tiles)
+          fi
+          if [ "$MRMS_ENCODED_TILES" != "false" ]; then
+            EXTRA_ARGS+=(--encoded-tiles)
           fi
           if [ "$MRMS_TILE_UPLOAD_MODE" = "r2" ]; then
             if [ -z "$MRMS_TILE_URL_BASE" ]; then
@@ -101,7 +105,7 @@ jobs:
       - name: Verify generated manifest
         if: steps.publish.outputs.skipped != 'true'
         run: |
-          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt}, null, 2));"
+          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('radar/mrms/manifest.json','utf8')); const i=JSON.parse(fs.readFileSync('radar/mrms/index.json','utf8')); if(m.provider!=='mrms-generated'||!m.frames?.length||!m.coverageBounds||!m.expiresAt||i.provider!=='nearcast-generated-radar-index'||!i.packs?.length) process.exit(1); console.log(JSON.stringify({frames:m.frames.length, packs:i.packs.length, coverage:m.coverageBounds, expiresAt:m.expiresAt, dataTiles:m.coverage?.dataTiles||0, dataUrl:Boolean(m.frames[0]?.dataUrl)}, null, 2));"
 
       - name: Install R2 upload dependencies
         if: steps.publish.outputs.skipped != 'true' && env.MRMS_TILE_UPLOAD_MODE == 'r2'

@@ -97,6 +97,10 @@ Optional GitHub variable:
   into one `radar/mrms/index.json`.
 - `MRMS_SKIP_EMPTY_TILES`: defaults to `true`. Empty radar tiles are not
   uploaded, which avoids spending Cloudflare asset slots on transparent PNGs.
+- `MRMS_ENCODED_TILES`: defaults to `true`. Publishes compact
+  `data/{z}/{x}/{y}.png` value tiles beside the colored generated PNGs so the
+  MapLibre renderer can colorize radar on the user's device. Set to `false` to
+  return to colored-PNG-only publishing.
 - `MRMS_ASSET_FILE_LIMIT`: generated-radar file budget before deploy. Defaults
   to `19500`, leaving headroom under the current 20000-file Workers static
   asset limit for the app shell and manifests.
@@ -164,6 +168,9 @@ Multi-pack static deploys:
 - Additional profiles write pack manifests under
   `radar/mrms/packs/<profile>/manifest.json`.
 - All pack tiles are written under `radar/mrms/live/<profile>/`.
+- When encoded tiles are enabled, each frame stores color fallback PNGs at the
+  frame root and data tiles under `data/`. The manifest points MapLibre at
+  `dataUrl` first and keeps `url` as the fallback.
 - Empty radar tiles are skipped by default. Missing generated tiles should read
   as transparent radar, not as unavailable weather, because the manifest and
   coverage metadata remain the source of truth.
