@@ -135,6 +135,29 @@ Smoke test:
 node scripts/radar-generation-renderer-smoke.mjs
 ```
 
+## Dormant radar generation publisher
+
+`scripts/radar-generation-publisher.mjs` publishes a renderer result into the
+generated-radar index contract without activating production upload. It supports
+`dry-run` planning and `local-r2` mirroring for smoke tests; credentialed R2
+upload is intentionally still outside the dormant path.
+
+The publisher can:
+
+- Collect manifest, pack, and sparse tile files from a renderer result.
+- Preserve exact object keys under `radar/mrms/on-demand/...`.
+- Rewrite the pack `manifestUrl` to a configured public artifact origin.
+- Merge the source-scoped pack into a `nearcast-generated-radar-index`.
+- Prune expired packs and cap retained pack count.
+- Write the mutable `radar/mrms/index.json` object separately from immutable
+  source-scoped artifacts.
+
+Smoke test:
+
+```bash
+node scripts/radar-generation-publisher-smoke.mjs
+```
+
 Activation checklist:
 
 1. Confirm Workers static assets expose the expected `ASSETS` binding with the
@@ -144,12 +167,14 @@ Activation checklist:
 4. Confirm budget limits for the preview environment.
 5. Run the generation consumer smoke test with preview budget values.
 6. Run the renderer smoke test with preview artifact settings.
-7. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
+7. Run the publisher smoke test against a local R2 mirror.
+8. Add credentialed R2 upload for the planned object set.
+9. Add a `RADAR_GENERATION_QUEUE` binding only after the generation worker is
    ready to consume messages and request budgets/rate limits are in place.
-8. Deploy to a preview Worker URL first.
-9. Point the app at the endpoint with
+10. Deploy to a preview Worker URL first.
+11. Point the app at the endpoint with
    `?radarCapabilityEndpoint=/api/radar/capability`.
-10. Verify fallback behavior remains unchanged before making the endpoint the
+12. Verify fallback behavior remains unchanged before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher

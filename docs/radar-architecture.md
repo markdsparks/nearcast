@@ -329,6 +329,15 @@ Current scaffold:
 - `scripts/radar-generation-renderer-smoke.mjs` verifies that render execution
   contract with a fake generator, so it does not depend on NOAA network access
   or real GRIB2 decoding.
+- `scripts/radar-generation-publisher.mjs` publishes a render result into the
+  generated-radar index contract in `dry-run` or `local-r2` mode. It collects
+  sparse artifact files, preserves exact on-demand object keys, rewrites public
+  manifest URLs, merges the source-scoped pack into the index, prunes expired
+  packs, and writes the mutable `radar/mrms/index.json` separately from
+  immutable pack artifacts.
+- `scripts/radar-generation-publisher-smoke.mjs` verifies object planning,
+  local R2 mirroring, expired-pack pruning, pack replacement, and index output
+  without Cloudflare credentials.
 
 Still missing before activation:
 
@@ -336,8 +345,8 @@ Still missing before activation:
 - Request-state storage binding.
 - Preview budget values.
 - Queue binding and consumer deployment wiring.
-- R2 upload for rendered tile, manifest, and pack artifacts.
-- Generated-radar index merge/update path for on-demand packs.
+- Credentialed R2 upload for the planned object set.
+- Worker or job wiring to run the consumer, renderer, and publisher together.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 
 ### Phase 4: Scale controls
