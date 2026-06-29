@@ -1547,41 +1547,77 @@ function scheduleGeneratedRadarViewportRefresh(reason = "viewport") {
 
 function shouldRefreshGeneratedRadarForViewport() {
   if (!mapState.initialized || !state.activePlace) return false;
-  if (mapState.timelineKind !== "radar") return false;
+  if (!generatedRadarRefreshTimelineKind()) return false;
   if (!radarProviderAllowsGenerated()) return false;
   if (generatedMrmsManifestUrlOverride()) return false;
   return true;
 }
 
+function generatedRadarRefreshTimelineKind() {
+  if (mapState.timelineKind === "radar") return "radar";
+  if (mapState.timelineKind === "precip") return "precip";
+  if (mapState.immersive) return "precip";
+  return "";
+}
+
+function generatedRadarRefreshOptions(timelineKind) {
+  return {
+    timelineKind,
+    focusNow: timelineKind === "precip",
+    focusLatest: timelineKind === "radar",
+    resumePlayback: mapState.playing,
+    preserveExisting: true
+  };
+}
+
 async function refreshGeneratedRadarForViewport() {
   if (!shouldRefreshGeneratedRadarForViewport()) return;
+  const timelineKind = generatedRadarRefreshTimelineKind();
+  if (!timelineKind) return;
   const viewportKey = generatedRadarViewportKey();
   if (viewportKey && viewportKey === mapState.generatedRadarViewportKey) return;
   const seq = ++mapState.generatedRadarRefreshSeq;
   try {
     const selection = await resolveGeneratedMrmsManifestSelection({ allowLegacy: false });
-    if (seq !== mapState.generatedRadarRefreshSeq || !selection?.key) return;
+    if (seq !== mapState.generatedRadarRefreshSeq) return;
+    if (!selection?.key) {
+      if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey) {
+        clearGeneratedRadarSelection();
+        await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+      }
+      return;
+    }
     if (selection.key === mapState.generatedRadarSelectionKey) {
       mapState.generatedRadarViewportKey = viewportKey;
       return;
     }
-    await loadMapFrames(true, {
-      timelineKind: "radar",
-      focusLatest: true,
-      resumePlayback: mapState.playing,
-      preserveExisting: true
-    });
+    await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
   } catch {
     if (radarProviderPreference() === "auto") {
       clearGeneratedRadarSelection();
-      await loadMapFrames(true, {
-        timelineKind: "radar",
-        focusLatest: true,
-        resumePlayback: mapState.playing,
-        preserveExisting: true
-      });
+      await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
     }
   }
+}
+
+function resetMapForPlaceChange(options = {}) {
+  mapState.panX = 0;
+  mapState.panY = 0;
+  clearGeneratedRadarSelection();
+  mapState.generatedRadarRefreshSeq += 1;
+  if (mapState.generatedRadarRefreshTimer) {
+    clearTimeout(mapState.generatedRadarRefreshTimer);
+    mapState.generatedRadarRefreshTimer = 0;
+  }
+  if (!mapState.initialized || !state.activePlace) return;
+  clearMapLibreInteractionState();
+  if (options.clearFrames !== false) clearMapLayers({ renderStatic: false });
+  mapLibreRecords.forEach((record) => {
+    record.placeKey = "";
+    syncMapLibreCamera(record, { force: true });
+  });
+  renderMapLegend();
+  renderTileMap();
 }
 
 function ensureMapLibreMap() {
@@ -2428,10 +2464,12 @@ function generatedCoverageScoreForAreas(areas, context) {
   const viewportOverlap = context.viewportBounds
     ? Math.min(1, areas.reduce((sum, bounds) => sum + generatedBoundsOverlapRatio(bounds, context.viewportBounds), 0))
     : 0;
-  const relevant = centerCovered || activeCovered || viewportOverlap >= 0.08;
+  const hasViewport = Boolean(context.centerPoint || context.viewportBounds);
+  const activeRelevant = !hasViewport && activeCovered;
+  const relevant = centerCovered || viewportOverlap >= 0.08 || activeRelevant;
   return {
     relevant,
-    value: (centerCovered ? 3 : 0) + (activeCovered ? 0.75 : 0) + viewportOverlap,
+    value: (centerCovered ? 3 : 0) + (activeRelevant ? 0.75 : 0) + viewportOverlap,
     centerCovered,
     activeCovered,
     viewportOverlap

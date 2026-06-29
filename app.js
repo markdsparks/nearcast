@@ -1,4 +1,4 @@
-const VERSION = "3.0.55";
+const VERSION = "3.0.56";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4403,11 +4403,14 @@ function warmStartForecast(place) {
     updateMode();
     updateFloatingChrome({ forceReveal: true });
     updatePlaceSwitcher();
-    mapState.panX = 0;
-    mapState.panY = 0;
+    if (typeof resetMapForPlaceChange === "function") {
+      resetMapForPlaceChange({ clearFrames: true });
+    } else {
+      mapState.panX = 0;
+      mapState.panY = 0;
+    }
     renderSavedPlaces();
     updateMapPlace();
-    syncMapToPlace();
     renderAlerts([]);
     renderForecast(cached.data, normalized, { refreshMap: false });
     setLoadingStatus("");
@@ -4429,11 +4432,14 @@ async function loadPlace(place, force = false) {
   updateMode();
   updateFloatingChrome({ forceReveal: true });
   updatePlaceSwitcher();
-  mapState.panX = 0;
-  mapState.panY = 0;
+  if (typeof resetMapForPlaceChange === "function") {
+    resetMapForPlaceChange({ clearFrames: true });
+  } else {
+    mapState.panX = 0;
+    mapState.panY = 0;
+  }
   renderSavedPlaces();
   updateMapPlace();
-  syncMapToPlace();
   renderAlerts([]); // clear prior place's alerts until this one resolves
   setStatus(`Updating ${state.activePlace.name}...`);
 
