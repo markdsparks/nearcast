@@ -85,6 +85,9 @@ Required GitHub variable for scheduled publishing:
 
 - `ENABLE_MRMS_PUBLISH=true`
 
+Set this to `false` to keep manual MRMS publishes available while preventing
+scheduled runs from spending CI minutes or uploading new generated packs.
+
 Optional GitHub variable:
 
 - `MRMS_CURRENT_MANIFEST_URL`: deployed generated-radar manifest to compare
@@ -124,8 +127,8 @@ Optional GitHub variable:
   under the configured prefix are pruned after a successful upload.
 
 Manual dispatch works without that variable. Scheduled runs are gated so the
-workflow does not spend CI minutes every 15 minutes before the Cloudflare publish
-secrets are configured.
+workflow does not spend CI minutes every 30 minutes unless generated publishing
+is deliberately enabled.
 
 Default live profile:
 
@@ -133,7 +136,7 @@ Default live profile:
 - Bounds: `38.35,-90.65,39.25,-89.25`
 - Zooms: `6-13`
 - Frames: `6`
-- Freshness window: `30` minutes
+- Freshness window: `120` minutes
 
 Additional test profiles:
 
@@ -193,9 +196,10 @@ Multi-pack static deploys:
 The workflow also supports manual dispatch, so a test run can be triggered
 without waiting for the schedule.
 
-Future generated forecast maps should reuse the same static-asset pattern:
-produce tile frames plus a coverage-aware manifest first, then let the app
-consume that manifest as ordinary precipitation timeline frames.
+Long-term radar architecture is tracked in `docs/radar-architecture.md`. Future
+generated forecast maps should reuse the same source-agnostic manifest shape,
+but broad coverage should move toward capability routing, object storage, and
+on-demand generation instead of full static app redeploys.
 
 ## Not included yet
 

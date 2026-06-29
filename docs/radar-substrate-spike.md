@@ -5,6 +5,10 @@ tiles. The `v3.0.45` source-zoom diagnostic showed that forcing NOAA WMS source
 zoom to z10 or z12 did not materially improve the ugly z7.5-z13 band, so the
 next work is a data-substrate decision rather than another renderer tweak.
 
+Production target-state architecture now lives in
+`docs/radar-architecture.md`. Treat this spike as the evidence log and prototype
+history behind that decision.
+
 ## Goal
 
 Make radar beautiful and responsive at every map zoom without overstating

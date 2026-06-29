@@ -15,6 +15,7 @@ const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
+const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const mapLibreRecords = new Map();
 let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
@@ -89,9 +90,88 @@ window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
     mode: mapDiagnosticMode(),
     renderer: state.mapRenderer,
     immersive: Boolean(mapState.immersive),
+    radar: radarDiagnosticsSnapshot(),
     records: [...mapLibreRecords.values()].map(mapLibreDiagnosticStats)
   };
 };
+
+window.nearcastRadarDiagnostics = radarDiagnosticsSnapshot;
+
+function radarDiagnosticsSnapshot() {
+  return {
+    current: mapState.radarSourceDecision || null,
+    history: [...(mapState.radarSourceDecisionLog || [])],
+    generated: {
+      manifestUrl: mapState.generatedRadarManifestUrl || "",
+      selectionKey: mapState.generatedRadarSelectionKey || "",
+      viewportKey: mapState.generatedRadarViewportKey || ""
+    },
+    context: safeGeneratedSelectionContext()
+  };
+}
+
+function safeGeneratedSelectionContext() {
+  try {
+    return generatedMrmsSelectionContext();
+  } catch {
+    return null;
+  }
+}
+
+function recordRadarSourceDecision(event, detail = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    event,
+    provider: radarProviderPreference(),
+    renderer: state.mapRenderer,
+    timelineKind: mapState.timelineKind,
+    immersive: Boolean(mapState.immersive),
+    place: radarSourcePlaceSnapshot(),
+    zoom: Number.isFinite(Number(mapState.zoom)) ? Number(mapState.zoom) : null,
+    generated: {
+      manifestUrl: mapState.generatedRadarManifestUrl || "",
+      selectionKey: mapState.generatedRadarSelectionKey || "",
+      viewportKey: mapState.generatedRadarViewportKey || ""
+    },
+    detail
+  };
+  mapState.radarSourceDecision = entry;
+  if (!Array.isArray(mapState.radarSourceDecisionLog)) mapState.radarSourceDecisionLog = [];
+  mapState.radarSourceDecisionLog.push(entry);
+  while (mapState.radarSourceDecisionLog.length > RADAR_SOURCE_DECISION_LOG_LIMIT) {
+    mapState.radarSourceDecisionLog.shift();
+  }
+  if (window.NEARCAST_DEBUG_RADAR === true) console.info("[nearcast radar]", entry);
+  return entry;
+}
+
+function radarSourcePlaceSnapshot() {
+  const place = state.activePlace;
+  if (!place) return null;
+  return {
+    id: place.id || "",
+    name: place.name || "",
+    latitude: Number.isFinite(Number(place.latitude)) ? Number(place.latitude) : null,
+    longitude: Number.isFinite(Number(place.longitude)) ? Number(place.longitude) : null
+  };
+}
+
+function radarDecisionErrorMessage(error) {
+  return error?.message || String(error || "unknown error");
+}
+
+function radarDecisionFrameSummary(frames) {
+  const list = Array.isArray(frames) ? frames : [];
+  const latest = list[list.length - 1];
+  return {
+    frameCount: list.length,
+    provider: latest?.provider || "",
+    attribution: latest?.attribution || latest?.sourceLabel || "",
+    latestTime: Number.isFinite(latest?.timestamp) ? new Date(latest.timestamp).toISOString() : "",
+    maxZoom: Number.isFinite(Number(latest?.maxZoom)) ? Number(latest.maxZoom) : null,
+    encodedFrames: list.filter((frame) => frame?.dataUrl).length
+  };
+}
 
 function initMap() {
   if (mapState.initialized || !els.weatherMap) return;
@@ -2182,20 +2262,51 @@ async function fetchRadarFrames() {
   if (radarProviderAllowsGenerated(provider)) {
     try {
       const generatedFrames = await fetchGeneratedMrmsRadarFrames();
-      if (generatedFrames.length) return generatedFrames;
-    } catch {
+      if (generatedFrames.length) {
+        recordRadarSourceDecision("radar.enhanced-selected", radarDecisionFrameSummary(generatedFrames));
+        return generatedFrames;
+      }
+      recordRadarSourceDecision("radar.enhanced-empty", {
+        reason: "manifest loaded without usable frames"
+      });
+    } catch (error) {
+      recordRadarSourceDecision("radar.enhanced-unavailable", {
+        reason: radarDecisionErrorMessage(error)
+      });
       /* Generated MRMS is optional; fall through to the proven sources if it is unavailable or stale. */
     }
     clearGeneratedRadarSelection();
+  } else {
+    recordRadarSourceDecision("radar.enhanced-skipped", {
+      reason: "provider preference is NOAA WMS"
+    });
   }
 
   try {
     const nwsFrames = await fetchNwsRadarFrames();
-    if (nwsFrames.length) return nwsFrames;
-  } catch {
+    if (nwsFrames.length) {
+      recordRadarSourceDecision("radar.fallback-nws-selected", radarDecisionFrameSummary(nwsFrames));
+      return nwsFrames;
+    }
+    recordRadarSourceDecision("radar.fallback-nws-empty", {
+      reason: "NOAA/NWS returned no radar frames"
+    });
+  } catch (error) {
+    recordRadarSourceDecision("radar.fallback-nws-unavailable", {
+      reason: radarDecisionErrorMessage(error)
+    });
     /* RainViewer remains the global/fallback radar source for this spike. */
   }
-  return fetchRainViewerFrames();
+  try {
+    const rainViewerFrames = await fetchRainViewerFrames();
+    recordRadarSourceDecision("radar.fallback-rainviewer-selected", radarDecisionFrameSummary(rainViewerFrames));
+    return rainViewerFrames;
+  } catch (error) {
+    recordRadarSourceDecision("radar.fallback-rainviewer-unavailable", {
+      reason: radarDecisionErrorMessage(error)
+    });
+    throw error;
+  }
 }
 
 function radarProviderPreference() {
@@ -2225,6 +2336,15 @@ async function fetchGeneratedMrmsRadarFrames() {
     mapState.generatedRadarManifestUrl = selection.manifestUrl;
     mapState.generatedRadarSelectionKey = selection.key;
     mapState.generatedRadarViewportKey = generatedRadarViewportKey();
+    recordRadarSourceDecision("radar.enhanced-ready", {
+      selectionSource: selection.source || "",
+      manifestUrl: selection.manifestUrl,
+      frameCount: frames.length,
+      encodedFrames: frames.filter((frame) => frame?.dataUrl).length,
+      generatedAt: manifest?.generatedAt || "",
+      expiresAt: manifest?.expiresAt || "",
+      coverageBounds: generatedCoverageBounds(manifest?.coverageBounds)
+    });
   }
   return frames;
 }
@@ -2237,6 +2357,9 @@ async function resolveGeneratedMrmsManifestUrl() {
 async function resolveGeneratedMrmsManifestSelection(options = {}) {
   const explicit = generatedMrmsManifestUrlOverride();
   if (explicit) {
+    recordRadarSourceDecision("radar.enhanced-override-selected", {
+      manifestUrl: explicit
+    });
     return {
       source: "override",
       manifestUrl: explicit,
@@ -2249,21 +2372,44 @@ async function resolveGeneratedMrmsManifestSelection(options = {}) {
     const response = await fetch(indexUrl, { cache: "no-store" });
     if (!response.ok) throw new Error("Generated MRMS index unavailable.");
     const index = await response.json();
+    const packs = generatedMrmsIndexPacks(index);
+    const freshPackCount = packs.filter((pack) => !generatedMrmsIndexPackExpired(pack)).length;
     const pack = selectGeneratedMrmsIndexPack(index);
     const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
     if (manifestUrl) {
       const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+      recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
+        indexUrl,
+        packId: pack?.id || pack?.label || "",
+        manifestUrl: resolved,
+        packCount: packs.length,
+        freshPackCount,
+        expiresAt: pack?.expiresAt || "",
+        coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
+      });
       return {
         source: "index",
         manifestUrl: resolved,
         key: generatedMrmsIndexPackSelectionKey(pack, resolved)
       };
     }
-  } catch {
+    recordRadarSourceDecision("radar.enhanced-index-no-match", {
+      indexUrl,
+      packCount: packs.length,
+      freshPackCount
+    });
+  } catch (error) {
+    recordRadarSourceDecision("radar.enhanced-index-unavailable", {
+      indexUrl,
+      reason: radarDecisionErrorMessage(error)
+    });
     /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
   }
 
   if (options.allowLegacy === false) return null;
+  recordRadarSourceDecision("radar.enhanced-legacy-selected", {
+    manifestUrl: MRMS_RADAR_MANIFEST_URL
+  });
   return {
     source: "legacy",
     manifestUrl: MRMS_RADAR_MANIFEST_URL,
