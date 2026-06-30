@@ -212,6 +212,19 @@ assert.equal(safeQueued.body.generation.state, "queued");
 assert.equal(safeQueued.body.generation.mode, "safe");
 assert.equal(safeQueued.body.generation.nextPollAfterSeconds, 25);
 
+const overBudgetEnv = {
+  ...env,
+  RADAR_GENERATION_ACCEPT_REQUESTS: "safe",
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_REQUESTS: createRequestStore(),
+  RADAR_GENERATION_MAX_CANDIDATE_TILES: "0"
+};
+const overBudgetCapability = await capability(outsidePayload, overBudgetEnv);
+assert.equal(overBudgetCapability.status, 200);
+assert.equal(overBudgetCapability.body.generation.state, "limited");
+assert.equal(overBudgetCapability.body.generation.reason, "tile-budget-exceeded");
+assert.equal(overBudgetEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
+
 const deduped = await capability(outsidePayload, queuedEnv);
 assert.equal(deduped.status, 200);
 assert.equal(deduped.body.enhanced.state, "unavailable");
@@ -275,6 +288,7 @@ console.log(JSON.stringify({
   disabled: disabled.body.generation.reason,
   queued: queued.body.generation.state,
   safeQueued: safeQueued.body.generation.mode,
+  overBudget: overBudgetCapability.body.generation.reason,
   deduped: deduped.body.generation.state,
   r2Queued: r2Queued.body.generation.state,
   r2Deduped: r2Deduped.body.generation.state,

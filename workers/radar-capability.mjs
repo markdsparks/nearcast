@@ -1,4 +1,4 @@
-import { handleRadarGenerationQueue } from "./radar-generation-consumer.mjs";
+import { buildRadarGenerationPlan, handleRadarGenerationQueue } from "./radar-generation-consumer.mjs";
 
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
@@ -263,6 +263,16 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable", mode: runnerMode };
   }
   const dedupeKey = generationDedupeKey(capability, payload);
+  const preflight = preflightGenerationPlan(capability, payload, dedupeKey, env);
+  if (preflight && !preflight.accepted) {
+    return {
+      state: "limited",
+      requestId: null,
+      reason: preflight.reason || "generation-preflight-rejected",
+      mode: runnerMode,
+      coverage: preflight.coverage || null
+    };
+  }
   const existing = await readGenerationRequest(requestStore, dedupeKey);
   if (existing && !generationRequestExpired(existing)) {
     return {
@@ -322,6 +332,26 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     queuedAt,
     nextPollAfterSeconds: generationPollAfterSeconds(env)
   };
+}
+
+function preflightGenerationPlan(capability, payload = {}, dedupeKey, env = {}) {
+  try {
+    return buildRadarGenerationPlan({
+      requestId: "preflight",
+      dedupeKey,
+      requestedAt: capability?.checkedAt || new Date().toISOString(),
+      viewport: capability?.viewport || {},
+      preferences: payload.preferences || {},
+      reason: payload.generation?.reason || "viewport",
+      enhancedReason: capability?.enhanced?.reason || ""
+    }, env);
+  } catch (error) {
+    return {
+      accepted: false,
+      reason: "generation-preflight-error",
+      error: error?.message || String(error)
+    };
+  }
 }
 
 async function readGenerationRequest(requestStore, dedupeKey) {
