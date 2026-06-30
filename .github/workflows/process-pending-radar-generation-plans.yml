@@ -165,7 +165,7 @@ jobs:
           fi
           scan_private_plan_store() {
             echo "Scanning private plan store for a selectable render plan."
-            node scripts/radar-generation-plan-queue.mjs select \
+            if ! node scripts/radar-generation-plan-queue.mjs select \
               --bucket="$RADAR_GENERATION_STATE_R2_BUCKET" \
               --plan-store-prefix="$RADAR_GENERATION_PLANS_R2_PREFIX" \
               --plan-output-prefix="$PLAN_OUTPUT_PREFIX" \
@@ -173,7 +173,21 @@ jobs:
               --scan-limit="$SCAN_LIMIT" \
               --max-age-minutes="$MAX_PLAN_AGE_MINUTES" \
               --plan-out=/tmp/radar-generation-plan.json \
-              --selection-out=/tmp/radar-generation-plan-selection.json
+              --selection-out=/tmp/radar-generation-plan-selection.json; then
+              node --input-type=module <<'NODE'
+              import fs from "node:fs";
+              fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+                provider: "nearcast-radar-generation-plan-selection",
+                version: 1,
+                selected: false,
+                reason: "plan-store-scan-failed",
+                pointerPath: process.env.POINTER_PATH || "",
+                skipped: []
+              }, null, 2)}\n`);
+            NODE
+              echo "selected=false" >> "$GITHUB_OUTPUT"
+              return 0
+            fi
             node --input-type=module <<'NODE'
             import fs from "node:fs";
             const selectionPath = "/tmp/radar-generation-plan-selection.json";
