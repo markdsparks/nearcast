@@ -31,6 +31,8 @@ The deploy is configured by `wrangler.toml`:
   and persist bounded render plans.
 - `RADAR_GENERATION_PLANS_R2` stores preview render plans in the private
   `nearcast-radar-state` R2 bucket under `RADAR_GENERATION_PLANS_R2_PREFIX`.
+- `RADAR_GENERATION_PENDING_PLANS_R2_PREFIX` stores the latest pending-plan
+  pointer the preview runner can consume without listing the private bucket.
 - `RADAR_GENERATION_OUTPUT_PREFIX` is set to
   `radar/mrms/on-demand-preview` so queued preview plans render into the same
   R2 namespace the app can opt into with `radarIndex=preview`.
@@ -229,12 +231,13 @@ Pending queued-plan processing:
 gh workflow run "Process pending radar generation plans" -f uploadMode=dry-run
 ```
 
-This workflow lists private plans in `nearcast-radar-state`, chooses the newest
-unprocessed plan under `radar/mrms/on-demand-preview`, renders it, and either
-dry-runs or uploads it through the same publisher. Successful `r2` publishes
-write a processed marker under `radar/mrms/processed-plans/...` so the runner
-does not repeatedly render the same plan. Empty no-precip renders are marked
-`skipped-empty` instead of being published unless `allowEmptyPublish=true`.
+This workflow reads the latest pending-plan pointer in `nearcast-radar-state`,
+fetches the referenced private plan under `radar/mrms/on-demand-preview`,
+renders it, and either dry-runs or uploads it through the same publisher.
+Successful `r2` publishes write a processed marker under
+`radar/mrms/processed-plans/...` so the runner does not repeatedly render the
+same plan. Empty no-precip renders are marked `skipped-empty` instead of being
+published unless `allowEmptyPublish=true`.
 
 The workflow also has a five-minute schedule, but scheduled jobs are skipped
 unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=true` is set.

@@ -107,6 +107,8 @@ assert.equal(workerQueue.accepted, 1);
 assert.equal(workerQueueMessage.acked, true);
 assert.equal(workerPlanStore.records.length, 1);
 assert.ok(workerPlanStore.records[0].key.startsWith("radar/mrms/plans-smoke/"));
+assert.equal(workerPlanStore.pointers.length, 1);
+assert.equal(workerPlanStore.pointers[0].key, "radar/mrms/pending-plans/latest.json");
 
 let externalFetchCount = 0;
 const externalIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";
@@ -315,12 +317,15 @@ function createR2Bucket() {
 function createR2PlanBucket() {
   return {
     records: [],
+    pointers: [],
     async put(key, body, options = {}) {
-      this.records.push({
+      const item = {
         key,
         value: JSON.parse(String(body)),
         options
-      });
+      };
+      if (key.endsWith("/latest.json")) this.pointers.push(item);
+      else this.records.push(item);
     }
   };
 }

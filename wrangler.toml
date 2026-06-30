@@ -27,6 +27,7 @@ max_retries = 2
 RADAR_GENERATION_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json"
 RADAR_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state"
 RADAR_GENERATION_PLANS_R2_PREFIX = "radar/mrms/plans"
+RADAR_GENERATION_PENDING_PLANS_R2_PREFIX = "radar/mrms/pending-plans"
 RADAR_GENERATION_OUTPUT_PREFIX = "radar/mrms/on-demand-preview"
 RADAR_GENERATION_GLOBAL_HOURLY_LIMIT = "20"
 RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT = "2"

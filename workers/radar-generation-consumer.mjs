@@ -9,7 +9,9 @@ const DEFAULT_TILE_SIZE = 256;
 const DEFAULT_TTL_MINUTES = 15;
 const DEFAULT_OUTPUT_PREFIX = "radar/mrms/on-demand";
 const DEFAULT_PLAN_R2_PREFIX = "radar/mrms/plans";
+const DEFAULT_PENDING_PLAN_R2_PREFIX = "radar/mrms/pending-plans";
 const RADAR_GENERATION_PLANS_R2_PREFIX_ENV = "RADAR_GENERATION_PLANS_R2_PREFIX";
+const RADAR_GENERATION_PENDING_PLANS_R2_PREFIX_ENV = "RADAR_GENERATION_PENDING_PLANS_R2_PREFIX";
 const MERCATOR_MAX_LAT = 85.05113;
 
 export default {
@@ -56,6 +58,7 @@ export async function handleRadarGenerationMessage(message, env = {}) {
     await store.putJson(result.plan.output.planKey, result.plan, {
       expirationTtl: result.plan.render.ttlMinutes * 60
     });
+    await store.putLatestPointer?.(result.plan);
     result = {
       ...result,
       stored: true,
@@ -88,6 +91,9 @@ function kvPlanStore(namespace) {
 
 function r2PlanStore(bucket, env = {}) {
   const prefix = cleanKeyPrefix(env?.[RADAR_GENERATION_PLANS_R2_PREFIX_ENV] || DEFAULT_PLAN_R2_PREFIX);
+  const pendingPrefix = cleanKeyPrefix(
+    env?.[RADAR_GENERATION_PENDING_PLANS_R2_PREFIX_ENV] || DEFAULT_PENDING_PLAN_R2_PREFIX
+  );
   return {
     kind: "r2",
     storageKey(key) {
@@ -100,6 +106,28 @@ function r2PlanStore(bucket, env = {}) {
           provider: value?.provider || PLAN_PROVIDER,
           requestId: value?.requestId || "",
           plannedAt: value?.plannedAt || ""
+        }
+      });
+    },
+    async putLatestPointer(value) {
+      const pointer = {
+        provider: "nearcast-radar-generation-pending-plan-pointer",
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        planKey: value?.output?.planKey || "",
+        objectKey: this.storageKey(value?.output?.planKey || ""),
+        requestId: value?.requestId || "",
+        dedupeKey: value?.dedupeKey || "",
+        plannedAt: value?.plannedAt || "",
+        outputPrefix: value?.output?.prefixTemplate || "",
+        candidateTiles: value?.coverage?.candidateTiles ?? null
+      };
+      return bucket.put(joinKey(pendingPrefix, "latest.json"), JSON.stringify(pointer), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+        customMetadata: {
+          provider: pointer.provider,
+          requestId: pointer.requestId,
+          plannedAt: pointer.plannedAt
         }
       });
     }

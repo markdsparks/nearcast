@@ -80,6 +80,7 @@ jobs:
       RADAR_GENERATION_R2_ENDPOINT: ${{ vars.RADAR_GENERATION_R2_ENDPOINT || vars.MRMS_R2_ENDPOINT || '' }}
       RADAR_GENERATION_R2_UPLOAD_CONCURRENCY: ${{ vars.RADAR_GENERATION_R2_UPLOAD_CONCURRENCY || vars.MRMS_R2_UPLOAD_CONCURRENCY || '4' }}
       RADAR_GENERATION_PLANS_R2_PREFIX: ${{ vars.RADAR_GENERATION_PLANS_R2_PREFIX || 'radar/mrms/plans' }}
+      RADAR_GENERATION_PENDING_PLANS_R2_PREFIX: ${{ vars.RADAR_GENERATION_PENDING_PLANS_R2_PREFIX || 'radar/mrms/pending-plans' }}
       RADAR_GENERATION_PROCESSED_PLANS_R2_PREFIX: ${{ vars.RADAR_GENERATION_PROCESSED_PLANS_R2_PREFIX || 'radar/mrms/processed-plans' }}
       UPLOAD_MODE: ${{ github.event.inputs.uploadMode || vars.RADAR_GENERATION_RUNNER_UPLOAD_MODE || 'r2' }}
       PUBLIC_BASE_URL: ${{ github.event.inputs.publicBaseUrl || vars.RADAR_GENERATION_PUBLIC_BASE_URL || 'https://radar.getnearcast.app' }}
@@ -106,32 +107,95 @@ jobs:
         id: select
         run: |
           set -euo pipefail
-          if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
-            echo "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets are required."
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN is required to read private pending plan pointers."
             exit 1
           fi
-          ENDPOINT="$RADAR_GENERATION_R2_ENDPOINT"
-          if [ -z "$ENDPOINT" ]; then
-            if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-              echo "CLOUDFLARE_ACCOUNT_ID or RADAR_GENERATION_R2_ENDPOINT is required."
-              exit 1
-            fi
-            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          POINTER_KEY="${RADAR_GENERATION_PENDING_PLANS_R2_PREFIX%/}/latest.json"
+          POINTER_PATH="$RADAR_GENERATION_STATE_R2_BUCKET/$POINTER_KEY"
+          export POINTER_PATH
+          if ! npx --yes wrangler r2 object get "$POINTER_PATH" --remote --file /tmp/radar-generation-plan-pointer.json; then
+            node --input-type=module <<'NODE'
+            import fs from "node:fs";
+            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", JSON.stringify({
+              provider: "nearcast-radar-generation-plan-selection",
+              version: 1,
+              selected: false,
+              reason: "pending-pointer-not-found",
+              pointerPath: process.env.POINTER_PATH || ""
+            }, null, 2));
+            NODE
+            echo "selected=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          node scripts/radar-generation-plan-queue.mjs select \
-            --bucket="$RADAR_GENERATION_STATE_R2_BUCKET" \
-            --endpoint="$ENDPOINT" \
-            --access-key-id="$R2_ACCESS_KEY_ID" \
-            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
-            --plan-store-prefix="$RADAR_GENERATION_PLANS_R2_PREFIX" \
-            --plan-output-prefix="$PLAN_OUTPUT_PREFIX" \
-            --processed-prefix="$RADAR_GENERATION_PROCESSED_PLANS_R2_PREFIX" \
-            --scan-limit="$SCAN_LIMIT" \
-            --max-age-minutes="$MAX_PLAN_AGE_MINUTES" \
-            --plan-out=/tmp/radar-generation-plan.json \
-            --selection-out=/tmp/radar-generation-plan-selection.json
-          SELECTED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected ? 'true' : 'false');")
-          echo "selected=$SELECTED" >> "$GITHUB_OUTPUT"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { markerKeyForPlanKey } from "./scripts/radar-generation-plan-queue.mjs";
+          const pointer = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-pointer.json", "utf8"));
+          if (pointer.provider !== "nearcast-radar-generation-pending-plan-pointer") {
+            throw new Error(`Unexpected pending pointer provider ${pointer.provider}`);
+          }
+          const planKey = String(pointer.planKey || "");
+          if (!planKey) throw new Error("Pending pointer did not include planKey.");
+          const objectKey = String(pointer.objectKey || `${process.env.RADAR_GENERATION_PLANS_R2_PREFIX}/${planKey}`);
+          const markerKey = markerKeyForPlanKey(planKey, {
+            processedPrefix: process.env.RADAR_GENERATION_PROCESSED_PLANS_R2_PREFIX
+          });
+          const selection = {
+            provider: "nearcast-radar-generation-plan-selection",
+            version: 1,
+            selected: true,
+            selectedAt: new Date().toISOString(),
+            bucket: process.env.RADAR_GENERATION_STATE_R2_BUCKET,
+            pointerKey: `${process.env.RADAR_GENERATION_PENDING_PLANS_R2_PREFIX}/latest.json`,
+            objectKey,
+            objectPath: `${process.env.RADAR_GENERATION_STATE_R2_BUCKET}/${objectKey}`,
+            planKey,
+            markerKey,
+            markerPath: `${process.env.RADAR_GENERATION_STATE_R2_BUCKET}/${markerKey}`,
+            requestId: pointer.requestId || "",
+            dedupeKey: pointer.dedupeKey || "",
+            plannedAt: pointer.plannedAt || "",
+            outputPrefix: pointer.outputPrefix || "",
+            candidateTiles: pointer.candidateTiles ?? null
+          };
+          fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify(selection, null, 2)}\n`);
+          NODE
+          MARKER_PATH=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.markerPath);")
+          if npx --yes wrangler r2 object get "$MARKER_PATH" --remote --file /tmp/radar-generation-plan-marker-existing.json; then
+            node --input-type=module <<'NODE'
+            import fs from "node:fs";
+            const selection = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-selection.json", "utf8"));
+            const marker = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-marker-existing.json", "utf8"));
+            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+              ...selection,
+              selected: false,
+              reason: "pending-plan-already-marked",
+              skipped: [{ markerKey: selection.markerKey, status: marker.status || "processed" }]
+            }, null, 2)}\n`);
+            NODE
+            echo "selected=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PLAN_OBJECT_PATH=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.objectPath);")
+          npx --yes wrangler r2 object get "$PLAN_OBJECT_PATH" --remote --file /tmp/radar-generation-plan.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const selection = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-selection.json", "utf8"));
+          const plan = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan.json", "utf8"));
+          if (plan.provider !== "nearcast-radar-generation-plan") {
+            throw new Error(`Unexpected plan provider ${plan.provider}`);
+          }
+          if (plan.output?.planKey !== selection.planKey) {
+            throw new Error(`Selection planKey mismatch: ${selection.planKey} !== ${plan.output?.planKey}`);
+          }
+          fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+            ...selection,
+            requestId: plan.requestId || selection.requestId,
+            dedupeKey: plan.dedupeKey || selection.dedupeKey
+          }, null, 2)}\n`);
+          NODE
+          echo "selected=true" >> "$GITHUB_OUTPUT"
 
       - name: Print selected plan summary
         if: ${{ steps.select.outputs.selected == 'true' }}
@@ -204,18 +268,18 @@ jobs:
           TILE_COUNT="$(cat /tmp/radar-generation-rendered-tile-count.txt)"
           if [ "$UPLOAD_MODE" = "r2" ] && [ "$ALLOW_EMPTY_PUBLISH" != "true" ] && [ "$TILE_COUNT" -le 0 ]; then
             echo "Render produced zero radar tiles. Marking this plan skipped-empty instead of publishing."
-            ENDPOINT="$RADAR_GENERATION_R2_ENDPOINT"
-            if [ -z "$ENDPOINT" ]; then
-              ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
-            fi
-            node scripts/radar-generation-plan-queue.mjs mark \
-              --bucket="$RADAR_GENERATION_STATE_R2_BUCKET" \
-              --endpoint="$ENDPOINT" \
-              --access-key-id="$R2_ACCESS_KEY_ID" \
-              --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+            node scripts/radar-generation-plan-queue.mjs marker-file \
               --selection=/tmp/radar-generation-plan-selection.json \
               --render-result=/tmp/radar-generation-result.json \
+              --marker-out=/tmp/radar-generation-plan-marker.json \
               --status=skipped-empty
+            MARKER_PATH=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.markerPath);")
+            npx --yes wrangler r2 object put "$MARKER_PATH" \
+              --remote \
+              --file /tmp/radar-generation-plan-marker.json \
+              --content-type "application/json; charset=utf-8" \
+              --cache-control no-store \
+              --force
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "marked=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -333,25 +397,25 @@ jobs:
         if: ${{ steps.select.outputs.selected == 'true' && steps.tile_guard.outputs.publish == 'true' && steps.tile_guard.outputs.marked != 'true' && ((env.UPLOAD_MODE == 'r2' && steps.upload.outcome == 'success' && (steps.verify.outcome == 'success' || steps.verify.outcome == 'skipped')) || (env.UPLOAD_MODE == 'dry-run' && env.MARK_DRY_RUN_PROCESSED == 'true' && steps.plan_publish.outcome == 'success')) }}
         run: |
           set -euo pipefail
-          ENDPOINT="$RADAR_GENERATION_R2_ENDPOINT"
-          if [ -z "$ENDPOINT" ]; then
-            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          fi
           STATUS=published
           PUBLICATION=/tmp/radar-generation-publication.json
           if [ "$UPLOAD_MODE" = "dry-run" ]; then
             STATUS=dry-run
             PUBLICATION=/tmp/radar-generation-publication-plan.json
           fi
-          node scripts/radar-generation-plan-queue.mjs mark \
-            --bucket="$RADAR_GENERATION_STATE_R2_BUCKET" \
-            --endpoint="$ENDPOINT" \
-            --access-key-id="$R2_ACCESS_KEY_ID" \
-            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+          node scripts/radar-generation-plan-queue.mjs marker-file \
             --selection=/tmp/radar-generation-plan-selection.json \
             --render-result=/tmp/radar-generation-result.json \
             --publication="$PUBLICATION" \
+            --marker-out=/tmp/radar-generation-plan-marker.json \
             --status="$STATUS"
+          MARKER_PATH=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.markerPath);")
+          npx --yes wrangler r2 object put "$MARKER_PATH" \
+            --remote \
+            --file /tmp/radar-generation-plan-marker.json \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control no-store \
+            --force
 
       - name: Print final summary
         if: always()
@@ -394,3 +458,4 @@ jobs:
             /tmp/radar-generation-result.json
             /tmp/radar-generation-publication-plan.json
             /tmp/radar-generation-publication.json
+            /tmp/radar-generation-plan-marker.json

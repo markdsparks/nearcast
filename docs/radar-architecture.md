@@ -380,10 +380,11 @@ Current scaffold:
   viewport does not create a misleading enhanced pack.
 - `scripts/radar-generation-plan-queue.mjs` and
   `.github/workflows/process-pending-radar-generation-plans.yml` add the first
-  preview runner loop. The workflow lists private R2 render plans, skips plans
-  with processed markers, renders the newest pending plan, publishes through the
-  same preview index path, and marks successful or intentionally skipped work so
-  it is not repeatedly rendered.
+  preview runner loop. The queue consumer writes a latest-plan pointer in
+  private R2, and the workflow reads that pointer, skips plans with processed
+  markers, renders the pending plan, publishes through the same preview index
+  path, and marks successful or intentionally skipped work so it is not
+  repeatedly rendered.
 - The pending-plan runner has a five-minute schedule, but scheduled execution is
   gated by `ENABLE_RADAR_GENERATION_RUNNER=true`. That keeps render spend under
   explicit operator control while the architecture is still being hardened.

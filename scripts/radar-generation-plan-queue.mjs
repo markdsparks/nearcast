@@ -11,6 +11,7 @@ const DEFAULT_PLAN_OUTPUT_PREFIX = "radar/mrms/on-demand-preview";
 const DEFAULT_PROCESSED_PREFIX = "radar/mrms/processed-plans";
 const DEFAULT_PLAN_OUT = "/tmp/radar-generation-plan.json";
 const DEFAULT_SELECTION_OUT = "/tmp/radar-generation-plan-selection.json";
+const DEFAULT_MARKER_OUT = "/tmp/radar-generation-plan-marker.json";
 const DEFAULT_SCAN_LIMIT = 1000;
 const DEFAULT_MAX_AGE_MINUTES = 45;
 
@@ -36,6 +37,11 @@ async function main() {
   }
   if (command === "mark") {
     const result = await markPlanFromR2(optionsFromArgs(args));
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (command === "marker-file") {
+    const result = writeMarkerFile(optionsFromArgs(args));
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -114,27 +120,10 @@ export async function markPlanFromR2(options = {}) {
     };
   }
   const client = options.r2Client || await createR2Client(config);
-  const renderResult = optionalJson(options.renderResult);
-  const publication = optionalJson(options.publication);
-  const marker = {
-    provider: MARKER_PROVIDER,
-    version: 1,
-    status: config.status,
-    markedAt: new Date(config.now).toISOString(),
-    bucket: selection.bucket || config.bucket,
-    objectKey: selection.objectKey,
-    objectPath: selection.objectPath,
-    planKey: selection.planKey,
-    markerKey: selection.markerKey,
-    requestId: selection.requestId || renderResult?.requestId || "",
-    dedupeKey: selection.dedupeKey || renderResult?.dedupeKey || "",
-    packId: publication?.packId || renderResult?.pack?.id || "",
-    sourceSignature: publication?.sourceSignature || renderResult?.sourceSignature || "",
-    uploadMode: publication?.uploadMode || "",
-    uploaded: publication?.upload?.uploaded ?? null,
-    objectCount: publication?.objectCount ?? null,
-    manifestUrl: renderResult?.pack?.manifestUrl || ""
-  };
+  const marker = buildPlanMarker(selection, config, {
+    renderResult: optionalJson(options.renderResult),
+    publication: optionalJson(options.publication)
+  });
   await client.putJson(selection.markerKey, marker);
   return {
     provider: MARKER_PROVIDER,
@@ -143,6 +132,47 @@ export async function markPlanFromR2(options = {}) {
     markerKey: selection.markerKey,
     status: marker.status,
     packId: marker.packId
+  };
+}
+
+export function writeMarkerFile(options = {}) {
+  const config = normalizeConfig(options);
+  const selection = readJson(options.selection || config.selectionOut);
+  const marker = buildPlanMarker(selection, config, {
+    renderResult: optionalJson(options.renderResult),
+    publication: optionalJson(options.publication)
+  });
+  const markerOut = options.markerOut || DEFAULT_MARKER_OUT;
+  writeJson(markerOut, marker);
+  return {
+    provider: MARKER_PROVIDER,
+    version: 1,
+    markerOut,
+    markerKey: marker.markerKey,
+    status: marker.status,
+    packId: marker.packId
+  };
+}
+
+export function buildPlanMarker(selection, config = {}, { renderResult = null, publication = null } = {}) {
+  return {
+    provider: MARKER_PROVIDER,
+    version: 1,
+    status: config.status || "processed",
+    markedAt: new Date(config.now || new Date().toISOString()).toISOString(),
+    bucket: selection?.bucket || config.bucket || "",
+    objectKey: selection?.objectKey || "",
+    objectPath: selection?.objectPath || "",
+    planKey: selection?.planKey || "",
+    markerKey: selection?.markerKey || "",
+    requestId: selection?.requestId || renderResult?.requestId || "",
+    dedupeKey: selection?.dedupeKey || renderResult?.dedupeKey || "",
+    packId: publication?.packId || renderResult?.pack?.id || "",
+    sourceSignature: publication?.sourceSignature || renderResult?.sourceSignature || "",
+    uploadMode: publication?.uploadMode || "",
+    uploaded: publication?.upload?.uploaded ?? null,
+    objectCount: publication?.objectCount ?? null,
+    manifestUrl: renderResult?.pack?.manifestUrl || ""
   };
 }
 
@@ -336,6 +366,7 @@ function optionsFromArgs(parsed) {
     selection: parsed.selection,
     renderResult: parsed["render-result"],
     publication: parsed.publication,
+    markerOut: parsed["marker-out"],
     status: parsed.status
   };
 }
@@ -349,6 +380,7 @@ function normalizeConfig(options = {}) {
     secretAccessKey: options.secretAccessKey || process.env.R2_SECRET_ACCESS_KEY,
     planOut: options.planOut || DEFAULT_PLAN_OUT,
     selectionOut: options.selectionOut || DEFAULT_SELECTION_OUT,
+    markerOut: options.markerOut || DEFAULT_MARKER_OUT,
     status: cleanSegment(options.status || "processed")
   };
 }
@@ -462,6 +494,7 @@ Options:
   --selection=PATH              Selection JSON path for mark.
   --render-result=PATH          Optional render result JSON for mark metadata.
   --publication=PATH            Optional publication JSON for mark metadata.
+  --marker-out=PATH             Local marker JSON output path for marker-file.
   --status=VALUE                Marker status. Examples: published, dry-run, skipped-empty.
 
 R2 mode requires @aws-sdk/client-s3 in the execution environment.

@@ -129,6 +129,10 @@ assert.equal(r2QueueMessage.acked, true);
 assert.equal(r2PlanStore.records.length, 1);
 assert.equal(r2PlanStore.records[0].key, `radar/mrms/plans-smoke/${planned.plan.output.planKey}`);
 assert.equal(r2PlanStore.records[0].value.requestId, baseMessage.requestId);
+assert.equal(r2PlanStore.pointers.length, 1);
+assert.equal(r2PlanStore.pointers[0].key, "radar/mrms/pending-plans/latest.json");
+assert.equal(r2PlanStore.pointers[0].value.objectKey, `radar/mrms/plans-smoke/${planned.plan.output.planKey}`);
+assert.equal(r2PlanStore.pointers[0].value.requestId, baseMessage.requestId);
 
 console.log(JSON.stringify({
   planned: planned.plan.output.jobKey,
@@ -173,12 +177,15 @@ function createPlanStore() {
 function createR2Bucket() {
   return {
     records: [],
+    pointers: [],
     async put(key, body, options = {}) {
-      this.records.push({
+      const item = {
         key,
         value: JSON.parse(String(body)),
         options
-      });
+      };
+      if (key.endsWith("/latest.json")) this.pointers.push(item);
+      else this.records.push(item);
     }
   };
 }
