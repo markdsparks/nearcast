@@ -23,6 +23,26 @@ on:
         description: Target-zoom tile buffer around active parent tiles
         required: false
         default: "0"
+      activeTilePlan:
+        description: Use active-parent pruning for higher zoom tile planning
+        required: false
+        default: "true"
+      pyramidTiles:
+        description: Render all zooms from one canonical high-resolution raster
+        required: false
+        default: "false"
+      pyramidBaseZoom:
+        description: Canonical raster zoom for pyramid tile rendering
+        required: false
+        default: ""
+      pyramidPool:
+        description: Downsample method for lower zooms, max or mean
+        required: false
+        default: "max"
+      pyramidMaxPixels:
+        description: Safety cap for canonical raster pixels
+        required: false
+        default: ""
       maxClientOverzoom:
         description: Maximum app-side zoom stretch before fallback
         required: false
@@ -69,6 +89,11 @@ jobs:
       MRMS_FRAME_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || vars.MRMS_FRAME_TTL_MINUTES || '10' }}
       MRMS_FRAME_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_FRAME_TILE_ZOOMS || '5,6,7,8,9,10' }}
       MRMS_FRAME_ACTIVE_TILE_BUFFER: ${{ github.event.inputs.activeTileBuffer || vars.MRMS_FRAME_ACTIVE_TILE_BUFFER || '0' }}
+      MRMS_FRAME_ACTIVE_TILE_PLAN: ${{ github.event.inputs.activeTilePlan || vars.MRMS_FRAME_ACTIVE_TILE_PLAN || 'true' }}
+      MRMS_FRAME_PYRAMID_TILES: ${{ github.event.inputs.pyramidTiles || vars.MRMS_FRAME_PYRAMID_TILES || 'false' }}
+      MRMS_FRAME_PYRAMID_BASE_ZOOM: ${{ github.event.inputs.pyramidBaseZoom || vars.MRMS_FRAME_PYRAMID_BASE_ZOOM || '' }}
+      MRMS_FRAME_PYRAMID_POOL: ${{ github.event.inputs.pyramidPool || vars.MRMS_FRAME_PYRAMID_POOL || 'max' }}
+      MRMS_FRAME_PYRAMID_MAX_PIXELS: ${{ github.event.inputs.pyramidMaxPixels || vars.MRMS_FRAME_PYRAMID_MAX_PIXELS || '' }}
       MRMS_FRAME_MAX_CLIENT_OVERZOOM: ${{ github.event.inputs.maxClientOverzoom || vars.MRMS_FRAME_MAX_CLIENT_OVERZOOM || '10' }}
       MRMS_FRAME_TILE_BOUNDS: ${{ github.event.inputs.tileBounds || vars.MRMS_FRAME_TILE_BOUNDS || '' }}
       MRMS_FRAME_FOCUS_BOUNDS: ${{ github.event.inputs.focusBounds || vars.MRMS_FRAME_FOCUS_BOUNDS || '' }}
@@ -100,6 +125,21 @@ jobs:
           EXTRA_ARGS=()
           if [ "$MRMS_FRAME_FORCE_PUBLISH" = "true" ]; then
             EXTRA_ARGS+=(--force-publish)
+          fi
+          if [ "$MRMS_FRAME_ACTIVE_TILE_PLAN" = "false" ]; then
+            EXTRA_ARGS+=(--active-tile-plan=false)
+          fi
+          if [ "$MRMS_FRAME_PYRAMID_TILES" = "true" ]; then
+            EXTRA_ARGS+=(--pyramid-tiles)
+            if [ -n "$MRMS_FRAME_PYRAMID_BASE_ZOOM" ]; then
+              EXTRA_ARGS+=(--pyramid-base-zoom="$MRMS_FRAME_PYRAMID_BASE_ZOOM")
+            fi
+            if [ -n "$MRMS_FRAME_PYRAMID_POOL" ]; then
+              EXTRA_ARGS+=(--pyramid-pool="$MRMS_FRAME_PYRAMID_POOL")
+            fi
+            if [ -n "$MRMS_FRAME_PYRAMID_MAX_PIXELS" ]; then
+              EXTRA_ARGS+=(--pyramid-max-pixels="$MRMS_FRAME_PYRAMID_MAX_PIXELS")
+            fi
           fi
           if [ -n "$MRMS_FRAME_TILE_BOUNDS" ]; then
             EXTRA_ARGS+=(--tile-bounds="$MRMS_FRAME_TILE_BOUNDS")

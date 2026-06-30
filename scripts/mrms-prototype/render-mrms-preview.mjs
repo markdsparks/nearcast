@@ -690,6 +690,9 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   const skipEmptyTiles = booleanArg(args["skip-empty-tiles"], false);
   const activeTilePlan = booleanArg(args["active-tile-plan"], false);
   const activeTileBuffer = Math.max(0, Math.min(8, Math.round(numberArg(args["active-tile-buffer"], 1))));
+  const pyramidTiles = booleanArg(args["pyramid-tiles"], false);
+  const pyramidBaseZoom = Math.max(...zooms, Math.round(numberArg(args["pyramid-base-zoom"], Math.max(...zooms))));
+  const pyramidPool = String(args["pyramid-pool"] || "max").toLowerCase() === "mean" ? "mean" : "max";
   const encodedTiles = booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false);
   const dataEncoding = encodedTiles ? radarDataEncoding(args, threshold, smooth, style) : null;
   const frameTime = generatedFrameIso(args);
@@ -722,8 +725,7 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   let maxRenderedDbz = -Infinity;
   let previousActiveTiles = null;
   let previousZoom = null;
-
-  zooms.forEach((z) => {
+  const zoomPlans = zooms.map((z) => {
     const centerTile = tileForLatLon(centerLat, centerLon, z, tileSize);
     const baseRange = tileBounds
       ? tileRangeForBounds(tileBounds, z, tileSize)
@@ -733,6 +735,21 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           minY: centerTile.y - radius,
           maxY: centerTile.y + radius
         };
+    return { z, centerTile, baseRange };
+  });
+  const pyramid = pyramidTiles
+    ? buildPyramidCanonicalRaster({
+        values,
+        grid,
+        zoomPlans,
+        baseZoom: pyramidBaseZoom,
+        tileSize,
+        smooth,
+        maxPixels: Math.max(1_000_000, numberArg(args["pyramid-max-pixels"], 40_000_000))
+      })
+    : null;
+
+  zoomPlans.forEach(({ z, centerTile, baseRange }) => {
     const candidates = activeTilePlan && previousActiveTiles
       ? filterTileCandidatesForRange(activeChildTileCandidates(previousActiveTiles, previousZoom, z, activeTileBuffer), baseRange, z)
       : tileCandidatesForRange(baseRange, z);
@@ -757,18 +774,30 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     for (const candidate of candidates) {
       const x = candidate.x;
       const y = candidate.y;
-      const rendered = renderRadarTile({
-        values,
-        grid,
-        z,
-        x,
-        y,
-        tileSize,
-        threshold,
-        smooth,
-        style,
-        dataEncoding
-      });
+      const rendered = pyramid
+        ? renderPyramidRadarTile({
+            pyramid,
+            z,
+            x,
+            y,
+            tileSize,
+            threshold,
+            style,
+            dataEncoding,
+            pool: pyramidPool
+          })
+        : renderRadarTile({
+            values,
+            grid,
+            z,
+            x,
+            y,
+            tileSize,
+            threshold,
+            smooth,
+            style,
+            dataEncoding
+          });
       candidateTiles += 1;
       zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
       zoomSummary.maxX = zoomSummary.maxX === null ? x : Math.max(zoomSummary.maxX, x);
@@ -827,6 +856,9 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     skipEmptyTiles,
     activeTilePlan,
     activeTileBuffer,
+    pyramidTiles,
+    pyramidBaseZoom: pyramidTiles ? pyramidBaseZoom : undefined,
+    pyramidPool: pyramidTiles ? pyramidPool : undefined,
     center: {
       lat: round(centerLat, 5),
       lon: round(centerLon, 5)
@@ -858,6 +890,9 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       dataTiles,
       activeTilePlan,
       activeTileBuffer,
+      pyramidTiles,
+      pyramidBaseZoom: pyramidTiles ? pyramidBaseZoom : undefined,
+      pyramidPool: pyramidTiles ? pyramidPool : undefined,
       zooms: perZoom
     }
   };
@@ -880,6 +915,9 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       skipEmptyTiles,
       activeTilePlan,
       activeTileBuffer,
+      pyramidTiles,
+      pyramidBaseZoom: pyramidTiles ? pyramidBaseZoom : null,
+      pyramidPool: pyramidTiles ? pyramidPool : null,
       encodedTiles,
       zooms,
       totalTiles,
@@ -930,6 +968,110 @@ function renderRadarTile({ values, grid, z, x, y, tileSize, threshold, smooth, s
   }
 
   return { pixels, dataPixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+}
+
+function buildPyramidCanonicalRaster({ values, grid, zoomPlans, baseZoom, tileSize, smooth, maxPixels }) {
+  const ranges = zoomPlans.map((plan) => zoomRangeAtBaseZoom(plan.baseRange, plan.z, baseZoom));
+  const range = ranges.reduce((result, item) => ({
+    minX: Math.min(result.minX, item.minX),
+    maxX: Math.max(result.maxX, item.maxX),
+    minY: Math.min(result.minY, item.minY),
+    maxY: Math.max(result.maxY, item.maxY)
+  }), ranges[0]);
+  const width = (range.maxX - range.minX + 1) * tileSize;
+  const height = (range.maxY - range.minY + 1) * tileSize;
+  const pixels = width * height;
+  if (pixels > maxPixels) {
+    throw new Error(`pyramid canonical raster is too large: ${pixels.toLocaleString()} pixels at z${baseZoom}; lower --pyramid-base-zoom, narrow --tile-bounds, or raise --pyramid-max-pixels`);
+  }
+
+  const data = new Float32Array(pixels);
+  const worldSize = tileSize * (2 ** baseZoom);
+  for (let py = 0; py < height; py += 1) {
+    const worldY = range.minY * tileSize + py + 0.5;
+    for (let px = 0; px < width; px += 1) {
+      const worldX = range.minX * tileSize + px + 0.5;
+      const { lon, lat } = worldToLonLat(worldX, worldY, worldSize);
+      const dbz = sampleGrid(values, grid, lat, lon, smooth);
+      data[py * width + px] = Number.isFinite(dbz) ? dbz : NaN;
+    }
+  }
+
+  return { baseZoom, tileSize, range, width, height, data, maxPixels };
+}
+
+function renderPyramidRadarTile({ pyramid, z, x, y, tileSize, threshold, style, dataEncoding = null, pool = "max" }) {
+  const pixels = new Uint8ClampedArray(tileSize * tileSize * 4);
+  const dataPixels = dataEncoding ? new Uint8ClampedArray(tileSize * tileSize * 4) : null;
+  const scale = 2 ** Math.max(0, pyramid.baseZoom - z);
+  let radarPixels = 0;
+  let maxRenderedDbz = -Infinity;
+
+  for (let py = 0; py < tileSize; py += 1) {
+    const sourceY0 = Math.floor((y * tileSize + py) * scale - pyramid.range.minY * tileSize);
+    const sourceY1 = Math.ceil((y * tileSize + py + 1) * scale - pyramid.range.minY * tileSize);
+    for (let px = 0; px < tileSize; px += 1) {
+      const sourceX0 = Math.floor((x * tileSize + px) * scale - pyramid.range.minX * tileSize);
+      const sourceX1 = Math.ceil((x * tileSize + px + 1) * scale - pyramid.range.minX * tileSize);
+      const dbz = poolPyramidValue(pyramid, sourceX0, sourceY0, sourceX1, sourceY1, pool);
+      const color = transparentRadarColor(dbz, threshold, style);
+      if (dataPixels && dataEncoding) {
+        const encodedValue = encodeRadarDataValue(dbz, dataEncoding);
+        if (encodedValue > 0) {
+          const outIndex = (py * tileSize + px) * 4;
+          dataPixels[outIndex] = encodedValue;
+          dataPixels[outIndex + 1] = 0;
+          dataPixels[outIndex + 2] = 0;
+          dataPixels[outIndex + 3] = 255;
+        }
+      }
+      if (!color) continue;
+      const outIndex = (py * tileSize + px) * 4;
+      pixels[outIndex] = color[0];
+      pixels[outIndex + 1] = color[1];
+      pixels[outIndex + 2] = color[2];
+      pixels[outIndex + 3] = color[3];
+      radarPixels += 1;
+      if (dbz > maxRenderedDbz) maxRenderedDbz = dbz;
+    }
+  }
+
+  return { pixels, dataPixels, radarPixels, maxRenderedDbz: Number.isFinite(maxRenderedDbz) ? maxRenderedDbz : null };
+}
+
+function poolPyramidValue(pyramid, x0, y0, x1, y1, pool) {
+  const minX = Math.max(0, x0);
+  const minY = Math.max(0, y0);
+  const maxX = Math.min(pyramid.width, x1);
+  const maxY = Math.min(pyramid.height, y1);
+  let max = -Infinity;
+  let sum = 0;
+  let count = 0;
+
+  for (let y = minY; y < maxY; y += 1) {
+    const row = y * pyramid.width;
+    for (let x = minX; x < maxX; x += 1) {
+      const value = pyramid.data[row + x];
+      if (!Number.isFinite(value)) continue;
+      if (value > max) max = value;
+      sum += value;
+      count += 1;
+    }
+  }
+
+  if (!count) return NaN;
+  return pool === "mean" ? sum / count : max;
+}
+
+function zoomRangeAtBaseZoom(range, zoom, baseZoom) {
+  if (zoom > baseZoom) throw new Error(`target zoom z${zoom} is above pyramid base z${baseZoom}`);
+  const scale = 2 ** (baseZoom - zoom);
+  return {
+    minX: range.minX * scale,
+    maxX: (range.maxX + 1) * scale - 1,
+    minY: range.minY * scale,
+    maxY: (range.maxY + 1) * scale - 1
+  };
 }
 
 function radarDataEncoding(options, threshold, smooth, style) {
@@ -2173,6 +2315,10 @@ Options:
   --skip-empty-tiles         Only write tiles with rendered radar pixels.
   --active-tile-plan         Plan higher zoom tiles from active lower zoom radar tiles.
   --active-tile-buffer=1     Target-zoom tile buffer around active parents.
+  --pyramid-tiles            Render all tile zooms from one canonical high-resolution raster.
+  --pyramid-base-zoom=12     Canonical raster zoom for pyramid tile rendering.
+  --pyramid-pool=max         Downsample method for lower zooms: max or mean.
+  --pyramid-max-pixels=N     Safety cap for canonical raster pixels.
   --encoded-tiles            Also write data/{z}/{x}/{y}.png value tiles for client-side colorization.
   --tile-out=radar/mrms/id   Generated tile directory.
   --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.

@@ -187,6 +187,10 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
   if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false)) commandArgs.push("--encoded-tiles");
   if (booleanArg(args["active-tile-plan"], false)) commandArgs.push("--active-tile-plan");
   if (args["active-tile-buffer"] !== undefined) commandArgs.push(`--active-tile-buffer=${args["active-tile-buffer"]}`);
+  if (booleanArg(args["pyramid-tiles"], false)) commandArgs.push("--pyramid-tiles");
+  if (args["pyramid-base-zoom"] !== undefined) commandArgs.push(`--pyramid-base-zoom=${args["pyramid-base-zoom"]}`);
+  if (args["pyramid-pool"] !== undefined) commandArgs.push(`--pyramid-pool=${args["pyramid-pool"]}`);
+  if (args["pyramid-max-pixels"] !== undefined) commandArgs.push(`--pyramid-max-pixels=${args["pyramid-max-pixels"]}`);
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
 
   const result = spawnSync(process.execPath, commandArgs, {
@@ -366,6 +370,10 @@ Options:
   --skip-empty-tiles         Do not write transparent no-radar tiles.
   --active-tile-plan         Plan higher zoom tiles from active lower zoom radar tiles.
   --active-tile-buffer=1     Target-zoom tile buffer around active parents.
+  --pyramid-tiles            Render all zooms from one canonical high-resolution raster.
+  --pyramid-base-zoom=12     Canonical raster zoom for pyramid tile rendering.
+  --pyramid-pool=max         Downsample method for lower zooms: max or mean.
+  --pyramid-max-pixels=N     Safety cap for canonical raster pixels.
   --encoded-tiles            Also publish compact data tiles for client-side colorization.
   --resolve-only             Resolve candidate source objects and fingerprint without rendering tiles.
   --tile-version=mrms1       Optional cache-buster query string for tile URLs.
@@ -401,6 +409,7 @@ function sourceObjectForManifest(source) {
 }
 
 function buildRenderConfig({ region, product, frameLimit }) {
+  const pyramidTiles = booleanArg(args["pyramid-tiles"], false);
   return {
     region,
     product,
@@ -423,6 +432,10 @@ function buildRenderConfig({ region, product, frameLimit }) {
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
     activeTilePlan: booleanArg(args["active-tile-plan"], false),
     activeTileBuffer: numberArg(args["active-tile-buffer"], 1),
+    pyramidTiles,
+    pyramidBaseZoom: pyramidTiles && args["pyramid-base-zoom"] !== undefined ? numberArg(args["pyramid-base-zoom"], null) : null,
+    pyramidPool: pyramidTiles ? args["pyramid-pool"] || null : null,
+    pyramidMaxPixels: pyramidTiles && args["pyramid-max-pixels"] !== undefined ? numberArg(args["pyramid-max-pixels"], null) : null,
     encodedTiles: booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false),
     sample: booleanArg(args.sample, false),
     ttlMinutes: numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)

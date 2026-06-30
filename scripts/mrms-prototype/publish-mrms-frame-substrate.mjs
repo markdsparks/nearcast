@@ -50,7 +50,11 @@ async function main() {
   const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
   const tileZooms = args["tile-zooms"] || args.zooms || profile.tileZooms;
   const detailAreas = parseDetailAreas(args["detail-areas"], args["detail-tile-zooms"] || DEFAULT_DETAIL_TILE_ZOOMS);
-  const renderProfile = cleanSegment(args["render-profile"] || frameRenderProfile(tileZooms, detailAreas));
+  const renderProfile = cleanSegment(args["render-profile"] || frameRenderProfile(tileZooms, detailAreas, {
+    pyramidTiles: booleanArg(args["pyramid-tiles"], false),
+    pyramidBaseZoom: args["pyramid-base-zoom"],
+    pyramidPool: args["pyramid-pool"]
+  }));
   const artifactRoot = args["artifact-root"] || DEFAULT_ARTIFACT_ROOT;
   const publicBaseUrl = cleanPublicUrl(args["public-base-url"] || args["tile-url-base"] || args["tile-base-url"]);
   const checkedAt = new Date().toISOString();
@@ -435,7 +439,11 @@ function baseGeneratorArgs({
     "frame-time",
     "frame-times",
     "product",
-    "style"
+    "style",
+    "pyramid-tiles",
+    "pyramid-base-zoom",
+    "pyramid-pool",
+    "pyramid-max-pixels"
   ]);
   if (booleanArg(args["skip-empty-tiles"], true)) commandArgs.push("--skip-empty-tiles");
   if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], true)) commandArgs.push("--encoded-tiles");
@@ -541,6 +549,7 @@ function resolveProfile(value) {
 function parseDetailAreas(value, defaultTileZooms = DEFAULT_DETAIL_TILE_ZOOMS) {
   const text = String(value || "").trim();
   if (!text) return [];
+  if (["none", "off", "false", "0"].includes(text.toLowerCase())) return [];
   return text.split(";").map((entry) => parseDetailArea(entry, defaultTileZooms)).filter(Boolean);
 }
 
@@ -579,8 +588,13 @@ function trimNumber(value) {
   return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(6)));
 }
 
-function frameRenderProfile(tileZooms, detailAreas = []) {
-  const base = `encoded-z${tileZooms.replace(/,/g, "-")}`;
+function frameRenderProfile(tileZooms, detailAreas = [], options = {}) {
+  let base = `encoded-z${tileZooms.replace(/,/g, "-")}`;
+  if (options.pyramidTiles) {
+    const baseZoom = options.pyramidBaseZoom ? `b${cleanSegment(options.pyramidBaseZoom)}` : "bauto";
+    const pool = cleanSegment(options.pyramidPool || "max");
+    base = `${base}-pyramid-${baseZoom}-${pool}`;
+  }
   if (!detailAreas.length) return base;
   const detailKey = detailAreas
     .map((area) => `${area.id}:${area.tileBounds}:${area.focusBounds}:${area.tileZooms}`)
@@ -724,6 +738,10 @@ Options:
   --max-client-overzoom=10    Maximum zoom stretch before the app falls back.
   --active-tile-plan=false    Disable active-first higher-zoom tile planning.
   --active-tile-buffer=1      Target-zoom tile buffer around active parents.
+  --pyramid-tiles             Render all zooms from one canonical high-resolution raster.
+  --pyramid-base-zoom=12      Canonical raster zoom for pyramid tile rendering.
+  --pyramid-pool=max          Downsample method for lower zooms: max or mean.
+  --pyramid-max-pixels=N      Safety cap for canonical raster pixels.
   --detail-areas=SPEC         Optional semicolon-separated place detail packs.
                               SPEC: id|Label|minLat,minLon,maxLat,maxLon|focusBounds|zooms
   --detail-tile-zooms=11,12   Default zooms for detail areas without explicit zooms.
