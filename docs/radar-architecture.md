@@ -378,6 +378,15 @@ Current scaffold:
   artifact set, plans the preview-index merge, and can either stop at `dry-run`
   or upload to R2. It blocks empty R2 publishes by default so a no-precip test
   viewport does not create a misleading enhanced pack.
+- `scripts/radar-generation-plan-queue.mjs` and
+  `.github/workflows/process-pending-radar-generation-plans.yml` add the first
+  preview runner loop. The workflow lists private R2 render plans, skips plans
+  with processed markers, renders the newest pending plan, publishes through the
+  same preview index path, and marks successful or intentionally skipped work so
+  it is not repeatedly rendered.
+- The pending-plan runner has a five-minute schedule, but scheduled execution is
+  gated by `ENABLE_RADAR_GENERATION_RUNNER=true`. That keeps render spend under
+  explicit operator control while the architecture is still being hardened.
 - A real Great Falls preview upload has verified the R2 object layout through
   the public origin: preview index, pack manifest, and encoded tile URLs are
   externally readable after upload.
@@ -406,7 +415,8 @@ Current scaffold:
 Still missing before broad activation:
 
 - Production queue/renderer R2 credential wiring and bucket policy review.
-- Automatic job wiring from a stored queue plan to the renderer/publisher.
+- Production-grade job runner outside GitHub Actions if preview workloads exceed
+  CI ergonomics, timing, or cost limits.
 - App-side enhanced-layer refresh after a generated pack becomes ready.
 
 ### Phase 4: Scale controls

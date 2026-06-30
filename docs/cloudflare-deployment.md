@@ -183,8 +183,8 @@ node scripts/radar-generation-renderer-smoke.mjs
 `scripts/radar-generation-publisher.mjs` publishes a renderer result into the
 generated-radar index contract without activating production upload. It supports
 `dry-run` planning, `local-r2` mirroring for smoke tests, and explicit
-credentialed `r2` upload for preview/manual execution. The script is still not
-connected to an automatic job runner. Manual `r2` runs require
+credentialed `r2` upload for preview/manual execution. The pending-plan runner
+uses the same publisher path. Manual and runner `r2` runs require
 `@aws-sdk/client-s3` in the execution environment, matching the existing
 generated-MRMS R2 uploader.
 
@@ -222,6 +222,31 @@ By default, the workflow refuses to publish a render that produced zero radar
 tiles. This keeps no-precip queue tests from creating a misleading enhanced pack
 in the preview index. Use `allowEmptyPublish=true` only when deliberately
 testing empty-coverage behavior.
+
+Pending queued-plan processing:
+
+```bash
+gh workflow run "Process pending radar generation plans" -f uploadMode=dry-run
+```
+
+This workflow lists private plans in `nearcast-radar-state`, chooses the newest
+unprocessed plan under `radar/mrms/on-demand-preview`, renders it, and either
+dry-runs or uploads it through the same publisher. Successful `r2` publishes
+write a processed marker under `radar/mrms/processed-plans/...` so the runner
+does not repeatedly render the same plan. Empty no-precip renders are marked
+`skipped-empty` instead of being published unless `allowEmptyPublish=true`.
+
+The workflow also has a five-minute schedule, but scheduled jobs are skipped
+unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=true` is set.
+That is the cost switch for preview automation. Keep it off when manually
+testing architecture, and turn it on only when on-demand render/publish spend is
+expected.
+
+Smoke test:
+
+```bash
+node scripts/radar-generation-plan-queue-smoke.mjs
+```
 
 Manual preview R2 upload:
 
@@ -296,6 +321,8 @@ Completed in repo:
 - `RADAR_GENERATION_PLANS_R2` stores accepted render plans in private R2.
 - `Process radar generation plan` can fetch a private plan, render artifacts,
   and dry-run or upload the preview pack to R2.
+- `Process pending radar generation plans` can discover the newest unprocessed
+  private plan, render/publish it, and mark it processed.
 - `Deploy Cloudflare app` provisions `nearcast-radar-generation-preview` before
   deploying the Worker.
 - `Deploy Cloudflare app` provisions the private `nearcast-radar-state` bucket
@@ -320,9 +347,11 @@ Next:
 8. Run the publisher smoke test against a local R2 mirror.
 9. Run `Process radar generation plan` in `dry-run` mode against the private
    plan object from queue verification.
-10. Verify credentialed R2 upload against the preview bucket with explicit
+10. Run `Process pending radar generation plans` in `dry-run` mode and confirm
+    it selects the same pending class without requiring a copied object path.
+11. Verify credentialed R2 upload against the preview bucket with explicit
    manual execution.
-11. Verify endpoint-driven enhanced radar before making the endpoint the
+12. Verify endpoint-driven enhanced radar before making the endpoint the
    default.
 
 ## Generated MRMS radar publisher
@@ -481,7 +510,7 @@ on-demand generation instead of full static app redeploys.
 
 - Workers paid plan.
 - Weather API proxy.
-- Automatic queue-backed radar render/publish runner.
+- Production queue-backed radar render/publish runner.
 - Push subscription endpoints.
 - Scheduled rain checks.
 - Auth or server-side user storage.
