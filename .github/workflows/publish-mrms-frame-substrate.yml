@@ -14,7 +14,7 @@ on:
       ttlMinutes:
         description: Frame index freshness window
         required: false
-        default: "10"
+        default: "60"
       tileZooms:
         description: Reusable source zooms
         required: false
