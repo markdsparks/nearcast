@@ -30,6 +30,8 @@ const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
 const GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = MAP_MAX_ZOOM;
 const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
 const GENERATED_RADAR_GENERATION_MIN_ZOOM = 8;
+const RADAR_CAPABILITY_FETCH_TIMEOUT_MS = 3500;
+const RADAR_FALLBACK_METADATA_FETCH_TIMEOUT_MS = 3500;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT = 6;
@@ -213,6 +215,32 @@ function radarSourcePlaceSnapshot() {
 
 function radarDecisionErrorMessage(error) {
   return error?.message || String(error || "unknown error");
+}
+
+async function fetchRadarMetadataWithTimeout(url, options = {}) {
+  const timeoutMs = Math.max(500, Number(options.timeoutMs || RADAR_FALLBACK_METADATA_FETCH_TIMEOUT_MS));
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : 0;
+  const abort = () => controller?.abort();
+  const externalSignal = options.signal;
+  if (externalSignal) externalSignal.addEventListener("abort", abort, { once: true });
+  if (externalSignal?.aborted) controller?.abort();
+
+  const {
+    timeoutMs: _timeoutMs,
+    signal: _signal,
+    ...fetchOptions
+  } = options;
+
+  try {
+    return await fetch(url, {
+      ...fetchOptions,
+      signal: controller?.signal || externalSignal
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", abort);
+  }
 }
 
 function radarDecisionFrameSummary(frames) {
@@ -2780,7 +2808,9 @@ async function fetchRainViewerData() {
   let data = cached && Date.now() - cached.savedAt < maxCacheAge ? cached.data : null;
 
   if (!data) {
-    const response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+    const response = await fetchRadarMetadataWithTimeout("https://api.rainviewer.com/public/weather-maps.json", {
+      timeoutMs: RADAR_FALLBACK_METADATA_FETCH_TIMEOUT_MS
+    });
     if (!response.ok) throw new Error("RainViewer metadata failed.");
     data = await response.json();
     localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
@@ -2966,7 +2996,10 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
   const indexAttempts = [];
   for (const indexUrl of generatedMrmsIndexCandidateUrls()) {
     try {
-      const response = await fetch(indexUrl, { cache: "no-store" });
+      const response = await fetchRadarMetadataWithTimeout(indexUrl, {
+        cache: "no-store",
+        timeoutMs: RADAR_CAPABILITY_FETCH_TIMEOUT_MS
+      });
       if (!response.ok) throw new Error("Generated MRMS index unavailable.");
       const index = await response.json();
       const selection = selectGeneratedMrmsIndexPack(index, { indexUrl });
@@ -3083,14 +3116,15 @@ function defaultRadarCapabilityEndpointUrl() {
 async function fetchRadarCapabilityEndpoint(endpoint, base, options = {}) {
   const url = resolveRadarCapabilityEndpointUrl(endpoint);
   if (!url) throw new Error("Radar capability endpoint URL is invalid.");
-  const response = await fetch(url, {
+  const response = await fetchRadarMetadataWithTimeout(url, {
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json"
     },
     cache: "no-store",
-    body: JSON.stringify(radarCapabilityRequestPayload(base, options))
+    body: JSON.stringify(radarCapabilityRequestPayload(base, options)),
+    timeoutMs: RADAR_CAPABILITY_FETCH_TIMEOUT_MS
   });
   if (!response.ok) throw new Error(`Radar capability endpoint failed with ${response.status}.`);
   const capability = normalizeRadarCapabilityResponse(await response.json(), base, url);
@@ -3259,7 +3293,10 @@ function radarCapabilityWithGenerationState(capability, options = {}) {
 async function fetchGeneratedMrmsRadarFrames() {
   const selection = await resolveGeneratedMrmsManifestSelection();
   if (!selection?.manifestUrl) throw new Error("Generated MRMS capability unavailable.");
-  const response = await fetch(selection.manifestUrl, { cache: "no-store" });
+  const response = await fetchRadarMetadataWithTimeout(selection.manifestUrl, {
+    cache: "no-store",
+    timeoutMs: RADAR_CAPABILITY_FETCH_TIMEOUT_MS
+  });
   if (!response.ok) throw new Error("Generated MRMS manifest unavailable.");
   const manifest = await response.json();
   validateGeneratedMrmsManifest(manifest);
@@ -4661,7 +4698,9 @@ async function fetchNwsRadarCapabilities(config) {
     VERSION: "1.3.0",
     REQUEST: "GetCapabilities"
   });
-  const response = await fetch(`${config.endpoint}?${params.toString()}`);
+  const response = await fetchRadarMetadataWithTimeout(`${config.endpoint}?${params.toString()}`, {
+    timeoutMs: RADAR_FALLBACK_METADATA_FETCH_TIMEOUT_MS
+  });
   if (!response.ok) throw new Error("NWS radar capabilities failed.");
   const xml = await response.text();
   localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), xml }));
