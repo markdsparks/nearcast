@@ -1497,39 +1497,76 @@ function radarQualityDiagnosticStats(record = null) {
   const currentZoom = Number.isFinite(Number(mapState.zoom)) ? Number(mapState.zoom) : null;
   const frameMinZoom = frame ? weatherFrameMinZoom(frame) : null;
   const frameMaxZoom = frame ? weatherFrameMaxZoom(frame) : null;
-  const sourceZoom = frame ? weatherFrameSourceZoom(frame) : null;
+  const frameSourceZoom = frame ? weatherFrameSourceZoom(frame) : null;
   const selection = mapState.generatedRadarIndexSelection || null;
-  const selected = selection?.selected || mapState.radarCapability?.enhanced?.quality || null;
+  const capability = mapState.radarCapability || null;
+  const selected = selection?.selected || capability?.enhanced?.quality || null;
   const enhanced = mapState.radarCapability?.enhanced || {};
   const metrics = selected?.metrics || enhanced.metrics || null;
-  const coverage = selected?.score?.coverage || null;
+  const score = selected?.score || enhanced.score || null;
+  const coverage = score?.coverage || null;
+  const viewportGate = score?.viewportGate || score?.viewportEligibility || null;
+  const selectedMinZoom = diagnosticFiniteNumber(selected?.minZoom ?? enhanced.minZoom ?? viewportGate?.minZoom);
+  const selectedMaxZoom = diagnosticFiniteNumber(selected?.maxZoom ?? enhanced.maxZoom ?? viewportGate?.maxZoom);
+  const maxClientOverzoom = diagnosticFiniteNumber(
+    selected?.maxClientOverzoom ??
+    enhanced.maxClientOverzoom ??
+    viewportGate?.maxClientOverzoom ??
+    frame?.maxClientOverzoom
+  );
+  const sourceZoom = selectedMaxZoom ?? frameSourceZoom;
+  const overzoom = Number.isFinite(currentZoom) && Number.isFinite(sourceZoom)
+    ? Math.max(0, currentZoom - sourceZoom)
+    : (Number.isFinite(frameSourceZoom) ? weatherOverzoomAmount(frameSourceZoom) : null);
   const renderer = frame?.dataUrl ? "encoded-radar" : (frame?.provider === "mrms-generated" ? "generated-radar" : activeMapSource(frame));
-  const overzoom = Number.isFinite(sourceZoom) ? weatherOverzoomAmount(sourceZoom) : null;
+  const frameTime = diagnosticIsoString(frame?.time || frame?.validTime || frame?.sourceObject?.observedAt || "");
+  const generatedAt = diagnosticIsoString(selected?.generatedAt || enhanced.generatedAt || capability?.checkedAt || "");
+  const sourceTime = frameTime || generatedAt;
+  const expiresAt = diagnosticIsoString(selected?.expiresAt || enhanced.expiresAt || "");
+  const checkedAt = diagnosticIsoString(capability?.checkedAt || selection?.at || "");
   return {
     renderer: renderer || enhanced.kind || "",
     selectionSource: enhanced.selectionSource || (selection?.selected ? "index" : ""),
     state: enhanced.state || (selected ? "ready" : "unavailable"),
+    reason: enhanced.reason || selection?.reason || "",
+    generationState: capability?.generation?.state || "",
+    generationReason: capability?.generation?.reason || "",
     packId: selected?.id || enhanced.packId || "",
     label: selected?.label || enhanced.label || "",
     currentZoom: roundedDiagnosticNumber(currentZoom, 2),
     frameMinZoom,
     frameMaxZoom,
+    selectedMinZoom,
+    selectedMaxZoom,
     sourceZoom,
     overzoom: roundedDiagnosticNumber(overzoom, 2),
-    selectedMinZoom: selected?.minZoom ?? null,
-    selectedMaxZoom: selected?.maxZoom ?? null,
+    maxClientOverzoom: roundedDiagnosticNumber(maxClientOverzoom, 2),
     coverageBounds: selected?.coverageBounds || enhanced.coverageBounds || null,
-    score: selected?.score || null,
+    score,
+    viewportGate,
     metrics,
     packCount: selection?.packCount ?? enhanced.packCount ?? null,
     freshPackCount: selection?.freshPackCount ?? enhanced.freshPackCount ?? null,
     rejectedPackCount: selection?.rejectedPackCount ?? null,
     candidateCount: Array.isArray(selection?.candidates) ? selection.candidates.length : 0,
     visibleWeatherEntries: [...(record?.weatherEntries?.values?.() || [])].filter((entry) => entry.visible).length,
-    manifestUrl: enhanced.manifestUrl || mapState.generatedRadarManifestUrl || "",
+    indexUrl: enhanced.indexUrl || selection?.indexUrl || "",
+    manifestUrl: enhanced.manifestUrl || selected?.manifestUrl || mapState.generatedRadarManifestUrl || "",
+    frameTime,
+    generatedAt,
+    sourceTime,
+    checkedAt,
+    expiresAt,
+    frameAgeMinutes: diagnosticMinutesSince(sourceTime),
+    expiresInMinutes: diagnosticMinutesUntil(expiresAt),
     coverageValue: coverage ? roundedDiagnosticNumber(coverage.value, 3) : null,
     viewportOverlap: coverage ? roundedDiagnosticNumber(coverage.viewportOverlap, 3) : null
   };
+}
+
+function diagnosticFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function roundedDiagnosticNumber(value, digits = 2) {
@@ -1539,15 +1576,78 @@ function roundedDiagnosticNumber(value, digits = 2) {
   return Math.round(number * factor) / factor;
 }
 
+function diagnosticIsoString(value) {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function diagnosticMinutesSince(value) {
+  const timestamp = Date.parse(value || "");
+  if (!Number.isFinite(timestamp)) return null;
+  return roundedDiagnosticNumber((Date.now() - timestamp) / 60000, 1);
+}
+
+function diagnosticMinutesUntil(value) {
+  const timestamp = Date.parse(value || "");
+  if (!Number.isFinite(timestamp)) return null;
+  return roundedDiagnosticNumber((timestamp - Date.now()) / 60000, 1);
+}
+
+function diagnosticMinuteLabel(value, suffix) {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) return "";
+  const absolute = Math.abs(minutes);
+  const amount = absolute < 1 ? "<1m" : absolute < 90 ? `${Math.round(absolute)}m` : `${roundedDiagnosticNumber(absolute / 60, 1)}h`;
+  return `${amount} ${suffix}`;
+}
+
+function diagnosticClockLabel(value) {
+  const timestamp = Date.parse(value || "");
+  if (!Number.isFinite(timestamp)) return "";
+  return new Date(timestamp).toISOString().slice(11, 16) + "Z";
+}
+
 function radarQualityDiagnosticLine(quality) {
   if (!quality) return "";
   const pack = quality.packId ? `pack ${shortDiagnosticId(quality.packId)}` : (quality.selectionSource || quality.renderer || "radar");
-  const band = Number.isFinite(quality.frameMinZoom) && Number.isFinite(quality.frameMaxZoom)
-    ? `z${quality.frameMinZoom}-${quality.frameMaxZoom}`
+  const minZoom = Number.isFinite(quality.selectedMinZoom) ? quality.selectedMinZoom : quality.frameMinZoom;
+  const maxZoom = Number.isFinite(quality.selectedMaxZoom) ? quality.selectedMaxZoom : quality.frameMaxZoom;
+  const band = Number.isFinite(minZoom) && Number.isFinite(maxZoom)
+    ? `z${minZoom}-${maxZoom}`
     : "z--";
   const source = Number.isFinite(quality.sourceZoom) ? `source z${quality.sourceZoom}` : "source z--";
   const overzoom = Number.isFinite(quality.overzoom) ? `over ${quality.overzoom.toFixed(1)}` : "over --";
-  return `quality ${quality.state || "unknown"} · ${pack} · ${band} · ${source} · ${overzoom}`;
+  const maxOver = Number.isFinite(quality.maxClientOverzoom) ? `max ${quality.maxClientOverzoom.toFixed(1)}` : "max --";
+  return `quality ${quality.state || "unknown"} · ${pack} · ${band} · ${source} · ${overzoom}/${maxOver}`;
+}
+
+function radarRouteDiagnosticLine(quality) {
+  if (!quality) return "";
+  const route = quality.selectionSource || quality.renderer || "fallback";
+  const reason = quality.reason || quality.generationReason || "no-reason";
+  const generation = quality.generationState && !["not-needed", "not-requested"].includes(quality.generationState)
+    ? `generation ${quality.generationState}`
+    : "";
+  const index = quality.indexUrl ? `index ${shortDiagnosticUrl(quality.indexUrl)}` : "";
+  return ["route", route, reason, generation, index].filter(Boolean).join(" · ");
+}
+
+function radarFreshnessDiagnosticLine(quality) {
+  if (!quality) return "";
+  const sourceClock = diagnosticClockLabel(quality.sourceTime);
+  const age = diagnosticMinuteLabel(quality.frameAgeMinutes, "old");
+  const expires = Number.isFinite(Number(quality.expiresInMinutes))
+    ? Number(quality.expiresInMinutes) < 0
+      ? diagnosticMinuteLabel(quality.expiresInMinutes, "expired")
+      : diagnosticMinuteLabel(quality.expiresInMinutes, "left")
+    : "";
+  const checked = diagnosticClockLabel(quality.checkedAt);
+  const pieces = [];
+  if (sourceClock || age) pieces.push(`frame ${[sourceClock, age].filter(Boolean).join(" ")}`);
+  if (expires) pieces.push(`expires ${expires}`);
+  if (checked) pieces.push(`checked ${checked}`);
+  return pieces.length ? `freshness ${pieces.join(" · ")}` : "";
 }
 
 function radarCostDiagnosticLine(quality) {
@@ -1555,19 +1655,33 @@ function radarCostDiagnosticLine(quality) {
   const metrics = quality.metrics || {};
   const generatedTiles = Number(metrics.generatedTiles || metrics.radarTiles || 0);
   const dataTiles = Number(metrics.dataTiles || 0);
+  const candidateTiles = Number(metrics.candidateTiles || 0);
   const candidateText = Number.isFinite(Number(quality.freshPackCount)) && Number.isFinite(Number(quality.packCount))
     ? `packs ${quality.freshPackCount}/${quality.packCount}`
     : `packs ${quality.candidateCount || 0}`;
   const overlap = Number.isFinite(Number(quality.viewportOverlap))
     ? `overlap ${Math.round(Number(quality.viewportOverlap) * 100)}%`
     : "overlap --";
-  return `${candidateText} · tiles ${generatedTiles || "--"} · data ${dataTiles || "--"} · ${overlap}`;
+  const tiles = candidateTiles ? `${generatedTiles || "--"}/${candidateTiles}` : `${generatedTiles || "--"}`;
+  return `${candidateText} · tiles ${tiles} · data ${dataTiles || "--"} · ${overlap}`;
 }
 
 function shortDiagnosticId(value) {
   const text = String(value || "");
   if (text.length <= 18) return text;
   return `${text.slice(0, 8)}...${text.slice(-6)}`;
+}
+
+function shortDiagnosticUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const url = new URL(text, window.location?.href || "https://getnearcast.app/");
+    const parts = url.pathname.split("/").filter(Boolean);
+    return [url.hostname, ...parts.slice(-3)].join("/");
+  } catch {
+    return shortDiagnosticId(text);
+  }
 }
 
 function mapLibreDiagnosticStats(record) {
@@ -1636,12 +1750,16 @@ function syncMapLibreDiagnosticReadout(record) {
   const glFps = stats.glFps ? `gl ${stats.glFps}` : "gl warming";
   const loaded = stats.tilesLoaded ? "tiles ready" : "tiles loading";
   const radarQuality = radarQualityDiagnosticLine(stats.radarQuality);
+  const radarRoute = radarRouteDiagnosticLine(stats.radarQuality);
+  const radarFreshness = radarFreshnessDiagnosticLine(stats.radarQuality);
   const radarCost = radarCostDiagnosticLine(stats.radarQuality);
   nextReadout.innerHTML = `
     <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
     <span>${escapeHtml(uiFps)} fps · ${escapeHtml(glFps)} fps · moves ${stats.movesPerSecond}/s</span>
     <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))} · ${escapeHtml(radarSourceZoomLabel())}</span>
     ${radarQuality ? `<span>${escapeHtml(radarQuality)}</span>` : ""}
+    ${radarRoute ? `<span>${escapeHtml(radarRoute)}</span>` : ""}
+    ${radarFreshness ? `<span>${escapeHtml(radarFreshness)}</span>` : ""}
     ${radarCost ? `<span>${escapeHtml(radarCost)}</span>` : ""}
     <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;

@@ -6329,7 +6329,7 @@ body.map-immersive-active #mapLegend {
   z-index: 24;
   display: grid;
   gap: 3px;
-  max-width: 360px;
+  max-width: min(520px, calc(100% - 24px));
   padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
@@ -6349,6 +6349,8 @@ body.map-immersive-active #mapLegend {
 
 .map-diagnostic-readout span {
   color: rgba(245, 248, 251, 0.78);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .map-radar-status {

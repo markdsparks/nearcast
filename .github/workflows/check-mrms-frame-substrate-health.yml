@@ -1,0 +1,55 @@
+name: Check MRMS frame substrate health
+
+on:
+  workflow_dispatch:
+    inputs:
+      indexUrl:
+        description: Public frame substrate index URL
+        required: false
+        default: ""
+      capabilityUrl:
+        description: Radar capability endpoint URL
+        required: false
+        default: ""
+      maxFrameAgeMinutes:
+        description: Maximum allowed MRMS source frame age
+        required: false
+        default: "20"
+      minExpiresInMinutes:
+        description: Minimum freshness remaining on the published index
+        required: false
+        default: "1"
+  schedule:
+    - cron: "*/10 * * * *"
+
+concurrency:
+  group: check-mrms-frame-substrate-health
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_MRMS_FRAME_SUBSTRATE_HEALTH == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MRMS_FRAME_INDEX_URL: ${{ github.event.inputs.indexUrl || vars.MRMS_FRAME_INDEX_URL || 'https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json' }}
+      RADAR_CAPABILITY_URL: ${{ github.event.inputs.capabilityUrl || vars.RADAR_CAPABILITY_URL || 'https://getnearcast.app/api/radar/capability' }}
+      MAX_FRAME_AGE_MINUTES: ${{ github.event.inputs.maxFrameAgeMinutes || vars.MRMS_FRAME_HEALTH_MAX_FRAME_AGE_MINUTES || '20' }}
+      MIN_EXPIRES_IN_MINUTES: ${{ github.event.inputs.minExpiresInMinutes || vars.MRMS_FRAME_HEALTH_MIN_EXPIRES_IN_MINUTES || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check public frame substrate health
+        run: |
+          node scripts/mrms-prototype/check-mrms-frame-substrate-health.mjs \
+            --index-url="$MRMS_FRAME_INDEX_URL" \
+            --capability-url="$RADAR_CAPABILITY_URL" \
+            --max-frame-age-minutes="$MAX_FRAME_AGE_MINUTES" \
+            --min-expires-in-minutes="$MIN_EXPIRES_IN_MINUTES"
