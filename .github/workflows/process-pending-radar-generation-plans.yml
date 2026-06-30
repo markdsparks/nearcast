@@ -34,7 +34,7 @@ on:
       maxPlanAgeMinutes:
         description: Skip private plans older than this; 0 disables the age guard.
         required: false
-        default: "45"
+        default: "12"
       scanLimit:
         description: Maximum private plan objects to scan.
         required: false
@@ -98,7 +98,7 @@ jobs:
       PUBLIC_BASE_URL: ${{ github.event.inputs.publicBaseUrl || vars.RADAR_GENERATION_PUBLIC_BASE_URL || 'https://radar.getnearcast.app' }}
       INDEX_KEY: ${{ github.event.inputs.indexKey || vars.RADAR_GENERATION_INDEX_KEY || 'radar/mrms/on-demand-preview/index.json' }}
       PLAN_OUTPUT_PREFIX: ${{ github.event.inputs.planOutputPrefix || vars.RADAR_GENERATION_OUTPUT_PREFIX || 'radar/mrms/on-demand-preview' }}
-      MAX_PLAN_AGE_MINUTES: ${{ github.event.inputs.maxPlanAgeMinutes || vars.RADAR_GENERATION_RUNNER_MAX_PLAN_AGE_MINUTES || '45' }}
+      MAX_PLAN_AGE_MINUTES: ${{ github.event.inputs.maxPlanAgeMinutes || vars.RADAR_GENERATION_RUNNER_MAX_PLAN_AGE_MINUTES || '12' }}
       SCAN_LIMIT: ${{ github.event.inputs.scanLimit || vars.RADAR_GENERATION_RUNNER_SCAN_LIMIT || '1000' }}
       VERIFY_PUBLIC: ${{ github.event.inputs.verifyPublic || vars.RADAR_GENERATION_RUNNER_VERIFY_PUBLIC || 'true' }}
       ALLOW_EMPTY_PUBLISH: ${{ github.event.inputs.allowEmptyPublish || vars.RADAR_GENERATION_RUNNER_ALLOW_EMPTY_PUBLISH || 'false' }}
@@ -141,7 +141,7 @@ jobs:
           }
           if [ "$MODE" = "safe" ]; then
             cap_positive RADAR_GENERATION_R2_UPLOAD_CONCURRENCY 2
-            cap_positive MAX_PLAN_AGE_MINUTES 20
+            cap_positive MAX_PLAN_AGE_MINUTES 12
             cap_positive SCAN_LIMIT 250
             cap_positive MAX_PACKS 40
             echo "VERIFY_PUBLIC=true" >> "$GITHUB_ENV"

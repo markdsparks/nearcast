@@ -278,6 +278,8 @@ upgrade.
 
 - Keep the pending-plan runner as a preview tool.
 - Offset the GitHub schedule away from minute zero to reduce dropped runs.
+- Keep the processed-marker freshness window shorter than the published pack TTL
+  so a viewport can regenerate as soon as the visible enhanced pack expires.
 - Add monitoring for "queued plan age" and "latest published pack age."
 - Make the app stop presenting enhancement as pending after a short timeout.
 
