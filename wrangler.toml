@@ -24,6 +24,7 @@ max_batch_timeout = 5
 max_retries = 2
 
 [vars]
+RADAR_FRAME_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json"
 RADAR_GENERATION_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json"
 RADAR_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state"
 RADAR_GENERATION_PLANS_R2_PREFIX = "radar/mrms/plans"

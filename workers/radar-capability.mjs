@@ -9,6 +9,7 @@ const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
+const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
 const RADAR_GENERATION_ACCEPT_REQUESTS_ENV = "RADAR_GENERATION_ACCEPT_REQUESTS";
 const RADAR_GENERATION_RUNNER_MODE_ENV = "RADAR_GENERATION_RUNNER_MODE";
 const RADAR_GENERATION_POLL_AFTER_SECONDS_ENV = "RADAR_GENERATION_POLL_AFTER_SECONDS";
@@ -47,10 +48,9 @@ export async function handleRadarCapabilityRequest(request, env = {}, ctx = {}) 
 
   const payload = await readJsonRequest(request);
   const base = baseCapability(payload);
-  const indexResult = await loadGeneratedRadarIndex(request, env);
-  const selected = indexResult.index ? selectGeneratedRadarPack(indexResult.index, base.viewport) : null;
-  const capability = selected
-    ? capabilityWithEnhanced(base, selected, request, indexResult)
+  const indexResult = await loadBestGeneratedRadarIndex(request, env, base.viewport);
+  const capability = indexResult.selected
+    ? capabilityWithEnhanced(base, indexResult.selected, request, indexResult)
     : capabilityUnavailable(base, indexResult);
   capability.generation = await generationState(capability, payload, env, ctx);
   return jsonResponse(capability);
@@ -92,9 +92,24 @@ function baseCapability(payload = {}) {
   };
 }
 
-async function loadGeneratedRadarIndex(request, env = {}) {
-  const externalIndexUrl = configuredGeneratedRadarIndexUrl(request, env);
-  if (externalIndexUrl) {
+async function loadBestGeneratedRadarIndex(request, env = {}, viewport = {}) {
+  const candidates = configuredGeneratedRadarIndexUrls(request, env);
+  const results = [];
+  for (const candidate of candidates) {
+    const indexResult = await loadGeneratedRadarIndexCandidate(request, env, candidate);
+    const selected = indexResult.index ? selectGeneratedRadarPack(indexResult.index, viewport) : null;
+    const result = { ...indexResult, selected };
+    results.push(result);
+    if (selected) return { ...result, attempts: results };
+  }
+  return results[0]
+    ? { ...results[0], attempts: results }
+    : { reason: "index-unavailable", indexUrl: "", attempts: [] };
+}
+
+async function loadGeneratedRadarIndexCandidate(request, env = {}, candidate = {}) {
+  const externalIndexUrl = candidate.indexUrl || "";
+  if (externalIndexUrl && candidate.kind !== "asset") {
     const fetcher = generatedRadarIndexFetch(env);
     if (!fetcher) return { reason: "external-index-fetch-unavailable", indexUrl: externalIndexUrl };
     return fetchGeneratedRadarIndex(externalIndexUrl, fetcher, {
@@ -113,6 +128,29 @@ async function loadGeneratedRadarIndex(request, env = {}) {
     unavailableReason: "index-unavailable",
     errorReason: "index-error"
   });
+}
+
+function configuredGeneratedRadarIndexUrls(request, env = {}) {
+  const urls = [
+    configuredRadarFrameIndexUrl(request, env),
+    configuredGeneratedRadarIndexUrl(request, env)
+  ].filter(Boolean);
+  const seen = new Set();
+  const externalCandidates = urls
+    .filter((indexUrl) => {
+      if (seen.has(indexUrl)) return false;
+      seen.add(indexUrl);
+      return true;
+    })
+    .map((indexUrl) => ({ kind: "external", indexUrl }));
+  return [...externalCandidates, { kind: "asset" }];
+}
+
+function configuredRadarFrameIndexUrl(request, env = {}) {
+  const value = typeof env?.[RADAR_FRAME_INDEX_URL_ENV] === "string"
+    ? env[RADAR_FRAME_INDEX_URL_ENV].trim()
+    : "";
+  return value ? absoluteUrl(value, request.url) : "";
 }
 
 async function fetchGeneratedRadarIndex(indexUrl, fetcher, reasons) {
@@ -190,6 +228,8 @@ function packScore(pack, viewport) {
       usable: eligibility.usable,
       reason: eligibility.reason,
       minZoom: eligibility.minZoom,
+      maxZoom: eligibility.maxZoom,
+      maxClientOverzoom: eligibility.maxClientOverzoom,
       viewportThreshold: eligibility.viewportThreshold
     }
   };
@@ -215,7 +255,7 @@ function capabilityWithEnhanced(base, selected, request, indexResult = {}) {
       label: pack?.label || "Radar",
       manifestUrl,
       indexUrl,
-      selectionSource: "index",
+      selectionSource: pack?.kind === "frame-substrate" ? "frame-index" : "index",
       selectionKey: [
         manifestUrl,
         pack?.id || "",
@@ -228,7 +268,7 @@ function capabilityWithEnhanced(base, selected, request, indexResult = {}) {
       generatedAt: pack?.generatedAt || "",
       expiresAt: pack?.expiresAt || "",
       metrics: pack?.metrics || null,
-      reason: "fresh-index-pack",
+      reason: pack?.kind === "frame-substrate" ? "fresh-frame-substrate" : "fresh-index-pack",
       score
     },
     generation: {
@@ -733,23 +773,33 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
   const centerPoint = viewport?.center || viewport?.activePoint;
   const hasViewport = Boolean(viewport?.bounds);
   const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + ENHANCED_MIN_ZOOM_GRACE >= minZoom;
+  const maxClientOverzoom = enhancedMaxClientOverzoom(source);
+  const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
+    zoom <= maxZoom + maxClientOverzoom + ENHANCED_MIN_ZOOM_GRACE;
   const centerOk = !centerPoint || coverage.centerCovered;
   const viewportThreshold = hasViewport ? ENHANCED_VIEWPORT_COVERAGE_MIN : null;
   const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN;
   let reason = "usable";
   if (!coverage.relevant) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
   return {
-    usable: coverage.relevant && minZoomOk && centerOk && viewportOk,
+    usable: coverage.relevant && minZoomOk && maxZoomOk && centerOk && viewportOk,
     reason,
     coverage,
     minZoom: Number.isFinite(minZoom) ? minZoom : null,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : null,
+    maxClientOverzoom: Number.isFinite(maxClientOverzoom) ? maxClientOverzoom : null,
     zoom: hasZoom ? zoom : null,
     viewportThreshold
   };
+}
+
+function enhancedMaxClientOverzoom(source) {
+  const value = finiteNumber(source?.maxClientOverzoom ?? source?.renderProfile?.maxClientOverzoom ?? source?.substrate?.maxClientOverzoom, NaN);
+  return Number.isFinite(value) && value >= 0 ? value : NaN;
 }
 
 function generationViewportEligibility(viewport = {}, env = {}) {

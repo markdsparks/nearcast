@@ -311,6 +311,9 @@ Initial implementation:
   pack index. If it is absent, stale, out of coverage, or beyond the allowed
   overzoom range, the existing generated-index and fallback paths continue to
   handle the viewport.
+- The production capability Worker must follow the same order because the live
+  app asks `/api/radar/capability` before local index fallback: frame-substrate
+  index first, on-demand preview index second, static generated index last.
 
 ### Step 3: Move color and polish to the client
 

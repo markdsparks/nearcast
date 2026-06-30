@@ -20,8 +20,11 @@ The deploy is configured by `wrangler.toml`:
 - Worker entry point: `workers/radar-capability.mjs`
 - Compatibility date: `2026-06-22`
 - Static assets directory: `.`
+- `RADAR_FRAME_INDEX_URL` points the capability endpoint at the frame-first R2
+  generated-radar index. This is the preferred broad enhanced-radar substrate.
 - `RADAR_GENERATION_INDEX_URL` points the capability endpoint at the R2 preview
-  generated-radar index.
+  generated-radar index. The endpoint checks the frame index first, then this
+  preview index, then the static generated index.
 - `RADAR_GENERATION_REQUESTS_R2` stores preview dedupe and budget records in
   the private `nearcast-radar-state` R2 bucket under
   `RADAR_GENERATION_REQUESTS_R2_PREFIX`.

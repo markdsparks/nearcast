@@ -150,6 +150,39 @@ assert.equal(
 );
 assert.equal(externalFetchCount, 1);
 
+let routedFetchCount = 0;
+const frameIndexUrl = "https://radar.example.test/radar/mrms/frame-substrate/latest-frame-index.json";
+const previewIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";
+const frameIndex = {
+  ...index,
+  provider: "nearcast-mrms-frame-index",
+  packs: [{
+    ...index.packs[0],
+    id: "frame-conus",
+    kind: "frame-substrate",
+    label: "CONUS radar substrate",
+    manifestUrl: "conus/source/encoded/manifest.json",
+    coverageBounds: { minLat: 24, minLon: -125, maxLat: 50, maxLon: -66 },
+    maxClientOverzoom: 2.25
+  }]
+};
+const routedFrameReady = await capability(basePayload, {
+  RADAR_FRAME_INDEX_URL: frameIndexUrl,
+  RADAR_GENERATION_INDEX_URL: previewIndexUrl,
+  async RADAR_GENERATION_INDEX_FETCH(request) {
+    routedFetchCount += 1;
+    if (request.url === frameIndexUrl) return Response.json(frameIndex);
+    return Response.json(externalIndex);
+  }
+});
+assert.equal(routedFrameReady.status, 200);
+assert.equal(routedFrameReady.body.enhanced.state, "ready");
+assert.equal(routedFrameReady.body.enhanced.reason, "fresh-frame-substrate");
+assert.equal(routedFrameReady.body.enhanced.selectionSource, "frame-index");
+assert.equal(routedFrameReady.body.enhanced.packId, "frame-conus");
+assert.equal(routedFrameReady.body.enhanced.indexUrl, frameIndexUrl);
+assert.equal(routedFetchCount, 1);
+
 const outsidePayload = {
   ...basePayload,
   viewport: {
@@ -337,6 +370,7 @@ console.log(JSON.stringify({
   partialViewport: partialViewport.body.enhanced.state,
   workerQueue: workerQueue.accepted,
   external: externalReady.body.enhanced.packId,
+  frameIndex: routedFrameReady.body.enhanced.reason,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
   disabled: disabled.body.generation.reason,
