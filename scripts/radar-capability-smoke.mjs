@@ -228,6 +228,30 @@ assert.equal(lowZoom.body.generation.state, "limited");
 assert.equal(lowZoom.body.generation.reason, "below-generation-min-zoom");
 assert.equal(lowZoomEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
 
+const directPlanStore = createR2PlanBucket();
+const directPlanEnv = {
+  ...env,
+  RADAR_GENERATION_REQUESTS: createRequestStore(),
+  RADAR_GENERATION_PLANS_R2: directPlanStore,
+  RADAR_GENERATION_PLANS_R2_PREFIX: "radar/mrms/plans-direct-smoke"
+};
+const directPlanned = await capability({
+  ...outsidePayload,
+  viewport: {
+    center: { latitude: 36.4, longitude: -91.2 },
+    activePoint: { latitude: 36.4, longitude: -91.2 },
+    zoom: 10,
+    bounds: { minLat: 36.2, minLon: -91.4, maxLat: 36.6, maxLon: -91.0 },
+    key: "36.40,-91.20,z10"
+  }
+}, directPlanEnv);
+assert.equal(directPlanned.status, 200);
+assert.equal(directPlanned.body.generation.state, "queued");
+assert.equal(directPlanned.body.generation.planStored, true);
+assert.ok(directPlanned.body.generation.planKey);
+assert.equal(directPlanStore.records.length, 1);
+assert.equal(directPlanStore.pointers.length, 1);
+
 const safeQueuedEnv = {
   ...env,
   RADAR_GENERATION_ACCEPT_REQUESTS: "safe",
@@ -318,6 +342,7 @@ console.log(JSON.stringify({
   disabled: disabled.body.generation.reason,
   queued: queued.body.generation.state,
   lowZoom: lowZoom.body.generation.reason,
+  directPlanned: directPlanned.body.generation.planStored,
   safeQueued: safeQueued.body.generation.mode,
   overBudget: overBudgetCapability.body.generation.reason,
   deduped: deduped.body.generation.state,

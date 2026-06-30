@@ -1,4 +1,8 @@
-import { buildRadarGenerationPlan, handleRadarGenerationQueue } from "./radar-generation-consumer.mjs";
+import {
+  buildRadarGenerationPlan,
+  handleRadarGenerationMessage,
+  handleRadarGenerationQueue
+} from "./radar-generation-consumer.mjs";
 
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
@@ -266,9 +270,8 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     return { state: "unsupported", requestId: null, reason: "generation-requests-disabled", mode: runnerMode };
   }
   const queue = env?.RADAR_GENERATION_QUEUE;
-  if (!queue?.send) {
-    return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable", mode: runnerMode };
-  }
+  const canStorePlan = generationPlanStoreAvailable(env);
+  if (!canStorePlan && !queue?.send) return { state: "unsupported", requestId: null, reason: "generation-dispatch-unavailable", mode: runnerMode };
   const requestStore = generationRequestStore(env);
   if (!requestStore) {
     return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable", mode: runnerMode };
@@ -296,6 +299,18 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
   }
   const existing = await readGenerationRequest(requestStore, dedupeKey);
   if (existing && !generationRequestExpired(existing)) {
+    const existingMessage = generationMessageFromRecord(existing, capability, payload, dedupeKey);
+    const plan = existing.planStored ? null : await storeGenerationPlanForRequest(existingMessage, env);
+    if (plan?.stored) {
+      await requestStore.putJson(dedupeKey, {
+        ...existing,
+        planStored: true,
+        planKey: plan.planKey || existing.planKey || "",
+        planStorageKey: plan.planStorageKey || existing.planStorageKey || ""
+      }, {
+        expirationTtl: generationRequestRemainingTtl(existing)
+      });
+    }
     return {
       state: "deduped",
       requestId: existing.requestId || null,
@@ -303,6 +318,8 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
       mode: runnerMode,
       dedupeKey,
       queuedAt: existing.queuedAt || "",
+      planStored: existing.planStored ?? plan?.stored ?? null,
+      planKey: existing.planKey || plan?.planKey || "",
       nextPollAfterSeconds: generationPollAfterSeconds(env)
     };
   }
@@ -328,7 +345,17 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     reason: payload.generation?.reason || "viewport",
     enhancedReason: capability.enhanced?.reason || ""
   };
-  await queue.send(message);
+  const plan = await storeGenerationPlanForRequest(message, env);
+  if (plan?.available && !plan.accepted) {
+    return {
+      state: plan.retryable ? "unsupported" : "limited",
+      requestId: null,
+      reason: plan.reason || "generation-plan-rejected",
+      mode: runnerMode,
+      plan
+    };
+  }
+  if (!plan?.stored) await queue.send(message);
   const record = {
     requestId,
     dedupeKey,
@@ -336,7 +363,10 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     expiresAt: new Date(Date.now() + GENERATION_DEDUPE_TTL_SECONDS * 1000).toISOString(),
     viewport: capability.viewport,
     preferences: payload.preferences || {},
-    reason: payload.generation?.reason || "viewport"
+    reason: payload.generation?.reason || "viewport",
+    planStored: Boolean(plan?.stored),
+    planKey: plan?.planKey || "",
+    planStorageKey: plan?.planStorageKey || ""
   };
   await Promise.all([
     requestStore.putJson(dedupeKey, record, {
@@ -351,6 +381,8 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     mode: runnerMode,
     dedupeKey,
     queuedAt,
+    planStored: Boolean(plan?.stored),
+    planKey: plan?.planKey || "",
     nextPollAfterSeconds: generationPollAfterSeconds(env)
   };
 }
@@ -370,6 +402,49 @@ function preflightGenerationPlan(capability, payload = {}, dedupeKey, env = {}) 
     return {
       accepted: false,
       reason: "generation-preflight-error",
+      error: error?.message || String(error)
+    };
+  }
+}
+
+function generationPlanStoreAvailable(env = {}) {
+  return Boolean(env?.RADAR_GENERATION_PLANS?.put || env?.RADAR_GENERATION_PLANS_R2?.put);
+}
+
+function generationMessageFromRecord(record = {}, capability, payload = {}, dedupeKey = "") {
+  return {
+    requestId: record.requestId || randomId(),
+    dedupeKey: record.dedupeKey || dedupeKey,
+    requestedAt: record.queuedAt || new Date().toISOString(),
+    viewport: record.viewport || capability?.viewport || {},
+    preferences: record.preferences || payload.preferences || {},
+    reason: record.reason || payload.generation?.reason || "viewport",
+    enhancedReason: capability?.enhanced?.reason || ""
+  };
+}
+
+async function storeGenerationPlanForRequest(message, env = {}) {
+  if (!generationPlanStoreAvailable(env)) return { available: false, stored: false };
+  try {
+    const result = await handleRadarGenerationMessage(message, env);
+    return {
+      available: true,
+      accepted: Boolean(result?.accepted),
+      stored: Boolean(result?.stored),
+      retryable: Boolean(result?.retryable),
+      reason: result?.reason || "",
+      planKey: result?.plan?.output?.planKey || "",
+      planStorageKey: result?.planStorageKey || "",
+      pendingPointerStored: Boolean(result?.pendingPointerStored),
+      coverage: result?.coverage || result?.plan?.coverage || null
+    };
+  } catch (error) {
+    return {
+      available: true,
+      accepted: false,
+      stored: false,
+      retryable: true,
+      reason: "generation-plan-store-error",
       error: error?.message || String(error)
     };
   }
@@ -485,6 +560,12 @@ function generationRequestExpired(record) {
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
 }
 
+function generationRequestRemainingTtl(record) {
+  const expiresAt = timestamp(record?.expiresAt);
+  if (!Number.isFinite(expiresAt)) return GENERATION_DEDUPE_TTL_SECONDS;
+  return Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+}
+
 function generationDedupeKey(capability, payload = {}) {
   const viewport = capability?.viewport || {};
   const center = viewport.center || viewport.activePoint || {};
@@ -494,7 +575,7 @@ function generationDedupeKey(capability, payload = {}) {
   const bounds = generationDedupeBounds(viewport.bounds);
   const provider = payload?.preferences?.radarProvider || "auto";
   const timeline = payload?.preferences?.timelineKind || "radar";
-  return ["radar-generation", "v2", provider, timeline, lat, lon, `z${zoom}`, bounds].join(":");
+  return ["radar-generation", "v3", provider, timeline, lat, lon, `z${zoom}`, bounds].join(":");
 }
 
 function generationDedupeBounds(value) {
