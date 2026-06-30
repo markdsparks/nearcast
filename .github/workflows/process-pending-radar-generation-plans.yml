@@ -64,7 +64,10 @@ on:
         required: false
         default: "80"
   schedule:
-    - cron: "*/5 * * * *"
+    # Offset from minute 0 because GitHub can delay or drop scheduled jobs
+    # during high-load periods. This is still a preview runner, not the
+    # production real-time radar clock.
+    - cron: "2-59/5 * * * *"
 
 permissions:
   contents: read

@@ -40,6 +40,33 @@ warming, but it should not become a world/continent/country pre-rendering
 system. Tile count, object churn, freshness windows, and compute time all grow
 too quickly when generation is tied to geography instead of user attention.
 
+## Reality check from live storm testing
+
+The June 30 Green Bay/New London storm test exposed the core problem with the
+current preview path:
+
+- The app can correctly request enhancement.
+- The capability Worker can store a bounded render plan.
+- The GitHub/R2 runner can render and publish a good pack when manually kicked.
+- But the user can still sit on "Enhancing radar" while the storm moves because
+  the preview runner is an asynchronous batch job with schedule delay, runner
+  startup, render time, object upload time, and a short freshness window.
+
+That is not a product-quality storm experience. During active weather, a user
+expects the radar surface to follow the storm immediately as they search, zoom,
+and pan. A per-viewport tile-pack queue chases the user's last view; it does not
+provide a continuous radar substrate.
+
+GitHub Actions also cannot be treated as the production radar clock. Its
+scheduled event is documented as delay-prone under load, and queued scheduled
+jobs can be dropped. Offsetting the preview schedule away from minute zero may
+reduce missed runs, but it does not change the architecture conclusion.
+
+Nearcast should keep the current on-demand pack path only as a bridge for
+experiments, hot-area warming, and visual-quality comparison. The production
+path should ingest each source frame once, publish a reusable data substrate,
+and let the app or an edge tile service render the current viewport instantly.
+
 ## Architecture stance
 
 Nearcast should use a hybrid progressive radar architecture.
@@ -54,7 +81,8 @@ Nearcast should use a hybrid progressive radar architecture.
 
 3. **On-demand generation**
    When a searched or panned viewport is not enhanced yet, enqueue work for that
-   viewport, dedupe it, and publish immutable artifacts to object storage.
+   viewport, dedupe it, and publish immutable artifacts to object storage. This
+   is a warming/bridge path, not the primary live-storm path.
 
 4. **Client-side rendering**
    Prefer compact encoded value tiles over pre-colored PNG-only output. The
@@ -145,14 +173,18 @@ Draft response shape:
 
 ### Generation service
 
-The generation service should not be coupled to app deployment.
+The generation service should not be coupled to app deployment, and it should
+not render a unique visual tile pyramid for every user viewport as the default
+path.
 
 Responsibilities:
 
 - Discover current source frames.
 - Decode and normalize weather fields.
-- Crop or tile only the requested coverage.
-- Emit encoded value tiles plus optional PNG fallback tiles.
+- Publish source-frame data tiles once per product/frame/render profile.
+- Crop or tile requested coverage only for bridge warming or special high-detail
+  packs.
+- Emit encoded value tiles plus optional PNG fallback tiles where needed.
 - Publish immutable frame artifacts to R2.
 - Write or update small manifests and indexes.
 - Dedupe equivalent viewport/source/render requests.
@@ -182,6 +214,104 @@ radar/mrms/index.json
 radar/mrms/packs/{pack-id}/manifest.json
 radar/capabilities/{geohash-or-viewport-key}.json
 ```
+
+In the target state, the hottest mutable routing object points to the latest
+source frames and data-tile templates, not to a growing list of short-lived
+place-specific visual packs.
+
+## Target production shape
+
+The production radar path should be frame-first:
+
+```mermaid
+flowchart LR
+  Source["MRMS / provider frame"] --> Ingest["Frame ingest worker"]
+  Ingest --> DataTiles["Reusable encoded data tiles"]
+  DataTiles --> Index["Latest-frame index"]
+  Index --> App["Nearcast app"]
+  DataTiles --> App
+  App --> Shader["Device color/ramp/render"]
+  App --> Fallback["Classic fallback if unsupported"]
+```
+
+Key properties:
+
+- **Ingest once per frame.** Do not regenerate the same weather field for every
+  place search.
+- **Render everywhere from the same substrate.** Search, pan, and zoom should
+  discover already-published frame data, not start a new job.
+- **Keep fallback immediate.** The classic radar fallback remains visible until
+  the enhanced frame is ready on-device.
+- **Use on-demand packs only for gaps.** On-demand jobs can warm a storm corridor
+  or a deep-zoom high-detail area, but the user should not depend on them for
+  basic live radar.
+- **Separate freshness from beauty.** Fresh frame availability is a data problem;
+  saturated colors, smoothing, opacity, and label readability are client render
+  problems.
+
+This moves cost from "number of users times number of viewed places" toward
+"number of source frames times bounded data-tile profiles." That is the only
+shape that can follow storms without exploding object count or waiting on
+per-user batch work.
+
+## UX target for enhanced radar
+
+The user flow should be:
+
+1. Search or open a place.
+2. Map recenters immediately.
+3. Fallback radar is visible immediately if precipitation exists.
+4. The app checks the latest enhanced frame index.
+5. If the device supports enhanced rendering and fresh data covers the viewport,
+   the enhanced layer fades in.
+6. If not, the fallback remains the radar experience; background warming is
+   silent or very lightly indicated.
+
+The normal user should not see a long-running "Enhancing radar" state. A short
+"Checking radar" affordance is acceptable. Anything longer than a few seconds
+should become a quiet fallback state, not a promise that the map is about to
+upgrade.
+
+## Migration plan from today's prototype
+
+### Step 1: Stabilize the bridge
+
+- Keep the pending-plan runner as a preview tool.
+- Offset the GitHub schedule away from minute zero to reduce dropped runs.
+- Add monitoring for "queued plan age" and "latest published pack age."
+- Make the app stop presenting enhancement as pending after a short timeout.
+
+### Step 2: Build the frame-first substrate
+
+- Add a frame-ingest job that fetches the latest MRMS product on a real clock.
+- Decode once and publish reusable encoded data tiles for a coarse CONUS profile.
+- Publish a small `latest-frame-index.json` with frame time, expiry, product,
+  tile template, and attribution.
+- Teach the app to load this index before considering viewport-pack generation.
+
+### Step 3: Move color and polish to the client
+
+- Treat encoded tiles as the normal path.
+- Colorize with the current Nearcast radar palette on the device.
+- Tune smoothing, opacity, and zoom styling in the app, not in a server PNG
+  bake.
+- Keep PNG fallback only for browsers/devices that cannot handle the enhanced
+  path.
+
+### Step 4: Use warming deliberately
+
+- Warm active storm corridors, saved places, and popular viewports from the same
+  source-frame data.
+- Do not build country-sized visual packs on every update.
+- Use lifecycle rules and immutable keys so old frames age out cheaply.
+
+### Step 5: Decide provider vs own-the-pipeline
+
+- If a commercial MapsGL-style provider gives the same data-driven rendering,
+  legal fit, and predictable pricing, it can replace much of the custom ingest
+  path.
+- If not, MRMS raw data remains the U.S. premium radar substrate, with a separate
+  global provider/fallback strategy outside MRMS coverage.
 
 ## Source strategy
 
