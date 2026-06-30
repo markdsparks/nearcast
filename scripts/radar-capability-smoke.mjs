@@ -193,9 +193,24 @@ const queued = await capability(outsidePayload, queuedEnv);
 assert.equal(queued.status, 200);
 assert.equal(queued.body.enhanced.state, "unavailable");
 assert.equal(queued.body.generation.state, "queued");
+assert.equal(queued.body.generation.mode, "standard");
+assert.equal(queued.body.generation.nextPollAfterSeconds, 20);
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].viewport.key, "35.00,-90.00,z10");
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].dedupeKey, queued.body.generation.dedupeKey);
+
+const safeQueuedEnv = {
+  ...env,
+  RADAR_GENERATION_ACCEPT_REQUESTS: "safe",
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_POLL_AFTER_SECONDS: "25",
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const safeQueued = await capability(outsidePayload, safeQueuedEnv);
+assert.equal(safeQueued.status, 200);
+assert.equal(safeQueued.body.generation.state, "queued");
+assert.equal(safeQueued.body.generation.mode, "safe");
+assert.equal(safeQueued.body.generation.nextPollAfterSeconds, 25);
 
 const deduped = await capability(outsidePayload, queuedEnv);
 assert.equal(deduped.status, 200);
@@ -259,6 +274,7 @@ console.log(JSON.stringify({
   queueOnly: queueOnly.body.generation.reason,
   disabled: disabled.body.generation.reason,
   queued: queued.body.generation.state,
+  safeQueued: safeQueued.body.generation.mode,
   deduped: deduped.body.generation.state,
   r2Queued: r2Queued.body.generation.state,
   r2Deduped: r2Deduped.body.generation.state,

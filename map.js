@@ -21,8 +21,8 @@ const GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS = 1600;
 const GENERATED_RADAR_TILE_PREFLIGHT_CACHE_MS = 2 * 60 * 1000;
 const GENERATED_RADAR_REFRESH_DEBOUNCE_MS = 300;
 const GENERATED_RADAR_POLL_INITIAL_MS = 7000;
-const GENERATED_RADAR_POLL_INTERVAL_MS = 9000;
-const GENERATED_RADAR_POLL_MAX_MS = 110 * 1000;
+const GENERATED_RADAR_POLL_INTERVAL_MS = 12000;
+const GENERATED_RADAR_POLL_MAX_MS = 7 * 60 * 1000;
 const GENERATED_RADAR_READY_STATUS_MS = 1800;
 const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
@@ -1833,6 +1833,14 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
         scheduleGeneratedRadarWarmupPoll(capability, warmup, viewportKey, reason);
         return;
       }
+      if (capability?.generation?.state) {
+        recordRadarSourceDecision("radar.generation-not-started", {
+          generationState: capability.generation.state || "",
+          generationReason: capability.generation.reason || "",
+          generationMode: capability.generation.mode || "",
+          retryAfterSeconds: capability.generation.retryAfterSeconds ?? null
+        });
+      }
       if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey) {
         clearGeneratedRadarSelection();
         await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
@@ -1901,7 +1909,10 @@ function scheduleGeneratedRadarWarmupPoll(capability, warmup, viewportKey, reaso
   }
 
   const attempts = Math.max(1, Number(warmup?.attempts) || 1);
-  const baseDelay = attempts <= 1 ? GENERATED_RADAR_POLL_INITIAL_MS : GENERATED_RADAR_POLL_INTERVAL_MS;
+  const advisedDelay = Number(generation.nextPollAfterSeconds) * 1000;
+  const baseDelay = Number.isFinite(advisedDelay) && advisedDelay > 0
+    ? advisedDelay
+    : attempts <= 1 ? GENERATED_RADAR_POLL_INITIAL_MS : GENERATED_RADAR_POLL_INTERVAL_MS;
   const delay = Math.max(1200, Math.min(baseDelay, timeoutAt - now));
   setGeneratedRadarWarmup({
     ...warmup,

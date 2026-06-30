@@ -6,6 +6,8 @@ const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_GENERATION_ACCEPT_REQUESTS_ENV = "RADAR_GENERATION_ACCEPT_REQUESTS";
+const RADAR_GENERATION_RUNNER_MODE_ENV = "RADAR_GENERATION_RUNNER_MODE";
+const RADAR_GENERATION_POLL_AFTER_SECONDS_ENV = "RADAR_GENERATION_POLL_AFTER_SECONDS";
 const RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV = "RADAR_GENERATION_REQUESTS_R2_PREFIX";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
@@ -13,6 +15,7 @@ const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
 const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
 const DEFAULT_GENERATION_GLOBAL_HOURLY_LIMIT = 60;
 const DEFAULT_GENERATION_VIEWPORT_HOURLY_LIMIT = 3;
+const DEFAULT_GENERATION_POLL_AFTER_SECONDS = 20;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -247,16 +250,17 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
   if (!payload?.generation?.request) {
     return { state: "not-requested", requestId: null, reason: "request-not-set" };
   }
+  const runnerMode = generationRunnerMode(env);
   if (!generationRequestsAccepted(env)) {
-    return { state: "unsupported", requestId: null, reason: "generation-requests-disabled" };
+    return { state: "unsupported", requestId: null, reason: "generation-requests-disabled", mode: runnerMode };
   }
   const queue = env?.RADAR_GENERATION_QUEUE;
   if (!queue?.send) {
-    return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable" };
+    return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable", mode: runnerMode };
   }
   const requestStore = generationRequestStore(env);
   if (!requestStore) {
-    return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable" };
+    return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable", mode: runnerMode };
   }
   const dedupeKey = generationDedupeKey(capability, payload);
   const existing = await readGenerationRequest(requestStore, dedupeKey);
@@ -265,8 +269,10 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
       state: "deduped",
       requestId: existing.requestId || null,
       reason: "recent-generation-request",
+      mode: runnerMode,
       dedupeKey,
-      queuedAt: existing.queuedAt || ""
+      queuedAt: existing.queuedAt || "",
+      nextPollAfterSeconds: generationPollAfterSeconds(env)
     };
   }
   const budget = await generationBudgetState(requestStore, dedupeKey, env);
@@ -275,6 +281,7 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
       state: "limited",
       requestId: null,
       reason: `${budget.scope}-budget-exhausted`,
+      mode: runnerMode,
       retryAfterSeconds: budget.retryAfterSeconds,
       budget: budgetSummary(budget)
     };
@@ -306,7 +313,15 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     }),
     ...generationBudgetWrites(requestStore, budget, queuedAt)
   ]);
-  return { state: "queued", requestId, reason: "queued-for-generation", dedupeKey };
+  return {
+    state: "queued",
+    requestId,
+    reason: "queued-for-generation",
+    mode: runnerMode,
+    dedupeKey,
+    queuedAt,
+    nextPollAfterSeconds: generationPollAfterSeconds(env)
+  };
 }
 
 async function readGenerationRequest(requestStore, dedupeKey) {
@@ -324,6 +339,23 @@ function generationRequestStore(env = {}) {
 function generationRequestsAccepted(env = {}) {
   if (env?.[RADAR_GENERATION_ACCEPT_REQUESTS_ENV] === undefined) return true;
   return booleanValue(env[RADAR_GENERATION_ACCEPT_REQUESTS_ENV]);
+}
+
+function generationRunnerMode(env = {}) {
+  if (!generationRequestsAccepted(env)) return "disabled";
+  const mode = String(env?.[RADAR_GENERATION_RUNNER_MODE_ENV] || env?.[RADAR_GENERATION_ACCEPT_REQUESTS_ENV] || "")
+    .trim()
+    .toLowerCase();
+  if (["safe", "standard", "manual"].includes(mode)) return mode;
+  return "standard";
+}
+
+function generationPollAfterSeconds(env = {}) {
+  const seconds = nonNegativeInteger(
+    env?.[RADAR_GENERATION_POLL_AFTER_SECONDS_ENV],
+    DEFAULT_GENERATION_POLL_AFTER_SECONDS
+  );
+  return Math.min(60, Math.max(5, seconds));
 }
 
 function kvGenerationRequestStore(namespace) {

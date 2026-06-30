@@ -245,10 +245,12 @@ published unless `allowEmptyPublish=true`. Verification plans are skipped if an
 old verification pointer is still present.
 
 The workflow also has a five-minute schedule, but scheduled jobs are skipped
-unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=true` is set.
-That is the cost switch for preview automation. Keep it off when manually
-testing architecture, and turn it on only when on-demand render/publish spend is
-expected.
+unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=safe` or
+`ENABLE_RADAR_GENERATION_RUNNER=true` is set. `safe` is the preferred preview
+automation mode: it processes one pending pointer per run, caps upload
+concurrency, caps retained preview packs, forces public verification, and
+refuses empty publishes. Keep it off when manually testing architecture, and
+turn it on only when on-demand render/publish spend is expected.
 
 Smoke test:
 

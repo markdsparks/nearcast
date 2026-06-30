@@ -386,8 +386,11 @@ Current scaffold:
   plan, publishes through the same preview index path, and marks successful or
   intentionally skipped work so it is not repeatedly rendered.
 - The pending-plan runner has a five-minute schedule, but scheduled execution is
-  gated by `ENABLE_RADAR_GENERATION_RUNNER=true`. That keeps render spend under
-  explicit operator control while the architecture is still being hardened.
+  gated by `ENABLE_RADAR_GENERATION_RUNNER=safe` or
+  `ENABLE_RADAR_GENERATION_RUNNER=true`. The `safe` profile is the preferred
+  preview mode while the architecture is still being hardened: one pending plan
+  per run, capped upload concurrency, capped preview index size, public
+  verification, and no empty publishes.
 - A real Great Falls preview upload has verified the R2 object layout through
   the public origin: preview index, pack manifest, and encoded tile URLs are
   externally readable after upload.
