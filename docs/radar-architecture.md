@@ -296,8 +296,11 @@ Initial implementation:
 - `scripts/mrms-prototype/publish-mrms-frame-substrate.mjs` publishes a
   frame-first MRMS substrate from the latest public MRMS source frame.
 - The first geography profile is `conus`, with encoded z5-z8 data tiles,
-  skipped empty tiles, a short freshness window, and a `maxClientOverzoom`
-  ceiling so the app does not stretch broad low/mid-zoom data forever.
+  skipped empty tiles, active-first higher-zoom planning, a short freshness
+  window, and a generous `maxClientOverzoom` ceiling. The broad substrate should
+  generally stay visible during deep zoom because visual continuity is better
+  than popping back to the classic fallback, even when the z8 source begins to
+  soften.
 - The mutable app entrypoint is
   `radar/mrms/frame-substrate/latest-frame-index.json`; immutable manifests and
   tiles live below source-signature-scoped frame-substrate paths.
@@ -328,6 +331,9 @@ Initial implementation:
 
 - Warm active storm corridors, saved places, and popular viewports from the same
   source-frame data.
+- Micro-detail around saved places should require active precipitation nearby,
+  a fresh MRMS frame, and a quota. Saved places are a prioritization signal, not
+  a reason to generate clear-weather z12-z13 tiles.
 - Do not build country-sized visual packs on every update.
 - Use lifecycle rules and immutable keys so old frames age out cheaply.
 

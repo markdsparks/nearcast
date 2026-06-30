@@ -3699,6 +3699,9 @@ function generatedMrmsIndexPackExpired(pack) {
 }
 
 function generatedMrmsIndexPackScore(pack, context = generatedMrmsSelectionContext()) {
+  if (pack?.kind === "frame-substrate" && Number(pack?.metrics?.dataTiles || pack?.metrics?.radarTiles || 0) <= 0) {
+    return null;
+  }
   const areas = generatedManifestCoverageAreas(pack);
   const viewportEligibility = generatedRadarViewportEligibilityForSource(pack, context, areas);
   if (!viewportEligibility.usable) return null;

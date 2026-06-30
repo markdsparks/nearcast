@@ -185,6 +185,8 @@ function renderFrame({ source, region, product, outDir, manifestOut }) {
   }
   if (booleanArg(args["skip-empty-tiles"], false)) commandArgs.push("--skip-empty-tiles");
   if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false)) commandArgs.push("--encoded-tiles");
+  if (booleanArg(args["active-tile-plan"], false)) commandArgs.push("--active-tile-plan");
+  if (args["active-tile-buffer"] !== undefined) commandArgs.push(`--active-tile-buffer=${args["active-tile-buffer"]}`);
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
 
   const result = spawnSync(process.execPath, commandArgs, {
@@ -258,6 +260,8 @@ function combineFrameManifests({ manifests, region, product, outDir, manifestOut
     tileSize: first.tileSize || 256,
     tileRadius: first.tileRadius,
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
+    activeTilePlan: booleanArg(args["active-tile-plan"], false),
+    activeTileBuffer: numberArg(args["active-tile-buffer"], 1),
     outDir: manifestTileOutDirUrl({
       tileUrlBase: args["tile-url-base"] || args["tile-base-url"],
       manifestOut,
@@ -360,6 +364,8 @@ Options:
   --coverage-id=metro-east   Optional id for explicit coverage metadata.
   --coverage-label=NAME      Optional label for explicit coverage metadata.
   --skip-empty-tiles         Do not write transparent no-radar tiles.
+  --active-tile-plan         Plan higher zoom tiles from active lower zoom radar tiles.
+  --active-tile-buffer=1     Target-zoom tile buffer around active parents.
   --encoded-tiles            Also publish compact data tiles for client-side colorization.
   --resolve-only             Resolve candidate source objects and fingerprint without rendering tiles.
   --tile-version=mrms1       Optional cache-buster query string for tile URLs.
@@ -415,6 +421,8 @@ function buildRenderConfig({ region, product, frameLimit }) {
     tileZooms: splitList(args["tile-zooms"] || args.zooms || DEFAULT_TILE_ZOOMS).map((item) => Number(item)).filter(Number.isFinite),
     tileRadius: numberArg(args["tile-radius"], Number(DEFAULT_TILE_RADIUS)),
     skipEmptyTiles: booleanArg(args["skip-empty-tiles"], false),
+    activeTilePlan: booleanArg(args["active-tile-plan"], false),
+    activeTileBuffer: numberArg(args["active-tile-buffer"], 1),
     encodedTiles: booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false),
     sample: booleanArg(args.sample, false),
     ttlMinutes: numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)

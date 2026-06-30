@@ -13,7 +13,8 @@ const DEFAULT_INDEX_NAME = "latest-frame-index.json";
 const DEFAULT_FRAMES = 1;
 const DEFAULT_TTL_MINUTES = 10;
 const DEFAULT_SKIP_MIN_FRESH_MINUTES = 3;
-const DEFAULT_MAX_CLIENT_OVERZOOM = 2.25;
+const DEFAULT_MAX_CLIENT_OVERZOOM = 8;
+const DEFAULT_ACTIVE_TILE_BUFFER = 1;
 
 const PROFILES = {
   conus: {
@@ -169,6 +170,8 @@ async function main() {
     minZoom: manifest.minZoom,
     maxZoom: manifest.maxZoom,
     maxClientOverzoom: maxClientOverzoom(),
+    activeTilePlan: Boolean(manifest.activeTilePlan),
+    activeTileBuffer: manifest.activeTileBuffer ?? null,
     generatedTiles: manifest.coverage?.generatedTiles || 0,
     candidateTiles: manifest.coverage?.candidateTiles || 0,
     radarTiles: manifest.coverage?.radarTiles || 0,
@@ -303,6 +306,8 @@ function baseGeneratorArgs({ generator, profile, frames, tileZooms, ttlMinutes, 
   ]);
   if (booleanArg(args["skip-empty-tiles"], true)) commandArgs.push("--skip-empty-tiles");
   if (booleanArg(args["encoded-tiles"] ?? args["data-tiles"], true)) commandArgs.push("--encoded-tiles");
+  if (booleanArg(args["active-tile-plan"], true)) commandArgs.push("--active-tile-plan");
+  commandArgs.push(`--active-tile-buffer=${Math.max(0, Math.round(numberArg(args["active-tile-buffer"], DEFAULT_ACTIVE_TILE_BUFFER)))}`);
   if (booleanArg(args.sample, false)) commandArgs.push("--sample");
   return commandArgs;
 }
@@ -503,7 +508,9 @@ Options:
   --current-index-url=URL     Existing frame index used to skip unchanged sources.
   --skip-min-fresh-minutes=3  Do not rerender unchanged frames if this fresh.
   --force-publish             Rerender even when source/render profile match.
-  --max-client-overzoom=2.25  Maximum zoom stretch before the app falls back.
+  --max-client-overzoom=8     Maximum zoom stretch before the app falls back.
+  --active-tile-plan=false    Disable active-first higher-zoom tile planning.
+  --active-tile-buffer=1      Target-zoom tile buffer around active parents.
   --skip-empty-tiles=false    Publish transparent empty tiles too.
   --encoded-tiles=false       Disable compact encoded data tiles.
 `);

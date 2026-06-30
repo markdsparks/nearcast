@@ -678,11 +678,15 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
 }
 
 function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth, style, args }) {
-  const zooms = parseIntegerZoomList(args["tile-zooms"] || args.zooms, DEFAULT_TILE_ZOOMS);
+  const zooms = parseIntegerZoomList(args["tile-zooms"] || args.zooms, DEFAULT_TILE_ZOOMS)
+    .sort((a, b) => a - b)
+    .filter((zoom, index, list) => list.indexOf(zoom) === index);
   const tileSize = Math.max(64, Math.min(512, Math.round(numberArg(args["tile-size"], DEFAULT_TILE_SIZE))));
   const radius = Math.max(0, Math.min(8, Math.round(numberArg(args["tile-radius"], DEFAULT_TILE_RADIUS))));
   const tileBounds = parseBounds(args["tile-bounds"] || args["coverage-bounds"]);
   const skipEmptyTiles = booleanArg(args["skip-empty-tiles"], false);
+  const activeTilePlan = booleanArg(args["active-tile-plan"], false);
+  const activeTileBuffer = Math.max(0, Math.min(8, Math.round(numberArg(args["active-tile-buffer"], 1))));
   const encodedTiles = booleanArg(args["encoded-tiles"] ?? args["data-tiles"], false);
   const dataEncoding = encodedTiles ? radarDataEncoding(args, threshold, smooth, style) : null;
   const frameTime = generatedFrameIso(args);
@@ -713,11 +717,12 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
   let dataTiles = 0;
   let radarPixels = 0;
   let maxRenderedDbz = -Infinity;
+  let previousActiveTiles = null;
+  let previousZoom = null;
 
   zooms.forEach((z) => {
     const centerTile = tileForLatLon(centerLat, centerLon, z, tileSize);
-    const worldTiles = 2 ** z;
-    const range = tileBounds
+    const baseRange = tileBounds
       ? tileRangeForBounds(tileBounds, z, tileSize)
       : {
           minX: centerTile.x - radius,
@@ -725,7 +730,13 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
           minY: centerTile.y - radius,
           maxY: centerTile.y + radius
         };
-    const bounds = tileRangeToBounds(range, z, tileSize);
+    const candidates = activeTilePlan && previousActiveTiles
+      ? filterTileCandidatesForRange(activeChildTileCandidates(previousActiveTiles, previousZoom, z, activeTileBuffer), baseRange, z)
+      : tileCandidatesForRange(baseRange, z);
+    const candidateRange = tileRangeForCandidates(candidates);
+    const bounds = candidateRange
+      ? tileRangeToBounds(candidateRange, z, tileSize)
+      : tileRangeToBounds(baseRange, z, tileSize);
     const zoomSummary = {
       z,
       centerX: centerTile.x,
@@ -738,51 +749,53 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       tiles: 0,
       radarTiles: 0
     };
+    const activeTiles = new Set();
 
-    for (let rawX = range.minX; rawX <= range.maxX; rawX += 1) {
-      for (let y = range.minY; y <= range.maxY; y += 1) {
-        if (y < 0 || y >= worldTiles) continue;
-        const x = wrapTileX(rawX, worldTiles);
-        const rendered = renderRadarTile({
-          values,
-          grid,
-          z,
-          x,
-          y,
-          tileSize,
-          threshold,
-          smooth,
-          style,
-          dataEncoding
-        });
-        candidateTiles += 1;
-        zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
-        zoomSummary.maxX = zoomSummary.maxX === null ? x : Math.max(zoomSummary.maxX, x);
-        zoomSummary.minY = zoomSummary.minY === null ? y : Math.min(zoomSummary.minY, y);
-        zoomSummary.maxY = zoomSummary.maxY === null ? y : Math.max(zoomSummary.maxY, y);
-        if (!skipEmptyTiles || rendered.radarPixels) {
-          const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
-          fs.mkdirSync(path.dirname(outPath), { recursive: true });
-          fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
-          if (encodedTiles && rendered.dataPixels) {
-            const dataOutPath = path.join(encodedTileOut, String(z), String(x), `${y}.png`);
-            fs.mkdirSync(path.dirname(dataOutPath), { recursive: true });
-            fs.writeFileSync(dataOutPath, encodePngRgba(tileSize, tileSize, rendered.dataPixels));
-            dataTiles += 1;
-          }
-          zoomSummary.tiles += 1;
-          totalTiles += 1;
+    for (const candidate of candidates) {
+      const x = candidate.x;
+      const y = candidate.y;
+      const rendered = renderRadarTile({
+        values,
+        grid,
+        z,
+        x,
+        y,
+        tileSize,
+        threshold,
+        smooth,
+        style,
+        dataEncoding
+      });
+      candidateTiles += 1;
+      zoomSummary.minX = zoomSummary.minX === null ? x : Math.min(zoomSummary.minX, x);
+      zoomSummary.maxX = zoomSummary.maxX === null ? x : Math.max(zoomSummary.maxX, x);
+      zoomSummary.minY = zoomSummary.minY === null ? y : Math.min(zoomSummary.minY, y);
+      zoomSummary.maxY = zoomSummary.maxY === null ? y : Math.max(zoomSummary.maxY, y);
+      if (!skipEmptyTiles || rendered.radarPixels) {
+        const outPath = path.join(tileOut, String(z), String(x), `${y}.png`);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, encodePngRgba(tileSize, tileSize, rendered.pixels));
+        if (encodedTiles && rendered.dataPixels) {
+          const dataOutPath = path.join(encodedTileOut, String(z), String(x), `${y}.png`);
+          fs.mkdirSync(path.dirname(dataOutPath), { recursive: true });
+          fs.writeFileSync(dataOutPath, encodePngRgba(tileSize, tileSize, rendered.dataPixels));
+          dataTiles += 1;
         }
-        radarPixels += rendered.radarPixels;
-        if (rendered.radarPixels) {
-          radarTiles += 1;
-          zoomSummary.radarTiles += 1;
-        }
-        if (Number.isFinite(rendered.maxRenderedDbz) && rendered.maxRenderedDbz > maxRenderedDbz) {
-          maxRenderedDbz = rendered.maxRenderedDbz;
-        }
+        zoomSummary.tiles += 1;
+        totalTiles += 1;
+      }
+      radarPixels += rendered.radarPixels;
+      if (rendered.radarPixels) {
+        radarTiles += 1;
+        zoomSummary.radarTiles += 1;
+        activeTiles.add(tileCoordKey(x, y));
+      }
+      if (Number.isFinite(rendered.maxRenderedDbz) && rendered.maxRenderedDbz > maxRenderedDbz) {
+        maxRenderedDbz = rendered.maxRenderedDbz;
       }
     }
+    previousActiveTiles = activeTiles;
+    previousZoom = z;
     perZoom.push(zoomSummary);
   });
 
@@ -809,6 +822,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
     tileSize,
     tileRadius: radius,
     skipEmptyTiles,
+    activeTilePlan,
+    activeTileBuffer,
     center: {
       lat: round(centerLat, 5),
       lon: round(centerLon, 5)
@@ -838,6 +853,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       candidateTiles,
       radarTiles,
       dataTiles,
+      activeTilePlan,
+      activeTileBuffer,
       zooms: perZoom
     }
   };
@@ -858,6 +875,8 @@ function generateTileSet({ values, grid, centerLat, centerLon, threshold, smooth
       tileSize,
       tileRadius: radius,
       skipEmptyTiles,
+      activeTilePlan,
+      activeTileBuffer,
       encodedTiles,
       zooms,
       totalTiles,
@@ -1517,6 +1536,84 @@ function tileRangeForBounds(bounds, zoom, tileSize = DEFAULT_TILE_SIZE) {
   };
 }
 
+function tileCandidatesForRange(range, zoom) {
+  if (!range) return [];
+  const worldTiles = 2 ** zoom;
+  const seen = new Set();
+  const candidates = [];
+  for (let rawX = range.minX; rawX <= range.maxX; rawX += 1) {
+    for (let y = range.minY; y <= range.maxY; y += 1) {
+      if (y < 0 || y >= worldTiles) continue;
+      const x = wrapTileX(rawX, worldTiles);
+      const key = tileCoordKey(x, y);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({ x, y });
+    }
+  }
+  return candidates;
+}
+
+function activeChildTileCandidates(activeTiles, fromZoom, toZoom, buffer = 0) {
+  if (!activeTiles?.size || !Number.isFinite(Number(fromZoom)) || !Number.isFinite(Number(toZoom))) return [];
+  const from = Math.round(Number(fromZoom));
+  const to = Math.round(Number(toZoom));
+  const scale = 2 ** Math.max(0, to - from);
+  const worldTiles = 2 ** to;
+  const seen = new Set();
+  const candidates = [];
+  for (const key of activeTiles) {
+    const coord = tileCoordFromKey(key);
+    if (!coord) continue;
+    const minX = coord.x * scale - buffer;
+    const maxX = (coord.x + 1) * scale - 1 + buffer;
+    const minY = coord.y * scale - buffer;
+    const maxY = (coord.y + 1) * scale - 1 + buffer;
+    for (let rawX = minX; rawX <= maxX; rawX += 1) {
+      for (let y = minY; y <= maxY; y += 1) {
+        if (y < 0 || y >= worldTiles) continue;
+        const x = wrapTileX(rawX, worldTiles);
+        const childKey = tileCoordKey(x, y);
+        if (seen.has(childKey)) continue;
+        seen.add(childKey);
+        candidates.push({ x, y });
+      }
+    }
+  }
+  return candidates.sort((a, b) => a.y - b.y || a.x - b.x);
+}
+
+function filterTileCandidatesForRange(candidates, range, zoom) {
+  if (!range) return Array.isArray(candidates) ? candidates : [];
+  const allowed = new Set(tileCandidatesForRange(range, zoom).map((coord) => tileCoordKey(coord.x, coord.y)));
+  return (Array.isArray(candidates) ? candidates : []).filter((coord) => allowed.has(tileCoordKey(coord.x, coord.y)));
+}
+
+function tileRangeForCandidates(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  if (!list.length) return null;
+  return list.reduce((range, coord) => ({
+    minX: Math.min(range.minX, coord.x),
+    maxX: Math.max(range.maxX, coord.x),
+    minY: Math.min(range.minY, coord.y),
+    maxY: Math.max(range.maxY, coord.y)
+  }), {
+    minX: list[0].x,
+    maxX: list[0].x,
+    minY: list[0].y,
+    maxY: list[0].y
+  });
+}
+
+function tileCoordKey(x, y) {
+  return `${Math.round(Number(x))},${Math.round(Number(y))}`;
+}
+
+function tileCoordFromKey(key) {
+  const [x, y] = String(key || "").split(",").map((value) => Number(value));
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
 function tileRangeToBounds(range, zoom, tileSize = DEFAULT_TILE_SIZE) {
   const worldSize = tileSize * (2 ** zoom);
   const nw = worldToLonLat(range.minX * tileSize, range.minY * tileSize, worldSize);
@@ -2071,6 +2168,8 @@ Options:
   --tile-bounds=minLat,minLon,maxLat,maxLon
                               Generate every tile intersecting these bounds.
   --skip-empty-tiles         Only write tiles with rendered radar pixels.
+  --active-tile-plan         Plan higher zoom tiles from active lower zoom radar tiles.
+  --active-tile-buffer=1     Target-zoom tile buffer around active parents.
   --encoded-tiles            Also write data/{z}/{x}/{y}.png value tiles for client-side colorization.
   --tile-out=radar/mrms/id   Generated tile directory.
   --manifest-out=PATH        Manifest path. Defaults to radar/mrms/manifest.json.

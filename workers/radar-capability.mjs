@@ -210,6 +210,9 @@ function packExpired(pack) {
 }
 
 function packScore(pack, viewport) {
+  if (pack?.kind === "frame-substrate" && Number(pack?.metrics?.dataTiles || pack?.metrics?.radarTiles || 0) <= 0) {
+    return null;
+  }
   const areas = coverageAreas(pack);
   const eligibility = enhancedViewportEligibility(pack, viewport, areas);
   if (!eligibility.usable) return null;
