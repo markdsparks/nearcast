@@ -133,6 +133,27 @@ assert.equal(r2PlanStore.pointers.length, 1);
 assert.equal(r2PlanStore.pointers[0].key, "radar/mrms/pending-plans/latest.json");
 assert.equal(r2PlanStore.pointers[0].value.objectKey, `radar/mrms/plans-smoke/${planned.plan.output.planKey}`);
 assert.equal(r2PlanStore.pointers[0].value.requestId, baseMessage.requestId);
+assert.equal(r2QueueResult.results[0].pendingPointerStored, true);
+
+const verificationPlanStore = createR2Bucket();
+const verificationQueueMessage = createQueueMessage({
+  ...baseMessage,
+  requestId: "queue-consumer-verification",
+  dedupeKey: "radar-generation:v1:auto:radar:47.55:-111.35:z10",
+  reason: "queue-consumer-verification"
+});
+const verificationQueueResult = await handleRadarGenerationQueue({
+  messages: [verificationQueueMessage]
+}, {
+  ...env,
+  RADAR_GENERATION_PLANS_R2: verificationPlanStore,
+  RADAR_GENERATION_PLANS_R2_PREFIX: "radar/mrms/plans-smoke"
+});
+assert.equal(verificationQueueResult.accepted, 1);
+assert.equal(verificationQueueMessage.acked, true);
+assert.equal(verificationPlanStore.records.length, 1);
+assert.equal(verificationPlanStore.pointers.length, 0);
+assert.equal(verificationQueueResult.results[0].pendingPointerStored, false);
 
 console.log(JSON.stringify({
   planned: planned.plan.output.jobKey,
@@ -143,7 +164,8 @@ console.log(JSON.stringify({
     accepted: queueResult.accepted,
     rejected: queueResult.rejected,
     storedPlans: planStore.records.length,
-    r2StoredPlans: r2PlanStore.records.length
+    r2StoredPlans: r2PlanStore.records.length,
+    verificationPointers: verificationPlanStore.pointers.length
   }
 }, null, 2));
 

@@ -91,6 +91,7 @@ jobs:
       VERIFY_PUBLIC: ${{ github.event.inputs.verifyPublic || vars.RADAR_GENERATION_RUNNER_VERIFY_PUBLIC || 'true' }}
       ALLOW_EMPTY_PUBLISH: ${{ github.event.inputs.allowEmptyPublish || vars.RADAR_GENERATION_RUNNER_ALLOW_EMPTY_PUBLISH || 'false' }}
       MARK_DRY_RUN_PROCESSED: ${{ github.event.inputs.markDryRunProcessed || vars.RADAR_GENERATION_RUNNER_MARK_DRY_RUN_PROCESSED || 'false' }}
+      SUPPRESSED_PLAN_REASONS: ${{ vars.RADAR_GENERATION_RUNNER_SUPPRESSED_PLAN_REASONS || 'queue-consumer-verification' }}
       SAMPLE: ${{ github.event.inputs.sample || 'false' }}
       MAX_PACKS: ${{ github.event.inputs.maxPacks || vars.RADAR_GENERATION_RUNNER_MAX_PACKS || '80' }}
     steps:
@@ -189,12 +190,33 @@ jobs:
           if (plan.output?.planKey !== selection.planKey) {
             throw new Error(`Selection planKey mismatch: ${selection.planKey} !== ${plan.output?.planKey}`);
           }
+          const suppressedReasons = String(process.env.SUPPRESSED_PLAN_REASONS || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          const planReason = String(plan.reason || "");
+          if (suppressedReasons.includes(planReason)) {
+            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+              ...selection,
+              selected: false,
+              reason: "pending-plan-suppressed-reason",
+              requestId: plan.requestId || selection.requestId,
+              dedupeKey: plan.dedupeKey || selection.dedupeKey,
+              skipped: [{ planKey: selection.planKey, status: "suppressed", reason: planReason }]
+            }, null, 2)}\n`);
+            process.exit(0);
+          }
           fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
             ...selection,
             requestId: plan.requestId || selection.requestId,
             dedupeKey: plan.dedupeKey || selection.dedupeKey
           }, null, 2)}\n`);
           NODE
+          SELECTED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected === true ? 'true' : 'false');")
+          if [ "$SELECTED" != "true" ]; then
+            echo "selected=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "selected=true" >> "$GITHUB_OUTPUT"
 
       - name: Print selected plan summary
@@ -222,7 +244,7 @@ jobs:
       - name: No pending private plans
         if: ${{ steps.select.outputs.selected != 'true' }}
         run: |
-          node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); console.log(JSON.stringify({selected:false, scanned:s.scanned, candidates:s.candidates, skipped:s.skipped || []}, null, 2));"
+          node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); console.log(JSON.stringify({selected:false, reason:s.reason || '', objectPath:s.objectPath || '', skipped:s.skipped || []}, null, 2));"
 
       - name: Render radar artifacts from plan
         if: ${{ steps.select.outputs.selected == 'true' }}

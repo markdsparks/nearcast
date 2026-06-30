@@ -109,6 +109,7 @@ assert.equal(workerPlanStore.records.length, 1);
 assert.ok(workerPlanStore.records[0].key.startsWith("radar/mrms/plans-smoke/"));
 assert.equal(workerPlanStore.pointers.length, 1);
 assert.equal(workerPlanStore.pointers[0].key, "radar/mrms/pending-plans/latest.json");
+assert.equal(workerPlanStore.pointers[0].value.reason, "worker-queue-smoke");
 
 let externalFetchCount = 0;
 const externalIndexUrl = "https://radar.example.test/radar/mrms/on-demand-preview/index.json";

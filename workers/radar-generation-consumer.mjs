@@ -10,8 +10,11 @@ const DEFAULT_TTL_MINUTES = 15;
 const DEFAULT_OUTPUT_PREFIX = "radar/mrms/on-demand";
 const DEFAULT_PLAN_R2_PREFIX = "radar/mrms/plans";
 const DEFAULT_PENDING_PLAN_R2_PREFIX = "radar/mrms/pending-plans";
+const DEFAULT_SUPPRESSED_PENDING_POINTER_REASONS = ["queue-consumer-verification"];
 const RADAR_GENERATION_PLANS_R2_PREFIX_ENV = "RADAR_GENERATION_PLANS_R2_PREFIX";
 const RADAR_GENERATION_PENDING_PLANS_R2_PREFIX_ENV = "RADAR_GENERATION_PENDING_PLANS_R2_PREFIX";
+const RADAR_GENERATION_WRITE_PENDING_POINTER_ENV = "RADAR_GENERATION_WRITE_PENDING_POINTER";
+const RADAR_GENERATION_SUPPRESSED_PENDING_POINTER_REASONS_ENV = "RADAR_GENERATION_SUPPRESSED_PENDING_POINTER_REASONS";
 const MERCATOR_MAX_LAT = 85.05113;
 
 export default {
@@ -58,12 +61,14 @@ export async function handleRadarGenerationMessage(message, env = {}) {
     await store.putJson(result.plan.output.planKey, result.plan, {
       expirationTtl: result.plan.render.ttlMinutes * 60
     });
-    await store.putLatestPointer?.(result.plan);
+    const writePendingPointer = shouldWritePendingPointer(result.plan, env);
+    if (writePendingPointer) await store.putLatestPointer?.(result.plan);
     result = {
       ...result,
       stored: true,
       planStore: store.kind,
-      planStorageKey: store.storageKey(result.plan.output.planKey)
+      planStorageKey: store.storageKey(result.plan.output.planKey),
+      pendingPointerStored: Boolean(writePendingPointer && store.putLatestPointer)
     };
   }
   return result;
@@ -118,6 +123,7 @@ function r2PlanStore(bucket, env = {}) {
         objectKey: this.storageKey(value?.output?.planKey || ""),
         requestId: value?.requestId || "",
         dedupeKey: value?.dedupeKey || "",
+        reason: value?.reason || "",
         plannedAt: value?.plannedAt || "",
         outputPrefix: value?.output?.prefixTemplate || "",
         candidateTiles: value?.coverage?.candidateTiles ?? null
@@ -132,6 +138,18 @@ function r2PlanStore(bucket, env = {}) {
       });
     }
   };
+}
+
+function shouldWritePendingPointer(plan = {}, env = {}) {
+  if (env?.[RADAR_GENERATION_WRITE_PENDING_POINTER_ENV] !== undefined
+    && !booleanValue(env[RADAR_GENERATION_WRITE_PENDING_POINTER_ENV])) {
+    return false;
+  }
+  const suppressed = stringList(
+    env?.[RADAR_GENERATION_SUPPRESSED_PENDING_POINTER_REASONS_ENV],
+    DEFAULT_SUPPRESSED_PENDING_POINTER_REASONS
+  );
+  return !suppressed.includes(stringValue(plan.reason));
 }
 
 export function buildRadarGenerationPlan(message, env = {}) {
@@ -479,6 +497,14 @@ function stringValue(value) {
 function booleanValue(value) {
   if (typeof value === "boolean") return value;
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function stringList(value, fallback = []) {
+  const items = String(value || "")
+    .split(",")
+    .map((item) => stringValue(item))
+    .filter(Boolean);
+  return items.length ? items : fallback;
 }
 
 function integerInRange(value, min, max, fallback) {

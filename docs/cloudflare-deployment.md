@@ -140,6 +140,9 @@ The consumer can:
   `{sourceSignature}` segment so rendered tile objects can remain immutable.
 - Persist accepted plans to `RADAR_GENERATION_PLANS` or the preview
   `RADAR_GENERATION_PLANS_R2` plan store.
+- Write the latest pending-plan pointer only for user-facing render work.
+  Verification requests still persist plans, but they do not replace the
+  production pending pointer the renderer consumes.
 
 Smoke test:
 
@@ -155,7 +158,8 @@ gh workflow run "Verify radar generation queue"
 
 That workflow posts a unique no-pack viewport to `/api/radar/capability`, waits
 for the preview queue consumer, and verifies the expected private R2 render plan
-object exists.
+object exists. It intentionally does not advance the production pending-plan
+pointer.
 
 ## Radar generation renderer
 
@@ -237,7 +241,8 @@ renders it, and either dry-runs or uploads it through the same publisher.
 Successful `r2` publishes write a processed marker under
 `radar/mrms/processed-plans/...` so the runner does not repeatedly render the
 same plan. Empty no-precip renders are marked `skipped-empty` instead of being
-published unless `allowEmptyPublish=true`.
+published unless `allowEmptyPublish=true`. Verification plans are skipped if an
+old verification pointer is still present.
 
 The workflow also has a five-minute schedule, but scheduled jobs are skipped
 unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=true` is set.
