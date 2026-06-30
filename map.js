@@ -19,6 +19,12 @@ const GENERATED_RADAR_TILE_PREFLIGHT_FRAME_LIMIT = 3;
 const GENERATED_RADAR_TILE_PREFLIGHT_MAX_URLS = 48;
 const GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS = 1600;
 const GENERATED_RADAR_TILE_PREFLIGHT_CACHE_MS = 2 * 60 * 1000;
+const GENERATED_RADAR_REFRESH_DEBOUNCE_MS = 300;
+const GENERATED_RADAR_POLL_INITIAL_MS = 7000;
+const GENERATED_RADAR_POLL_INTERVAL_MS = 9000;
+const GENERATED_RADAR_POLL_MAX_MS = 110 * 1000;
+const GENERATED_RADAR_READY_STATUS_MS = 1800;
+const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT = 6;
@@ -129,10 +135,12 @@ function radarDiagnosticsSnapshot() {
       manifestUrl: mapState.generatedRadarManifestUrl || "",
       selectionKey: mapState.generatedRadarSelectionKey || "",
       viewportKey: mapState.generatedRadarViewportKey || "",
+      selectionHint: mapState.generatedRadarSelectionHint || null,
       indexUrl: generatedMrmsIndexUrl(),
       indexOverride: generatedMrmsIndexUrlOverride(),
       indexSelection: mapState.generatedRadarIndexSelection || null
     },
+    warmup: mapState.generatedRadarWarmup || null,
     capability: mapState.radarCapability || null,
     capabilityHistory: [...(mapState.radarCapabilityLog || [])],
     context: safeGeneratedSelectionContext()
@@ -1762,13 +1770,14 @@ function applyRadarProviderPreference() {
   });
 }
 
-function scheduleGeneratedRadarViewportRefresh(reason = "viewport") {
+function scheduleGeneratedRadarViewportRefresh(reason = "viewport", delayMs = GENERATED_RADAR_REFRESH_DEBOUNCE_MS) {
   if (!shouldRefreshGeneratedRadarForViewport()) return;
   if (mapState.generatedRadarRefreshTimer) clearTimeout(mapState.generatedRadarRefreshTimer);
+  const delay = Math.max(0, Number(delayMs) || 0);
   mapState.generatedRadarRefreshTimer = setTimeout(() => {
     mapState.generatedRadarRefreshTimer = 0;
     refreshGeneratedRadarForViewport(reason);
-  }, 300);
+  }, delay);
 }
 
 function shouldRefreshGeneratedRadarForViewport() {
@@ -1801,8 +1810,12 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
   const timelineKind = generatedRadarRefreshTimelineKind();
   if (!timelineKind) return;
   const viewportKey = generatedRadarViewportKey();
-  if (viewportKey && viewportKey === mapState.generatedRadarViewportKey) return;
+  if (viewportKey && viewportKey === mapState.generatedRadarViewportKey) {
+    finishGeneratedRadarWarmup(viewportKey, "already-ready");
+    return;
+  }
   const seq = ++mapState.generatedRadarRefreshSeq;
+  const warmup = beginGeneratedRadarWarmup(viewportKey, reason);
   try {
     const selection = await resolveGeneratedMrmsManifestSelection({
       allowLegacy: false,
@@ -1810,30 +1823,221 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
       reason
     });
     if (seq !== mapState.generatedRadarRefreshSeq) return;
+    const capability = selection?.capability || mapState.radarCapability || null;
     if (!selection?.key) {
+      if (generatedRadarGenerationIsPending(capability)) {
+        if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey && viewportKey !== mapState.generatedRadarViewportKey) {
+          clearGeneratedRadarSelection();
+          await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+        }
+        scheduleGeneratedRadarWarmupPoll(capability, warmup, viewportKey, reason);
+        return;
+      }
       if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey) {
         clearGeneratedRadarSelection();
         await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
       }
+      clearGeneratedRadarWarmup();
       return;
     }
     if (selection.key === mapState.generatedRadarSelectionKey) {
       mapState.generatedRadarViewportKey = viewportKey;
+      finishGeneratedRadarWarmup(viewportKey, "selection-current");
       return;
     }
+    rememberGeneratedRadarSelectionHint(selection, viewportKey);
     await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+    if (selection.key === mapState.generatedRadarSelectionKey) {
+      finishGeneratedRadarWarmup(viewportKey, "selection-loaded");
+    } else {
+      recordRadarSourceDecision("radar.generation-ready-promotion-missed", {
+        selectionKey: selection.key || "",
+        manifestUrl: selection.manifestUrl || "",
+        activeSelectionKey: mapState.generatedRadarSelectionKey || ""
+      });
+      clearGeneratedRadarWarmup();
+    }
   } catch {
     if (radarProviderPreference() === "auto") {
       clearGeneratedRadarSelection();
       await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
     }
+    clearGeneratedRadarWarmup();
   }
+}
+
+function beginGeneratedRadarWarmup(viewportKey, reason = "viewport") {
+  const current = generatedRadarWarmupState();
+  const now = Date.now();
+  const sameViewport = current.viewportKey && current.viewportKey === viewportKey && generatedRadarWarmupIsActive(current);
+  const startedAt = sameViewport && Number.isFinite(Number(current.startedAt)) ? Number(current.startedAt) : now;
+  return setGeneratedRadarWarmup({
+    state: "checking",
+    viewportKey,
+    reason,
+    requestId: sameViewport ? current.requestId : "",
+    dedupeKey: sameViewport ? current.dedupeKey : "",
+    attempts: (sameViewport ? Number(current.attempts) || 0 : 0) + 1,
+    startedAt,
+    updatedAt: now,
+    timeoutAt: startedAt + GENERATED_RADAR_POLL_MAX_MS
+  });
+}
+
+function scheduleGeneratedRadarWarmupPoll(capability, warmup, viewportKey, reason = "generation-poll") {
+  const generation = capability?.generation || {};
+  const now = Date.now();
+  const startedAt = Number(warmup?.startedAt) || now;
+  const timeoutAt = Number(warmup?.timeoutAt) || startedAt + GENERATED_RADAR_POLL_MAX_MS;
+  if (now >= timeoutAt) {
+    recordRadarSourceDecision("radar.generation-poll-timeout", {
+      generationState: generation.state || "",
+      requestId: generation.requestId || "",
+      dedupeKey: generation.dedupeKey || "",
+      viewportKey
+    });
+    clearGeneratedRadarWarmup();
+    return;
+  }
+
+  const attempts = Math.max(1, Number(warmup?.attempts) || 1);
+  const baseDelay = attempts <= 1 ? GENERATED_RADAR_POLL_INITIAL_MS : GENERATED_RADAR_POLL_INTERVAL_MS;
+  const delay = Math.max(1200, Math.min(baseDelay, timeoutAt - now));
+  setGeneratedRadarWarmup({
+    ...warmup,
+    state: generation.state === "deduped" ? "deduped" : "queued",
+    viewportKey,
+    requestId: generation.requestId || warmup?.requestId || "",
+    dedupeKey: generation.dedupeKey || warmup?.dedupeKey || "",
+    reason: reason || generation.reason || "generation-poll",
+    updatedAt: now,
+    timeoutAt
+  });
+  scheduleGeneratedRadarViewportRefresh("generation-poll", delay);
+}
+
+function finishGeneratedRadarWarmup(viewportKey, reason = "ready") {
+  const current = generatedRadarWarmupState();
+  if (!generatedRadarWarmupIsActive(current) && current.state !== "ready") return;
+  setGeneratedRadarWarmup({
+    ...current,
+    state: "ready",
+    viewportKey: viewportKey || current.viewportKey || "",
+    reason,
+    updatedAt: Date.now()
+  });
+  if (mapState.generatedRadarStatusHideTimer) clearTimeout(mapState.generatedRadarStatusHideTimer);
+  const readyViewportKey = viewportKey || current.viewportKey || "";
+  mapState.generatedRadarStatusHideTimer = setTimeout(() => {
+    mapState.generatedRadarStatusHideTimer = 0;
+    const latest = generatedRadarWarmupState();
+    if (latest.state === "ready" && (!readyViewportKey || latest.viewportKey === readyViewportKey)) {
+      clearGeneratedRadarWarmup();
+    }
+  }, GENERATED_RADAR_READY_STATUS_MS);
+}
+
+function generatedRadarWarmupState() {
+  if (!mapState.generatedRadarWarmup || typeof mapState.generatedRadarWarmup !== "object") {
+    mapState.generatedRadarWarmup = {
+      state: "idle",
+      viewportKey: "",
+      requestId: "",
+      dedupeKey: "",
+      reason: "",
+      attempts: 0,
+      startedAt: 0,
+      updatedAt: 0,
+      timeoutAt: 0
+    };
+  }
+  return mapState.generatedRadarWarmup;
+}
+
+function setGeneratedRadarWarmup(next = {}) {
+  const current = generatedRadarWarmupState();
+  mapState.generatedRadarWarmup = {
+    state: generatedRadarWarmupValue(next, current, "state", "idle"),
+    viewportKey: generatedRadarWarmupValue(next, current, "viewportKey", ""),
+    requestId: generatedRadarWarmupValue(next, current, "requestId", ""),
+    dedupeKey: generatedRadarWarmupValue(next, current, "dedupeKey", ""),
+    reason: generatedRadarWarmupValue(next, current, "reason", ""),
+    attempts: Number.isFinite(Number(next.attempts)) ? Number(next.attempts) : Number(current.attempts) || 0,
+    startedAt: Number.isFinite(Number(next.startedAt)) ? Number(next.startedAt) : Number(current.startedAt) || 0,
+    updatedAt: Number.isFinite(Number(next.updatedAt)) ? Number(next.updatedAt) : Date.now(),
+    timeoutAt: Number.isFinite(Number(next.timeoutAt)) ? Number(next.timeoutAt) : Number(current.timeoutAt) || 0
+  };
+  syncGeneratedRadarStatusChip();
+  return mapState.generatedRadarWarmup;
+}
+
+function generatedRadarWarmupValue(next, current, key, fallback) {
+  return Object.prototype.hasOwnProperty.call(next, key) ? next[key] || fallback : current[key] || fallback;
+}
+
+function clearGeneratedRadarWarmup() {
+  if (mapState.generatedRadarStatusHideTimer) {
+    clearTimeout(mapState.generatedRadarStatusHideTimer);
+    mapState.generatedRadarStatusHideTimer = 0;
+  }
+  mapState.generatedRadarWarmup = {
+    state: "idle",
+    viewportKey: "",
+    requestId: "",
+    dedupeKey: "",
+    reason: "",
+    attempts: 0,
+    startedAt: 0,
+    updatedAt: Date.now(),
+    timeoutAt: 0
+  };
+  syncGeneratedRadarStatusChip();
+}
+
+function generatedRadarWarmupIsActive(warmup = generatedRadarWarmupState()) {
+  return ["checking", "queued", "deduped"].includes(warmup?.state);
+}
+
+function generatedRadarGenerationIsPending(capability) {
+  return ["queued", "deduped"].includes(capability?.generation?.state);
+}
+
+function maybeScheduleGeneratedRadarWarmup(reason = "fallback-visible") {
+  if (!shouldRefreshGeneratedRadarForViewport()) return;
+  const warmup = generatedRadarWarmupState();
+  const viewportKey = generatedRadarViewportKey();
+  if (generatedRadarWarmupIsActive(warmup) && warmup.viewportKey === viewportKey) return;
+  scheduleGeneratedRadarViewportRefresh(reason);
+}
+
+function ensureGeneratedRadarStatusChip() {
+  if (!els.weatherMap) return null;
+  const existing = Array.from(els.weatherMap.children || []).find((child) => child.classList?.contains("map-radar-status"));
+  if (existing) return existing;
+  const chip = document.createElement("div");
+  chip.className = "map-radar-status";
+  chip.setAttribute("role", "status");
+  chip.setAttribute("aria-live", "polite");
+  chip.hidden = true;
+  els.weatherMap.appendChild(chip);
+  return chip;
+}
+
+function syncGeneratedRadarStatusChip() {
+  const chip = ensureGeneratedRadarStatusChip();
+  if (!chip) return;
+  const warmup = generatedRadarWarmupState();
+  const visible = generatedRadarWarmupIsActive(warmup) || warmup.state === "ready";
+  chip.hidden = !visible;
+  chip.classList.toggle("is-ready", warmup.state === "ready");
+  chip.textContent = warmup.state === "ready" ? "Radar enhanced" : "Enhancing radar";
 }
 
 function resetMapForPlaceChange(options = {}) {
   mapState.panX = 0;
   mapState.panY = 0;
   clearGeneratedRadarSelection();
+  clearGeneratedRadarWarmup();
   mapState.generatedRadarRefreshSeq += 1;
   if (mapState.generatedRadarRefreshTimer) {
     clearTimeout(mapState.generatedRadarRefreshTimer);
@@ -2426,6 +2630,7 @@ async function fetchRadarFrames() {
       /* Generated MRMS is optional; fall through to the proven sources if it is unavailable or stale. */
     }
     clearGeneratedRadarSelection();
+    maybeScheduleGeneratedRadarWarmup("enhanced-missing");
   } else {
     recordRadarSourceDecision("radar.enhanced-skipped", {
       reason: "provider preference is NOAA WMS"
@@ -2436,6 +2641,7 @@ async function fetchRadarFrames() {
     const nwsFrames = await fetchNwsRadarFrames();
     if (nwsFrames.length) {
       recordRadarSourceDecision("radar.fallback-nws-selected", radarDecisionFrameSummary(nwsFrames));
+      maybeScheduleGeneratedRadarWarmup("fallback-nws-visible");
       return nwsFrames;
     }
     recordRadarSourceDecision("radar.fallback-nws-empty", {
@@ -2450,6 +2656,7 @@ async function fetchRadarFrames() {
   try {
     const rainViewerFrames = await fetchRainViewerFrames();
     recordRadarSourceDecision("radar.fallback-rainviewer-selected", radarDecisionFrameSummary(rainViewerFrames));
+    maybeScheduleGeneratedRadarWarmup("fallback-rainviewer-visible");
     return rainViewerFrames;
   } catch (error) {
     recordRadarSourceDecision("radar.fallback-rainviewer-unavailable", {
@@ -2675,10 +2882,23 @@ function radarCapabilityEndpointUrl() {
     const key = typeof RADAR_CAPABILITY_ENDPOINT_KEY === "string"
       ? RADAR_CAPABILITY_ENDPOINT_KEY
       : "nearcast-radar-capability-endpoint";
-    return String(localStorage.getItem(key) || "").trim();
+    const configured = String(localStorage.getItem(key) || "").trim();
+    if (["0", "off", "local", "none"].includes(configured.toLowerCase())) return "";
+    if (configured) return configured;
+    return defaultRadarCapabilityEndpointUrl();
   } catch {
-    return "";
+    return defaultRadarCapabilityEndpointUrl();
   }
+}
+
+function defaultRadarCapabilityEndpointUrl() {
+  const endpoint = typeof DEFAULT_RADAR_CAPABILITY_ENDPOINT === "string"
+    ? DEFAULT_RADAR_CAPABILITY_ENDPOINT
+    : "";
+  if (!endpoint) return "";
+  const host = String(window.location?.hostname || "").toLowerCase();
+  if (!host || ["localhost", "127.0.0.1", "0.0.0.0"].includes(host)) return "";
+  return endpoint;
 }
 
 async function fetchRadarCapabilityEndpoint(endpoint, base, options = {}) {
@@ -3112,6 +3332,10 @@ async function resolveGeneratedMrmsManifestUrl() {
 }
 
 async function resolveGeneratedMrmsManifestSelection(options = {}) {
+  if (!generatedMrmsManifestUrlOverride()) {
+    const hinted = generatedRadarSelectionHint();
+    if (hinted) return hinted;
+  }
   const capability = await resolveRadarViewportCapability(options);
   const enhanced = capability?.enhanced;
   if (enhanced?.state !== "ready" || !enhanced.manifestUrl) return null;
@@ -3120,6 +3344,40 @@ async function resolveGeneratedMrmsManifestSelection(options = {}) {
     manifestUrl: enhanced.manifestUrl,
     key: enhanced.selectionKey || `${enhanced.selectionSource || "capability"}:${enhanced.manifestUrl}`,
     capability
+  };
+}
+
+function rememberGeneratedRadarSelectionHint(selection, viewportKey = generatedRadarViewportKey()) {
+  if (!selection?.manifestUrl || !selection?.key) return null;
+  mapState.generatedRadarSelectionHint = {
+    source: selection.source || "capability",
+    manifestUrl: selection.manifestUrl,
+    key: selection.key,
+    capability: selection.capability || null,
+    viewportKey,
+    rememberedAt: Date.now()
+  };
+  return mapState.generatedRadarSelectionHint;
+}
+
+function generatedRadarSelectionHint() {
+  const hint = mapState.generatedRadarSelectionHint;
+  if (!hint?.manifestUrl || !hint.key) return null;
+  const age = Date.now() - (Number(hint.rememberedAt) || 0);
+  if (!Number.isFinite(age) || age > GENERATED_RADAR_SELECTION_HINT_MS) {
+    mapState.generatedRadarSelectionHint = null;
+    return null;
+  }
+  const viewportKey = generatedRadarViewportKey();
+  if (hint.viewportKey && viewportKey && hint.viewportKey !== viewportKey) {
+    mapState.generatedRadarSelectionHint = null;
+    return null;
+  }
+  return {
+    source: hint.source || "capability",
+    manifestUrl: hint.manifestUrl,
+    key: hint.key,
+    capability: hint.capability || null
   };
 }
 
@@ -3519,6 +3777,7 @@ function clearGeneratedRadarSelection() {
   mapState.generatedRadarManifestUrl = "";
   mapState.generatedRadarSelectionKey = "";
   mapState.generatedRadarViewportKey = "";
+  mapState.generatedRadarSelectionHint = null;
   mapState.generatedRadarIndexSelection = null;
 }
 
@@ -5454,6 +5713,7 @@ function enterImmersiveMap() {
   els.frameSlider      = document.getElementById("immSlider");
   els.frameLabel       = document.getElementById("immLabel");
   els.playRadar        = document.getElementById("immPlay");
+  syncGeneratedRadarStatusChip();
 
   document.getElementById("immersiveMap").hidden = false;
   document.body.style.overflow = "hidden";
@@ -5501,6 +5761,7 @@ function exitImmersiveMap() {
   els.frameSlider.value = String(mapState.frameIndex);
   updateRangeProgress(els.frameSlider);
   setPlaybackButtonState(els.playRadar, mapState.playing);
+  syncGeneratedRadarStatusChip();
 
   document.getElementById("immersiveMap").hidden = true;
   document.body.style.overflow = "";

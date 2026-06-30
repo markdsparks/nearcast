@@ -1,4 +1,4 @@
-const VERSION = "3.0.66";
+const VERSION = "3.0.68";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -12,6 +12,7 @@ const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
 const RADAR_INDEX_URL_KEY = "nearcast-radar-index-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const RADAR_CAPABILITY_ENDPOINT_KEY = "nearcast-radar-capability-endpoint";
+const DEFAULT_RADAR_CAPABILITY_ENDPOINT = "/api/radar/capability";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_INDEX_URL = "radar/mrms/index.json";
 const MRMS_RADAR_PREVIEW_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json";
@@ -181,8 +182,11 @@ if (radarIndexQueryFlag !== null) {
 const radarCapabilityEndpointQueryFlag = queryValue("radarCapabilityEndpoint", "radarcapabilityendpoint", "radarCapability", "radarcapability");
 if (radarCapabilityEndpointQueryFlag !== null) {
   const value = String(radarCapabilityEndpointQueryFlag || "").trim();
-  if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
+  const lower = value.toLowerCase();
+  if (!value || ["default", "auto"].includes(lower)) {
     localStorage.removeItem(RADAR_CAPABILITY_ENDPOINT_KEY);
+  } else if (["0", "off", "local", "none"].includes(lower)) {
+    localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, "off");
   } else {
     localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, value);
   }
@@ -308,9 +312,22 @@ const mapState = {
   generatedRadarManifestUrl: "",
   generatedRadarSelectionKey: "",
   generatedRadarViewportKey: "",
+  generatedRadarSelectionHint: null,
   generatedRadarIndexSelection: null,
   generatedRadarRefreshTimer: 0,
   generatedRadarRefreshSeq: 0,
+  generatedRadarWarmup: {
+    state: "idle",
+    viewportKey: "",
+    requestId: "",
+    dedupeKey: "",
+    reason: "",
+    attempts: 0,
+    startedAt: 0,
+    updatedAt: 0,
+    timeoutAt: 0
+  },
+  generatedRadarStatusHideTimer: 0,
   radarCapability: null,
   radarCapabilityLog: [],
   radarSourceDecision: null,
