@@ -163,21 +163,66 @@ jobs:
             echo "CLOUDFLARE_API_TOKEN is required to read private pending plan pointers."
             exit 1
           fi
+          scan_private_plan_store() {
+            echo "Scanning private plan store for a selectable render plan."
+            node scripts/radar-generation-plan-queue.mjs select \
+              --bucket="$RADAR_GENERATION_STATE_R2_BUCKET" \
+              --plan-store-prefix="$RADAR_GENERATION_PLANS_R2_PREFIX" \
+              --plan-output-prefix="$PLAN_OUTPUT_PREFIX" \
+              --processed-prefix="$RADAR_GENERATION_PROCESSED_PLANS_R2_PREFIX" \
+              --scan-limit="$SCAN_LIMIT" \
+              --max-age-minutes="$MAX_PLAN_AGE_MINUTES" \
+              --plan-out=/tmp/radar-generation-plan.json \
+              --selection-out=/tmp/radar-generation-plan-selection.json
+            node --input-type=module <<'NODE'
+            import fs from "node:fs";
+            const selectionPath = "/tmp/radar-generation-plan-selection.json";
+            const planPath = "/tmp/radar-generation-plan.json";
+            const selection = JSON.parse(fs.readFileSync(selectionPath, "utf8"));
+            if (!selection.selected) {
+              fs.writeFileSync(selectionPath, `${JSON.stringify({
+                ...selection,
+                pointerPath: process.env.POINTER_PATH || ""
+              }, null, 2)}\n`);
+              process.exit(0);
+            }
+            const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
+            const suppressedReasons = String(process.env.SUPPRESSED_PLAN_REASONS || "")
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean);
+            const planReason = String(plan.reason || "");
+            if (suppressedReasons.includes(planReason)) {
+              fs.writeFileSync(selectionPath, `${JSON.stringify({
+                ...selection,
+                selected: false,
+                reason: "pending-plan-suppressed-reason",
+                requestId: plan.requestId || selection.requestId,
+                dedupeKey: plan.dedupeKey || selection.dedupeKey,
+                pointerPath: process.env.POINTER_PATH || "",
+                skipped: [
+                  ...(Array.isArray(selection.skipped) ? selection.skipped : []),
+                  { planKey: selection.planKey, status: "suppressed", reason: planReason }
+                ]
+              }, null, 2)}\n`);
+              process.exit(0);
+            }
+            fs.writeFileSync(selectionPath, `${JSON.stringify({
+              ...selection,
+              pointerPath: process.env.POINTER_PATH || "",
+              requestId: plan.requestId || selection.requestId,
+              dedupeKey: plan.dedupeKey || selection.dedupeKey
+            }, null, 2)}\n`);
+          NODE
+            FALLBACK_SELECTED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected === true ? 'true' : 'false');")
+            echo "selected=$FALLBACK_SELECTED" >> "$GITHUB_OUTPUT"
+          }
           POINTER_KEY="${RADAR_GENERATION_PENDING_PLANS_R2_PREFIX%/}/latest.json"
           POINTER_PATH="$RADAR_GENERATION_STATE_R2_BUCKET/$POINTER_KEY"
           export POINTER_PATH
           if ! npx --yes wrangler r2 object get "$POINTER_PATH" --remote --file /tmp/radar-generation-plan-pointer.json; then
-            node --input-type=module <<'NODE'
-            import fs from "node:fs";
-            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", JSON.stringify({
-              provider: "nearcast-radar-generation-plan-selection",
-              version: 1,
-              selected: false,
-              reason: "pending-pointer-not-found",
-              pointerPath: process.env.POINTER_PATH || ""
-            }, null, 2));
-          NODE
-            echo "selected=false" >> "$GITHUB_OUTPUT"
+            echo "Pending pointer not found; scanning private plan store."
+            scan_private_plan_store
             exit 0
           fi
           node --input-type=module <<'NODE'
@@ -250,7 +295,8 @@ jobs:
           NODE
             SELECTED_AFTER_MARKER=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected === true ? 'true' : 'false');")
             if [ "$SELECTED_AFTER_MARKER" != "true" ]; then
-              echo "selected=false" >> "$GITHUB_OUTPUT"
+              echo "Pending pointer target is already marked; scanning private plan store."
+              scan_private_plan_store
               exit 0
             fi
           fi
@@ -310,7 +356,8 @@ jobs:
           NODE
           SELECTED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected === true ? 'true' : 'false');")
           if [ "$SELECTED" != "true" ]; then
-            echo "selected=false" >> "$GITHUB_OUTPUT"
+            echo "Pending pointer target is not selectable; scanning private plan store."
+            scan_private_plan_store
             exit 0
           fi
           echo "selected=true" >> "$GITHUB_OUTPUT"
