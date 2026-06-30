@@ -5,6 +5,7 @@ const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
+const RADAR_GENERATION_ACCEPT_REQUESTS_ENV = "RADAR_GENERATION_ACCEPT_REQUESTS";
 const RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV = "RADAR_GENERATION_REQUESTS_R2_PREFIX";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
@@ -246,6 +247,9 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
   if (!payload?.generation?.request) {
     return { state: "not-requested", requestId: null, reason: "request-not-set" };
   }
+  if (!generationRequestsAccepted(env)) {
+    return { state: "unsupported", requestId: null, reason: "generation-requests-disabled" };
+  }
   const queue = env?.RADAR_GENERATION_QUEUE;
   if (!queue?.send) {
     return { state: "unsupported", requestId: null, reason: "queue-binding-unavailable" };
@@ -315,6 +319,11 @@ function generationRequestStore(env = {}) {
   const r2 = env?.RADAR_GENERATION_REQUESTS_R2;
   if (r2?.get && r2?.put) return r2GenerationRequestStore(r2, env);
   return null;
+}
+
+function generationRequestsAccepted(env = {}) {
+  if (env?.[RADAR_GENERATION_ACCEPT_REQUESTS_ENV] === undefined) return true;
+  return booleanValue(env[RADAR_GENERATION_ACCEPT_REQUESTS_ENV]);
 }
 
 function kvGenerationRequestStore(namespace) {
@@ -467,6 +476,13 @@ function generationBudgetWrites(requestStore, budget, queuedAt) {
 
 function generationBudgetKey(scope, value, bucket) {
   return ["radar-generation-budget", "v1", scope, value, bucket].join(":");
+}
+
+function booleanValue(value) {
+  if (typeof value === "boolean") return value;
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return false;
+  return !["0", "false", "no", "off", "disabled"].includes(text);
 }
 
 function budgetRetryAfterSeconds(bucket) {

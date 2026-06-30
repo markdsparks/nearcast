@@ -2030,7 +2030,9 @@ function syncGeneratedRadarStatusChip() {
   const visible = generatedRadarWarmupIsActive(warmup) || warmup.state === "ready";
   chip.hidden = !visible;
   chip.classList.toggle("is-ready", warmup.state === "ready");
-  chip.textContent = warmup.state === "ready" ? "Radar enhanced" : "Enhancing radar";
+  if (warmup.state === "ready") chip.textContent = "Radar enhanced";
+  else if (warmup.state === "checking") chip.textContent = "Checking radar";
+  else chip.textContent = "Enhancing radar";
 }
 
 function resetMapForPlaceChange(options = {}) {

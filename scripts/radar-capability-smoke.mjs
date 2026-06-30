@@ -171,6 +171,19 @@ assert.equal(queueOnly.body.generation.state, "unsupported");
 assert.equal(queueOnly.body.generation.reason, "request-state-binding-unavailable");
 assert.equal(queueEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
 
+const disabledEnv = {
+  ...env,
+  RADAR_GENERATION_ACCEPT_REQUESTS: "false",
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const disabled = await capability(outsidePayload, disabledEnv);
+assert.equal(disabled.status, 200);
+assert.equal(disabled.body.enhanced.state, "unavailable");
+assert.equal(disabled.body.generation.state, "unsupported");
+assert.equal(disabled.body.generation.reason, "generation-requests-disabled");
+assert.equal(disabledEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
+
 const queuedEnv = {
   ...queueEnv,
   RADAR_GENERATION_REQUESTS: createRequestStore()
@@ -244,6 +257,7 @@ console.log(JSON.stringify({
   external: externalReady.body.enhanced.packId,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
+  disabled: disabled.body.generation.reason,
   queued: queued.body.generation.state,
   deduped: deduped.body.generation.state,
   r2Queued: r2Queued.body.generation.state,
