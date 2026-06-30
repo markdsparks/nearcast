@@ -219,15 +219,40 @@ jobs:
             import fs from "node:fs";
             const selection = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-selection.json", "utf8"));
             const marker = JSON.parse(fs.readFileSync("/tmp/radar-generation-plan-marker-existing.json", "utf8"));
-            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
-              ...selection,
-              selected: false,
-              reason: "pending-plan-already-marked",
-              skipped: [{ markerKey: selection.markerKey, status: marker.status || "processed" }]
-            }, null, 2)}\n`);
+            const maxAgeMinutes = Math.max(0, Number(process.env.MAX_PLAN_AGE_MINUTES || 0));
+            const markedAt = Date.parse(marker.markedAt || "");
+            const markerAgeMinutes = Number.isFinite(markedAt) ? (Date.now() - markedAt) / 60000 : Infinity;
+            if (maxAgeMinutes > 0 && markerAgeMinutes > maxAgeMinutes) {
+              fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+                ...selection,
+                ignoredMarker: {
+                  markerKey: selection.markerKey,
+                  status: marker.status || "processed",
+                  markedAt: marker.markedAt || "",
+                  ageMinutes: Math.round(markerAgeMinutes * 10) / 10,
+                  maxAgeMinutes
+                }
+              }, null, 2)}\n`);
+            } else {
+              fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+                ...selection,
+                selected: false,
+                reason: "pending-plan-already-marked",
+                skipped: [{
+                  markerKey: selection.markerKey,
+                  status: marker.status || "processed",
+                  markedAt: marker.markedAt || "",
+                  ageMinutes: Number.isFinite(markerAgeMinutes) ? Math.round(markerAgeMinutes * 10) / 10 : null,
+                  maxAgeMinutes
+                }]
+              }, null, 2)}\n`);
+            }
           NODE
-            echo "selected=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            SELECTED_AFTER_MARKER=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.selected === true ? 'true' : 'false');")
+            if [ "$SELECTED_AFTER_MARKER" != "true" ]; then
+              echo "selected=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           PLAN_OBJECT_PATH=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/radar-generation-plan-selection.json','utf8')); process.stdout.write(s.objectPath);")
           npx --yes wrangler r2 object get "$PLAN_OBJECT_PATH" --remote --file /tmp/radar-generation-plan.json
@@ -240,6 +265,26 @@ jobs:
           }
           if (plan.output?.planKey !== selection.planKey) {
             throw new Error(`Selection planKey mismatch: ${selection.planKey} !== ${plan.output?.planKey}`);
+          }
+          const maxAgeMinutes = Math.max(0, Number(process.env.MAX_PLAN_AGE_MINUTES || 0));
+          const plannedAt = Date.parse(plan.plannedAt || selection.plannedAt || "");
+          const planAgeMinutes = Number.isFinite(plannedAt) ? (Date.now() - plannedAt) / 60000 : Infinity;
+          if (maxAgeMinutes > 0 && planAgeMinutes > maxAgeMinutes) {
+            fs.writeFileSync("/tmp/radar-generation-plan-selection.json", `${JSON.stringify({
+              ...selection,
+              selected: false,
+              reason: "pending-plan-too-old",
+              requestId: plan.requestId || selection.requestId,
+              dedupeKey: plan.dedupeKey || selection.dedupeKey,
+              skipped: [{
+                planKey: selection.planKey,
+                status: "too-old",
+                plannedAt: plan.plannedAt || selection.plannedAt || "",
+                ageMinutes: Number.isFinite(planAgeMinutes) ? Math.round(planAgeMinutes * 10) / 10 : null,
+                maxAgeMinutes
+              }]
+            }, null, 2)}\n`);
+            process.exit(0);
           }
           const suppressedReasons = String(process.env.SUPPRESSED_PLAN_REASONS || "")
             .split(",")

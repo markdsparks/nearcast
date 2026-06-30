@@ -390,7 +390,8 @@ Current scaffold:
   `ENABLE_RADAR_GENERATION_RUNNER=true`. The `safe` profile is the preferred
   preview mode while the architecture is still being hardened: one pending plan
   per run, capped upload concurrency, capped preview index size, public
-  verification, and no empty publishes.
+  verification, no empty publishes, and age-aware processed markers so stale
+  empty results do not permanently suppress retries.
 - A real Great Falls preview upload has verified the R2 object layout through
   the public origin: preview index, pack manifest, and encoded tile URLs are
   externally readable after upload.

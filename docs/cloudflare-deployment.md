@@ -249,8 +249,11 @@ unless the repository variable `ENABLE_RADAR_GENERATION_RUNNER=safe` or
 `ENABLE_RADAR_GENERATION_RUNNER=true` is set. `safe` is the preferred preview
 automation mode: it processes one pending pointer per run, caps upload
 concurrency, caps retained preview packs, forces public verification, and
-refuses empty publishes. Keep it off when manually testing architecture, and
-turn it on only when on-demand render/publish spend is expected.
+refuses empty publishes. Fresh processed markers suppress repeated work, while
+stale markers and stale pending plans follow the max-plan-age guard so an empty
+render does not permanently block a future retry. Keep it off when manually
+testing architecture, and turn it on only when on-demand render/publish spend is
+expected.
 
 Smoke test:
 
