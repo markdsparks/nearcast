@@ -1,4 +1,4 @@
-const CACHE = "nearcast-v3072";
+const CACHE = "nearcast-v3073";
 const ASSET_VERSION = "3.0.73";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
