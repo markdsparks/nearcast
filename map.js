@@ -27,6 +27,7 @@ const GENERATED_RADAR_READY_STATUS_MS = 1800;
 const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const GENERATED_RADAR_VIEWPORT_COVERAGE_MIN = 0.999;
 const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
+const GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = MAP_MAX_ZOOM;
 const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
 const GENERATED_RADAR_GENERATION_MIN_ZOOM = 8;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
@@ -3764,7 +3765,26 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
 
 function generatedRadarMaxClientOverzoom(source) {
   const explicit = Number(source?.maxClientOverzoom ?? source?.renderProfile?.maxClientOverzoom ?? source?.substrate?.maxClientOverzoom);
-  return Number.isFinite(explicit) && explicit >= 0 ? explicit : null;
+  const frameSubstrateOverzoom = generatedRadarFrameSubstrateClientOverzoom(source);
+  if (Number.isFinite(explicit) && explicit >= 0) {
+    return Number.isFinite(frameSubstrateOverzoom)
+      ? Math.max(explicit, frameSubstrateOverzoom)
+      : explicit;
+  }
+  return Number.isFinite(frameSubstrateOverzoom) ? frameSubstrateOverzoom : null;
+}
+
+function generatedRadarFrameSubstrateClientOverzoom(source) {
+  if (!generatedRadarSourceIsFrameSubstrate(source)) return null;
+  const maxZoom = Number(source?.maxZoom ?? source?.maxzoom);
+  if (!Number.isFinite(maxZoom)) return null;
+  return Math.max(0, GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM - maxZoom);
+}
+
+function generatedRadarSourceIsFrameSubstrate(source) {
+  return source?.kind === "frame-substrate" ||
+    source?.substrate?.provider === "nearcast-mrms-frame-substrate" ||
+    source?.substrate?.clientRendering === "encoded-radar";
 }
 
 function generatedRadarFrameViewportEligibility(frame, context = generatedMrmsSelectionContext()) {

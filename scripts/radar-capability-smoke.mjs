@@ -183,6 +183,38 @@ assert.equal(routedFrameReady.body.enhanced.packId, "frame-conus");
 assert.equal(routedFrameReady.body.enhanced.indexUrl, frameIndexUrl);
 assert.equal(routedFetchCount, 1);
 
+let deepFrameFetchCount = 0;
+const deepFrameIndex = {
+  ...frameIndex,
+  packs: [{
+    ...frameIndex.packs[0],
+    maxZoom: 8,
+    maxClientOverzoom: 8
+  }]
+};
+const deepFrameReady = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 18,
+    key: "47.50,-111.30,z18"
+  }
+}, {
+  RADAR_FRAME_INDEX_URL: frameIndexUrl,
+  RADAR_GENERATION_INDEX_URL: previewIndexUrl,
+  async RADAR_GENERATION_INDEX_FETCH(request) {
+    deepFrameFetchCount += 1;
+    if (request.url === frameIndexUrl) return Response.json(deepFrameIndex);
+    return Response.json(externalIndex);
+  }
+});
+assert.equal(deepFrameReady.status, 200);
+assert.equal(deepFrameReady.body.enhanced.state, "ready");
+assert.equal(deepFrameReady.body.enhanced.reason, "fresh-frame-substrate");
+assert.equal(deepFrameReady.body.enhanced.selectionSource, "frame-index");
+assert.equal(deepFrameReady.body.enhanced.score.viewportGate.maxClientOverzoom, 10);
+assert.equal(deepFrameFetchCount, 1);
+
 const outsidePayload = {
   ...basePayload,
   viewport: {
@@ -371,6 +403,7 @@ console.log(JSON.stringify({
   workerQueue: workerQueue.accepted,
   external: externalReady.body.enhanced.packId,
   frameIndex: routedFrameReady.body.enhanced.reason,
+  deepFrameIndex: deepFrameReady.body.enhanced.score.viewportGate.maxClientOverzoom,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
   disabled: disabled.body.generation.reason,

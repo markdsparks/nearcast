@@ -9,7 +9,7 @@ const DEFAULT_MIN_DATA_TILES = 1;
 const DEFAULT_VIEWPORT = {
   latitude: 44.5133,
   longitude: -88.0133,
-  zoom: 12,
+  zoom: 18,
   spanLat: 0.42,
   spanLon: 0.58
 };
@@ -399,7 +399,7 @@ Options:
   --min-expires-in-minutes=1       Fail when the index is expired or almost expired.
   --min-data-tiles=1               Require active encoded data tiles.
   --lat=44.5133 --lon=-88.0133     Capability viewport center.
-  --zoom=12                        Capability viewport zoom.
+  --zoom=18                        Capability viewport zoom.
   --bounds=minLat,minLon,maxLat,maxLon
   --skip-capability                Only validate the public frame substrate artifacts.
   --timeout-ms=6000                Per-request timeout.

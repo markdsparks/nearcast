@@ -25,6 +25,7 @@ const DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM = 8;
 const RADAR_GENERATION_MIN_VIEWPORT_ZOOM_ENV = "RADAR_GENERATION_MIN_VIEWPORT_ZOOM";
 const ENHANCED_VIEWPORT_COVERAGE_MIN = 0.999;
 const ENHANCED_MIN_ZOOM_GRACE = 0.001;
+const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -802,7 +803,26 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
 
 function enhancedMaxClientOverzoom(source) {
   const value = finiteNumber(source?.maxClientOverzoom ?? source?.renderProfile?.maxClientOverzoom ?? source?.substrate?.maxClientOverzoom, NaN);
-  return Number.isFinite(value) && value >= 0 ? value : NaN;
+  const frameSubstrateOverzoom = enhancedFrameSubstrateClientOverzoom(source);
+  if (Number.isFinite(value) && value >= 0) {
+    return Number.isFinite(frameSubstrateOverzoom)
+      ? Math.max(value, frameSubstrateOverzoom)
+      : value;
+  }
+  return Number.isFinite(frameSubstrateOverzoom) ? frameSubstrateOverzoom : NaN;
+}
+
+function enhancedFrameSubstrateClientOverzoom(source) {
+  if (!enhancedSourceIsFrameSubstrate(source)) return NaN;
+  const maxZoom = finiteNumber(source?.maxZoom ?? source?.maxzoom, NaN);
+  if (!Number.isFinite(maxZoom)) return NaN;
+  return Math.max(0, FRAME_SUBSTRATE_MAX_CLIENT_ZOOM - maxZoom);
+}
+
+function enhancedSourceIsFrameSubstrate(source) {
+  return source?.kind === "frame-substrate" ||
+    source?.substrate?.provider === "nearcast-mrms-frame-substrate" ||
+    source?.substrate?.clientRendering === "encoded-radar";
 }
 
 function generationViewportEligibility(viewport = {}, env = {}) {

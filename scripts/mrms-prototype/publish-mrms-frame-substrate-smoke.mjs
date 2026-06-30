@@ -61,7 +61,7 @@ assert.equal(index.defaultPack, "frame-conus");
 assert.equal(index.packs.length, 1);
 assert.equal(index.packs[0].kind, "frame-substrate");
 assert.equal(index.packs[0].manifestUrl, index.manifestUrl);
-assert.equal(index.packs[0].maxClientOverzoom, 8);
+assert.equal(index.packs[0].maxClientOverzoom, 10);
 assert.deepEqual(index.renderProfile.tileZooms, [5, 6, 7, 8]);
 assert.equal(index.frames.length, 1);
 assert.equal(index.metrics.dataTiles, 12);

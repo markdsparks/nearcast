@@ -13,7 +13,7 @@ const DEFAULT_INDEX_NAME = "latest-frame-index.json";
 const DEFAULT_FRAMES = 1;
 const DEFAULT_TTL_MINUTES = 10;
 const DEFAULT_SKIP_MIN_FRESH_MINUTES = 3;
-const DEFAULT_MAX_CLIENT_OVERZOOM = 8;
+const DEFAULT_MAX_CLIENT_OVERZOOM = 10;
 const DEFAULT_ACTIVE_TILE_BUFFER = 1;
 
 const PROFILES = {
@@ -508,7 +508,7 @@ Options:
   --current-index-url=URL     Existing frame index used to skip unchanged sources.
   --skip-min-fresh-minutes=3  Do not rerender unchanged frames if this fresh.
   --force-publish             Rerender even when source/render profile match.
-  --max-client-overzoom=8     Maximum zoom stretch before the app falls back.
+  --max-client-overzoom=10    Maximum zoom stretch before the app falls back.
   --active-tile-plan=false    Disable active-first higher-zoom tile planning.
   --active-tile-buffer=1      Target-zoom tile buffer around active parents.
   --skip-empty-tiles=false    Publish transparent empty tiles too.
