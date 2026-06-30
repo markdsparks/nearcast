@@ -2844,84 +2844,81 @@ async function resolveLocalRadarViewportCapability(base, options = {}) {
     return rememberRadarCapability(capability);
   }
 
-  const indexUrl = generatedMrmsIndexUrl();
-  try {
-    const response = await fetch(indexUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error("Generated MRMS index unavailable.");
-    const index = await response.json();
-    const selection = selectGeneratedMrmsIndexPack(index, { indexUrl });
-    const pack = selection.pack;
-    const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
-    if (manifestUrl) {
-      const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
-      const quality = selection.selected
-        ? { ...selection.selected, manifestUrl: resolved }
-        : generatedMrmsIndexPackDiagnosticSummary(pack, null, { indexUrl, manifestUrl: resolved });
-      const capability = radarCapabilityWithEnhanced(base, {
-        state: "ready",
-        kind: Number(pack?.metrics?.dataTiles || 0) > 0 ? "encoded-radar" : "generated-radar",
-        manifestUrl: resolved,
-        selectionSource: "index",
-        selectionKey: generatedMrmsIndexPackSelectionKey(pack, resolved),
-        packId: pack?.id || "",
-        label: pack?.label || "",
-        generatedAt: pack?.generatedAt || "",
-        expiresAt: pack?.expiresAt || "",
-        coverageBounds: generatedCoverageBounds(pack?.coverageBounds),
-        metrics: pack?.metrics || null,
-        quality,
-        reason: "fresh-index-pack"
-      });
-      recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
+  const indexAttempts = [];
+  for (const indexUrl of generatedMrmsIndexCandidateUrls()) {
+    try {
+      const response = await fetch(indexUrl, { cache: "no-store" });
+      if (!response.ok) throw new Error("Generated MRMS index unavailable.");
+      const index = await response.json();
+      const selection = selectGeneratedMrmsIndexPack(index, { indexUrl });
+      const pack = selection.pack;
+      const manifestUrl = generatedMrmsIndexPackManifestUrl(pack);
+      if (manifestUrl) {
+        const resolved = resolveGeneratedRadarUrl(manifestUrl, indexUrl);
+        const quality = selection.selected
+          ? { ...selection.selected, manifestUrl: resolved }
+          : generatedMrmsIndexPackDiagnosticSummary(pack, null, { indexUrl, manifestUrl: resolved });
+        const capability = radarCapabilityWithEnhanced(base, {
+          state: "ready",
+          kind: Number(pack?.metrics?.dataTiles || 0) > 0 ? "encoded-radar" : "generated-radar",
+          manifestUrl: resolved,
+          selectionSource: pack?.kind === "frame-substrate" ? "frame-index" : "index",
+          selectionKey: generatedMrmsIndexPackSelectionKey(pack, resolved),
+          packId: pack?.id || "",
+          label: pack?.label || "",
+          generatedAt: pack?.generatedAt || "",
+          expiresAt: pack?.expiresAt || "",
+          coverageBounds: generatedCoverageBounds(pack?.coverageBounds),
+          metrics: pack?.metrics || null,
+          quality,
+          reason: pack?.kind === "frame-substrate" ? "fresh-frame-substrate" : "fresh-index-pack"
+        });
+        recordRadarSourceDecision("radar.enhanced-index-pack-selected", {
+          indexUrl,
+          provider: index?.provider || "",
+          packId: pack?.id || pack?.label || "",
+          kind: pack?.kind || "",
+          manifestUrl: resolved,
+          packCount: selection.packCount,
+          freshPackCount: selection.freshPackCount,
+          rejectedPackCount: selection.rejectedPackCount,
+          candidates: selection.candidates,
+          quality,
+          expiresAt: pack?.expiresAt || "",
+          coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
+        });
+        return rememberRadarCapability(capability);
+      }
+      const attempt = {
+        reason: "no-fresh-index-pack",
         indexUrl,
-        packId: pack?.id || pack?.label || "",
-        manifestUrl: resolved,
+        provider: index?.provider || "",
         packCount: selection.packCount,
         freshPackCount: selection.freshPackCount,
         rejectedPackCount: selection.rejectedPackCount,
-        candidates: selection.candidates,
-        quality,
-        expiresAt: pack?.expiresAt || "",
-        coverageBounds: generatedCoverageBounds(pack?.coverageBounds)
-      });
-      return rememberRadarCapability(capability);
+        candidates: selection.candidates
+      };
+      indexAttempts.push(attempt);
+      recordRadarSourceDecision("radar.enhanced-index-no-match", attempt);
+    } catch (error) {
+      rememberGeneratedMrmsIndexSelection(null);
+      const attempt = {
+        reason: "index-unavailable",
+        indexUrl,
+        error: radarDecisionErrorMessage(error)
+      };
+      indexAttempts.push(attempt);
+      recordRadarSourceDecision("radar.enhanced-index-unavailable", attempt);
+      /* The index is a production-routing layer; legacy generated radar and fallback remain compatibility paths. */
     }
-    const capability = radarCapabilityUnavailable(base, {
-      reason: "no-fresh-index-pack",
-      indexUrl,
-      packCount: selection.packCount,
-      freshPackCount: selection.freshPackCount,
-      rejectedPackCount: selection.rejectedPackCount,
-      candidates: selection.candidates
-    });
-    recordRadarSourceDecision("radar.enhanced-index-no-match", {
-      indexUrl,
-      packCount: selection.packCount,
-      freshPackCount: selection.freshPackCount,
-      rejectedPackCount: selection.rejectedPackCount,
-      candidates: selection.candidates
-    });
-    if (options.allowLegacy === false) return rememberRadarCapability(radarCapabilityWithGenerationState(capability, options));
-  } catch (error) {
-    rememberGeneratedMrmsIndexSelection(null);
-    const capability = radarCapabilityUnavailable(base, {
-      reason: "index-unavailable",
-      indexUrl,
-      error: radarDecisionErrorMessage(error)
-    });
-    recordRadarSourceDecision("radar.enhanced-index-unavailable", {
-      indexUrl,
-      reason: radarDecisionErrorMessage(error)
-    });
-    if (options.allowLegacy === false) return rememberRadarCapability(radarCapabilityWithGenerationState(capability, options));
-    /* The index is a production-routing layer; the legacy manifest remains the compatibility path. */
   }
 
+  const indexUrl = generatedMrmsIndexUrl();
   if (options.allowLegacy === false) {
-    rememberGeneratedMrmsIndexSelection(null);
+    const latestAttempt = indexAttempts[indexAttempts.length - 1] || { reason: "index-unavailable", indexUrl };
     return rememberRadarCapability(radarCapabilityWithGenerationState(radarCapabilityUnavailable(base, {
-      reason: "legacy-disabled-for-viewport-refresh",
-      indexUrl
+      ...latestAttempt,
+      attempts: indexAttempts
     }), options));
   }
 
@@ -3449,11 +3446,16 @@ function generatedRadarSelectionHint() {
 }
 
 function generatedMrmsIndexUrl() {
+  return generatedMrmsIndexCandidateUrls()[0] || "radar/mrms/index.json";
+}
+
+function generatedMrmsIndexCandidateUrls() {
   const override = generatedMrmsIndexUrlOverride();
-  if (override) return override;
-  return typeof MRMS_RADAR_INDEX_URL === "string" && MRMS_RADAR_INDEX_URL
-    ? MRMS_RADAR_INDEX_URL
-    : "radar/mrms/index.json";
+  if (override) return [override];
+  return [
+    typeof MRMS_RADAR_FRAME_INDEX_URL === "string" ? MRMS_RADAR_FRAME_INDEX_URL : "",
+    typeof MRMS_RADAR_INDEX_URL === "string" ? MRMS_RADAR_INDEX_URL : "radar/mrms/index.json"
+  ].filter((url, index, urls) => url && urls.indexOf(url) === index);
 }
 
 function selectGeneratedMrmsIndexPack(index, options = {}) {
@@ -3552,6 +3554,7 @@ function generatedMrmsIndexPackDiagnosticSummary(pack, score = null, options = {
     manifestUrl,
     minZoom: zoomWindow.minZoom,
     maxZoom: zoomWindow.maxZoom,
+    maxClientOverzoom: generatedRadarMaxClientOverzoom(pack),
     generatedAt: pack?.generatedAt || "",
     expiresAt: pack?.expiresAt || "",
     coverageBounds: generatedBoundsDiagnosticSummary(pack?.coverageBounds),
@@ -3617,23 +3620,33 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
   const hasZoom = Number.isFinite(zoom);
   const hasViewport = Boolean(safeContext.viewportBounds);
   const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= minZoom;
+  const maxClientOverzoom = generatedRadarMaxClientOverzoom(source);
+  const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
+    zoom <= maxZoom + maxClientOverzoom + GENERATED_RADAR_MIN_ZOOM_GRACE;
   const centerOk = !safeContext.centerPoint || coverage.centerCovered;
   const viewportThreshold = hasViewport ? GENERATED_RADAR_VIEWPORT_COVERAGE_MIN : null;
   const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN;
   let reason = "usable";
   if (!coverage.relevant) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
   return {
-    usable: coverage.relevant && minZoomOk && centerOk && viewportOk,
+    usable: coverage.relevant && minZoomOk && maxZoomOk && centerOk && viewportOk,
     reason,
     coverage,
     minZoom,
     maxZoom,
+    maxClientOverzoom,
     zoom: hasZoom ? zoom : null,
     viewportThreshold
   };
+}
+
+function generatedRadarMaxClientOverzoom(source) {
+  const explicit = Number(source?.maxClientOverzoom ?? source?.renderProfile?.maxClientOverzoom ?? source?.substrate?.maxClientOverzoom);
+  return Number.isFinite(explicit) && explicit >= 0 ? explicit : null;
 }
 
 function generatedRadarFrameViewportEligibility(frame, context = generatedMrmsSelectionContext()) {
@@ -3656,6 +3669,7 @@ function generatedRadarViewportEligibilityDiagnostic(eligibility) {
     zoom: roundedDiagnosticNumber(eligibility.zoom, 2),
     minZoom: eligibility.minZoom,
     maxZoom: eligibility.maxZoom,
+    maxClientOverzoom: roundedDiagnosticNumber(eligibility.maxClientOverzoom, 2),
     viewportThreshold: roundedDiagnosticNumber(eligibility.viewportThreshold, 3),
     coverage: eligibility.coverage
       ? {
@@ -3933,6 +3947,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
   const manifestGeneratedAt = generatedManifestTimestamp(manifest?.generatedAt);
   const manifestExpiresAt = generatedManifestTimestamp(manifest?.expiresAt);
   const coverageBounds = generatedCoverageBounds(manifest?.coverageBounds);
+  const maxClientOverzoom = generatedRadarMaxClientOverzoom(manifest);
   const sample = Boolean(manifest?.sample);
 
   return frames
@@ -3946,6 +3961,7 @@ function normalizeGeneratedMrmsFrames(manifest, manifestUrl) {
       manifestGeneratedAt,
       manifestExpiresAt,
       coverageBounds,
+      maxClientOverzoom,
       sample
     }))
     .filter(Boolean)
@@ -3992,6 +4008,8 @@ function normalizeGeneratedMrmsFrame(frame, context) {
     coverageBounds: generatedCoverageBounds(frame?.coverageBounds) || context.coverageBounds,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : 14
   };
+  const maxClientOverzoom = generatedRadarMaxClientOverzoom(frame) ?? context.maxClientOverzoom;
+  if (Number.isFinite(maxClientOverzoom)) normalized.maxClientOverzoom = maxClientOverzoom;
   if (Number.isFinite(minZoom)) normalized.minZoom = minZoom;
   if (layers.length) {
     normalized.layers = layers

@@ -6,6 +6,7 @@ import path from "node:path";
 const DEFAULT_DIR = "radar/mrms/live";
 const DEFAULT_PREFIX = "mrms";
 const DEFAULT_CACHE_CONTROL = "public, max-age=86400, immutable";
+const DEFAULT_MUTABLE_CACHE_CONTROL = "no-store";
 const DEFAULT_CONCURRENCY = 24;
 const DEFAULT_PRUNE_OLDER_THAN_MINUTES = 360;
 
@@ -26,12 +27,15 @@ async function main() {
   const accessKeyId = args["access-key-id"] || process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = args["secret-access-key"] || process.env.R2_SECRET_ACCESS_KEY;
   const cacheControl = args["cache-control"] || process.env.MRMS_R2_CACHE_CONTROL || DEFAULT_CACHE_CONTROL;
+  const mutableCacheControl = args["mutable-cache-control"] || DEFAULT_MUTABLE_CACHE_CONTROL;
+  const mutableFiles = new Set(splitList(args["mutable-files"] || args["mutable-file"])
+    .map((item) => cleanKeyPrefix(item)));
   const concurrency = Math.max(1, Math.round(numberArg(args.concurrency || process.env.MRMS_R2_UPLOAD_CONCURRENCY, DEFAULT_CONCURRENCY)));
   const deleteLocal = booleanArg(args["delete-local"], false);
   const pruneOlderThanMinutes = Math.max(0, numberArg(args["prune-older-than-minutes"] ?? process.env.MRMS_R2_PRUNE_OLDER_THAN_MINUTES, DEFAULT_PRUNE_OLDER_THAN_MINUTES));
 
   if (!bucket) throw new Error("missing --bucket or MRMS_R2_BUCKET");
-  if (!endpoint) throw new Error("missing --endpoint or CLOUDFLARE_ACCOUNT_ID");
+  if (!dryRun && !endpoint) throw new Error("missing --endpoint or CLOUDFLARE_ACCOUNT_ID");
   if (!dryRun && !accessKeyId) throw new Error("missing --access-key-id or R2_ACCESS_KEY_ID");
   if (!dryRun && !secretAccessKey) throw new Error("missing --secret-access-key or R2_SECRET_ACCESS_KEY");
 
@@ -43,7 +47,8 @@ async function main() {
       file,
       relativePath,
       key: joinKey(prefix, relativePath),
-      size: fs.statSync(file).size
+      size: fs.statSync(file).size,
+      cacheControl: mutableFiles.has(cleanKeyPrefix(relativePath)) ? mutableCacheControl : cacheControl
     };
   });
 
@@ -60,6 +65,8 @@ async function main() {
     pruned: 0,
     deleteLocal,
     cacheControl,
+    mutableCacheControl,
+    mutableFileCount: planned.filter((item) => item.cacheControl === mutableCacheControl).length,
     concurrency
   };
 
@@ -85,7 +92,7 @@ async function main() {
     await client.putObject({
       key: item.key,
       body,
-      cacheControl,
+      cacheControl: item.cacheControl,
       contentType: contentTypeForFile(item.file)
     });
     uploadedKeys.add(item.key);
@@ -284,6 +291,11 @@ function chunks(items, size) {
   return result;
 }
 
+function splitList(value) {
+  if (!value) return [];
+  return String(value).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function numberArg(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -312,6 +324,8 @@ Options:
   --access-key-id=KEY           R2 access key id. Also reads R2_ACCESS_KEY_ID.
   --secret-access-key=SECRET    R2 secret access key. Also reads R2_SECRET_ACCESS_KEY.
   --cache-control=VALUE         Cache-Control for uploaded immutable tile PNGs.
+  --mutable-file=PATH           Relative file uploaded with no-store cache-control.
+  --mutable-cache-control=VALUE Cache-Control for mutable files. Defaults to no-store.
   --concurrency=24              Concurrent upload requests.
   --prune-older-than-minutes=360
                                 Delete older objects under the prefix after upload.

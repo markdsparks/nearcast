@@ -291,6 +291,27 @@ upgrade.
   tile template, and attribution.
 - Teach the app to load this index before considering viewport-pack generation.
 
+Initial implementation:
+
+- `scripts/mrms-prototype/publish-mrms-frame-substrate.mjs` publishes a
+  frame-first MRMS substrate from the latest public MRMS source frame.
+- The first geography profile is `conus`, with encoded z5-z8 data tiles,
+  skipped empty tiles, a short freshness window, and a `maxClientOverzoom`
+  ceiling so the app does not stretch broad low/mid-zoom data forever.
+- The mutable app entrypoint is
+  `radar/mrms/frame-substrate/latest-frame-index.json`; immutable manifests and
+  tiles live below source-signature-scoped frame-substrate paths.
+- `.github/workflows/publish-mrms-frame-substrate.yml` is a gated bridge runner:
+  it can check every two minutes, resolve the latest MRMS source, skip unchanged
+  frames, publish artifacts to R2, and upload the latest index with `no-store`
+  cache-control. This is useful for testing the contract, but the target
+  production clock should still move to a purpose-built scheduled worker or job
+  runner if GitHub Actions timing becomes the bottleneck.
+- The app now checks the frame-substrate index before the existing generated
+  pack index. If it is absent, stale, out of coverage, or beyond the allowed
+  overzoom range, the existing generated-index and fallback paths continue to
+  handle the viewport.
+
 ### Step 3: Move color and polish to the client
 
 - Treat encoded tiles as the normal path.

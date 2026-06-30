@@ -1,0 +1,131 @@
+name: Publish MRMS frame substrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Frame substrate geography profile
+        required: false
+        default: conus
+      frames:
+        description: Latest MRMS frames to publish
+        required: false
+        default: "1"
+      ttlMinutes:
+        description: Frame index freshness window
+        required: false
+        default: "10"
+      tileZooms:
+        description: Reusable source zooms
+        required: false
+        default: "5,6,7,8"
+      forcePublish:
+        description: Rerender even when the current MRMS source is unchanged
+        required: false
+        default: "false"
+  schedule:
+    - cron: "*/2 * * * *"
+
+concurrency:
+  group: publish-mrms-frame-substrate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_MRMS_FRAME_SUBSTRATE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MRMS_FRAME_PROFILE: ${{ github.event.inputs.profile || vars.MRMS_FRAME_PROFILE || 'conus' }}
+      MRMS_FRAME_FRAMES: ${{ github.event.inputs.frames || vars.MRMS_FRAME_FRAMES || '1' }}
+      MRMS_FRAME_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || vars.MRMS_FRAME_TTL_MINUTES || '10' }}
+      MRMS_FRAME_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_FRAME_TILE_ZOOMS || '5,6,7,8' }}
+      MRMS_FRAME_PUBLIC_BASE_URL: ${{ vars.MRMS_FRAME_PUBLIC_BASE_URL || 'https://radar.getnearcast.app/radar/mrms/frame-substrate' }}
+      MRMS_FRAME_INDEX_URL: ${{ vars.MRMS_FRAME_INDEX_URL || 'https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json' }}
+      MRMS_FRAME_ARTIFACT_ROOT: ${{ vars.MRMS_FRAME_ARTIFACT_ROOT || 'radar/mrms/frame-substrate' }}
+      MRMS_FRAME_R2_BUCKET: ${{ vars.MRMS_FRAME_R2_BUCKET || vars.MRMS_R2_BUCKET || 'nearcast-radar' }}
+      MRMS_FRAME_R2_PREFIX: ${{ vars.MRMS_FRAME_R2_PREFIX || 'radar/mrms/frame-substrate' }}
+      MRMS_FRAME_CACHE_CONTROL: ${{ vars.MRMS_FRAME_CACHE_CONTROL || 'public, max-age=86400, immutable' }}
+      MRMS_FRAME_INDEX_CACHE_CONTROL: ${{ vars.MRMS_FRAME_INDEX_CACHE_CONTROL || 'no-store' }}
+      MRMS_FRAME_R2_ENDPOINT: ${{ vars.MRMS_FRAME_R2_ENDPOINT || vars.MRMS_R2_ENDPOINT || '' }}
+      MRMS_FRAME_R2_UPLOAD_CONCURRENCY: ${{ vars.MRMS_FRAME_R2_UPLOAD_CONCURRENCY || vars.MRMS_R2_UPLOAD_CONCURRENCY || '24' }}
+      MRMS_FRAME_R2_PRUNE_OLDER_THAN_MINUTES: ${{ vars.MRMS_FRAME_R2_PRUNE_OLDER_THAN_MINUTES || '240' }}
+      MRMS_FRAME_FORCE_PUBLISH: ${{ github.event.inputs.forcePublish || 'false' }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate frame substrate
+        id: publish
+        run: |
+          EXTRA_ARGS=()
+          if [ "$MRMS_FRAME_FORCE_PUBLISH" = "true" ]; then
+            EXTRA_ARGS+=(--force-publish)
+          fi
+          node scripts/mrms-prototype/publish-mrms-frame-substrate.mjs \
+            --profile="$MRMS_FRAME_PROFILE" \
+            --frames="$MRMS_FRAME_FRAMES" \
+            --ttl-minutes="$MRMS_FRAME_TTL_MINUTES" \
+            --tile-zooms="$MRMS_FRAME_TILE_ZOOMS" \
+            --artifact-root="$MRMS_FRAME_ARTIFACT_ROOT" \
+            --public-base-url="$MRMS_FRAME_PUBLIC_BASE_URL" \
+            --current-index-url="$MRMS_FRAME_INDEX_URL" \
+            --summary-out=/tmp/nearcast-mrms-frame-substrate-summary.json \
+            "${EXTRA_ARGS[@]}"
+          SKIPPED=$(node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync('/tmp/nearcast-mrms-frame-substrate-summary.json','utf8')); process.stdout.write(s.skipped ? 'true' : 'false');")
+          echo "skipped=$SKIPPED" >> "$GITHUB_OUTPUT"
+
+      - name: Skip upload when frame source is unchanged
+        if: steps.publish.outputs.skipped == 'true'
+        run: echo "MRMS frame source and render profile are unchanged; keeping current frame substrate."
+
+      - name: Verify frame substrate index
+        if: steps.publish.outputs.skipped != 'true'
+        run: |
+          node -e "const fs=require('fs'); const root=process.env.MRMS_FRAME_ARTIFACT_ROOT; const i=JSON.parse(fs.readFileSync(root + '/latest-frame-index.json','utf8')); if(i.provider!=='nearcast-mrms-frame-index'||!i.packs?.length||!i.manifestUrl||!i.expiresAt) process.exit(1); console.log(JSON.stringify({provider:i.provider, profile:i.geography?.id, frames:i.frameCount, expiresAt:i.expiresAt, dataTiles:i.metrics?.dataTiles||0, maxClientOverzoom:i.maxClientOverzoom}, null, 2));"
+
+      - name: Install R2 upload dependencies
+        if: steps.publish.outputs.skipped != 'true'
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
+      - name: Upload frame substrate to R2
+        if: steps.publish.outputs.skipped != 'true'
+        run: |
+          if [ -z "$MRMS_FRAME_R2_BUCKET" ]; then
+            echo "MRMS_FRAME_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ]; then
+            echo "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY secrets are required."
+            exit 1
+          fi
+          ENDPOINT="$MRMS_FRAME_R2_ENDPOINT"
+          if [ -z "$ENDPOINT" ]; then
+            ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          node scripts/mrms-prototype/upload-mrms-r2.mjs \
+            --dir="$MRMS_FRAME_ARTIFACT_ROOT" \
+            --bucket="$MRMS_FRAME_R2_BUCKET" \
+            --prefix="$MRMS_FRAME_R2_PREFIX" \
+            --endpoint="$ENDPOINT" \
+            --access-key-id="$R2_ACCESS_KEY_ID" \
+            --secret-access-key="$R2_SECRET_ACCESS_KEY" \
+            --cache-control="$MRMS_FRAME_CACHE_CONTROL" \
+            --mutable-file=latest-frame-index.json \
+            --mutable-cache-control="$MRMS_FRAME_INDEX_CACHE_CONTROL" \
+            --concurrency="$MRMS_FRAME_R2_UPLOAD_CONCURRENCY" \
+            --prune-older-than-minutes="$MRMS_FRAME_R2_PRUNE_OLDER_THAN_MINUTES"
+
+      - name: Verify public frame substrate
+        if: steps.publish.outputs.skipped != 'true'
+        run: |
+          node -e "const url=process.env.MRMS_FRAME_INDEX_URL; fetch(url,{cache:'no-store'}).then(async r=>{if(!r.ok) throw new Error(r.status + ' ' + r.statusText); const i=await r.json(); if(i.provider!=='nearcast-mrms-frame-index'||!i.packs?.length) throw new Error('invalid frame index'); console.log(JSON.stringify({url, provider:i.provider, profile:i.geography?.id, frames:i.frameCount, expiresAt:i.expiresAt}, null, 2));}).catch(e=>{console.error(e.message); process.exit(1);});"

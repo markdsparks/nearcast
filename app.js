@@ -1,4 +1,4 @@
-const VERSION = "3.0.72";
+const VERSION = "3.0.73";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -14,6 +14,7 @@ const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const RADAR_CAPABILITY_ENDPOINT_KEY = "nearcast-radar-capability-endpoint";
 const DEFAULT_RADAR_CAPABILITY_ENDPOINT = "/api/radar/capability";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
+const MRMS_RADAR_FRAME_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json";
 const MRMS_RADAR_INDEX_URL = "radar/mrms/index.json";
 const MRMS_RADAR_PREVIEW_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/on-demand-preview/index.json";
 const MAPLIBRE_CSS_ID = "maplibreCss";
