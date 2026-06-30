@@ -16,6 +16,10 @@ const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 
 const DEFAULT_GENERATION_GLOBAL_HOURLY_LIMIT = 60;
 const DEFAULT_GENERATION_VIEWPORT_HOURLY_LIMIT = 3;
 const DEFAULT_GENERATION_POLL_AFTER_SECONDS = 20;
+const DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM = 8;
+const RADAR_GENERATION_MIN_VIEWPORT_ZOOM_ENV = "RADAR_GENERATION_MIN_VIEWPORT_ZOOM";
+const ENHANCED_VIEWPORT_COVERAGE_MIN = 0.999;
+const ENHANCED_MIN_ZOOM_GRACE = 0.001;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -165,8 +169,9 @@ function packExpired(pack) {
 
 function packScore(pack, viewport) {
   const areas = coverageAreas(pack);
-  const coverage = coverageScore(areas, viewport);
-  if (!coverage.relevant) return null;
+  const eligibility = enhancedViewportEligibility(pack, viewport, areas);
+  if (!eligibility.usable) return null;
+  const coverage = eligibility.coverage;
   const zoom = zoomScore(pack, viewport.zoom);
   const dataTiles = Number(pack?.metrics?.dataTiles || 0);
   const area = packArea(pack);
@@ -176,7 +181,13 @@ function packScore(pack, viewport) {
     coverage,
     zoom,
     area,
-    freshness
+    freshness,
+    viewportGate: {
+      usable: eligibility.usable,
+      reason: eligibility.reason,
+      minZoom: eligibility.minZoom,
+      viewportThreshold: eligibility.viewportThreshold
+    }
   };
 }
 
@@ -263,6 +274,16 @@ async function generationState(capability, payload = {}, env = {}, ctx = {}) {
     return { state: "unsupported", requestId: null, reason: "request-state-binding-unavailable", mode: runnerMode };
   }
   const dedupeKey = generationDedupeKey(capability, payload);
+  const viewportEligibility = generationViewportEligibility(capability?.viewport, env);
+  if (!viewportEligibility.accepted) {
+    return {
+      state: "limited",
+      requestId: null,
+      reason: viewportEligibility.reason,
+      mode: runnerMode,
+      viewport: viewportEligibility
+    };
+  }
   const preflight = preflightGenerationPlan(capability, payload, dedupeKey, env);
   if (preflight && !preflight.accepted) {
     return {
@@ -619,6 +640,53 @@ function coverageBounds(value) {
     minLon,
     maxLat: Math.max(minLat, maxLat),
     maxLon
+  };
+}
+
+function enhancedViewportEligibility(source, viewport = {}, areas = coverageAreas(source)) {
+  const coverage = coverageScore(Array.isArray(areas) ? areas : [], viewport || {});
+  const minZoom = finiteNumber(source?.minZoom ?? source?.minzoom, NaN);
+  const maxZoom = finiteNumber(source?.maxZoom ?? source?.maxzoom, NaN);
+  const zoom = finiteNumber(viewport?.zoom, NaN);
+  const hasZoom = Number.isFinite(zoom);
+  const centerPoint = viewport?.center || viewport?.activePoint;
+  const hasViewport = Boolean(viewport?.bounds);
+  const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + ENHANCED_MIN_ZOOM_GRACE >= minZoom;
+  const centerOk = !centerPoint || coverage.centerCovered;
+  const viewportThreshold = hasViewport ? ENHANCED_VIEWPORT_COVERAGE_MIN : null;
+  const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN;
+  let reason = "usable";
+  if (!coverage.relevant) reason = "coverage-not-relevant";
+  else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!centerOk) reason = "center-outside-coverage";
+  else if (!viewportOk) reason = "viewport-not-covered";
+  return {
+    usable: coverage.relevant && minZoomOk && centerOk && viewportOk,
+    reason,
+    coverage,
+    minZoom: Number.isFinite(minZoom) ? minZoom : null,
+    maxZoom: Number.isFinite(maxZoom) ? maxZoom : null,
+    zoom: hasZoom ? zoom : null,
+    viewportThreshold
+  };
+}
+
+function generationViewportEligibility(viewport = {}, env = {}) {
+  const minZoom = finiteNumber(env?.[RADAR_GENERATION_MIN_VIEWPORT_ZOOM_ENV], DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM);
+  const zoom = finiteNumber(viewport?.zoom, NaN);
+  if (Number.isFinite(zoom) && Number.isFinite(minZoom) && zoom + ENHANCED_MIN_ZOOM_GRACE < minZoom) {
+    return {
+      accepted: false,
+      reason: "below-generation-min-zoom",
+      zoom,
+      minZoom
+    };
+  }
+  return {
+    accepted: true,
+    reason: "viewport-ok",
+    zoom: Number.isFinite(zoom) ? zoom : null,
+    minZoom: Number.isFinite(minZoom) ? minZoom : null
   };
 }
 

@@ -65,6 +65,17 @@ const workerReady = await workerCapability(basePayload, env);
 assert.equal(workerReady.status, 200);
 assert.equal(workerReady.body.enhanced.state, "ready");
 
+const partialViewport = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    bounds: { minLat: 46.4, minLon: -112.8, maxLat: 48.6, maxLon: -109.8 },
+    key: "47.50,-111.30,z10-wide"
+  }
+});
+assert.equal(partialViewport.status, 200);
+assert.equal(partialViewport.body.enhanced.state, "unavailable");
+
 const passthrough = await worker.fetch(new Request("https://getnearcast.app/index.html"), {
   ASSETS: {
     async fetch() {
@@ -199,6 +210,24 @@ assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].viewport.key, "35.00,-90.00,z10");
 assert.equal(queuedEnv.RADAR_GENERATION_QUEUE.messages[0].dedupeKey, queued.body.generation.dedupeKey);
 
+const lowZoomEnv = {
+  ...env,
+  RADAR_GENERATION_QUEUE: createQueue(),
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const lowZoom = await capability({
+  ...outsidePayload,
+  viewport: {
+    ...outsidePayload.viewport,
+    zoom: 7,
+    key: "35.00,-90.00,z7"
+  }
+}, lowZoomEnv);
+assert.equal(lowZoom.status, 200);
+assert.equal(lowZoom.body.generation.state, "limited");
+assert.equal(lowZoom.body.generation.reason, "below-generation-min-zoom");
+assert.equal(lowZoomEnv.RADAR_GENERATION_QUEUE.messages.length, 0);
+
 const safeQueuedEnv = {
   ...env,
   RADAR_GENERATION_ACCEPT_REQUESTS: "safe",
@@ -281,12 +310,14 @@ assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
+  partialViewport: partialViewport.body.enhanced.state,
   workerQueue: workerQueue.accepted,
   external: externalReady.body.enhanced.packId,
   unsupported: unsupported.body.generation.state,
   queueOnly: queueOnly.body.generation.reason,
   disabled: disabled.body.generation.reason,
   queued: queued.body.generation.state,
+  lowZoom: lowZoom.body.generation.reason,
   safeQueued: safeQueued.body.generation.mode,
   overBudget: overBudgetCapability.body.generation.reason,
   deduped: deduped.body.generation.state,

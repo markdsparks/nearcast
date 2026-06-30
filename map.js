@@ -25,6 +25,10 @@ const GENERATED_RADAR_POLL_INTERVAL_MS = 12000;
 const GENERATED_RADAR_POLL_MAX_MS = 7 * 60 * 1000;
 const GENERATED_RADAR_READY_STATUS_MS = 1800;
 const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
+const GENERATED_RADAR_VIEWPORT_COVERAGE_MIN = 0.999;
+const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
+const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
+const GENERATED_RADAR_GENERATION_MIN_ZOOM = 8;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
 const RADAR_SOURCE_DECISION_LOG_LIMIT = 50;
 const GENERATED_RADAR_DIAGNOSTIC_CANDIDATE_LIMIT = 6;
@@ -33,6 +37,7 @@ let mapLibreOverlayRaf = 0;
 let mapLibreOverlayForceRadar = false;
 let mapLibreGeneratedRadarProtocolRegistered = false;
 let mapLibreGeneratedRadarDataProtocolRegistered = false;
+let generatedRadarFallbackReloadTimer = 0;
 const mapLibreEncodedRadarTileCache = new Map();
 const generatedRadarTilePreflightCache = new Map();
 const mapLibreInteraction = {
@@ -1244,6 +1249,7 @@ function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
 function renderMapLibreWeather(index = mapState.frameIndex) {
   const record = mapLibreCurrentRecord();
   if (!mapLibreRecordReady(record)) return;
+  if (maybeSwitchGeneratedRadarToFallback(index, "generated-viewport-out-of-scope")) return;
   const specs = mapLibreWeatherLayerSpecs(index);
   syncMapLibreWeatherSlots(record, specs);
 }
@@ -1788,6 +1794,11 @@ function shouldRefreshGeneratedRadarForViewport() {
   return true;
 }
 
+function generatedRadarViewportAllowsGenerationRequest() {
+  const zoom = Number(mapState.zoom);
+  return !Number.isFinite(zoom) || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= GENERATED_RADAR_GENERATION_MIN_ZOOM;
+}
+
 function generatedRadarRefreshTimelineKind() {
   if (mapState.timelineKind === "radar") return "radar";
   if (mapState.timelineKind === "precip") return "precip";
@@ -1805,6 +1816,40 @@ function generatedRadarRefreshOptions(timelineKind) {
   };
 }
 
+function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason = "generated-viewport-out-of-scope") {
+  const frame = mapState.frames[index];
+  const eligibility = generatedRadarFrameViewportEligibility(frame);
+  if (!eligibility || eligibility.usable) return false;
+
+  if (generatedRadarFallbackReloadTimer) return true;
+  const timelineKind = mapState.timelineKind === "precip" ? "precip" : "radar";
+  const shouldResumePlayback = Boolean(mapState.playing);
+  recordRadarSourceDecision("radar.enhanced-fallback-viewport", {
+    reason,
+    eligibility: generatedRadarViewportEligibilityDiagnostic(eligibility)
+  });
+
+  clearGeneratedRadarSelection();
+  clearGeneratedRadarWarmup();
+  clearMapLayers({ renderStatic: false });
+  setFrameLabel("Loading radar");
+  setMapLoading(true);
+
+  generatedRadarFallbackReloadTimer = setTimeout(() => {
+    generatedRadarFallbackReloadTimer = 0;
+    loadMapFrames(true, {
+      ...generatedRadarRefreshOptions(timelineKind),
+      preserveExisting: false,
+      resumePlayback: shouldResumePlayback
+    }).catch((error) => {
+      recordRadarSourceDecision("radar.fallback-reload-failed", {
+        reason: radarDecisionErrorMessage(error)
+      });
+    });
+  }, GENERATED_RADAR_FALLBACK_RELOAD_MS);
+  return true;
+}
+
 async function refreshGeneratedRadarForViewport(reason = "viewport") {
   if (!shouldRefreshGeneratedRadarForViewport()) return;
   const timelineKind = generatedRadarRefreshTimelineKind();
@@ -1817,9 +1862,10 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
   const seq = ++mapState.generatedRadarRefreshSeq;
   const warmup = beginGeneratedRadarWarmup(viewportKey, reason);
   try {
+    const requestGeneration = generatedRadarViewportAllowsGenerationRequest();
     const selection = await resolveGeneratedMrmsManifestSelection({
       allowLegacy: false,
-      requestGeneration: true,
+      requestGeneration,
       reason
     });
     if (seq !== mapState.generatedRadarRefreshSeq) return;
@@ -2055,6 +2101,10 @@ function resetMapForPlaceChange(options = {}) {
   if (mapState.generatedRadarRefreshTimer) {
     clearTimeout(mapState.generatedRadarRefreshTimer);
     mapState.generatedRadarRefreshTimer = 0;
+  }
+  if (generatedRadarFallbackReloadTimer) {
+    clearTimeout(generatedRadarFallbackReloadTimer);
+    generatedRadarFallbackReloadTimer = 0;
   }
   if (!mapState.initialized || !state.activePlace) return;
   clearMapLibreInteractionState();
@@ -3098,6 +3148,10 @@ async function fetchGeneratedMrmsRadarFrames() {
   const manifest = await response.json();
   validateGeneratedMrmsManifest(manifest);
   const frames = normalizeGeneratedMrmsFrames(manifest, selection.manifestUrl);
+  const frameEligibility = generatedRadarFramesViewportEligibility(frames);
+  if (frameEligibility && !frameEligibility.usable) {
+    throw new Error(`Generated MRMS frame coverage unavailable for current map view (${frameEligibility.reason}).`);
+  }
   await preflightGeneratedMrmsTiles(frames, manifest);
   if (frames.length) {
     mapState.generatedRadarManifestUrl = selection.manifestUrl;
@@ -3529,6 +3583,14 @@ function generatedMrmsIndexPackScoreSummary(score) {
         activeCovered: Boolean(score.coverage.activeCovered),
         viewportOverlap: roundedDiagnosticNumber(score.coverage.viewportOverlap, 3)
       }
+      : null,
+    viewportGate: score.viewportEligibility
+      ? {
+        usable: Boolean(score.viewportEligibility.usable),
+        reason: score.viewportEligibility.reason || "",
+        minZoom: score.viewportEligibility.minZoom,
+        viewportThreshold: roundedDiagnosticNumber(score.viewportEligibility.viewportThreshold, 3)
+      }
       : null
   };
 }
@@ -3544,6 +3606,65 @@ function generatedMrmsIndexPackZoomWindow(pack) {
   return {
     minZoom: Number.isFinite(minZoom) ? minZoom : null,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : null
+  };
+}
+
+function generatedRadarViewportEligibilityForSource(source, context = generatedMrmsSelectionContext(), areas = generatedManifestCoverageAreas(source)) {
+  const safeContext = context || {};
+  const coverage = generatedCoverageScoreForAreas(Array.isArray(areas) ? areas : [], safeContext);
+  const { minZoom, maxZoom } = generatedMrmsIndexPackZoomWindow(source);
+  const zoom = Number(safeContext.zoom);
+  const hasZoom = Number.isFinite(zoom);
+  const hasViewport = Boolean(safeContext.viewportBounds);
+  const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= minZoom;
+  const centerOk = !safeContext.centerPoint || coverage.centerCovered;
+  const viewportThreshold = hasViewport ? GENERATED_RADAR_VIEWPORT_COVERAGE_MIN : null;
+  const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN;
+  let reason = "usable";
+  if (!coverage.relevant) reason = "coverage-not-relevant";
+  else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!centerOk) reason = "center-outside-coverage";
+  else if (!viewportOk) reason = "viewport-not-covered";
+  return {
+    usable: coverage.relevant && minZoomOk && centerOk && viewportOk,
+    reason,
+    coverage,
+    minZoom,
+    maxZoom,
+    zoom: hasZoom ? zoom : null,
+    viewportThreshold
+  };
+}
+
+function generatedRadarFrameViewportEligibility(frame, context = generatedMrmsSelectionContext()) {
+  if (!frame || frame.provider !== "mrms-generated") return null;
+  return generatedRadarViewportEligibilityForSource(frame, context, generatedManifestCoverageAreas(frame));
+}
+
+function generatedRadarFramesViewportEligibility(frames, context = generatedMrmsSelectionContext()) {
+  const list = Array.isArray(frames) ? frames : [];
+  const frame = [...list].reverse().find((item) => item?.provider === "mrms-generated");
+  if (!frame) return null;
+  return generatedRadarFrameViewportEligibility(frame, context);
+}
+
+function generatedRadarViewportEligibilityDiagnostic(eligibility) {
+  if (!eligibility) return null;
+  return {
+    usable: Boolean(eligibility.usable),
+    reason: eligibility.reason || "",
+    zoom: roundedDiagnosticNumber(eligibility.zoom, 2),
+    minZoom: eligibility.minZoom,
+    maxZoom: eligibility.maxZoom,
+    viewportThreshold: roundedDiagnosticNumber(eligibility.viewportThreshold, 3),
+    coverage: eligibility.coverage
+      ? {
+        relevant: Boolean(eligibility.coverage.relevant),
+        centerCovered: Boolean(eligibility.coverage.centerCovered),
+        activeCovered: Boolean(eligibility.coverage.activeCovered),
+        viewportOverlap: roundedDiagnosticNumber(eligibility.coverage.viewportOverlap, 3)
+      }
+      : null
   };
 }
 
@@ -3565,8 +3686,9 @@ function generatedMrmsIndexPackExpired(pack) {
 
 function generatedMrmsIndexPackScore(pack, context = generatedMrmsSelectionContext()) {
   const areas = generatedManifestCoverageAreas(pack);
-  const coverage = generatedCoverageScoreForAreas(areas, context);
-  if (!coverage.relevant) return null;
+  const viewportEligibility = generatedRadarViewportEligibilityForSource(pack, context, areas);
+  if (!viewportEligibility.usable) return null;
+  const coverage = viewportEligibility.coverage;
   const zoom = generatedMrmsIndexPackZoomScore(pack, context.zoom);
   const { minZoom, maxZoom } = generatedMrmsIndexPackZoomWindow(pack);
   const currentZoom = Number(context.zoom);
@@ -3588,7 +3710,8 @@ function generatedMrmsIndexPackScore(pack, context = generatedMrmsSelectionConte
     overzoom,
     underzoom,
     area,
-    freshness
+    freshness,
+    viewportEligibility
   };
 }
 
@@ -3783,7 +3906,11 @@ function generatedRadarViewportKey() {
   const point = context.centerPoint || context.activePoint;
   if (!point) return "";
   const zoom = Number.isFinite(context.zoom) ? context.zoom : 0;
-  return `${point.latitude.toFixed(2)},${point.longitude.toFixed(2)},z${Math.round(zoom * 2) / 2}`;
+  const bounds = generatedCoverageBounds(context.viewportBounds);
+  const boundsKey = bounds
+    ? `,b${bounds.minLat.toFixed(1)},${bounds.minLon.toFixed(1)},${bounds.maxLat.toFixed(1)},${bounds.maxLon.toFixed(1)}`
+    : "";
+  return `${point.latitude.toFixed(2)},${point.longitude.toFixed(2)},z${Math.round(zoom * 2) / 2}${boundsKey}`;
 }
 
 function clearGeneratedRadarSelection() {
@@ -3933,9 +4060,7 @@ function generatedManifestCoversActivePlace(manifest) {
 
 function generatedManifestCoversCurrentMapView(manifest) {
   const areas = generatedManifestCoverageAreas(manifest);
-  if (!areas.length) return true;
-  const score = generatedCoverageScoreForAreas(areas, generatedMrmsSelectionContext());
-  return score.relevant;
+  return generatedRadarViewportEligibilityForSource(manifest, generatedMrmsSelectionContext(), areas).usable;
 }
 
 function generatedManifestCoverageAreas(manifest) {
@@ -5353,6 +5478,7 @@ function renderWeatherLayers(layers, frameOrMaxZoom, viewport = null) {
 }
 
 function renderWeatherTiles(viewport = null) {
+  if (maybeSwitchGeneratedRadarToFallback(mapState.frameIndex, "generated-viewport-out-of-scope")) return;
   const frame = mapState.frames[mapState.frameIndex];
   const layers = (frame && state.activePlace)
     ? (frame.layers || [{ url: frame.url, opacity: weatherFrameDefaultOpacity(frame) }])
