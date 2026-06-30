@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { pathToFileURL } from "node:url";
 
 const BUCKET_URL = "https://noaa-mrms-pds.s3.amazonaws.com/";
 const DEFAULT_PRODUCT = "MergedReflectivityQCComposite_00.50";
@@ -70,10 +71,12 @@ const RESOLVED_RAMP = [
 
 const args = parseArgs(process.argv.slice(2));
 
-main().catch((error) => {
-  console.error(`MRMS render failed: ${error.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`MRMS render failed: ${error.message}`);
+    process.exit(1);
+  });
+}
 
 async function main() {
   if (args.help) {
@@ -2254,3 +2257,21 @@ function decodeXml(value) {
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
 }
+
+export {
+  decodeGridValues,
+  decodePngGrayscale16,
+  defaultSmoothForStyle,
+  edgeFocus,
+  encodePngRgba,
+  gridValueStats,
+  loadGribBuffer,
+  lonLatToWorld,
+  parseBounds,
+  parseGrib2,
+  radarStyle,
+  round,
+  sampleGrid,
+  transparentRadarColor,
+  worldToLonLat
+};
