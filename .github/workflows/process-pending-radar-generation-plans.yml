@@ -124,7 +124,7 @@ jobs:
               reason: "pending-pointer-not-found",
               pointerPath: process.env.POINTER_PATH || ""
             }, null, 2));
-            NODE
+          NODE
             echo "selected=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -173,7 +173,7 @@ jobs:
               reason: "pending-plan-already-marked",
               skipped: [{ markerKey: selection.markerKey, status: marker.status || "processed" }]
             }, null, 2)}\n`);
-            NODE
+          NODE
             echo "selected=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
