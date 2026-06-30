@@ -238,6 +238,28 @@ scores packs against the current map viewport, searched place, zoom level,
 coverage area, and freshness, then keeps the current layer visible while a
 better generated pack loads after pan or zoom.
 
+The frame-substrate publisher follows the same multi-pack contract. A scheduled
+CONUS run can publish active-storm source tiles, for example z5-z10, while a
+manual canary can add bounded detail packs with `--detail-areas`. Detail specs
+are semicolon-separated and use:
+
+```text
+id|Label|minLat,minLon,maxLat,maxLon|optionalFocusBounds|optionalZooms
+```
+
+Example:
+
+```bash
+node scripts/mrms-prototype/publish-mrms-frame-substrate.mjs \
+  --tile-zooms=5,6,7,8,9,10 \
+  --active-tile-buffer=0 \
+  --detail-areas='green-bay|Green Bay|43.8,-89.4,45.2,-87|43,-90,46,-86|11,12'
+```
+
+The app does not expose this as a user-facing mode. It simply loads the public
+frame index, scores the broad and detail packs, and switches to the best
+available pack as the user searches, zooms, or pans.
+
 This changes only the manifest contract. The renderer still writes local tile
 files first. The GitHub Actions workflow can then upload those files to R2 and
 remove the local tile directory before Worker deploy when

@@ -18,7 +18,31 @@ on:
       tileZooms:
         description: Reusable source zooms
         required: false
-        default: "5,6,7,8"
+        default: "5,6,7,8,9,10"
+      activeTileBuffer:
+        description: Target-zoom tile buffer around active parent tiles
+        required: false
+        default: "0"
+      maxClientOverzoom:
+        description: Maximum app-side zoom stretch before fallback
+        required: false
+        default: "10"
+      tileBounds:
+        description: Optional coverage override minLat,minLon,maxLat,maxLon
+        required: false
+        default: ""
+      focusBounds:
+        description: Optional source focus override minLat,minLon,maxLat,maxLon
+        required: false
+        default: ""
+      detailAreas:
+        description: Optional place detail specs separated by semicolon
+        required: false
+        default: ""
+      detailTileZooms:
+        description: Default zooms for detail areas without explicit zooms
+        required: false
+        default: "11,12"
       forcePublish:
         description: Rerender even when the current MRMS source is unchanged
         required: false
@@ -43,7 +67,13 @@ jobs:
       MRMS_FRAME_PROFILE: ${{ github.event.inputs.profile || vars.MRMS_FRAME_PROFILE || 'conus' }}
       MRMS_FRAME_FRAMES: ${{ github.event.inputs.frames || vars.MRMS_FRAME_FRAMES || '1' }}
       MRMS_FRAME_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || vars.MRMS_FRAME_TTL_MINUTES || '10' }}
-      MRMS_FRAME_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_FRAME_TILE_ZOOMS || '5,6,7,8' }}
+      MRMS_FRAME_TILE_ZOOMS: ${{ github.event.inputs.tileZooms || vars.MRMS_FRAME_TILE_ZOOMS || '5,6,7,8,9,10' }}
+      MRMS_FRAME_ACTIVE_TILE_BUFFER: ${{ github.event.inputs.activeTileBuffer || vars.MRMS_FRAME_ACTIVE_TILE_BUFFER || '0' }}
+      MRMS_FRAME_MAX_CLIENT_OVERZOOM: ${{ github.event.inputs.maxClientOverzoom || vars.MRMS_FRAME_MAX_CLIENT_OVERZOOM || '10' }}
+      MRMS_FRAME_TILE_BOUNDS: ${{ github.event.inputs.tileBounds || vars.MRMS_FRAME_TILE_BOUNDS || '' }}
+      MRMS_FRAME_FOCUS_BOUNDS: ${{ github.event.inputs.focusBounds || vars.MRMS_FRAME_FOCUS_BOUNDS || '' }}
+      MRMS_FRAME_DETAIL_AREAS: ${{ github.event.inputs.detailAreas || vars.MRMS_FRAME_DETAIL_AREAS || '' }}
+      MRMS_FRAME_DETAIL_TILE_ZOOMS: ${{ github.event.inputs.detailTileZooms || vars.MRMS_FRAME_DETAIL_TILE_ZOOMS || '11,12' }}
       MRMS_FRAME_PUBLIC_BASE_URL: ${{ vars.MRMS_FRAME_PUBLIC_BASE_URL || 'https://radar.getnearcast.app/radar/mrms/frame-substrate' }}
       MRMS_FRAME_INDEX_URL: ${{ vars.MRMS_FRAME_INDEX_URL || 'https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json' }}
       MRMS_FRAME_ARTIFACT_ROOT: ${{ vars.MRMS_FRAME_ARTIFACT_ROOT || 'radar/mrms/frame-substrate' }}
@@ -71,11 +101,23 @@ jobs:
           if [ "$MRMS_FRAME_FORCE_PUBLISH" = "true" ]; then
             EXTRA_ARGS+=(--force-publish)
           fi
+          if [ -n "$MRMS_FRAME_TILE_BOUNDS" ]; then
+            EXTRA_ARGS+=(--tile-bounds="$MRMS_FRAME_TILE_BOUNDS")
+          fi
+          if [ -n "$MRMS_FRAME_FOCUS_BOUNDS" ]; then
+            EXTRA_ARGS+=(--focus-bounds="$MRMS_FRAME_FOCUS_BOUNDS")
+          fi
+          if [ -n "$MRMS_FRAME_DETAIL_AREAS" ]; then
+            EXTRA_ARGS+=(--detail-areas="$MRMS_FRAME_DETAIL_AREAS")
+            EXTRA_ARGS+=(--detail-tile-zooms="$MRMS_FRAME_DETAIL_TILE_ZOOMS")
+          fi
           node scripts/mrms-prototype/publish-mrms-frame-substrate.mjs \
             --profile="$MRMS_FRAME_PROFILE" \
             --frames="$MRMS_FRAME_FRAMES" \
             --ttl-minutes="$MRMS_FRAME_TTL_MINUTES" \
             --tile-zooms="$MRMS_FRAME_TILE_ZOOMS" \
+            --active-tile-buffer="$MRMS_FRAME_ACTIVE_TILE_BUFFER" \
+            --max-client-overzoom="$MRMS_FRAME_MAX_CLIENT_OVERZOOM" \
             --artifact-root="$MRMS_FRAME_ARTIFACT_ROOT" \
             --public-base-url="$MRMS_FRAME_PUBLIC_BASE_URL" \
             --current-index-url="$MRMS_FRAME_INDEX_URL" \
@@ -91,7 +133,7 @@ jobs:
       - name: Verify frame substrate index
         if: steps.publish.outputs.skipped != 'true'
         run: |
-          node -e "const fs=require('fs'); const root=process.env.MRMS_FRAME_ARTIFACT_ROOT; const i=JSON.parse(fs.readFileSync(root + '/latest-frame-index.json','utf8')); if(i.provider!=='nearcast-mrms-frame-index'||!i.packs?.length||!i.manifestUrl||!i.expiresAt) process.exit(1); console.log(JSON.stringify({provider:i.provider, profile:i.geography?.id, frames:i.frameCount, expiresAt:i.expiresAt, dataTiles:i.metrics?.dataTiles||0, maxClientOverzoom:i.maxClientOverzoom}, null, 2));"
+          node -e "const fs=require('fs'); const root=process.env.MRMS_FRAME_ARTIFACT_ROOT; const i=JSON.parse(fs.readFileSync(root + '/latest-frame-index.json','utf8')); if(i.provider!=='nearcast-mrms-frame-index'||!i.packs?.length||!i.manifestUrl||!i.expiresAt) process.exit(1); console.log(JSON.stringify({provider:i.provider, profile:i.geography?.id, frames:i.frameCount, expiresAt:i.expiresAt, packCount:i.packs.length, maxZoom:i.maxZoom, dataTiles:i.metrics?.dataTiles||0, maxClientOverzoom:i.maxClientOverzoom}, null, 2));"
 
       - name: Install R2 upload dependencies
         if: steps.publish.outputs.skipped != 'true'

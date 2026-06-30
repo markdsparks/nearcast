@@ -19,6 +19,10 @@ on:
         description: Minimum freshness remaining on the published index
         required: false
         default: "1"
+      minMaxZoom:
+        description: Minimum data-backed published source zoom
+        required: false
+        default: "10"
   schedule:
     - cron: "*/10 * * * *"
 
@@ -39,6 +43,7 @@ jobs:
       RADAR_CAPABILITY_URL: ${{ github.event.inputs.capabilityUrl || vars.RADAR_CAPABILITY_URL || 'https://getnearcast.app/api/radar/capability' }}
       MAX_FRAME_AGE_MINUTES: ${{ github.event.inputs.maxFrameAgeMinutes || vars.MRMS_FRAME_HEALTH_MAX_FRAME_AGE_MINUTES || '20' }}
       MIN_EXPIRES_IN_MINUTES: ${{ github.event.inputs.minExpiresInMinutes || vars.MRMS_FRAME_HEALTH_MIN_EXPIRES_IN_MINUTES || '1' }}
+      MIN_MAX_ZOOM: ${{ github.event.inputs.minMaxZoom || vars.MRMS_FRAME_HEALTH_MIN_MAX_ZOOM || '10' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,4 +57,5 @@ jobs:
             --index-url="$MRMS_FRAME_INDEX_URL" \
             --capability-url="$RADAR_CAPABILITY_URL" \
             --max-frame-age-minutes="$MAX_FRAME_AGE_MINUTES" \
-            --min-expires-in-minutes="$MIN_EXPIRES_IN_MINUTES"
+            --min-expires-in-minutes="$MIN_EXPIRES_IN_MINUTES" \
+            --min-max-zoom="$MIN_MAX_ZOOM"

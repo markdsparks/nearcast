@@ -6,6 +6,7 @@ const DEFAULT_TIMEOUT_MS = 6000;
 const DEFAULT_MAX_FRAME_AGE_MINUTES = 20;
 const DEFAULT_MIN_EXPIRES_IN_MINUTES = 1;
 const DEFAULT_MIN_DATA_TILES = 1;
+const DEFAULT_MIN_MAX_ZOOM = 10;
 const DEFAULT_VIEWPORT = {
   latitude: 44.5133,
   longitude: -88.0133,
@@ -25,7 +26,8 @@ async function main() {
   const options = healthOptions(args);
   const checks = [];
   const index = await fetchJson(options.indexUrl, { timeoutMs: options.timeoutMs });
-  const pack = selectFramePack(index);
+  const pack = selectFramePack(index, { minMaxZoom: options.minMaxZoom });
+  const publishedMaxZoom = maxPublishedDataZoom(index);
   const sourceTime = newestIso([
     ...frames(index).flatMap((frame) => [
       frame.time,
@@ -69,6 +71,11 @@ async function main() {
     radarTiles: Number(metrics.radarTiles || 0),
     minDataTiles: options.minDataTiles
   });
+  addCheck(checks, "detail-max-zoom", !Number.isFinite(options.minMaxZoom) || publishedMaxZoom >= options.minMaxZoom, {
+    maxZoom: publishedMaxZoom,
+    selectedPackMaxZoom: packMaxZoom(pack),
+    minMaxZoom: options.minMaxZoom
+  });
 
   const manifestProbe = manifestUrl
     ? await probeUrl(manifestUrl, { timeoutMs: options.timeoutMs })
@@ -109,6 +116,13 @@ async function main() {
       radarTiles: numberOrNull(metrics.radarTiles),
       dataTiles: numberOrNull(metrics.dataTiles)
     },
+    zooms: {
+      minZoom: numberOrNull(pack?.minZoom ?? index?.minZoom),
+      maxZoom: publishedMaxZoom,
+      selectedPackMaxZoom: packMaxZoom(pack),
+      maxClientOverzoom: numberOrNull(pack?.maxClientOverzoom ?? index?.maxClientOverzoom),
+      minRequiredMaxZoom: options.minMaxZoom
+    },
     manifest: {
       url: manifestUrl,
       ok: manifestProbe.ok,
@@ -145,6 +159,7 @@ function healthOptions(parsed) {
     maxFrameAgeMinutes: nonNegativeNumberOrInfinity(parsed["max-frame-age-minutes"], DEFAULT_MAX_FRAME_AGE_MINUTES),
     minExpiresInMinutes: Math.max(0, numberArg(parsed["min-expires-in-minutes"], DEFAULT_MIN_EXPIRES_IN_MINUTES)),
     minDataTiles: Math.max(0, numberArg(parsed["min-data-tiles"], DEFAULT_MIN_DATA_TILES)),
+    minMaxZoom: nonNegativeNumberOrInfinity(parsed["min-max-zoom"], DEFAULT_MIN_MAX_ZOOM),
     skipCapability: booleanArg(parsed["skip-capability"], false),
     viewport: {
       latitude,
@@ -259,13 +274,45 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
-function selectFramePack(index) {
-  const packs = Array.isArray(index?.packs) ? index.packs : [];
+function selectFramePack(index, options = {}) {
+  const packs = framePacks(index);
   const defaultPack = String(index?.defaultPack || "");
+  const minMaxZoom = Number(options.minMaxZoom);
+  if (Number.isFinite(minMaxZoom)) {
+    const detailed = packs
+      .filter((pack) => packHasData(pack) && packMaxZoom(pack) >= minMaxZoom)
+      .sort((a, b) => packMaxZoom(b) - packMaxZoom(a));
+    if (detailed.length) return detailed[0];
+  }
   return packs.find((pack) => pack?.id === defaultPack && pack?.kind === "frame-substrate") ||
     packs.find((pack) => pack?.kind === "frame-substrate") ||
     packs[0] ||
     null;
+}
+
+function framePacks(index) {
+  return Array.isArray(index?.packs) ? index.packs : [];
+}
+
+function packHasData(pack) {
+  return Number(pack?.metrics?.dataTiles || pack?.metrics?.radarTiles || 0) > 0;
+}
+
+function packMaxZoom(pack) {
+  const maxZoom = Number(pack?.maxZoom ?? pack?.maxzoom);
+  return Number.isFinite(maxZoom) ? maxZoom : null;
+}
+
+function maxPublishedDataZoom(index) {
+  const packZooms = framePacks(index)
+    .filter(packHasData)
+    .map(packMaxZoom)
+    .filter(Number.isFinite);
+  const indexMaxZoom = Number(index?.maxZoom ?? index?.maxzoom);
+  if (Number.isFinite(indexMaxZoom) && Number(index?.metrics?.dataTiles || index?.metrics?.radarTiles || 0) > 0) {
+    packZooms.push(indexMaxZoom);
+  }
+  return packZooms.length ? Math.max(...packZooms) : null;
 }
 
 function frames(index) {
@@ -398,6 +445,7 @@ Options:
   --max-frame-age-minutes=20       Fail when newest source frame is older than this.
   --min-expires-in-minutes=1       Fail when the index is expired or almost expired.
   --min-data-tiles=1               Require active encoded data tiles.
+  --min-max-zoom=10                Require data-backed published source zoom at least this high.
   --lat=44.5133 --lon=-88.0133     Capability viewport center.
   --zoom=18                        Capability viewport zoom.
   --bounds=minLat,minLon,maxLat,maxLon

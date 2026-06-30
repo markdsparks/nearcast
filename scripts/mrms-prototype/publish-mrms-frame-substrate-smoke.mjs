@@ -44,6 +44,38 @@ const manifest = {
   }
 };
 
+const detailPack = {
+  id: "frame-conus-green-bay",
+  label: "Green Bay detail",
+  provider: "mrms-generated",
+  kind: "frame-substrate",
+  product: "MergedReflectivityQCComposite_00.50",
+  region: "CONUS",
+  style: "banded",
+  manifestUrl: "https://radar.example/radar/mrms/frame-substrate/conus/abc123/encoded-z5-6-7-8/details/green-bay/manifest.json",
+  generatedAt: "2026-06-30T16:00:00.000Z",
+  expiresAt: "2026-06-30T16:10:00.000Z",
+  minZoom: 11,
+  maxZoom: 12,
+  maxClientOverzoom: 10,
+  renderProfile: "encoded-z5-6-7-8",
+  tileZooms: [11, 12],
+  frameCount: 1,
+  coverageBounds: { minLat: 43.8, minLon: -89.3, maxLat: 45.2, maxLon: -87 },
+  coverageAreas: [{
+    id: "conus-green-bay",
+    label: "Green Bay detail",
+    bounds: { minLat: 43.8, minLon: -89.3, maxLat: 45.2, maxLon: -87 }
+  }],
+  sourceSignature: "abc123",
+  metrics: {
+    generatedTiles: 6,
+    candidateTiles: 24,
+    radarTiles: 6,
+    dataTiles: 6
+  }
+};
+
 const index = buildFrameSubstrateIndex({
   manifest,
   profile: { id: "conus", label: "CONUS radar substrate", region: "CONUS" },
@@ -52,23 +84,28 @@ const index = buildFrameSubstrateIndex({
   manifestUrl: "https://radar.example/radar/mrms/frame-substrate/conus/abc123/encoded-z5-6-7-8/manifest.json",
   indexOut: "radar/mrms/frame-substrate/latest-frame-index.json",
   checkedAt: "2026-06-30T16:01:00.000Z",
-  tileZooms: "5,6,7,8"
+  tileZooms: "5,6,7,8",
+  additionalPacks: [detailPack]
 });
 
 assert.equal(index.provider, "nearcast-mrms-frame-index");
 assert.equal(index.version, 1);
 assert.equal(index.defaultPack, "frame-conus");
-assert.equal(index.packs.length, 1);
+assert.equal(index.packs.length, 2);
 assert.equal(index.packs[0].kind, "frame-substrate");
 assert.equal(index.packs[0].manifestUrl, index.manifestUrl);
 assert.equal(index.packs[0].maxClientOverzoom, 10);
+assert.equal(index.packs[1].id, "frame-conus-green-bay");
+assert.equal(index.maxZoom, 12);
 assert.deepEqual(index.renderProfile.tileZooms, [5, 6, 7, 8]);
 assert.equal(index.frames.length, 1);
-assert.equal(index.metrics.dataTiles, 12);
+assert.equal(index.metrics.dataTiles, 18);
 
 console.log(JSON.stringify({
   ok: true,
   provider: index.provider,
   packId: index.defaultPack,
+  indexPacks: index.packs.length,
+  maxZoom: index.maxZoom,
   maxClientOverzoom: index.packs[0].maxClientOverzoom
 }, null, 2));

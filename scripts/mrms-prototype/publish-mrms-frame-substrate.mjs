@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import crypto from "node:crypto";
 
 const FRAME_INDEX_PROVIDER = "nearcast-mrms-frame-index";
 const FRAME_INDEX_VERSION = 1;
@@ -15,6 +16,7 @@ const DEFAULT_TTL_MINUTES = 10;
 const DEFAULT_SKIP_MIN_FRESH_MINUTES = 3;
 const DEFAULT_MAX_CLIENT_OVERZOOM = 10;
 const DEFAULT_ACTIVE_TILE_BUFFER = 1;
+const DEFAULT_DETAIL_TILE_ZOOMS = "11,12";
 
 const PROFILES = {
   conus: {
@@ -47,7 +49,8 @@ async function main() {
   const frames = Math.max(1, Math.round(numberArg(args.frames || args.limit, DEFAULT_FRAMES)));
   const ttlMinutes = Math.max(1, Math.round(numberArg(args["ttl-minutes"], DEFAULT_TTL_MINUTES)));
   const tileZooms = args["tile-zooms"] || args.zooms || profile.tileZooms;
-  const renderProfile = cleanSegment(args["render-profile"] || `encoded-z${tileZooms.replace(/,/g, "-")}`);
+  const detailAreas = parseDetailAreas(args["detail-areas"], args["detail-tile-zooms"] || DEFAULT_DETAIL_TILE_ZOOMS);
+  const renderProfile = cleanSegment(args["render-profile"] || frameRenderProfile(tileZooms, detailAreas));
   const artifactRoot = args["artifact-root"] || DEFAULT_ARTIFACT_ROOT;
   const publicBaseUrl = cleanPublicUrl(args["public-base-url"] || args["tile-url-base"] || args["tile-base-url"]);
   const checkedAt = new Date().toISOString();
@@ -138,6 +141,19 @@ async function main() {
   };
   atomicWriteJson(manifestOut, manifest);
 
+  const detailPacks = generateDetailPacks({
+    detailAreas,
+    generator,
+    profile,
+    frames,
+    ttlMinutes,
+    frameRoot,
+    indexOut,
+    publicBaseUrl,
+    sourceSignature,
+    renderProfile
+  });
+
   const index = buildFrameSubstrateIndex({
     manifest,
     profile,
@@ -147,10 +163,12 @@ async function main() {
     manifestUrl,
     indexOut,
     checkedAt,
-    tileZooms
+    tileZooms,
+    additionalPacks: detailPacks.map((detail) => detail.pack)
   });
   atomicWriteJson(indexOut, index);
 
+  const packMetrics = totalPackMetrics(index.packs);
   const summary = {
     provider: "nearcast-mrms-frame-substrate-publish",
     version: 1,
@@ -168,14 +186,25 @@ async function main() {
     currentIndexSource: current.source,
     frameCount: Array.isArray(manifest.frames) ? manifest.frames.length : 0,
     minZoom: manifest.minZoom,
-    maxZoom: manifest.maxZoom,
+    maxZoom: index.maxZoom,
     maxClientOverzoom: maxClientOverzoom(),
     activeTilePlan: Boolean(manifest.activeTilePlan),
     activeTileBuffer: manifest.activeTileBuffer ?? null,
-    generatedTiles: manifest.coverage?.generatedTiles || 0,
-    candidateTiles: manifest.coverage?.candidateTiles || 0,
-    radarTiles: manifest.coverage?.radarTiles || 0,
-    dataTiles: manifest.coverage?.dataTiles || 0
+    generatedTiles: packMetrics.generatedTiles,
+    candidateTiles: packMetrics.candidateTiles,
+    radarTiles: packMetrics.radarTiles,
+    dataTiles: packMetrics.dataTiles,
+    packCount: index.packs.length,
+    detailAreas: detailPacks.map((detail) => ({
+      id: detail.area.id,
+      label: detail.area.label,
+      tileZooms: splitList(detail.area.tileZooms).map((value) => Number(value)).filter(Number.isFinite),
+      generatedTiles: detail.manifest.coverage?.generatedTiles || 0,
+      candidateTiles: detail.manifest.coverage?.candidateTiles || 0,
+      radarTiles: detail.manifest.coverage?.radarTiles || 0,
+      dataTiles: detail.manifest.coverage?.dataTiles || 0,
+      manifestUrl: detail.manifestUrl
+    }))
   };
   writeSummary(summary);
   console.log(JSON.stringify(summary, null, 2));
@@ -190,10 +219,13 @@ export function buildFrameSubstrateIndex({
   manifestUrl = "",
   indexOut = "",
   checkedAt = new Date().toISOString(),
-  tileZooms = ""
+  tileZooms = "",
+  additionalPacks = []
 } = {}) {
   if (!manifest || typeof manifest !== "object") throw new Error("missing manifest");
   const pack = frameSubstratePack({ manifest, profile, sourceSignature, renderProfile, manifestUrl, tileZooms });
+  const packs = [pack, ...additionalPacks.filter(Boolean)];
+  const metrics = totalPackMetrics(packs);
   return {
     provider: FRAME_INDEX_PROVIDER,
     version: FRAME_INDEX_VERSION,
@@ -223,15 +255,15 @@ export function buildFrameSubstrateIndex({
     indexPath: indexOut || "",
     frameCount: Array.isArray(manifest.frames) ? manifest.frames.length : 0,
     minZoom: manifest.minZoom,
-    maxZoom: manifest.maxZoom,
+    maxZoom: maxFiniteNumber(packs.map((item) => item.maxZoom), manifest.maxZoom),
     maxClientOverzoom: maxClientOverzoom(),
     coverageBounds: manifest.coverageBounds || null,
     coverageAreas: manifest.coverageAreas || [],
     attribution: manifest.attribution || "NOAA MRMS · Nearcast",
     frames: summarizeFrames(manifest.frames),
-    metrics: manifest.metrics || manifest.coverage || null,
+    metrics,
     defaultPack: pack.id,
-    packs: [pack]
+    packs
   };
 }
 
@@ -262,6 +294,92 @@ function frameSubstratePack({ manifest, profile, sourceSignature, renderProfile,
   };
 }
 
+function generateDetailPacks({
+  detailAreas,
+  generator,
+  profile,
+  frames,
+  ttlMinutes,
+  frameRoot,
+  indexOut,
+  publicBaseUrl,
+  sourceSignature,
+  renderProfile
+}) {
+  if (!detailAreas.length) return [];
+
+  return detailAreas.map((area) => {
+    const detailProfile = {
+      id: `${profile.id}-${area.id}`,
+      label: area.label,
+      region: profile.region,
+      tileBounds: area.tileBounds,
+      focusBounds: area.focusBounds || area.tileBounds
+    };
+    const detailRoot = path.join(frameRoot, "details", area.id);
+    const detailOutDir = path.join(detailRoot, "tiles");
+    const detailManifestOut = path.join(detailRoot, "manifest.json");
+    const detailManifestUrl = publicBaseUrl
+      ? joinPublicUrl(publicBaseUrl, profile.id, sourceSignature, renderProfile, "details", area.id, "manifest.json")
+      : relativeUrl(indexOut, detailManifestOut);
+    const detailTileUrlBase = publicBaseUrl
+      ? joinPublicUrl(publicBaseUrl, profile.id, sourceSignature, renderProfile, "details", area.id, "tiles")
+      : "";
+    const detailCommandArgs = baseGeneratorArgs({
+      generator,
+      profile: detailProfile,
+      frames,
+      tileZooms: area.tileZooms,
+      ttlMinutes,
+      outDir: detailOutDir,
+      manifestOut: detailManifestOut,
+      tileUrlBase: detailTileUrlBase,
+      renderProfile,
+      tileBounds: area.tileBounds,
+      focusBounds: area.focusBounds || area.tileBounds,
+      coverageId: detailProfile.id,
+      coverageLabel: area.label,
+      tileVersion: `${renderProfile}-${area.id}`
+    });
+
+    runGenerator(detailCommandArgs, `frame substrate detail generation for ${area.id}`);
+    const detailManifest = JSON.parse(fs.readFileSync(detailManifestOut, "utf8"));
+    detailManifest.substrate = {
+      provider: "nearcast-mrms-frame-substrate",
+      version: 1,
+      profile: detailProfile.id,
+      profileLabel: area.label,
+      parentProfile: profile.id,
+      renderProfile,
+      sourceSignature,
+      checkedAt: new Date().toISOString(),
+      clientRendering: "encoded-radar",
+      maxClientOverzoom: maxClientOverzoom(),
+      detailArea: {
+        id: area.id,
+        label: area.label,
+        tileBounds: area.tileBounds,
+        focusBounds: area.focusBounds || area.tileBounds
+      }
+    };
+    atomicWriteJson(detailManifestOut, detailManifest);
+
+    return {
+      area,
+      manifest: detailManifest,
+      manifestUrl: detailManifestUrl,
+      pack: frameSubstratePack({
+        manifest: detailManifest,
+        profile: detailProfile,
+        sourceSignature,
+        renderProfile,
+        manifestUrl: detailManifestUrl,
+        tileZooms: area.tileZooms
+      })
+    };
+  });
+}
+
 function summarizeFrames(frames) {
   return (Array.isArray(frames) ? frames : []).map((frame) => ({
     id: frame?.id || "",
@@ -275,20 +393,35 @@ function summarizeFrames(frames) {
   }));
 }
 
-function baseGeneratorArgs({ generator, profile, frames, tileZooms, ttlMinutes, outDir, manifestOut, tileUrlBase, renderProfile }) {
+function baseGeneratorArgs({
+  generator,
+  profile,
+  frames,
+  tileZooms,
+  ttlMinutes,
+  outDir,
+  manifestOut,
+  tileUrlBase,
+  renderProfile,
+  tileBounds = "",
+  focusBounds = "",
+  coverageId = "",
+  coverageLabel = "",
+  tileVersion = ""
+}) {
   const commandArgs = [
     generator,
     `--frames=${frames}`,
     `--region=${args.region || profile.region || "CONUS"}`,
     `--out-dir=${outDir}`,
     `--manifest-out=${manifestOut}`,
-    `--tile-bounds=${args["tile-bounds"] || args["coverage-bounds"] || profile.tileBounds}`,
-    `--focus-bounds=${args["focus-bounds"] || profile.focusBounds || profile.tileBounds}`,
-    `--coverage-id=${args["coverage-id"] || profile.id}`,
-    `--coverage-label=${args["coverage-label"] || profile.label}`,
+    `--tile-bounds=${tileBounds || args["tile-bounds"] || args["coverage-bounds"] || profile.tileBounds}`,
+    `--focus-bounds=${focusBounds || args["focus-bounds"] || profile.focusBounds || profile.tileBounds}`,
+    `--coverage-id=${coverageId || args["coverage-id"] || profile.id}`,
+    `--coverage-label=${coverageLabel || args["coverage-label"] || profile.label}`,
     `--tile-zooms=${tileZooms}`,
     `--ttl-minutes=${ttlMinutes}`,
-    `--tile-version=${args["tile-version"] || renderProfile}`,
+    `--tile-version=${tileVersion || args["tile-version"] || renderProfile}`,
     `--max-keys=${args["max-keys"] || 1200}`
   ];
   if (tileUrlBase) commandArgs.push(`--tile-url-base=${tileUrlBase}`);
@@ -405,6 +538,60 @@ function resolveProfile(value) {
   return profile;
 }
 
+function parseDetailAreas(value, defaultTileZooms = DEFAULT_DETAIL_TILE_ZOOMS) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return text.split(";").map((entry) => parseDetailArea(entry, defaultTileZooms)).filter(Boolean);
+}
+
+function parseDetailArea(entry, defaultTileZooms = DEFAULT_DETAIL_TILE_ZOOMS) {
+  const parts = String(entry || "").split("|").map((part) => part.trim());
+  if (!parts.some(Boolean)) return null;
+  if (parts.length < 3) {
+    throw new Error(`detail area "${entry}" must be id|label|minLat,minLon,maxLat,maxLon`);
+  }
+  const id = cleanSegment(parts[0]);
+  const label = parts[1] || id;
+  const tileBounds = normalizeBoundsString(parts[2], `detail area ${id} bounds`);
+  const focusBounds = parts[3] ? normalizeBoundsString(parts[3], `detail area ${id} focus bounds`) : tileBounds;
+  const tileZooms = normalizedZoomList(parts[4] || defaultTileZooms, `detail area ${id} tile zooms`);
+  return { id, label, tileBounds, focusBounds, tileZooms };
+}
+
+function normalizeBoundsString(value, label) {
+  const parts = String(value || "").split(",").map((part) => Number(part.trim()));
+  if (parts.length !== 4 || !parts.every(Number.isFinite) || parts[0] >= parts[2] || parts[1] >= parts[3]) {
+    throw new Error(`${label} must be minLat,minLon,maxLat,maxLon`);
+  }
+  return parts.map((part) => trimNumber(part)).join(",");
+}
+
+function normalizedZoomList(value, label) {
+  const zooms = splitList(value).map((item) => Number(item));
+  if (!zooms.length || !zooms.every((zoom) => Number.isInteger(zoom) && zoom >= 0 && zoom <= 18)) {
+    throw new Error(`${label} must be a comma-separated list of integer zooms`);
+  }
+  return [...new Set(zooms)].sort((a, b) => a - b).join(",");
+}
+
+function trimNumber(value) {
+  const number = Number(value);
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(6)));
+}
+
+function frameRenderProfile(tileZooms, detailAreas = []) {
+  const base = `encoded-z${tileZooms.replace(/,/g, "-")}`;
+  if (!detailAreas.length) return base;
+  const detailKey = detailAreas
+    .map((area) => `${area.id}:${area.tileBounds}:${area.focusBounds}:${area.tileZooms}`)
+    .join(";");
+  return `${base}-detail-${shortHash(detailKey)}`;
+}
+
+function shortHash(value) {
+  return crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 10);
+}
+
 function maxClientOverzoom() {
   return Math.max(0, numberArg(args["max-client-overzoom"], DEFAULT_MAX_CLIENT_OVERZOOM));
 }
@@ -469,6 +656,32 @@ function splitList(value) {
   return String(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function totalPackMetrics(packs) {
+  const metrics = {
+    candidateTiles: 0,
+    generatedTiles: 0,
+    radarTiles: 0,
+    dataTiles: 0
+  };
+  (Array.isArray(packs) ? packs : []).forEach((pack) => {
+    const source = pack?.metrics || {};
+    Object.keys(metrics).forEach((key) => {
+      const value = Number(source[key] || 0);
+      if (Number.isFinite(value)) metrics[key] += value;
+    });
+  });
+  return metrics;
+}
+
+function maxFiniteNumber(values, fallback = null) {
+  const finite = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter(Number.isFinite);
+  const fallbackNumber = Number(fallback);
+  if (Number.isFinite(fallbackNumber)) finite.push(fallbackNumber);
+  return finite.length ? Math.max(...finite) : null;
+}
+
 function parseArgs(argv) {
   const parsed = {};
   argv.forEach((arg) => {
@@ -511,6 +724,9 @@ Options:
   --max-client-overzoom=10    Maximum zoom stretch before the app falls back.
   --active-tile-plan=false    Disable active-first higher-zoom tile planning.
   --active-tile-buffer=1      Target-zoom tile buffer around active parents.
+  --detail-areas=SPEC         Optional semicolon-separated place detail packs.
+                              SPEC: id|Label|minLat,minLon,maxLat,maxLon|focusBounds|zooms
+  --detail-tile-zooms=11,12   Default zooms for detail areas without explicit zooms.
   --skip-empty-tiles=false    Publish transparent empty tiles too.
   --encoded-tiles=false       Disable compact encoded data tiles.
 `);
