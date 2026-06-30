@@ -470,9 +470,21 @@ function generationDedupeKey(capability, payload = {}) {
   const lat = Number.isFinite(center.latitude) ? center.latitude.toFixed(2) : "na";
   const lon = Number.isFinite(center.longitude) ? center.longitude.toFixed(2) : "na";
   const zoom = Number.isFinite(viewport.zoom) ? Math.round(viewport.zoom * 2) / 2 : "na";
+  const bounds = generationDedupeBounds(viewport.bounds);
   const provider = payload?.preferences?.radarProvider || "auto";
   const timeline = payload?.preferences?.timelineKind || "radar";
-  return ["radar-generation", "v1", provider, timeline, lat, lon, `z${zoom}`].join(":");
+  return ["radar-generation", "v2", provider, timeline, lat, lon, `z${zoom}`, bounds].join(":");
+}
+
+function generationDedupeBounds(value) {
+  const bounds = coverageBounds(value);
+  if (!bounds) return "bna";
+  return [
+    bounds.minLat,
+    bounds.minLon,
+    bounds.maxLat,
+    bounds.maxLon
+  ].map((number) => Number(number).toFixed(1)).join(",");
 }
 
 async function generationBudgetState(requestStore, dedupeKey, env = {}) {
