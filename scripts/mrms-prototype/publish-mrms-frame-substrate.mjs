@@ -72,6 +72,7 @@ async function main() {
   });
   const resolveResult = runGenerator([...resolveArgs, "--resolve-only"], "frame substrate source resolve");
   const sourcePlan = parseJsonOutput(resolveResult.stdout, "frame substrate source resolve");
+  const sourceLockArgs = sourceLockGeneratorArgs(sourcePlan);
   const sourceSignature = cleanSegment(sourcePlan.source?.signature || sourcePlan.publishFingerprint || checkedAt);
   const frameRoot = path.join(artifactRoot, profile.id, sourceSignature, renderProfile);
   const outDir = args["out-dir"] || path.join(frameRoot, "tiles");
@@ -128,9 +129,9 @@ async function main() {
     tileUrlBase,
     renderProfile
   });
-  runGenerator(commandArgs, "frame substrate generation");
+  runGenerator([...commandArgs, ...sourceLockArgs], "frame substrate generation");
 
-  const manifest = JSON.parse(fs.readFileSync(manifestOut, "utf8"));
+  const manifest = applyResolvedSourcePlan(JSON.parse(fs.readFileSync(manifestOut, "utf8")), sourcePlan);
   manifest.substrate = {
     provider: "nearcast-mrms-frame-substrate",
     version: 1,
@@ -155,7 +156,9 @@ async function main() {
     indexOut,
     publicBaseUrl,
     sourceSignature,
-    renderProfile
+    renderProfile,
+    sourcePlan,
+    sourceLockArgs
   });
 
   const index = buildFrameSubstrateIndex({
@@ -308,7 +311,9 @@ function generateDetailPacks({
   indexOut,
   publicBaseUrl,
   sourceSignature,
-  renderProfile
+  renderProfile,
+  sourcePlan = null,
+  sourceLockArgs = []
 }) {
   if (!detailAreas.length) return [];
 
@@ -346,8 +351,8 @@ function generateDetailPacks({
       tileVersion: `${renderProfile}-${area.id}`
     });
 
-    runGenerator(detailCommandArgs, `frame substrate detail generation for ${area.id}`);
-    const detailManifest = JSON.parse(fs.readFileSync(detailManifestOut, "utf8"));
+    runGenerator([...detailCommandArgs, ...sourceLockArgs], `frame substrate detail generation for ${area.id}`);
+    const detailManifest = applyResolvedSourcePlan(JSON.parse(fs.readFileSync(detailManifestOut, "utf8")), sourcePlan);
     detailManifest.substrate = {
       provider: "nearcast-mrms-frame-substrate",
       version: 1,
@@ -382,6 +387,29 @@ function generateDetailPacks({
       })
     };
   });
+}
+
+function applyResolvedSourcePlan(manifest, sourcePlan) {
+  const objects = Array.isArray(sourcePlan?.source?.objects) ? sourcePlan.source.objects : [];
+  if (!manifest || !objects.length) return manifest;
+
+  const orderedObjects = [...objects].sort((a, b) =>
+    Number(a.timestamp || Date.parse(a.observedAt || "")) - Number(b.timestamp || Date.parse(b.observedAt || ""))
+  );
+  manifest.source = sourcePlan.source;
+  manifest.frames = (Array.isArray(manifest.frames) ? manifest.frames : []).map((frame, index) => ({
+    ...frame,
+    sourceObject: sourceObjectForFrame(frame, orderedObjects, index)
+  }));
+  return manifest;
+}
+
+function sourceObjectForFrame(frame, objects, fallbackIndex) {
+  const frameTimestamp = Number(frame?.timestamp || Date.parse(frame?.time || frame?.validTime || ""));
+  const match = Number.isFinite(frameTimestamp)
+    ? objects.find((object) => Number(object.timestamp || Date.parse(object.observedAt || "")) === frameTimestamp)
+    : null;
+  return match || objects[fallbackIndex] || objects[0] || frame?.sourceObject || null;
 }
 
 function summarizeFrames(frames) {
@@ -544,6 +572,36 @@ function resolveProfile(value) {
   const profile = PROFILES[key];
   if (!profile) throw new Error(`unknown profile "${value}". Known profiles: ${Object.keys(PROFILES).join(", ")}`);
   return profile;
+}
+
+function sourceLockGeneratorArgs(sourcePlan) {
+  const objects = Array.isArray(sourcePlan?.source?.objects) ? sourcePlan.source.objects : [];
+  if (!objects.length) return [];
+
+  const files = [];
+  const urls = [];
+  const frameTimes = [];
+  objects.forEach((object) => {
+    const value = object?.value || object?.url || "";
+    if (!value) return;
+    if (object.kind === "file") files.push(value);
+    else urls.push(value);
+    frameTimes.push(object.observedAt || object.time || object.validTime || "");
+  });
+
+  if (files.length && urls.length) throw new Error("cannot lock mixed file and URL MRMS sources");
+  const sourceCount = files.length || urls.length;
+  if (!sourceCount) return [];
+
+  const lockedArgs = [
+    files.length
+      ? `--files=${files.join(",")}`
+      : `--urls=${urls.join(",")}`
+  ];
+  if (frameTimes.length === sourceCount && frameTimes.every(Boolean)) {
+    lockedArgs.push(`--frame-times=${frameTimes.join(",")}`);
+  }
+  return lockedArgs;
 }
 
 function parseDetailAreas(value, defaultTileZooms = DEFAULT_DETAIL_TILE_ZOOMS) {
