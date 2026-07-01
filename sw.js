@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v3082";
-const ASSET_VERSION = "3.0.82";
+const CACHE = "nearcast-v3083";
+const ASSET_VERSION = "3.0.83";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline

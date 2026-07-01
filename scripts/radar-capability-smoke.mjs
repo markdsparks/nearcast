@@ -89,6 +89,22 @@ assert.equal(detailCenteredPartialViewport.status, 200);
 assert.equal(detailCenteredPartialViewport.body.enhanced.state, "ready");
 assert.equal(detailCenteredPartialViewport.body.enhanced.score.viewportGate.centerFocusOk, true);
 
+const detailActivePlaceCoveredViewport = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    center: { latitude: 47.5, longitude: -113.2 },
+    activePoint: { latitude: 47.5, longitude: -111.3 },
+    zoom: 13,
+    bounds: { minLat: 47.2, minLon: -113.6, maxLat: 47.8, maxLon: -112.9 },
+    key: "47.50,-113.20,z13-active-covered"
+  }
+});
+assert.equal(detailActivePlaceCoveredViewport.status, 200);
+assert.equal(detailActivePlaceCoveredViewport.body.enhanced.state, "ready");
+assert.equal(detailActivePlaceCoveredViewport.body.enhanced.score.viewportGate.centerFocusOk, true);
+assert.equal(detailActivePlaceCoveredViewport.body.enhanced.score.viewportGate.focusPointCovered, true);
+
 const passthrough = await worker.fetch(new Request("https://getnearcast.app/index.html"), {
   ASSETS: {
     async fetch() {

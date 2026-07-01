@@ -3786,18 +3786,20 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
   const maxClientOverzoom = generatedRadarMaxClientOverzoom(source);
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + GENERATED_RADAR_MIN_ZOOM_GRACE;
-  const centerOk = !safeContext.centerPoint || coverage.centerCovered;
-  const centerFocusOk = centerOk && hasZoom && zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM;
+  const focusPointCovered = coverage.centerCovered || coverage.activeCovered;
+  const centerFocusOk = focusPointCovered && hasZoom && zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM;
+  const relevantOk = coverage.relevant || centerFocusOk;
+  const centerOk = !safeContext.centerPoint || coverage.centerCovered || centerFocusOk;
   const viewportThreshold = hasViewport ? GENERATED_RADAR_VIEWPORT_COVERAGE_MIN : null;
   const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
-  if (!coverage.relevant) reason = "coverage-not-relevant";
+  if (!relevantOk) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
   else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
   return {
-    usable: coverage.relevant && minZoomOk && maxZoomOk && centerOk && viewportOk,
+    usable: relevantOk && minZoomOk && maxZoomOk && centerOk && viewportOk,
     reason,
     coverage,
     minZoom,
@@ -3805,7 +3807,9 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
     maxClientOverzoom,
     zoom: hasZoom ? zoom : null,
     viewportThreshold,
-    centerFocusOk
+    centerFocusOk,
+    focusPointCovered,
+    relevantOk
   };
 }
 
@@ -3856,6 +3860,8 @@ function generatedRadarViewportEligibilityDiagnostic(eligibility) {
     maxClientOverzoom: roundedDiagnosticNumber(eligibility.maxClientOverzoom, 2),
     viewportThreshold: roundedDiagnosticNumber(eligibility.viewportThreshold, 3),
     centerFocusOk: Boolean(eligibility.centerFocusOk),
+    focusPointCovered: Boolean(eligibility.focusPointCovered),
+    relevantOk: Boolean(eligibility.relevantOk),
     coverage: eligibility.coverage
       ? {
         relevant: Boolean(eligibility.coverage.relevant),

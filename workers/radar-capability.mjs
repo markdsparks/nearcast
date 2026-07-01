@@ -236,7 +236,9 @@ function packScore(pack, viewport) {
       maxZoom: eligibility.maxZoom,
       maxClientOverzoom: eligibility.maxClientOverzoom,
       viewportThreshold: eligibility.viewportThreshold,
-      centerFocusOk: eligibility.centerFocusOk
+      centerFocusOk: eligibility.centerFocusOk,
+      focusPointCovered: eligibility.focusPointCovered,
+      relevantOk: eligibility.relevantOk
     }
   };
 }
@@ -782,18 +784,20 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
   const maxClientOverzoom = enhancedMaxClientOverzoom(source);
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + ENHANCED_MIN_ZOOM_GRACE;
-  const centerOk = !centerPoint || coverage.centerCovered;
-  const centerFocusOk = centerOk && hasZoom && zoom + ENHANCED_MIN_ZOOM_GRACE >= ENHANCED_CENTER_FOCUS_MIN_ZOOM;
+  const focusPointCovered = coverage.centerCovered || coverage.activeCovered;
+  const centerFocusOk = focusPointCovered && hasZoom && zoom + ENHANCED_MIN_ZOOM_GRACE >= ENHANCED_CENTER_FOCUS_MIN_ZOOM;
+  const relevantOk = coverage.relevant || centerFocusOk;
+  const centerOk = !centerPoint || coverage.centerCovered || centerFocusOk;
   const viewportThreshold = hasViewport ? ENHANCED_VIEWPORT_COVERAGE_MIN : null;
   const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
-  if (!coverage.relevant) reason = "coverage-not-relevant";
+  if (!relevantOk) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
   else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
   return {
-    usable: coverage.relevant && minZoomOk && maxZoomOk && centerOk && viewportOk,
+    usable: relevantOk && minZoomOk && maxZoomOk && centerOk && viewportOk,
     reason,
     coverage,
     minZoom: Number.isFinite(minZoom) ? minZoom : null,
@@ -801,7 +805,9 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
     maxClientOverzoom: Number.isFinite(maxClientOverzoom) ? maxClientOverzoom : null,
     zoom: hasZoom ? zoom : null,
     viewportThreshold,
-    centerFocusOk
+    centerFocusOk,
+    focusPointCovered,
+    relevantOk
   };
 }
 
