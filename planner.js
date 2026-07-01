@@ -3401,9 +3401,53 @@ function planWatchPendingItem(memory, source, isPast = false) {
   };
 }
 
+function planConditionRiskKind(stats = {}, alert = null, text = "") {
+  const alertText = [
+    alert?.event,
+    alert?.headline,
+    alert?.description,
+    alert?.instruction,
+    text
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (/\b(excessive heat|extreme heat|heat warning|heat advisory|heat|hot|humid|uv|sun|sunscreen)\b/.test(alertText)) return "heat";
+  if (/\b(thunder|lightning|hail|tornado|severe thunderstorm)\b/.test(alertText)) return "storm";
+  if (/\b(flood|flash flood|heavy rain|downpour)\b/.test(alertText)) return "flood";
+  if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(alertText)) return "wind";
+  if (/\b(aqi|air quality|smoke)\b/.test(alertText)) return "air";
+  if (/\b(pollen|allerg)\b/.test(alertText)) return "pollen";
+  if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText)) return "cold";
+  if (stats.stormPotential) return "storm";
+  if (stats.rainChance >= 35 || stats.precipTotal > 0.02) return "rain";
+  if (stats.gustMax >= 25) return "wind";
+  if (stats.aqiMax >= 101) return "air";
+  if (stats.pollenRank >= 3) return "pollen";
+  if (stats.feelsAvg <= 40) return "cold";
+  if (stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
+  return "good";
+}
+
+function planWatchRiskKind(item) {
+  return planConditionRiskKind(
+    item?.stats || {},
+    item?.alert || null,
+    [item?.primaryReason, item?.advice, item?.label, item?.reason].filter(Boolean).join(" ")
+  );
+}
+
 function planWatchLabel(item) {
   if (!item) return "Waiting on forecast";
-  if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") return "Have a backup plan";
+  if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") {
+    const risk = planWatchRiskKind(item);
+    if (risk === "heat") return item.alertTone === "warning" ? "Plan for serious heat" : "Add heat precautions";
+    if (risk === "storm") return "Keep an indoor option";
+    if (risk === "flood") return "Avoid low spots";
+    if (risk === "rain") return "Plan around rain";
+    if (risk === "wind") return "Secure the setup";
+    if (risk === "air") return "Limit outdoor strain";
+    if (risk === "pollen") return "Plan for allergies";
+    if (risk === "cold") return "Plan for the cold";
+    return "Adjust this plan";
+  }
   if (item.tone === "caution") return "Weather may affect this";
   return "Looks good";
 }
@@ -3475,18 +3519,9 @@ function planSignalRiskKind(item) {
   const stats = item?.stats || {};
   const alertText = [item?.alert?.event, item?.primaryReason, item?.advice, item?.label, item?.reason]
     .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  if (/\b(excessive heat|extreme heat|heat warning|heat advisory|heat|hot|humid|uv|sun|sunscreen)\b/.test(alertText)) return "heat";
-  if (/\b(thunder|storm|lightning|hail|tornado)\b/.test(alertText)) return "storm";
-  if (/\b(aqi|air quality|smoke)\b/.test(alertText) || stats.aqiMax >= 101) return "air";
-  if (/\b(pollen|allerg)\b/.test(alertText) || stats.pollenRank >= 3) return "pollen";
-  if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(alertText) || stats.gustMax >= 25) return "wind";
-  if (/\b(flood|heavy rain|downpour)\b/.test(alertText) || stats.rainChance >= 35 || stats.precipTotal > 0.02) return "rain";
-  if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText) || stats.feelsAvg <= 40) return "cold";
-  if (stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
-  if (stats.stormPotential) return "storm";
-  return "good";
+    .join(" ");
+  const risk = planConditionRiskKind(stats, item?.alert || null, alertText);
+  return risk === "flood" ? "rain" : risk;
 }
 
 function planSignalPrecipText(value, unit) {
@@ -4349,10 +4384,17 @@ function planWhy(plan, place, stats, units, alert) {
 }
 
 function planAdvice(stats, alert, score) {
+  const risk = planConditionRiskKind(stats, alert);
   if (alert) {
     const tone = alertTone(alert);
-    if (tone === "warning") return "Check local guidance before you go.";
-    if (tone === "watch") return "Keep a backup plan and stay weather-aware.";
+    if (risk === "heat") return "Plan shade, water, breaks, and an indoor option if people need it.";
+    if (risk === "storm") return "Keep an indoor option and a way to delay if lightning or warnings arrive.";
+    if (risk === "flood") return "Avoid low spots and keep a different route or window available.";
+    if (risk === "wind") return "Secure loose items and avoid exposed setups.";
+    if (risk === "air") return "Sensitive folks may want shorter outdoor time or an indoor option.";
+    if (risk === "cold") return "Add warm layers and a shorter outdoor window.";
+    if (tone === "warning") return "Check local guidance and adjust the plan before you go.";
+    if (tone === "watch") return "Stay weather-aware and keep an alternate window or location available.";
     return "Keep an eye on the alert details.";
   }
   if (stats.stormPotential) return "Have a delay or indoor fallback.";
@@ -4362,7 +4404,7 @@ function planAdvice(stats, alert, score) {
   if (stats.pollenRank >= 4) return "Allergy-sensitive people should plan ahead.";
   if (stats.uvMax >= 8) return "Sunscreen earns its spot in the bag.";
   if (score >= 70) return "Weather is mostly behaving for this one.";
-  return "I would keep a backup option handy.";
+  return "Keep an alternate window or location handy.";
 }
 
 function formatHourFloat(hour) {

@@ -1,4 +1,4 @@
-const VERSION = "3.0.121";
+const VERSION = "3.0.122";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6715,10 +6715,11 @@ function forYouWatchingCard(data, place) {
   ).length;
   const tone = attentionCount ? "caution" : changedCount ? "changed" : loadingCount ? "pending" : "good";
   const topTitle = top?.memory ? (typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : top.memory.title || "Plan") : "";
+  const attentionLabel = top?.label && !["Looks good", "Past"].includes(top.label)
+    ? top.label
+    : top?.tone === "watch" ? "Needs attention" : "May be affected by weather";
   const title = attentionCount && topTitle
-    ? top?.tone === "watch"
-      ? `${topTitle} needs a backup plan`
-      : `${topTitle} may be affected by weather`
+    ? `${topTitle}: ${attentionLabel}`
     : changedCount && topTitle
       ? `${topTitle} changed`
       : loadingCount
