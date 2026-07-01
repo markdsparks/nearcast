@@ -652,7 +652,7 @@ function renderViewport({ values, grid, centerLat, centerLon, zoom, width, heigh
       const worldY = center.y + y - height / 2;
       const { lon, lat } = worldToLonLat(worldX, worldY, worldSize);
       const dbz = sampleGrid(values, grid, lat, lon, smooth);
-      const thresholdFade = smoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+      const thresholdFade = radarThresholdAlpha(dbz, threshold, style);
       if (!Number.isFinite(dbz) || thresholdFade <= 0) {
         if (!basemap) pixels[outIndex + 3] = 0;
         continue;
@@ -1098,7 +1098,7 @@ function encodeRadarDataValue(dbz, encoding) {
 }
 
 function transparentRadarColor(dbz, threshold, style) {
-  const thresholdFade = smoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+  const thresholdFade = radarThresholdAlpha(dbz, threshold, style);
   if (!Number.isFinite(dbz) || thresholdFade <= 0) return null;
   const base = radarColor(dbz, style);
   let r = base[0];
@@ -1989,6 +1989,12 @@ function smoothstep(edge0, edge1, value) {
   return t * t * (3 - 2 * t);
 }
 
+function radarThresholdAlpha(dbz, threshold, style) {
+  if (!Number.isFinite(dbz)) return 0;
+  if (style?.hardThreshold) return dbz >= threshold ? 1 : 0;
+  return smoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+}
+
 function radarColor(value, style) {
   const styledValue = contourValue(value, style);
   return style.steppedRamp ? steppedRampColor(styledValue, style.ramp) : rampColor(styledValue, style.ramp);
@@ -2060,6 +2066,7 @@ function radarStyle(name, options = {}) {
       alphaScale: numberArg(options.alpha, 1.22),
       fadeBelow: numberArg(options["fade-below"], 2.5),
       fadeAbove: numberArg(options["fade-above"], 1.25),
+      hardThreshold: true,
       bandBase: numberArg(options["band-base"], 5),
       bandStep: numberArg(options["band-step"], 7.5),
       bandFeather: numberArg(options["band-feather"], 0),
@@ -2079,6 +2086,7 @@ function radarStyle(name, options = {}) {
       alphaScale: numberArg(options.alpha, 1.22),
       fadeBelow: numberArg(options["fade-below"], 5),
       fadeAbove: numberArg(options["fade-above"], 1.75),
+      hardThreshold: false,
       bandBase: numberArg(options["band-base"], 5),
       bandStep: numberArg(options["band-step"], 0),
       bandFeather: numberArg(options["band-feather"], 0.4),
@@ -2097,6 +2105,7 @@ function radarStyle(name, options = {}) {
     alphaScale: numberArg(options.alpha, 1.16),
     fadeBelow: numberArg(options["fade-below"], 3),
     fadeAbove: numberArg(options["fade-above"], 2),
+    hardThreshold: false,
     bandBase: 5,
     bandStep: 0,
     bandFeather: 0,

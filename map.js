@@ -1013,7 +1013,7 @@ function colorizeMapLibreRadarImageData(imageData, encoding) {
       continue;
     }
     const dbz = min + ((encoded - 1) / 254) * (max - min);
-    const thresholdFade = mapLibreSmoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
+    const thresholdFade = mapLibreRadarThresholdAlpha(dbz, threshold, style);
     if (thresholdFade <= 0) {
       data[index] = 0;
       data[index + 1] = 0;
@@ -1038,6 +1038,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
       alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
       fadeBelow: 5,
       fadeAbove: 1.75,
+      hardThreshold: false,
       bandBase: 5,
       bandStep: 0,
       bandFeather: 0.4
@@ -1050,6 +1051,7 @@ function mapLibreRadarStyle(name, encoding = {}) {
       alphaScale: mapLibreRadarAlphaScale(encoding, 1.16),
       fadeBelow: 3,
       fadeAbove: 2,
+      hardThreshold: false,
       bandBase: 5,
       bandStep: 0,
       bandFeather: 0
@@ -1061,10 +1063,17 @@ function mapLibreRadarStyle(name, encoding = {}) {
     alphaScale: mapLibreRadarAlphaScale(encoding, 1.22),
     fadeBelow: 2.5,
     fadeAbove: 1.25,
+    hardThreshold: true,
     bandBase: 5,
     bandStep: 7.5,
     bandFeather: 0
   };
+}
+
+function mapLibreRadarThresholdAlpha(dbz, threshold, style) {
+  if (!Number.isFinite(dbz)) return 0;
+  if (style?.hardThreshold) return dbz >= threshold ? 1 : 0;
+  return mapLibreSmoothstep(threshold - style.fadeBelow, threshold + style.fadeAbove, dbz);
 }
 
 function mapLibreRadarAlphaScale(encoding = {}, minimum = 1) {
