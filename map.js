@@ -6057,11 +6057,27 @@ function toggleRadarPlayback() {
 // scrolls out of view. A manual pause disables scroll-triggered auto-play until
 // the user presses Play again in this session. Immersive mode drives itself.
 let mapInView = false;
-let mapNearView = false;
 let mapViewObserver = null;
+let mapViewportSyncRaf = 0;
+
+function mapViewVisibleForSkyPause() {
+  const target = document.getElementById("mapView");
+  if (!target) return false;
+  const rect = target.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight || 720;
+  return rect.top < vh && rect.bottom > 0;
+}
 
 function syncSkyMotionForMap() {
-  document.documentElement.classList.toggle("sky-motion-paused-for-map", Boolean(mapState.immersive || mapNearView));
+  document.documentElement.classList.toggle("sky-motion-paused-for-map", Boolean(mapState.immersive || mapViewVisibleForSkyPause()));
+}
+
+function scheduleMapViewportMotionSync() {
+  if (mapViewportSyncRaf) return;
+  mapViewportSyncRaf = requestAnimationFrame(() => {
+    mapViewportSyncRaf = 0;
+    syncSkyMotionForMap();
+  });
 }
 
 function maybeAutoPlayRadar() {
@@ -6078,7 +6094,6 @@ function initMapAutoPlay() {
   mapViewObserver = new IntersectionObserver((entries) => {
     const entry = entries[entries.length - 1];
     mapInView = entry.isIntersecting && entry.intersectionRatio >= 0.4;
-    mapNearView = Boolean(entry.isIntersecting || mapViewNearViewport());
     syncSkyMotionForMap();
     if (mapInView) {
       maybeAutoPlayRadar();
@@ -6096,6 +6111,10 @@ function initMapAutoPlay() {
       maybeAutoPlayRadar();
     }
   });
+  window.addEventListener("scroll", scheduleMapViewportMotionSync, { passive: true });
+  window.addEventListener("resize", scheduleMapViewportMotionSync, { passive: true });
+  window.visualViewport?.addEventListener("scroll", scheduleMapViewportMotionSync, { passive: true });
+  window.visualViewport?.addEventListener("resize", scheduleMapViewportMotionSync, { passive: true });
 }
 
 function stopRadarPlayback(options = {}) {
