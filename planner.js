@@ -410,10 +410,11 @@ function planWatchNotificationPanelCopy(watchItems) {
   };
 }
 
-function renderPlanWatchNotificationPanel(watchItems) {
+function renderPlanWatchNotificationPanel(watchItems, options = {}) {
   const copy = planWatchNotificationPanelCopy(watchItems);
+  const compactClass = options.compact ? " is-compact" : "";
   return `
-    <section class="plan-watch-notify is-${escapeHtml(copy.tone)}">
+    <section class="plan-watch-notify${compactClass} is-${escapeHtml(copy.tone)}">
       <div class="plan-watch-notify-main">
         <span>${escapeHtml(copy.meta)}</span>
         <strong>${escapeHtml(copy.title)}</strong>
@@ -3563,6 +3564,10 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
   `;
 }
 
+function renderGlobalMemoryCards(items, watchById) {
+  return items.map((item) => renderGlobalMemoryCard({ ...item, watch: watchById?.get(item.memory.id) })).join("");
+}
+
 function renderGlobalMemoryGroup(label, items, options = {}) {
   if (!items.length) return "";
   const { sub = "", watchById = null } = options;
@@ -3573,9 +3578,72 @@ function renderGlobalMemoryGroup(label, items, options = {}) {
         ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
       </div>
       <div class="memory-list global-memory-list">
-        ${items.map((item) => renderGlobalMemoryCard({ ...item, watch: watchById?.get(item.memory.id) })).join("")}
+        ${renderGlobalMemoryCards(items, watchById)}
       </div>
     </section>
+  `;
+}
+
+function setGlobalMemorySheetFocusedMode(focused) {
+  const sub = document.getElementById("memorySheetSub");
+  if (sub) {
+    sub.textContent = focused
+      ? "Your plan, checked against the forecast"
+      : "Plans Nearcast is keeping an eye on";
+  }
+  els.memorySheet?.classList.toggle("is-focused-plan", Boolean(focused));
+}
+
+function renderFocusedPlanWatchHero(item, watch) {
+  const memory = item.memory;
+  const id = escapeHtml(memory.id);
+  const tone = watch?.tone || "pending";
+  const label = watch?.label || "Waiting on forecast";
+  const reason = watch?.change?.body || watch?.reason || "Nearcast is checking this plan against the forecast.";
+  const effectivePast = Boolean(item.isPast || watch?.isPast);
+  return `
+    <section class="focused-plan-hero is-${escapeHtml(tone)}">
+      <span class="focused-plan-kicker">${effectivePast ? "Saved plan" : "Watched plan"}</span>
+      <h3>${escapeHtml(label)}</h3>
+      <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+      <p>${escapeHtml(reason)}</p>
+      <small>${escapeHtml(planWatchMetaText(memory, watch))}</small>
+      ${renderPlanWatchSignals(watch)}
+      <div class="focused-plan-actions">
+        ${effectivePast ? "" : `<button class="is-primary" type="button" data-memory-hourly="${id}">Hourly detail</button>`}
+        <button type="button" data-memory-edit="${id}">Change plan</button>
+      </div>
+      <button class="focused-plan-forget" type="button" data-memory-forget="${id}">Forget this plan</button>
+    </section>
+  `;
+}
+
+function renderPastPlanDisclosure(past, watchById) {
+  if (!past.length) return "";
+  return `
+    <details class="past-plan-disclosure">
+      <summary>
+        <span>Past plans</span>
+        <small>${past.length} kept locally</small>
+      </summary>
+      <div class="memory-list global-memory-list">
+        ${renderGlobalMemoryCards(past, watchById)}
+      </div>
+    </details>
+  `;
+}
+
+function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past, watchById, watchItems }) {
+  const otherUpcoming = upcoming.filter((item) => item.memory.id !== focusedItem.memory.id);
+  return `
+    ${renderFocusedPlanWatchHero(focusedItem, focusedWatch)}
+    ${renderPlanWatchNotificationPanel(watchItems, { compact: true })}
+    ${renderGlobalMemoryGroup("Other watched plans", otherUpcoming, {
+      sub: otherUpcoming.length === 1 ? "1 upcoming" : `${otherUpcoming.length} upcoming`,
+      watchById
+    })}
+    ${renderPastPlanDisclosure(past, watchById)}
+    <button class="memory-new-btn" type="button" data-memory-new>Add a plan</button>
   `;
 }
 
@@ -3592,10 +3660,30 @@ function renderGlobalMemorySheet() {
   const elsewhere = upcoming.filter((item) => !item.isHere);
   const otherGroups = groupPlanMemoryItemsByPlace(elsewhere);
   const placeCount = new Set(state.planMemories.map(planMemoryPlaceKey)).size;
-  const watchItems = upcoming.map(planWatchItemForMemoryItem);
-  const watchById = new Map(watchItems.map((watch) => [watch.memory.id, watch]));
+  const allWatchItems = items.map(planWatchItemForMemoryItem);
+  const watchItems = allWatchItems.filter((watch) => !watch.isPast);
+  const watchById = new Map(allWatchItems.map((watch) => [watch.memory.id, watch]));
   const attentionCount = watchItems.filter((watch) => ["watch", "caution"].includes(watch.tone) && !watch.isPast).length;
+  const focusedItem = planWatchFocusMemoryId
+    ? items.find((item) => item.memory.id === planWatchFocusMemoryId)
+    : null;
 
+  if (focusedItem) {
+    setGlobalMemorySheetFocusedMode(true);
+    els.memorySheetSummary.innerHTML = "";
+    els.memorySheetBody.innerHTML = renderFocusedPlanWatchSheet({
+      focusedItem,
+      focusedWatch: watchById.get(focusedItem.memory.id) || planWatchItemForMemoryItem(focusedItem),
+      upcoming,
+      past,
+      watchById,
+      watchItems
+    });
+    return;
+  }
+
+  planWatchFocusMemoryId = "";
+  setGlobalMemorySheetFocusedMode(false);
   els.memorySheetSummary.innerHTML = `
     <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>${upcoming.length === 1 ? "plan" : "plans"}</span></div>
     <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>need attention</span></div>
