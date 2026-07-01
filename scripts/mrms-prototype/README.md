@@ -260,6 +260,47 @@ The app does not expose this as a user-facing mode. It simply loads the public
 frame index, scores the broad and detail packs, and switches to the best
 available pack as the user searches, zooms, or pans.
 
+## Step 4: coverage-engine chunk spike
+
+The frame-substrate publisher is still tile-manifest shaped. The next spike is
+lower level: publish numeric radar chunks that a custom WebGL layer can render
+as one continuous field across zooms.
+
+Synthetic smoke test:
+
+```bash
+node scripts/mrms-prototype/encode-mrms-chunks.mjs \
+  --synthetic \
+  --bounds=30.35,-88.3,31.25,-87.2 \
+  --levels=8,9,10 \
+  --base-zoom=10 \
+  --pool=max \
+  --out-dir=/tmp/nearcast-radar-chunks-smoke \
+  --index-out=/tmp/nearcast-radar-chunks-smoke/index.json \
+  --summary-out=/tmp/nearcast-radar-chunks-smoke/summary.json
+```
+
+Live MRMS shape once a storm frame is worth testing:
+
+```bash
+node scripts/mrms-prototype/encode-mrms-chunks.mjs \
+  --product=MergedReflectivityQCComposite_00.50 \
+  --bounds=30.35,-88.3,31.25,-87.2 \
+  --levels=8,9,10 \
+  --base-zoom=10 \
+  --pool=max \
+  --out-dir=/tmp/nearcast-radar-chunks-live \
+  --index-out=/tmp/nearcast-radar-chunks-live/index.json
+```
+
+The script writes a small `index.json` plus gzip-compressed binary chunks at
+`chunks/z{level}/{x}/{y}.ncrd.gz`. Chunks are `Uint8` dBZ fields by default,
+not colored PNGs. `0` means no visible precip/no data; `1..255` maps across the
+configured dBZ range. Empty chunks are skipped unless `--write-empty` is set.
+
+This is the bridge toward the target custom WebGL radar layer described in
+`docs/radar-coverage-engine-spike.md`.
+
 This changes only the manifest contract. The renderer still writes local tile
 files first. The GitHub Actions workflow can then upload those files to R2 and
 remove the local tile directory before Worker deploy when
