@@ -1,6 +1,6 @@
 # Generated MRMS spike archive
 
-Status: paused from the main product path as of `v3.0.107`.
+Status: paused from the main product path as of `v3.0.108`.
 
 ## Decision
 

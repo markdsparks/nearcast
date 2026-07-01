@@ -1,4 +1,4 @@
-const VERSION = "3.0.107";
+const VERSION = "3.0.108";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -153,6 +153,8 @@ if (mapDiagnosticQueryFlag !== null) {
 const radarSourceZoomQueryFlag = queryValue("radarSourceZoom", "radarsourcezoom", "radarZoom", "radarzoom");
 if (radarSourceZoomQueryFlag !== null) {
   localStorage.setItem(RADAR_SOURCE_ZOOM_KEY, sanitizeRadarSourceZoom(radarSourceZoomQueryFlag));
+} else {
+  try { localStorage.removeItem(RADAR_SOURCE_ZOOM_KEY); } catch {}
 }
 
 const generatedRadarExperimentQueryFlag = queryValue(
