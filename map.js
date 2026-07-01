@@ -2432,7 +2432,9 @@ function radarSourceZoomOverride() {
 }
 
 function radarSourceZoomLabel() {
-  if (!radarSourceZoomOverride() && radarProviderAllowsGenerated()) return "Radar auto MRMS";
+  if (!radarSourceZoomOverride()) {
+    return radarProviderAllowsGenerated() ? "Radar experimental MRMS" : "Radar auto";
+  }
   return `Radar z${radarSourceZoomOverride() || RADAR_TILE_MAX_ZOOM}`;
 }
 
@@ -2941,6 +2943,10 @@ function syncGeneratedRadarStatusChip() {
   const visible = generatedRadarWarmupIsActive(warmup) || warmup.state === "ready";
   chip.hidden = !visible;
   chip.classList.toggle("is-ready", warmup.state === "ready");
+  if (!visible) {
+    chip.textContent = "";
+    return;
+  }
   if (warmup.state === "ready") chip.textContent = "Radar enhanced";
   else if (warmup.state === "checking") chip.textContent = "Checking radar";
   else chip.textContent = "Enhancing radar";
@@ -3595,7 +3601,7 @@ function radarProviderPreference() {
 }
 
 function radarProviderAllowsGenerated(provider = radarProviderPreference()) {
-  return provider !== "noaa-wms";
+  return provider === "mrms-generated" && generatedRadarExperimentEnabled?.();
 }
 
 function generatedMrmsManifestUrlOverride() {

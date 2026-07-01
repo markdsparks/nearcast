@@ -3,6 +3,11 @@
 Decision record for moving the radar/map system from a successful regional MRMS
 prototype to a scalable, beautiful, search-anywhere product surface.
 
+> July 2026 update: the generated MRMS substrate remains archived as a spike,
+> not the active main-app direction. See
+> `docs/generated-mrms-spike-archive.md` for the product/cost decision and the
+> experiment revival criteria.
+
 ## Product target
 
 Users should be able to search any place, zoom, pan, and scrub the precipitation
