@@ -1,4 +1,4 @@
-const VERSION = "3.0.113";
+const VERSION = "3.0.114";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6716,7 +6716,9 @@ function forYouWatchingCard(data, place) {
   const tone = attentionCount ? "caution" : changedCount ? "changed" : loadingCount ? "pending" : "good";
   const topTitle = top?.memory ? (typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : top.memory.title || "Plan") : "";
   const title = attentionCount && topTitle
-    ? `${topTitle} needs margin`
+    ? top?.tone === "watch"
+      ? `${topTitle} needs a backup plan`
+      : `${topTitle} may be affected by weather`
     : changedCount && topTitle
       ? `${topTitle} changed`
       : loadingCount
@@ -7216,7 +7218,7 @@ function forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems) {
         <button class="for-you-card is-interruption is-wind" type="button" data-for-you-summary="${summaryIndex >= 0 ? summaryIndex : 2}" data-for-you-signal="launch-summary">
           <span class="for-you-kicker"><span>Heads up</span><em>Wind</em></span>
           <strong>Gusts ${gust} ${escapeHtml(windUnit)}</strong>
-          <span class="for-you-body">Outdoor plans may need a little margin.</span>
+          <span class="for-you-body">Keep outdoor plans flexible.</span>
           <small>Hourly detail</small>
         </button>
       `

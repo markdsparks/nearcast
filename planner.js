@@ -3412,8 +3412,8 @@ function planWatchPendingItem(memory, source, isPast = false) {
 
 function planWatchLabel(item) {
   if (!item) return "Waiting on forecast";
-  if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") return "Watch closely";
-  if (item.tone === "caution") return "Needs a margin";
+  if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") return "Have a backup plan";
+  if (item.tone === "caution") return "Weather may affect this";
   return "Looks good";
 }
 
