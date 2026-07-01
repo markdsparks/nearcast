@@ -30,16 +30,15 @@ function skyMotionProfile(condition, skyState = state.skyState) {
   const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
   const smallViewport = Math.min(window.innerWidth || 0, window.innerHeight || 0) < 760;
   const lowMemory = Number(navigator.deviceMemory || 8) <= 4;
-  const rainy = condition === "rain" || condition === "thunder" || condition === "snow";
 
   if (reduceMotion || document.visibilityState === "hidden") {
     return {
       level: "still",
-      density: 0.18,
+      density: 1,
       animateClouds: 0,
       animateStars: 0,
       animateAtmosphere: false,
-      cloudFilter: false,
+      cloudFilter: true,
       sunMotion: false,
       moonMotion: false,
       rareMotion: false
@@ -49,14 +48,14 @@ function skyMotionProfile(condition, skyState = state.skyState) {
   if (coarsePointer || smallViewport || lowMemory) {
     return {
       level: "ambient",
-      density: rainy ? 0.42 : 0.58,
-      animateClouds: rainy ? 1 : 2,
-      animateStars: 12,
+      density: 1,
+      animateClouds: Infinity,
+      animateStars: Infinity,
       animateAtmosphere: true,
-      cloudFilter: false,
-      sunMotion: false,
-      moonMotion: false,
-      rareMotion: false
+      cloudFilter: true,
+      sunMotion: true,
+      moonMotion: true,
+      rareMotion: true
     };
   }
 
@@ -85,7 +84,7 @@ function markSkyInteractionMotionPause() {
   if (document.visibilityState === "hidden") return;
   setSkyInteractionMotionPaused(true);
   clearTimeout(skyInteractionPauseTimer);
-  skyInteractionPauseTimer = setTimeout(() => setSkyInteractionMotionPaused(false), 650);
+  skyInteractionPauseTimer = setTimeout(() => setSkyInteractionMotionPaused(false), 900);
 }
 
 function installSkyMotionGuards() {
@@ -814,15 +813,13 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   el.style.background = bg.css;
 
   const parts = [skyFilterDefs()];
-  const starCount = motion.level === "full" ? cfg.stars : Math.round(cfg.stars * motion.density);
-  const cloudCount = motion.level === "full" ? cfg.clouds : Math.min(cfg.clouds, Math.max(0, Math.round(cfg.clouds * motion.density)));
-  if (starCount)        parts.push(skyStars(vw, vh, starCount, rngFor("stars"), motion));
+  if (cfg.stars)        parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars"), motion));
   if (cfg.stars >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
   if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
   if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow"), motion));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
   if (cfg.sun)          parts.push(skySun(vw, vh, phase, motion));
-  if (cloudCount)       parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, rngFor("clouds"), skyState, motion));
+  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds"), skyState, motion));
   if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
   if ((skyState?.precipPressure ?? 0) > 0.08) parts.push(skyApproachVeil(vw, vh, skyState));
   if ((skyState?.airHaze ?? 0) > 0.08 || (skyState?.pollenVeil ?? 0) > 0.10) parts.push(skyAirVeil(vw, vh, skyState));
@@ -882,18 +879,24 @@ function skyFilterDefs() {
 }
 
 function skyStars(vw, vh, count, rng, motion = skyMotionProfile("clear")) {
-  let s = "";
+  const groups = ["", "", "", ""];
   for (let i = 0; i < count; i++) {
     const x = (rng() * vw).toFixed(1);
     const y = (rng() * vh * 0.82).toFixed(1);
     const r = (rng() * 1.2 + 0.4).toFixed(1);
     const op = (rng() * 0.5 + 0.25).toFixed(2);
-    const dur = (rng() * 3 + 2).toFixed(1);
-    const delay = (rng() * 6).toFixed(1);
-    const animated = i < motion.animateStars;
-    s += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star${animated ? " is-animated" : ""}" opacity="${op}" style="--op:${op};animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
+    groups[i % groups.length] += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star" opacity="${op}"/>`;
   }
-  return s;
+  const animated = motion.animateStars > 0;
+  return groups
+    .map((content, index) => {
+      if (!content) return "";
+      const dur = (4.2 + index * 1.35).toFixed(1);
+      const delay = (index * 1.6).toFixed(1);
+      const low = (0.42 + index * 0.08).toFixed(2);
+      return `<g class="sky-star-field${animated ? " is-animated" : ""}" style="--twinkle-low:${low};animation-duration:${dur}s;animation-delay:-${delay}s">${content}</g>`;
+    })
+    .join("");
 }
 
 function skyMoon(vw, vh, phase) {
@@ -1165,18 +1168,33 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null, motion = skyMotion
 }
 
 function skySnow(vw, vh, rng, skyState = null, motion = skyMotionProfile("snow", skyState)) {
-  let out = "";
   const intensity = skyState ? clamp01((skyState.pop - 20) / 70 + (skyState.precipitation || 0) * 0.5) : 0.45;
   const count = Math.max(10, Math.round((34 + intensity * 30) * (motion.density ?? 1)));
+  const tileHeight = Math.round(vh * 1.08);
+  let far = "";
+  let near = "";
   for (let i = 0; i < count; i++) {
     const x = (rng() * vw).toFixed(0);
+    const y = (rng() * tileHeight).toFixed(0);
     const r = (1.4 + intensity * 0.8 + rng() * 2.5).toFixed(1);
-    const dur = (3.8 + rng() * 6 - intensity * 0.7).toFixed(1);
-    const delay = (rng() * 8).toFixed(1);
-    const drift = ((rng() * 50) - 25).toFixed(0);
-    out += `<circle cx="${x}" cy="-5" r="${r}" fill="white" opacity="0.8" class="sky-snow${motion.animateAtmosphere ? " is-animated" : ""}" style="--drift:${drift}px;animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
+    const op = (0.50 + rng() * 0.34).toFixed(2);
+    const dot = `<circle cx="${x}" cy="${y}" r="${r}" fill="white" opacity="${op}" class="sky-snow"/>`;
+    if (i % 3 === 0) near += dot;
+    else far += dot;
   }
-  return out;
+  const animated = motion.animateAtmosphere;
+  const farDuration = (8.6 - intensity * 1.6).toFixed(2);
+  const nearDuration = (5.2 - intensity * 1.0).toFixed(2);
+  return `
+    <g class="sky-snow-layer sky-snow-far${animated ? " is-animated" : ""}" style="--snow-distance:${tileHeight}px;--snow-drift:-26px;animation-duration:${farDuration}s;animation-delay:-${(rng() * Number(farDuration)).toFixed(2)}s">
+      <g>${far}</g>
+      <g transform="translate(0 -${tileHeight})">${far}</g>
+    </g>
+    <g class="sky-snow-layer sky-snow-near${animated ? " is-animated" : ""}" style="--snow-distance:${tileHeight}px;--snow-drift:34px;animation-duration:${nearDuration}s;animation-delay:-${(rng() * Number(nearDuration)).toFixed(2)}s">
+      <g>${near}</g>
+      <g transform="translate(0 -${tileHeight})">${near}</g>
+    </g>
+  `;
 }
 
 function skyLightningBolt(vw, vh, rng) {

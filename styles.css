@@ -616,6 +616,8 @@ html[data-sky] body {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  contain: layout paint style;
+  isolation: isolate;
   background: var(--sky-page-bg);
   background-size: cover;
   background-color: var(--sky-page-bg-color);
@@ -691,13 +693,14 @@ html[data-sky] body {
   filter: none !important;
 }
 
-.sky-star.is-animated {
-  animation: sky-twinkle linear infinite;
+.sky-star-field.is-animated {
+  animation: sky-twinkle ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes sky-twinkle {
-  0%, 100% { opacity: var(--op, 0.5); }
-  50% { opacity: calc(var(--op, 0.5) * 0.2); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: var(--twinkle-low, 0.48); }
 }
 
 .sky-sun-rays {
@@ -788,23 +791,34 @@ html[data-sky] body {
   to   { transform: translateY(var(--rain-distance, 1200px)); }
 }
 
-.sky-snow.is-animated {
+.sky-snow {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+
+.sky-snow-layer {
+  pointer-events: none;
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+
+.sky-snow-layer.is-animated {
   animation: sky-snow-fall linear infinite;
+  will-change: transform, opacity;
 }
 
 @keyframes sky-snow-fall {
-  from { transform: translateY(-10px) translateX(0); opacity: 0; }
-  8%   { opacity: 0.85; }
-  92%  { opacity: 0.7; }
-  to   { transform: translateY(105vh) translateX(var(--drift, 20px)); opacity: 0; }
+  from { transform: translateY(0) translateX(0); opacity: 0.82; }
+  50%  { opacity: 0.92; }
+  to   { transform: translateY(var(--snow-distance, 1200px)) translateX(var(--snow-drift, 20px)); opacity: 0.82; }
 }
 
 .sky-lightning.is-animated {
   animation: sky-lightning-flash 10s ease infinite;
 }
 
-:root.sky-motion-paused-for-map .sky-star,
-:root.sky-motion-paused-for-interaction .sky-star,
+:root.sky-motion-paused-for-map .sky-star-field,
+:root.sky-motion-paused-for-interaction .sky-star-field,
 :root.sky-motion-paused-for-map .sky-sun-rays,
 :root.sky-motion-paused-for-interaction .sky-sun-rays,
 :root.sky-motion-paused-for-map .sky-shoot,
@@ -817,8 +831,8 @@ html[data-sky] body {
 :root.sky-motion-paused-for-interaction .sky-rain-sheet,
 :root.sky-motion-paused-for-map .sky-rain-layer,
 :root.sky-motion-paused-for-interaction .sky-rain-layer,
-:root.sky-motion-paused-for-map .sky-snow,
-:root.sky-motion-paused-for-interaction .sky-snow,
+:root.sky-motion-paused-for-map .sky-snow-layer,
+:root.sky-motion-paused-for-interaction .sky-snow-layer,
 :root.sky-motion-paused-for-map .sky-lightning,
 :root.sky-motion-paused-for-interaction .sky-lightning {
   animation: none !important;
