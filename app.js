@@ -1,4 +1,4 @@
-const VERSION = "3.0.81";
+const VERSION = "3.0.82";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -190,6 +190,23 @@ if (radarCapabilityEndpointQueryFlag !== null) {
     localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, "off");
   } else {
     localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, value);
+  }
+}
+
+const radarRoutingOverrideQueryPresent = radarManifestQueryFlag !== null ||
+  radarIndexQueryFlag !== null ||
+  radarCapabilityEndpointQueryFlag !== null;
+if (!radarRoutingOverrideQueryPresent) clearProductionRadarRoutingOverrides();
+
+function clearProductionRadarRoutingOverrides() {
+  try {
+    const host = String(window.location.hostname || "").toLowerCase();
+    if (!["getnearcast.app", "www.getnearcast.app"].includes(host)) return;
+    localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
+    localStorage.removeItem(RADAR_INDEX_URL_KEY);
+    localStorage.removeItem(RADAR_CAPABILITY_ENDPOINT_KEY);
+  } catch {
+    /* Storage can be unavailable in private or embedded contexts. */
   }
 }
 
