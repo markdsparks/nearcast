@@ -3478,6 +3478,36 @@ h2 {
   font-size: 0.83rem;
   font-weight: 900;
 }
+.next-plan-metrics span.is-heat,
+.plan-watch-signals span.is-heat {
+  border-color: rgba(201, 152, 55, 0.26);
+  background: rgba(201, 152, 55, 0.13);
+}
+.next-plan-metrics span.is-sun,
+.plan-watch-signals span.is-sun {
+  border-color: rgba(184, 109, 0, 0.24);
+  background: rgba(246, 185, 77, 0.16);
+}
+.next-plan-metrics span.is-rain,
+.plan-watch-signals span.is-rain {
+  border-color: rgba(53, 111, 183, 0.24);
+  background: rgba(53, 111, 183, 0.12);
+}
+.next-plan-metrics span.is-wind,
+.plan-watch-signals span.is-wind {
+  border-color: rgba(95, 115, 131, 0.25);
+  background: rgba(95, 115, 131, 0.12);
+}
+.next-plan-metrics span.is-storm,
+.plan-watch-signals span.is-storm {
+  border-color: rgba(200, 85, 85, 0.28);
+  background: rgba(200, 85, 85, 0.13);
+}
+.next-plan-metrics span.is-air,
+.plan-watch-signals span.is-air {
+  border-color: rgba(52, 125, 98, 0.24);
+  background: rgba(52, 125, 98, 0.12);
+}
 .next-plan-actions {
   flex-wrap: wrap;
 }

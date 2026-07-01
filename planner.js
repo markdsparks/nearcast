@@ -601,17 +601,7 @@ function nextPlanBriefingItem(data = state.forecast, place = state.activePlace) 
 }
 
 function planPulseMetricRows(item) {
-  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const rain = `${item.stats.rainChance}%`;
-  const wind = `${item.stats.gustMax || item.stats.windMax} ${item.units.wind}`;
-  const temps = `${item.stats.tempMin}${degree(tempUnit)}-${item.stats.tempMax}${degree(tempUnit)}`;
-  return [
-    ["Rain", rain],
-    ["Gusts", wind],
-    ["Temp", temps]
-  ].map(([label, value]) =>
-    `<span><b>${escapeHtml(label)}</b><strong>${escapeHtml(value)}</strong></span>`
-  ).join("");
+  return planContextSignalRows(item).map(renderPlanSignalChip).join("");
 }
 
 function planPulseWhenText(memory, data = state.forecast) {
@@ -3481,16 +3471,88 @@ function planWatchMetaText(memory, watch) {
   return `${planWatchWhenText(memory, watch?.data || state.forecast)} · ${placeLabel(memory.place)}`;
 }
 
-function renderPlanWatchSignals(watch) {
-  if (!watch?.stats) return "";
+function planSignalRiskKind(item) {
+  const stats = item?.stats || {};
+  const alertText = [item?.alert?.event, item?.primaryReason, item?.advice, item?.label, item?.reason]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (stats.stormPotential || /\b(thunder|storm|lightning|hail|tornado)\b/.test(alertText)) return "storm";
+  if (/\b(heat|hot|humid|uv|sun|sunscreen)\b/.test(alertText) || stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
+  if (/\b(aqi|air quality|smoke)\b/.test(alertText) || stats.aqiMax >= 101) return "air";
+  if (/\b(pollen|allerg)\b/.test(alertText) || stats.pollenRank >= 3) return "pollen";
+  if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(alertText) || stats.gustMax >= 25) return "wind";
+  if (/\b(flood|heavy rain|downpour)\b/.test(alertText) || stats.rainChance >= 35 || stats.precipTotal > 0.02) return "rain";
+  if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText) || stats.feelsAvg <= 40) return "cold";
+  return "good";
+}
+
+function planSignalPrecipText(value, unit) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "None";
+  if (unit === "in") {
+    if (amount < 0.01) return "Trace";
+    return amount < 0.1 ? amount.toFixed(2) : amount.toFixed(1);
+  }
+  if (amount < 0.1) return "Trace";
+  return amount < 1 ? amount.toFixed(1) : String(Math.round(amount));
+}
+
+function uniquePlanSignalRows(rows, limit = 3) {
+  const seen = new Set();
+  const result = [];
+  rows.forEach((row) => {
+    if (!row?.label || row.value === null || row.value === undefined) return;
+    const key = String(row.label).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(row);
+  });
+  return result.slice(0, limit);
+}
+
+function planContextSignalRows(item) {
+  if (!item?.stats) return [];
+  const stats = item.stats;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const rows = [
-    ["Rain", `${watch.stats.rainChance}%`],
-    ["Gusts", `${watch.stats.gustMax || watch.stats.windMax} ${watch.units.wind}`],
-    ["Temp", `${watch.stats.tempMin}${degree(tempUnit)}-${watch.stats.tempMax}${degree(tempUnit)}`]
-  ];
+  const temp = item.units?.temp || degree(tempUnit);
+  const wind = item.units?.wind || (state.unit === "fahrenheit" ? "mph" : "km/h");
+  const precip = item.units?.precip || (state.unit === "fahrenheit" ? "in" : "mm");
+  const risk = planSignalRiskKind(item);
+  const feelsRow = { label: "Feels", value: `${stats.feelsAvg}${temp}`, kind: "heat" };
+  const tempRow = { label: "Temp", value: `${stats.tempMin}${temp}-${stats.tempMax}${temp}`, kind: "temp" };
+  const rainRow = { label: "Rain", value: `${stats.rainChance}%`, kind: "rain" };
+  const amountRow = { label: "Amount", value: `${planSignalPrecipText(stats.precipTotal, precip)}${stats.precipTotal > 0 ? ` ${precip}` : ""}`, kind: "rain" };
+  const gustRow = { label: "Gusts", value: `${stats.gustMax || stats.windMax} ${wind}`, kind: "wind" };
+  const windRow = { label: "Wind", value: `${stats.windMax} ${wind}`, kind: "wind" };
+  const uvRow = { label: "UV", value: stats.uvMax > 0 ? String(stats.uvMax) : "Low", kind: "sun" };
+  const airRow = { label: "Air", value: stats.aqiMax ? `AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" };
+  const pollenRow = { label: "Pollen", value: stats.pollenLabel || stats.pollenLevel || "Elevated", kind: "air" };
+  const stormRow = { label: "Storms", value: stats.stormPotential ? "Possible" : "Watch", kind: "storm" };
+  const fallback = [rainRow, feelsRow, gustRow, tempRow];
+  const rowsByRisk = {
+    heat: [feelsRow, uvRow, tempRow, rainRow],
+    cold: [feelsRow, tempRow, gustRow, rainRow],
+    storm: [stormRow, rainRow, gustRow, amountRow],
+    rain: [rainRow, amountRow, gustRow, feelsRow],
+    wind: [gustRow, windRow, rainRow, feelsRow],
+    air: [airRow, feelsRow, rainRow, gustRow],
+    pollen: [pollenRow, airRow, feelsRow, rainRow],
+    good: fallback
+  };
+  return uniquePlanSignalRows([...(rowsByRisk[risk] || fallback), ...fallback]);
+}
+
+function renderPlanSignalChip(row) {
+  const kind = row.kind ? ` is-${escapeHtml(row.kind)}` : "";
+  return `<span class="${kind.trim()}"><b>${escapeHtml(row.label)}</b><strong>${escapeHtml(row.value)}</strong></span>`;
+}
+
+function renderPlanWatchSignals(watch) {
+  const rows = planContextSignalRows(watch);
+  if (!rows.length) return "";
   return `<div class="plan-watch-signals">` +
-    rows.map(([label, value]) => `<span><b>${escapeHtml(label)}</b><strong>${escapeHtml(value)}</strong></span>`).join("") +
+    rows.map(renderPlanSignalChip).join("") +
   `</div>`;
 }
 
@@ -3686,7 +3748,7 @@ function renderGlobalMemorySheet() {
   setGlobalMemorySheetFocusedMode(false);
   els.memorySheetSummary.innerHTML = `
     <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>${upcoming.length === 1 ? "plan" : "plans"}</span></div>
-    <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>need attention</span></div>
+    <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>${attentionCount === 1 ? "risk" : "risks"}</span></div>
     <div class="memory-summary-stat"><strong>${placeCount}</strong><span>${placeCount === 1 ? "place" : "places"}</span></div>
     ${renderPlanWatchOverview(watchItems)}
   `;
