@@ -3500,6 +3500,38 @@ function planSignalPrecipText(value, unit) {
   return amount < 1 ? amount.toFixed(1) : String(Math.round(amount));
 }
 
+function planSignalRangeText(min, max, unit = "") {
+  const low = Math.round(Number(min));
+  const high = Math.round(Number(max));
+  if (!Number.isFinite(low) && !Number.isFinite(high)) return "";
+  if (!Number.isFinite(low)) return `${high}${unit}`;
+  if (!Number.isFinite(high)) return `${low}${unit}`;
+  if (low === high) return `${low}${unit}`;
+  return `${low}${unit}-${high}${unit}`;
+}
+
+function planSignalUnitRangeText(min, max, unit = "") {
+  const low = Math.round(Number(min));
+  const high = Math.round(Number(max));
+  const suffix = unit ? ` ${unit}` : "";
+  if (!Number.isFinite(low) && !Number.isFinite(high)) return "";
+  if (!Number.isFinite(low)) return `${high}${suffix}`;
+  if (!Number.isFinite(high)) return `${low}${suffix}`;
+  if (low === high) return `${low}${suffix}`;
+  return `${low}-${high}${suffix}`;
+}
+
+function planSignalPeakText(value, unit = "") {
+  const amount = Math.round(Number(value));
+  if (!Number.isFinite(amount)) return "";
+  return `Peak ${amount}${unit ? ` ${unit}` : ""}`;
+}
+
+function planSignalPrecipTotalText(value, unit) {
+  const text = planSignalPrecipText(value, unit);
+  return text === "None" ? text : `Total ${text} ${unit}`;
+}
+
 function uniquePlanSignalRows(rows, limit = 3) {
   const seen = new Set();
   const result = [];
@@ -3521,14 +3553,14 @@ function planContextSignalRows(item) {
   const wind = item.units?.wind || (state.unit === "fahrenheit" ? "mph" : "km/h");
   const precip = item.units?.precip || (state.unit === "fahrenheit" ? "in" : "mm");
   const risk = planSignalRiskKind(item);
-  const feelsRow = { label: "Feels", value: `${stats.feelsAvg}${temp}`, kind: "heat" };
-  const tempRow = { label: "Temp", value: `${stats.tempMin}${temp}-${stats.tempMax}${temp}`, kind: "temp" };
-  const rainRow = { label: "Rain", value: `${stats.rainChance}%`, kind: "rain" };
-  const amountRow = { label: "Amount", value: `${planSignalPrecipText(stats.precipTotal, precip)}${stats.precipTotal > 0 ? ` ${precip}` : ""}`, kind: "rain" };
-  const gustRow = { label: "Gusts", value: `${stats.gustMax || stats.windMax} ${wind}`, kind: "wind" };
-  const windRow = { label: "Wind", value: `${stats.windMax} ${wind}`, kind: "wind" };
-  const uvRow = { label: "UV", value: stats.uvMax > 0 ? String(stats.uvMax) : "Low", kind: "sun" };
-  const airRow = { label: "Air", value: stats.aqiMax ? `AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" };
+  const feelsRow = { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" };
+  const tempRow = { label: "Temp", value: planSignalRangeText(stats.tempMin, stats.tempMax, temp), kind: "temp" };
+  const rainRow = { label: "Rain", value: `Max ${Math.round(Number(stats.rainChance || 0))}%`, kind: "rain" };
+  const amountRow = { label: "Amount", value: planSignalPrecipTotalText(stats.precipTotal, precip), kind: "rain" };
+  const gustRow = { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" };
+  const windRow = { label: "Wind", value: planSignalUnitRangeText(stats.windMin ?? stats.windMax, stats.windMax, wind), kind: "wind" };
+  const uvRow = { label: "UV", value: stats.uvMax > 0 ? planSignalPeakText(stats.uvMax) : "Low", kind: "sun" };
+  const airRow = { label: "Air", value: stats.aqiMax ? `Peak AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" };
   const pollenRow = { label: "Pollen", value: stats.pollenLabel || stats.pollenLevel || "Elevated", kind: "air" };
   const stormRow = { label: "Storms", value: stats.stormPotential ? "Possible" : "Watch", kind: "storm" };
   const fallback = [rainRow, feelsRow, gustRow, tempRow];
@@ -4195,10 +4227,15 @@ function planWindowStats(data, c, w) {
     tempMin: Math.round(Math.min(...temps)),
     tempMax: Math.round(Math.max(...temps)),
     feelsAvg: Math.round(avg(feels)),
+    feelsMin: Math.round(Math.min(...feels)),
+    feelsMax: Math.round(Math.max(...feels)),
     rainChance: Math.round(Math.max(...pop)),
+    rainChanceMin: Math.round(Math.min(...pop)),
     precipTotal: precip.reduce((sum, item) => sum + Number(item || 0), 0),
+    windMin: Math.round(Math.min(...wind)),
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
+    uvMin: Math.round(Math.min(...uv)),
     uvMax: Math.round(Math.max(...uv)),
     aqiMax: air.aqiMax,
     aqiLabel: air.aqiLabel,
@@ -4494,10 +4531,15 @@ function askWindowStats(w) {
     tempMin: Math.round(Math.min(...temps)),
     tempMax: Math.round(Math.max(...temps)),
     feelsAvg: Math.round(avg(feels)),
+    feelsMin: Math.round(Math.min(...feels)),
+    feelsMax: Math.round(Math.max(...feels)),
     rainChance: Math.round(Math.max(...pop)),
+    rainChanceMin: Math.round(Math.min(...pop)),
     precipTotal: precip.reduce((sum, item) => sum + Number(item || 0), 0),
+    windMin: Math.round(Math.min(...wind)),
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
+    uvMin: Math.round(Math.min(...uv)),
     uvMax: Math.round(Math.max(...uv)),
     aqiMax: air.aqiMax,
     aqiLabel: air.aqiLabel,
