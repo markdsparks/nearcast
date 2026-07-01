@@ -4958,7 +4958,24 @@ function syncMapSourceFromFrame(frame) {
     updateMapModeButtons();
   }
   renderMapLegend();
+  renderMapCredit(frame);
   setPlaybackButtonState();
+}
+
+function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
+  const credit = mapCreditText(frame);
+  const html = `${escapeHtml(credit)} · Map <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OSM</a>`;
+  document.querySelectorAll("#mapCredit, #immCredit").forEach((node) => {
+    node.innerHTML = html;
+  });
+}
+
+function mapCreditText(frame) {
+  if (activeMapSource(frame) === "forecast") return "Forecast NOAA/NWS nowCOAST/NDFD";
+  if (frame?.provider === "mrms-generated") return `Radar ${frame.attribution || "NOAA MRMS · Nearcast"}`;
+  if (frame?.attribution === "RainViewer") return "Radar RainViewer";
+  if (frame?.attribution) return `Radar ${frame.attribution}`;
+  return "Radar NOAA/NWS, RainViewer";
 }
 
 function updateMapModeButtons() {
