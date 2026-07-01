@@ -74,7 +74,8 @@ const partialViewport = await capability({
   }
 });
 assert.equal(partialViewport.status, 200);
-assert.equal(partialViewport.body.enhanced.state, "unavailable");
+assert.equal(partialViewport.body.enhanced.state, "ready");
+assert.equal(partialViewport.body.enhanced.score.viewportGate.centerFocusOk, true);
 
 const detailCenteredPartialViewport = await capability({
   ...basePayload,
