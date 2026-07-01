@@ -1,6 +1,6 @@
 # Generated MRMS spike archive
 
-Status: paused from the main product path as of `v3.0.108`.
+Status: paused from the main product path as of `v3.0.110`.
 
 ## Decision
 
@@ -82,11 +82,14 @@ The app also keeps explicit debug access for radar chunks:
 Generated MRMS provider routing is now intentionally gated:
 
 ```text
-?generatedRadar=1&radarProvider=mrms-generated
+?debugSettings=1&generatedRadar=1&radarProvider=mrms-generated
 ```
 
 Without that explicit experiment flag, stored/generated provider preferences are
 ignored and the app falls back to free radar coverage.
+
+The main settings menu also hides map renderer, map test, radar provider, and
+radar zoom controls unless `debugSettings=1` is present.
 
 ## Revival Criteria
 

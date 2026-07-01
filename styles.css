@@ -1090,6 +1090,10 @@ h2 {
   background: var(--glass-light);
 }
 
+.menu-setting[hidden] {
+  display: none !important;
+}
+
 .menu-setting-copy {
   min-width: 0;
 }

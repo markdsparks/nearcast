@@ -1,4 +1,4 @@
-const VERSION = "3.0.108";
+const VERSION = "3.0.110";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -80,6 +80,17 @@ function queryValue(...names) {
   return null;
 }
 
+function debugSettingsEnabled() {
+  return generatedRadarExperimentFlagEnabled(queryValue(
+    "debugSettings",
+    "debugsettings",
+    "settingsDebug",
+    "settingsdebug"
+  ));
+}
+
+const DEBUG_SETTINGS_ENABLED = debugSettingsEnabled();
+
 const perfQueryFlag = queryValue("perf");
 if (perfQueryFlag === "1") localStorage.setItem(PERF_STORAGE_KEY, "1");
 else if (perfQueryFlag === "0") localStorage.removeItem(PERF_STORAGE_KEY);
@@ -89,9 +100,14 @@ if (windFieldQueryFlag === "1") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "1"
 else if (windFieldQueryFlag === "0") localStorage.setItem(WIND_FIELD_STORAGE_KEY, "0");
 
 const mapRendererQueryFlag = queryValue("mapRenderer", "maprenderer", "map");
-if (["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLowerCase())) {
+if (DEBUG_SETTINGS_ENABLED && ["classic", "gl", "webgl"].includes(String(mapRendererQueryFlag || "").toLowerCase())) {
   localStorage.setItem(MAP_RENDERER_KEY, String(mapRendererQueryFlag).toLowerCase() === "classic" ? "classic" : "gl");
   localStorage.setItem(MAP_RENDERER_CHOICE_KEY, "explicit");
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  try {
+    localStorage.removeItem(MAP_RENDERER_KEY);
+    localStorage.removeItem(MAP_RENDERER_CHOICE_KEY);
+  } catch {}
 }
 
 const MAP_DIAGNOSTIC_MODES = {
@@ -146,12 +162,14 @@ const MAP_DIAGNOSTIC_MODES = {
 };
 
 const mapDiagnosticQueryFlag = queryValue("mapPerf", "mapperf", "mapDiag", "mapdiag");
-if (mapDiagnosticQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && mapDiagnosticQueryFlag !== null) {
   localStorage.setItem(MAP_DIAGNOSTIC_MODE_KEY, sanitizeMapDiagnosticMode(mapDiagnosticQueryFlag));
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  try { localStorage.removeItem(MAP_DIAGNOSTIC_MODE_KEY); } catch {}
 }
 
 const radarSourceZoomQueryFlag = queryValue("radarSourceZoom", "radarsourcezoom", "radarZoom", "radarzoom");
-if (radarSourceZoomQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && radarSourceZoomQueryFlag !== null) {
   localStorage.setItem(RADAR_SOURCE_ZOOM_KEY, sanitizeRadarSourceZoom(radarSourceZoomQueryFlag));
 } else {
   try { localStorage.removeItem(RADAR_SOURCE_ZOOM_KEY); } catch {}
@@ -175,27 +193,31 @@ try {
   localStorage.removeItem(GENERATED_RADAR_EXPERIMENT_KEY);
 } catch {}
 
-if (!generatedRadarExperimentEnabled() && radarProviderValueIsGenerated(localStorage.getItem(RADAR_PROVIDER_KEY))) {
+if (!DEBUG_SETTINGS_ENABLED) {
+  localStorage.removeItem(RADAR_PROVIDER_KEY);
+} else if (!generatedRadarExperimentEnabled() && radarProviderValueIsGenerated(localStorage.getItem(RADAR_PROVIDER_KEY))) {
   localStorage.removeItem(RADAR_PROVIDER_KEY);
 }
 
 const radarProviderQueryFlag = queryValue("radarProvider", "radarprovider", "radar");
-if (radarProviderQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && radarProviderQueryFlag !== null) {
   localStorage.setItem(RADAR_PROVIDER_KEY, sanitizeRadarProvider(radarProviderQueryFlag));
 }
 
 const radarManifestQueryFlag = queryValue("radarManifest", "radarmanifest", "mrmsManifest", "mrmsmanifest");
-if (radarManifestQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && radarManifestQueryFlag !== null) {
   const value = String(radarManifestQueryFlag || "").trim();
   if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
     localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
   } else {
     localStorage.setItem(RADAR_MANIFEST_URL_KEY, value);
   }
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
 }
 
 const radarIndexQueryFlag = queryValue("radarIndex", "radarindex", "mrmsIndex", "mrmsindex");
-if (radarIndexQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && radarIndexQueryFlag !== null) {
   const value = String(radarIndexQueryFlag || "").trim();
   localStorage.removeItem(RADAR_MANIFEST_URL_KEY);
   if (!value || ["0", "off", "local", "none"].includes(value.toLowerCase())) {
@@ -203,10 +225,12 @@ if (radarIndexQueryFlag !== null) {
   } else {
     localStorage.setItem(RADAR_INDEX_URL_KEY, value);
   }
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  localStorage.removeItem(RADAR_INDEX_URL_KEY);
 }
 
 const radarCapabilityEndpointQueryFlag = queryValue("radarCapabilityEndpoint", "radarcapabilityendpoint", "radarCapability", "radarcapability");
-if (radarCapabilityEndpointQueryFlag !== null) {
+if (DEBUG_SETTINGS_ENABLED && radarCapabilityEndpointQueryFlag !== null) {
   const value = String(radarCapabilityEndpointQueryFlag || "").trim();
   const lower = value.toLowerCase();
   if (!value || ["default", "auto"].includes(lower)) {
@@ -216,6 +240,8 @@ if (radarCapabilityEndpointQueryFlag !== null) {
   } else {
     localStorage.setItem(RADAR_CAPABILITY_ENDPOINT_KEY, value);
   }
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  localStorage.removeItem(RADAR_CAPABILITY_ENDPOINT_KEY);
 }
 
 const radarRoutingOverrideQueryPresent = radarManifestQueryFlag !== null ||
@@ -676,6 +702,7 @@ const els = {
   unitToggle: document.querySelector("#unitToggle"),
   timeFormatButtons: document.querySelectorAll("[data-time-format]"),
   timeFormatMeta: document.querySelector("#timeFormatMeta"),
+  debugSettings: document.querySelectorAll("[data-debug-setting]"),
   mapRendererButtons: document.querySelectorAll("[data-map-renderer]"),
   mapRendererMeta: document.querySelector("#mapRendererMeta"),
   mapDiagnosticMode: document.querySelector("#mapDiagnosticMode"),
@@ -2459,6 +2486,7 @@ function init() {
   renderSavedPlaces();
   updateUnitButton();
   updateTimeFormatButtons();
+  updateDebugSettingsVisibility();
   updateMapRendererButtons();
   updateMapDiagnosticModeControl();
   updateRadarSourceZoomControl();
@@ -3414,6 +3442,13 @@ function setTimeFormatPreference(value) {
   refreshTimeFormattedSurfaces();
 }
 
+function updateDebugSettingsVisibility() {
+  els.debugSettings.forEach((setting) => {
+    setting.hidden = !DEBUG_SETTINGS_ENABLED;
+  });
+  document.documentElement.classList.toggle("debug-settings-enabled", DEBUG_SETTINGS_ENABLED);
+}
+
 function mapRendererMetaText() {
   if (state.mapDiagnosticMode !== "full") return `Testing: ${MAP_DIAGNOSTIC_MODES[state.mapDiagnosticMode]?.label || "Map"}`;
   if (state.mapRenderer === "gl") {
@@ -3446,7 +3481,7 @@ function radarProviderMetaText() {
 function syncGeneratedRadarProviderOption() {
   if (!els.radarProvider) return;
   const existing = els.radarProvider.querySelector?.("option[value=\"mrms-generated\"]");
-  if (generatedRadarExperimentEnabled()) {
+  if (DEBUG_SETTINGS_ENABLED && generatedRadarExperimentEnabled()) {
     if (!existing) {
       const option = document.createElement("option");
       option.value = "mrms-generated";
