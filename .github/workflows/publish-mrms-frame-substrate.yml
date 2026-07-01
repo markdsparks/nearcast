@@ -84,6 +84,7 @@ jobs:
     timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MRMS_FRAME_PROFILE: ${{ github.event.inputs.profile || vars.MRMS_FRAME_PROFILE || 'conus' }}
       MRMS_FRAME_FRAMES: ${{ github.event.inputs.frames || vars.MRMS_FRAME_FRAMES || '1' }}
       MRMS_FRAME_TTL_MINUTES: ${{ github.event.inputs.ttlMinutes || vars.MRMS_FRAME_TTL_MINUTES || '10' }}
@@ -178,6 +179,20 @@ jobs:
       - name: Install R2 upload dependencies
         if: steps.publish.outputs.skipped != 'true'
         run: npm install --no-save --no-package-lock --no-audit --no-fund @aws-sdk/client-s3
+
+      - name: Configure R2 CORS for browser radar reads
+        if: steps.publish.outputs.skipped != 'true'
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Skipping R2 CORS configuration because CLOUDFLARE_API_TOKEN is not set."
+            exit 0
+          fi
+          if [ -z "$MRMS_FRAME_R2_BUCKET" ]; then
+            echo "MRMS_FRAME_R2_BUCKET or MRMS_R2_BUCKET is required."
+            exit 1
+          fi
+          npx --yes wrangler r2 bucket cors set "$MRMS_FRAME_R2_BUCKET" \
+            --file config/radar-r2-cors.json
 
       - name: Upload frame substrate to R2
         if: steps.publish.outputs.skipped != 'true'
