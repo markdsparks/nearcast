@@ -1,0 +1,487 @@
+{
+  "provider": "nearcast-radar-coverage-chunks",
+  "version": 1,
+  "generatedAt": "2026-07-01T04:21:06.469Z",
+  "product": "SyntheticReflectivity_00.50",
+  "region": "LOCAL",
+  "source": {
+    "kind": "synthetic",
+    "note": "Deterministic local radar-like field for chunk format smoke tests."
+  },
+  "bounds": {
+    "minLat": 30.35,
+    "minLon": -88.3,
+    "maxLat": 31.25,
+    "maxLon": -87.2
+  },
+  "frame": {
+    "observedAt": "2026-07-01T04:21:06.345Z",
+    "sourceType": "synthetic",
+    "stats": {
+      "validCells": 101520,
+      "precipCells": 98436,
+      "precipPercent": 96.962,
+      "minDbz": 0,
+      "maxDbz": 94.8,
+      "maxLat": 30.7483,
+      "maxLon": -87.6256
+    }
+  },
+  "renderIntent": {
+    "clientRendering": "custom-webgl-radar-layer",
+    "fallback": "classic radar remains visible until chunks are ready",
+    "colorizeOnDevice": true,
+    "animateOnDevice": true
+  },
+  "valueEncoding": {
+    "type": "uint8-dbz",
+    "dbzMin": 0,
+    "dbzMax": 80,
+    "threshold": 5,
+    "noData": 0,
+    "valueMin": 1,
+    "valueMax": 255,
+    "formula": "dbz = dbzMin + (value - 1) * (dbzMax - dbzMin) / 254"
+  },
+  "canonical": {
+    "baseZoom": 10,
+    "chunkSize": 256,
+    "range": {
+      "minX": 260,
+      "maxX": 263,
+      "minY": 416,
+      "maxY": 423
+    },
+    "bounds": {
+      "minLat": 29.53523,
+      "minLon": -88.59375,
+      "maxLat": 31.95216,
+      "maxLon": -87.1875
+    },
+    "pixels": 2097152,
+    "validPixels": 1328128,
+    "sampleSmooth": 0
+  },
+  "levels": [
+    {
+      "id": "z8",
+      "zoom": 8,
+      "chunkSize": 256,
+      "pool": "max",
+      "range": {
+        "minX": 65,
+        "maxX": 65,
+        "minY": 104,
+        "maxY": 105
+      },
+      "bounds": {
+        "minLat": 29.53523,
+        "minLon": -88.59375,
+        "maxLat": 31.95216,
+        "maxLon": -87.1875
+      },
+      "template": "chunks/z8/{x}/{y}.ncrd.gz",
+      "candidateChunks": 2,
+      "chunkCount": 2,
+      "precipPixels": 61427,
+      "bytes": 33800,
+      "minDbz": 5,
+      "maxDbz": 94.8,
+      "chunks": [
+        {
+          "x": 65,
+          "y": 104,
+          "path": "chunks/z8/65/104.ncrd.gz",
+          "byteLength": 18300,
+          "precipPixels": 34316,
+          "minDbz": 5,
+          "maxDbz": 94.6,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -88.59375,
+            "maxLat": 31.95216,
+            "maxLon": -87.1875
+          }
+        },
+        {
+          "x": 65,
+          "y": 105,
+          "path": "chunks/z8/65/105.ncrd.gz",
+          "byteLength": 15500,
+          "precipPixels": 27111,
+          "minDbz": 5,
+          "maxDbz": 94.8,
+          "bounds": {
+            "minLat": 29.53523,
+            "minLon": -88.59375,
+            "maxLat": 30.75128,
+            "maxLon": -87.1875
+          }
+        }
+      ]
+    },
+    {
+      "id": "z9",
+      "zoom": 9,
+      "chunkSize": 256,
+      "pool": "max",
+      "range": {
+        "minX": 130,
+        "maxX": 131,
+        "minY": 209,
+        "maxY": 210
+      },
+      "bounds": {
+        "minLat": 30.14513,
+        "minLon": -88.59375,
+        "maxLat": 31.35364,
+        "maxLon": -87.1875
+      },
+      "template": "chunks/z9/{x}/{y}.ncrd.gz",
+      "candidateChunks": 4,
+      "chunkCount": 4,
+      "precipPixels": 221586,
+      "bytes": 73009,
+      "minDbz": 5,
+      "maxDbz": 94.8,
+      "chunks": [
+        {
+          "x": 130,
+          "y": 209,
+          "path": "chunks/z9/130/209.ncrd.gz",
+          "byteLength": 19916,
+          "precipPixels": 64942,
+          "minDbz": 5,
+          "maxDbz": 61.7,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -88.59375,
+            "maxLat": 31.35364,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 131,
+          "y": 209,
+          "path": "chunks/z9/131/209.ncrd.gz",
+          "byteLength": 18913,
+          "precipPixels": 53306,
+          "minDbz": 5,
+          "maxDbz": 94.6,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -87.89062,
+            "maxLat": 31.35364,
+            "maxLon": -87.1875
+          }
+        },
+        {
+          "x": 130,
+          "y": 210,
+          "path": "chunks/z9/130/210.ncrd.gz",
+          "byteLength": 13304,
+          "precipPixels": 39795,
+          "minDbz": 5,
+          "maxDbz": 40.9,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -88.59375,
+            "maxLat": 30.75128,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 131,
+          "y": 210,
+          "path": "chunks/z9/131/210.ncrd.gz",
+          "byteLength": 20876,
+          "precipPixels": 63543,
+          "minDbz": 5,
+          "maxDbz": 94.8,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -87.89062,
+            "maxLat": 30.75128,
+            "maxLon": -87.1875
+          }
+        }
+      ]
+    },
+    {
+      "id": "z10",
+      "zoom": 10,
+      "chunkSize": 256,
+      "pool": "canonical",
+      "range": {
+        "minX": 260,
+        "maxX": 263,
+        "minY": 418,
+        "maxY": 421
+      },
+      "bounds": {
+        "minLat": 30.14513,
+        "minLon": -88.59375,
+        "maxLat": 31.35364,
+        "maxLon": -87.1875
+      },
+      "template": "chunks/z10/{x}/{y}.ncrd.gz",
+      "candidateChunks": 16,
+      "chunkCount": 16,
+      "precipPixels": 883215,
+      "bytes": 173295,
+      "minDbz": 5,
+      "maxDbz": 94.8,
+      "chunks": [
+        {
+          "x": 260,
+          "y": 418,
+          "path": "chunks/z10/260/418.ncrd.gz",
+          "byteLength": 10902,
+          "precipPixels": 65536,
+          "minDbz": 5.3,
+          "maxDbz": 20.4,
+          "bounds": {
+            "minLat": 31.05293,
+            "minLon": -88.59375,
+            "maxLat": 31.35364,
+            "maxLon": -88.24219
+          }
+        },
+        {
+          "x": 261,
+          "y": 418,
+          "path": "chunks/z10/261/418.ncrd.gz",
+          "byteLength": 13122,
+          "precipPixels": 64246,
+          "minDbz": 5,
+          "maxDbz": 58.6,
+          "bounds": {
+            "minLat": 31.05293,
+            "minLon": -88.24219,
+            "maxLat": 31.35364,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 262,
+          "y": 418,
+          "path": "chunks/z10/262/418.ncrd.gz",
+          "byteLength": 10909,
+          "precipPixels": 53087,
+          "minDbz": 5,
+          "maxDbz": 52.3,
+          "bounds": {
+            "minLat": 31.05293,
+            "minLon": -87.89062,
+            "maxLat": 31.35364,
+            "maxLon": -87.53906
+          }
+        },
+        {
+          "x": 263,
+          "y": 418,
+          "path": "chunks/z10/263/418.ncrd.gz",
+          "byteLength": 5646,
+          "precipPixels": 27931,
+          "minDbz": 5,
+          "maxDbz": 16.6,
+          "bounds": {
+            "minLat": 31.05293,
+            "minLon": -87.53906,
+            "maxLat": 31.35364,
+            "maxLon": -87.1875
+          }
+        },
+        {
+          "x": 260,
+          "y": 419,
+          "path": "chunks/z10/260/419.ncrd.gz",
+          "byteLength": 11354,
+          "precipPixels": 64192,
+          "minDbz": 5,
+          "maxDbz": 23,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -88.59375,
+            "maxLat": 31.05293,
+            "maxLon": -88.24219
+          }
+        },
+        {
+          "x": 261,
+          "y": 419,
+          "path": "chunks/z10/261/419.ncrd.gz",
+          "byteLength": 12976,
+          "precipPixels": 65536,
+          "minDbz": 10.2,
+          "maxDbz": 61.7,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -88.24219,
+            "maxLat": 31.05293,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 262,
+          "y": 419,
+          "path": "chunks/z10/262/419.ncrd.gz",
+          "byteLength": 14226,
+          "precipPixels": 65536,
+          "minDbz": 13.6,
+          "maxDbz": 94.6,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -87.89062,
+            "maxLat": 31.05293,
+            "maxLon": -87.53906
+          }
+        },
+        {
+          "x": 263,
+          "y": 419,
+          "path": "chunks/z10/263/419.ncrd.gz",
+          "byteLength": 13215,
+          "precipPixels": 65536,
+          "minDbz": 9.4,
+          "maxDbz": 78.4,
+          "bounds": {
+            "minLat": 30.75128,
+            "minLon": -87.53906,
+            "maxLat": 31.05293,
+            "maxLon": -87.1875
+          }
+        },
+        {
+          "x": 260,
+          "y": 420,
+          "path": "chunks/z10/260/420.ncrd.gz",
+          "byteLength": 9088,
+          "precipPixels": 44653,
+          "minDbz": 5,
+          "maxDbz": 17.1,
+          "bounds": {
+            "minLat": 30.44867,
+            "minLon": -88.59375,
+            "maxLat": 30.75128,
+            "maxLon": -88.24219
+          }
+        },
+        {
+          "x": 261,
+          "y": 420,
+          "path": "chunks/z10/261/420.ncrd.gz",
+          "byteLength": 12183,
+          "precipPixels": 65536,
+          "minDbz": 9.4,
+          "maxDbz": 40.9,
+          "bounds": {
+            "minLat": 30.44867,
+            "minLon": -88.24219,
+            "maxLat": 30.75128,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 262,
+          "y": 420,
+          "path": "chunks/z10/262/420.ncrd.gz",
+          "byteLength": 13230,
+          "precipPixels": 65536,
+          "minDbz": 30.6,
+          "maxDbz": 94.8,
+          "bounds": {
+            "minLat": 30.44867,
+            "minLon": -87.89062,
+            "maxLat": 30.75128,
+            "maxLon": -87.53906
+          }
+        },
+        {
+          "x": 263,
+          "y": 420,
+          "path": "chunks/z10/263/420.ncrd.gz",
+          "byteLength": 12925,
+          "precipPixels": 65536,
+          "minDbz": 15.8,
+          "maxDbz": 76.6,
+          "bounds": {
+            "minLat": 30.44867,
+            "minLon": -87.53906,
+            "maxLat": 30.75128,
+            "maxLon": -87.1875
+          }
+        },
+        {
+          "x": 260,
+          "y": 421,
+          "path": "chunks/z10/260/421.ncrd.gz",
+          "byteLength": 2026,
+          "precipPixels": 5455,
+          "minDbz": 5,
+          "maxDbz": 11.6,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -88.59375,
+            "maxLat": 30.44867,
+            "maxLon": -88.24219
+          }
+        },
+        {
+          "x": 261,
+          "y": 421,
+          "path": "chunks/z10/261/421.ncrd.gz",
+          "byteLength": 8736,
+          "precipPixels": 42262,
+          "minDbz": 5,
+          "maxDbz": 34.3,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -88.24219,
+            "maxLat": 30.44867,
+            "maxLon": -87.89062
+          }
+        },
+        {
+          "x": 262,
+          "y": 421,
+          "path": "chunks/z10/262/421.ncrd.gz",
+          "byteLength": 11405,
+          "precipPixels": 58897,
+          "minDbz": 5,
+          "maxDbz": 38.1,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -87.89062,
+            "maxLat": 30.44867,
+            "maxLon": -87.53906
+          }
+        },
+        {
+          "x": 263,
+          "y": 421,
+          "path": "chunks/z10/263/421.ncrd.gz",
+          "byteLength": 11352,
+          "precipPixels": 63740,
+          "minDbz": 5,
+          "maxDbz": 30.3,
+          "bounds": {
+            "minLat": 30.14513,
+            "minLon": -87.53906,
+            "maxLat": 30.44867,
+            "maxLon": -87.1875
+          }
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "candidateChunks": 22,
+    "chunkCount": 22,
+    "precipPixels": 1166228,
+    "bytes": 280104,
+    "minDbz": 5,
+    "maxDbz": 94.8,
+    "elapsedMs": 137
+  }
+}

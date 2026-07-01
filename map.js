@@ -9,6 +9,9 @@ const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
+const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
+const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
+const MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT = 128;
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
@@ -133,6 +136,7 @@ window.nearcastMapDiagnostics = function nearcastMapDiagnostics() {
 };
 
 window.nearcastRadarDiagnostics = radarDiagnosticsSnapshot;
+window.nearcastRadarChunkDiagnostics = radarChunkDiagnosticsSnapshot;
 window.nearcastRadarCapability = (options = {}) => resolveRadarViewportCapability(options);
 window.nearcastRequestRadarGeneration = (options = {}) => requestRadarViewportGeneration(options);
 window.nearcastUseRadarPreviewIndex = (enabled = true) => setGeneratedMrmsIndexUrlOverride(enabled ? "preview" : "");
@@ -154,6 +158,31 @@ function radarDiagnosticsSnapshot() {
     capability: mapState.radarCapability || null,
     capabilityHistory: [...(mapState.radarCapabilityLog || [])],
     context: safeGeneratedSelectionContext()
+  };
+}
+
+function radarChunkDiagnosticsSnapshot() {
+  const layer = mapLibreCurrentRecord()?.radarChunkLayerState;
+  if (!layer) {
+    return {
+      enabled: Boolean(radarChunkIndexUrl()),
+      indexUrl: radarChunkIndexUrl() || "",
+      state: "inactive"
+    };
+  }
+  return {
+    enabled: true,
+    indexUrl: layer.indexUrl || "",
+    state: layer.status || "idle",
+    error: layer.error || "",
+    levels: (layer.index?.levels || []).map((level) => ({
+      zoom: level.zoom,
+      chunkCount: Array.isArray(level.chunks) ? level.chunks.length : 0,
+      bytes: level.bytes || 0
+    })),
+    loadedChunks: layer.chunks?.length || 0,
+    activeZoom: layer.activeZoom ?? null,
+    renderedChunks: layer.renderedChunks || 0
   };
 }
 
@@ -712,7 +741,9 @@ function syncMapLibreStateAndOverlays(map, options = {}) {
 function renderMapLibreOverlays(options = {}) {
   const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
   syncMapZoomDebugReadout();
-  syncMapLibreBaseLayerVisibility(mapLibreCurrentRecord());
+  const record = mapLibreCurrentRecord();
+  syncMapLibreBaseLayerVisibility(record);
+  syncMapLibreRadarChunkLayer(record);
   if (shouldRenderRadar) {
     renderMapLibreWeather(mapState.frameIndex);
     renderMapLibreMarkers();
@@ -721,7 +752,7 @@ function renderMapLibreOverlays(options = {}) {
   } else {
     mapLibreInteraction.needsRadarRender = true;
   }
-  syncMapLibreDiagnosticReadout(mapLibreCurrentRecord());
+  syncMapLibreDiagnosticReadout(record);
 }
 
 function syncMapLibreBaseLayerVisibility(record) {
@@ -1149,6 +1180,379 @@ function mapLibreSourceBounds(bounds) {
 
 function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
+}
+
+function radarChunkIndexUrl() {
+  const value = radarChunkIndexFlag();
+  if (!value) return "";
+  const normalized = value.trim();
+  if (!normalized || ["0", "false", "off", "none"].includes(normalized.toLowerCase())) return "";
+  if (["1", "true", "synthetic", "smoke", "test"].includes(normalized.toLowerCase())) {
+    return MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL;
+  }
+  return normalized;
+}
+
+function radarChunkIndexFlag() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return params.get("radarChunkIndex") || params.get("radarChunks") || params.get("radarchunks") || "";
+  } catch {
+    return "";
+  }
+}
+
+function syncMapLibreRadarChunkLayer(record = mapLibreCurrentRecord()) {
+  const map = record?.map;
+  if (!map || !map.isStyleLoaded?.()) return;
+  const indexUrl = radarChunkIndexUrl();
+  if (!indexUrl) {
+    removeMapLibreRadarChunkLayer(record);
+    return;
+  }
+
+  const existing = record.radarChunkLayerState;
+  if (existing?.indexUrl === indexUrl && map.getLayer(MAPLIBRE_RADAR_CHUNK_LAYER_ID)) return;
+  removeMapLibreRadarChunkLayer(record);
+  const layer = createMapLibreRadarChunkLayer(indexUrl);
+  map.addLayer(layer, mapLibreWeatherBeforeLayer(map));
+  record.radarChunkLayerState = layer._nearcastState;
+}
+
+function removeMapLibreRadarChunkLayer(record) {
+  const map = record?.map;
+  if (!map) return;
+  if (map.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)) map.removeLayer(MAPLIBRE_RADAR_CHUNK_LAYER_ID);
+  record.radarChunkLayerState = null;
+}
+
+function createMapLibreRadarChunkLayer(indexUrl) {
+  const state = {
+    indexUrl,
+    map: null,
+    status: "idle",
+    error: "",
+    index: null,
+    chunks: [],
+    program: null,
+    buffers: null,
+    uniforms: null,
+    attributes: null,
+    texturesCreated: 0,
+    activeZoom: null,
+    renderedChunks: 0,
+    removed: false
+  };
+
+  return {
+    id: MAPLIBRE_RADAR_CHUNK_LAYER_ID,
+    type: "custom",
+    renderingMode: "2d",
+    _nearcastState: state,
+    onAdd(map, gl) {
+      state.map = map;
+      initRadarChunkGl(state, gl);
+      loadRadarChunkIndex(state).then(() => {
+        if (!state.removed) state.map?.triggerRepaint?.();
+      });
+    },
+    render(glOrArgs, matrixMaybe) {
+      const gl = glOrArgs?.gl || glOrArgs;
+      const matrix = radarChunkRenderMatrix(glOrArgs, matrixMaybe);
+      renderRadarChunkLayer(state, gl, matrix);
+    },
+    onRemove(map, gl) {
+      state.removed = true;
+      destroyRadarChunkGl(state, gl);
+      state.map = null;
+    }
+  };
+}
+
+function radarChunkRenderMatrix(glOrArgs, matrixMaybe) {
+  if (glOrArgs?.modelViewProjectionMatrix) return glOrArgs.modelViewProjectionMatrix;
+  if (matrixMaybe?.modelViewProjectionMatrix) return matrixMaybe.modelViewProjectionMatrix;
+  if (matrixMaybe?.defaultProjectionData?.mainMatrix) return matrixMaybe.defaultProjectionData.mainMatrix;
+  return matrixMaybe;
+}
+
+function initRadarChunkGl(state, gl) {
+  const vertexSource = `
+    attribute vec2 a_pos;
+    attribute vec2 a_tex;
+    uniform mat4 u_matrix;
+    varying vec2 v_tex;
+    void main() {
+      gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
+      v_tex = a_tex;
+    }
+  `;
+  const fragmentSource = `
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform float u_dbz_min;
+    uniform float u_dbz_max;
+    uniform float u_threshold;
+    uniform float u_opacity;
+    varying vec2 v_tex;
+
+    vec4 radarColor(float dbz) {
+      if (dbz <= 10.0) return vec4(66.0 / 255.0, 174.0 / 255.0, 214.0 / 255.0, 202.0 / 255.0);
+      if (dbz <= 18.0) return vec4(62.0 / 255.0, 204.0 / 255.0, 105.0 / 255.0, 226.0 / 255.0);
+      if (dbz <= 28.0) return vec4(20.0 / 255.0, 154.0 / 255.0, 74.0 / 255.0, 246.0 / 255.0);
+      if (dbz <= 36.0) return vec4(238.0 / 255.0, 188.0 / 255.0, 42.0 / 255.0, 255.0 / 255.0);
+      if (dbz <= 45.0) return vec4(230.0 / 255.0, 111.0 / 255.0, 36.0 / 255.0, 255.0 / 255.0);
+      if (dbz <= 56.0) return vec4(214.0 / 255.0, 55.0 / 255.0, 43.0 / 255.0, 255.0 / 255.0);
+      if (dbz <= 68.0) return vec4(154.0 / 255.0, 64.0 / 255.0, 188.0 / 255.0, 255.0 / 255.0);
+      return vec4(238.0 / 255.0, 220.0 / 255.0, 244.0 / 255.0, 255.0 / 255.0);
+    }
+
+    void main() {
+      float encoded = texture2D(u_texture, v_tex).r * 255.0;
+      if (encoded < 0.5) discard;
+      float dbz = u_dbz_min + ((encoded - 1.0) / 254.0) * (u_dbz_max - u_dbz_min);
+      if (dbz < u_threshold) discard;
+      vec4 color = radarColor(dbz);
+      gl_FragColor = vec4(color.rgb, color.a * u_opacity);
+    }
+  `;
+
+  const vertexShader = compileRadarChunkShader(gl, gl.VERTEX_SHADER, vertexSource);
+  const fragmentShader = compileRadarChunkShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  gl.deleteShader(vertexShader);
+  gl.deleteShader(fragmentShader);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const message = gl.getProgramInfoLog(program) || "radar chunk shader link failed";
+    gl.deleteProgram(program);
+    throw new Error(message);
+  }
+
+  state.program = program;
+  state.buffers = {
+    vertices: gl.createBuffer()
+  };
+  state.attributes = {
+    pos: gl.getAttribLocation(program, "a_pos"),
+    tex: gl.getAttribLocation(program, "a_tex")
+  };
+  state.uniforms = {
+    matrix: gl.getUniformLocation(program, "u_matrix"),
+    texture: gl.getUniformLocation(program, "u_texture"),
+    dbzMin: gl.getUniformLocation(program, "u_dbz_min"),
+    dbzMax: gl.getUniformLocation(program, "u_dbz_max"),
+    threshold: gl.getUniformLocation(program, "u_threshold"),
+    opacity: gl.getUniformLocation(program, "u_opacity")
+  };
+}
+
+function compileRadarChunkShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const message = gl.getShaderInfoLog(shader) || "radar chunk shader compile failed";
+    gl.deleteShader(shader);
+    throw new Error(message);
+  }
+  return shader;
+}
+
+async function loadRadarChunkIndex(state) {
+  state.status = "loading";
+  state.error = "";
+  try {
+    const response = await fetch(state.indexUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`chunk index failed: ${response.status}`);
+    const index = await response.json();
+    const chunks = await loadRadarChunkPayloads(index, state.indexUrl);
+    if (state.removed) return;
+    state.index = index;
+    state.chunks = chunks;
+    state.status = chunks.length ? "ready" : "empty";
+  } catch (error) {
+    state.status = "error";
+    state.error = error?.message || "chunk radar failed";
+    recordRadarSourceDecision("radar.chunk-layer-unavailable", {
+      indexUrl: state.indexUrl,
+      reason: state.error
+    });
+  }
+}
+
+async function loadRadarChunkPayloads(index, indexUrl) {
+  const levels = Array.isArray(index?.levels) ? index.levels : [];
+  const tasks = [];
+  for (const level of levels) {
+    const chunks = Array.isArray(level.chunks) ? level.chunks : [];
+    for (const chunk of chunks) {
+      if (tasks.length >= MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT) break;
+      tasks.push(loadRadarChunkPayload(index, level, chunk, indexUrl));
+    }
+  }
+  const results = await Promise.allSettled(tasks);
+  return results
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value);
+}
+
+async function loadRadarChunkPayload(index, level, chunk, indexUrl) {
+  const url = new URL(chunk.path || "", new URL(indexUrl, window.location.href)).href;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`chunk failed: ${response.status}`);
+  const raw = await response.arrayBuffer();
+  const decoded = await decodeRadarChunkBinary(raw);
+  const bounds = decoded.meta.bounds || chunk.bounds || level.bounds;
+  const vertices = radarChunkVertices(bounds);
+  return {
+    levelZoom: Number(level.zoom),
+    x: Number(chunk.x ?? decoded.meta.x),
+    y: Number(chunk.y ?? decoded.meta.y),
+    bounds,
+    vertices,
+    width: Number(decoded.meta.width || level.chunkSize || index?.canonical?.chunkSize || 256),
+    height: Number(decoded.meta.height || level.chunkSize || index?.canonical?.chunkSize || 256),
+    payload: decoded.payload,
+    valueEncoding: decoded.meta.valueEncoding || index.valueEncoding || {},
+    texture: null
+  };
+}
+
+async function decodeRadarChunkBinary(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const inflated = bytes[0] === 0x1f && bytes[1] === 0x8b
+    ? new Uint8Array(await gunzipRadarChunkBuffer(buffer))
+    : bytes;
+  const view = new DataView(inflated.buffer, inflated.byteOffset, inflated.byteLength);
+  const magic = String.fromCharCode(inflated[0], inflated[1], inflated[2], inflated[3]);
+  if (magic !== "NCRD") throw new Error("unsupported radar chunk magic");
+  const headerLength = view.getUint16(6);
+  const payloadLength = view.getUint32(8);
+  const headerStart = 12;
+  const payloadStart = headerStart + headerLength;
+  const meta = JSON.parse(new TextDecoder().decode(inflated.slice(headerStart, payloadStart)).trim());
+  const payload = inflated.slice(payloadStart, payloadStart + payloadLength);
+  if (payload.length !== payloadLength) throw new Error("truncated radar chunk payload");
+  return { meta, payload };
+}
+
+async function gunzipRadarChunkBuffer(buffer) {
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("browser lacks gzip chunk decompression");
+  }
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).arrayBuffer();
+}
+
+function radarChunkVertices(bounds) {
+  const source = mapLibreSourceBounds(bounds);
+  if (!source || !window.maplibregl?.MercatorCoordinate) return null;
+  const [minLon, minLat, maxLon, maxLat] = source;
+  const nw = maplibregl.MercatorCoordinate.fromLngLat({ lng: minLon, lat: maxLat });
+  const ne = maplibregl.MercatorCoordinate.fromLngLat({ lng: maxLon, lat: maxLat });
+  const sw = maplibregl.MercatorCoordinate.fromLngLat({ lng: minLon, lat: minLat });
+  const se = maplibregl.MercatorCoordinate.fromLngLat({ lng: maxLon, lat: minLat });
+  return new Float32Array([
+    nw.x, nw.y, 0, 0,
+    ne.x, ne.y, 1, 0,
+    sw.x, sw.y, 0, 1,
+    se.x, se.y, 1, 1
+  ]);
+}
+
+function renderRadarChunkLayer(state, gl, matrix) {
+  if (!gl || !matrix || !state?.program || state.status !== "ready") return;
+  const activeZoom = radarChunkActiveZoom(state);
+  const chunks = state.chunks.filter((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds));
+  state.activeZoom = activeZoom;
+  state.renderedChunks = chunks.length;
+  if (!chunks.length) return;
+
+  gl.useProgram(state.program);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.vertices);
+  gl.enableVertexAttribArray(state.attributes.pos);
+  gl.enableVertexAttribArray(state.attributes.tex);
+  gl.vertexAttribPointer(state.attributes.pos, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(state.attributes.tex, 2, gl.FLOAT, false, 16, 8);
+  gl.uniformMatrix4fv(state.uniforms.matrix, false, matrix);
+  gl.uniform1i(state.uniforms.texture, 0);
+  gl.uniform1f(state.uniforms.opacity, 0.94);
+
+  for (const chunk of chunks) {
+    if (!chunk.vertices) continue;
+    const texture = ensureRadarChunkTexture(state, gl, chunk);
+    if (!texture) continue;
+    const encoding = chunk.valueEncoding || {};
+    const dbzMin = Number.isFinite(Number(encoding.dbzMin)) ? Number(encoding.dbzMin) : 0;
+    const dbzMax = Number.isFinite(Number(encoding.dbzMax)) && Number(encoding.dbzMax) > dbzMin ? Number(encoding.dbzMax) : 80;
+    const threshold = Number.isFinite(Number(encoding.threshold)) ? Number(encoding.threshold) : 5;
+    gl.uniform1f(state.uniforms.dbzMin, dbzMin);
+    gl.uniform1f(state.uniforms.dbzMax, dbzMax);
+    gl.uniform1f(state.uniforms.threshold, threshold);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bufferData(gl.ARRAY_BUFFER, chunk.vertices, gl.STREAM_DRAW);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+}
+
+function radarChunkActiveZoom(state) {
+  const zoom = Number(state.map?.getZoom?.());
+  const levels = [...new Set((state.chunks || []).map((chunk) => chunk.levelZoom).filter(Number.isFinite))].sort((a, b) => a - b);
+  if (!levels.length) return null;
+  if (!Number.isFinite(zoom)) return levels[levels.length - 1];
+  return levels.reduce((best, level) => (level <= zoom ? level : best), levels[0]);
+}
+
+function radarChunkIntersectsViewport(map, bounds) {
+  if (!map?.getBounds || !bounds) return true;
+  const source = mapLibreSourceBounds(bounds);
+  if (!source) return true;
+  const viewport = map.getBounds();
+  const west = viewport.getWest();
+  const east = viewport.getEast();
+  const south = viewport.getSouth();
+  const north = viewport.getNorth();
+  return source[2] >= west && source[0] <= east && source[3] >= south && source[1] <= north;
+}
+
+function ensureRadarChunkTexture(state, gl, chunk) {
+  if (chunk.texture) return chunk.texture;
+  const texture = gl.createTexture();
+  const isWebGl2 = typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext;
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  if (isWebGl2) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, chunk.width, chunk.height, 0, gl.RED, gl.UNSIGNED_BYTE, chunk.payload);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, chunk.width, chunk.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, chunk.payload);
+  }
+  chunk.texture = texture;
+  state.texturesCreated += 1;
+  return texture;
+}
+
+function destroyRadarChunkGl(state, gl) {
+  if (!gl || !state) return;
+  (state.chunks || []).forEach((chunk) => {
+    if (chunk.texture) gl.deleteTexture(chunk.texture);
+    chunk.texture = null;
+  });
+  if (state.buffers?.vertices) gl.deleteBuffer(state.buffers.vertices);
+  if (state.program) gl.deleteProgram(state.program);
+  state.buffers = null;
+  state.program = null;
 }
 
 function mapLibreWeatherLayerPaint(opacity, sourceZoom = MAP_MAX_ZOOM, options = {}) {
@@ -1743,6 +2147,7 @@ function mapLibreDiagnosticStats(record) {
     sources: Object.keys(style?.sources || {}).length,
     zoom: Number(mapState.zoom?.toFixed ? mapState.zoom.toFixed(2) : mapState.zoom),
     immersive: Boolean(mapState.immersive),
+    radarChunks: radarChunkDiagnosticsSnapshot(),
     radarQuality: radarQualityDiagnosticStats(record),
     lastError: record?.lastError || ""
   };
@@ -1793,16 +2198,28 @@ function syncMapLibreDiagnosticReadout(record) {
   const radarRoute = radarRouteDiagnosticLine(stats.radarQuality);
   const radarFreshness = radarFreshnessDiagnosticLine(stats.radarQuality);
   const radarCost = radarCostDiagnosticLine(stats.radarQuality);
+  const radarChunks = radarChunkDiagnosticLine(stats.radarChunks);
   nextReadout.innerHTML = `
     <strong>${escapeHtml(mapDiagnosticModeLabel())}</strong>
     <span>${escapeHtml(uiFps)} fps · ${escapeHtml(glFps)} fps · moves ${stats.movesPerSecond}/s</span>
     <span>radar ${stats.visibleWeatherEntries}/${stats.weatherEntries} · places ${stats.markers} · z${escapeHtml(String(stats.zoom))} · ${escapeHtml(radarSourceZoomLabel())}</span>
+    ${radarChunks ? `<span>${escapeHtml(radarChunks)}</span>` : ""}
     ${radarQuality ? `<span>${escapeHtml(radarQuality)}</span>` : ""}
     ${radarRoute ? `<span>${escapeHtml(radarRoute)}</span>` : ""}
     ${radarFreshness ? `<span>${escapeHtml(radarFreshness)}</span>` : ""}
     ${radarCost ? `<span>${escapeHtml(radarCost)}</span>` : ""}
     <span>layers ${stats.layers} · sources ${stats.sources} · ${escapeHtml(loaded)}</span>
   `;
+}
+
+function radarChunkDiagnosticLine(chunks) {
+  if (!chunks?.enabled) return "";
+  const levels = (chunks.levels || []).map((level) => `z${level.zoom}:${level.chunkCount}`).join(" ");
+  const rendered = Number.isFinite(Number(chunks.renderedChunks)) ? chunks.renderedChunks : "--";
+  const loaded = Number.isFinite(Number(chunks.loadedChunks)) ? chunks.loadedChunks : "--";
+  const active = chunks.activeZoom == null ? "--" : `z${chunks.activeZoom}`;
+  const reason = chunks.error ? ` · ${chunks.error}` : "";
+  return `chunks ${chunks.state || "idle"} · ${active} · ${rendered}/${loaded}${levels ? ` · ${levels}` : ""}${reason}`;
 }
 
 function syncMapZoomDebugReadout() {
@@ -2339,6 +2756,7 @@ function ensureMapLibreMap() {
     weatherEntrySeq: 0,
     weatherRenderSeq: 0,
     liveWeatherKeys: new Set(),
+    radarChunkLayerState: null,
     markerEntries: new Map(),
     diagnosticRaf: 0,
     diagnosticGlFps: 0,
@@ -2472,6 +2890,7 @@ function destroyMapLibreRecord(container) {
   if (!record) return;
   if (record.fallbackTimer) clearTimeout(record.fallbackTimer);
   stopMapLibreDiagnosticRaf(record);
+  removeMapLibreRadarChunkLayer(record);
   clearMapLibreWeatherRecord(record);
   clearMapLibreMarkers(record);
   container.querySelector(":scope > .map-diagnostic-readout")?.remove();

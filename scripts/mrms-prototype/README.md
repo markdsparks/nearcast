@@ -298,6 +298,16 @@ The script writes a small `index.json` plus gzip-compressed binary chunks at
 not colored PNGs. `0` means no visible precip/no data; `1..255` maps across the
 configured dBZ range. Empty chunks are skipped unless `--write-empty` is set.
 
+The checked-in synthetic fixture can be tested in the app with:
+
+```text
+?map=gl&radarChunks=synthetic&mapPerf=current
+```
+
+Search for Bay Minette, Alabama, then zoom from z8 through z16. The chunk layer
+is drawn by a MapLibre custom WebGL layer under labels. It does not alter the
+normal radar provider path and should not appear unless the query flag is set.
+
 This is the bridge toward the target custom WebGL radar layer described in
 `docs/radar-coverage-engine-spike.md`.
 

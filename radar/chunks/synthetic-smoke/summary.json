@@ -1,0 +1,43 @@
+{
+  "provider": "nearcast-radar-coverage-chunk-encode",
+  "version": 1,
+  "generatedAt": "2026-07-01T04:21:06.469Z",
+  "synthetic": true,
+  "outDir": "radar/chunks/synthetic-smoke",
+  "indexOut": "radar/chunks/synthetic-smoke/index.json",
+  "product": "SyntheticReflectivity_00.50",
+  "bounds": {
+    "minLat": 30.35,
+    "minLon": -88.3,
+    "maxLat": 31.25,
+    "maxLon": -87.2
+  },
+  "baseZoom": 10,
+  "levels": [
+    8,
+    9,
+    10
+  ],
+  "chunkSize": 256,
+  "threshold": 5,
+  "pool": "max",
+  "sampleSmooth": 0,
+  "stats": {
+    "validCells": 101520,
+    "precipCells": 98436,
+    "precipPercent": 96.962,
+    "minDbz": 0,
+    "maxDbz": 94.8,
+    "maxLat": 30.7483,
+    "maxLon": -87.6256
+  },
+  "metrics": {
+    "candidateChunks": 22,
+    "chunkCount": 22,
+    "precipPixels": 1166228,
+    "bytes": 280104,
+    "minDbz": 5,
+    "maxDbz": 94.8,
+    "elapsedMs": 137
+  }
+}
