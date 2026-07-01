@@ -22,8 +22,6 @@ const SKY_CFG = {
 };
 
 const SKY_SCENE_VERSION = "sky-v8";
-let skyInteractionPauseTimer = null;
-let skyMotionGuardsInstalled = false;
 
 function skyMotionProfile(condition, skyState = state.skyState) {
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -74,29 +72,7 @@ function skyMotionProfile(condition, skyState = state.skyState) {
 
 function applySkyMotionProfile(profile) {
   document.documentElement.dataset.skyMotion = profile?.level || "full";
-}
-
-function setSkyInteractionMotionPaused(paused) {
-  document.documentElement.classList.toggle("sky-motion-paused-for-interaction", Boolean(paused));
-}
-
-function markSkyInteractionMotionPause() {
-  if (document.visibilityState === "hidden") return;
-  setSkyInteractionMotionPaused(true);
-  clearTimeout(skyInteractionPauseTimer);
-  skyInteractionPauseTimer = setTimeout(() => setSkyInteractionMotionPaused(false), 900);
-}
-
-function installSkyMotionGuards() {
-  if (skyMotionGuardsInstalled) return;
-  skyMotionGuardsInstalled = true;
-  ["touchstart", "touchmove", "wheel", "pointerdown"].forEach((eventName) => {
-    window.addEventListener(eventName, markSkyInteractionMotionPause, { passive: true, capture: true });
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") setSkyInteractionMotionPaused(true);
-    else markSkyInteractionMotionPause();
-  });
+  document.documentElement.classList.remove("sky-motion-paused-for-interaction");
 }
 
 function skySceneSeed(condition, isDay) {
@@ -677,7 +653,6 @@ function applySkyAtmosphereTokens(skyState) {
 function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondition = null) {
   const el = document.getElementById("skyCanvas");
   if (!el) return;
-  installSkyMotionGuards();
 
   state.skyCode = weatherCode;
   state.skyData = data || null;

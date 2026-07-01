@@ -818,23 +818,14 @@ html[data-sky] body {
 }
 
 :root.sky-motion-paused-for-map .sky-star-field,
-:root.sky-motion-paused-for-interaction .sky-star-field,
 :root.sky-motion-paused-for-map .sky-sun-rays,
-:root.sky-motion-paused-for-interaction .sky-sun-rays,
 :root.sky-motion-paused-for-map .sky-shoot,
-:root.sky-motion-paused-for-interaction .sky-shoot,
 :root.sky-motion-paused-for-map .sky-moon-glow,
-:root.sky-motion-paused-for-interaction .sky-moon-glow,
 :root.sky-motion-paused-for-map .sky-cloud,
-:root.sky-motion-paused-for-interaction .sky-cloud,
 :root.sky-motion-paused-for-map .sky-rain-sheet,
-:root.sky-motion-paused-for-interaction .sky-rain-sheet,
 :root.sky-motion-paused-for-map .sky-rain-layer,
-:root.sky-motion-paused-for-interaction .sky-rain-layer,
 :root.sky-motion-paused-for-map .sky-snow-layer,
-:root.sky-motion-paused-for-interaction .sky-snow-layer,
-:root.sky-motion-paused-for-map .sky-lightning,
-:root.sky-motion-paused-for-interaction .sky-lightning {
+:root.sky-motion-paused-for-map .sky-lightning {
   animation: none !important;
   will-change: auto !important;
 }
