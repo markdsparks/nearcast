@@ -316,8 +316,14 @@ tested with:
 ```
 
 Search for Thedford, Nebraska or Valentine, Nebraska. The fixture covers
-`41.55,-102.4,43.35,-98.9` and publishes z8/z9/z10 numeric chunks from
+`41.55,-102.4,43.35,-98.9` and publishes z8/z9/z10/z11/z12 numeric chunks from
 `MergedReflectivityQCComposite_00.50`.
+
+The previous z8/z9/z10-only fixture is still available for visual comparison:
+
+```text
+?map=gl&radarChunks=nebraska-z10&mapPerf=current
+```
 
 This is the bridge toward the target custom WebGL radar layer described in
 `docs/radar-coverage-engine-spike.md`.

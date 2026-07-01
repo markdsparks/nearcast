@@ -15,11 +15,14 @@ const MAPLIBRE_RADAR_CHUNK_INDEX_URLS = {
   synthetic: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
   smoke: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
   test: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
-  nebraska: "radar/chunks/nebraska-20260701-055640/index.json",
-  "nebraska-live": "radar/chunks/nebraska-20260701-055640/index.json",
-  "real-nebraska": "radar/chunks/nebraska-20260701-055640/index.json"
+  nebraska: "radar/chunks/nebraska-20260701-055640-z12/index.json",
+  "nebraska-live": "radar/chunks/nebraska-20260701-055640-z12/index.json",
+  "real-nebraska": "radar/chunks/nebraska-20260701-055640-z12/index.json",
+  "nebraska-z12": "radar/chunks/nebraska-20260701-055640-z12/index.json",
+  "nebraska-z10": "radar/chunks/nebraska-20260701-055640/index.json"
 };
-const MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT = 128;
+const MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT = 96;
+const MAPLIBRE_RADAR_CHUNK_LOADED_LIMIT = 384;
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
@@ -169,8 +172,8 @@ function radarDiagnosticsSnapshot() {
   };
 }
 
-function radarChunkDiagnosticsSnapshot() {
-  const layer = mapLibreCurrentRecord()?.radarChunkLayerState;
+function radarChunkDiagnosticsSnapshot(record = mapLibreCurrentRecord()) {
+  const layer = record?.radarChunkLayerState;
   if (!layer) {
     return {
       enabled: Boolean(radarChunkIndexUrl()),
@@ -189,6 +192,8 @@ function radarChunkDiagnosticsSnapshot() {
       bytes: level.bytes || 0
     })),
     loadedChunks: layer.chunks?.length || 0,
+    availableChunks: layer.chunkMetas?.length || 0,
+    loadingChunks: layer.loadingChunkKeys?.size || 0,
     activeZoom: layer.activeZoom ?? null,
     renderedChunks: layer.renderedChunks || 0,
     drawnChunks: layer.drawnChunks || 0,
@@ -1263,9 +1268,10 @@ function removeMapLibreRadarChunkLayer(record) {
 
 function mapLibreRadarChunkReady(record = mapLibreCurrentRecord()) {
   const state = record?.radarChunkLayerState;
+  const activeZoom = state?.activeZoom ?? radarChunkActiveZoom(state);
   return Boolean(
     state?.status === "ready"
-    && (state.chunks?.length || 0) > 0
+    && (state.chunks || []).some((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds))
     && record?.map?.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
   );
 }
@@ -1292,7 +1298,11 @@ function createMapLibreRadarChunkLayer(indexUrl) {
     status: "idle",
     error: "",
     index: null,
+    chunkMetas: [],
     chunks: [],
+    loadedChunkKeys: new Set(),
+    loadingChunkKeys: new Set(),
+    chunkLoadSeq: 0,
     program: null,
     buffers: null,
     uniforms: null,
@@ -1432,11 +1442,14 @@ async function loadRadarChunkIndex(state) {
     const response = await fetch(state.indexUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`chunk index failed: ${response.status}`);
     const index = await response.json();
-    const chunks = await loadRadarChunkPayloads(index, state.indexUrl);
     if (state.removed) return;
     state.index = index;
-    state.chunks = chunks;
-    state.status = chunks.length ? "ready" : "empty";
+    state.chunkMetas = radarChunkMetasFromIndex(index);
+    state.chunks = [];
+    state.loadedChunkKeys = new Set();
+    state.loadingChunkKeys = new Set();
+    state.status = state.chunkMetas.length ? "loading" : "empty";
+    state.map?.triggerRepaint?.();
     syncMapLibreRadarChunkFallbackVisibility(state.record);
   } catch (error) {
     state.status = "error";
@@ -1447,6 +1460,31 @@ async function loadRadarChunkIndex(state) {
       reason: state.error
     });
   }
+}
+
+function radarChunkMetasFromIndex(index) {
+  const levels = Array.isArray(index?.levels) ? index.levels : [];
+  const metas = [];
+  for (const level of levels) {
+    const levelZoom = Number(level.zoom);
+    const chunks = Array.isArray(level.chunks) ? level.chunks : [];
+    for (const chunk of chunks) {
+      metas.push({
+        level,
+        chunk,
+        levelZoom,
+        x: Number(chunk.x),
+        y: Number(chunk.y),
+        bounds: chunk.bounds || level.bounds,
+        key: radarChunkKey(levelZoom, chunk.x, chunk.y)
+      });
+    }
+  }
+  return metas.filter((meta) => Number.isFinite(meta.levelZoom) && Number.isFinite(meta.x) && Number.isFinite(meta.y));
+}
+
+function radarChunkKey(levelZoom, x, y) {
+  return `${levelZoom}/${x}/${y}`;
 }
 
 async function loadRadarChunkPayloads(index, indexUrl) {
@@ -1530,14 +1568,17 @@ function radarChunkVertices(bounds) {
 }
 
 function renderRadarChunkLayer(state, gl, matrix) {
-  if (!gl || !matrix || !state?.program || state.status !== "ready") return;
+  if (!gl || !matrix || !state?.program || !["loading", "ready"].includes(state.status)) return;
   const activeZoom = radarChunkActiveZoom(state);
+  scheduleRadarChunkViewportLoads(state, activeZoom);
   const chunks = state.chunks.filter((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds));
   state.activeZoom = activeZoom;
   state.renderedChunks = chunks.length;
   state.drawnChunks = 0;
   state.renderCalls += 1;
+  syncMapLibreRadarChunkFallbackVisibility(state.record);
   if (!chunks.length) return;
+  pruneRadarChunkCache(state, gl, new Set(chunks.map((chunk) => chunk._nearcastChunkKey).filter(Boolean)));
 
   state.glError = "";
   gl.useProgram(state.program);
@@ -1576,6 +1617,7 @@ function renderRadarChunkLayer(state, gl, matrix) {
     gl.bufferData(gl.ARRAY_BUFFER, chunk.vertices, gl.STREAM_DRAW);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     state.drawnChunks += 1;
+    chunk.lastDrawSeq = state.renderCalls;
     const error = gl.getError?.();
     if (error) {
       state.glError = `gl ${error}`;
@@ -1585,11 +1627,68 @@ function renderRadarChunkLayer(state, gl, matrix) {
 }
 
 function radarChunkActiveZoom(state) {
-  const zoom = Number(state.map?.getZoom?.());
-  const levels = [...new Set((state.chunks || []).map((chunk) => chunk.levelZoom).filter(Number.isFinite))].sort((a, b) => a - b);
+  const mapZoom = Number(state.map?.getZoom?.());
+  const appZoom = Number(mapState.zoom);
+  const zoom = Number.isFinite(mapZoom)
+    ? (Number.isFinite(appZoom) ? Math.max(mapZoom, appZoom) : mapZoom)
+    : appZoom;
+  const source = state.chunkMetas?.length ? state.chunkMetas : state.chunks;
+  const levels = [...new Set((source || []).map((chunk) => chunk.levelZoom).filter(Number.isFinite))].sort((a, b) => a - b);
   if (!levels.length) return null;
   if (!Number.isFinite(zoom)) return levels[levels.length - 1];
-  return levels.reduce((best, level) => (level <= zoom ? level : best), levels[0]);
+  return levels.reduce((best, level) => {
+    const bestDelta = Math.abs(best - zoom);
+    const levelDelta = Math.abs(level - zoom);
+    return levelDelta <= bestDelta ? level : best;
+  }, levels[0]);
+}
+
+function scheduleRadarChunkViewportLoads(state, activeZoom) {
+  if (!state?.index || !state.chunkMetas?.length || activeZoom == null || state.removed) return;
+  const candidates = state.chunkMetas
+    .filter((meta) => meta.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, meta.bounds))
+    .filter((meta) => !state.loadedChunkKeys.has(meta.key) && !state.loadingChunkKeys.has(meta.key))
+    .slice(0, MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT);
+  if (!candidates.length) return;
+
+  candidates.forEach((meta) => {
+    state.loadingChunkKeys.add(meta.key);
+    loadRadarChunkPayload(state.index, meta.level, meta.chunk, state.indexUrl)
+      .then((chunk) => {
+        state.loadingChunkKeys.delete(meta.key);
+        if (!chunk || state.removed) return;
+        chunk._nearcastChunkKey = meta.key;
+        chunk.loadedAtSeq = ++state.chunkLoadSeq;
+        state.loadedChunkKeys.add(meta.key);
+        state.chunks.push(chunk);
+        state.status = "ready";
+        syncMapLibreRadarChunkFallbackVisibility(state.record);
+        state.map?.triggerRepaint?.();
+      })
+      .catch((error) => {
+        state.loadingChunkKeys.delete(meta.key);
+        state.error = error?.message || "chunk load failed";
+        if (!state.chunks.length) state.status = "loading";
+        syncMapLibreRadarChunkFallbackVisibility(state.record);
+        state.map?.triggerRepaint?.();
+      });
+  });
+}
+
+function pruneRadarChunkCache(state, gl, protectedKeys = new Set()) {
+  if (!state?.chunks || state.chunks.length <= MAPLIBRE_RADAR_CHUNK_LOADED_LIMIT) return;
+  const removable = state.chunks
+    .filter((chunk) => !protectedKeys.has(chunk._nearcastChunkKey))
+    .sort((a, b) => (a.lastDrawSeq || a.loadedAtSeq || 0) - (b.lastDrawSeq || b.loadedAtSeq || 0));
+  while (state.chunks.length > MAPLIBRE_RADAR_CHUNK_LOADED_LIMIT && removable.length) {
+    const chunk = removable.shift();
+    const index = state.chunks.indexOf(chunk);
+    if (index >= 0) state.chunks.splice(index, 1);
+    if (chunk._nearcastChunkKey) state.loadedChunkKeys.delete(chunk._nearcastChunkKey);
+    if (chunk.texture && gl) gl.deleteTexture(chunk.texture);
+    chunk.texture = null;
+    chunk.rgbaPayload = null;
+  }
 }
 
 function radarChunkIntersectsViewport(map, bounds) {
@@ -1785,6 +1884,7 @@ function renderMapLibreWeather(index = mapState.frameIndex) {
   if (maybeSwitchGeneratedRadarToFallback(index, "generated-viewport-out-of-scope")) return;
   const specs = mapLibreWeatherLayerSpecs(index);
   syncMapLibreWeatherSlots(record, specs);
+  syncMapLibreRadarChunkLayer(record);
 }
 
 function syncMapLibreWeatherSlots(record, specs = []) {
@@ -2239,7 +2339,7 @@ function mapLibreDiagnosticStats(record) {
     sources: Object.keys(style?.sources || {}).length,
     zoom: Number(mapState.zoom?.toFixed ? mapState.zoom.toFixed(2) : mapState.zoom),
     immersive: Boolean(mapState.immersive),
-    radarChunks: radarChunkDiagnosticsSnapshot(),
+    radarChunks: radarChunkDiagnosticsSnapshot(record),
     radarQuality: radarQualityDiagnosticStats(record),
     lastError: record?.lastError || ""
   };
@@ -2308,11 +2408,11 @@ function radarChunkDiagnosticLine(chunks) {
   if (!chunks?.enabled) return "";
   const levels = (chunks.levels || []).map((level) => `z${level.zoom}:${level.chunkCount}`).join(" ");
   const rendered = Number.isFinite(Number(chunks.renderedChunks)) ? chunks.renderedChunks : "--";
-  const drawn = Number.isFinite(Number(chunks.drawnChunks)) ? chunks.drawnChunks : "--";
   const loaded = Number.isFinite(Number(chunks.loadedChunks)) ? chunks.loadedChunks : "--";
+  const loading = Number.isFinite(Number(chunks.loadingChunks)) && Number(chunks.loadingChunks) > 0 ? `+${chunks.loadingChunks}` : "";
   const active = chunks.activeZoom == null ? "--" : `z${chunks.activeZoom}`;
   const reason = chunks.error || chunks.glError ? ` · ${chunks.error || chunks.glError}` : "";
-  return `chunks ${chunks.state || "idle"} · ${active} · ${drawn}/${rendered}/${loaded}${levels ? ` · ${levels}` : ""}${reason}`;
+  return `chunks ${chunks.state || "idle"} · ${active} · visible ${rendered} · loaded ${loaded}${loading}${levels ? ` · ${levels}` : ""}${reason}`;
 }
 
 function syncMapZoomDebugReadout() {
@@ -2877,11 +2977,13 @@ function ensureMapLibreMap() {
     record.loaded = true;
     syncMapLibreCamera(record, { force: true });
     renderMapLibreOverlays();
+    syncMapLibreRadarChunkLayer(record);
     markRenderedIfSourcesLoaded();
     requestAnimationFrame(() => {
       if (mapLibreRecords.get(container) !== record) return;
       map.resize();
       renderMapLibreOverlays({ forceRadar: true });
+      syncMapLibreRadarChunkLayer(record);
       map.triggerRepaint?.();
       markRenderedIfSourcesLoaded();
     });
@@ -2889,6 +2991,7 @@ function ensureMapLibreMap() {
   map.on("idle", () => {
     markRenderedIfSourcesLoaded();
     if (mapLibreRecords.get(container) === record && state.mapRenderer === "gl") {
+      syncMapLibreRadarChunkLayer(record);
       renderMapLibreMarkers(record);
     }
   });

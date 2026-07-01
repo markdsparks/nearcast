@@ -1,0 +1,45 @@
+{
+  "provider": "nearcast-radar-coverage-chunk-encode",
+  "version": 1,
+  "generatedAt": "2026-07-01T06:34:45.238Z",
+  "synthetic": false,
+  "outDir": "/tmp/nearcast-nebraska-z12-chunks",
+  "indexOut": "/tmp/nearcast-nebraska-z12-chunks/index.json",
+  "product": "MergedReflectivityQCComposite_00.50",
+  "bounds": {
+    "minLat": 41.55,
+    "minLon": -102.4,
+    "maxLat": 43.35,
+    "maxLon": -98.9
+  },
+  "baseZoom": 12,
+  "levels": [
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "chunkSize": 256,
+  "threshold": 5,
+  "pool": "max",
+  "sampleSmooth": 1.15,
+  "stats": {
+    "validCells": 63000,
+    "precipCells": 50385,
+    "precipPercent": 79.976,
+    "minDbz": -1,
+    "maxDbz": 63.5,
+    "maxLat": 42.845,
+    "maxLon": -99.445
+  },
+  "metrics": {
+    "candidateChunks": 1625,
+    "chunkCount": 1435,
+    "precipPixels": 84051737,
+    "bytes": 6163242,
+    "minDbz": 5,
+    "maxDbz": 60.4,
+    "elapsedMs": 60507
+  }
+}
