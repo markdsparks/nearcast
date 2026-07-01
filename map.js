@@ -53,40 +53,40 @@ const mapLibreInteraction = {
 };
 
 const MAPLIBRE_RADAR_RAMP = [
-  { value: 5, color: [76, 193, 255, 160] },
-  { value: 10, color: [76, 193, 255, 190] },
-  { value: 12, color: [46, 245, 92, 215] },
-  { value: 20, color: [0, 190, 68, 240] },
-  { value: 28, color: [0, 118, 44, 250] },
-  { value: 30, color: [0, 118, 44, 252] },
-  { value: 31, color: [255, 204, 0, 255] },
-  { value: 36, color: [255, 214, 0, 255] },
-  { value: 43, color: [255, 143, 0, 255] },
-  { value: 54, color: [246, 48, 36, 255] },
-  { value: 65, color: [190, 39, 232, 255] },
-  { value: 75, color: [255, 232, 255, 255] }
+  { value: 5, color: [68, 170, 210, 172] },
+  { value: 10, color: [66, 174, 214, 202] },
+  { value: 12, color: [62, 204, 105, 224] },
+  { value: 20, color: [24, 164, 78, 242] },
+  { value: 28, color: [12, 110, 55, 250] },
+  { value: 30, color: [10, 104, 52, 252] },
+  { value: 31, color: [238, 188, 42, 255] },
+  { value: 36, color: [244, 181, 38, 255] },
+  { value: 43, color: [230, 111, 36, 255] },
+  { value: 54, color: [214, 55, 43, 255] },
+  { value: 65, color: [154, 64, 188, 255] },
+  { value: 75, color: [238, 220, 244, 255] }
 ];
 
 const MAPLIBRE_RADAR_STEPPED_RAMP = [
-  { value: 10, color: [76, 193, 255, 190] },
-  { value: 18, color: [43, 245, 91, 220] },
-  { value: 28, color: [0, 181, 64, 245] },
-  { value: 36, color: [255, 204, 0, 255] },
-  { value: 45, color: [255, 143, 0, 255] },
-  { value: 56, color: [246, 48, 36, 255] },
-  { value: 68, color: [190, 39, 232, 255] },
-  { value: 80, color: [255, 232, 255, 255] }
+  { value: 10, color: [66, 174, 214, 202] },
+  { value: 18, color: [62, 204, 105, 226] },
+  { value: 28, color: [20, 154, 74, 246] },
+  { value: 36, color: [238, 188, 42, 255] },
+  { value: 45, color: [230, 111, 36, 255] },
+  { value: 56, color: [214, 55, 43, 255] },
+  { value: 68, color: [154, 64, 188, 255] },
+  { value: 80, color: [238, 220, 244, 255] }
 ];
 
 const MAPLIBRE_RADAR_RESOLVED_RAMP = [
-  { value: 8, color: [76, 193, 255, 198] },
-  { value: 16, color: [43, 245, 91, 225] },
-  { value: 28, color: [0, 181, 64, 248] },
-  { value: 36, color: [255, 204, 0, 255] },
-  { value: 45, color: [255, 143, 0, 255] },
-  { value: 56, color: [246, 48, 36, 255] },
-  { value: 68, color: [190, 39, 232, 255] },
-  { value: 80, color: [246, 228, 255, 255] }
+  { value: 8, color: [66, 174, 214, 204] },
+  { value: 16, color: [62, 204, 105, 228] },
+  { value: 28, color: [20, 154, 74, 248] },
+  { value: 36, color: [238, 188, 42, 255] },
+  { value: 45, color: [230, 111, 36, 255] },
+  { value: 56, color: [214, 55, 43, 255] },
+  { value: 68, color: [154, 64, 188, 255] },
+  { value: 80, color: [238, 220, 244, 255] }
 ];
 
 function mapDiagnosticMode() {
@@ -5456,7 +5456,7 @@ function renderMapLegend() {
       }
     : {
         title: "Radar intensity",
-        colors: ["#4cc1ff", "#2bf55b", "#ffcc00", "#ff8f00", "#f63024"],
+        colors: ["#42aed6", "#3ecc69", "#eebc2a", "#e66f24", "#d6372b"],
         labels: ["Very light", "Light", "Steady", "Heavy", "Severe"]
       };
 
