@@ -4036,6 +4036,27 @@ h2 {
   font-size: 0.86rem;
   font-weight: 760;
   line-height: 1.33;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+.focused-plan-hero .focused-plan-advice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 152, 55, 0.26);
+  border-radius: 8px;
+  background: rgba(201, 152, 55, 0.10);
+  font-weight: 820;
+}
+.focused-plan-hero .focused-plan-advice span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  line-height: 1.1;
+  text-transform: uppercase;
 }
 .focused-plan-hero small {
   color: var(--muted);

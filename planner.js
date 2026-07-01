@@ -3452,11 +3452,15 @@ function planWatchLabel(item) {
   return "Looks good";
 }
 
-function planWatchReason(item) {
+function planWatchFullReason(item) {
   if (!item) return "";
   const reason = capitalize(String(item.primaryReason || item.reasons?.[0] || "weather looks manageable").replace(/[.!?]+$/, ""));
   if (item.tone === "good") return reason;
-  return planWatchCompactText(`${reason}. ${item.advice || ""}`);
+  return `${reason}. ${item.advice || ""}`.trim();
+}
+
+function planWatchReason(item) {
+  return planWatchCompactText(planWatchFullReason(item));
 }
 
 function planWatchBaselineStore() {
@@ -3501,6 +3505,7 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
     event: watchEvent,
     status: "ready",
     label: past ? "Past" : planWatchLabel(item),
+    fullReason: past ? "Kept here until you forget it." : planWatchFullReason(item),
     reason: past ? "Kept here until you forget it." : planWatchReason(item),
     change,
     isPast: past
@@ -3730,14 +3735,21 @@ function renderFocusedPlanWatchHero(item, watch) {
   const id = escapeHtml(memory.id);
   const tone = watch?.tone || "pending";
   const label = watch?.label || "Waiting on forecast";
-  const reason = watch?.change?.body || watch?.reason || "Nearcast is checking this plan against the forecast.";
+  const reason = watch?.change?.body ||
+    watch?.primaryReason ||
+    watch?.reasons?.[0] ||
+    watch?.fullReason ||
+    watch?.reason ||
+    "Nearcast is checking this plan against the forecast.";
+  const advice = watch?.change ? "" : String(watch?.advice || "").trim();
   const effectivePast = Boolean(item.isPast || watch?.isPast);
   return `
     <section class="focused-plan-hero is-${escapeHtml(tone)}">
       <span class="focused-plan-kicker">${effectivePast ? "Saved plan" : "Watched plan"}</span>
       <h3>${escapeHtml(label)}</h3>
       <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
-      <p>${escapeHtml(reason)}</p>
+      <p class="focused-plan-reason">${escapeHtml(reason)}</p>
+      ${advice ? `<p class="focused-plan-advice"><span>What to do</span>${escapeHtml(advice)}</p>` : ""}
       <small>${escapeHtml(planWatchMetaText(memory, watch))}</small>
       ${renderPlanWatchSignals(watch)}
       <div class="focused-plan-actions">
