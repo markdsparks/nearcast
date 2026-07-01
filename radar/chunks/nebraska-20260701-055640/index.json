@@ -1,0 +1,1976 @@
+{
+  "provider": "nearcast-radar-coverage-chunks",
+  "version": 1,
+  "generatedAt": "2026-07-01T06:01:13.942Z",
+  "product": "MergedReflectivityQCComposite_00.50",
+  "region": "CONUS",
+  "source": {
+    "kind": "url-or-latest",
+    "file": null,
+    "url": "https://noaa-mrms-pds.s3.amazonaws.com/CONUS/MergedReflectivityQCComposite_00.50/20260701/MRMS_MergedReflectivityQCComposite_00.50_20260701-055640.grib2.gz",
+    "product": "MergedReflectivityQCComposite_00.50",
+    "region": "CONUS",
+    "date": null
+  },
+  "bounds": {
+    "minLat": 41.55,
+    "minLon": -102.4,
+    "maxLat": 43.35,
+    "maxLon": -98.9
+  },
+  "frame": {
+    "observedAt": "2026-07-01T05:56:40.000Z",
+    "sourceType": "mrms-grib2",
+    "stats": {
+      "validCells": 63000,
+      "precipCells": 50385,
+      "precipPercent": 79.976,
+      "minDbz": -1,
+      "maxDbz": 63.5,
+      "maxLat": 42.845,
+      "maxLon": -99.445
+    }
+  },
+  "renderIntent": {
+    "clientRendering": "custom-webgl-radar-layer",
+    "fallback": "classic radar remains visible until chunks are ready",
+    "colorizeOnDevice": true,
+    "animateOnDevice": true
+  },
+  "valueEncoding": {
+    "type": "uint8-dbz",
+    "dbzMin": 0,
+    "dbzMax": 80,
+    "threshold": 5,
+    "noData": 0,
+    "valueMin": 1,
+    "valueMax": 255,
+    "formula": "dbz = dbzMin + (value - 1) * (dbzMax - dbzMin) / 254"
+  },
+  "canonical": {
+    "baseZoom": 10,
+    "chunkSize": 256,
+    "range": {
+      "minX": 220,
+      "maxX": 231,
+      "minY": 372,
+      "maxY": 383
+    },
+    "bounds": {
+      "minLat": 40.9799,
+      "minLon": -102.65625,
+      "maxLat": 44.08759,
+      "maxLon": -98.4375
+    },
+    "pixels": 9437184,
+    "validPixels": 9437184,
+    "sampleSmooth": 1.15
+  },
+  "levels": [
+    {
+      "id": "z8",
+      "zoom": 8,
+      "chunkSize": 256,
+      "pool": "max",
+      "range": {
+        "minX": 55,
+        "maxX": 57,
+        "minY": 93,
+        "maxY": 95
+      },
+      "bounds": {
+        "minLat": 40.9799,
+        "minLon": -102.65625,
+        "maxLat": 44.08759,
+        "maxLon": -98.4375
+      },
+      "template": "chunks/z8/{x}/{y}.ncrd.gz",
+      "candidateChunks": 9,
+      "chunkCount": 9,
+      "precipPixels": 438870,
+      "bytes": 182189,
+      "minDbz": 5,
+      "maxDbz": 60.4,
+      "chunks": [
+        {
+          "x": 55,
+          "y": 93,
+          "path": "chunks/z8/55/93.ncrd.gz",
+          "byteLength": 19257,
+          "precipPixels": 60510,
+          "minDbz": 5,
+          "maxDbz": 34.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -102.65625,
+            "maxLat": 44.08759,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 56,
+          "y": 93,
+          "path": "chunks/z8/56/93.ncrd.gz",
+          "byteLength": 17525,
+          "precipPixels": 65442,
+          "minDbz": 5,
+          "maxDbz": 44.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.25,
+            "maxLat": 44.08759,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 57,
+          "y": 93,
+          "path": "chunks/z8/57/93.ncrd.gz",
+          "byteLength": 14698,
+          "precipPixels": 41124,
+          "minDbz": 5,
+          "maxDbz": 50,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.84375,
+            "maxLat": 44.08759,
+            "maxLon": -98.4375
+          }
+        },
+        {
+          "x": 55,
+          "y": 94,
+          "path": "chunks/z8/55/94.ncrd.gz",
+          "byteLength": 15180,
+          "precipPixels": 42381,
+          "minDbz": 5,
+          "maxDbz": 41.2,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -102.65625,
+            "maxLat": 43.06889,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 56,
+          "y": 94,
+          "path": "chunks/z8/56/94.ncrd.gz",
+          "byteLength": 28385,
+          "precipPixels": 65536,
+          "minDbz": 16.1,
+          "maxDbz": 59.4,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.25,
+            "maxLat": 43.06889,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 57,
+          "y": 94,
+          "path": "chunks/z8/57/94.ncrd.gz",
+          "byteLength": 19644,
+          "precipPixels": 32411,
+          "minDbz": 5,
+          "maxDbz": 60.4,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.84375,
+            "maxLat": 43.06889,
+            "maxLon": -98.4375
+          }
+        },
+        {
+          "x": 55,
+          "y": 95,
+          "path": "chunks/z8/55/95.ncrd.gz",
+          "byteLength": 26866,
+          "precipPixels": 43432,
+          "minDbz": 5,
+          "maxDbz": 53.7,
+          "bounds": {
+            "minLat": 40.9799,
+            "minLon": -102.65625,
+            "maxLat": 42.03297,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 56,
+          "y": 95,
+          "path": "chunks/z8/56/95.ncrd.gz",
+          "byteLength": 26786,
+          "precipPixels": 51136,
+          "minDbz": 5,
+          "maxDbz": 55.7,
+          "bounds": {
+            "minLat": 40.9799,
+            "minLon": -101.25,
+            "maxLat": 42.03297,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 57,
+          "y": 95,
+          "path": "chunks/z8/57/95.ncrd.gz",
+          "byteLength": 13848,
+          "precipPixels": 36898,
+          "minDbz": 5,
+          "maxDbz": 25.9,
+          "bounds": {
+            "minLat": 40.9799,
+            "minLon": -99.84375,
+            "maxLat": 42.03297,
+            "maxLon": -98.4375
+          }
+        }
+      ]
+    },
+    {
+      "id": "z9",
+      "zoom": 9,
+      "chunkSize": 256,
+      "pool": "max",
+      "range": {
+        "minX": 110,
+        "maxX": 115,
+        "minY": 187,
+        "maxY": 190
+      },
+      "bounds": {
+        "minLat": 41.50858,
+        "minLon": -102.65625,
+        "maxLat": 43.58039,
+        "maxLon": -98.4375
+      },
+      "template": "chunks/z9/{x}/{y}.ncrd.gz",
+      "candidateChunks": 24,
+      "chunkCount": 24,
+      "precipPixels": 1192242,
+      "bytes": 318377,
+      "minDbz": 5,
+      "maxDbz": 60.4,
+      "chunks": [
+        {
+          "x": 110,
+          "y": 187,
+          "path": "chunks/z9/110/187.ncrd.gz",
+          "byteLength": 12749,
+          "precipPixels": 59982,
+          "minDbz": 5,
+          "maxDbz": 29.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -102.65625,
+            "maxLat": 43.58039,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 111,
+          "y": 187,
+          "path": "chunks/z9/111/187.ncrd.gz",
+          "byteLength": 7842,
+          "precipPixels": 65536,
+          "minDbz": 18.7,
+          "maxDbz": 32.1,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.95312,
+            "maxLat": 43.58039,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 112,
+          "y": 187,
+          "path": "chunks/z9/112/187.ncrd.gz",
+          "byteLength": 10179,
+          "precipPixels": 65536,
+          "minDbz": 22.1,
+          "maxDbz": 39.1,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.25,
+            "maxLat": 43.58039,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 113,
+          "y": 187,
+          "path": "chunks/z9/113/187.ncrd.gz",
+          "byteLength": 9475,
+          "precipPixels": 65536,
+          "minDbz": 13.2,
+          "maxDbz": 44.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -100.54687,
+            "maxLat": 43.58039,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 114,
+          "y": 187,
+          "path": "chunks/z9/114/187.ncrd.gz",
+          "byteLength": 13980,
+          "precipPixels": 65536,
+          "minDbz": 5.8,
+          "maxDbz": 50,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.84375,
+            "maxLat": 43.58039,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 115,
+          "y": 187,
+          "path": "chunks/z9/115/187.ncrd.gz",
+          "byteLength": 8886,
+          "precipPixels": 34922,
+          "minDbz": 5,
+          "maxDbz": 25.8,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.14062,
+            "maxLat": 43.58039,
+            "maxLon": -98.4375
+          }
+        },
+        {
+          "x": 110,
+          "y": 188,
+          "path": "chunks/z9/110/188.ncrd.gz",
+          "byteLength": 9499,
+          "precipPixels": 36402,
+          "minDbz": 5,
+          "maxDbz": 29.1,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -102.65625,
+            "maxLat": 43.06889,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 111,
+          "y": 188,
+          "path": "chunks/z9/111/188.ncrd.gz",
+          "byteLength": 8277,
+          "precipPixels": 65536,
+          "minDbz": 13.2,
+          "maxDbz": 32.5,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -101.95312,
+            "maxLat": 43.06889,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 112,
+          "y": 188,
+          "path": "chunks/z9/112/188.ncrd.gz",
+          "byteLength": 16765,
+          "precipPixels": 65536,
+          "minDbz": 22.4,
+          "maxDbz": 51,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -101.25,
+            "maxLat": 43.06889,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 113,
+          "y": 188,
+          "path": "chunks/z9/113/188.ncrd.gz",
+          "byteLength": 20108,
+          "precipPixels": 65536,
+          "minDbz": 22.7,
+          "maxDbz": 58.9,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -100.54687,
+            "maxLat": 43.06889,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 114,
+          "y": 188,
+          "path": "chunks/z9/114/188.ncrd.gz",
+          "byteLength": 19512,
+          "precipPixels": 58486,
+          "minDbz": 5,
+          "maxDbz": 60.4,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -99.84375,
+            "maxLat": 43.06889,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 115,
+          "y": 188,
+          "path": "chunks/z9/115/188.ncrd.gz",
+          "byteLength": 6028,
+          "precipPixels": 10965,
+          "minDbz": 5,
+          "maxDbz": 31.6,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -99.14062,
+            "maxLat": 43.06889,
+            "maxLon": -98.4375
+          }
+        },
+        {
+          "x": 110,
+          "y": 189,
+          "path": "chunks/z9/110/189.ncrd.gz",
+          "byteLength": 6351,
+          "precipPixels": 14695,
+          "minDbz": 5,
+          "maxDbz": 24.5,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -102.65625,
+            "maxLat": 42.55308,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 111,
+          "y": 189,
+          "path": "chunks/z9/111/189.ncrd.gz",
+          "byteLength": 12744,
+          "precipPixels": 51907,
+          "minDbz": 5,
+          "maxDbz": 41.2,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.95312,
+            "maxLat": 42.55308,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 112,
+          "y": 189,
+          "path": "chunks/z9/112/189.ncrd.gz",
+          "byteLength": 15903,
+          "precipPixels": 65536,
+          "minDbz": 18.9,
+          "maxDbz": 59.4,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.25,
+            "maxLat": 42.55308,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 113,
+          "y": 189,
+          "path": "chunks/z9/113/189.ncrd.gz",
+          "byteLength": 19488,
+          "precipPixels": 65536,
+          "minDbz": 16,
+          "maxDbz": 55.7,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -100.54687,
+            "maxLat": 42.55308,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 114,
+          "y": 189,
+          "path": "chunks/z9/114/189.ncrd.gz",
+          "byteLength": 12905,
+          "precipPixels": 37948,
+          "minDbz": 5,
+          "maxDbz": 42.7,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.84375,
+            "maxLat": 42.55308,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 115,
+          "y": 189,
+          "path": "chunks/z9/115/189.ncrd.gz",
+          "byteLength": 11241,
+          "precipPixels": 21235,
+          "minDbz": 5,
+          "maxDbz": 56.3,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.14062,
+            "maxLat": 42.55308,
+            "maxLon": -98.4375
+          }
+        },
+        {
+          "x": 110,
+          "y": 190,
+          "path": "chunks/z9/110/190.ncrd.gz",
+          "byteLength": 19731,
+          "precipPixels": 45115,
+          "minDbz": 5,
+          "maxDbz": 44.2,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -102.65625,
+            "maxLat": 42.03297,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 111,
+          "y": 190,
+          "path": "chunks/z9/111/190.ncrd.gz",
+          "byteLength": 19140,
+          "precipPixels": 44325,
+          "minDbz": 5,
+          "maxDbz": 41.7,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -101.95312,
+            "maxLat": 42.03297,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 112,
+          "y": 190,
+          "path": "chunks/z9/112/190.ncrd.gz",
+          "byteLength": 20862,
+          "precipPixels": 58635,
+          "minDbz": 5,
+          "maxDbz": 55.6,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -101.25,
+            "maxLat": 42.03297,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 113,
+          "y": 190,
+          "path": "chunks/z9/113/190.ncrd.gz",
+          "byteLength": 19420,
+          "precipPixels": 60321,
+          "minDbz": 5,
+          "maxDbz": 55.7,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -100.54687,
+            "maxLat": 42.03297,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 114,
+          "y": 190,
+          "path": "chunks/z9/114/190.ncrd.gz",
+          "byteLength": 8654,
+          "precipPixels": 29268,
+          "minDbz": 5,
+          "maxDbz": 25.3,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -99.84375,
+            "maxLat": 42.03297,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 115,
+          "y": 190,
+          "path": "chunks/z9/115/190.ncrd.gz",
+          "byteLength": 8638,
+          "precipPixels": 38212,
+          "minDbz": 5,
+          "maxDbz": 25.2,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -99.14062,
+            "maxLat": 42.03297,
+            "maxLon": -98.4375
+          }
+        }
+      ]
+    },
+    {
+      "id": "z10",
+      "zoom": 10,
+      "chunkSize": 256,
+      "pool": "canonical",
+      "range": {
+        "minX": 220,
+        "maxX": 230,
+        "minY": 374,
+        "maxY": 381
+      },
+      "bounds": {
+        "minLat": 41.50858,
+        "minLon": -102.65625,
+        "maxLat": 43.58039,
+        "maxLon": -98.78906
+      },
+      "template": "chunks/z10/{x}/{y}.ncrd.gz",
+      "candidateChunks": 88,
+      "chunkCount": 88,
+      "precipPixels": 4551633,
+      "bytes": 705884,
+      "minDbz": 5,
+      "maxDbz": 60.4,
+      "chunks": [
+        {
+          "x": 220,
+          "y": 374,
+          "path": "chunks/z10/220/374.ncrd.gz",
+          "byteLength": 7515,
+          "precipPixels": 46757,
+          "minDbz": 5,
+          "maxDbz": 27.3,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -102.65625,
+            "maxLat": 43.58039,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 374,
+          "path": "chunks/z10/221/374.ncrd.gz",
+          "byteLength": 6811,
+          "precipPixels": 65536,
+          "minDbz": 15.4,
+          "maxDbz": 27.9,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -102.30469,
+            "maxLat": 43.58039,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 374,
+          "path": "chunks/z10/222/374.ncrd.gz",
+          "byteLength": 4042,
+          "precipPixels": 65536,
+          "minDbz": 18.7,
+          "maxDbz": 23.9,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -101.95312,
+            "maxLat": 43.58039,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 374,
+          "path": "chunks/z10/223/374.ncrd.gz",
+          "byteLength": 4963,
+          "precipPixels": 65536,
+          "minDbz": 22.3,
+          "maxDbz": 31.9,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -101.60156,
+            "maxLat": 43.58039,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 374,
+          "path": "chunks/z10/224/374.ncrd.gz",
+          "byteLength": 7626,
+          "precipPixels": 65536,
+          "minDbz": 24.5,
+          "maxDbz": 39.1,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -101.25,
+            "maxLat": 43.58039,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 374,
+          "path": "chunks/z10/225/374.ncrd.gz",
+          "byteLength": 5077,
+          "precipPixels": 65536,
+          "minDbz": 22.1,
+          "maxDbz": 32.4,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -100.89844,
+            "maxLat": 43.58039,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 374,
+          "path": "chunks/z10/226/374.ncrd.gz",
+          "byteLength": 4448,
+          "precipPixels": 65536,
+          "minDbz": 15.7,
+          "maxDbz": 23.7,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -100.54687,
+            "maxLat": 43.58039,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 374,
+          "path": "chunks/z10/227/374.ncrd.gz",
+          "byteLength": 4348,
+          "precipPixels": 65536,
+          "minDbz": 13.2,
+          "maxDbz": 21.3,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -100.19531,
+            "maxLat": 43.58039,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 374,
+          "path": "chunks/z10/228/374.ncrd.gz",
+          "byteLength": 3748,
+          "precipPixels": 65536,
+          "minDbz": 14.8,
+          "maxDbz": 21.9,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -99.84375,
+            "maxLat": 43.58039,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 374,
+          "path": "chunks/z10/229/374.ncrd.gz",
+          "byteLength": 7928,
+          "precipPixels": 65536,
+          "minDbz": 5.8,
+          "maxDbz": 34.6,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -99.49219,
+            "maxLat": 43.58039,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 374,
+          "path": "chunks/z10/230/374.ncrd.gz",
+          "byteLength": 7041,
+          "precipPixels": 65477,
+          "minDbz": 5,
+          "maxDbz": 20.1,
+          "bounds": {
+            "minLat": 43.32518,
+            "minLon": -99.14062,
+            "maxLat": 43.58039,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 375,
+          "path": "chunks/z10/220/375.ncrd.gz",
+          "byteLength": 10409,
+          "precipPixels": 61765,
+          "minDbz": 5,
+          "maxDbz": 29.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -102.65625,
+            "maxLat": 43.32518,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 375,
+          "path": "chunks/z10/221/375.ncrd.gz",
+          "byteLength": 4888,
+          "precipPixels": 65536,
+          "minDbz": 12,
+          "maxDbz": 21,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -102.30469,
+            "maxLat": 43.32518,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 375,
+          "path": "chunks/z10/222/375.ncrd.gz",
+          "byteLength": 4017,
+          "precipPixels": 65536,
+          "minDbz": 19.7,
+          "maxDbz": 25.4,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.95312,
+            "maxLat": 43.32518,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 375,
+          "path": "chunks/z10/223/375.ncrd.gz",
+          "byteLength": 5115,
+          "precipPixels": 65536,
+          "minDbz": 23.8,
+          "maxDbz": 32.1,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.60156,
+            "maxLat": 43.32518,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 375,
+          "path": "chunks/z10/224/375.ncrd.gz",
+          "byteLength": 6220,
+          "precipPixels": 65536,
+          "minDbz": 24.2,
+          "maxDbz": 35.4,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -101.25,
+            "maxLat": 43.32518,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 375,
+          "path": "chunks/z10/225/375.ncrd.gz",
+          "byteLength": 4561,
+          "precipPixels": 65536,
+          "minDbz": 22.1,
+          "maxDbz": 35.5,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -100.89844,
+            "maxLat": 43.32518,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 375,
+          "path": "chunks/z10/226/375.ncrd.gz",
+          "byteLength": 7819,
+          "precipPixels": 65536,
+          "minDbz": 20.4,
+          "maxDbz": 44.2,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -100.54687,
+            "maxLat": 43.32518,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 375,
+          "path": "chunks/z10/227/375.ncrd.gz",
+          "byteLength": 4697,
+          "precipPixels": 65536,
+          "minDbz": 19.2,
+          "maxDbz": 29.7,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -100.19531,
+            "maxLat": 43.32518,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 375,
+          "path": "chunks/z10/228/375.ncrd.gz",
+          "byteLength": 10556,
+          "precipPixels": 65536,
+          "minDbz": 18.9,
+          "maxDbz": 50,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.84375,
+            "maxLat": 43.32518,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 375,
+          "path": "chunks/z10/229/375.ncrd.gz",
+          "byteLength": 8855,
+          "precipPixels": 65536,
+          "minDbz": 15.5,
+          "maxDbz": 35.3,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.49219,
+            "maxLat": 43.32518,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 375,
+          "path": "chunks/z10/230/375.ncrd.gz",
+          "byteLength": 7423,
+          "precipPixels": 54891,
+          "minDbz": 5,
+          "maxDbz": 25.8,
+          "bounds": {
+            "minLat": 43.06889,
+            "minLon": -99.14062,
+            "maxLat": 43.32518,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 376,
+          "path": "chunks/z10/220/376.ncrd.gz",
+          "byteLength": 7979,
+          "precipPixels": 41130,
+          "minDbz": 5,
+          "maxDbz": 29.1,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -102.65625,
+            "maxLat": 43.06889,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 376,
+          "path": "chunks/z10/221/376.ncrd.gz",
+          "byteLength": 6742,
+          "precipPixels": 64477,
+          "minDbz": 5,
+          "maxDbz": 21.1,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -102.30469,
+            "maxLat": 43.06889,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 376,
+          "path": "chunks/z10/222/376.ncrd.gz",
+          "byteLength": 4500,
+          "precipPixels": 65536,
+          "minDbz": 19.6,
+          "maxDbz": 26.3,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -101.95312,
+            "maxLat": 43.06889,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 376,
+          "path": "chunks/z10/223/376.ncrd.gz",
+          "byteLength": 5199,
+          "precipPixels": 65536,
+          "minDbz": 24.9,
+          "maxDbz": 32.5,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -101.60156,
+            "maxLat": 43.06889,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 376,
+          "path": "chunks/z10/224/376.ncrd.gz",
+          "byteLength": 7588,
+          "precipPixels": 65536,
+          "minDbz": 26,
+          "maxDbz": 35.4,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -101.25,
+            "maxLat": 43.06889,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 376,
+          "path": "chunks/z10/225/376.ncrd.gz",
+          "byteLength": 9958,
+          "precipPixels": 65536,
+          "minDbz": 23.9,
+          "maxDbz": 45.3,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -100.89844,
+            "maxLat": 43.06889,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 376,
+          "path": "chunks/z10/226/376.ncrd.gz",
+          "byteLength": 12528,
+          "precipPixels": 65536,
+          "minDbz": 25,
+          "maxDbz": 52.8,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -100.54687,
+            "maxLat": 43.06889,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 376,
+          "path": "chunks/z10/227/376.ncrd.gz",
+          "byteLength": 10396,
+          "precipPixels": 65536,
+          "minDbz": 22.7,
+          "maxDbz": 55,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -100.19531,
+            "maxLat": 43.06889,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 376,
+          "path": "chunks/z10/228/376.ncrd.gz",
+          "byteLength": 12175,
+          "precipPixels": 65536,
+          "minDbz": 21.1,
+          "maxDbz": 58.6,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -99.84375,
+            "maxLat": 43.06889,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 376,
+          "path": "chunks/z10/229/376.ncrd.gz",
+          "byteLength": 10945,
+          "precipPixels": 65536,
+          "minDbz": 15.8,
+          "maxDbz": 60.4,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -99.49219,
+            "maxLat": 43.06889,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 376,
+          "path": "chunks/z10/230/376.ncrd.gz",
+          "byteLength": 8604,
+          "precipPixels": 32963,
+          "minDbz": 5,
+          "maxDbz": 29,
+          "bounds": {
+            "minLat": 42.81152,
+            "minLon": -99.14062,
+            "maxLat": 43.06889,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 377,
+          "path": "chunks/z10/220/377.ncrd.gz",
+          "byteLength": 1390,
+          "precipPixels": 3243,
+          "minDbz": 5,
+          "maxDbz": 14.1,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -102.65625,
+            "maxLat": 42.81152,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 377,
+          "path": "chunks/z10/221/377.ncrd.gz",
+          "byteLength": 5565,
+          "precipPixels": 36043,
+          "minDbz": 5,
+          "maxDbz": 20,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -102.30469,
+            "maxLat": 42.81152,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 377,
+          "path": "chunks/z10/222/377.ncrd.gz",
+          "byteLength": 5006,
+          "precipPixels": 65536,
+          "minDbz": 13.2,
+          "maxDbz": 25.2,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -101.95312,
+            "maxLat": 42.81152,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 377,
+          "path": "chunks/z10/223/377.ncrd.gz",
+          "byteLength": 4180,
+          "precipPixels": 65536,
+          "minDbz": 22.5,
+          "maxDbz": 28.1,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -101.60156,
+            "maxLat": 42.81152,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 377,
+          "path": "chunks/z10/224/377.ncrd.gz",
+          "byteLength": 9645,
+          "precipPixels": 65536,
+          "minDbz": 22.3,
+          "maxDbz": 46,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -101.25,
+            "maxLat": 42.81152,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 377,
+          "path": "chunks/z10/225/377.ncrd.gz",
+          "byteLength": 12675,
+          "precipPixels": 65536,
+          "minDbz": 27.8,
+          "maxDbz": 51,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -100.89844,
+            "maxLat": 42.81152,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 377,
+          "path": "chunks/z10/226/377.ncrd.gz",
+          "byteLength": 13477,
+          "precipPixels": 65536,
+          "minDbz": 28.1,
+          "maxDbz": 56.3,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -100.54687,
+            "maxLat": 42.81152,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 377,
+          "path": "chunks/z10/227/377.ncrd.gz",
+          "byteLength": 13573,
+          "precipPixels": 65536,
+          "minDbz": 24.2,
+          "maxDbz": 58.9,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -100.19531,
+            "maxLat": 42.81152,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 377,
+          "path": "chunks/z10/228/377.ncrd.gz",
+          "byteLength": 14288,
+          "precipPixels": 65246,
+          "minDbz": 5,
+          "maxDbz": 58.4,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -99.84375,
+            "maxLat": 42.81152,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 377,
+          "path": "chunks/z10/229/377.ncrd.gz",
+          "byteLength": 9763,
+          "precipPixels": 37366,
+          "minDbz": 5,
+          "maxDbz": 59.5,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -99.49219,
+            "maxLat": 42.81152,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 377,
+          "path": "chunks/z10/230/377.ncrd.gz",
+          "byteLength": 1571,
+          "precipPixels": 3056,
+          "minDbz": 5,
+          "maxDbz": 18.6,
+          "bounds": {
+            "minLat": 42.55308,
+            "minLon": -99.14062,
+            "maxLat": 42.81152,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 378,
+          "path": "chunks/z10/220/378.ncrd.gz",
+          "byteLength": 4138,
+          "precipPixels": 15002,
+          "minDbz": 5,
+          "maxDbz": 24.5,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -102.65625,
+            "maxLat": 42.55308,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 378,
+          "path": "chunks/z10/221/378.ncrd.gz",
+          "byteLength": 1555,
+          "precipPixels": 4350,
+          "minDbz": 5,
+          "maxDbz": 13.1,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -102.30469,
+            "maxLat": 42.55308,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 378,
+          "path": "chunks/z10/222/378.ncrd.gz",
+          "byteLength": 6758,
+          "precipPixels": 52123,
+          "minDbz": 5,
+          "maxDbz": 24.6,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -101.95312,
+            "maxLat": 42.55308,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 378,
+          "path": "chunks/z10/223/378.ncrd.gz",
+          "byteLength": 5168,
+          "precipPixels": 65536,
+          "minDbz": 12.6,
+          "maxDbz": 29.1,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -101.60156,
+            "maxLat": 42.55308,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 378,
+          "path": "chunks/z10/224/378.ncrd.gz",
+          "byteLength": 7969,
+          "precipPixels": 65536,
+          "minDbz": 22.7,
+          "maxDbz": 41.8,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -101.25,
+            "maxLat": 42.55308,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 378,
+          "path": "chunks/z10/225/378.ncrd.gz",
+          "byteLength": 9967,
+          "precipPixels": 65536,
+          "minDbz": 31.6,
+          "maxDbz": 59.4,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -100.89844,
+            "maxLat": 42.55308,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 378,
+          "path": "chunks/z10/226/378.ncrd.gz",
+          "byteLength": 11458,
+          "precipPixels": 65536,
+          "minDbz": 26.4,
+          "maxDbz": 55.7,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -100.54687,
+            "maxLat": 42.55308,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 378,
+          "path": "chunks/z10/227/378.ncrd.gz",
+          "byteLength": 11050,
+          "precipPixels": 65536,
+          "minDbz": 19.2,
+          "maxDbz": 48.6,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -100.19531,
+            "maxLat": 42.55308,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 378,
+          "path": "chunks/z10/228/378.ncrd.gz",
+          "byteLength": 12578,
+          "precipPixels": 64480,
+          "minDbz": 5,
+          "maxDbz": 42.7,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -99.84375,
+            "maxLat": 42.55308,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 378,
+          "path": "chunks/z10/229/378.ncrd.gz",
+          "byteLength": 5431,
+          "precipPixels": 20294,
+          "minDbz": 5,
+          "maxDbz": 23.9,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -99.49219,
+            "maxLat": 42.55308,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 378,
+          "path": "chunks/z10/230/378.ncrd.gz",
+          "byteLength": 604,
+          "precipPixels": 182,
+          "minDbz": 5,
+          "maxDbz": 9.9,
+          "bounds": {
+            "minLat": 42.29356,
+            "minLon": -99.14062,
+            "maxLat": 42.55308,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 379,
+          "path": "chunks/z10/220/379.ncrd.gz",
+          "byteLength": 5948,
+          "precipPixels": 26759,
+          "minDbz": 5,
+          "maxDbz": 20.4,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -102.65625,
+            "maxLat": 42.29356,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 379,
+          "path": "chunks/z10/221/379.ncrd.gz",
+          "byteLength": 3908,
+          "precipPixels": 11981,
+          "minDbz": 5,
+          "maxDbz": 20.4,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -102.30469,
+            "maxLat": 42.29356,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 379,
+          "path": "chunks/z10/222/379.ncrd.gz",
+          "byteLength": 6669,
+          "precipPixels": 23863,
+          "minDbz": 5,
+          "maxDbz": 28.2,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.95312,
+            "maxLat": 42.29356,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 379,
+          "path": "chunks/z10/223/379.ncrd.gz",
+          "byteLength": 10999,
+          "precipPixels": 65536,
+          "minDbz": 8.8,
+          "maxDbz": 41.2,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.60156,
+            "maxLat": 42.29356,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 379,
+          "path": "chunks/z10/224/379.ncrd.gz",
+          "byteLength": 9452,
+          "precipPixels": 65536,
+          "minDbz": 18.8,
+          "maxDbz": 39.1,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -101.25,
+            "maxLat": 42.29356,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 379,
+          "path": "chunks/z10/225/379.ncrd.gz",
+          "byteLength": 9521,
+          "precipPixels": 65536,
+          "minDbz": 31,
+          "maxDbz": 44.7,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -100.89844,
+            "maxLat": 42.29356,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 379,
+          "path": "chunks/z10/226/379.ncrd.gz",
+          "byteLength": 10453,
+          "precipPixels": 65536,
+          "minDbz": 31.9,
+          "maxDbz": 54.3,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -100.54687,
+            "maxLat": 42.29356,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 379,
+          "path": "chunks/z10/227/379.ncrd.gz",
+          "byteLength": 13351,
+          "precipPixels": 65536,
+          "minDbz": 15.9,
+          "maxDbz": 50.3,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -100.19531,
+            "maxLat": 42.29356,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 379,
+          "path": "chunks/z10/228/379.ncrd.gz",
+          "byteLength": 10269,
+          "precipPixels": 62870,
+          "minDbz": 5,
+          "maxDbz": 25.5,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.84375,
+            "maxLat": 42.29356,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 379,
+          "path": "chunks/z10/229/379.ncrd.gz",
+          "byteLength": 1535,
+          "precipPixels": 3444,
+          "minDbz": 5,
+          "maxDbz": 16.6,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.49219,
+            "maxLat": 42.29356,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 379,
+          "path": "chunks/z10/230/379.ncrd.gz",
+          "byteLength": 623,
+          "precipPixels": 217,
+          "minDbz": 5.1,
+          "maxDbz": 9.5,
+          "bounds": {
+            "minLat": 42.03297,
+            "minLon": -99.14062,
+            "maxLat": 42.29356,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 380,
+          "path": "chunks/z10/220/380.ncrd.gz",
+          "byteLength": 9139,
+          "precipPixels": 26474,
+          "minDbz": 5,
+          "maxDbz": 33.8,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -102.65625,
+            "maxLat": 42.03297,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 380,
+          "path": "chunks/z10/221/380.ncrd.gz",
+          "byteLength": 14141,
+          "precipPixels": 49970,
+          "minDbz": 5,
+          "maxDbz": 44.2,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -102.30469,
+            "maxLat": 42.03297,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 380,
+          "path": "chunks/z10/222/380.ncrd.gz",
+          "byteLength": 12635,
+          "precipPixels": 42438,
+          "minDbz": 5,
+          "maxDbz": 41.1,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -101.95312,
+            "maxLat": 42.03297,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 380,
+          "path": "chunks/z10/223/380.ncrd.gz",
+          "byteLength": 13652,
+          "precipPixels": 52981,
+          "minDbz": 5,
+          "maxDbz": 34.9,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -101.60156,
+            "maxLat": 42.03297,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 380,
+          "path": "chunks/z10/224/380.ncrd.gz",
+          "byteLength": 10096,
+          "precipPixels": 65536,
+          "minDbz": 11,
+          "maxDbz": 33.7,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -101.25,
+            "maxLat": 42.03297,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 380,
+          "path": "chunks/z10/225/380.ncrd.gz",
+          "byteLength": 14378,
+          "precipPixels": 65536,
+          "minDbz": 15.2,
+          "maxDbz": 52,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -100.89844,
+            "maxLat": 42.03297,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 380,
+          "path": "chunks/z10/226/380.ncrd.gz",
+          "byteLength": 11384,
+          "precipPixels": 65536,
+          "minDbz": 25.6,
+          "maxDbz": 55.7,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -100.54687,
+            "maxLat": 42.03297,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 380,
+          "path": "chunks/z10/227/380.ncrd.gz",
+          "byteLength": 11669,
+          "precipPixels": 65536,
+          "minDbz": 12,
+          "maxDbz": 53.3,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -100.19531,
+            "maxLat": 42.03297,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 380,
+          "path": "chunks/z10/228/380.ncrd.gz",
+          "byteLength": 9651,
+          "precipPixels": 65536,
+          "minDbz": 5.2,
+          "maxDbz": 25.3,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -99.84375,
+            "maxLat": 42.03297,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 380,
+          "path": "chunks/z10/229/380.ncrd.gz",
+          "byteLength": 2326,
+          "precipPixels": 7697,
+          "minDbz": 5,
+          "maxDbz": 14.3,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -99.49219,
+            "maxLat": 42.03297,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 380,
+          "path": "chunks/z10/230/380.ncrd.gz",
+          "byteLength": 2282,
+          "precipPixels": 7424,
+          "minDbz": 5,
+          "maxDbz": 12.3,
+          "bounds": {
+            "minLat": 41.77131,
+            "minLon": -99.14062,
+            "maxLat": 42.03297,
+            "maxLon": -98.78906
+          }
+        },
+        {
+          "x": 220,
+          "y": 381,
+          "path": "chunks/z10/220/381.ncrd.gz",
+          "byteLength": 11636,
+          "precipPixels": 54412,
+          "minDbz": 5,
+          "maxDbz": 26.6,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -102.65625,
+            "maxLat": 41.77131,
+            "maxLon": -102.30469
+          }
+        },
+        {
+          "x": 221,
+          "y": 381,
+          "path": "chunks/z10/221/381.ncrd.gz",
+          "byteLength": 13474,
+          "precipPixels": 47656,
+          "minDbz": 5,
+          "maxDbz": 32.1,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -102.30469,
+            "maxLat": 41.77131,
+            "maxLon": -101.95312
+          }
+        },
+        {
+          "x": 222,
+          "y": 381,
+          "path": "chunks/z10/222/381.ncrd.gz",
+          "byteLength": 12082,
+          "precipPixels": 44940,
+          "minDbz": 5,
+          "maxDbz": 41.7,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -101.95312,
+            "maxLat": 41.77131,
+            "maxLon": -101.60156
+          }
+        },
+        {
+          "x": 223,
+          "y": 381,
+          "path": "chunks/z10/223/381.ncrd.gz",
+          "byteLength": 9851,
+          "precipPixels": 35513,
+          "minDbz": 5,
+          "maxDbz": 37.8,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -101.60156,
+            "maxLat": 41.77131,
+            "maxLon": -101.25
+          }
+        },
+        {
+          "x": 224,
+          "y": 381,
+          "path": "chunks/z10/224/381.ncrd.gz",
+          "byteLength": 9356,
+          "precipPixels": 37650,
+          "minDbz": 5,
+          "maxDbz": 30.6,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -101.25,
+            "maxLat": 41.77131,
+            "maxLon": -100.89844
+          }
+        },
+        {
+          "x": 225,
+          "y": 381,
+          "path": "chunks/z10/225/381.ncrd.gz",
+          "byteLength": 15640,
+          "precipPixels": 65536,
+          "minDbz": 13.6,
+          "maxDbz": 55.6,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -100.89844,
+            "maxLat": 41.77131,
+            "maxLon": -100.54687
+          }
+        },
+        {
+          "x": 226,
+          "y": 381,
+          "path": "chunks/z10/226/381.ncrd.gz",
+          "byteLength": 13545,
+          "precipPixels": 64310,
+          "minDbz": 5,
+          "maxDbz": 52,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -100.54687,
+            "maxLat": 41.77131,
+            "maxLon": -100.19531
+          }
+        },
+        {
+          "x": 227,
+          "y": 381,
+          "path": "chunks/z10/227/381.ncrd.gz",
+          "byteLength": 8568,
+          "precipPixels": 45580,
+          "minDbz": 5,
+          "maxDbz": 44.9,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -100.19531,
+            "maxLat": 41.77131,
+            "maxLon": -99.84375
+          }
+        },
+        {
+          "x": 228,
+          "y": 381,
+          "path": "chunks/z10/228/381.ncrd.gz",
+          "byteLength": 7531,
+          "precipPixels": 42972,
+          "minDbz": 5,
+          "maxDbz": 19.1,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -99.84375,
+            "maxLat": 41.77131,
+            "maxLon": -99.49219
+          }
+        },
+        {
+          "x": 229,
+          "y": 381,
+          "path": "chunks/z10/229/381.ncrd.gz",
+          "byteLength": 598,
+          "precipPixels": 373,
+          "minDbz": 5,
+          "maxDbz": 7.6,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -99.49219,
+            "maxLat": 41.77131,
+            "maxLon": -99.14062
+          }
+        },
+        {
+          "x": 230,
+          "y": 381,
+          "path": "chunks/z10/230/381.ncrd.gz",
+          "byteLength": 6992,
+          "precipPixels": 47536,
+          "minDbz": 5,
+          "maxDbz": 24.7,
+          "bounds": {
+            "minLat": 41.50858,
+            "minLon": -99.14062,
+            "maxLat": 41.77131,
+            "maxLon": -98.78906
+          }
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "candidateChunks": 121,
+    "chunkCount": 121,
+    "precipPixels": 6182745,
+    "bytes": 1206450,
+    "minDbz": 5,
+    "maxDbz": 60.4,
+    "elapsedMs": 5512
+  }
+}

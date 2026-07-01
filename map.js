@@ -11,6 +11,14 @@ const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
 const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
+const MAPLIBRE_RADAR_CHUNK_INDEX_URLS = {
+  synthetic: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
+  smoke: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
+  test: MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL,
+  nebraska: "radar/chunks/nebraska-20260701-055640/index.json",
+  "nebraska-live": "radar/chunks/nebraska-20260701-055640/index.json",
+  "real-nebraska": "radar/chunks/nebraska-20260701-055640/index.json"
+};
 const MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT = 128;
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
@@ -744,15 +752,17 @@ function syncMapLibreStateAndOverlays(map, options = {}) {
 function renderMapLibreOverlays(options = {}) {
   const shouldRenderRadar = Boolean(options.forceRadar) || !mapLibreInteraction.active;
   syncMapZoomDebugReadout();
-  const record = mapLibreCurrentRecord();
+  let record = mapLibreCurrentRecord();
   syncMapLibreBaseLayerVisibility(record);
   if (shouldRenderRadar) {
     renderMapLibreWeather(mapState.frameIndex);
+    record = mapLibreCurrentRecord() || record;
     syncMapLibreRadarChunkLayer(record);
     renderMapLibreMarkers();
     if (mapState.immersive) renderStormImpactOverlay();
     mapLibreInteraction.needsRadarRender = false;
   } else {
+    record = mapLibreCurrentRecord() || record;
     syncMapLibreRadarChunkLayer(record);
     mapLibreInteraction.needsRadarRender = true;
   }
@@ -1190,10 +1200,12 @@ function radarChunkIndexUrl() {
   const value = radarChunkIndexFlag();
   if (!value) return "";
   const normalized = value.trim();
-  if (!normalized || ["0", "false", "off", "none"].includes(normalized.toLowerCase())) return "";
-  if (["1", "true", "synthetic", "smoke", "test"].includes(normalized.toLowerCase())) {
+  const key = normalized.toLowerCase();
+  if (!normalized || ["0", "false", "off", "none"].includes(key)) return "";
+  if (["1", "true"].includes(key)) {
     return MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL;
   }
+  if (MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key]) return MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key];
   return normalized;
 }
 

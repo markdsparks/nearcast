@@ -308,6 +308,17 @@ Search for Bay Minette, Alabama, then zoom from z8 through z16. The chunk layer
 is drawn by a MapLibre custom WebGL layer under labels. It does not alter the
 normal radar provider path and should not appear unless the query flag is set.
 
+A checked-in live-MRMS fixture from the 2026-07-01 05:56Z composite frame can be
+tested with:
+
+```text
+?map=gl&radarChunks=nebraska&mapPerf=current
+```
+
+Search for Thedford, Nebraska or Valentine, Nebraska. The fixture covers
+`41.55,-102.4,43.35,-98.9` and publishes z8/z9/z10 numeric chunks from
+`MergedReflectivityQCComposite_00.50`.
+
 This is the bridge toward the target custom WebGL radar layer described in
 `docs/radar-coverage-engine-spike.md`.
 
