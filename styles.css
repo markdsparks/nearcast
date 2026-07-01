@@ -691,7 +691,7 @@ html[data-sky] body {
   filter: none !important;
 }
 
-.sky-star {
+.sky-star.is-animated {
   animation: sky-twinkle linear infinite;
 }
 
@@ -702,6 +702,9 @@ html[data-sky] body {
 
 .sky-sun-rays {
   transform-origin: 0 0;
+}
+
+.sky-sun-rays.is-animated {
   animation: sky-rays 150s linear infinite;
 }
 
@@ -711,6 +714,9 @@ html[data-sky] body {
 
 .sky-shoot {
   opacity: 0;
+}
+
+.sky-shoot.is-animated {
   animation: sky-shoot 16s ease-in infinite;
 }
 
@@ -721,7 +727,7 @@ html[data-sky] body {
   100% { opacity: 0; transform: translate(0, 0); }
 }
 
-.sky-moon-glow {
+.sky-moon-glow.is-animated {
   animation: sky-moon-pulse 5s ease-in-out infinite;
 }
 
@@ -730,7 +736,7 @@ html[data-sky] body {
   50% { opacity: 0.24; }
 }
 
-.sky-cloud {
+.sky-cloud.is-animated {
   animation: sky-cloud-drift ease-in-out infinite alternate;
   will-change: transform;
 }
@@ -747,17 +753,23 @@ html[data-sky] body {
 }
 
 .sky-rain-sheet {
-  animation: sky-rain-sheet-drift ease-in-out infinite alternate;
   transform-origin: center;
+}
+
+.sky-rain-sheet.is-animated {
+  animation: sky-rain-sheet-drift ease-in-out infinite alternate;
   will-change: transform, opacity;
 }
 
 .sky-rain-layer {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+
+.sky-rain-layer.is-animated {
   animation-name: sky-rain-layer-fall;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
-  transform-box: view-box;
-  transform-origin: 0 0;
   will-change: transform;
 }
 
@@ -776,7 +788,7 @@ html[data-sky] body {
   to   { transform: translateY(var(--rain-distance, 1200px)); }
 }
 
-.sky-snow {
+.sky-snow.is-animated {
   animation: sky-snow-fall linear infinite;
 }
 
@@ -787,19 +799,28 @@ html[data-sky] body {
   to   { transform: translateY(105vh) translateX(var(--drift, 20px)); opacity: 0; }
 }
 
-.sky-lightning {
+.sky-lightning.is-animated {
   animation: sky-lightning-flash 10s ease infinite;
 }
 
 :root.sky-motion-paused-for-map .sky-star,
+:root.sky-motion-paused-for-interaction .sky-star,
 :root.sky-motion-paused-for-map .sky-sun-rays,
+:root.sky-motion-paused-for-interaction .sky-sun-rays,
 :root.sky-motion-paused-for-map .sky-shoot,
+:root.sky-motion-paused-for-interaction .sky-shoot,
 :root.sky-motion-paused-for-map .sky-moon-glow,
+:root.sky-motion-paused-for-interaction .sky-moon-glow,
 :root.sky-motion-paused-for-map .sky-cloud,
+:root.sky-motion-paused-for-interaction .sky-cloud,
 :root.sky-motion-paused-for-map .sky-rain-sheet,
+:root.sky-motion-paused-for-interaction .sky-rain-sheet,
 :root.sky-motion-paused-for-map .sky-rain-layer,
+:root.sky-motion-paused-for-interaction .sky-rain-layer,
 :root.sky-motion-paused-for-map .sky-snow,
-:root.sky-motion-paused-for-map .sky-lightning {
+:root.sky-motion-paused-for-interaction .sky-snow,
+:root.sky-motion-paused-for-map .sky-lightning,
+:root.sky-motion-paused-for-interaction .sky-lightning {
   animation: none !important;
   will-change: auto !important;
 }

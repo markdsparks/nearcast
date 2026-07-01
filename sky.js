@@ -22,6 +22,83 @@ const SKY_CFG = {
 };
 
 const SKY_SCENE_VERSION = "sky-v8";
+let skyInteractionPauseTimer = null;
+let skyMotionGuardsInstalled = false;
+
+function skyMotionProfile(condition, skyState = state.skyState) {
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
+  const smallViewport = Math.min(window.innerWidth || 0, window.innerHeight || 0) < 760;
+  const lowMemory = Number(navigator.deviceMemory || 8) <= 4;
+  const rainy = condition === "rain" || condition === "thunder" || condition === "snow";
+
+  if (reduceMotion || document.visibilityState === "hidden") {
+    return {
+      level: "still",
+      density: 0.18,
+      animateClouds: 0,
+      animateStars: 0,
+      animateAtmosphere: false,
+      cloudFilter: false,
+      sunMotion: false,
+      moonMotion: false,
+      rareMotion: false
+    };
+  }
+
+  if (coarsePointer || smallViewport || lowMemory) {
+    return {
+      level: "ambient",
+      density: rainy ? 0.42 : 0.58,
+      animateClouds: rainy ? 1 : 2,
+      animateStars: 12,
+      animateAtmosphere: true,
+      cloudFilter: false,
+      sunMotion: false,
+      moonMotion: false,
+      rareMotion: false
+    };
+  }
+
+  return {
+    level: "full",
+    density: 1,
+    animateClouds: Infinity,
+    animateStars: Infinity,
+    animateAtmosphere: true,
+    cloudFilter: true,
+    sunMotion: true,
+    moonMotion: true,
+    rareMotion: true
+  };
+}
+
+function applySkyMotionProfile(profile) {
+  document.documentElement.dataset.skyMotion = profile?.level || "full";
+}
+
+function setSkyInteractionMotionPaused(paused) {
+  document.documentElement.classList.toggle("sky-motion-paused-for-interaction", Boolean(paused));
+}
+
+function markSkyInteractionMotionPause() {
+  if (document.visibilityState === "hidden") return;
+  setSkyInteractionMotionPaused(true);
+  clearTimeout(skyInteractionPauseTimer);
+  skyInteractionPauseTimer = setTimeout(() => setSkyInteractionMotionPaused(false), 650);
+}
+
+function installSkyMotionGuards() {
+  if (skyMotionGuardsInstalled) return;
+  skyMotionGuardsInstalled = true;
+  ["touchstart", "touchmove", "wheel", "pointerdown"].forEach((eventName) => {
+    window.addEventListener(eventName, markSkyInteractionMotionPause, { passive: true, capture: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") setSkyInteractionMotionPaused(true);
+    else markSkyInteractionMotionPause();
+  });
+}
 
 function skySceneSeed(condition, isDay) {
   const place = state.activePlace
@@ -601,6 +678,7 @@ function applySkyAtmosphereTokens(skyState) {
 function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondition = null) {
   const el = document.getElementById("skyCanvas");
   if (!el) return;
+  installSkyMotionGuards();
 
   state.skyCode = weatherCode;
   state.skyData = data || null;
@@ -724,6 +802,8 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const perf = perfStart();
   const { width: vw, height: vh } = skyViewportSize();
   const cfg = skySceneConfig(condition, isDay, skyState);
+  const motion = skyMotionProfile(condition, skyState);
+  applySkyMotionProfile(motion);
   const sceneSeed = skySceneSeed(condition, isDay);
   const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
   const bg = skyBackgroundCss(condition, skyState);
@@ -734,19 +814,21 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   el.style.background = bg.css;
 
   const parts = [skyFilterDefs()];
-  if (cfg.stars)        parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars")));
-  if (cfg.stars >= 60)  parts.push(skyShootingStar(vw, vh, rngFor("shoot")));
+  const starCount = motion.level === "full" ? cfg.stars : Math.round(cfg.stars * motion.density);
+  const cloudCount = motion.level === "full" ? cfg.clouds : Math.min(cfg.clouds, Math.max(0, Math.round(cfg.clouds * motion.density)));
+  if (starCount)        parts.push(skyStars(vw, vh, starCount, rngFor("stars"), motion));
+  if (cfg.stars >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
   if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
-  if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow")));
+  if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow"), motion));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
-  if (cfg.sun)          parts.push(skySun(vw, vh, phase));
-  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds"), skyState));
+  if (cfg.sun)          parts.push(skySun(vw, vh, phase, motion));
+  if (cloudCount)       parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, rngFor("clouds"), skyState, motion));
   if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
   if ((skyState?.precipPressure ?? 0) > 0.08) parts.push(skyApproachVeil(vw, vh, skyState));
   if ((skyState?.airHaze ?? 0) > 0.08 || (skyState?.pollenVeil ?? 0) > 0.10) parts.push(skyAirVeil(vw, vh, skyState));
-  if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain"), skyState));
-  if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState));
-  if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning")));
+  if (cfg.rain)         parts.push(skyRain(vw, vh, cfg.lightning, rngFor("rain"), skyState, motion));
+  if (cfg.snow)         parts.push(skySnow(vw, vh, rngFor("snow"), skyState, motion));
+  if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning"), motion));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>`;
   perfEnd("renderSkyScene", perf);
@@ -799,7 +881,7 @@ function skyFilterDefs() {
   </defs>`;
 }
 
-function skyStars(vw, vh, count, rng) {
+function skyStars(vw, vh, count, rng, motion = skyMotionProfile("clear")) {
   let s = "";
   for (let i = 0; i < count; i++) {
     const x = (rng() * vw).toFixed(1);
@@ -808,7 +890,8 @@ function skyStars(vw, vh, count, rng) {
     const op = (rng() * 0.5 + 0.25).toFixed(2);
     const dur = (rng() * 3 + 2).toFixed(1);
     const delay = (rng() * 6).toFixed(1);
-    s += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star" style="--op:${op};animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
+    const animated = i < motion.animateStars;
+    s += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star${animated ? " is-animated" : ""}" opacity="${op}" style="--op:${op};animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
   }
   return s;
 }
@@ -830,13 +913,13 @@ function skyMoon(vw, vh, phase) {
   `;
 }
 
-function skyMoonGlow(vw, vh, rng) {
+function skyMoonGlow(vw, vh, rng, motion = skyMotionProfile("overcast")) {
   const x = Math.round(vw * (0.52 + rng() * 0.3));
   const y = Math.round(vh * (0.05 + rng() * 0.18));
-  return `<circle cx="${x}" cy="${y}" r="90" fill="#7080b0" opacity="0.24" filter="url(#sky-glow-f)" class="sky-moon-glow"/>`;
+  return `<circle cx="${x}" cy="${y}" r="90" fill="#7080b0" opacity="0.24" filter="url(#sky-glow-f)" class="sky-moon-glow${motion.moonMotion ? " is-animated" : ""}"/>`;
 }
 
-function skySun(vw, vh, phase) {
+function skySun(vw, vh, phase, motion = skyMotionProfile("clear")) {
   const isPartly = phase.condition === "partly-cloudy";
   const point = skyVisiblePoint(
     vw,
@@ -854,19 +937,19 @@ function skySun(vw, vh, phase) {
   return `
     <circle cx="${cx}" cy="${cy}" r="${r * (4.1 + haze * 1.3)}" fill="${halo}" opacity="${(0.13 + warm * 0.18 + haze * 0.10).toFixed(2)}" filter="url(#sky-glow-f)"/>
     <circle cx="${cx}" cy="${cy}" r="${r * (1.9 + brightness * 0.65)}" fill="#fff5b4" opacity="${(0.12 + brightness * 0.11).toFixed(2)}" filter="url(#sky-glow-f)"/>
-    <g transform="translate(${cx} ${cy})">${skySunRays(r, warm, directness)}</g>
+    <g transform="translate(${cx} ${cy})">${skySunRays(r, warm, directness, motion)}</g>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="${core}" opacity="${(0.74 + directness * 0.23).toFixed(2)}"/>
     <circle cx="${cx - 13}" cy="${cy - 13}" r="${Math.round(r * 0.52)}" fill="#fff7b6" opacity="0.22"/>
   `;
 }
 
-function skySunRays(r, warm, directness = 0.7) {
+function skySunRays(r, warm, directness = 0.7, motion = skyMotionProfile("clear")) {
   let lines = "";
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
     lines += `<line x1="${(Math.cos(a) * r * 1.45).toFixed(0)}" y1="${(Math.sin(a) * r * 1.45).toFixed(0)}" x2="${(Math.cos(a) * r * 2.6).toFixed(0)}" y2="${(Math.sin(a) * r * 2.6).toFixed(0)}" stroke="#fff0b0" stroke-width="2.4" stroke-linecap="round"/>`;
   }
-  return `<g class="sky-sun-rays" opacity="${(0.05 + directness * 0.13 + warm * 0.08).toFixed(2)}">${lines}</g>`;
+  return `<g class="sky-sun-rays${motion.sunMotion ? " is-animated" : ""}" opacity="${(0.05 + directness * 0.13 + warm * 0.08).toFixed(2)}">${lines}</g>`;
 }
 
 // Warm bloom around a low sun during golden hour.
@@ -879,15 +962,15 @@ function skyHorizonGlow(vw, vh, phase) {
 }
 
 // One rare meteor streak on clear nights — a small surprise, not a feature.
-function skyShootingStar(vw, vh, rng) {
+function skyShootingStar(vw, vh, rng, motion = skyMotionProfile("clear")) {
   const x = ((0.32 + rng() * 0.5) * vw).toFixed(0);
   const y = ((0.06 + rng() * 0.18) * vh).toFixed(0);
   const len = 110 + rng() * 80;
   const delay = (6 + rng() * 26).toFixed(1);
-  return `<line x1="${x}" y1="${y}" x2="${(Number(x) - len * 0.92).toFixed(0)}" y2="${(Number(y) + len * 0.4).toFixed(0)}" class="sky-shoot" stroke="#ffffff" stroke-width="2" stroke-linecap="round" style="animation-delay:${delay}s"/>`;
+  return `<line x1="${x}" y1="${y}" x2="${(Number(x) - len * 0.92).toFixed(0)}" y2="${(Number(y) + len * 0.4).toFixed(0)}" class="sky-shoot${motion.rareMotion ? " is-animated" : ""}" stroke="#ffffff" stroke-width="2" stroke-linecap="round" style="animation-delay:${delay}s"/>`;
 }
 
-function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
+function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null, motion = skyMotionProfile(condition, skyState)) {
   const isRainy = condition === "rain" || condition === "thunder";
   const isOvercast = condition === "overcast";
   const isPartly = condition === "partly-cloudy";
@@ -948,7 +1031,9 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null) {
     ].join(" ");
     const lowBandY = baseY + bodyHeight * (0.10 + rng() * 0.20);
     const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.44"}"/>`;
-    out += `<g class="sky-cloud" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}" filter="url(#sky-cloud-f)" opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
+    const animated = c < motion.animateClouds;
+    const filter = motion.cloudFilter ? ` filter="url(#sky-cloud-f)"` : "";
+    out += `<g class="sky-cloud${animated ? " is-animated" : ""}" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}"${filter} opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
   }
   return out;
 }
@@ -998,7 +1083,7 @@ function skyAirVeil(vw, vh, skyState) {
   `;
 }
 
-function skyRain(vw, vh, heavy = false, rng, skyState = null) {
+function skyRain(vw, vh, heavy = false, rng, skyState = null, motion = skyMotionProfile(heavy ? "thunder" : "rain", skyState)) {
   const wetness = skyState ? skyState.wetness || 0 : heavy ? 1 : 0.55;
   const pressure = skyState ? skyState.precipPressure || 0 : heavy ? 0.8 : 0.45;
   const precipitation = skyState ? skyState.precipitation || 0 : heavy ? 0.8 : 0.3;
@@ -1012,8 +1097,9 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   const lightRain = !heavy && intensity < 0.45;
   const nightDensity = isDay ? 1 : clamp(0.58 + intensity * 0.28, 0.58, 0.84);
   const nightOpacity = isDay ? 1 : clamp(0.52 + intensity * 0.22, 0.52, 0.76);
-  const fineCount = Math.round(((lightRain ? 70 : 112) + intensity * (lightRain ? 92 : 166) + (heavy ? 46 : 0) + (active ? intensity * 28 : 0)) * nightDensity);
-  const nearCount = Math.round((lightRain ? 4 + intensity * 14 : 12 + intensity * 42 + (heavy ? 16 : 0) + (active ? intensity * 10 : 0)) * nightDensity);
+  const density = motion.density ?? 1;
+  const fineCount = Math.max(10, Math.round(((lightRain ? 70 : 112) + intensity * (lightRain ? 92 : 166) + (heavy ? 46 : 0) + (active ? intensity * 28 : 0)) * nightDensity * density));
+  const nearCount = Math.max(motion.level === "still" ? 0 : 2, Math.round((lightRain ? 4 + intensity * 14 : 12 + intensity * 42 + (heavy ? 16 : 0) + (active ? intensity * 10 : 0)) * nightDensity * (density * 0.82)));
   const drift = 18 + windLean * 34 + intensity * 10;
   const fineColor = isDay ? lerpHex("#8da6b4", "#b89f8c", warmth * 0.45) : lerpHex("#8197a8", "#adbfcc", intensity * 0.55);
   const nearColor = isDay ? lerpHex("#f4fafc", "#f3dcc2", warmth * 0.48) : lerpHex("#a7bac8", "#d4e0ea", intensity * 0.5);
@@ -1029,7 +1115,7 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
   const fineDuration = clamp(2.55 - intensity * 0.86 - windLean * 0.24, 1.10, 2.65);
   const nearDuration = clamp(1.72 - intensity * 0.48 - windLean * 0.16, 0.78, 1.78);
   const bandCount = isDay
-    ? Math.max(2, Math.round(lightRain ? 3 : 4 + intensity * 3))
+    ? Math.max(1, Math.round((lightRain ? 3 : 4 + intensity * 3) * Math.max(0.45, density)))
     : 0;
 
   for (let i = 0; i < bandCount; i++) {
@@ -1037,7 +1123,7 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
     const width = Math.round(vw * ((lightRain ? 0.12 : 0.18) + rng() * 0.14));
     const lean = Math.round(drift * (1.8 + rng() * 1.1));
     const op = (bandOpacity * (0.55 + rng() * 0.45)).toFixed(3);
-    bands += `<path class="sky-rain-sheet" d="M${x} 0 L${x + width} 0 L${x + width + lean} ${vh} L${x + lean} ${vh} Z" fill="${glowColor}" opacity="${op}" style="--rain-drift:${drift.toFixed(0)}px;animation-delay:-${(rng() * 8).toFixed(2)}s;animation-duration:${(10 + rng() * 8).toFixed(2)}s"/>`;
+    bands += `<path class="sky-rain-sheet${motion.animateAtmosphere ? " is-animated" : ""}" d="M${x} 0 L${x + width} 0 L${x + width + lean} ${vh} L${x + lean} ${vh} Z" fill="${glowColor}" opacity="${op}" style="--rain-drift:${drift.toFixed(0)}px;animation-delay:-${(rng() * 8).toFixed(2)}s;animation-duration:${(10 + rng() * 8).toFixed(2)}s"/>`;
   }
 
   for (let i = 0; i < fineCount; i++) {
@@ -1067,28 +1153,28 @@ function skyRain(vw, vh, heavy = false, rng, skyState = null) {
       <ellipse cx="${Math.round(vw * 0.48)}" cy="${Math.round(vh * 0.74)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.30)}" fill="${glowColor}" opacity="${horizonOpacity.toFixed(3)}" filter="url(#sky-glow-f)"/>
       ${bands}
     </g>
-    <g class="sky-rain-layer sky-rain-curtain" style="--rain-distance:${tileHeight}px;animation-duration:${fineDuration.toFixed(2)}s;animation-delay:-${(rng() * fineDuration).toFixed(2)}s">
+    <g class="sky-rain-layer sky-rain-curtain${motion.animateAtmosphere ? " is-animated" : ""}" style="--rain-distance:${tileHeight}px;animation-duration:${fineDuration.toFixed(2)}s;animation-delay:-${(rng() * fineDuration).toFixed(2)}s">
       <g>${fine}</g>
       <g transform="translate(0 -${tileHeight})">${fine}</g>
     </g>
-    <g class="sky-rain-layer sky-rain-foreground" style="--rain-distance:${tileHeight}px;animation-duration:${nearDuration.toFixed(2)}s;animation-delay:-${(rng() * nearDuration).toFixed(2)}s">
+    <g class="sky-rain-layer sky-rain-foreground${motion.animateAtmosphere ? " is-animated" : ""}" style="--rain-distance:${tileHeight}px;animation-duration:${nearDuration.toFixed(2)}s;animation-delay:-${(rng() * nearDuration).toFixed(2)}s">
       <g>${near}</g>
       <g transform="translate(0 -${tileHeight})">${near}</g>
     </g>
   `;
 }
 
-function skySnow(vw, vh, rng, skyState = null) {
+function skySnow(vw, vh, rng, skyState = null, motion = skyMotionProfile("snow", skyState)) {
   let out = "";
   const intensity = skyState ? clamp01((skyState.pop - 20) / 70 + (skyState.precipitation || 0) * 0.5) : 0.45;
-  const count = Math.round(34 + intensity * 30);
+  const count = Math.max(10, Math.round((34 + intensity * 30) * (motion.density ?? 1)));
   for (let i = 0; i < count; i++) {
     const x = (rng() * vw).toFixed(0);
     const r = (1.4 + intensity * 0.8 + rng() * 2.5).toFixed(1);
     const dur = (3.8 + rng() * 6 - intensity * 0.7).toFixed(1);
     const delay = (rng() * 8).toFixed(1);
     const drift = ((rng() * 50) - 25).toFixed(0);
-    out += `<circle cx="${x}" cy="-5" r="${r}" fill="white" opacity="0.8" class="sky-snow" style="--drift:${drift}px;animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
+    out += `<circle cx="${x}" cy="-5" r="${r}" fill="white" opacity="0.8" class="sky-snow${motion.animateAtmosphere ? " is-animated" : ""}" style="--drift:${drift}px;animation-duration:${dur}s;animation-delay:-${delay}s"/>`;
   }
   return out;
 }
@@ -1107,18 +1193,19 @@ function skyLightningBolt(vw, vh, rng) {
   return d;
 }
 
-function skyLightning(vw, vh, rng) {
+function skyLightning(vw, vh, rng, motion = skyMotionProfile("thunder")) {
   const d1 = (rng() * 5).toFixed(1);
   const d2 = (Number(d1) + 5 + rng() * 7).toFixed(1);
   const bolt1 = skyLightningBolt(vw, vh, rng);
   const bolt2 = skyLightningBolt(vw, vh, rng);
+  const cls = `sky-lightning${motion.animateAtmosphere ? " is-animated" : ""}`;
   return `
-    <rect x="0" y="0" width="${vw}" height="${vh}" fill="#c0d0ff" opacity="0" class="sky-lightning" style="animation-delay:${d1}s"/>
-    <path d="${bolt1}" stroke="#ffe080" stroke-width="3" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d1}s;filter:blur(3px)"/>
-    <path d="${bolt1}" stroke="white" stroke-width="1.5" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d1}s"/>
-    <rect x="0" y="0" width="${vw}" height="${vh}" fill="#c0d0ff" opacity="0" class="sky-lightning" style="animation-delay:${d2}s"/>
-    <path d="${bolt2}" stroke="#ffe080" stroke-width="3" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d2}s;filter:blur(3px)"/>
-    <path d="${bolt2}" stroke="white" stroke-width="1.5" fill="none" opacity="0" class="sky-lightning" style="animation-delay:${d2}s"/>
+    <rect x="0" y="0" width="${vw}" height="${vh}" fill="#c0d0ff" opacity="0" class="${cls}" style="animation-delay:${d1}s"/>
+    <path d="${bolt1}" stroke="#ffe080" stroke-width="3" fill="none" opacity="0" class="${cls}" style="animation-delay:${d1}s;filter:blur(3px)"/>
+    <path d="${bolt1}" stroke="white" stroke-width="1.5" fill="none" opacity="0" class="${cls}" style="animation-delay:${d1}s"/>
+    <rect x="0" y="0" width="${vw}" height="${vh}" fill="#c0d0ff" opacity="0" class="${cls}" style="animation-delay:${d2}s"/>
+    <path d="${bolt2}" stroke="#ffe080" stroke-width="3" fill="none" opacity="0" class="${cls}" style="animation-delay:${d2}s;filter:blur(3px)"/>
+    <path d="${bolt2}" stroke="white" stroke-width="1.5" fill="none" opacity="0" class="${cls}" style="animation-delay:${d2}s"/>
   `;
 }
 
