@@ -3477,13 +3477,15 @@ function planSignalRiskKind(item) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  if (stats.stormPotential || /\b(thunder|storm|lightning|hail|tornado)\b/.test(alertText)) return "storm";
-  if (/\b(heat|hot|humid|uv|sun|sunscreen)\b/.test(alertText) || stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
+  if (/\b(excessive heat|extreme heat|heat warning|heat advisory|heat|hot|humid|uv|sun|sunscreen)\b/.test(alertText)) return "heat";
+  if (/\b(thunder|storm|lightning|hail|tornado)\b/.test(alertText)) return "storm";
   if (/\b(aqi|air quality|smoke)\b/.test(alertText) || stats.aqiMax >= 101) return "air";
   if (/\b(pollen|allerg)\b/.test(alertText) || stats.pollenRank >= 3) return "pollen";
   if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(alertText) || stats.gustMax >= 25) return "wind";
   if (/\b(flood|heavy rain|downpour)\b/.test(alertText) || stats.rainChance >= 35 || stats.precipTotal > 0.02) return "rain";
   if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText) || stats.feelsAvg <= 40) return "cold";
+  if (stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
+  if (stats.stormPotential) return "storm";
   return "good";
 }
 
@@ -3531,7 +3533,7 @@ function planContextSignalRows(item) {
   const stormRow = { label: "Storms", value: stats.stormPotential ? "Possible" : "Watch", kind: "storm" };
   const fallback = [rainRow, feelsRow, gustRow, tempRow];
   const rowsByRisk = {
-    heat: [feelsRow, uvRow, tempRow, rainRow],
+    heat: [feelsRow, tempRow, uvRow, rainRow],
     cold: [feelsRow, tempRow, gustRow, rainRow],
     storm: [stormRow, rainRow, gustRow, amountRow],
     rain: [rainRow, amountRow, gustRow, feelsRow],
