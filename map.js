@@ -1224,12 +1224,14 @@ function syncMapLibreRadarChunkLayer(record = mapLibreCurrentRecord()) {
   const indexUrl = radarChunkIndexUrl();
   if (!indexUrl) {
     removeMapLibreRadarChunkLayer(record);
+    syncMapLibreRadarChunkFallbackVisibility(record);
     return;
   }
 
   const existing = record.radarChunkLayerState;
   if (existing?.indexUrl === indexUrl && map.getLayer(MAPLIBRE_RADAR_CHUNK_LAYER_ID)) {
     ensureMapLibreRadarChunkLayerOrder(map);
+    syncMapLibreRadarChunkFallbackVisibility(record);
     return;
   }
   removeMapLibreRadarChunkLayer(record);
@@ -1237,6 +1239,8 @@ function syncMapLibreRadarChunkLayer(record = mapLibreCurrentRecord()) {
   map.addLayer(layer, mapLibreWeatherBeforeLayer(map));
   ensureMapLibreRadarChunkLayerOrder(map);
   record.radarChunkLayerState = layer._nearcastState;
+  record.radarChunkLayerState.record = record;
+  syncMapLibreRadarChunkFallbackVisibility(record);
 }
 
 function ensureMapLibreRadarChunkLayerOrder(map) {
@@ -1257,10 +1261,34 @@ function removeMapLibreRadarChunkLayer(record) {
   record.radarChunkLayerState = null;
 }
 
+function mapLibreRadarChunkReady(record = mapLibreCurrentRecord()) {
+  const state = record?.radarChunkLayerState;
+  return Boolean(
+    state?.status === "ready"
+    && (state.chunks?.length || 0) > 0
+    && record?.map?.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
+  );
+}
+
+function syncMapLibreRadarChunkFallbackVisibility(record = mapLibreCurrentRecord()) {
+  if (!record?.weatherEntries) return;
+  const useChunkRadar = mapLibreRadarChunkReady(record);
+  record.weatherEntries.forEach((entry) => {
+    if (!entry || !record.map?.getLayer?.(entry.layerId)) return;
+    if (useChunkRadar) {
+      setMapLibreWeatherEntryOpacity(record, entry, 0);
+    } else if (record.liveWeatherKeys?.has(entry.key) && entry.lastSpec) {
+      setMapLibreWeatherEntryVisual(record, entry, entry.lastSpec);
+    }
+  });
+  syncMapLibreDiagnosticReadout(record);
+}
+
 function createMapLibreRadarChunkLayer(indexUrl) {
   const state = {
     indexUrl,
     map: null,
+    record: null,
     status: "idle",
     error: "",
     index: null,
@@ -1299,6 +1327,7 @@ function createMapLibreRadarChunkLayer(indexUrl) {
       state.removed = true;
       destroyRadarChunkGl(state, gl);
       state.map = null;
+      state.record = null;
     }
   };
 }
@@ -1408,9 +1437,11 @@ async function loadRadarChunkIndex(state) {
     state.index = index;
     state.chunks = chunks;
     state.status = chunks.length ? "ready" : "empty";
+    syncMapLibreRadarChunkFallbackVisibility(state.record);
   } catch (error) {
     state.status = "error";
     state.error = error?.message || "chunk radar failed";
+    syncMapLibreRadarChunkFallbackVisibility(state.record);
     recordRadarSourceDecision("radar.chunk-layer-unavailable", {
       indexUrl: state.indexUrl,
       reason: state.error
@@ -1770,10 +1801,12 @@ function syncMapLibreWeatherSlots(record, specs = []) {
     if (!entry) return;
     entry.frameIndex = spec.frameIndex;
     entry.lastUsedAt = record.weatherRenderSeq;
+    entry.lastSpec = spec;
     entry.hideSeq = 0;
     setMapLibreWeatherEntryVisual(record, entry, spec);
   });
 
+  syncMapLibreRadarChunkFallbackVisibility(record);
   record.weatherEntries.forEach((entry, key) => {
     if (liveKeys.has(key)) return;
     if (mapDiagnosticUsesStrictLayerSet()) {
@@ -1828,6 +1861,7 @@ function ensureMapLibreWeatherEntry(record, spec) {
     layerId,
     sourceSignature,
     frameIndex: spec.frameIndex,
+    lastSpec: spec,
     visible: mapLibreWeatherOpacity(spec) > MAPLIBRE_WEATHER_PRELOAD_OPACITY,
     lastUsedAt: record.weatherRenderSeq || 0,
     hideSeq: 0
