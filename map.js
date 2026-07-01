@@ -27,6 +27,7 @@ const GENERATED_RADAR_READY_STATUS_MS = 1800;
 const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const GENERATED_RADAR_VIEWPORT_COVERAGE_MIN = 0.999;
 const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
+const GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM = 12;
 const GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = MAP_MAX_ZOOM;
 const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
 const GENERATED_RADAR_GENERATION_MIN_ZOOM = 8;
@@ -1963,6 +1964,12 @@ function generatedRadarRefreshOptions(timelineKind) {
   };
 }
 
+function currentRadarFramesAreGenerated() {
+  return (mapState.frames || []).some((frame) =>
+    frame?.source !== "forecast" && frame?.provider === "mrms-generated"
+  );
+}
+
 function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason = "generated-viewport-out-of-scope") {
   const frame = mapState.frames[index];
   const eligibility = generatedRadarFrameViewportEligibility(frame);
@@ -2041,7 +2048,7 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
       clearGeneratedRadarWarmup();
       return;
     }
-    if (selection.key === mapState.generatedRadarSelectionKey) {
+    if (selection.key === mapState.generatedRadarSelectionKey && currentRadarFramesAreGenerated()) {
       mapState.generatedRadarViewportKey = viewportKey;
       finishGeneratedRadarWarmup(viewportKey, "selection-current");
       return;
@@ -3780,8 +3787,9 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + GENERATED_RADAR_MIN_ZOOM_GRACE;
   const centerOk = !safeContext.centerPoint || coverage.centerCovered;
+  const centerFocusOk = centerOk && hasZoom && zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM;
   const viewportThreshold = hasViewport ? GENERATED_RADAR_VIEWPORT_COVERAGE_MIN : null;
-  const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN;
+  const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
   if (!coverage.relevant) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
@@ -3796,7 +3804,8 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
     maxZoom,
     maxClientOverzoom,
     zoom: hasZoom ? zoom : null,
-    viewportThreshold
+    viewportThreshold,
+    centerFocusOk
   };
 }
 
@@ -3846,6 +3855,7 @@ function generatedRadarViewportEligibilityDiagnostic(eligibility) {
     maxZoom: eligibility.maxZoom,
     maxClientOverzoom: roundedDiagnosticNumber(eligibility.maxClientOverzoom, 2),
     viewportThreshold: roundedDiagnosticNumber(eligibility.viewportThreshold, 3),
+    centerFocusOk: Boolean(eligibility.centerFocusOk),
     coverage: eligibility.coverage
       ? {
         relevant: Boolean(eligibility.coverage.relevant),

@@ -76,6 +76,19 @@ const partialViewport = await capability({
 assert.equal(partialViewport.status, 200);
 assert.equal(partialViewport.body.enhanced.state, "unavailable");
 
+const detailCenteredPartialViewport = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 13,
+    bounds: { minLat: 46.4, minLon: -112.8, maxLat: 48.6, maxLon: -109.8 },
+    key: "47.50,-111.30,z13-wide"
+  }
+});
+assert.equal(detailCenteredPartialViewport.status, 200);
+assert.equal(detailCenteredPartialViewport.body.enhanced.state, "ready");
+assert.equal(detailCenteredPartialViewport.body.enhanced.score.viewportGate.centerFocusOk, true);
+
 const passthrough = await worker.fetch(new Request("https://getnearcast.app/index.html"), {
   ASSETS: {
     async fetch() {

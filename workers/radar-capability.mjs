@@ -25,6 +25,7 @@ const DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM = 8;
 const RADAR_GENERATION_MIN_VIEWPORT_ZOOM_ENV = "RADAR_GENERATION_MIN_VIEWPORT_ZOOM";
 const ENHANCED_VIEWPORT_COVERAGE_MIN = 0.999;
 const ENHANCED_MIN_ZOOM_GRACE = 0.001;
+const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 12;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 
 export default {
@@ -234,7 +235,8 @@ function packScore(pack, viewport) {
       minZoom: eligibility.minZoom,
       maxZoom: eligibility.maxZoom,
       maxClientOverzoom: eligibility.maxClientOverzoom,
-      viewportThreshold: eligibility.viewportThreshold
+      viewportThreshold: eligibility.viewportThreshold,
+      centerFocusOk: eligibility.centerFocusOk
     }
   };
 }
@@ -781,8 +783,9 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + ENHANCED_MIN_ZOOM_GRACE;
   const centerOk = !centerPoint || coverage.centerCovered;
+  const centerFocusOk = centerOk && hasZoom && zoom + ENHANCED_MIN_ZOOM_GRACE >= ENHANCED_CENTER_FOCUS_MIN_ZOOM;
   const viewportThreshold = hasViewport ? ENHANCED_VIEWPORT_COVERAGE_MIN : null;
-  const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN;
+  const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
   if (!coverage.relevant) reason = "coverage-not-relevant";
   else if (!minZoomOk) reason = "below-generated-min-zoom";
@@ -797,7 +800,8 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : null,
     maxClientOverzoom: Number.isFinite(maxClientOverzoom) ? maxClientOverzoom : null,
     zoom: hasZoom ? zoom : null,
-    viewportThreshold
+    viewportThreshold,
+    centerFocusOk
   };
 }
 
