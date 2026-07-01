@@ -21,10 +21,11 @@ const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 
 const DEFAULT_GENERATION_GLOBAL_HOURLY_LIMIT = 60;
 const DEFAULT_GENERATION_VIEWPORT_HOURLY_LIMIT = 3;
 const DEFAULT_GENERATION_POLL_AFTER_SECONDS = 20;
-const DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM = 8;
+const DEFAULT_GENERATION_MIN_VIEWPORT_ZOOM = 7.5;
 const RADAR_GENERATION_MIN_VIEWPORT_ZOOM_ENV = "RADAR_GENERATION_MIN_VIEWPORT_ZOOM";
 const ENHANCED_VIEWPORT_COVERAGE_MIN = 0.999;
 const ENHANCED_MIN_ZOOM_GRACE = 0.001;
+const ENHANCED_MIN_VIEWPORT_ZOOM = 7.5;
 const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 
@@ -780,7 +781,9 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
   const hasZoom = Number.isFinite(zoom);
   const centerPoint = viewport?.center || viewport?.activePoint;
   const hasViewport = Boolean(viewport?.bounds);
-  const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + ENHANCED_MIN_ZOOM_GRACE >= minZoom;
+  const enhancedMinZoomOk = !hasZoom || zoom + ENHANCED_MIN_ZOOM_GRACE >= ENHANCED_MIN_VIEWPORT_ZOOM;
+  const sourceMinZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + ENHANCED_MIN_ZOOM_GRACE >= minZoom;
+  const minZoomOk = enhancedMinZoomOk && sourceMinZoomOk;
   const maxClientOverzoom = enhancedMaxClientOverzoom(source);
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + ENHANCED_MIN_ZOOM_GRACE;
@@ -792,7 +795,8 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
   const viewportOk = !hasViewport || coverage.viewportOverlap >= ENHANCED_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
   if (!relevantOk) reason = "coverage-not-relevant";
-  else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!enhancedMinZoomOk) reason = "below-enhanced-min-zoom";
+  else if (!sourceMinZoomOk) reason = "below-generated-min-zoom";
   else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
@@ -800,6 +804,7 @@ function enhancedViewportEligibility(source, viewport = {}, areas = coverageArea
     usable: relevantOk && minZoomOk && maxZoomOk && centerOk && viewportOk,
     reason,
     coverage,
+    enhancedMinZoom: ENHANCED_MIN_VIEWPORT_ZOOM,
     minZoom: Number.isFinite(minZoom) ? minZoom : null,
     maxZoom: Number.isFinite(maxZoom) ? maxZoom : null,
     maxClientOverzoom: Number.isFinite(maxClientOverzoom) ? maxClientOverzoom : null,

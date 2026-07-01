@@ -65,6 +65,47 @@ const workerReady = await workerCapability(basePayload, env);
 assert.equal(workerReady.status, 200);
 assert.equal(workerReady.body.enhanced.state, "ready");
 
+const belowEnhancedStart = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 7.4,
+    bounds: { minLat: 47.3, minLon: -111.7, maxLat: 47.7, maxLon: -110.9 },
+    key: "47.50,-111.30,z7.4-covered"
+  }
+});
+assert.equal(belowEnhancedStart.status, 200);
+assert.equal(belowEnhancedStart.body.enhanced.state, "unavailable");
+assert.equal(belowEnhancedStart.body.enhanced.reason, "no-fresh-index-pack");
+assert.equal(belowEnhancedStart.body.enhanced.freshPackCount, 1);
+
+const regionalCoveredViewport = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 7.5,
+    bounds: { minLat: 47.3, minLon: -111.7, maxLat: 47.7, maxLon: -110.9 },
+    key: "47.50,-111.30,z7.5-covered"
+  }
+});
+assert.equal(regionalCoveredViewport.status, 200);
+assert.equal(regionalCoveredViewport.body.enhanced.state, "ready");
+assert.equal(regionalCoveredViewport.body.enhanced.score.viewportGate.centerFocusOk, false);
+
+const preFocusPartialViewport = await capability({
+  ...basePayload,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 8.5,
+    bounds: { minLat: 46.4, minLon: -112.8, maxLat: 48.6, maxLon: -109.8 },
+    key: "47.50,-111.30,z8.5-wide"
+  }
+});
+assert.equal(preFocusPartialViewport.status, 200);
+assert.equal(preFocusPartialViewport.body.enhanced.state, "unavailable");
+assert.equal(preFocusPartialViewport.body.enhanced.reason, "no-fresh-index-pack");
+assert.equal(preFocusPartialViewport.body.enhanced.freshPackCount, 1);
+
 const partialViewport = await capability({
   ...basePayload,
   viewport: {

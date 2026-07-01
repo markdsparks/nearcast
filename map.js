@@ -27,10 +27,11 @@ const GENERATED_RADAR_READY_STATUS_MS = 1800;
 const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const GENERATED_RADAR_VIEWPORT_COVERAGE_MIN = 0.999;
 const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
+const GENERATED_RADAR_MIN_VIEWPORT_ZOOM = 7.5;
 const GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM = 9;
 const GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = MAP_MAX_ZOOM;
 const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
-const GENERATED_RADAR_GENERATION_MIN_ZOOM = 8;
+const GENERATED_RADAR_GENERATION_MIN_ZOOM = GENERATED_RADAR_MIN_VIEWPORT_ZOOM;
 const RADAR_CAPABILITY_FETCH_TIMEOUT_MS = 3500;
 const RADAR_FALLBACK_METADATA_FETCH_TIMEOUT_MS = 3500;
 const RADAR_CAPABILITY_LOG_LIMIT = 20;
@@ -3782,7 +3783,9 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
   const zoom = Number(safeContext.zoom);
   const hasZoom = Number.isFinite(zoom);
   const hasViewport = Boolean(safeContext.viewportBounds);
-  const minZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= minZoom;
+  const enhancedMinZoomOk = !hasZoom || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= GENERATED_RADAR_MIN_VIEWPORT_ZOOM;
+  const sourceMinZoomOk = !hasZoom || !Number.isFinite(minZoom) || zoom + GENERATED_RADAR_MIN_ZOOM_GRACE >= minZoom;
+  const minZoomOk = enhancedMinZoomOk && sourceMinZoomOk;
   const maxClientOverzoom = generatedRadarMaxClientOverzoom(source);
   const maxZoomOk = !hasZoom || !Number.isFinite(maxZoom) || !Number.isFinite(maxClientOverzoom) ||
     zoom <= maxZoom + maxClientOverzoom + GENERATED_RADAR_MIN_ZOOM_GRACE;
@@ -3794,7 +3797,8 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
   const viewportOk = !hasViewport || coverage.viewportOverlap >= GENERATED_RADAR_VIEWPORT_COVERAGE_MIN || centerFocusOk;
   let reason = "usable";
   if (!relevantOk) reason = "coverage-not-relevant";
-  else if (!minZoomOk) reason = "below-generated-min-zoom";
+  else if (!enhancedMinZoomOk) reason = "below-enhanced-min-zoom";
+  else if (!sourceMinZoomOk) reason = "below-generated-min-zoom";
   else if (!maxZoomOk) reason = "above-generated-max-zoom";
   else if (!centerOk) reason = "center-outside-coverage";
   else if (!viewportOk) reason = "viewport-not-covered";
@@ -3803,6 +3807,7 @@ function generatedRadarViewportEligibilityForSource(source, context = generatedM
     reason,
     coverage,
     minZoom,
+    enhancedMinZoom: GENERATED_RADAR_MIN_VIEWPORT_ZOOM,
     maxZoom,
     maxClientOverzoom,
     zoom: hasZoom ? zoom : null,
