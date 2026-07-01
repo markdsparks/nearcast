@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30110";
-const ASSET_VERSION = "3.0.110";
+const CACHE = "nearcast-v30111";
+const ASSET_VERSION = "3.0.111";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -121,5 +121,20 @@ self.addEventListener("fetch", e => {
   // Versioned app shell assets — cache-first
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
+  );
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || BASE, self.location.origin + BASE).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(clients => {
+      const existing = clients.find(client => client.url.startsWith(self.location.origin + BASE));
+      if (existing) {
+        existing.focus();
+        return;
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
   );
 });

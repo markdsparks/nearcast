@@ -1,4 +1,4 @@
-const VERSION = "3.0.110";
+const VERSION = "3.0.111";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2949,7 +2949,12 @@ function bindEvents() {
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify]", (event, target) => {
+    const watchNotify = target.closest("[data-watch-notify]");
+    if (watchNotify) {
+      if (typeof requestPlanWatchNotifications === "function") requestPlanWatchNotifications();
+      return;
+    }
     const memoryNew = target.closest("[data-memory-new]");
     if (memoryNew) {
       closeGlobalMemorySheet();
@@ -5300,6 +5305,8 @@ function renderForecastGlance(ctx) {
 
 function renderForecastPlan(ctx) {
   renderPlanPulse(ctx.data, ctx.place);
+  if (typeof refreshPlanWatchForecasts === "function") refreshPlanWatchForecasts();
+  if (typeof maybeSyncPlanWatchNotifications === "function") maybeSyncPlanWatchNotifications();
 }
 
 function renderForecastLists(ctx, lanes) {
@@ -6636,6 +6643,7 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
   const continuity = forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, continuityBaselineStore(data, place));
   const herePlanCards = forYouPlanCards(data, place).slice(0, 1);
   const elsewherePlanCard = forYouElsewherePlanCard(data, place);
+  const watchlistCard = forYouWatchlistCard(data, place);
   const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
   return {
     data,
@@ -6649,6 +6657,7 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     continuityMemoryId: continuity.memoryId,
     herePlanCards,
     elsewherePlanCard,
+    watchlistCard,
     interruptionCard: interruption.html,
     interruptionType: interruption.type,
     memoryCount: Array.isArray(state.planMemories) ? state.planMemories.length : 0
@@ -6666,6 +6675,8 @@ function todayPriorityCards(context) {
   ) cards.push(context.herePlanCards[0]);
   else if (context.elsewherePlanCard) cards.push(context.elsewherePlanCard);
 
+  if (context.watchlistCard && cards.length < 2) cards.push(context.watchlistCard);
+
   if (context.interruptionCard && context.interruptionType !== context.continuityType) {
     cards.push(context.interruptionCard);
   }
@@ -6680,8 +6691,51 @@ function forYouMeta(context) {
   const hasAwayPlan = Boolean(context?.elsewherePlanCard && !context?.herePlanCards?.length);
   if (context?.continuityCard) return `${placeText} · changed since last check`;
   if (hasAwayPlan) return `${placeText} · next plan away`;
+  if (context?.watchlistCard) return `${placeText} · watchlist ready`;
   if (memoryCount) return `${placeText} · plan-aware`;
   return placeText;
+}
+
+function forYouWatchlistCard(data, place) {
+  if (
+    !Array.isArray(state.planMemories) ||
+    !state.planMemories.length ||
+    typeof planMemoryListItems !== "function"
+  ) return "";
+
+  const items = planMemoryListItems(data, place, { includePast: false });
+  if (!items.length) return "";
+
+  const watches = typeof planWatchItemForMemoryItem === "function"
+    ? items.map(planWatchItemForMemoryItem).filter(Boolean)
+    : [];
+  const ranked = [...watches].sort((a, b) => (
+    (typeof planWatchAttentionRank === "function" ? planWatchAttentionRank(b) - planWatchAttentionRank(a) : 0) ||
+    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
+  ));
+  const top = ranked[0];
+  const attentionCount = watches.filter((watch) =>
+    !watch?.isPast && ["watch", "caution"].includes(watch?.tone)
+  ).length;
+  const changedCount = watches.filter((watch) => !watch?.isPast && watch?.change).length;
+  const loadingCount = watches.filter((watch) =>
+    watch?.status === "loading" || watch?.status === "idle"
+  ).length;
+  const tone = attentionCount ? "caution" : changedCount ? "changed" : loadingCount ? "pending" : "good";
+  const title = attentionCount
+    ? `${attentionCount} ${attentionCount === 1 ? "plan needs margin" : "plans need margin"}`
+    : `${items.length} ${items.length === 1 ? "plan" : "plans"} watched`;
+  const body = top?.change?.body ||
+    top?.reason ||
+    (loadingCount ? "Nearcast is checking saved plan windows." : "No major weather signal right now.");
+  return `
+    <button class="for-you-card is-watchlist is-${escapeHtml(tone)}" type="button" data-memory-open data-for-you-signal="memory-open">
+      <span class="for-you-kicker"><span>Watchlist</span><em>${escapeHtml(`${items.length} active`)}</em></span>
+      <strong>${escapeHtml(title)}</strong>
+      <span class="for-you-body">${escapeHtml(compactForYouText(body, 92))}</span>
+      <small>Open Plan Watch</small>
+    </button>
+  `;
 }
 
 function defaultContinuityStore() {

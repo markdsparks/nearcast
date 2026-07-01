@@ -276,6 +276,10 @@ const MAIN_PLAN_BRIEFING_MAX_ITEMS = 2;
 const PLAN_WATCH_MAX_AUTO_FETCH_PLACES = 4;
 const PLAN_WATCH_FORECAST_MAX_AGE_MS = 60 * 60 * 1000;
 const PLAN_WATCH_REFRESH_THROTTLE_MS = 90 * 1000;
+const PLAN_WATCH_NOTIFICATION_PREF_KEY = "nearcast-plan-watch-notifications-v1";
+const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
+const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
 
 const planWatchState = {
   data: {},
@@ -286,6 +290,215 @@ const planWatchState = {
   baselineStore: null
 };
 let planWatchFocusMemoryId = "";
+
+function readPlanWatchNotificationState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_NOTIFICATION_STATE_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return { events: {} };
+    return {
+      events: parsed.events && typeof parsed.events === "object" ? parsed.events : {}
+    };
+  } catch {
+    return { events: {} };
+  }
+}
+
+function writePlanWatchNotificationState(stateValue) {
+  try {
+    const now = Date.now();
+    const events = Object.entries(stateValue?.events || {})
+      .filter(([, value]) => now - (Number(value) || 0) <= 7 * 24 * 60 * 60 * 1000)
+      .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
+      .slice(0, PLAN_WATCH_NOTIFICATION_MAX_EVENTS);
+    localStorage.setItem(PLAN_WATCH_NOTIFICATION_STATE_KEY, JSON.stringify({
+      events: Object.fromEntries(events)
+    }));
+  } catch {
+    /* Notification dedupe is optional. */
+  }
+}
+
+function planWatchNotificationsSupported() {
+  return Boolean(
+    window.isSecureContext &&
+    "Notification" in window &&
+    "serviceWorker" in navigator
+  );
+}
+
+function planWatchNotificationPermission() {
+  if (!("Notification" in window)) return "unsupported";
+  return Notification.permission || "default";
+}
+
+function planWatchNotificationPreference() {
+  try {
+    return localStorage.getItem(PLAN_WATCH_NOTIFICATION_PREF_KEY) || "off";
+  } catch {
+    return "off";
+  }
+}
+
+function planWatchNotificationsEnabled() {
+  return planWatchNotificationsSupported() &&
+    planWatchNotificationPermission() === "granted" &&
+    planWatchNotificationPreference() === "enabled";
+}
+
+async function requestPlanWatchNotifications() {
+  if (!planWatchNotificationsSupported()) {
+    renderGlobalMemorySheet();
+    return;
+  }
+  if (planWatchNotificationsEnabled()) {
+    try {
+      localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, "off");
+    } catch {
+      /* Keep the current session working even if storage is unavailable. */
+    }
+    renderGlobalMemorySheet();
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  try {
+    localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, permission === "granted" ? "enabled" : "off");
+  } catch {
+    /* Keep the current session working even if storage is unavailable. */
+  }
+  renderGlobalMemorySheet();
+  if (permission === "granted") maybeSyncPlanWatchNotifications(null, { userInitiated: true });
+}
+
+function planWatchNotificationPanelCopy(watchItems) {
+  const count = (watchItems || []).filter((watch) => !watch.isPast).length;
+  const supported = planWatchNotificationsSupported();
+  const permission = planWatchNotificationPermission();
+  const enabled = planWatchNotificationsEnabled();
+  if (!supported) {
+    return {
+      tone: "pending",
+      title: "Watchlist ready",
+      body: "Nearcast can track changes here. Device notifications need browser support and a secure installed app.",
+      button: "",
+      meta: count ? `${count} active` : "No active plans"
+    };
+  }
+  if (permission === "denied") {
+    return {
+      tone: "caution",
+      title: "Notifications blocked",
+      body: "Plan Watch still works in the app. Change browser notification settings to receive device alerts.",
+      button: "",
+      meta: "Blocked"
+    };
+  }
+  if (enabled) {
+    return {
+      tone: "good",
+      title: "Notifications on",
+      body: "Nearcast can notify you when watched plans get wetter, windier, or overlap active alerts.",
+      button: "Turn off",
+      meta: count ? `${count} active` : "Ready"
+    };
+  }
+  return {
+    tone: "neutral",
+    title: "Notify on meaningful changes",
+    body: "Use notifications for watched plans only: bigger rain shifts, stronger wind, or active alert overlap.",
+    button: "Turn on",
+    meta: count ? `${count} active` : "Optional"
+  };
+}
+
+function renderPlanWatchNotificationPanel(watchItems) {
+  const copy = planWatchNotificationPanelCopy(watchItems);
+  return `
+    <section class="plan-watch-notify is-${escapeHtml(copy.tone)}">
+      <div class="plan-watch-notify-main">
+        <span>${escapeHtml(copy.meta)}</span>
+        <strong>${escapeHtml(copy.title)}</strong>
+        <small>${escapeHtml(copy.body)}</small>
+      </div>
+      ${copy.button ? `<button type="button" data-watch-notify>${escapeHtml(copy.button)}</button>` : ""}
+    </section>
+  `;
+}
+
+function currentPlanWatchItems() {
+  if (typeof planMemoryListItems !== "function" || typeof planWatchItemForMemoryItem !== "function") return [];
+  return planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+    .map(planWatchItemForMemoryItem)
+    .filter(Boolean)
+    .filter((watch) => !watch.isPast);
+}
+
+function planWatchNotificationEventKey(watch) {
+  if (!watch?.memory?.id) return "";
+  const signal = watch.change?.type || watch.alertTone || watch.tone || watch.label || "watch";
+  const body = watch.change?.body || watch.reason || "";
+  return [
+    watch.memory.id,
+    watch.memory.targetDate,
+    watch.memory.startHour,
+    watch.memory.endHour,
+    signal,
+    body
+  ].join("|");
+}
+
+function planWatchNotificationCandidates(watchItems) {
+  return (watchItems || [])
+    .filter((watch) => !watch.isPast && watch.status === "ready")
+    .filter((watch) => watch.change || watch.alertTone === "warning" || watch.alertTone === "watch" || watch.tone === "watch")
+    .sort((a, b) =>
+      planWatchAttentionRank(b) - planWatchAttentionRank(a) ||
+      (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
+    );
+}
+
+async function showPlanWatchNotification(watch) {
+  if (!planWatchNotificationsEnabled()) return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const title = `Nearcast: ${planMemoryTitle(watch.memory)}`;
+    const body = planWatchCompactText(`${watch.label}: ${watch.change?.body || watch.reason || "Weather changed for this plan."}`, 128);
+    await registration.showNotification(title, {
+      body,
+      tag: `nearcast-plan-${watch.memory.id}`,
+      renotify: false,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      data: {
+        url: "./",
+        memoryId: watch.memory.id,
+        source: "plan-watch"
+      }
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function maybeSyncPlanWatchNotifications(watchItems = null, options = {}) {
+  const candidates = planWatchNotificationCandidates(watchItems || currentPlanWatchItems());
+  if (!candidates.length) return;
+  if (!planWatchNotificationsEnabled()) return;
+  const store = readPlanWatchNotificationState();
+  const now = Date.now();
+  const candidate = candidates.find((watch) => {
+    const key = planWatchNotificationEventKey(watch);
+    return key && now - (Number(store.events[key]) || 0) > PLAN_WATCH_NOTIFICATION_COOLDOWN_MS;
+  });
+  if (!candidate) return;
+
+  const key = planWatchNotificationEventKey(candidate);
+  store.events[key] = now;
+  writePlanWatchNotificationState(store);
+
+  if (!options.userInitiated && document.visibilityState === "visible") return;
+  await showPlanWatchNotification(candidate);
+}
 
 function briefingPanel(html, className = "") {
   const cls = ["briefing-panel", className].filter(Boolean).join(" ");
@@ -3392,6 +3605,7 @@ function renderGlobalMemorySheet() {
   }
 
   els.memorySheetBody.innerHTML =
+    renderPlanWatchNotificationPanel(watchItems) +
     renderGlobalMemoryGroup("Current place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById
@@ -3461,6 +3675,8 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
       planWatchState.data[key] = data;
       planWatchState.alerts[key] = alerts || [];
       delete planWatchState.errors[key];
+      if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+      maybeSyncPlanWatchNotifications();
     }).catch((err) => {
       planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
     }).finally(() => {
