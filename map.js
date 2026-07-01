@@ -1368,9 +1368,21 @@ function initRadarChunkGl(state, gl) {
     uniform float u_dbz_max;
     uniform float u_threshold;
     uniform float u_opacity;
+    uniform float u_zoom;
+    uniform vec2 u_texel_size;
     varying vec2 v_tex;
 
-    vec4 radarColor(float dbz) {
+    float radarDbzFromEncoded(float encoded) {
+      return u_dbz_min + ((encoded - 1.0) / 254.0) * (u_dbz_max - u_dbz_min);
+    }
+
+    float radarSampleDbz(vec2 coord) {
+      float encoded = texture2D(u_texture, coord).r * 255.0;
+      if (encoded < 0.5) return -999.0;
+      return radarDbzFromEncoded(encoded);
+    }
+
+    vec4 radarSteppedColor(float dbz) {
       if (dbz <= 10.0) return vec4(66.0 / 255.0, 174.0 / 255.0, 214.0 / 255.0, 202.0 / 255.0);
       if (dbz <= 18.0) return vec4(62.0 / 255.0, 204.0 / 255.0, 105.0 / 255.0, 226.0 / 255.0);
       if (dbz <= 28.0) return vec4(20.0 / 255.0, 154.0 / 255.0, 74.0 / 255.0, 246.0 / 255.0);
@@ -1381,13 +1393,61 @@ function initRadarChunkGl(state, gl) {
       return vec4(238.0 / 255.0, 220.0 / 255.0, 244.0 / 255.0, 255.0 / 255.0);
     }
 
+    vec4 radarSmoothColor(float dbz) {
+      vec4 c0 = vec4(66.0 / 255.0, 174.0 / 255.0, 214.0 / 255.0, 202.0 / 255.0);
+      vec4 c1 = vec4(62.0 / 255.0, 204.0 / 255.0, 105.0 / 255.0, 226.0 / 255.0);
+      vec4 c2 = vec4(20.0 / 255.0, 154.0 / 255.0, 74.0 / 255.0, 246.0 / 255.0);
+      vec4 c3 = vec4(238.0 / 255.0, 188.0 / 255.0, 42.0 / 255.0, 255.0 / 255.0);
+      vec4 c4 = vec4(230.0 / 255.0, 111.0 / 255.0, 36.0 / 255.0, 255.0 / 255.0);
+      vec4 c5 = vec4(214.0 / 255.0, 55.0 / 255.0, 43.0 / 255.0, 255.0 / 255.0);
+      vec4 c6 = vec4(154.0 / 255.0, 64.0 / 255.0, 188.0 / 255.0, 255.0 / 255.0);
+      vec4 c7 = vec4(238.0 / 255.0, 220.0 / 255.0, 244.0 / 255.0, 255.0 / 255.0);
+      if (dbz <= 10.0) return c0;
+      if (dbz <= 18.0) return mix(c0, c1, smoothstep(10.0, 18.0, dbz));
+      if (dbz <= 28.0) return mix(c1, c2, smoothstep(18.0, 28.0, dbz));
+      if (dbz <= 36.0) return mix(c2, c3, smoothstep(28.0, 36.0, dbz));
+      if (dbz <= 45.0) return mix(c3, c4, smoothstep(36.0, 45.0, dbz));
+      if (dbz <= 56.0) return mix(c4, c5, smoothstep(45.0, 56.0, dbz));
+      if (dbz <= 68.0) return mix(c5, c6, smoothstep(56.0, 68.0, dbz));
+      return mix(c6, c7, smoothstep(68.0, 80.0, dbz));
+    }
+
+    float radarNeighborhoodDbz(float centerDbz, float blend) {
+      float sum = centerDbz;
+      float count = 1.0;
+      float sampleDbz;
+      sampleDbz = radarSampleDbz(v_tex + vec2(u_texel_size.x, 0.0));
+      if (sampleDbz > -900.0) { sum += sampleDbz; count += 1.0; }
+      sampleDbz = radarSampleDbz(v_tex - vec2(u_texel_size.x, 0.0));
+      if (sampleDbz > -900.0) { sum += sampleDbz; count += 1.0; }
+      sampleDbz = radarSampleDbz(v_tex + vec2(0.0, u_texel_size.y));
+      if (sampleDbz > -900.0) { sum += sampleDbz; count += 1.0; }
+      sampleDbz = radarSampleDbz(v_tex - vec2(0.0, u_texel_size.y));
+      if (sampleDbz > -900.0) { sum += sampleDbz; count += 1.0; }
+      return mix(centerDbz, sum / count, blend);
+    }
+
+    vec4 radarColor(float dbz, float deepMix) {
+      vec4 stepped = radarSteppedColor(dbz);
+      vec4 smooth = radarSmoothColor(dbz);
+      vec4 color = mix(stepped, smooth, deepMix * 0.88);
+      vec3 warmStreetTone = color.rgb * vec3(0.88, 0.90, 0.78) + vec3(0.018, 0.012, 0.0);
+      float luminance = dot(warmStreetTone, vec3(0.2126, 0.7152, 0.0722));
+      warmStreetTone = mix(vec3(luminance), warmStreetTone, 0.94);
+      color.rgb = mix(color.rgb, warmStreetTone, deepMix * 0.82);
+      return color;
+    }
+
     void main() {
       float encoded = texture2D(u_texture, v_tex).r * 255.0;
       if (encoded < 0.5) discard;
-      float dbz = u_dbz_min + ((encoded - 1.0) / 254.0) * (u_dbz_max - u_dbz_min);
+      float deepMix = smoothstep(13.0, 16.25, u_zoom);
+      float dbz = radarDbzFromEncoded(encoded);
+      dbz = radarNeighborhoodDbz(dbz, deepMix * 0.32);
       if (dbz < u_threshold) discard;
-      vec4 color = radarColor(dbz);
-      gl_FragColor = vec4(color.rgb, color.a * u_opacity);
+      vec4 color = radarColor(dbz, deepMix);
+      float intensityAlpha = smoothstep(24.0, 58.0, dbz) * 0.08;
+      gl_FragColor = vec4(color.rgb, color.a * min(u_opacity + intensityAlpha, 1.0));
     }
   `;
 
@@ -1419,7 +1479,9 @@ function initRadarChunkGl(state, gl) {
     dbzMin: gl.getUniformLocation(program, "u_dbz_min"),
     dbzMax: gl.getUniformLocation(program, "u_dbz_max"),
     threshold: gl.getUniformLocation(program, "u_threshold"),
-    opacity: gl.getUniformLocation(program, "u_opacity")
+    opacity: gl.getUniformLocation(program, "u_opacity"),
+    zoom: gl.getUniformLocation(program, "u_zoom"),
+    texelSize: gl.getUniformLocation(program, "u_texel_size")
   };
 }
 
@@ -1567,9 +1629,25 @@ function radarChunkVertices(bounds) {
   ]);
 }
 
+function radarChunkRenderZoom(state) {
+  const mapZoom = Number(state?.map?.getZoom?.());
+  const appZoom = Number(mapState.zoom);
+  if (Number.isFinite(mapZoom) && Number.isFinite(appZoom)) return Math.max(mapZoom, appZoom);
+  if (Number.isFinite(mapZoom)) return mapZoom;
+  if (Number.isFinite(appZoom)) return appZoom;
+  return Number(state?.activeZoom) || MAP_MAX_ZOOM;
+}
+
+function radarChunkOpacityForZoom(zoom) {
+  if (!Number.isFinite(zoom)) return 0.94;
+  const streetMix = mapLibreSmoothstep(0, 1, (zoom - 12) / 5);
+  return 0.94 - (0.24 * streetMix);
+}
+
 function renderRadarChunkLayer(state, gl, matrix) {
   if (!gl || !matrix || !state?.program || !["loading", "ready"].includes(state.status)) return;
   const activeZoom = radarChunkActiveZoom(state);
+  const renderZoom = radarChunkRenderZoom(state);
   scheduleRadarChunkViewportLoads(state, activeZoom);
   const chunks = state.chunks.filter((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds));
   state.activeZoom = activeZoom;
@@ -1599,7 +1677,8 @@ function renderRadarChunkLayer(state, gl, matrix) {
   gl.vertexAttribPointer(state.attributes.tex, 2, gl.FLOAT, false, 16, 8);
   gl.uniformMatrix4fv(state.uniforms.matrix, false, matrix);
   gl.uniform1i(state.uniforms.texture, 0);
-  gl.uniform1f(state.uniforms.opacity, 0.94);
+  gl.uniform1f(state.uniforms.opacity, radarChunkOpacityForZoom(renderZoom));
+  gl.uniform1f(state.uniforms.zoom, renderZoom);
 
   for (const chunk of chunks) {
     if (!chunk.vertices) continue;
@@ -1612,6 +1691,7 @@ function renderRadarChunkLayer(state, gl, matrix) {
     gl.uniform1f(state.uniforms.dbzMin, dbzMin);
     gl.uniform1f(state.uniforms.dbzMax, dbzMax);
     gl.uniform1f(state.uniforms.threshold, threshold);
+    gl.uniform2f(state.uniforms.texelSize, 1 / Math.max(1, chunk.width || 256), 1 / Math.max(1, chunk.height || 256));
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.bufferData(gl.ARRAY_BUFFER, chunk.vertices, gl.STREAM_DRAW);
@@ -1627,12 +1707,12 @@ function renderRadarChunkLayer(state, gl, matrix) {
 }
 
 function radarChunkActiveZoom(state) {
-  const mapZoom = Number(state.map?.getZoom?.());
+  const mapZoom = Number(state?.map?.getZoom?.());
   const appZoom = Number(mapState.zoom);
   const zoom = Number.isFinite(mapZoom)
     ? (Number.isFinite(appZoom) ? Math.max(mapZoom, appZoom) : mapZoom)
     : appZoom;
-  const source = state.chunkMetas?.length ? state.chunkMetas : state.chunks;
+  const source = state?.chunkMetas?.length ? state.chunkMetas : state?.chunks;
   const levels = [...new Set((source || []).map((chunk) => chunk.levelZoom).filter(Number.isFinite))].sort((a, b) => a - b);
   if (!levels.length) return null;
   if (!Number.isFinite(zoom)) return levels[levels.length - 1];
