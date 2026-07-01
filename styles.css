@@ -1933,17 +1933,17 @@ h2 {
   border-color: rgba(53, 111, 183, 0.25);
   background: var(--for-you-action-bg);
 }
-.for-you-card.is-watchlist {
+.for-you-card.is-watching {
   border-color: rgba(53, 111, 183, 0.28);
   background:
     linear-gradient(135deg, rgba(53, 111, 183, 0.12), rgba(52, 125, 98, 0.10)),
     rgba(255, 255, 255, 0.48);
 }
-.for-you-card.is-watchlist.is-good {
+.for-you-card.is-watching.is-good {
   border-color: rgba(52, 125, 98, 0.30);
 }
-.for-you-card.is-watchlist.is-caution,
-.for-you-card.is-watchlist.is-changed {
+.for-you-card.is-watching.is-caution,
+.for-you-card.is-watching.is-changed {
   border-color: rgba(201, 152, 55, 0.34);
   background:
     linear-gradient(135deg, rgba(201, 152, 55, 0.14), rgba(53, 111, 183, 0.08)),

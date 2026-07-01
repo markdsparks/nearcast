@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.111">
-    <link rel="manifest" href="manifest.json?v=3.0.111">
+    <link rel="stylesheet" href="styles.css?v=3.0.113">
+    <link rel="manifest" href="manifest.json?v=3.0.113">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.111">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.111">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.113">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.113">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -437,8 +437,8 @@
               <path d="M8.8 10.5h6.4M8.8 13.3h4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
           </span>
-          <strong>Plan Watch</strong>
-          <span>Tap remembered plans for a live weather verdict, key signals, and hourly detail.</span>
+          <strong>Watching</strong>
+          <span>Save plans and Nearcast will keep an eye on the weather around them.</span>
         </article>
         <article class="release-feature">
           <span class="release-feature-icon" aria-hidden="true">
@@ -598,16 +598,16 @@
     </aside>
 
     <div class="sheet-backdrop memory-backdrop" id="memoryBackdrop" hidden></div>
-    <aside class="day-sheet memory-sheet" id="memorySheet" hidden aria-label="Plan Watch" role="dialog" aria-modal="true">
+    <aside class="day-sheet memory-sheet" id="memorySheet" hidden aria-label="Watching" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="memorySheetClose" type="button" aria-label="Close memory">✕</button>
+      <button class="sheet-close" id="memorySheetClose" type="button" aria-label="Close watching">✕</button>
       <header class="sheet-head memory-sheet-head">
         <span class="memory-sheet-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 21s7-6.1 7-11.6A7 7 0 1 0 5 9.4C5 14.9 12 21 12 21Z" stroke="currentColor" stroke-width="1.7"/><path d="M8.6 10.1h6.8M8.6 13.2h4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
         </span>
         <div class="sheet-head-text">
-          <h2>Plan Watch</h2>
-          <p class="memory-sheet-sub">Remembered plans, forecast checked</p>
+          <h2>Watching</h2>
+          <p class="memory-sheet-sub">Plans Nearcast is keeping an eye on</p>
         </div>
       </header>
       <div class="memory-sheet-summary" id="memorySheetSummary"></div>
@@ -615,15 +615,15 @@
     </aside>
 
     <div class="sheet-backdrop memory-edit-backdrop" id="memoryEditBackdrop" hidden></div>
-    <aside class="day-sheet memory-edit-sheet" id="memoryEditSheet" hidden aria-label="Edit memory" role="dialog" aria-modal="true">
+    <aside class="day-sheet memory-edit-sheet" id="memoryEditSheet" hidden aria-label="Edit plan" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="memoryEditClose" type="button" aria-label="Close memory editor">✕</button>
+      <button class="sheet-close" id="memoryEditClose" type="button" aria-label="Close plan editor">✕</button>
       <header class="sheet-head memory-edit-head">
         <span class="memory-sheet-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none"><path d="M6 17.5 5.5 20l2.5-.5 9.6-9.6a1.8 1.8 0 0 0 0-2.5l-1-1a1.8 1.8 0 0 0-2.5 0L6 14.5v3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m13.8 6.7 3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
         </span>
         <div class="sheet-head-text">
-          <h2>Edit memory</h2>
+          <h2>Edit plan</h2>
           <p class="memory-sheet-sub">Adjust the plan fields directly</p>
         </div>
       </header>
@@ -631,23 +631,23 @@
     </aside>
 
     <div class="sheet-backdrop" id="memoryDetailBackdrop" hidden></div>
-    <aside class="day-sheet memory-detail-sheet" id="memoryDetailSheet" hidden aria-label="Memory details" role="dialog" aria-modal="true">
+    <aside class="day-sheet memory-detail-sheet" id="memoryDetailSheet" hidden aria-label="Plan details" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="memoryDetailClose" type="button" aria-label="Close memory details">✕</button>
+      <button class="sheet-close" id="memoryDetailClose" type="button" aria-label="Close plan details">✕</button>
       <header class="sheet-head memory-detail-head">
         <div class="sheet-head-text">
-          <h2 id="memoryDetailTitle">Memory</h2>
+          <h2 id="memoryDetailTitle">Plan</h2>
           <p id="memoryDetailSub">Local context · under your control</p>
         </div>
       </header>
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="planner.js?v=3.0.111"></script>
-    <script src="app.js?v=3.0.111"></script>
-    <script src="map.js?v=3.0.111"></script>
-    <script src="sky.js?v=3.0.111"></script>
-    <script src="daygraph.js?v=3.0.111"></script>
-    <script src="boot.js?v=3.0.111"></script>
+    <script src="planner.js?v=3.0.113"></script>
+    <script src="app.js?v=3.0.113"></script>
+    <script src="map.js?v=3.0.113"></script>
+    <script src="sky.js?v=3.0.113"></script>
+    <script src="daygraph.js?v=3.0.113"></script>
+    <script src="boot.js?v=3.0.113"></script>
   </body>
 </html>

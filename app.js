@@ -1,4 +1,4 @@
-const VERSION = "3.0.111";
+const VERSION = "3.0.113";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6632,7 +6632,6 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
         <strong>Today</strong>
         <small>${escapeHtml(forYouMeta(context))}</small>
       </span>
-      <button class="for-you-plan-btn" type="button" data-for-you-template="I have " data-for-you-signal="plan">Plan</button>
     </div>
     <div class="for-you-grid">${visibleCards.join("")}</div>
   `;
@@ -6641,9 +6640,7 @@ function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth
 function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
   const weatherItems = launchSummaryItems(data, tempUnit, windUnit, truth);
   const continuity = forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, continuityBaselineStore(data, place));
-  const herePlanCards = forYouPlanCards(data, place).slice(0, 1);
-  const elsewherePlanCard = forYouElsewherePlanCard(data, place);
-  const watchlistCard = forYouWatchlistCard(data, place);
+  const watching = forYouWatchingCard(data, place);
   const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
   return {
     data,
@@ -6655,9 +6652,9 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     continuityCard: continuity.html,
     continuityType: continuity.type,
     continuityMemoryId: continuity.memoryId,
-    herePlanCards,
-    elsewherePlanCard,
-    watchlistCard,
+    watchingCard: watching.html,
+    watchingMemoryId: watching.memoryId,
+    watchingCount: watching.count,
     interruptionCard: interruption.html,
     interruptionType: interruption.type,
     memoryCount: Array.isArray(state.planMemories) ? state.planMemories.length : 0
@@ -6670,12 +6667,9 @@ function todayPriorityCards(context) {
   if (context.continuityCard) cards.push(context.continuityCard);
 
   if (
-    context.herePlanCards?.[0] &&
-    (!context.continuityMemoryId || !context.herePlanCards[0].includes(`data-memory-show="${escapeHtml(context.continuityMemoryId)}"`))
-  ) cards.push(context.herePlanCards[0]);
-  else if (context.elsewherePlanCard) cards.push(context.elsewherePlanCard);
-
-  if (context.watchlistCard && cards.length < 2) cards.push(context.watchlistCard);
+    context.watchingCard &&
+    (!context.continuityMemoryId || context.watchingMemoryId !== context.continuityMemoryId)
+  ) cards.push(context.watchingCard);
 
   if (context.interruptionCard && context.interruptionType !== context.continuityType) {
     cards.push(context.interruptionCard);
@@ -6688,23 +6682,21 @@ function forYouMeta(context) {
   const place = context?.place || context;
   const memoryCount = Number(context?.memoryCount ?? (Array.isArray(state.planMemories) ? state.planMemories.length : 0));
   const placeText = place ? placeLabel(place) : "Current place";
-  const hasAwayPlan = Boolean(context?.elsewherePlanCard && !context?.herePlanCards?.length);
   if (context?.continuityCard) return `${placeText} · changed since last check`;
-  if (hasAwayPlan) return `${placeText} · next plan away`;
-  if (context?.watchlistCard) return `${placeText} · watchlist ready`;
-  if (memoryCount) return `${placeText} · plan-aware`;
+  if (context?.watchingCard) return `${placeText} · watching ${context.watchingCount || memoryCount}`;
+  if (memoryCount) return `${placeText} · watching`;
   return placeText;
 }
 
-function forYouWatchlistCard(data, place) {
+function forYouWatchingCard(data, place) {
   if (
     !Array.isArray(state.planMemories) ||
     !state.planMemories.length ||
     typeof planMemoryListItems !== "function"
-  ) return "";
+  ) return { html: "", memoryId: "", count: 0 };
 
   const items = planMemoryListItems(data, place, { includePast: false });
-  if (!items.length) return "";
+  if (!items.length) return { html: "", memoryId: "", count: 0 };
 
   const watches = typeof planWatchItemForMemoryItem === "function"
     ? items.map(planWatchItemForMemoryItem).filter(Boolean)
@@ -6722,20 +6714,34 @@ function forYouWatchlistCard(data, place) {
     watch?.status === "loading" || watch?.status === "idle"
   ).length;
   const tone = attentionCount ? "caution" : changedCount ? "changed" : loadingCount ? "pending" : "good";
-  const title = attentionCount
-    ? `${attentionCount} ${attentionCount === 1 ? "plan needs margin" : "plans need margin"}`
-    : `${items.length} ${items.length === 1 ? "plan" : "plans"} watched`;
+  const topTitle = top?.memory ? (typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : top.memory.title || "Plan") : "";
+  const title = attentionCount && topTitle
+    ? `${topTitle} needs margin`
+    : changedCount && topTitle
+      ? `${topTitle} changed`
+      : loadingCount
+        ? "Checking your plans"
+        : `Watching ${items.length} ${items.length === 1 ? "plan" : "plans"}`;
   const body = top?.change?.body ||
     top?.reason ||
     (loadingCount ? "Nearcast is checking saved plan windows." : "No major weather signal right now.");
-  return `
-    <button class="for-you-card is-watchlist is-${escapeHtml(tone)}" type="button" data-memory-open data-for-you-signal="memory-open">
-      <span class="for-you-kicker"><span>Watchlist</span><em>${escapeHtml(`${items.length} active`)}</em></span>
+  const focusId = top?.memory?.id || "";
+  const opensPlan = Boolean(focusId && (attentionCount || changedCount || items.length === 1));
+  const actionAttr = opensPlan
+    ? `data-memory-show="${escapeHtml(focusId)}" data-for-you-signal="memory-show"`
+    : `data-memory-open data-for-you-signal="memory-open"`;
+  return {
+    memoryId: focusId,
+    count: items.length,
+    html: `
+    <button class="for-you-card is-watching is-${escapeHtml(tone)}" type="button" ${actionAttr}>
+      <span class="for-you-kicker"><span>Watching</span><em>${escapeHtml(`${items.length} active`)}</em></span>
       <strong>${escapeHtml(title)}</strong>
       <span class="for-you-body">${escapeHtml(compactForYouText(body, 92))}</span>
-      <small>Open Plan Watch</small>
+      <small>${opensPlan ? "View plan" : "Review"}</small>
     </button>
-  `;
+  `
+  };
 }
 
 function defaultContinuityStore() {
@@ -8118,7 +8124,7 @@ function renderDaily(data, tempUnit, precipUnit) {
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
     const precipNote = precipProfile.note;
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${precipNote ? `, ${precipNote}` : ""}${memoryCue ? `, remembered ${memoryCue}` : ""}`;
+    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${precipNote ? `, ${precipNote}` : ""}${memoryCue ? `, watched plan ${memoryCue}` : ""}`;
     return `
       <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${memoryCue ? " has-plan-memory" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">

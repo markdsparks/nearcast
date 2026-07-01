@@ -377,7 +377,7 @@ function planWatchNotificationPanelCopy(watchItems) {
   if (!supported) {
     return {
       tone: "pending",
-      title: "Watchlist ready",
+      title: "Watching ready",
       body: "Nearcast can track changes here. Device notifications need browser support and a secure installed app.",
       button: "",
       meta: count ? `${count} active` : "No active plans"
@@ -387,7 +387,7 @@ function planWatchNotificationPanelCopy(watchItems) {
     return {
       tone: "caution",
       title: "Notifications blocked",
-      body: "Plan Watch still works in the app. Change browser notification settings to receive device alerts.",
+      body: "Nearcast still watches in the app. Change browser notification settings to receive device alerts.",
       button: "",
       meta: "Blocked"
     };
@@ -624,7 +624,7 @@ function renderNextPlanCard(item, data = state.forecast) {
   const where = placeLabel(item.memory.place);
   const lead = `${item.verdict}. ${capitalize(item.primaryReason)}.`;
   return `
-    <article class="next-plan-card is-${item.tone}" aria-label="Next remembered plan">
+    <article class="next-plan-card is-${item.tone}" aria-label="Next watched plan">
       <div class="next-plan-kicker">
         <span>Next up</span>
         <em>${escapeHtml(when)}</em>
@@ -636,7 +636,7 @@ function renderNextPlanCard(item, data = state.forecast) {
       <p>${escapeHtml(lead)} <span>${escapeHtml(item.advice)}</span></p>
       <div class="next-plan-metrics">${planPulseMetricRows(item)}</div>
       <div class="next-plan-actions">
-        <button type="button" data-memory-show="${escapeHtml(item.memory.id)}">Check plan</button>
+        <button type="button" data-memory-show="${escapeHtml(item.memory.id)}">View plan</button>
         <button type="button" data-memory-edit="${escapeHtml(item.memory.id)}">Edit</button>
       </div>
     </article>
@@ -678,7 +678,7 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
   const lead = planBriefingLeadText(visible, options);
   const countLabel = options.also
     ? items.length === 1 ? "1 other plan" : `${items.length} other plans`
-    : items.length === 1 ? "1 remembered plan" : `${items.length} remembered plans`;
+    : items.length === 1 ? "1 watched plan" : `${items.length} watched plans`;
   const rows = visible.map((item) => {
     const title = planMemoryTitle(item.memory);
     const reason = item.reasons.slice(0, 2).join(" · ") || item.primaryReason;
@@ -700,7 +700,7 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
       </div>
       <p>${escapeHtml(lead)}</p>
       <div class="plan-pulse-brief-list">${rows}</div>
-      ${items.length > visible.length ? `<button class="plan-pulse-more" type="button" data-memory-open>View memories</button>` : ""}
+      ${items.length > visible.length ? `<button class="plan-pulse-more" type="button" data-memory-open>Review all</button>` : ""}
     </section>
   `;
 }
@@ -708,18 +708,8 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
 function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   const slot = els.planPulse;
   if (!slot) return;
-  const next = nextPlanBriefingItem(data, place);
-  const today = planAwareBriefingItems(data, place);
-  const nextKey = planBriefingItemKey(next);
-  const mainItems = nextKey
-    ? today.filter((item) => planBriefingItemKey(item) !== nextKey)
-    : today;
-  const html = [
-    renderNextPlanCard(next, data),
-    renderMainPlanBriefing(mainItems, data, { also: Boolean(nextKey) })
-  ].filter(Boolean).join("");
-  slot.hidden = !html;
-  slot.innerHTML = html;
+  slot.hidden = true;
+  slot.innerHTML = "";
 }
 
 function renderPlanAwareBriefing() {
@@ -741,7 +731,7 @@ function renderPlanAwareBriefing() {
     `;
   }).join("");
   const more = items.length > visible.length
-    ? `<button class="plan-briefing-more" type="button" data-memory-open>View memories</button>`
+    ? `<button class="plan-briefing-more" type="button" data-memory-open>Review all</button>`
     : "";
 
   return `
@@ -750,7 +740,7 @@ function renderPlanAwareBriefing() {
         <span class="plan-briefing-spark" aria-hidden="true">✦</span>
         <div>
           <strong>What matters today</strong>
-          <small>Based on remembered plans</small>
+          <small>Based on plans you're watching</small>
         </div>
       </div>
       <p class="plan-briefing-lead">${escapeHtml(lead)}</p>
@@ -1555,6 +1545,10 @@ function likelyPlannerTimeText(question) {
   const s = plannerParseText(question);
   const period = inferPlanPeriod(s);
   if (period) return period;
+  const namedTime = !/\b(before|after)\s+noon\b/.test(s)
+    ? s.match(/\b(?:at|around|about)?\s*(noon|midday|midnight)\b/)
+    : null;
+  if (namedTime) return namedTime[0];
   const at = s.match(/\b(?:at|around|about)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
   if (at) return at[0];
   const between = s.match(/\b(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:and|to|-)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/);
@@ -1688,6 +1682,22 @@ function inferPlanTiming(question, c, activityKey) {
       explicit: true,
       period,
       assumption: ""
+    };
+  }
+
+  const namedTime = !/\b(before|after)\s+noon\b/.test(s)
+    ? s.match(/\b(?:at|around|about)?\s*(noon|midday|midnight)\b/)
+    : null;
+  if (namedTime) {
+    const startHour = namedTime[1] === "midnight" ? 0 : 12;
+    const duration = planDurationHours(activityKey);
+    return {
+      startHour,
+      endHour: Math.min(startHour + duration, 24),
+      hasTime: true,
+      explicit: true,
+      period: namedTime[1] === "midnight" ? "overnight" : "afternoon",
+      assumption: `I used ${formatHourFloat(startHour)}-${formatHourFloat(Math.min(startHour + duration, 24))}.`
     };
   }
 
@@ -2262,7 +2272,7 @@ function editPlanMemory(idOrRow) {
   }
   fillPlannerTemplate(draft, {
     helperText: memory
-      ? "Editing remembered plan. Submit to replace this memory."
+      ? "Editing this plan. Submit to replace it."
       : "Adjust the plan, then submit it again."
   });
 }
@@ -2324,7 +2334,7 @@ function openMemoryDetail(idsOrValue) {
   memoryDetailIds = memories.map((memory) => memory.id);
   document.getElementById("memoryDetailTitle").textContent = memories.length === 1
     ? planMemoryTitle(memories[0])
-    : `${memories.length} memories`;
+    : `${memories.length} plans`;
   document.getElementById("memoryDetailSub").textContent = memories.length === 1
     ? "Local context · under your control"
     : "Overlapping local context";
@@ -2827,7 +2837,7 @@ async function saveStructuredMemoryEdit(event) {
     const endMs = planBoundaryMs(data, window.endHour, dayIdx);
     const alert = topAlertForPlanRange(memoryEditState.alerts || [], startMs, endMs);
     const existing = state.planMemories.find((memory) => memory.id === memoryEditState.memoryId);
-    if (!existing) throw new Error("Memory missing.");
+    if (!existing) throw new Error("Plan missing.");
     const draft = {
       ...memoryEditState,
       data,
@@ -2901,14 +2911,14 @@ function renderMemoryDetailPanel(memory) {
         <span>${escapeHtml(placeLabel(memory.place))}</span>
       </div>
       <dl class="memory-detail-facts">
-        <div><dt>Original</dt><dd>${escapeHtml(original || planMemoryDraft(memory))}</dd></div>
-        <div><dt>Interpreted</dt><dd>${escapeHtml(interpreted)}</dd></div>
-        <div><dt>Weather window</dt><dd>${escapeHtml(weatherLine)}</dd></div>
+        <div><dt>You asked</dt><dd>${escapeHtml(original || planMemoryDraft(memory))}</dd></div>
+        <div><dt>Plan window</dt><dd>${escapeHtml(interpreted)}</dd></div>
+        <div><dt>Forecast read</dt><dd>${escapeHtml(weatherLine)}</dd></div>
         ${answer ? `<div><dt>Last answer</dt><dd>${escapeHtml(answer)}</dd></div>` : ""}
         <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
       </dl>
       <div class="memory-detail-actions">
-        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit memory</button>
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit plan</button>
         <button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
@@ -2952,7 +2962,7 @@ function planMemoryEventForData(memory, data = state.forecast, place = state.act
   });
   if (event) {
     event.memoryId = memory.id;
-    event.badgeLabel = "Memory";
+    event.badgeLabel = "Plan";
   }
   return event;
 }
@@ -3002,8 +3012,8 @@ function planMemoryDetailEventForDay(items, data = state.forecast, place = state
     endHour: Math.max(...windows.map((event) => event.endHour)),
     startMs: first.startMs,
     endMs: last.endMs,
-    label: "remembered plans",
-    badgeLabel: "Memory",
+    label: "watched plans",
+    badgeLabel: "Plan",
     memoryIds: items.map(({ memory }) => memory.id),
     windows
   };
@@ -3111,14 +3121,14 @@ function planMemoryEventContextLabel(memory, event) {
   const place = event?.place ? placeLabel(event.place) : "";
   const title = memory ? planMemoryTitle(memory) : String(event?.title || "").trim();
   const when = memory ? planMemoryTimeText(memory) : "";
-  return ["Memory", place, [title, when].filter(Boolean).join(" · ")].filter(Boolean).join(" · ");
+  return ["Plan", place, [title, when].filter(Boolean).join(" · ")].filter(Boolean).join(" · ");
 }
 
 function planMemoryDayContextLabel(items, event) {
   if (!items?.length) return "";
   if (items.length === 1) return planMemoryEventContextLabel(items[0].memory, event);
   const place = event?.place ? placeLabel(event.place) : "";
-  return ["Memory", place, `${items.length} plans`, planMemoryDayRangeText(items)].filter(Boolean).join(" · ");
+  return ["Plan", place, `${items.length} plans`, planMemoryDayRangeText(items)].filter(Boolean).join(" · ");
 }
 
 function detailEventWindows(eventWindow) {
@@ -3143,7 +3153,7 @@ function matchingDetailEventWindows(windows, startMs, endMs) {
 function detailEventBadgeLabel(windows, eventWindow = null) {
   if (!windows?.length) return "";
   const memoryWindows = windows.filter((window) => window.memoryId);
-  if (memoryWindows.length > 1) return `${memoryWindows.length} memories`;
+  if (memoryWindows.length > 1) return `${memoryWindows.length} plans`;
   if (memoryWindows.length === 1) return planMemoryTitle(memoryWindows[0]);
   if (windows.length > 1) return eventWindow?.badgeLabel || `${windows.length} plans`;
   return windows[0].badgeLabel || eventWindow?.badgeLabel || "Plan";
@@ -3156,9 +3166,9 @@ function graphMemoryWindowIds(window) {
   ].filter(Boolean).map(String))];
 }
 
-function graphMemoryWindowLabel(ids, fallback = "Memory") {
+function graphMemoryWindowLabel(ids, fallback = "Plan") {
   if (!ids?.length) return fallback;
-  if (ids.length > 1) return `${ids.length} memories`;
+  if (ids.length > 1) return `${ids.length} plans`;
   const memory = state.planMemories.find((item) => item.id === ids[0]);
   return memory ? planMemoryTitle(memory) : fallback;
 }
@@ -3228,7 +3238,7 @@ function graphMemoryAtMs(ms, windows) {
 function graphMemoryAriaLabel(window, data = state.forecast) {
   const start = formatForecastMs(window.startMs, data);
   const end = formatForecastMs(window.endMs, data);
-  return `${window.label}, ${start} to ${end}. Show memory details.`;
+  return `${window.label}, ${start} to ${end}. Show plan details.`;
 }
 
 function renderGraphMemoryBands(windows, xForMs, options = {}) {
@@ -3275,7 +3285,7 @@ function renderPlanMemoryGroup(label, items) {
             <span>${escapeHtml(planMemoryMeta(memory, event))}</span>
           </button>
           <div class="memory-actions">
-            <button type="button" data-memory-show="${escapeHtml(memory.id)}">Check plan</button>
+            <button type="button" data-memory-show="${escapeHtml(memory.id)}">View plan</button>
             <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit</button>
             <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
           </div>
@@ -3296,16 +3306,16 @@ function renderPlanMemorySection() {
     upcoming.length ? `${upcoming.length} upcoming` : "",
     allItems.length - upcoming.length ? `${allItems.length - upcoming.length} past` : ""
   ].filter(Boolean);
-  const summary = summaryParts.join(" · ") || `${allItems.length} remembered`;
-  return `<section class="memory-section" aria-label="Nearcast memory">` +
+  const summary = summaryParts.join(" · ") || `${allItems.length} watched`;
+  return `<section class="memory-section" aria-label="Watched plans">` +
     `<div class="ai-section-title memory-section-title">` +
-      `<strong>Memory</strong>` +
+      `<strong>Watching</strong>` +
       `<span>${escapeHtml(summary)}</span>` +
-      `<button class="memory-manage-btn" type="button" data-memory-open>Manage</button>` +
+      `<button class="memory-manage-btn" type="button" data-memory-open>Review</button>` +
     `</div>` +
     (items.length
       ? renderPlanMemoryGroup("Here", here) + renderPlanMemoryGroup("Elsewhere", elsewhere)
-      : `<p class="memory-empty-inline">No upcoming memories. Past memories are still in Manage.</p>`) +
+      : `<p class="memory-empty-inline">No upcoming watched plans.</p>`) +
   `</section>`;
 }
 
@@ -3385,7 +3395,7 @@ function planWatchPendingItem(memory, source, isPast = false) {
   const reason = isPast
     ? "Kept here until you forget it."
     : source.status === "error" ? "Could not update this place yet."
-      : "The plan is remembered; forecast detail will appear when this place is checked.";
+      : "This plan is saved; forecast detail will appear when this place is checked.";
   return {
     memory,
     source,
@@ -3523,7 +3533,7 @@ function renderPlanWatchOverview(watchItems) {
     : top.change?.body || top.reason;
   return `
     <section class="plan-watch-overview is-${escapeHtml(tone)}">
-      <span>Plan Watch</span>
+      <span>Watching</span>
       <strong>${escapeHtml(title)}</strong>
       <small>${escapeHtml(planWatchCompactText(body, 112))}</small>
     </section>
@@ -3534,7 +3544,7 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
   const watched = watch || planWatchItemForMemoryItem({ memory, event, isHere, isPast });
   const meta = planWatchMetaText(memory, watched);
   const effectivePast = Boolean(isPast || watched?.isPast);
-  const kicker = effectivePast ? "Past" : isHere ? "Here" : "Away";
+  const kicker = effectivePast ? "Past" : isHere ? "This place" : "Away";
   const focused = memory.id === planWatchFocusMemoryId;
   return `
     <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""}${focused ? " is-focused" : ""} is-${escapeHtml(watched?.tone || "pending")}" data-memory-card="${escapeHtml(memory.id)}">
@@ -3587,8 +3597,8 @@ function renderGlobalMemorySheet() {
   const attentionCount = watchItems.filter((watch) => ["watch", "caution"].includes(watch.tone) && !watch.isPast).length;
 
   els.memorySheetSummary.innerHTML = `
-    <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>watching</span></div>
-    <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>need margin</span></div>
+    <div class="memory-summary-stat"><strong>${upcoming.length}</strong><span>${upcoming.length === 1 ? "plan" : "plans"}</span></div>
+    <div class="memory-summary-stat"><strong>${attentionCount}</strong><span>need attention</span></div>
     <div class="memory-summary-stat"><strong>${placeCount}</strong><span>${placeCount === 1 ? "place" : "places"}</span></div>
     ${renderPlanWatchOverview(watchItems)}
   `;
@@ -3596,9 +3606,9 @@ function renderGlobalMemorySheet() {
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
       <section class="memory-empty-state">
-        <strong>No memories yet</strong>
-        <p>Ask the Planner about a real plan, then remember it when the answer looks right.</p>
-        <button type="button" data-memory-new>Open Planner</button>
+        <strong>Nothing being watched yet</strong>
+        <p>Ask the Planner about a real plan, then save it when the answer looks right.</p>
+        <button type="button" data-memory-new>Create a plan</button>
       </section>
     `;
     return;
@@ -3606,15 +3616,15 @@ function renderGlobalMemorySheet() {
 
   els.memorySheetBody.innerHTML =
     renderPlanWatchNotificationPanel(watchItems) +
-    renderGlobalMemoryGroup("Current place", here, {
+    renderGlobalMemoryGroup("This place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById
     }) +
     otherGroups.map((group) =>
       renderGlobalMemoryGroup(group.label, group.items, { sub: `${group.items.length} upcoming`, watchById })
     ).join("") +
-    renderGlobalMemoryGroup("Past", past, { sub: "kept locally until you forget them", watchById }) +
-    `<button class="memory-new-btn" type="button" data-memory-new>Plan something new</button>`;
+    renderGlobalMemoryGroup("Past plans", past, { sub: "kept locally until you forget them", watchById }) +
+    `<button class="memory-new-btn" type="button" data-memory-new>Add a plan</button>`;
 }
 
 function scrollFocusedPlanWatchCard() {
@@ -5075,10 +5085,10 @@ function renderAsk() {
     const rememberedId = ex.event && !streaming ? (ex.memoryId || rememberedPlanIdForEvent(ex.event)) : "";
     const memoryAction = ex.event && !streaming
       ? rememberedId
-        ? `<span class="ask-memory-state">Remembered</span>` +
+        ? `<span class="ask-memory-state">Watching</span>` +
           `<button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(rememberedId)}">Edit</button>` +
           `<button class="ask-memory-btn" type="button" data-memory-forget="${escapeHtml(rememberedId)}">Forget</button>`
-        : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${i}">Remember</button>` +
+        : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${i}">Watch this</button>` +
           `<button class="ask-memory-btn" type="button" data-memory-edit="${i}">Edit</button>`
       : "";
     return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
