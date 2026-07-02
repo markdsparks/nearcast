@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.130**.
+Living product roadmap. Current as of **v3.0.144**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -180,7 +180,7 @@ Do not start with:
 
 ### 3. Weather Truth Extraction
 
-Status: **foundation bet**.
+Status: **started**.
 
 Goal: create one shared interpretation layer before notifications and more plan
 logic raise the cost of inconsistency.
@@ -213,6 +213,13 @@ Starter fixtures:
 - Alert overlapping only part of a plan window.
 - Storm risk with low rain probability but active NWS alert.
 - Windy but otherwise good outdoor plan.
+
+First shipped slice:
+
+- Watched-plan receipts now come from `weather-truth.js` and explain the
+  evidence behind the verdict in the focused plan view.
+- Notification sync/evaluator records can carry receipt text in `lastKnown`, so
+  server-side watch state has room for the same explanation model.
 
 ### 4. Trust And Craft Hardening
 

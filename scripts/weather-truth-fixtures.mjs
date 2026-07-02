@@ -38,6 +38,9 @@ assert.equal(heatTruth.label, "Plan around heat");
 assert.equal(heatTruth.notification.eligible, false);
 assert.equal(heatTruth.notification.signal, "warning");
 assert.deepEqual(heatTruth.signalRows.map(row => row.label), ["Feels", "Temp", "UV"]);
+assert.deepEqual(heatTruth.receiptLines.map(row => row.label), ["Alert", "Feels", "Temp", "UV"]);
+assert.match(heatTruth.receipt, /Alert: Extreme Heat Warning overlaps this window/);
+assert.match(heatTruth.receipt, /Feels: 92°F-101°F/);
 
 const rainWatch = {
   tone: "watch",
@@ -60,6 +63,7 @@ assert.match(truth.planWatchActionText(rainWatch), /rain gear/i);
 assert.deepEqual(truth.planContextSignalRows(rainWatch).map(row => row.label), ["Rain", "Amount", "Gusts"]);
 assert.equal(truth.planContextSignalRows(rainWatch)[0].value, "20-72%");
 assert.equal(truth.planContextSignalRows(rainWatch)[1].value, "0.2 in total");
+assert.deepEqual(truth.planWeatherReceiptLines(rainWatch).map(row => row.label), ["Signal", "Rain", "Amount", "Gusts"]);
 
 const windWatch = {
   tone: "caution",
@@ -107,6 +111,7 @@ const goodTruth = truth.planWeatherTruth({ ...goodWatch, score: 91, status: "rea
 assert.equal(goodTruth.verdict, "Looks good");
 assert.equal(goodTruth.tone, "good");
 assert.equal(goodTruth.notification.eligible, false);
+assert.deepEqual(goodTruth.receiptLines.map(row => row.label), ["Signal", "Rain", "Feels", "Gusts"]);
 
 assert.equal(truth.planVerdict(44, ""), "Not ideal");
 assert.match(truth.planAdvice({ stormPotential: true }, null, 40), /delay or indoor/i);

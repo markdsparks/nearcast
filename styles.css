@@ -4204,6 +4204,51 @@ h2 {
 .focused-plan-hero .plan-watch-signals {
   margin-top: 3px;
 }
+.focused-plan-receipt {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(54, 76, 98, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.10);
+}
+.focused-plan-receipt > span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.focused-plan-receipt dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.focused-plan-receipt div {
+  display: grid;
+  grid-template-columns: minmax(62px, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+.focused-plan-receipt dt,
+.focused-plan-receipt dd {
+  min-width: 0;
+  margin: 0;
+  line-height: 1.25;
+}
+.focused-plan-receipt dt {
+  color: var(--blue);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+.focused-plan-receipt dd {
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
 .focused-plan-actions {
   display: flex;
   flex-wrap: wrap;

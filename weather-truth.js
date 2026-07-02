@@ -369,6 +369,105 @@ function planWeatherNotificationState(item) {
   return { eligible, signal, body, urgency };
 }
 
+function planReceiptValue(row) {
+  if (!row?.label || !row?.value) return "";
+  return `${row.label}: ${row.value}`;
+}
+
+function planWeatherReceiptLines(item) {
+  if (!item?.stats) return [];
+  const stats = item.stats;
+  const units = item.units || {};
+  const risk = planSignalRiskKind(item);
+  const temp = units.temp || weatherTruthDegree(weatherTruthUnitPreference() === "fahrenheit" ? "F" : "C");
+  const wind = units.wind || (weatherTruthUnitPreference() === "fahrenheit" ? "mph" : "km/h");
+  const precip = units.precip || (weatherTruthUnitPreference() === "fahrenheit" ? "in" : "mm");
+  const lines = [];
+
+  if (item.alert?.event) {
+    lines.push({
+      label: "Alert",
+      value: `${item.alert.event} overlaps this window`,
+      kind: "storm"
+    });
+  }
+
+  if (item.change?.body) {
+    lines.push({
+      label: "Changed",
+      value: item.change.body,
+      kind: item.change.tone || item.tone || "caution"
+    });
+  }
+
+  const reason = planWatchFullReason(item);
+  if (reason && !item.alert?.event) {
+    lines.push({
+      label: "Signal",
+      value: reason,
+      kind: risk
+    });
+  }
+
+  const metricRows = {
+    heat: [
+      { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" },
+      { label: "Temp", value: planSignalRangeText(stats.tempMin, stats.tempMax, temp), kind: "temp" },
+      { label: "UV", value: stats.uvMax > 0 ? planSignalPeakText(stats.uvMax) : "", kind: "sun" }
+    ],
+    cold: [
+      { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "cold" },
+      { label: "Temp", value: planSignalRangeText(stats.tempMin, stats.tempMax, temp), kind: "temp" },
+      { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
+    ],
+    rain: [
+      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Amount", value: planSignalPrecipTotalText(stats.precipTotal, precip), kind: "rain" },
+      { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
+    ],
+    storm: [
+      { label: "Storms", value: stats.stormPotential ? "Possible" : "Watch", kind: "storm" },
+      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
+    ],
+    wind: [
+      { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" },
+      { label: "Wind", value: planSignalUnitRangeText(stats.windMin ?? stats.windMax, stats.windMax, wind), kind: "wind" },
+      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" }
+    ],
+    air: [
+      { label: "Air", value: stats.aqiMax ? `Peak AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" },
+      { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" }
+    ],
+    pollen: [
+      { label: "Pollen", value: stats.pollenLabel || stats.pollenLevel || "Elevated", kind: "air" },
+      { label: "Air", value: stats.aqiMax ? `Peak AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" }
+    ],
+    good: [
+      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" },
+      { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
+    ]
+  };
+
+  const seen = new Set(lines.map((line) => String(line.label || "").toLowerCase()));
+  (metricRows[risk] || metricRows.good).forEach((line) => {
+    const key = String(line.label || "").toLowerCase();
+    if (!line.value || seen.has(key)) return;
+    seen.add(key);
+    lines.push(line);
+  });
+
+  return lines.slice(0, 4);
+}
+
+function planWeatherReceiptText(item) {
+  return planWeatherReceiptLines(item)
+    .map(planReceiptValue)
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function planWeatherTruth(item) {
   if (!item) return null;
   const alertToneValue = item.alertTone || weatherTruthAlertTone(item.alert);
@@ -397,6 +496,8 @@ function planWeatherTruth(item) {
   truth.reason = planWatchReason({ ...resolved, label: truth.label, fullReason: truth.fullReason });
   truth.action = planWatchActionText({ ...resolved, label: truth.label, fullReason: truth.fullReason, reason: truth.reason });
   truth.signalRows = planContextSignalRows({ ...resolved, ...truth });
+  truth.receiptLines = planWeatherReceiptLines({ ...resolved, ...truth });
+  truth.receipt = planWeatherReceiptText({ ...resolved, ...truth });
   truth.notification = planWeatherNotificationState({ ...resolved, ...truth, status: item.status || "ready" });
   return truth;
 }
@@ -553,6 +654,9 @@ if (typeof module !== "undefined" && module.exports) {
     samePlanWeatherWindow,
     planWeatherChange,
     planWeatherNotificationState,
+    planReceiptValue,
+    planWeatherReceiptLines,
+    planWeatherReceiptText,
     planWeatherTruth,
     planSignalRiskKind,
     planSignalPrecipText,

@@ -633,6 +633,7 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
   const place = memory?.place;
   if (!memory?.id || !place) return null;
   const notification = watch?.notification || (watch ? planWeatherNotificationState(watch) : null);
+  const receipt = watch?.receipt || (watch && typeof planWeatherReceiptText === "function" ? planWeatherReceiptText(watch) : "");
   return {
     id: memory.id,
     title: planMemoryTitle(memory),
@@ -654,6 +655,7 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
       label: watch?.label || "",
       reason: watch?.reason || "",
       body: notification?.body || watch?.change?.body || "",
+      receipt,
       checkedAt: new Date().toISOString(),
       snapshot: watch && typeof planWeatherChangeSnapshot === "function" ? planWeatherChangeSnapshot(watch) : null
     }
@@ -4152,6 +4154,26 @@ function renderFocusedPlanChangeBlock(watch) {
   `;
 }
 
+function renderFocusedPlanReceipt(watch) {
+  const lines = Array.isArray(watch?.receiptLines)
+    ? watch.receiptLines
+    : typeof planWeatherReceiptLines === "function" ? planWeatherReceiptLines(watch) : [];
+  if (!lines.length) return "";
+  return `
+    <section class="focused-plan-receipt">
+      <span>Why Nearcast says this</span>
+      <dl>
+        ${lines.map((line) => `
+          <div class="is-${escapeHtml(line.kind || "neutral")}">
+            <dt>${escapeHtml(line.label)}</dt>
+            <dd>${escapeHtml(line.value)}</dd>
+          </div>
+        `).join("")}
+      </dl>
+    </section>
+  `;
+}
+
 function renderFocusedPlanWatchHero(item, watch) {
   const memory = item.memory;
   const id = escapeHtml(memory.id);
@@ -4174,6 +4196,7 @@ function renderFocusedPlanWatchHero(item, watch) {
       ${advice ? `<p class="focused-plan-advice"><span>What to do</span>${escapeHtml(advice)}</p>` : ""}
       <small>${escapeHtml(planWatchMetaText(memory, watch))}</small>
       ${renderPlanWatchSignals(watch)}
+      ${renderFocusedPlanReceipt(watch)}
       <div class="focused-plan-actions">
         ${effectivePast ? "" : `<button class="is-primary" type="button" data-memory-hourly="${id}">Hourly detail</button>`}
         ${renderFocusedPlanNotifyAction(watch, effectivePast)}

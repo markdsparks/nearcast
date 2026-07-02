@@ -1341,6 +1341,7 @@ function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alerts = 
     label: "Saved place forecast",
     reason: savedPlaceWatchSnapshotReason(snapshot, unit),
     body: savedPlaceWatchSnapshotReason(snapshot, unit),
+    receipt: savedPlaceWatchSnapshotReceipt(snapshot, unit),
     snapshot
   };
 }
@@ -1406,6 +1407,25 @@ function savedPlaceWatchSnapshotReason(snapshot = {}, unit = "fahrenheit") {
   if (day.rainChance >= 50) return `Rain chance ${day.rainChance}% ${day.label}.`;
   if (day.feelsMax >= (unit === "fahrenheit" ? 95 : 35)) return `Feels up to ${day.feelsMax}${tempUnit} ${day.label}.`;
   return `${day.label} still looks mostly steady.`;
+}
+
+function savedPlaceWatchSnapshotReceipt(snapshot = {}, unit = "fahrenheit") {
+  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
+  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
+  return (snapshot.days || [])
+    .slice(0, 2)
+    .map((day) => {
+      const parts = [
+        `${capitalizeWord(day.label || "day")}: rain ${roundNumber(day.rainChance)}%`,
+        `feels ${roundNumber(day.feelsMax)}${tempUnit}`,
+        `gusts ${roundNumber(day.gustMax)} ${windUnit}`
+      ];
+      if (day.alertEvent) parts.push(day.alertEvent);
+      if (day.stormPotential) parts.push("storms possible");
+      return parts.filter(Boolean).join(", ");
+    })
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function savedPlaceWatchStateChange(previousLastKnown = {}, current = {}) {
@@ -1571,6 +1591,7 @@ function savedPlaceWatchLastKnownFromState(watchedPlace, current, change = {}) {
     label: current.label || "",
     reason: current.reason || "",
     body,
+    receipt: current.receipt || "",
     checkedAt: new Date().toISOString(),
     snapshot: current.snapshot
   };
@@ -1792,6 +1813,7 @@ function planWatchCurrentState(plan, stats, alert, unit = "fahrenheit") {
   const label = planWatchStateLabel({ tone, riskKind, alert });
   const reason = planWatchStateReason(stats, alert, unit);
   const body = `${label}: ${reason}.`;
+  const receipt = planWatchStateReceipt(stats, alert, unit);
   const snapshot = {
     title: plan.title || "Plan",
     targetDate: plan.targetDate || "",
@@ -1816,6 +1838,7 @@ function planWatchCurrentState(plan, stats, alert, unit = "fahrenheit") {
     label,
     reason,
     body,
+    receipt,
     snapshot,
     alert
   };
@@ -1854,6 +1877,22 @@ function planWatchStateReason(stats = {}, alert = null, unit = "fahrenheit") {
   if (stats.uvMax >= 8) return `UV up to ${stats.uvMax}`;
   if (stats.feelsMax >= (unit === "fahrenheit" ? 88 : 31)) return `feels up to ${stats.feelsMax}${tempUnit}`;
   return `rain looks low (${stats.rainChance}%)`;
+}
+
+function planWatchStateReceipt(stats = {}, alert = null, unit = "fahrenheit") {
+  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
+  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
+  const precipUnit = unit === "fahrenheit" ? "in" : "mm";
+  const lines = [];
+  if (alert?.event) lines.push(`Alert: ${alert.event} overlaps this window`);
+  lines.push(`Rain: ${roundNumber(stats.rainChanceMin ?? stats.rainChance)}-${roundNumber(stats.rainChance)}%`);
+  lines.push(`Feels: ${roundNumber(stats.feelsMin ?? stats.feelsAvg)}${tempUnit}-${roundNumber(stats.feelsMax ?? stats.feelsAvg)}${tempUnit}`);
+  lines.push(`Gusts: peak ${roundNumber(stats.gustMax)} ${windUnit}`);
+  if (Number(stats.precipTotal || 0) > 0) {
+    lines.push(`Amount: ${roundNumber(stats.precipTotal, unit === "fahrenheit" ? 2 : 1)} ${precipUnit}`);
+  }
+  if (Number(stats.uvMax || 0) > 0) lines.push(`UV: peak ${roundNumber(stats.uvMax)}`);
+  return lines.filter(Boolean).slice(0, 5).join(" · ");
 }
 
 function planWatchWindowScore(stats = {}, unit = "fahrenheit") {
@@ -2015,6 +2054,7 @@ function planWatchLastKnownFromState(plan, current, change = {}) {
     label: current.label || "",
     reason: current.reason || "",
     body,
+    receipt: current.receipt || "",
     checkedAt: new Date().toISOString(),
     snapshot: current.snapshot
   };
@@ -2253,6 +2293,7 @@ function normalizePlanWatchLastKnown(value = {}) {
     label: cleanText(source.label, 120),
     reason: cleanText(source.reason, 240),
     body: cleanText(source.body, 240),
+    receipt: cleanText(source.receipt, 500),
     checkedAt: cleanText(source.checkedAt, 40),
     snapshot: normalizePlanWatchSnapshot(source.snapshot)
   };
