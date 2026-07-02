@@ -5645,7 +5645,7 @@ function renderAILauncher() {
 }
 
 function openAISheet(options = {}) {
-  const { restoreScroll = null, autoBrief = true } = options;
+  const { restoreScroll = null, autoBrief = false } = options;
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
   setSheetScrollAnchor(els.aiSheet);
@@ -5656,7 +5656,7 @@ function openAISheet(options = {}) {
       els.aiSheet.scrollTop = restoreScroll;
     });
   }
-  // Auto-generate the briefing the first time it's opened for a place.
+  // Summary generation is optional; the planner sheet opens directly to plan checking.
   if (autoBrief && aiState.phase === "ready" && !aiState.text) runBrief();
 }
 
