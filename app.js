@@ -1,4 +1,4 @@
-const VERSION = "3.0.134";
+const VERSION = "3.0.135";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3106,7 +3106,9 @@ function bindEvents() {
   bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify]", (event, target) => {
     const watchNotify = target.closest("[data-watch-notify]");
     if (watchNotify) {
-      if (typeof requestPlanWatchNotifications === "function") requestPlanWatchNotifications();
+      if (typeof requestPlanWatchNotifications === "function") {
+        requestPlanWatchNotifications(watchNotify.dataset.watchNotify || "");
+      }
       return;
     }
     const memoryNew = target.closest("[data-memory-new]");

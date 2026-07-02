@@ -277,6 +277,7 @@ const PLAN_WATCH_MAX_AUTO_FETCH_PLACES = 4;
 const PLAN_WATCH_FORECAST_MAX_AGE_MS = 60 * 60 * 1000;
 const PLAN_WATCH_REFRESH_THROTTLE_MS = 90 * 1000;
 const PLAN_WATCH_NOTIFICATION_PREF_KEY = "nearcast-plan-watch-notifications-v1";
+const PLAN_WATCH_NOTIFICATION_PLANS_KEY = "nearcast-plan-watch-notification-plans-v1";
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
 const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
@@ -339,38 +340,146 @@ function planWatchNotificationPreference() {
   }
 }
 
+function writePlanWatchNotificationPreference(value) {
+  try {
+    localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, value);
+  } catch {
+    /* Keep the current session working even if storage is unavailable. */
+  }
+}
+
+function readPlanWatchNotificationPlans() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY) || "null");
+    return parsed && typeof parsed === "object" && parsed.plans && typeof parsed.plans === "object"
+      ? parsed
+      : { plans: {} };
+  } catch {
+    return { plans: {} };
+  }
+}
+
+function writePlanWatchNotificationPlans(value) {
+  try {
+    const plans = Object.fromEntries(
+      Object.entries(value?.plans || {})
+        .filter(([, enabled]) => Boolean(enabled))
+        .slice(0, 80)
+    );
+    localStorage.setItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY, JSON.stringify({ plans }));
+  } catch {
+    /* Plan-level notification intent is optional. */
+  }
+}
+
+function planWatchNotificationPlanEnabled(memoryId) {
+  const id = String(memoryId || "").trim();
+  if (!id) return false;
+  return readPlanWatchNotificationPlans().plans[id] === true;
+}
+
+function setPlanWatchNotificationPlan(memoryId, enabled) {
+  const id = String(memoryId || "").trim();
+  if (!id) return;
+  const prefs = readPlanWatchNotificationPlans();
+  if (enabled) prefs.plans[id] = true;
+  else delete prefs.plans[id];
+  writePlanWatchNotificationPlans(prefs);
+}
+
+function planWatchNotificationEnabledCount(watchItems) {
+  return (watchItems || []).filter((watch) =>
+    !watch?.isPast && planWatchNotificationPlanEnabled(watch?.memory?.id)
+  ).length;
+}
+
 function planWatchNotificationsEnabled() {
   return planWatchNotificationsSupported() &&
     planWatchNotificationPermission() === "granted" &&
     planWatchNotificationPreference() === "enabled";
 }
 
-async function requestPlanWatchNotifications() {
+function planWatchNotificationPlanCopy(memoryId) {
+  const id = String(memoryId || "").trim();
+  const supported = planWatchNotificationsSupported();
+  const permission = planWatchNotificationPermission();
+  if (!supported) {
+    return {
+      label: "Notifications unavailable",
+      aria: "Device notifications are unavailable in this browser",
+      pressed: false,
+      disabled: true
+    };
+  }
+  if (permission === "denied") {
+    return {
+      label: "Notifications blocked",
+      aria: "Notifications are blocked in browser settings",
+      pressed: false,
+      disabled: true
+    };
+  }
+  if (id && planWatchNotificationPlanEnabled(id) && planWatchNotificationsEnabled()) {
+    return {
+      label: "Notifications on",
+      aria: "Turn off notifications for this plan",
+      pressed: true,
+      disabled: false
+    };
+  }
+  if (id && planWatchNotificationPlanEnabled(id)) {
+    return {
+      label: "Resume notifications",
+      aria: "Resume notifications for this plan",
+      pressed: true,
+      disabled: false
+    };
+  }
+  return {
+    label: "Notify me",
+    aria: "Notify me if this plan changes",
+    pressed: false,
+    disabled: false
+  };
+}
+
+async function requestPlanWatchNotifications(memoryId = "") {
+  const planId = String(memoryId || "").trim();
   if (!planWatchNotificationsSupported()) {
     renderGlobalMemorySheet();
     return;
   }
-  if (planWatchNotificationsEnabled()) {
-    try {
-      localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, "off");
-    } catch {
-      /* Keep the current session working even if storage is unavailable. */
-    }
+  if (planId && planWatchNotificationPlanEnabled(planId) && planWatchNotificationsEnabled()) {
+    setPlanWatchNotificationPlan(planId, false);
     renderGlobalMemorySheet();
+    if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
     return;
   }
-  const permission = await Notification.requestPermission();
-  try {
-    localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, permission === "granted" ? "enabled" : "off");
-  } catch {
-    /* Keep the current session working even if storage is unavailable. */
+  if (!planId && planWatchNotificationsEnabled()) {
+    writePlanWatchNotificationPreference("off");
+    renderGlobalMemorySheet();
+    if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+    return;
+  }
+
+  let permission = planWatchNotificationPermission();
+  if (permission !== "granted") {
+    permission = await Notification.requestPermission();
+  }
+  writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
+  if (permission === "granted" && planId) {
+    setPlanWatchNotificationPlan(planId, true);
   }
   renderGlobalMemorySheet();
-  if (permission === "granted") maybeSyncPlanWatchNotifications(null, { userInitiated: true });
+  if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+  if (permission === "granted") {
+    maybeSyncPlanWatchNotifications(null, { userInitiated: true });
+  }
 }
 
 function planWatchNotificationPanelCopy(watchItems) {
   const count = (watchItems || []).filter((watch) => !watch.isPast).length;
+  const enabledCount = planWatchNotificationEnabledCount(watchItems);
   const supported = planWatchNotificationsSupported();
   const permission = planWatchNotificationPermission();
   const enabled = planWatchNotificationsEnabled();
@@ -394,18 +503,22 @@ function planWatchNotificationPanelCopy(watchItems) {
   }
   if (enabled) {
     return {
-      tone: "good",
-      title: "Notifications on",
-      body: "Nearcast can notify you when watched plans get wetter, windier, or overlap active alerts.",
-      button: "Turn off",
+      tone: enabledCount ? "good" : "neutral",
+      title: enabledCount
+        ? `Notifications on for ${enabledCount} ${enabledCount === 1 ? "plan" : "plans"}`
+        : "Choose which plans notify you",
+      body: enabledCount
+        ? "Nearcast will only notify when those plans meaningfully change."
+        : "Open a watched plan and tap Notify me to opt into that plan.",
+      button: enabledCount ? "Pause all" : "",
       meta: count ? `${count} active` : "Ready"
     };
   }
   return {
     tone: "neutral",
     title: "Notify on meaningful changes",
-    body: "Use notifications for watched plans only: bigger rain shifts, stronger wind, or active alert overlap.",
-    button: "Turn on",
+    body: "Enable device notifications, then choose the plans that should be allowed to interrupt you.",
+    button: "Enable",
     meta: count ? `${count} active` : "Optional"
   };
 }
@@ -450,6 +563,7 @@ function planWatchNotificationEventKey(watch) {
 
 function planWatchNotificationCandidates(watchItems) {
   return (watchItems || [])
+    .filter((watch) => planWatchNotificationPlanEnabled(watch?.memory?.id))
     .filter((watch) => planWeatherNotificationState(watch).eligible)
     .sort((a, b) =>
       planWatchAttentionRank(b) - planWatchAttentionRank(a) ||
@@ -2172,6 +2286,7 @@ function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
 function forgetPlanMemory(id) {
   const before = state.planMemories.length;
   state.planMemories = state.planMemories.filter((memory) => memory.id !== id);
+  setPlanWatchNotificationPlan(id, false);
   askThread.forEach((exchange) => {
     if (exchange.memoryId === id) exchange.memoryId = "";
   });
@@ -3525,15 +3640,26 @@ function setGlobalMemorySheetFocusedMode(focused) {
 }
 
 function renderFocusedPlanNotifyAction(watch, effectivePast) {
-  if (
-    effectivePast ||
-    !planWatchNotificationsSupported() ||
-    planWatchNotificationsEnabled() ||
-    planWatchNotificationPermission() === "denied"
-  ) return "";
-  const label = "Notify me";
-  const aria = `Notify me if ${planMemoryTitle(watch?.memory)} changes`;
-  return `<button type="button" data-watch-notify aria-label="${escapeHtml(aria)}">${escapeHtml(label)}</button>`;
+  if (effectivePast || !watch?.memory?.id) return "";
+  const id = escapeHtml(watch.memory.id);
+  const copy = planWatchNotificationPlanCopy(watch.memory.id);
+  const disabled = copy.disabled ? " disabled" : "";
+  const active = copy.pressed ? " is-active" : "";
+  const aria = `${copy.aria} ${planMemoryTitle(watch.memory)}`.trim();
+  return `<button class="${active.trim()}" type="button" data-watch-notify="${id}" aria-label="${escapeHtml(aria)}" aria-pressed="${copy.pressed ? "true" : "false"}"${disabled}>${escapeHtml(copy.label)}</button>`;
+}
+
+function renderFocusedPlanChangeBlock(watch) {
+  const change = watch?.change;
+  if (!change?.body) return "";
+  const tone = change.tone || watch?.tone || "caution";
+  return `
+    <section class="focused-plan-change is-${escapeHtml(tone)}">
+      <span>Changed since last check</span>
+      <strong>${escapeHtml(change.title || "Plan changed")}</strong>
+      <p>${escapeHtml(change.body)}</p>
+    </section>
+  `;
 }
 
 function renderFocusedPlanWatchHero(item, watch) {
@@ -3541,8 +3667,7 @@ function renderFocusedPlanWatchHero(item, watch) {
   const id = escapeHtml(memory.id);
   const tone = watch?.tone || "pending";
   const label = watch?.label || "Waiting on forecast";
-  const reason = watch?.change?.body ||
-    watch?.primaryReason ||
+  const reason = watch?.primaryReason ||
     watch?.reasons?.[0] ||
     watch?.fullReason ||
     watch?.reason ||
@@ -3554,6 +3679,7 @@ function renderFocusedPlanWatchHero(item, watch) {
       <span class="focused-plan-kicker">${effectivePast ? "Saved plan" : "Watched plan"}</span>
       <h3>${escapeHtml(label)}</h3>
       <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+      ${renderFocusedPlanChangeBlock(watch)}
       <p class="focused-plan-reason">${escapeHtml(reason)}</p>
       ${advice ? `<p class="focused-plan-advice"><span>What to do</span>${escapeHtml(advice)}</p>` : ""}
       <small>${escapeHtml(planWatchMetaText(memory, watch))}</small>
