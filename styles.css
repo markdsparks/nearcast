@@ -4372,6 +4372,74 @@ h2 {
   border-color: var(--blue);
   outline: none;
 }
+.plan-watch-activity {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(91, 141, 220, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(91, 141, 220, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.04);
+}
+.plan-watch-activity.is-compact {
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.plan-watch-activity-head {
+  display: grid;
+  gap: 3px;
+}
+.plan-watch-activity-head span {
+  color: var(--blue);
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.plan-watch-activity-head strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 950;
+  line-height: 1.15;
+}
+.plan-watch-activity-head small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+.plan-watch-activity-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+.plan-watch-activity-list div {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(54, 76, 98, 0.10);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.plan-watch-activity-list dt {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.plan-watch-activity-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 920;
+  line-height: 1.2;
+}
 .past-plan-disclosure {
   display: grid;
   gap: 8px;
@@ -5358,6 +5426,10 @@ h2 {
 
   .plan-watch-notify button {
     justify-self: start;
+  }
+
+  .plan-watch-activity-list {
+    grid-template-columns: 1fr;
   }
 
   .global-memory-main em {

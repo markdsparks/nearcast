@@ -962,6 +962,110 @@ function renderPlanWatchNotificationPanel(watchItems, options = {}) {
   `;
 }
 
+function formatPlanWatchRelativeTimestamp(value) {
+  const time = value instanceof Date ? value.getTime() : Number(value);
+  if (!Number.isFinite(time) || time <= 0) return "";
+  const diff = Date.now() - time;
+  const abs = Math.abs(diff);
+  const future = diff < -1000;
+  const unit = future ? "from now" : "ago";
+  if (abs < 45 * 1000) return future ? "in a moment" : "just now";
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (abs < hour) {
+    const count = Math.max(1, Math.round(abs / minute));
+    return `${count} min ${unit}`;
+  }
+  if (abs < day) {
+    const count = Math.max(1, Math.round(abs / hour));
+    return `${count} hr ${unit}`;
+  }
+  const count = Math.max(1, Math.round(abs / day));
+  return `${count} day${count === 1 ? "" : "s"} ${unit}`;
+}
+
+function latestPlanWatchNotificationEventAt() {
+  const values = Object.values(readPlanWatchNotificationState().events || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length ? Math.max(...values) : 0;
+}
+
+function planWatchActivityRows(watchItems) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const enabledPlans = planWatchNotificationEnabledCount(active);
+  const notificationsReady = planWatchNotificationsEnabled();
+  const placesRequested = placeWatchNotificationsRequested();
+  const selectedPlaces = placeWatchNotificationSelectedCount();
+  const savedPlaces = placeWatchSavedPlaces().length;
+  const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
+  const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
+  const notificationState = notificationsReady
+    ? "Notifications ready"
+    : planWatchNotificationPermission() === "denied"
+      ? "Notifications blocked"
+      : "In-app watching";
+  const planNotifyText = enabledPlans
+    ? notificationsReady
+      ? `${enabledPlans} can notify`
+      : `${enabledPlans} selected`
+    : "";
+  const savedPlaceText = savedPlaces
+    ? placesRequested
+      ? `${selectedPlaces}/${PLACE_WATCH_MAX_SYNC_PLACES} selected${notificationsReady ? "" : " · off"}`
+      : "Not watching"
+    : "None saved";
+  const rows = [
+    {
+      label: "Plans",
+      value: active.length
+        ? `${active.length} active${planNotifyText ? ` · ${planNotifyText}` : ""}`
+        : "None yet"
+    },
+    {
+      label: "Saved places",
+      value: savedPlaceText
+    },
+    {
+      label: "Status",
+      value: notificationState
+    }
+  ];
+  if (lastSync) {
+    rows.push({ label: "Last sync", value: lastSync });
+  }
+  if (lastSignal) {
+    rows.push({ label: "Last matched change", value: lastSignal });
+  }
+  return rows;
+}
+
+function renderPlanWatchActivityPanel(watchItems, options = {}) {
+  const rows = planWatchActivityRows(watchItems);
+  const compactClass = options.compact ? " is-compact" : "";
+  const body = planWatchNotificationsEnabled()
+    ? "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
+    : "Nearcast still checks watched plans in the app. Turn on notifications when you want device alerts.";
+  return `
+    <section class="plan-watch-activity${compactClass}">
+      <div class="plan-watch-activity-head">
+        <span>Watching activity</span>
+        <strong>This device is set up to watch</strong>
+        <small>${escapeHtml(body)}</small>
+      </div>
+      <dl class="plan-watch-activity-list">
+        ${rows.map((row) => `
+          <div>
+            <dt>${escapeHtml(row.label)}</dt>
+            <dd>${escapeHtml(row.value)}</dd>
+          </div>
+        `).join("")}
+      </dl>
+    </section>
+  `;
+}
+
 function savedPlaceWatchNotificationPanelCopy() {
   const savedCount = (state.savedPlaces || []).length;
   const selectedCount = placeWatchNotificationSelectedCount();
@@ -4227,6 +4331,7 @@ function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past
   return `
     ${renderFocusedPlanWatchHero(focusedItem, focusedWatch)}
     ${renderPlanWatchNotificationPanel(watchItems, { compact: true })}
+    ${renderPlanWatchActivityPanel(watchItems, { compact: true })}
     ${renderGlobalMemoryGroup("Other watched plans", otherUpcoming, {
       sub: otherUpcoming.length === 1 ? "1 upcoming" : `${otherUpcoming.length} upcoming`,
       watchById
@@ -4293,6 +4398,7 @@ function renderGlobalMemorySheet() {
 
   els.memorySheetBody.innerHTML =
     renderPlanWatchNotificationPanel(watchItems) +
+    renderPlanWatchActivityPanel(watchItems) +
     renderGlobalMemoryGroup("This place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById

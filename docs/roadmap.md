@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.144**.
+Living product roadmap. Current as of **v3.0.145**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -220,6 +220,9 @@ First shipped slice:
   evidence behind the verdict in the focused plan view.
 - Notification sync/evaluator records can carry receipt text in `lastKnown`, so
   server-side watch state has room for the same explanation model.
+- The Watch sheet now includes a simple activity panel showing active plans,
+  saved-place watch selection, notification readiness, last sync, and recent
+  matched changes from this device.
 
 ### 4. Trust And Craft Hardening
 
