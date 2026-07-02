@@ -26,6 +26,10 @@ const PLAN_WATCH_VAPID_PUBLIC_KEY_ENV = "PLAN_WATCH_VAPID_PUBLIC_KEY";
 const PLAN_WATCH_VAPID_PRIVATE_KEY_ENV = "PLAN_WATCH_VAPID_PRIVATE_KEY";
 const PLAN_WATCH_VAPID_SUBJECT_ENV = "PLAN_WATCH_VAPID_SUBJECT";
 const PLAN_WATCH_TEST_TOKEN_ENV = "PLAN_WATCH_TEST_TOKEN";
+const PLAN_WATCH_EVALUATOR_MODE_ENV = "PLAN_WATCH_EVALUATOR_MODE";
+const PLAN_WATCH_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_EVALUATOR_LIMIT";
+const PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV = "PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS";
+const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
 const DEFAULT_PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app";
@@ -42,11 +46,14 @@ const ENHANCED_MIN_ZOOM_GRACE = 0.001;
 const ENHANCED_MIN_VIEWPORT_ZOOM = 7.5;
 const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
-const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 40;
+const DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = 10;
+const DEFAULT_PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 3;
 const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
 const PLAN_WATCH_PUSH_TTL_SECONDS = 30 * 60;
 const PLAN_WATCH_PENDING_TTL_SECONDS = 2 * 60 * 60;
-const PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT = 25;
+const PLAN_WATCH_REGISTRATION_CAP_CACHE_SECONDS = 10 * 60;
+const DEFAULT_PLAN_WATCH_EVALUATOR_LIMIT = 5;
+const PLAN_WATCH_EVALUATOR_HARD_LIMIT = 25;
 const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
 const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
 
@@ -81,9 +88,10 @@ export default {
     return handleRadarGenerationQueue(batch, env, ctx);
   },
   async scheduled(event, env = {}, ctx = {}) {
+    if (!planWatchScheduledEvaluatorEnabled(env)) return;
     ctx.waitUntil(evaluatePlanWatchNotifications(env, {
       reason: "scheduled",
-      limit: PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT
+      limit: configuredPlanWatchEvaluatorLimit(env)
     }));
   }
 };
@@ -130,6 +138,12 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     storage: {
       state: store ? "ready" : "unavailable",
       kind: store?.kind || ""
+    },
+    limits: {
+      mode: configuredPlanWatchEvaluatorMode(env),
+      maxActiveSubscriptions: configuredPlanWatchMaxActiveSubscriptions(env),
+      maxPlansPerSubscription: configuredPlanWatchMaxPlansPerSubscription(env),
+      scheduledEvaluationLimit: configuredPlanWatchEvaluatorLimit(env)
     }
   });
 }
@@ -155,6 +169,37 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   }
 
   const subscriptionId = await planWatchSubscriptionId(subscription);
+  const existingRecord = store.getJson
+    ? await store.getJson(planWatchSubscriptionStorageName(subscriptionId))
+    : null;
+  if (!existingRecord?.subscription) {
+    const capMarker = await planWatchRegistrationCapMarker(store);
+    if (capMarker.full) {
+      return jsonResponse({
+        ok: false,
+        provider: PLAN_WATCH_PROVIDER,
+        state: "beta-full",
+        reason: "plan-watch-registration-limit",
+        subscriptionId,
+        activeSubscriptions: capMarker.activeSubscriptions,
+        maxActiveSubscriptions: capMarker.maxActiveSubscriptions,
+        retryAfterSeconds: capMarker.retryAfterSeconds
+      }, { status: 429 });
+    }
+    const capacity = await planWatchRegistrationCapacity(store, subscriptionId, env);
+    if (!capacity.allowed) {
+      await writePlanWatchRegistrationCapMarker(store, capacity);
+      return jsonResponse({
+        ok: false,
+        provider: PLAN_WATCH_PROVIDER,
+        state: "beta-full",
+        reason: "plan-watch-registration-limit",
+        subscriptionId,
+        activeSubscriptions: capacity.activeSubscriptions,
+        maxActiveSubscriptions: capacity.maxActiveSubscriptions
+      }, { status: 429 });
+    }
+  }
   const now = new Date();
   const expiresAt = new Date(now.getTime() + PLAN_WATCH_SUBSCRIPTION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const record = {
@@ -164,12 +209,15 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     platform: normalizePlatform(payload.platform),
     client: normalizePlanWatchClient(payload.client),
     subscription,
-    plans: normalizePlanWatchPlans(payload.plans),
-    registeredAt: now.toISOString(),
+    plans: normalizePlanWatchPlans(payload.plans, env),
+    registeredAt: existingRecord?.registeredAt || now.toISOString(),
     updatedAt: now.toISOString(),
     expiresAt
   };
   await store.putJson(planWatchSubscriptionStorageName(subscriptionId), record);
+  if (store.deleteJson && existingRecord?.subscription) {
+    await store.deleteJson(planWatchRegistrationCapStorageName());
+  }
   return jsonResponse({
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
@@ -201,6 +249,7 @@ export async function handlePlanWatchNotificationUnregisterRequest(request, env 
     }, { status: 202 });
   }
   await store.deleteJson(planWatchSubscriptionStorageName(subscriptionId));
+  await store.deleteJson(planWatchRegistrationCapStorageName());
   return jsonResponse({
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
@@ -296,7 +345,7 @@ export async function handlePlanWatchNotificationEvaluateRequest(request, env = 
     reason: "manual",
     dryRun: Boolean(payload.dryRun),
     subscriptionId: cleanText(payload.subscriptionId, 120),
-    limit: nonNegativeInteger(payload.limit, PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT)
+    limit: configuredPlanWatchEvaluatorLimit(env, payload.limit)
   });
   return jsonResponse(result, { status: result.ok ? 200 : 500 });
 }
@@ -856,6 +905,42 @@ function configuredPlanWatchTestToken(env = {}) {
   return String(env?.[PLAN_WATCH_TEST_TOKEN_ENV] || "").trim();
 }
 
+function configuredPlanWatchEvaluatorMode(env = {}) {
+  return cleanToken(env?.[PLAN_WATCH_EVALUATOR_MODE_ENV] || "off", 24).toLowerCase() || "off";
+}
+
+function planWatchScheduledEvaluatorEnabled(env = {}) {
+  return ["beta", "on", "enabled", "true"].includes(configuredPlanWatchEvaluatorMode(env));
+}
+
+function configuredPlanWatchEvaluatorLimit(env = {}, value = undefined) {
+  const defaultLimit = boundedInteger(
+    env?.[PLAN_WATCH_EVALUATOR_LIMIT_ENV],
+    DEFAULT_PLAN_WATCH_EVALUATOR_LIMIT,
+    1,
+    PLAN_WATCH_EVALUATOR_HARD_LIMIT
+  );
+  return boundedInteger(value, defaultLimit, 1, PLAN_WATCH_EVALUATOR_HARD_LIMIT);
+}
+
+function configuredPlanWatchMaxActiveSubscriptions(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV],
+    DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS,
+    0,
+    500
+  );
+}
+
+function configuredPlanWatchMaxPlansPerSubscription(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV],
+    DEFAULT_PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION,
+    1,
+    25
+  );
+}
+
 function planWatchTestAuthorization(request, env = {}) {
   const expected = configuredPlanWatchTestToken(env);
   if (!expected) return { available: false, authorized: false };
@@ -865,9 +950,63 @@ function planWatchTestAuthorization(request, env = {}) {
   return { available: true, authorized: token === expected };
 }
 
-function planWatchEvaluationLimit(value) {
-  const limit = nonNegativeInteger(value, PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT);
-  return Math.max(1, Math.min(100, limit));
+async function planWatchRegistrationCapacity(store, subscriptionId, env = {}) {
+  const maxActiveSubscriptions = configuredPlanWatchMaxActiveSubscriptions(env);
+  if (maxActiveSubscriptions <= 0) {
+    return { allowed: false, activeSubscriptions: 0, maxActiveSubscriptions };
+  }
+  if (!store?.listNames || !store?.getJson) {
+    return { allowed: true, activeSubscriptions: null, maxActiveSubscriptions };
+  }
+  const names = await store.listNames(
+    "subscriptions/",
+    Math.min(1000, Math.max(maxActiveSubscriptions + 25, 50))
+  );
+  let activeSubscriptions = 0;
+  for (const name of names) {
+    const record = await store.getJson(name);
+    if (!record?.subscription) continue;
+    if (planWatchSubscriptionExpired(record)) {
+      if (store.deleteJson && record.subscriptionId) {
+        await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+      }
+      continue;
+    }
+    if (record.subscriptionId === subscriptionId) continue;
+    activeSubscriptions += 1;
+  }
+  return {
+    allowed: activeSubscriptions < maxActiveSubscriptions,
+    activeSubscriptions,
+    maxActiveSubscriptions
+  };
+}
+
+async function planWatchRegistrationCapMarker(store) {
+  if (!store?.getJson) return { full: false };
+  const marker = await store.getJson(planWatchRegistrationCapStorageName());
+  if (!marker?.full || planWatchPendingExpired(marker)) return { full: false };
+  const expiresAt = timestamp(marker.expiresAt);
+  return {
+    full: true,
+    activeSubscriptions: finiteNumber(marker.activeSubscriptions, null),
+    maxActiveSubscriptions: finiteNumber(marker.maxActiveSubscriptions, null),
+    retryAfterSeconds: Number.isFinite(expiresAt) ? Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000)) : null
+  };
+}
+
+async function writePlanWatchRegistrationCapMarker(store, capacity = {}) {
+  if (!store?.putJson) return;
+  const now = Date.now();
+  return store.putJson(planWatchRegistrationCapStorageName(), {
+    provider: PLAN_WATCH_PROVIDER,
+    version: 1,
+    full: true,
+    activeSubscriptions: capacity.activeSubscriptions,
+    maxActiveSubscriptions: capacity.maxActiveSubscriptions,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + PLAN_WATCH_REGISTRATION_CAP_CACHE_SECONDS * 1000).toISOString()
+  });
 }
 
 function planWatchStore(env = {}) {
@@ -948,18 +1087,29 @@ async function planWatchSubscriptionRecords(store, options = {}) {
     const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
     return record?.subscription ? [record] : [];
   }
-  const names = await store.listNames("subscriptions/", planWatchEvaluationLimit(options.limit));
+  const evaluationLimit = configuredPlanWatchEvaluatorLimit(options.env, options.limit);
+  const scanLimit = Math.min(
+    1000,
+    Math.max(evaluationLimit, configuredPlanWatchMaxActiveSubscriptions(options.env))
+  );
+  const names = await store.listNames("subscriptions/", scanLimit);
   const records = [];
   for (const name of names) {
     const record = await store.getJson(name);
     if (record?.subscription && !planWatchSubscriptionExpired(record)) records.push(record);
   }
-  return records;
+  return records
+    .sort((a, b) => planWatchLastEvaluatedAt(a) - planWatchLastEvaluatedAt(b))
+    .slice(0, evaluationLimit);
 }
 
 function planWatchSubscriptionExpired(record) {
   const expiresAt = timestamp(record?.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+function planWatchLastEvaluatedAt(record = {}) {
+  return timestamp(record.evaluatedAt || record.updatedAt || record.registeredAt) || 0;
 }
 
 function planWatchPendingExpired(record) {
@@ -977,7 +1127,7 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
       reason: options.reason || ""
     };
   }
-  const records = await planWatchSubscriptionRecords(store, options);
+  const records = await planWatchSubscriptionRecords(store, { ...options, env });
   const summary = {
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
@@ -1028,8 +1178,12 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
 
   const evaluatedPlans = [];
   const candidates = [];
+  const context = {
+    forecastCache: new Map(),
+    alertsCache: new Map()
+  };
   for (const plan of plans) {
-    const evaluation = await evaluatePlanWatchPlan(plan, record).catch((error) => ({
+    const evaluation = await evaluatePlanWatchPlan(plan, record, context).catch((error) => ({
       plan,
       error: error?.message || String(error)
     }));
@@ -1077,15 +1231,15 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   return result;
 }
 
-async function evaluatePlanWatchPlan(plan, record = {}) {
+async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   if (!plan || planWatchPlanIsPast(plan)) {
     return { plan, updated: false, candidate: null };
   }
   const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
-  const forecast = await fetchPlanWatchForecast(plan.place, unit);
+  const forecast = await cachedPlanWatchForecast(plan.place, unit, context);
   const stats = planWatchWindowStats(plan, forecast, unit);
   if (!stats) return { plan, updated: false, candidate: null, error: "forecast-window-unavailable" };
-  const alerts = await fetchPlanWatchAlerts(plan.place).catch(() => []);
+  const alerts = await cachedPlanWatchAlerts(plan.place, context).catch(() => []);
   const windowMs = planWatchWindowMs(plan, forecast);
   const alert = topPlanWatchAlert(alerts, windowMs.startMs, windowMs.endMs);
   const current = planWatchCurrentState(plan, stats, alert, unit);
@@ -1110,6 +1264,30 @@ function planWatchPlanIsPast(plan) {
   if (!plan?.targetDate) return false;
   const endOfDate = new Date(`${plan.targetDate}T23:59:59Z`);
   return Number.isFinite(endOfDate.getTime()) && endOfDate.getTime() < Date.now() - 12 * 60 * 60 * 1000;
+}
+
+async function cachedPlanWatchForecast(place = {}, unit = "fahrenheit", context = {}) {
+  if (!context.forecastCache) return fetchPlanWatchForecast(place, unit);
+  const key = planWatchPlaceCacheKey(place, unit);
+  if (!context.forecastCache.has(key)) {
+    context.forecastCache.set(key, fetchPlanWatchForecast(place, unit));
+  }
+  return context.forecastCache.get(key);
+}
+
+async function cachedPlanWatchAlerts(place = {}, context = {}) {
+  if (!context.alertsCache) return fetchPlanWatchAlerts(place);
+  const key = planWatchPlaceCacheKey(place, "alerts");
+  if (!context.alertsCache.has(key)) {
+    context.alertsCache.set(key, fetchPlanWatchAlerts(place));
+  }
+  return context.alertsCache.get(key);
+}
+
+function planWatchPlaceCacheKey(place = {}, suffix = "") {
+  const lat = Number.isFinite(Number(place.latitude)) ? Number(place.latitude).toFixed(3) : "lat";
+  const lon = Number.isFinite(Number(place.longitude)) ? Number(place.longitude).toFixed(3) : "lon";
+  return [lat, lon, suffix].join(":");
 }
 
 async function fetchPlanWatchForecast(place = {}, unit = "fahrenheit") {
@@ -1647,10 +1825,10 @@ function normalizePlanWatchClient(value = {}) {
   };
 }
 
-function normalizePlanWatchPlans(value) {
+function normalizePlanWatchPlans(value, env = {}) {
   if (!Array.isArray(value)) return [];
   return value
-    .slice(0, PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION)
+    .slice(0, configuredPlanWatchMaxPlansPerSubscription(env))
     .map(normalizePlanWatchPlan)
     .filter(Boolean);
 }
@@ -1708,6 +1886,10 @@ function planWatchSubscriptionStorageName(subscriptionId) {
 
 function planWatchPendingStorageName(subscriptionId) {
   return `pending/${cleanStorageName(subscriptionId)}.json`;
+}
+
+function planWatchRegistrationCapStorageName() {
+  return "limits/registration-cap.json";
 }
 
 function normalizePlanWatchSnapshot(value = {}) {
@@ -2191,6 +2373,11 @@ function nonNegativeInteger(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) return fallback;
   return Math.floor(number);
+}
+
+function boundedInteger(value, fallback, min, max) {
+  const number = nonNegativeInteger(value, fallback);
+  return Math.max(min, Math.min(max, number));
 }
 
 function timestamp(value) {

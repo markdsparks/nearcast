@@ -23,6 +23,40 @@ without caring whether the client is a PWA or a native app.
   when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
+- A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
+  `PLAN_WATCH_EVALUATOR_MODE=beta`.
+
+## Beta Guardrails
+
+The notification evaluator is intentionally capped so public traffic cannot turn
+into an open-ended backend job:
+
+- `PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS=10`: at most 10 active Web Push
+  subscriptions can register during the beta. Existing subscriptions can refresh
+  their own plan state.
+- `PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION=3`: each subscribed device can sync at
+  most 3 notifying plans.
+- `PLAN_WATCH_EVALUATOR_LIMIT=5`: each scheduled run checks at most 5
+  subscriptions.
+- The scheduler checks the least-recently-evaluated subscriptions first, so a
+  larger beta cap rotates through devices instead of repeatedly checking the
+  same records.
+- Forecast and alert calls are cached per place/unit within each evaluation run.
+
+With the default beta settings, the upper bound is 5 subscriptions x 3 plans x
+48 runs/day, or 720 plan evaluations/day. Each unique place can require one
+Open-Meteo forecast request and, for US places, one NWS alert request.
+
+At this beta size the expected Cloudflare-side cost should remain effectively
+inside normal free/very-low-cost usage: roughly 1,440 external weather requests
+per day at the cap, 1,440 scheduled Worker invocations/month, and small R2 JSON
+reads/writes. Scaling is linear:
+
+`monthly plan evaluations = evaluated subscriptions per run x plans per subscription x 48 x 30`
+
+Before raising the caps meaningfully, revisit the Worker subrequest limit,
+Open-Meteo/NWS fair-use behavior, R2 operation volume, and push-provider failure
+cleanup.
 
 ## Manual E2E Smoke
 
@@ -58,7 +92,6 @@ cross a score band.
 ## Intentionally Not Built Yet
 
 - Encrypted notification payloads with plan-specific copy.
-- Automatic scheduled evaluator runs.
 - Native APNs token registration.
 - User accounts or cross-device plan sync.
 
