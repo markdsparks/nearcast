@@ -194,16 +194,178 @@ function planAdvice(stats = {}, alert = null, score = 100, alertSignal = null) {
   return "Keep an alternate window or location handy.";
 }
 
+function weatherTruthNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function weatherTruthDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  return current - previous;
+}
+
+function weatherTruthScoreBand(score) {
+  if (score >= 65) return "good";
+  if (score >= 45) return "iffy";
+  return "poor";
+}
+
+function weatherTruthWindDeltaThreshold(unit) {
+  return unit === "mph" ? 8 : 13;
+}
+
+function weatherTruthWindNotableThreshold(unit) {
+  return unit === "mph" ? 24 : 39;
+}
+
+function weatherTruthDisplayTempUnit(unit) {
+  if (!unit) return "";
+  return unit.startsWith("°") ? unit : weatherTruthDegree(unit);
+}
+
+function planWeatherChangeSnapshot(item) {
+  if (!item) return null;
+  const stats = item.stats || {};
+  const units = item.units || {};
+  return {
+    title: item.title || item.memory?.title || item.label || "Plan",
+    targetDate: item.targetDate || item.memory?.targetDate || "",
+    startHour: weatherTruthNumber(item.startHour ?? item.memory?.startHour),
+    endHour: weatherTruthNumber(item.endHour ?? item.memory?.endHour),
+    rainChance: weatherTruthNumber(stats.rainChance ?? item.rainChance),
+    gustMax: weatherTruthNumber(stats.gustMax ?? stats.windMax ?? item.gustMax),
+    windUnit: item.windUnit || units.wind || "",
+    feelsMax: weatherTruthNumber(stats.feelsMax ?? stats.feelsAvg ?? item.feelsMax ?? item.feels),
+    tempUnit: weatherTruthDisplayTempUnit(item.tempUnit || units.temp || ""),
+    score: weatherTruthNumber(item.score),
+    tone: item.tone || "",
+    verdict: item.verdict || "",
+    alertTone: item.alertTone || weatherTruthAlertTone(item.alert),
+    alertEvent: item.alert?.event || item.alertEvent || "",
+    riskKind: item.riskKind || planWatchRiskKind(item)
+  };
+}
+
+function samePlanWeatherWindow(previous, current) {
+  if (!previous || !current) return false;
+  if (previous.targetDate && current.targetDate && previous.targetDate !== current.targetDate) return false;
+  if (previous.startHour !== null && current.startHour !== null && previous.startHour !== current.startHour) return false;
+  if (previous.endHour !== null && current.endHour !== null && previous.endHour !== current.endHour) return false;
+  return true;
+}
+
+function planWeatherChange(previousItem, currentItem) {
+  const previous = planWeatherChangeSnapshot(previousItem);
+  const current = planWeatherChangeSnapshot(currentItem);
+  if (!previous || !current || !samePlanWeatherWindow(previous, current)) return null;
+  const title = current.title || previous.title || "Plan";
+
+  if (
+    current.alertTone &&
+    current.alertTone !== "none" &&
+    (current.alertTone !== previous.alertTone || current.alertEvent !== previous.alertEvent)
+  ) {
+    const tone = current.alertTone === "warning" || current.alertTone === "watch" ? "watch" : "caution";
+    const alertName = current.alertEvent || "A weather alert";
+    return {
+      type: "plan-alert",
+      tone,
+      notify: true,
+      priority: current.alertTone === "warning" ? 140 : current.alertTone === "watch" ? 125 : 105,
+      title: `${title}: alert started`,
+      body: `${alertName} now overlaps this plan.`
+    };
+  }
+
+  if (previous.alertTone && !current.alertTone) {
+    return {
+      type: "plan-alert-ended",
+      tone: "good",
+      notify: false,
+      priority: 45,
+      title: `${title}: alert ended`,
+      body: `${previous.alertEvent || "The weather alert"} no longer overlaps this plan.`
+    };
+  }
+
+  const rainDelta = weatherTruthDelta(current.rainChance, previous.rainChance);
+  if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainChance, previous.rainChance) >= 35) {
+    const wetter = rainDelta > 0;
+    return {
+      type: "plan-rain",
+      tone: wetter ? "watch" : "good",
+      notify: wetter,
+      priority: 90 + Math.abs(rainDelta),
+      title: `${title} ${wetter ? "got wetter" : "got drier"}`,
+      body: `Rain now ${current.rainChance}%, ${wetter ? "up" : "down"} from ${previous.rainChance}%.`
+    };
+  }
+
+  const heatDelta = weatherTruthDelta(current.feelsMax, previous.feelsMax);
+  const crossedSeriousHeat = previous.feelsMax !== null && current.feelsMax !== null && previous.feelsMax < 100 && current.feelsMax >= 100;
+  if (
+    heatDelta !== null &&
+    (crossedSeriousHeat || (Math.abs(heatDelta) >= 5 && Math.max(current.feelsMax, previous.feelsMax) >= 92))
+  ) {
+    const hotter = heatDelta > 0;
+    return {
+      type: "plan-heat",
+      tone: hotter ? (current.feelsMax >= 100 ? "watch" : "caution") : "good",
+      notify: hotter,
+      priority: (hotter ? 88 : 52) + Math.abs(heatDelta),
+      title: `${title} ${hotter ? "got hotter" : "cooled down"}`,
+      body: `Feels like now peaks at ${current.feelsMax}${current.tempUnit || ""}, ${hotter ? "up" : "down"} from ${previous.feelsMax}${current.tempUnit || ""}.`
+    };
+  }
+
+  const gustDelta = weatherTruthDelta(current.gustMax, previous.gustMax);
+  const windThreshold = weatherTruthWindDeltaThreshold(current.windUnit);
+  if (
+    current.windUnit === previous.windUnit &&
+    gustDelta !== null &&
+    Math.abs(gustDelta) >= windThreshold &&
+    Math.max(current.gustMax, previous.gustMax) >= weatherTruthWindNotableThreshold(current.windUnit)
+  ) {
+    const stronger = gustDelta > 0;
+    return {
+      type: "plan-wind",
+      tone: stronger ? "caution" : "good",
+      notify: stronger,
+      priority: 70 + Math.abs(gustDelta),
+      title: `${title} ${stronger ? "got windier" : "eased up"}`,
+      body: `Gusts now ${current.gustMax} ${current.windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${current.windUnit}.`
+    };
+  }
+
+  const scoreDelta = weatherTruthDelta(current.score, previous.score);
+  if (scoreDelta !== null && Math.abs(scoreDelta) >= 18 && weatherTruthScoreBand(current.score) !== weatherTruthScoreBand(previous.score)) {
+    const better = scoreDelta > 0;
+    return {
+      type: "plan-score",
+      tone: better ? "good" : "caution",
+      notify: !better,
+      priority: 55 + Math.abs(scoreDelta),
+      title: `${title} looks ${better ? "better" : "iffy now"}`,
+      body: `Plan window moved from ${weatherTruthScoreBand(previous.score)} to ${weatherTruthScoreBand(current.score)}.`
+    };
+  }
+
+  return null;
+}
+
 function planWeatherNotificationState(item) {
+  const change = item?.change || null;
+  const alertChange = change?.type === "plan-alert";
+  const changeEligible = Boolean(change && change.notify !== false && change.type);
   const eligible = Boolean(
     item &&
     !item.isPast &&
     item.status === "ready" &&
-    (item.change || item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch")
+    (changeEligible || alertChange)
   );
-  const signal = item?.change?.type || item?.alertTone || item?.tone || item?.label || "watch";
-  const body = planWatchCompactText(`${item?.label || "Plan"}: ${item?.change?.body || item?.reason || "Weather changed for this plan."}`, 128);
-  const urgency = item?.alertTone === "warning" || item?.tone === "watch" ? "attention" : "watch";
+  const signal = change?.type || item?.alertTone || item?.tone || item?.label || "watch";
+  const body = planWatchCompactText(`${item?.label || "Plan"}: ${change?.body || item?.reason || "Weather changed for this plan."}`, 128);
+  const urgency = change?.tone === "watch" || item?.alertTone === "warning" || item?.tone === "watch" ? "attention" : "watch";
   return { eligible, signal, body, urgency };
 }
 
@@ -368,6 +530,12 @@ if (typeof module !== "undefined" && module.exports) {
     weatherTruthEscapeHtml,
     weatherTruthDegree,
     weatherTruthUnitPreference,
+    weatherTruthNumber,
+    weatherTruthDelta,
+    weatherTruthScoreBand,
+    weatherTruthWindDeltaThreshold,
+    weatherTruthWindNotableThreshold,
+    weatherTruthDisplayTempUnit,
     planWatchCompactText,
     planConditionRiskKind,
     planWatchRiskKind,
@@ -381,6 +549,9 @@ if (typeof module !== "undefined" && module.exports) {
     planBriefingReason,
     weatherTruthAlertTone,
     planAdvice,
+    planWeatherChangeSnapshot,
+    samePlanWeatherWindow,
+    planWeatherChange,
     planWeatherNotificationState,
     planWeatherTruth,
     planSignalRiskKind,

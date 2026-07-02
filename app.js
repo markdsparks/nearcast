@@ -1,4 +1,4 @@
-const VERSION = "3.0.133";
+const VERSION = "3.0.134";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7016,6 +7016,9 @@ function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
   const memory = item?.memory;
   const stats = item?.stats;
   if (!memory?.id || !stats) return null;
+  const truth = typeof planWeatherTruth === "function"
+    ? planWeatherTruth({ ...item, status: "ready" })
+    : null;
   return {
     savedAt: Date.now(),
     placeKey: continuityPlaceKey(place),
@@ -7030,11 +7033,17 @@ function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
     windUnit,
     rainChance: continuityNumber(stats.rainChance),
     gustMax: continuityNumber(stats.gustMax ?? stats.windMax),
+    feelsMax: continuityNumber(stats.feelsMax ?? stats.feelsAvg),
+    feelsAvg: continuityNumber(stats.feelsAvg),
+    uvMax: continuityNumber(stats.uvMax),
     tempMin: continuityNumber(stats.tempMin),
     tempMax: continuityNumber(stats.tempMax),
     score: continuityNumber(item.score),
-    tone: item.tone || "",
+    tone: truth?.tone || item.tone || "",
     verdict: item.verdict || "",
+    riskKind: truth?.riskKind || item.riskKind || "",
+    alertTone: truth?.alertTone || item.alertTone || "",
+    alertEvent: item.alert?.event || item.alertEvent || "",
     when: typeof planPulseWhenText === "function" ? planPulseWhenText(memory, data) : ""
   };
 }
@@ -7124,6 +7133,7 @@ function forYouPlanContinuityCard(planSnapshots, store) {
 function continuityPlanChange(current, previous) {
   if (!current || !previous) return null;
   if (current.targetDate !== previous.targetDate || current.startHour !== previous.startHour || current.endHour !== previous.endHour) return null;
+  if (typeof planWeatherChange === "function") return planWeatherChange(previous, current);
   const rainDelta = continuityDelta(current.rainChance, previous.rainChance);
   if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainChance, previous.rainChance) >= 35) {
     const wetter = rainDelta > 0;

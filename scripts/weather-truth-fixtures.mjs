@@ -35,7 +35,7 @@ assert.equal(heatTruth.verdict, "High-risk");
 assert.equal(heatTruth.tone, "watch");
 assert.equal(heatTruth.riskKind, "heat");
 assert.equal(heatTruth.label, "Plan around heat");
-assert.equal(heatTruth.notification.eligible, true);
+assert.equal(heatTruth.notification.eligible, false);
 assert.equal(heatTruth.notification.signal, "warning");
 assert.deepEqual(heatTruth.signalRows.map(row => row.label), ["Feels", "Temp", "UV"]);
 
@@ -110,6 +110,49 @@ assert.equal(goodTruth.notification.eligible, false);
 
 assert.equal(truth.planVerdict(44, ""), "Not ideal");
 assert.match(truth.planAdvice({ stormPotential: true }, null, 40), /delay or indoor/i);
+
+const baselinePlan = {
+  title: "4th Party",
+  targetDate: "2026-07-03",
+  startHour: 15,
+  endHour: 20,
+  rainChance: 20,
+  gustMax: 18,
+  feelsMax: 91,
+  tempUnit: "°F",
+  windUnit: "mph",
+  score: 82
+};
+const rainChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 72, score: 58 });
+assert.equal(rainChange.type, "plan-rain");
+assert.equal(rainChange.notify, true);
+assert.match(rainChange.body, /Rain now 72%/);
+
+const drierChange = truth.planWeatherChange({ ...baselinePlan, rainChance: 72 }, { ...baselinePlan, rainChance: 28 });
+assert.equal(drierChange.type, "plan-rain");
+assert.equal(drierChange.notify, false);
+
+const heatChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, feelsMax: 101, score: 52 });
+assert.equal(heatChange.type, "plan-heat");
+assert.equal(heatChange.tone, "watch");
+assert.equal(heatChange.notify, true);
+assert.match(heatChange.body, /101°F/);
+
+const windChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, gustMax: 31, score: 61 });
+assert.equal(windChange.type, "plan-wind");
+assert.equal(windChange.notify, true);
+
+const alertChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, alertTone: "warning", alertEvent: "Extreme Heat Warning" });
+assert.equal(alertChange.type, "plan-alert");
+assert.equal(alertChange.notify, true);
+assert.match(alertChange.body, /Extreme Heat Warning/);
+
+const noMeaningfulChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 25, gustMax: 20, feelsMax: 93, score: 79 });
+assert.equal(noMeaningfulChange, null);
+
+const changedTruth = truth.planWeatherTruth({ ...rainWatch, score: 58, status: "ready", change: rainChange });
+assert.equal(changedTruth.notification.eligible, true);
+assert.equal(changedTruth.notification.signal, "plan-rain");
 
 const longText = "This plan has a very long context sentence that should remain readable without clipping inside the watched plan surface.";
 const compactText = truth.planWatchCompactText(longText, 42);
