@@ -4802,11 +4802,10 @@ function renderPastPlanDisclosure(past, watchById) {
   `;
 }
 
-function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past, watchById, watchItems }) {
+function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past, watchById }) {
   const otherUpcoming = upcoming.filter((item) => item.memory.id !== focusedItem.memory.id);
   return `
     ${renderFocusedPlanWatchHero(focusedItem, focusedWatch)}
-    ${renderPlanWatchNotificationManagementSurface(watchItems, { compact: true })}
     ${renderGlobalMemoryGroup("Other watched plans", otherUpcoming, {
       sub: otherUpcoming.length === 1 ? "1 upcoming" : `${otherUpcoming.length} upcoming`,
       watchById
@@ -4845,8 +4844,7 @@ function renderGlobalMemorySheet() {
       focusedWatch: watchById.get(focusedItem.memory.id) || planWatchItemForMemoryItem(focusedItem),
       upcoming,
       past,
-      watchById,
-      watchItems
+      watchById
     });
     return;
   }

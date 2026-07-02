@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.153**.
+Living product roadmap. Current as of **v3.0.154**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -232,6 +232,9 @@ First shipped slice:
 - Opening a changed watched plan now reviews that exact forecast change, keeps
   the explanation visible in the focused sheet, and advances the local baseline
   so the same change does not keep reappearing as unresolved.
+- Focused watched-plan sheets now stay centered on the plan story and plan-level
+  actions; broader notification and saved-place controls live on the main
+  Watching overview.
 - The Watch sheet now has a unified `Watching controls` panel for plan and
   saved-place notification opt-ins, so users can manage what can interrupt them
   from one place.
