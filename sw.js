@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30131";
-const ASSET_VERSION = "3.0.131";
+const CACHE = "nearcast-v30132";
+const ASSET_VERSION = "3.0.132";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -8,6 +8,7 @@ const SHELL = [
   BASE,
   `${BASE}index.html`,
   `${BASE}styles.css?v=${ASSET_VERSION}`,
+  `${BASE}weather-truth.js?v=${ASSET_VERSION}`,
   `${BASE}planner.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
   `${BASE}map.js?v=${ASSET_VERSION}`,

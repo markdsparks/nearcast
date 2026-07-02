@@ -1,0 +1,105 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const truth = require("../weather-truth.js");
+
+const units = { temp: "°F", wind: "mph", precip: "in" };
+
+const heatWatch = {
+  tone: "watch",
+  alertTone: "warning",
+  primaryReason: "Extreme Heat Warning overlaps that window",
+  alert: { event: "Extreme Heat Warning" },
+  units,
+  stats: {
+    feelsMin: 92,
+    feelsAvg: 96,
+    feelsMax: 101,
+    tempMin: 86,
+    tempMax: 93,
+    uvMax: 7,
+    rainChanceMin: 0,
+    rainChance: 7,
+    gustMax: 22
+  }
+};
+
+assert.equal(truth.planWatchRiskKind(heatWatch), "heat");
+assert.equal(truth.planWatchLabel(heatWatch), "Plan around heat");
+assert.match(truth.planWatchActionText(heatWatch), /shade, water, cooling breaks/i);
+assert.deepEqual(truth.planContextSignalRows(heatWatch).map(row => row.label), ["Feels", "Temp", "UV"]);
+assert.equal(truth.planContextSignalRows(heatWatch)[0].value, "92°F-101°F");
+
+const rainWatch = {
+  tone: "watch",
+  primaryReason: "72% rain chance during the plan",
+  units,
+  stats: {
+    rainChanceMin: 20,
+    rainChance: 72,
+    precipTotal: 0.23,
+    gustMax: 18,
+    feelsAvg: 74,
+    tempMin: 71,
+    tempMax: 78
+  }
+};
+
+assert.equal(truth.planWatchRiskKind(rainWatch), "rain");
+assert.equal(truth.planWatchLabel(rainWatch), "Expect rain");
+assert.match(truth.planWatchActionText(rainWatch), /rain gear/i);
+assert.deepEqual(truth.planContextSignalRows(rainWatch).map(row => row.label), ["Rain", "Amount", "Gusts"]);
+assert.equal(truth.planContextSignalRows(rainWatch)[0].value, "20-72%");
+assert.equal(truth.planContextSignalRows(rainWatch)[1].value, "0.2 in total");
+
+const windWatch = {
+  tone: "caution",
+  primaryReason: "gusts near 31 mph",
+  units,
+  stats: {
+    gustMax: 31,
+    windMin: 13,
+    windMax: 22,
+    rainChanceMin: 0,
+    rainChance: 12,
+    feelsAvg: 67
+  }
+};
+
+assert.equal(truth.planWatchRiskKind(windWatch), "wind");
+assert.equal(truth.planWatchLabel(windWatch), "Wind may matter");
+assert.match(truth.planWatchActionText(windWatch), /Secure loose items/i);
+assert.deepEqual(truth.planContextSignalRows(windWatch).map(row => row.label), ["Gusts", "Wind", "Rain"]);
+assert.equal(truth.planContextSignalRows(windWatch)[0].value, "Peak 31 mph");
+
+const goodWatch = {
+  tone: "good",
+  primaryReason: "weather looks manageable",
+  units,
+  stats: {
+    rainChanceMin: 0,
+    rainChance: 7,
+    feelsMin: 72,
+    feelsAvg: 75,
+    feelsMax: 78,
+    tempMin: 72,
+    tempMax: 78,
+    gustMax: 11,
+    uvMax: 3
+  }
+};
+
+assert.equal(truth.planWatchRiskKind(goodWatch), "good");
+assert.equal(truth.planWatchLabel(goodWatch), "Looks good");
+assert.equal(truth.planWatchActionText(goodWatch), "");
+assert.equal(truth.planWatchReason(goodWatch), "Weather looks manageable");
+assert.deepEqual(truth.planContextSignalRows(goodWatch).map(row => row.label), ["Rain", "Feels", "Gusts"]);
+
+const longText = "This plan has a very long context sentence that should remain readable without clipping inside the watched plan surface.";
+const compactText = truth.planWatchCompactText(longText, 42);
+assert.ok(compactText.endsWith("..."));
+assert.ok(compactText.length <= 42);
+assert.match(compactText, /very long context/);
+
+console.log("weather-truth fixtures passed");
