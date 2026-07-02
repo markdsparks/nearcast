@@ -5860,9 +5860,10 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
   const action = item.action || (item.tone === "good" ? "" : item.advice);
   const signals = planContextSignalRows(item).map(renderPlanSignalChip).join("");
   const watchAction = rememberedId
-    ? `<span class="ask-memory-state">Watching</span>` +
-      `<button class="ask-memory-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Review</button>`
-    : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${index}">Watch this plan</button>`;
+    ? `<button class="ask-decision-primary-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Open watch</button>` +
+      `<span class="ask-memory-state">Saved for updates</span>`
+    : `<button class="ask-decision-primary-btn" type="button" data-memory-remember="${index}">Watch this plan</button>` +
+      `<span class="ask-decision-action-note">Nearcast can keep checking this window.</span>`;
   const changeTarget = rememberedId || index;
   return `
     <article class="ask-decision is-${escapeHtml(item.tone || "pending")}${streaming ? " answering" : ""}">
@@ -5877,10 +5878,14 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
       ${reason ? `<p class="ask-decision-reason">${escapeHtml(reason)}</p>` : ""}
       ${action ? `<p class="ask-decision-action"><span>What to do</span>${escapeHtml(action)}</p>` : ""}
       ${signals ? `<div class="plan-watch-signals ask-decision-signals">${signals}</div>` : ""}
-      <div class="ask-exchange-actions ask-decision-actions">
-        ${watchAction}
-        <button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>
-        <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change plan</button>
+      <div class="ask-decision-actions">
+        <div class="ask-decision-primary-row">
+          ${watchAction}
+        </div>
+        <div class="ask-decision-secondary-actions">
+          <button class="ask-show" type="button" data-ask-show="${index}">See hourly</button>
+          <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change details</button>
+        </div>
       </div>
     </article>
   `;
