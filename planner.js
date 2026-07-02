@@ -435,7 +435,8 @@ function currentPlanWatchItems() {
 
 function planWatchNotificationEventKey(watch) {
   if (!watch?.memory?.id) return "";
-  const signal = watch.change?.type || watch.alertTone || watch.tone || watch.label || "watch";
+  const notification = watch.notification || planWeatherNotificationState(watch);
+  const signal = notification.signal || watch.change?.type || watch.alertTone || watch.tone || watch.label || "watch";
   const body = watch.change?.body || watch.reason || "";
   return [
     watch.memory.id,
@@ -449,8 +450,7 @@ function planWatchNotificationEventKey(watch) {
 
 function planWatchNotificationCandidates(watchItems) {
   return (watchItems || [])
-    .filter((watch) => !watch.isPast && watch.status === "ready")
-    .filter((watch) => watch.change || watch.alertTone === "warning" || watch.alertTone === "watch" || watch.tone === "watch")
+    .filter((watch) => planWeatherNotificationState(watch).eligible)
     .sort((a, b) =>
       planWatchAttentionRank(b) - planWatchAttentionRank(a) ||
       (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
@@ -462,7 +462,7 @@ async function showPlanWatchNotification(watch) {
   try {
     const registration = await navigator.serviceWorker.ready;
     const title = `Nearcast: ${planMemoryTitle(watch.memory)}`;
-    const body = planWatchCompactText(`${watch.label}: ${watch.change?.body || watch.reason || "Weather changed for this plan."}`, 128);
+    const body = (watch.notification || planWeatherNotificationState(watch)).body;
     await registration.showNotification(title, {
       body,
       tag: `nearcast-plan-${watch.memory.id}`,
@@ -513,34 +513,6 @@ function planBriefingActivityKey(memory) {
   return detectAskActivity(text) || detectPlanActivity(text) || "event";
 }
 
-function planBriefingTone(item) {
-  if (item.alertTone === "warning" || item.alertTone === "watch") return "watch";
-  if (item.score < 45 || item.stats?.stormPotential) return "watch";
-  if (item.score < 65 || item.stats?.rainChance >= 35 || item.stats?.gustMax >= 25) return "caution";
-  return "good";
-}
-
-function planBriefingPriority(item) {
-  const alertWeight = item.alertTone === "warning" ? 80 :
-    item.alertTone === "watch" ? 65 :
-      item.alertTone === "advisory" ? 42 : 0;
-  const rainWeight = item.stats?.stormPotential ? 35 : Math.min(35, Math.max(0, item.stats?.rainChance || 0) / 2);
-  const windWeight = Math.max(0, (item.stats?.gustMax || 0) - 18);
-  const scoreWeight = Math.max(0, 75 - item.score);
-  return alertWeight + rainWeight + windWeight + scoreWeight;
-}
-
-function planBriefingReason(item) {
-  const reasons = item.reasons || [];
-  if (item.alert) return reasons[0] || `${item.alert.event} overlaps that window`;
-  if (item.stats?.stormPotential) return "thunderstorms are possible";
-  if (item.stats?.rainChance >= 35) return `${item.stats.rainChance}% rain chance`;
-  if (item.stats?.gustMax >= 25) return `gusts near ${item.stats.gustMax} ${item.units.wind}`;
-  if (item.stats?.uvMax >= 8) return `UV up to ${item.stats.uvMax}`;
-  if (item.stats?.aqiMax >= 101) return `AQI ${item.stats.aqiMax}`;
-  return reasons[0] || "weather looks manageable";
-}
-
 function planBriefingItemFromEvent(memory, event, data, place, c = null, alerts = activeAlerts) {
   const context = c || buildAIContext(data, place, alerts || []);
   if (!memory || !event || !data || !place || !context) return null;
@@ -568,11 +540,7 @@ function planBriefingItemFromEvent(memory, event, data, place, c = null, alerts 
     units: context.units,
     reasons: planReasons(stats, context.units, alert).slice(0, 3)
   };
-  item.tone = planBriefingTone(item);
-  item.priority = planBriefingPriority(item);
-  item.primaryReason = planBriefingReason(item);
-  item.advice = planAdvice(stats, alert, score);
-  return item;
+  return { ...item, ...planWeatherTruth(item) };
 }
 
 function planAwareBriefingItems(data = state.forecast, place = state.activePlace, options = {}) {
@@ -3429,17 +3397,20 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
   if (!item) return planWatchPendingItem(memory, source, past);
 
   const change = planWatchChangeForItem(item, source);
+  const truth = planWeatherTruth({ ...item, change, isPast: past, status: "ready" }) || {};
   return {
     ...item,
+    ...truth,
     source,
     data: source.data,
     place: source.place,
     event: watchEvent,
     status: "ready",
-    label: past ? "Past" : planWatchLabel(item),
-    fullReason: past ? "Kept here until you forget it." : planWatchFullReason(item),
-    reason: past ? "Kept here until you forget it." : planWatchReason(item),
-    action: past ? "" : planWatchActionText({ ...item, change, isPast: past }),
+    label: past ? "Past" : truth.label,
+    fullReason: past ? "Kept here until you forget it." : truth.fullReason,
+    reason: past ? "Kept here until you forget it." : truth.reason,
+    action: past ? "" : truth.action,
+    notification: past ? planWeatherNotificationState({ ...item, ...truth, change, isPast: true, status: "ready" }) : truth.notification,
     change,
     isPast: past
   };
@@ -4193,15 +4164,6 @@ function planDisplayName(plan) {
   return capitalize(label.replace(/^a\s+/, "").replace(/^the\s+/, ""));
 }
 
-function planVerdict(score, tone) {
-  if (tone === "warning") return "High-risk";
-  if (tone === "watch") return "Watch closely";
-  if (score >= 80) return "Looks good";
-  if (score >= 65) return "Pretty good";
-  if (score >= 45) return "Iffy";
-  return "Not ideal";
-}
-
 function planReasons(stats, units, alert) {
   const reasons = [];
   if (alert) reasons.push(`${alert.event} overlaps that window`);
@@ -4229,30 +4191,6 @@ function planWhy(plan, place, stats, units, alert) {
   if (plan.locationImplicit) reasons.push(`read ${placeLabel(place)} as the place`);
   if (plan.intent?.source === "local-ai") reasons.push("read the plan details from your wording");
   return reasons.join(", ");
-}
-
-function planAdvice(stats, alert, score) {
-  const risk = planConditionRiskKind(stats, alert);
-  if (alert) {
-    const tone = alertTone(alert);
-    if (risk === "heat") return "Plan shade, water, breaks, and an indoor option if people need it.";
-    if (risk === "storm") return "Keep an indoor option and a way to delay if lightning or warnings arrive.";
-    if (risk === "flood") return "Avoid low spots and keep a different route or window available.";
-    if (risk === "wind") return "Secure loose items and avoid exposed setups.";
-    if (risk === "air") return "Sensitive folks may want shorter outdoor time or an indoor option.";
-    if (risk === "cold") return "Add warm layers and a shorter outdoor window.";
-    if (tone === "warning") return "Check local guidance and adjust the plan before you go.";
-    if (tone === "watch") return "Stay weather-aware and keep an alternate window or location available.";
-    return "Keep an eye on the alert details.";
-  }
-  if (stats.stormPotential) return "Have a delay or indoor fallback.";
-  if (stats.rainChance >= 55) return "Bring rain gear and expect interruptions.";
-  if (stats.aqiMax >= 151) return "Air quality is rough enough to consider moving it indoors.";
-  if (stats.aqiMax >= 101) return "Sensitive folks may want a shorter window or an indoor backup.";
-  if (stats.pollenRank >= 4) return "Allergy-sensitive people should plan ahead.";
-  if (stats.uvMax >= 8) return "Sunscreen earns its spot in the bag.";
-  if (score >= 70) return "Weather is mostly behaving for this one.";
-  return "Keep an alternate window or location handy.";
 }
 
 function formatHourFloat(hour) {

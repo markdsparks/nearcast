@@ -30,6 +30,14 @@ assert.equal(truth.planWatchLabel(heatWatch), "Plan around heat");
 assert.match(truth.planWatchActionText(heatWatch), /shade, water, cooling breaks/i);
 assert.deepEqual(truth.planContextSignalRows(heatWatch).map(row => row.label), ["Feels", "Temp", "UV"]);
 assert.equal(truth.planContextSignalRows(heatWatch)[0].value, "92°F-101°F");
+const heatTruth = truth.planWeatherTruth({ ...heatWatch, score: 82, status: "ready" });
+assert.equal(heatTruth.verdict, "High-risk");
+assert.equal(heatTruth.tone, "watch");
+assert.equal(heatTruth.riskKind, "heat");
+assert.equal(heatTruth.label, "Plan around heat");
+assert.equal(heatTruth.notification.eligible, true);
+assert.equal(heatTruth.notification.signal, "warning");
+assert.deepEqual(heatTruth.signalRows.map(row => row.label), ["Feels", "Temp", "UV"]);
 
 const rainWatch = {
   tone: "watch",
@@ -95,6 +103,13 @@ assert.equal(truth.planWatchLabel(goodWatch), "Looks good");
 assert.equal(truth.planWatchActionText(goodWatch), "");
 assert.equal(truth.planWatchReason(goodWatch), "Weather looks manageable");
 assert.deepEqual(truth.planContextSignalRows(goodWatch).map(row => row.label), ["Rain", "Feels", "Gusts"]);
+const goodTruth = truth.planWeatherTruth({ ...goodWatch, score: 91, status: "ready" });
+assert.equal(goodTruth.verdict, "Looks good");
+assert.equal(goodTruth.tone, "good");
+assert.equal(goodTruth.notification.eligible, false);
+
+assert.equal(truth.planVerdict(44, ""), "Not ideal");
+assert.match(truth.planAdvice({ stormPotential: true }, null, 40), /delay or indoor/i);
 
 const longText = "This plan has a very long context sentence that should remain readable without clipping inside the watched plan surface.";
 const compactText = truth.planWatchCompactText(longText, 42);
