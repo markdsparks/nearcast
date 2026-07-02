@@ -1,4 +1,4 @@
-const VERSION = "3.0.127";
+const VERSION = "3.0.130";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2204,6 +2204,159 @@ function bindInputResponsiveness(input, name) {
   });
 }
 
+const SKY_WORK_MOTION_RELEASE_MS = 260;
+const SKY_WORK_MOTION_FALLBACK_RELEASE_MS = 900;
+let skyWorkMotionPointerActive = false;
+let skyWorkMotionSurfaceActive = false;
+let skyWorkMotionFocusActive = false;
+let skyWorkMotionReleaseTimer = 0;
+let skyWorkMotionFollowUpTimer = 0;
+let skyWorkMotionSyncRaf = 0;
+let skyWorkMotionObserver = null;
+let skyWorkMotionPointerStartedAt = 0;
+
+function skyWorkInteractiveTarget(target) {
+  return target?.closest?.([
+    "button",
+    "a[href]",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[role='button']",
+    "[role='slider']",
+    ".app-menu",
+    ".search-popover",
+    ".day-sheet",
+    ".sheet-backdrop",
+    ".release-splash",
+    ".map-controls",
+    ".map-timeline",
+    ".imm-controls",
+    ".storm-impact-card",
+    ".hour-card",
+    ".day-row",
+    ".glance-signal",
+    ".summary-chip",
+    ".launch-shortcut",
+    ".daylight-arc"
+  ].join(", "));
+}
+
+function skyWorkFocusTarget(target) {
+  const candidate = target?.closest?.([
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[role='slider']",
+    ".daylight-arc"
+  ].join(", "));
+  if (!skyWorkTargetIsVisible(candidate)) return null;
+  return candidate;
+}
+
+function skyWorkTargetIsVisible(target) {
+  if (!target?.isConnected) return false;
+  if (target.hidden || target.closest?.("[hidden]")) return false;
+  if (target.closest?.(".search-popover") && !els.shell?.classList.contains("search-open")) return false;
+  if (target.closest?.(".app-menu") && els.appMenu?.hidden) return false;
+  return Boolean(target.getClientRects?.().length);
+}
+
+function skyWorkSurfaceIsOpen() {
+  return Boolean(
+    (!els.appMenu?.hidden) ||
+    els.shell?.classList.contains("search-open") ||
+    document.querySelector(".day-sheet.show:not([hidden])") ||
+    document.querySelector(".release-splash:not([hidden])") ||
+    document.querySelector(".sheet-backdrop.show:not([hidden])")
+  );
+}
+
+function syncSkyWorkMotionPause() {
+  skyWorkMotionSurfaceActive = skyWorkSurfaceIsOpen();
+  skyWorkMotionFocusActive = Boolean(skyWorkFocusTarget(document.activeElement));
+  if (
+    skyWorkMotionPointerActive &&
+    !skyWorkMotionSurfaceActive &&
+    !skyWorkMotionFocusActive &&
+    Date.now() - skyWorkMotionPointerStartedAt > SKY_WORK_MOTION_RELEASE_MS
+  ) {
+    skyWorkMotionPointerActive = false;
+  }
+  const paused = skyWorkMotionPointerActive || skyWorkMotionFocusActive || skyWorkMotionSurfaceActive;
+  document.documentElement.classList.toggle("sky-motion-paused-for-app-work", paused);
+}
+
+function scheduleSkyWorkMotionSync() {
+  if (skyWorkMotionSyncRaf) return;
+  skyWorkMotionSyncRaf = requestAnimationFrame(() => {
+    skyWorkMotionSyncRaf = 0;
+    syncSkyWorkMotionPause();
+  });
+}
+
+function scheduleSkyWorkMotionFollowUp(delay = SKY_WORK_MOTION_RELEASE_MS + 120) {
+  scheduleSkyWorkMotionSync();
+  clearTimeout(skyWorkMotionFollowUpTimer);
+  skyWorkMotionFollowUpTimer = setTimeout(scheduleSkyWorkMotionSync, delay);
+}
+
+function releaseSkyWorkPointerPause(delay = SKY_WORK_MOTION_RELEASE_MS) {
+  clearTimeout(skyWorkMotionReleaseTimer);
+  skyWorkMotionReleaseTimer = setTimeout(() => {
+    skyWorkMotionPointerActive = false;
+    syncSkyWorkMotionPause();
+  }, delay);
+}
+
+function installSkyWorkMotionPause() {
+  document.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (!skyWorkInteractiveTarget(event.target)) return;
+    clearTimeout(skyWorkMotionReleaseTimer);
+    skyWorkMotionPointerActive = true;
+    skyWorkMotionPointerStartedAt = Date.now();
+    syncSkyWorkMotionPause();
+    releaseSkyWorkPointerPause(SKY_WORK_MOTION_FALLBACK_RELEASE_MS);
+  }, { passive: true, capture: true });
+
+  ["pointerup", "pointercancel", "lostpointercapture", "mouseup", "touchend", "click"].forEach((eventName) => {
+    document.addEventListener(eventName, () => releaseSkyWorkPointerPause(), { passive: true, capture: true });
+  });
+
+  document.addEventListener("focusin", (event) => {
+    skyWorkMotionFocusActive = Boolean(skyWorkFocusTarget(event.target));
+    syncSkyWorkMotionPause();
+  }, true);
+
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      skyWorkMotionFocusActive = Boolean(skyWorkFocusTarget(document.activeElement));
+      syncSkyWorkMotionPause();
+    }, 0);
+  }, true);
+
+  ["input", "change", "keydown"].forEach((eventName) => {
+    document.addEventListener(eventName, (event) => {
+      if (!skyWorkFocusTarget(event.target)) return;
+      skyWorkMotionFocusActive = true;
+      syncSkyWorkMotionPause();
+      scheduleSkyWorkMotionFollowUp(eventName === "keydown" ? SKY_WORK_MOTION_RELEASE_MS + 180 : undefined);
+    }, true);
+  });
+
+  skyWorkMotionObserver = new MutationObserver(scheduleSkyWorkMotionSync);
+  skyWorkMotionObserver.observe(document.body, {
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "hidden", "aria-expanded"]
+  });
+
+  scheduleSkyWorkMotionSync();
+}
+
 function currentPageScrollY() {
   return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
 }
@@ -2712,6 +2865,7 @@ function dismissStormImpactFromControl(event) {
 
 function bindEvents() {
   document.addEventListener("click", blockGuardedClickThrough, true);
+  installSkyWorkMotionPause();
 
   els.searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
