@@ -283,6 +283,10 @@ const PLACE_WATCH_MAX_SYNC_PLACES = 3;
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
 const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
+const PLAN_WATCH_REVIEWED_CHANGES_KEY = "nearcast-plan-watch-reviewed-changes-v1";
+const PLAN_WATCH_REVIEWED_MAX_CHANGES = 120;
+const PLAN_WATCH_REVIEWED_CHANGE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const PLAN_WATCH_RECENT_REVIEW_MS = 10 * 60 * 1000;
 const PLAN_WATCH_PUSH_CONFIG_ENDPOINT = "/api/watch/notifications/config";
 const PLAN_WATCH_PUSH_REGISTER_ENDPOINT = "/api/watch/notifications/register";
 const PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT = "/api/watch/notifications/unregister";
@@ -295,6 +299,7 @@ const planWatchState = {
   errors: {},
   lastFetchAt: {},
   baselineStore: null,
+  recentReviewedChanges: {},
   pushConfig: null,
   pushConfigPromise: null,
   pushLastSyncAt: 0,
@@ -302,6 +307,70 @@ const planWatchState = {
   pushSyncPromise: null
 };
 let planWatchFocusMemoryId = "";
+
+function planWatchReviewedChangesStore() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_REVIEWED_CHANGES_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return { changes: {} };
+    return {
+      changes: parsed.changes && typeof parsed.changes === "object" ? parsed.changes : {}
+    };
+  } catch {
+    return { changes: {} };
+  }
+}
+
+function writePlanWatchReviewedChangesStore(store) {
+  try {
+    const now = Date.now();
+    const changes = Object.entries(store?.changes || {})
+      .filter(([, value]) => now - (Number(value) || 0) <= PLAN_WATCH_REVIEWED_CHANGE_MAX_AGE_MS)
+      .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
+      .slice(0, PLAN_WATCH_REVIEWED_MAX_CHANGES);
+    localStorage.setItem(PLAN_WATCH_REVIEWED_CHANGES_KEY, JSON.stringify({
+      changes: Object.fromEntries(changes)
+    }));
+  } catch {
+    /* Change review is an affordance; storage failure should not block the app. */
+  }
+}
+
+function planWatchChangeReviewKey(memory, change) {
+  if (!memory?.id || !change?.type) return "";
+  return [
+    memory.id,
+    memory.targetDate || "",
+    memory.startHour ?? "",
+    memory.endHour ?? "",
+    change.type,
+    change.title || "",
+    change.body || ""
+  ].join("|");
+}
+
+function planWatchChangeWasReviewed(memory, change) {
+  const key = planWatchChangeReviewKey(memory, change);
+  if (!key) return false;
+  const reviewedAt = Number(planWatchReviewedChangesStore().changes[key] || 0);
+  return reviewedAt > 0 && Date.now() - reviewedAt <= PLAN_WATCH_REVIEWED_CHANGE_MAX_AGE_MS;
+}
+
+function planWatchRecentReviewedChange(memoryId) {
+  const entry = planWatchState.recentReviewedChanges?.[memoryId];
+  if (!entry?.change || Date.now() - Number(entry.at || 0) > PLAN_WATCH_RECENT_REVIEW_MS) return null;
+  return entry.change;
+}
+
+function markPlanWatchChangeReviewed(memory, change) {
+  const key = planWatchChangeReviewKey(memory, change);
+  if (!key) return false;
+  const now = Date.now();
+  const store = planWatchReviewedChangesStore();
+  store.changes[key] = now;
+  writePlanWatchReviewedChangesStore(store);
+  planWatchState.recentReviewedChanges[memory.id] = { change, at: now };
+  return true;
+}
 
 function readPlanWatchNotificationState() {
   try {
@@ -4444,19 +4513,73 @@ function planWatchChangeForItem(item, source) {
   return continuityPlanChange(snapshot, previous);
 }
 
-function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPast = false }) {
+function planWatchResolvedForecastItem({ memory, event = null, isHere = false, isPast = false }) {
   const source = planWatchSourceForMemory(memory, isHere);
-  if (!source.data) return planWatchPendingItem(memory, source, isPast);
+  if (!source.data) return { source, item: null, event: null, past: isPast };
 
   const watchEvent = event || planMemoryEventForData(memory, source.data, source.place, source.alerts);
-  if (!watchEvent) return planWatchPendingItem(memory, source, isPast);
+  if (!watchEvent) return { source, item: null, event: null, past: isPast };
 
   const now = forecastNowMs(source.data);
   const past = isPast || watchEvent.endMs < now - 60 * 60 * 1000;
   const item = planBriefingItemFromEvent(memory, watchEvent, source.data, source.place, null, source.alerts);
-  if (!item) return planWatchPendingItem(memory, source, past);
+  return { source, item, event: watchEvent, past };
+}
 
-  const change = planWatchChangeForItem(item, source);
+function savePlanWatchReviewedContinuitySnapshot(item, source) {
+  if (
+    !item?.memory?.id ||
+    !source?.data ||
+    !source?.place ||
+    typeof loadContinuityStore !== "function" ||
+    typeof saveContinuityStore !== "function" ||
+    typeof continuityPlanSnapshot !== "function" ||
+    typeof continuityPlanKey !== "function"
+  ) return;
+
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit);
+  const key = continuityPlanKey(snapshot);
+  if (!key) return;
+
+  let store = loadContinuityStore();
+  store.plans[key] = snapshot;
+  if (typeof pruneContinuityStore === "function") {
+    const placeKey = typeof continuityPlaceKey === "function" ? continuityPlaceKey(source.place) : "";
+    store = pruneContinuityStore(store, placeKey);
+  } else {
+    store.updatedAt = Date.now();
+  }
+  saveContinuityStore(store);
+  refreshPlanWatchBaselineStore(store);
+}
+
+function markPlanWatchFocusedChangeReviewed(memoryId) {
+  const found = planMemoryListItems(state.forecast, state.activePlace, { includePast: true })
+    .find((item) => item.memory.id === memoryId);
+  if (!found || found.isPast) return false;
+  const resolved = planWatchResolvedForecastItem(found);
+  if (!resolved.item) return false;
+  const change = planWatchChangeForItem(resolved.item, resolved.source);
+  if (!change?.body) return false;
+  markPlanWatchChangeReviewed(found.memory, change);
+  savePlanWatchReviewedContinuitySnapshot(resolved.item, resolved.source);
+  if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+  return true;
+}
+
+function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPast = false }) {
+  const resolved = planWatchResolvedForecastItem({ memory, event, isHere, isPast });
+  const { source, item, event: watchEvent, past } = resolved;
+  if (!source.data) return planWatchPendingItem(memory, source, isPast);
+  if (!watchEvent || !item) return planWatchPendingItem(memory, source, past);
+
+  const rawChange = planWatchChangeForItem(item, source);
+  const storedReviewedChange = rawChange && planWatchChangeWasReviewed(memory, rawChange) ? rawChange : null;
+  const recentReviewedChange = !rawChange && !past ? planWatchRecentReviewedChange(memory.id) : null;
+  const reviewedChange = storedReviewedChange || recentReviewedChange;
+  const change = reviewedChange ? null : rawChange;
   const truth = planWeatherTruth({ ...item, change, isPast: past, status: "ready" }) || {};
   return {
     ...item,
@@ -4472,6 +4595,8 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
     action: past ? "" : truth.action,
     notification: past ? planWeatherNotificationState({ ...item, ...truth, change, isPast: true, status: "ready" }) : truth.notification,
     change,
+    reviewedChange,
+    changeReviewed: Boolean(reviewedChange),
     isPast: past
   };
 }
@@ -4595,15 +4720,16 @@ function renderFocusedPlanNotifyAction(watch, effectivePast) {
 }
 
 function renderFocusedPlanChangeBlock(watch) {
-  const change = watch?.change;
+  const change = watch?.change || watch?.reviewedChange;
   if (!change?.body) return "";
+  const reviewed = !watch?.change && Boolean(watch?.reviewedChange);
   const tone = change.tone || watch?.tone || "caution";
   return `
-    <section class="focused-plan-change is-${escapeHtml(tone)}">
-      <span>Forecast changed</span>
+    <section class="focused-plan-change is-${escapeHtml(tone)}${reviewed ? " is-reviewed" : ""}">
+      <span>${reviewed ? "Reviewed change" : "Forecast changed"}</span>
       <strong>${escapeHtml(change.title || "Plan changed")}</strong>
       <p>${escapeHtml(change.body)}</p>
-      <small>Compared with the previous forecast saved on this device.</small>
+      <small>${reviewed ? "Nearcast saved this forecast as the current comparison point. New changes will stand out." : "Compared with the previous forecast saved on this device."}</small>
     </section>
   `;
 }
@@ -4848,6 +4974,7 @@ function openGlobalMemorySheet(options = {}) {
     planWatchFocusMemoryId = "";
   }
   refreshPlanWatchBaselineStore();
+  if (planWatchFocusMemoryId) markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId);
   renderGlobalMemorySheet();
   els.memoryBackdrop.hidden = false;
   els.memorySheet.hidden = false;

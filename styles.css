@@ -4178,6 +4178,12 @@ h2 {
   border-color: rgba(200, 85, 85, 0.34);
   background: rgba(200, 85, 85, 0.11);
 }
+.focused-plan-change.is-reviewed {
+  border-color: rgba(52, 125, 98, 0.26);
+  background:
+    linear-gradient(135deg, rgba(52, 125, 98, 0.11), rgba(91, 141, 220, 0.07)),
+    rgba(255, 255, 255, 0.05);
+}
 .focused-plan-change span {
   color: var(--blue);
   font-size: 0.64rem;
