@@ -65,7 +65,11 @@ jobs:
           npx --yes wrangler r2 object delete 'nearcast-radar/radar/mrms/request-state/radar-generation-budget:v1:global:all:495215.json' --remote --force || true
           npx --yes wrangler r2 object delete 'nearcast-radar/radar/mrms/request-state/radar-generation-budget:v1:viewport:radar-generation:v1:auto:radar:35.00:-90.00:z10:495215.json' --remote --force || true
 
-      - name: Configure plan watch Worker secrets
+      - name: Deploy app and radar capability Worker
+        run: npx --yes wrangler deploy
+
+      - name: Refresh plan watch Worker secrets
+        continue-on-error: true
         env:
           PLAN_WATCH_VAPID_PRIVATE_KEY: ${{ secrets.PLAN_WATCH_VAPID_PRIVATE_KEY }}
           PLAN_WATCH_TEST_TOKEN: ${{ secrets.PLAN_WATCH_TEST_TOKEN }}
@@ -80,9 +84,6 @@ jobs:
           else
             echo "Skipping PLAN_WATCH_TEST_TOKEN because the GitHub secret is not set."
           fi
-
-      - name: Deploy app and radar capability Worker
-        run: npx --yes wrangler deploy
 
       - name: Purge app edge cache
         continue-on-error: true
