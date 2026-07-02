@@ -6,6 +6,8 @@ const truth = require("../weather-truth.js");
 
 const units = { temp: "°F", wind: "mph", precip: "in" };
 
+assert.equal(globalThis.NearcastWeatherTruth, truth);
+
 const heatWatch = {
   tone: "watch",
   alertTone: "warning",
@@ -85,6 +87,21 @@ assert.match(truth.planWatchActionText(windWatch), /Secure loose items/i);
 assert.deepEqual(truth.planContextSignalRows(windWatch).map(row => row.label), ["Gusts", "Wind", "Rain"]);
 assert.equal(truth.planContextSignalRows(windWatch)[0].value, "Peak 31 mph");
 
+const celsiusHeatWatch = {
+  tone: "caution",
+  units: { temp: "°C", wind: "km/h", precip: "mm" },
+  stats: {
+    feelsAvg: 32,
+    feelsMax: 34,
+    tempMin: 29,
+    tempMax: 31,
+    gustMax: 20,
+    rainChance: 5,
+    precipTotal: 0
+  }
+};
+assert.equal(truth.planWatchRiskKind(celsiusHeatWatch), "heat");
+
 const goodWatch = {
   tone: "good",
   primaryReason: "weather looks manageable",
@@ -115,6 +132,8 @@ assert.deepEqual(goodTruth.receiptLines.map(row => row.label), ["Signal", "Rain"
 
 assert.equal(truth.planVerdict(44, ""), "Not ideal");
 assert.match(truth.planAdvice({ stormPotential: true }, null, 40), /delay or indoor/i);
+assert.equal(truth.weatherTruthAlertTone({ event: "Severe Thunderstorm Warning" }), "warning");
+assert.equal(truth.weatherTruthAlertTone({ severity: "Severe" }), "warning");
 
 const baselinePlan = {
   title: "4th Party",
@@ -158,6 +177,63 @@ assert.equal(noMeaningfulChange, null);
 const changedTruth = truth.planWeatherTruth({ ...rainWatch, score: 58, status: "ready", change: rainChange });
 assert.equal(changedTruth.notification.eligible, true);
 assert.equal(changedTruth.notification.signal, "plan-rain");
+
+const sharedCurrentState = truth.planWeatherWatchCurrentState(
+  {
+    id: "party-1",
+    title: "4th Party",
+    targetDate: "2026-07-03",
+    startHour: 15,
+    endHour: 20
+  },
+  heatWatch.stats,
+  { event: "Extreme Heat Warning", severity: "Severe" },
+  "fahrenheit"
+);
+assert.equal(sharedCurrentState.tone, "watch");
+assert.equal(sharedCurrentState.label, "Plan around heat");
+assert.match(sharedCurrentState.receipt, /Extreme Heat Warning/);
+assert.equal(sharedCurrentState.snapshot.alertTone, "warning");
+assert.equal(sharedCurrentState.snapshot.riskKind, "heat");
+
+const sharedInitialChange = truth.planWeatherWatchStateChange({}, sharedCurrentState);
+assert.equal(sharedInitialChange.type, "plan-alert");
+assert.equal(sharedInitialChange.notify, true);
+assert.equal(sharedInitialChange.updateBaseline, true);
+
+const sharedLastKnown = truth.planWeatherLastKnownFromState(
+  { id: "party-1", targetDate: "2026-07-03", startHour: 15, endHour: 20 },
+  sharedCurrentState,
+  sharedInitialChange,
+  "2026-07-02T12:00:00.000Z"
+);
+assert.equal(sharedLastKnown.signal, "plan-alert");
+assert.equal(sharedLastKnown.checkedAt, "2026-07-02T12:00:00.000Z");
+assert.match(sharedLastKnown.receipt, /Feels: 92°F-101°F/);
+
+const sharedCandidate = truth.planWeatherNotificationCandidate(
+  { id: "party 1", title: "4th Party" },
+  sharedCurrentState,
+  sharedInitialChange
+);
+assert.equal(sharedCandidate.type, "plan-alert");
+assert.equal(sharedCandidate.notification.tag, "nearcast-plan-party-1");
+assert.match(sharedCandidate.notification.body, /Extreme Heat Warning/);
+
+const sharedBaselineChange = truth.planWeatherWatchStateChange({}, truth.planWeatherWatchCurrentState(
+  {
+    id: "quiet-1",
+    title: "Quiet plan",
+    targetDate: "2026-07-05",
+    startHour: 10,
+    endHour: 12
+  },
+  goodWatch.stats,
+  null,
+  "fahrenheit"
+));
+assert.equal(sharedBaselineChange.type, "baseline");
+assert.equal(sharedBaselineChange.notify, false);
 
 const longText = "This plan has a very long context sentence that should remain readable without clipping inside the watched plan surface.";
 const compactText = truth.planWatchCompactText(longText, 42);

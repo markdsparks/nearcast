@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.148**.
+Living product roadmap. Current as of **v3.0.149**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -232,6 +232,10 @@ First shipped slice:
 - The Watch sheet now has a unified `Watching controls` panel for plan and
   saved-place notification opt-ins, so users can manage what can interrupt them
   from one place.
+- `weather-truth.js` now exposes the shared plan-watch truth contract used by
+  both the browser UI and the Cloudflare notification evaluator: current state,
+  change detection, last-known receipts, and notification candidates now come
+  from the same deterministic plan weather spine.
 
 ### 4. Trust And Craft Hardening
 

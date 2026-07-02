@@ -474,7 +474,23 @@ try {
     if (url.hostname === "api.open-meteo.com") {
       return Response.json({
         utc_offset_seconds: -18000,
-        hourly: { time: [] },
+        hourly: {
+          time: [
+            "2026-07-03T15:00",
+            "2026-07-03T16:00",
+            "2026-07-03T17:00",
+            "2026-07-03T18:00",
+            "2026-07-03T19:00"
+          ],
+          temperature_2m: [91, 93, 94, 92, 90],
+          apparent_temperature: [97, 100, 102, 99, 96],
+          precipitation_probability: [8, 7, 6, 8, 9],
+          precipitation: [0, 0, 0, 0, 0],
+          wind_speed_10m: [9, 10, 11, 10, 8],
+          wind_gusts_10m: [18, 20, 22, 20, 18],
+          uv_index: [7, 7, 6, 4, 2],
+          weather_code: [1, 1, 95, 1, 1]
+        },
         daily: {
           time: ["2026-07-02", "2026-07-03"],
           weather_code: [1, 95],
@@ -491,10 +507,93 @@ try {
       });
     }
     if (url.hostname === "api.weather.gov") {
+      if (url.searchParams.get("point")?.startsWith("38.7230,-89.9559")) {
+        return Response.json({
+          features: [{
+            properties: {
+              event: "Extreme Heat Warning",
+              severity: "Severe",
+              onset: "2026-07-03T12:00:00-05:00",
+              ends: "2026-07-03T22:00:00-05:00",
+              headline: "Extreme Heat Warning issued for the plan area"
+            }
+          }]
+        });
+      }
       return Response.json({ features: [] });
     }
     return originalFetch(input);
   };
+
+  const planWatchBucket = createR2Bucket();
+  const planWatchEnv = {
+    PLAN_WATCH_R2: planWatchBucket,
+    PLAN_WATCH_TEST_TOKEN: "smoke-token",
+    PLAN_WATCH_EVALUATOR_LIMIT: "5",
+    PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION: "3"
+  };
+  const registerPlanWatch = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subscription: {
+        endpoint: "https://push.example.test/nearcast-plan-watch",
+        keys: { p256dh: "p256dh", auth: "auth" }
+      },
+      client: { unit: "fahrenheit" },
+      plans: [{
+        id: "party-1",
+        title: "4th Party",
+        targetDate: "2026-07-03",
+        startHour: 15,
+        endHour: 20,
+        place: {
+          name: "Maryville",
+          admin1: "Illinois",
+          country: "United States",
+          countryCode: "US",
+          latitude: 38.723,
+          longitude: -89.9559
+        },
+        lastKnown: {
+          snapshot: {
+            title: "4th Party",
+            targetDate: "2026-07-03",
+            startHour: 15,
+            endHour: 20,
+            rainChance: 9,
+            gustMax: 18,
+            windUnit: "mph",
+            feelsMax: 91,
+            tempUnit: "°F",
+            score: 82,
+            tone: "good",
+            alertTone: "",
+            alertEvent: "",
+            riskKind: "good"
+          }
+        }
+      }],
+      places: []
+    })
+  }), planWatchEnv, {});
+  assert.equal(registerPlanWatch.status, 200);
+  const registerPlanWatchBody = await registerPlanWatch.json();
+  assert.equal(registerPlanWatchBody.planCount, 1);
+
+  const evaluatePlanWatch = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/evaluate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Nearcast-Test-Token": "smoke-token"
+    },
+    body: JSON.stringify({ dryRun: true, limit: 5 })
+  }), planWatchEnv, {});
+  assert.equal(evaluatePlanWatch.status, 200);
+  const evaluatePlanWatchBody = await evaluatePlanWatch.json();
+  assert.equal(evaluatePlanWatchBody.plans, 1);
+  assert.equal(evaluatePlanWatchBody.candidates, 1);
+  assert.equal(evaluatePlanWatchBody.results[0].reasons[0], "dry-run:plan-alert");
 
   const placeWatchBucket = createR2Bucket();
   const placeWatchEnv = {
@@ -592,6 +691,7 @@ console.log(JSON.stringify({
   r2Queued: r2Queued.body.generation.state,
   r2Deduped: r2Deduped.body.generation.state,
   limited: budgetLimited.body.generation.reason,
+  planWatch: "plan-alert",
   placeWatch: "place-storm",
   requestId: queued.body.generation.requestId
 }, null, 2));

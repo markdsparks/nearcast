@@ -16,6 +16,19 @@ function weatherTruthEscapeHtml(value) {
   }[char]));
 }
 
+function weatherTruthCleanText(value, maxLength = 240) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function weatherTruthCleanToken(value, maxLength = 64) {
+  return weatherTruthCleanText(value, maxLength)
+    .replace(/[^a-zA-Z0-9._:-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function weatherTruthDegree(unit) {
   if (typeof degree === "function") return degree(unit);
   return `°${unit}`;
@@ -25,13 +38,26 @@ function weatherTruthUnitPreference() {
   return typeof state !== "undefined" && state?.unit === "fahrenheit" ? "fahrenheit" : "celsius";
 }
 
+function planWeatherUnitFromItem(item = {}) {
+  if (item.unit === "celsius" || item.unit === "fahrenheit") return item.unit;
+  const tempUnit = String(item.units?.temp || item.tempUnit || "").toLowerCase();
+  if (tempUnit.includes("c")) return "celsius";
+  if (tempUnit.includes("f")) return "fahrenheit";
+  return weatherTruthUnitPreference();
+}
+
 function planWatchCompactText(value, limit = 98) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text || text.length <= limit) return text;
   return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
-function planConditionRiskKind(stats = {}, alert = null, text = "") {
+function planConditionRiskKind(stats = {}, alert = null, text = "", unit = weatherTruthUnitPreference()) {
+  const preference = unit === "celsius" ? "celsius" : "fahrenheit";
+  const precipThreshold = preference === "fahrenheit" ? 0.02 : 0.5;
+  const windThreshold = preference === "fahrenheit" ? 25 : 40;
+  const coldThreshold = preference === "fahrenheit" ? 40 : 4;
+  const heatThreshold = preference === "fahrenheit" ? 88 : 31;
   const alertText = [
     alert?.event,
     alert?.headline,
@@ -47,12 +73,13 @@ function planConditionRiskKind(stats = {}, alert = null, text = "") {
   if (/\b(pollen|allerg)\b/.test(alertText)) return "pollen";
   if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText)) return "cold";
   if (stats.stormPotential) return "storm";
-  if (stats.rainChance >= 35 || stats.precipTotal > 0.02) return "rain";
-  if (stats.gustMax >= 25) return "wind";
+  if (stats.rainChance >= 35 || stats.precipTotal > precipThreshold) return "rain";
+  if (stats.gustMax >= windThreshold) return "wind";
   if (stats.aqiMax >= 101) return "air";
   if (stats.pollenRank >= 3) return "pollen";
-  if (stats.feelsAvg <= 40) return "cold";
-  if (stats.feelsAvg >= 88 || stats.uvMax >= 8) return "heat";
+  const feels = Number.isFinite(Number(stats.feelsAvg)) ? Number(stats.feelsAvg) : Number(stats.feelsMax);
+  if (feels <= coldThreshold) return "cold";
+  if (feels >= heatThreshold || stats.uvMax >= 8) return "heat";
   return "good";
 }
 
@@ -60,7 +87,8 @@ function planWatchRiskKind(item) {
   return planConditionRiskKind(
     item?.stats || {},
     item?.alert || null,
-    [item?.primaryReason, item?.advice, item?.label, item?.reason].filter(Boolean).join(" ")
+    [item?.primaryReason, item?.advice, item?.label, item?.reason].filter(Boolean).join(" "),
+    planWeatherUnitFromItem(item)
   );
 }
 
@@ -135,9 +163,10 @@ function planVerdict(score, tone) {
 }
 
 function planBriefingTone(item) {
+  const unit = planWeatherUnitFromItem(item);
   if (item?.alertTone === "warning" || item?.alertTone === "watch") return "watch";
   if (item?.score < 45 || item?.stats?.stormPotential) return "watch";
-  if (item?.score < 65 || item?.stats?.rainChance >= 35 || item?.stats?.gustMax >= 25) return "caution";
+  if (item?.score < 65 || item?.stats?.rainChance >= 35 || item?.stats?.gustMax >= planWeatherWindCautionThreshold(unit)) return "caution";
   return "good";
 }
 
@@ -167,11 +196,19 @@ function planBriefingReason(item) {
 function weatherTruthAlertTone(alert) {
   if (!alert) return "";
   if (typeof alertTone === "function") return alertTone(alert);
-  return alert.tone || alert.severity || "";
+  if (alert.tone) return String(alert.tone).toLowerCase();
+  const event = String(alert.event || alert.headline || "").toLowerCase();
+  if (event.includes("warning")) return "warning";
+  if (event.includes("watch")) return "watch";
+  if (event.includes("advisory")) return "advisory";
+  const severity = String(alert.severity || "").toLowerCase();
+  if (severity === "extreme" || severity === "severe") return "warning";
+  if (severity === "moderate" || severity === "minor") return "advisory";
+  return alert ? "notice" : "";
 }
 
-function planAdvice(stats = {}, alert = null, score = 100, alertSignal = null) {
-  const risk = planConditionRiskKind(stats, alert);
+function planAdvice(stats = {}, alert = null, score = 100, alertSignal = null, unit = weatherTruthUnitPreference()) {
+  const risk = planConditionRiskKind(stats, alert, "", unit);
   if (alert) {
     const tone = alertSignal || weatherTruthAlertTone(alert);
     if (risk === "heat") return "Plan shade, water, breaks, and an indoor option if people need it.";
@@ -221,6 +258,159 @@ function weatherTruthWindNotableThreshold(unit) {
 function weatherTruthDisplayTempUnit(unit) {
   if (!unit) return "";
   return unit.startsWith("°") ? unit : weatherTruthDegree(unit);
+}
+
+function planWeatherUnits(unit = weatherTruthUnitPreference()) {
+  const preference = unit === "celsius" ? "celsius" : "fahrenheit";
+  return {
+    temp: weatherTruthDegree(preference === "fahrenheit" ? "F" : "C"),
+    wind: preference === "fahrenheit" ? "mph" : "km/h",
+    precip: preference === "fahrenheit" ? "in" : "mm"
+  };
+}
+
+function planWeatherWindowScore(stats = {}, unit = weatherTruthUnitPreference()) {
+  const preference = unit === "celsius" ? "celsius" : "fahrenheit";
+  const feelsAvg = Number(stats.feelsAvg ?? stats.feelsMax ?? 0);
+  const windMax = Number(stats.windMax ?? 0);
+  const gustMax = Number(stats.gustMax ?? windMax ?? 0);
+  const rainChance = Number(stats.rainChance ?? 0);
+  const precipTotal = Number(stats.precipTotal ?? 0);
+  const uvMax = Number(stats.uvMax ?? 0);
+  const feelsF = preference === "celsius" ? (feelsAvg * 9) / 5 + 32 : feelsAvg;
+  const windMph = preference === "celsius" ? windMax / 1.609344 : windMax;
+  const gustMph = preference === "celsius" ? gustMax / 1.609344 : gustMax;
+  const target = 72;
+  const tempPenalty = Math.abs(feelsF - target) * 0.8;
+  const rainPenalty = rainChance * 1.2 + precipTotal * 80;
+  const windPenalty = Math.max(0, windMph - 24) * 2 + Math.max(0, gustMph - 32) * 2;
+  const uvPenalty = Math.max(0, uvMax - 8 + 1) * 5;
+  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
+}
+
+function planWeatherWindCautionThreshold(unit = weatherTruthUnitPreference()) {
+  return unit === "celsius" ? 40 : 25;
+}
+
+function planWeatherWatchCurrentState(plan = {}, stats = {}, alert = null, unit = weatherTruthUnitPreference()) {
+  const preference = unit === "celsius" ? "celsius" : "fahrenheit";
+  const alertToneValue = weatherTruthAlertTone(alert);
+  const score = planWeatherWindowScore(stats, preference);
+  const tone = alertToneValue === "warning" || alertToneValue === "watch" || score < 45 || stats.stormPotential
+    ? "watch"
+    : score < 65 || stats.rainChance >= 35 || stats.gustMax >= planWeatherWindCautionThreshold(preference) ? "caution" : "good";
+  const truth = planWeatherTruth({
+    title: plan.title || "Plan",
+    targetDate: plan.targetDate || "",
+    startHour: plan.startHour,
+    endHour: plan.endHour,
+    stats,
+    units: planWeatherUnits(preference),
+    score,
+    tone,
+    alert,
+    alertTone: alertToneValue,
+    status: "ready"
+  }) || {};
+  const fullReason = truth.fullReason || planWatchFullReason({ stats, alert, primaryReason: truth.primaryReason });
+  const bodyReason = fullReason ? String(fullReason).replace(/[.!?]+$/, "") : "Weather changed for this plan";
+  const snapshot = planWeatherChangeSnapshot({
+    title: plan.title || "Plan",
+    targetDate: plan.targetDate || "",
+    startHour: plan.startHour,
+    endHour: plan.endHour,
+    stats,
+    units: planWeatherUnits(preference),
+    score,
+    tone: truth.tone || tone,
+    verdict: truth.verdict,
+    alert,
+    alertTone: alertToneValue,
+    riskKind: truth.riskKind
+  });
+  return {
+    signal: alert ? "plan-alert" : (truth.tone || tone),
+    tone: truth.tone || tone,
+    label: truth.label || planWatchLabel({ stats, alert, tone }),
+    reason: truth.reason || bodyReason,
+    body: `${truth.label || "Plan watch"}: ${bodyReason}.`,
+    receipt: truth.receipt || planWeatherReceiptText({ stats, alert, ...truth }),
+    snapshot,
+    alert,
+    truth
+  };
+}
+
+function planWeatherWatchStateChange(previousLastKnown = {}, current = {}) {
+  const previous = previousLastKnown?.snapshot || null;
+  const currentSnapshot = current?.snapshot || null;
+  if (!currentSnapshot) return { updateBaseline: false, notify: false };
+
+  if (!previous) {
+    const hadAlert = /alert|warning|watch|advisory/i.test([
+      previousLastKnown?.signal,
+      previousLastKnown?.label,
+      previousLastKnown?.reason,
+      previousLastKnown?.body
+    ].filter(Boolean).join(" "));
+    if (currentSnapshot.alertTone && !hadAlert) {
+      return {
+        type: "plan-alert",
+        tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
+        notify: true,
+        updateBaseline: true,
+        priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
+        title: `${currentSnapshot.title || "Plan"}: alert started`,
+        body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
+      };
+    }
+    return { type: "baseline", notify: false, updateBaseline: true, priority: 0 };
+  }
+
+  const change = planWeatherChange(previous, currentSnapshot);
+  return change ? { ...change, updateBaseline: true } : { updateBaseline: false, notify: false };
+}
+
+function planWeatherLastKnownFromState(plan = {}, current = {}, change = {}, checkedAt = new Date().toISOString()) {
+  const body = change?.body || current.body || "";
+  const signal = change?.type || current.signal || current.tone || "watch";
+  const eventKey = [
+    plan.id,
+    plan.targetDate,
+    plan.startHour,
+    plan.endHour,
+    signal,
+    body || current.reason || ""
+  ].join("|");
+  return {
+    eventKey,
+    signal,
+    tone: current.tone || "",
+    label: current.label || "",
+    reason: current.reason || "",
+    body,
+    receipt: current.receipt || "",
+    checkedAt,
+    snapshot: current.snapshot
+  };
+}
+
+function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) {
+  return {
+    type: change.type || current.signal || "plan-watch",
+    priority: change.priority || 50,
+    notification: {
+      title: change.title || `Nearcast: ${plan.title || "Watched plan"}`,
+      body: change.body || current.body || "Weather changed for this plan.",
+      tag: `nearcast-plan-${weatherTruthCleanToken(plan.id, 80)}`,
+      renotify: false,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      url: "./",
+      memoryId: plan.id || "",
+      source: "plan-watch-evaluator"
+    }
+  };
 }
 
 function planWeatherChangeSnapshot(item) {
@@ -471,14 +661,14 @@ function planWeatherReceiptText(item) {
 function planWeatherTruth(item) {
   if (!item) return null;
   const alertToneValue = item.alertTone || weatherTruthAlertTone(item.alert);
-  const verdict = item.verdict || planVerdict(item.score ?? 100, alertToneValue);
   const base = {
     ...item,
     alertTone: alertToneValue,
-    verdict,
-    advice: item.advice || planAdvice(item.stats || {}, item.alert || null, item.score ?? 100, alertToneValue)
+    advice: item.advice || planAdvice(item.stats || {}, item.alert || null, item.score ?? 100, alertToneValue, planWeatherUnitFromItem(item))
   };
   const tone = item.tone || planBriefingTone(base);
+  const verdict = item.verdict || planVerdict(item.score ?? 100, alertToneValue === "warning" ? "warning" : tone);
+  base.verdict = verdict;
   const riskKind = planWatchRiskKind({ ...base, tone });
   const primaryReason = item.primaryReason || planBriefingReason({ ...base, tone, riskKind });
   const truth = {
@@ -507,7 +697,7 @@ function planSignalRiskKind(item) {
   const alertText = [item?.alert?.event, item?.primaryReason, item?.advice, item?.label, item?.reason]
     .filter(Boolean)
     .join(" ");
-  const risk = planConditionRiskKind(stats, item?.alert || null, alertText);
+  const risk = planConditionRiskKind(stats, item?.alert || null, alertText, planWeatherUnitFromItem(item));
   return risk === "flood" ? "rain" : risk;
 }
 
@@ -625,49 +815,65 @@ function renderPlanWatchSignals(watch) {
   `</div>`;
 }
 
+const NearcastWeatherTruth = {
+  weatherTruthCapitalize,
+  weatherTruthEscapeHtml,
+  weatherTruthCleanText,
+  weatherTruthCleanToken,
+  weatherTruthDegree,
+  weatherTruthUnitPreference,
+  weatherTruthNumber,
+  weatherTruthDelta,
+  weatherTruthScoreBand,
+  weatherTruthWindDeltaThreshold,
+  weatherTruthWindNotableThreshold,
+  weatherTruthDisplayTempUnit,
+  planWeatherUnitFromItem,
+  planWatchCompactText,
+  planConditionRiskKind,
+  planWatchRiskKind,
+  planWatchLabel,
+  planWatchFullReason,
+  planWatchReason,
+  planWatchActionText,
+  planVerdict,
+  planBriefingTone,
+  planBriefingPriority,
+  planBriefingReason,
+  weatherTruthAlertTone,
+  planAdvice,
+  planWeatherUnits,
+  planWeatherWindowScore,
+  planWeatherWindCautionThreshold,
+  planWeatherWatchCurrentState,
+  planWeatherWatchStateChange,
+  planWeatherLastKnownFromState,
+  planWeatherNotificationCandidate,
+  planWeatherChangeSnapshot,
+  samePlanWeatherWindow,
+  planWeatherChange,
+  planWeatherNotificationState,
+  planReceiptValue,
+  planWeatherReceiptLines,
+  planWeatherReceiptText,
+  planWeatherTruth,
+  planSignalRiskKind,
+  planSignalPrecipText,
+  planSignalRangeText,
+  planSignalChanceRangeText,
+  planSignalUnitRangeText,
+  planSignalPeakText,
+  planSignalPrecipTotalText,
+  uniquePlanSignalRows,
+  planContextSignalRows,
+  renderPlanSignalChip,
+  renderPlanWatchSignals
+};
+
+if (typeof globalThis !== "undefined") {
+  globalThis.NearcastWeatherTruth = NearcastWeatherTruth;
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = {
-    weatherTruthCapitalize,
-    weatherTruthEscapeHtml,
-    weatherTruthDegree,
-    weatherTruthUnitPreference,
-    weatherTruthNumber,
-    weatherTruthDelta,
-    weatherTruthScoreBand,
-    weatherTruthWindDeltaThreshold,
-    weatherTruthWindNotableThreshold,
-    weatherTruthDisplayTempUnit,
-    planWatchCompactText,
-    planConditionRiskKind,
-    planWatchRiskKind,
-    planWatchLabel,
-    planWatchFullReason,
-    planWatchReason,
-    planWatchActionText,
-    planVerdict,
-    planBriefingTone,
-    planBriefingPriority,
-    planBriefingReason,
-    weatherTruthAlertTone,
-    planAdvice,
-    planWeatherChangeSnapshot,
-    samePlanWeatherWindow,
-    planWeatherChange,
-    planWeatherNotificationState,
-    planReceiptValue,
-    planWeatherReceiptLines,
-    planWeatherReceiptText,
-    planWeatherTruth,
-    planSignalRiskKind,
-    planSignalPrecipText,
-    planSignalRangeText,
-    planSignalChanceRangeText,
-    planSignalUnitRangeText,
-    planSignalPeakText,
-    planSignalPrecipTotalText,
-    uniquePlanSignalRows,
-    planContextSignalRows,
-    renderPlanSignalChip,
-    renderPlanWatchSignals
-  };
+  module.exports = NearcastWeatherTruth;
 }

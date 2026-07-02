@@ -3,6 +3,14 @@ import {
   handleRadarGenerationMessage,
   handleRadarGenerationQueue
 } from "./radar-generation-consumer.mjs";
+import "../weather-truth.js";
+
+const {
+  planWeatherWatchCurrentState: sharedPlanWeatherWatchCurrentState,
+  planWeatherWatchStateChange: sharedPlanWeatherWatchStateChange,
+  planWeatherLastKnownFromState: sharedPlanWeatherLastKnownFromState,
+  planWeatherNotificationCandidate: sharedPlanWeatherNotificationCandidate
+} = globalThis.NearcastWeatherTruth || {};
 
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
@@ -1281,9 +1289,9 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   const alerts = await cachedPlanWatchAlerts(plan.place, context).catch(() => []);
   const windowMs = planWatchWindowMs(plan, forecast);
   const alert = topPlanWatchAlert(alerts, windowMs.startMs, windowMs.endMs);
-  const current = planWatchCurrentState(plan, stats, alert, unit);
-  const change = planWatchStateChange(plan.lastKnown, current);
-  const lastKnown = planWatchLastKnownFromState(plan, current, change);
+  const current = sharedPlanWeatherWatchCurrentState(plan, stats, alert, unit);
+  const change = sharedPlanWeatherWatchStateChange(plan.lastKnown, current);
+  const lastKnown = sharedPlanWeatherLastKnownFromState(plan, current, change);
   const nextPlan = change?.updateBaseline ? { ...plan, lastKnown } : {
     ...plan,
     lastKnown: {
@@ -1291,7 +1299,7 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
       checkedAt: new Date().toISOString()
     }
   };
-  const candidate = change?.notify ? planWatchNotificationCandidate(plan, current, change) : null;
+  const candidate = change?.notify ? sharedPlanWeatherNotificationCandidate(plan, current, change) : null;
   return {
     plan: nextPlan,
     updated: Boolean(change?.updateBaseline),
@@ -1803,281 +1811,6 @@ function planWatchAlertPriority(alert) {
   return toneRank * 100 + severityRank * 10;
 }
 
-function planWatchCurrentState(plan, stats, alert, unit = "fahrenheit") {
-  const alertTone = planWatchAlertTone(alert);
-  const score = planWatchWindowScore(stats, unit);
-  const riskKind = planWatchRiskKindForStats(stats, alert, unit);
-  const tone = alertTone === "warning" || alertTone === "watch" || score < 45 || stats.stormPotential
-    ? "watch"
-    : score < 65 || stats.rainChance >= 35 || stats.gustMax >= (unit === "fahrenheit" ? 25 : 40) ? "caution" : "good";
-  const label = planWatchStateLabel({ tone, riskKind, alert });
-  const reason = planWatchStateReason(stats, alert, unit);
-  const body = `${label}: ${reason}.`;
-  const receipt = planWatchStateReceipt(stats, alert, unit);
-  const snapshot = {
-    title: plan.title || "Plan",
-    targetDate: plan.targetDate || "",
-    startHour: roundNumber(finiteNumber(plan.startHour, null)),
-    endHour: roundNumber(finiteNumber(plan.endHour, null)),
-    rainChance: roundNumber(stats.rainChance),
-    gustMax: roundNumber(stats.gustMax),
-    windUnit: unit === "fahrenheit" ? "mph" : "km/h",
-    feelsMax: roundNumber(stats.feelsMax),
-    tempUnit: unit === "fahrenheit" ? "°F" : "°C",
-    score,
-    tone,
-    verdict: planWatchVerdict(score, tone),
-    alertTone,
-    alertEvent: alert?.event || "",
-    riskKind
-  };
-  const signal = alert ? "plan-alert" : tone;
-  return {
-    signal,
-    tone,
-    label,
-    reason,
-    body,
-    receipt,
-    snapshot,
-    alert
-  };
-}
-
-function planWatchRiskKindForStats(stats = {}, alert = null, unit = "fahrenheit") {
-  const text = [alert?.event, alert?.headline, alert?.description, alert?.instruction].filter(Boolean).join(" ").toLowerCase();
-  if (/\b(excessive heat|extreme heat|heat warning|heat advisory|heat|hot|humid|uv)\b/.test(text)) return "heat";
-  if (/\b(thunder|lightning|hail|tornado|severe thunderstorm)\b/.test(text)) return "storm";
-  if (/\b(flood|flash flood|heavy rain|downpour)\b/.test(text)) return "rain";
-  if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(text)) return "wind";
-  if (stats.stormPotential) return "storm";
-  if (stats.rainChance >= 35 || stats.precipTotal > (unit === "fahrenheit" ? 0.02 : 0.5)) return "rain";
-  if (stats.gustMax >= (unit === "fahrenheit" ? 25 : 40)) return "wind";
-  if (stats.feelsMax >= (unit === "fahrenheit" ? 92 : 33) || stats.uvMax >= 8) return "heat";
-  return "good";
-}
-
-function planWatchStateLabel({ tone, riskKind, alert }) {
-  if (tone === "good") return "Looks good";
-  if (riskKind === "heat") return "Plan around heat";
-  if (riskKind === "storm") return alert ? "Alert overlaps" : "Keep an eye on storms";
-  if (riskKind === "rain") return "Expect rain";
-  if (riskKind === "wind") return "Wind may matter";
-  if (alert) return "Alert overlaps";
-  return "Keep an eye on it";
-}
-
-function planWatchStateReason(stats = {}, alert = null, unit = "fahrenheit") {
-  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
-  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
-  if (alert?.event) return `${alert.event} overlaps that window`;
-  if (stats.stormPotential) return "thunderstorms are possible";
-  if (stats.rainChance >= 35) return `${stats.rainChance}% rain chance`;
-  if (stats.gustMax >= (unit === "fahrenheit" ? 25 : 40)) return `gusts near ${stats.gustMax} ${windUnit}`;
-  if (stats.uvMax >= 8) return `UV up to ${stats.uvMax}`;
-  if (stats.feelsMax >= (unit === "fahrenheit" ? 88 : 31)) return `feels up to ${stats.feelsMax}${tempUnit}`;
-  return `rain looks low (${stats.rainChance}%)`;
-}
-
-function planWatchStateReceipt(stats = {}, alert = null, unit = "fahrenheit") {
-  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
-  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
-  const precipUnit = unit === "fahrenheit" ? "in" : "mm";
-  const lines = [];
-  if (alert?.event) lines.push(`Alert: ${alert.event} overlaps this window`);
-  lines.push(`Rain: ${roundNumber(stats.rainChanceMin ?? stats.rainChance)}-${roundNumber(stats.rainChance)}%`);
-  lines.push(`Feels: ${roundNumber(stats.feelsMin ?? stats.feelsAvg)}${tempUnit}-${roundNumber(stats.feelsMax ?? stats.feelsAvg)}${tempUnit}`);
-  lines.push(`Gusts: peak ${roundNumber(stats.gustMax)} ${windUnit}`);
-  if (Number(stats.precipTotal || 0) > 0) {
-    lines.push(`Amount: ${roundNumber(stats.precipTotal, unit === "fahrenheit" ? 2 : 1)} ${precipUnit}`);
-  }
-  if (Number(stats.uvMax || 0) > 0) lines.push(`UV: peak ${roundNumber(stats.uvMax)}`);
-  return lines.filter(Boolean).slice(0, 5).join(" · ");
-}
-
-function planWatchWindowScore(stats = {}, unit = "fahrenheit") {
-  const feelsF = unit === "celsius" ? (stats.feelsAvg * 9) / 5 + 32 : stats.feelsAvg;
-  const windMph = unit === "celsius" ? stats.windMax / 1.609344 : stats.windMax;
-  const gustMph = unit === "celsius" ? stats.gustMax / 1.609344 : stats.gustMax;
-  const target = 72;
-  const tempPenalty = Math.abs(feelsF - target) * 0.8;
-  const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80;
-  const windPenalty = Math.max(0, windMph - 24) * 2 + Math.max(0, gustMph - 32) * 2;
-  const uvPenalty = Math.max(0, stats.uvMax - 8 + 1) * 5;
-  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
-}
-
-function planWatchVerdict(score, tone) {
-  if (tone === "watch") return "Watch closely";
-  if (score >= 80) return "Looks good";
-  if (score >= 65) return "Pretty good";
-  if (score >= 45) return "Iffy";
-  return "Not ideal";
-}
-
-function planWatchStateChange(previousLastKnown = {}, current = {}) {
-  const previous = normalizePlanWatchSnapshot(previousLastKnown?.snapshot);
-  const currentSnapshot = current.snapshot;
-  if (!currentSnapshot) return { updateBaseline: false, notify: false };
-
-  if (!previous) {
-    const hadAlert = /alert|warning|watch|advisory/i.test([
-      previousLastKnown?.signal,
-      previousLastKnown?.label,
-      previousLastKnown?.reason,
-      previousLastKnown?.body
-    ].filter(Boolean).join(" "));
-    if (currentSnapshot.alertTone && !hadAlert) {
-      return {
-        type: "plan-alert",
-        tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
-        notify: true,
-        updateBaseline: true,
-        priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
-        title: `${currentSnapshot.title}: alert started`,
-        body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
-      };
-    }
-    return { type: "baseline", notify: false, updateBaseline: true, priority: 0 };
-  }
-
-  if (
-    currentSnapshot.alertTone &&
-    currentSnapshot.alertTone !== "none" &&
-    (currentSnapshot.alertTone !== previous.alertTone || currentSnapshot.alertEvent !== previous.alertEvent)
-  ) {
-    return {
-      type: "plan-alert",
-      tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
-      notify: true,
-      updateBaseline: true,
-      priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
-      title: `${currentSnapshot.title}: alert started`,
-      body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
-    };
-  }
-
-  if (previous.alertTone && !currentSnapshot.alertTone) {
-    return { type: "plan-alert-ended", tone: "good", notify: false, updateBaseline: true, priority: 45 };
-  }
-
-  const rainDelta = numberDelta(currentSnapshot.rainChance, previous.rainChance);
-  if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(currentSnapshot.rainChance, previous.rainChance) >= 35) {
-    const wetter = rainDelta > 0;
-    return {
-      type: "plan-rain",
-      tone: wetter ? "watch" : "good",
-      notify: wetter,
-      updateBaseline: true,
-      priority: 90 + Math.abs(rainDelta),
-      title: `${currentSnapshot.title} ${wetter ? "got wetter" : "got drier"}`,
-      body: `Rain now ${currentSnapshot.rainChance}%, ${wetter ? "up" : "down"} from ${previous.rainChance}%.`
-    };
-  }
-
-  const heatDelta = numberDelta(currentSnapshot.feelsMax, previous.feelsMax);
-  const seriousHeat = currentSnapshot.tempUnit === "°C" ? 38 : 100;
-  const notableHeat = currentSnapshot.tempUnit === "°C" ? 33 : 92;
-  const crossedSeriousHeat = Number.isFinite(previous.feelsMax) &&
-    Number.isFinite(currentSnapshot.feelsMax) &&
-    previous.feelsMax < seriousHeat &&
-    currentSnapshot.feelsMax >= seriousHeat;
-  if (
-    heatDelta !== null &&
-    (crossedSeriousHeat || (Math.abs(heatDelta) >= (currentSnapshot.tempUnit === "°C" ? 3 : 5) && Math.max(currentSnapshot.feelsMax, previous.feelsMax) >= notableHeat))
-  ) {
-    const hotter = heatDelta > 0;
-    return {
-      type: "plan-heat",
-      tone: hotter ? (currentSnapshot.feelsMax >= seriousHeat ? "watch" : "caution") : "good",
-      notify: hotter,
-      updateBaseline: true,
-      priority: (hotter ? 88 : 52) + Math.abs(heatDelta),
-      title: `${currentSnapshot.title} ${hotter ? "got hotter" : "cooled down"}`,
-      body: `Feels like now peaks at ${currentSnapshot.feelsMax}${currentSnapshot.tempUnit}, ${hotter ? "up" : "down"} from ${previous.feelsMax}${currentSnapshot.tempUnit}.`
-    };
-  }
-
-  const gustDelta = numberDelta(currentSnapshot.gustMax, previous.gustMax);
-  const windThreshold = currentSnapshot.windUnit === "mph" ? 8 : 13;
-  const notableWind = currentSnapshot.windUnit === "mph" ? 24 : 39;
-  if (
-    currentSnapshot.windUnit === previous.windUnit &&
-    gustDelta !== null &&
-    Math.abs(gustDelta) >= windThreshold &&
-    Math.max(currentSnapshot.gustMax, previous.gustMax) >= notableWind
-  ) {
-    const stronger = gustDelta > 0;
-    return {
-      type: "plan-wind",
-      tone: stronger ? "caution" : "good",
-      notify: stronger,
-      updateBaseline: true,
-      priority: 70 + Math.abs(gustDelta),
-      title: `${currentSnapshot.title} ${stronger ? "got windier" : "eased up"}`,
-      body: `Gusts now ${currentSnapshot.gustMax} ${currentSnapshot.windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${currentSnapshot.windUnit}.`
-    };
-  }
-
-  const scoreDelta = numberDelta(currentSnapshot.score, previous.score);
-  if (scoreDelta !== null && Math.abs(scoreDelta) >= 18 && scoreBand(currentSnapshot.score) !== scoreBand(previous.score)) {
-    const better = scoreDelta > 0;
-    return {
-      type: "plan-score",
-      tone: better ? "good" : "caution",
-      notify: !better,
-      updateBaseline: true,
-      priority: 55 + Math.abs(scoreDelta),
-      title: `${currentSnapshot.title} looks ${better ? "better" : "iffy now"}`,
-      body: `Plan window moved from ${scoreBand(previous.score)} to ${scoreBand(currentSnapshot.score)}.`
-    };
-  }
-
-  return { updateBaseline: false, notify: false };
-}
-
-function planWatchLastKnownFromState(plan, current, change = {}) {
-  const body = change?.body || current.body || "";
-  const signal = change?.type || current.signal || current.tone || "watch";
-  const eventKey = [
-    plan.id,
-    plan.targetDate,
-    plan.startHour,
-    plan.endHour,
-    signal,
-    body || current.reason || ""
-  ].join("|");
-  return {
-    eventKey,
-    signal,
-    tone: current.tone || "",
-    label: current.label || "",
-    reason: current.reason || "",
-    body,
-    receipt: current.receipt || "",
-    checkedAt: new Date().toISOString(),
-    snapshot: current.snapshot
-  };
-}
-
-function planWatchNotificationCandidate(plan, current, change = {}) {
-  return {
-    type: change.type || current.signal || "plan-watch",
-    priority: change.priority || 50,
-    notification: {
-      title: change.title || `Nearcast: ${plan.title || "Watched plan"}`,
-      body: change.body || current.body || "Weather changed for this plan.",
-      tag: `nearcast-plan-${cleanToken(plan.id, 80)}`,
-      renotify: false,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      url: "./",
-      memoryId: plan.id || "",
-      source: "plan-watch-evaluator"
-    }
-  };
-}
-
 function buildPendingPlanWatchNotification(record, candidate) {
   const createdAt = new Date();
   return {
@@ -2386,12 +2119,6 @@ function roundNumber(value, digits = 0) {
 function numberDelta(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
   return current - previous;
-}
-
-function scoreBand(score) {
-  if (score >= 65) return "good";
-  if (score >= 45) return "iffy";
-  return "poor";
 }
 
 function base64UrlEncodeJson(value) {
