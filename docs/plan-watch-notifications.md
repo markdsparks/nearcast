@@ -11,15 +11,19 @@ without caring whether the client is a PWA or a native app.
 - `POST /api/watch/notifications/unregister` removes the stored subscription.
 - `GET /api/watch/notifications/config` advertises whether Web Push is configured
   with a VAPID public key.
+- `POST /api/watch/notifications/test` is a token-protected backend smoke route
+  that sends an empty Web Push to a stored subscription using VAPID signing.
 - The service worker handles `push` events and displays a notification that opens
   Nearcast.
 - The browser syncs enabled watched plans when notification permission is granted,
   when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
+- VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
+  token are GitHub secrets that the deploy workflow installs as Worker secrets.
 
 ## Intentionally Not Built Yet
 
 - Scheduled server-side plan evaluation.
-- VAPID private-key signing and outbound Web Push delivery.
+- Encrypted notification payloads with plan-specific copy.
 - Native APNs token registration.
 - User accounts or cross-device plan sync.
 

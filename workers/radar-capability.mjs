@@ -11,6 +11,7 @@ const PLAN_WATCH_PROVIDER = "nearcast-plan-watch-notifications";
 const PLAN_WATCH_CONFIG_ENDPOINT_PATH = "/api/watch/notifications/config";
 const PLAN_WATCH_REGISTER_ENDPOINT_PATH = "/api/watch/notifications/register";
 const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister";
+const PLAN_WATCH_TEST_ENDPOINT_PATH = "/api/watch/notifications/test";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
@@ -20,8 +21,12 @@ const RADAR_GENERATION_POLL_AFTER_SECONDS_ENV = "RADAR_GENERATION_POLL_AFTER_SEC
 const RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV = "RADAR_GENERATION_REQUESTS_R2_PREFIX";
 const PLAN_WATCH_R2_PREFIX_ENV = "PLAN_WATCH_R2_PREFIX";
 const PLAN_WATCH_VAPID_PUBLIC_KEY_ENV = "PLAN_WATCH_VAPID_PUBLIC_KEY";
+const PLAN_WATCH_VAPID_PRIVATE_KEY_ENV = "PLAN_WATCH_VAPID_PRIVATE_KEY";
+const PLAN_WATCH_VAPID_SUBJECT_ENV = "PLAN_WATCH_VAPID_SUBJECT";
+const PLAN_WATCH_TEST_TOKEN_ENV = "PLAN_WATCH_TEST_TOKEN";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
+const DEFAULT_PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
 const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
 const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
@@ -37,6 +42,7 @@ const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 40;
 const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
+const PLAN_WATCH_PUSH_TTL_SECONDS = 30 * 60;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -52,6 +58,9 @@ export default {
     }
     if (url.pathname === PLAN_WATCH_UNREGISTER_ENDPOINT_PATH) {
       return handlePlanWatchNotificationUnregisterRequest(request, env);
+    }
+    if (url.pathname === PLAN_WATCH_TEST_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationTestRequest(request, env);
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -83,6 +92,7 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
   const publicKey = configuredPlanWatchVapidPublicKey(env);
+  const privateKey = configuredPlanWatchVapidPrivateKey(env);
   const store = planWatchStore(env);
   return jsonResponse({
     provider: PLAN_WATCH_PROVIDER,
@@ -93,6 +103,10 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
       vapidPublicKey: publicKey,
       registerUrl: PLAN_WATCH_REGISTER_ENDPOINT_PATH,
       unregisterUrl: PLAN_WATCH_UNREGISTER_ENDPOINT_PATH
+    },
+    delivery: {
+      state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
+      subject: configuredPlanWatchVapidSubject(env)
     },
     storage: {
       state: store ? "ready" : "unavailable",
@@ -173,6 +187,47 @@ export async function handlePlanWatchNotificationUnregisterRequest(request, env 
     provider: PLAN_WATCH_PROVIDER,
     state: "deleted",
     subscriptionId
+  });
+}
+
+export async function handlePlanWatchNotificationTestRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const auth = planWatchTestAuthorization(request, env);
+  if (!auth.available) {
+    return jsonResponse({ ok: false, error: "test-disabled" }, { status: 404 });
+  }
+  if (!auth.authorized) {
+    return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  const payload = await readJsonRequest(request);
+  const store = planWatchStore(env);
+  if (!store) {
+    return jsonResponse({ ok: false, error: "plan-watch-store-unavailable" }, { status: 503 });
+  }
+  const record = await resolvePlanWatchSubscriptionRecord(store, payload);
+  if (!record?.subscription) {
+    return jsonResponse({ ok: false, error: "subscription-not-found" }, { status: 404 });
+  }
+
+  const push = await sendPlanWatchPush(record.subscription, env);
+  if ((push.status === 404 || push.status === 410) && store.deleteJson) {
+    await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+  }
+  return jsonResponse({
+    ok: push.ok,
+    provider: PLAN_WATCH_PROVIDER,
+    state: push.ok ? "sent" : "send-failed",
+    subscriptionId: record.subscriptionId,
+    endpointHost: safeUrlHost(record.subscription.endpoint),
+    status: push.status,
+    expired: push.status === 404 || push.status === 410,
+    body: push.body
+  }, {
+    status: push.ok ? 200 : 502
   });
 }
 
@@ -710,14 +765,61 @@ function configuredPlanWatchVapidPublicKey(env = {}) {
   return String(env?.[PLAN_WATCH_VAPID_PUBLIC_KEY_ENV] || "").trim();
 }
 
+function configuredPlanWatchVapidPrivateKey(env = {}) {
+  const value = env?.[PLAN_WATCH_VAPID_PRIVATE_KEY_ENV];
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function configuredPlanWatchVapidSubject(env = {}) {
+  const value = String(env?.[PLAN_WATCH_VAPID_SUBJECT_ENV] || "").trim();
+  return value || DEFAULT_PLAN_WATCH_VAPID_SUBJECT;
+}
+
+function configuredPlanWatchTestToken(env = {}) {
+  return String(env?.[PLAN_WATCH_TEST_TOKEN_ENV] || "").trim();
+}
+
+function planWatchTestAuthorization(request, env = {}) {
+  const expected = configuredPlanWatchTestToken(env);
+  if (!expected) return { available: false, authorized: false };
+  const auth = String(request.headers.get("Authorization") || "").trim();
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const token = String(request.headers.get("X-Nearcast-Test-Token") || bearer || "").trim();
+  return { available: true, authorized: token === expected };
+}
+
 function planWatchStore(env = {}) {
   const bucket = env?.PLAN_WATCH_R2 || env?.RADAR_GENERATION_REQUESTS_R2;
   if (!bucket?.put) return null;
   const prefix = cleanStoragePrefix(env?.[PLAN_WATCH_R2_PREFIX_ENV] || DEFAULT_PLAN_WATCH_R2_PREFIX);
+  const storageKey = (name) => [prefix, name].filter(Boolean).join("/");
   return {
     kind: "r2",
+    async getJson(name) {
+      if (!bucket.get) return null;
+      const object = await bucket.get(storageKey(name));
+      if (!object) return null;
+      try {
+        if (typeof object.json === "function") return await object.json();
+      } catch {
+        /* Fall through to text parsing for R2-compatible test doubles. */
+      }
+      try {
+        const text = typeof object.text === "function" ? await object.text() : "";
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
+    },
     async putJson(name, value) {
-      return bucket.put([prefix, name].filter(Boolean).join("/"), JSON.stringify(value), {
+      return bucket.put(storageKey(name), JSON.stringify(value), {
         httpMetadata: { contentType: "application/json; charset=utf-8" },
         customMetadata: {
           provider: value?.provider || PLAN_WATCH_PROVIDER,
@@ -727,10 +829,106 @@ function planWatchStore(env = {}) {
       });
     },
     async deleteJson(name) {
-      if (bucket.delete) return bucket.delete([prefix, name].filter(Boolean).join("/"));
+      if (bucket.delete) return bucket.delete(storageKey(name));
       return null;
+    },
+    async listNames(namePrefix = "", limit = 25) {
+      if (!bucket.list) return [];
+      const listPrefix = storageKey(namePrefix);
+      const result = await bucket.list({ prefix: listPrefix, limit });
+      const stripPrefix = prefix ? `${prefix}/` : "";
+      return (result?.objects || [])
+        .map((object) => String(object?.key || ""))
+        .filter(Boolean)
+        .map((key) => key.startsWith(stripPrefix) ? key.slice(stripPrefix.length) : key);
     }
   };
+}
+
+async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
+  const subscriptionId = cleanText(payload?.subscriptionId, 120);
+  if (subscriptionId && store.getJson) {
+    const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
+    if (record?.subscription) return record;
+  }
+  const subscription = normalizeWebPushSubscription(payload?.subscription);
+  if (subscription && store.getJson) {
+    const id = await planWatchSubscriptionId(subscription);
+    const record = await store.getJson(planWatchSubscriptionStorageName(id));
+    if (record?.subscription) return record;
+  }
+  if (!store.listNames || !store.getJson) return null;
+  const names = await store.listNames("subscriptions/", 20);
+  for (const name of names) {
+    const record = await store.getJson(name);
+    if (record?.subscription && !planWatchSubscriptionExpired(record)) return record;
+  }
+  return null;
+}
+
+function planWatchSubscriptionExpired(record) {
+  const expiresAt = timestamp(record?.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+async function sendPlanWatchPush(subscription, env = {}) {
+  const publicKey = configuredPlanWatchVapidPublicKey(env);
+  const privateKey = configuredPlanWatchVapidPrivateKey(env);
+  if (!publicKey || !privateKey) {
+    return { ok: false, status: 0, body: "missing-vapid-key" };
+  }
+  if (!subscription?.endpoint) {
+    return { ok: false, status: 0, body: "missing-subscription-endpoint" };
+  }
+  const headers = await planWatchVapidHeaders(subscription.endpoint, env, publicKey, privateKey);
+  const response = await fetch(subscription.endpoint, {
+    method: "POST",
+    headers: {
+      ...headers,
+      TTL: String(PLAN_WATCH_PUSH_TTL_SECONDS)
+    }
+  });
+  const body = response.ok ? "" : cleanText(await response.text().catch(() => ""), 240);
+  return {
+    ok: response.ok,
+    status: response.status,
+    body
+  };
+}
+
+async function planWatchVapidHeaders(endpoint, env, publicKey, privateJwk) {
+  const endpointUrl = new URL(endpoint);
+  const jwt = await planWatchVapidJwt({
+    audience: endpointUrl.origin,
+    subject: configuredPlanWatchVapidSubject(env),
+    privateJwk
+  });
+  return {
+    Authorization: `vapid t=${jwt}, k=${publicKey}`
+  };
+}
+
+async function planWatchVapidJwt({ audience, subject, privateJwk }) {
+  const header = base64UrlEncodeJson({ typ: "JWT", alg: "ES256" });
+  const body = base64UrlEncodeJson({
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60,
+    sub: subject
+  });
+  const input = `${header}.${body}`;
+  const privateKey = await crypto.subtle.importKey(
+    "jwk",
+    privateJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    new TextEncoder().encode(input)
+  );
+  return `${input}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
 }
 
 function normalizeWebPushSubscription(value) {
@@ -837,6 +1035,29 @@ async function sha256Hex(value) {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 48);
+}
+
+function base64UrlEncodeJson(value) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function safeUrlHost(value) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "";
+  }
 }
 
 function cleanStorageName(value) {
@@ -1265,7 +1486,7 @@ function jsonResponse(body, options = {}) {
   headers.set("Cache-Control", "no-store");
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  headers.set("Access-Control-Allow-Headers", "Content-Type, Accept");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Nearcast-Test-Token");
   return new Response(options.status === 204 ? null : JSON.stringify(body, null, 2), {
     status: options.status || 200,
     headers
