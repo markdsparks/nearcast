@@ -298,6 +298,7 @@ const planWatchState = {
   pushConfig: null,
   pushConfigPromise: null,
   pushLastSyncAt: 0,
+  pushLastSyncResult: null,
   pushSyncPromise: null
 };
 let planWatchFocusMemoryId = "";
@@ -734,7 +735,11 @@ async function unregisterPlanWatchPushSubscription(options = {}) {
   try {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
-    if (!subscription) return { ok: true, reason: "no-subscription" };
+    if (!subscription) {
+      const noSubscription = { ok: true, reason: "no-subscription" };
+      planWatchState.pushLastSyncResult = noSubscription;
+      return noSubscription;
+    }
     const config = await planWatchPushConfig();
     const endpoint = config?.push?.unregisterUrl || PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT;
     const result = await postPlanWatchPush(endpoint, {
@@ -745,9 +750,12 @@ async function unregisterPlanWatchPushSubscription(options = {}) {
       reason: options.reason || "disabled"
     }).catch((error) => ({ ok: false, reason: cleanError(error) || "unregister-failed" }));
     if (options.unsubscribe !== false) await subscription.unsubscribe().catch(() => false);
+    planWatchState.pushLastSyncResult = result;
     return result;
   } catch (error) {
-    return { ok: false, reason: cleanError(error) || "unregister-failed" };
+    const result = { ok: false, reason: cleanError(error) || "unregister-failed" };
+    planWatchState.pushLastSyncResult = result;
+    return result;
   }
 }
 
@@ -781,10 +789,23 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
       client: planWatchPushClient(),
       reason: options.reason || "sync"
     });
-  })().catch((error) => ({ ok: false, reason: cleanError(error) || "sync-failed" })).finally(() => {
+  })().then((result) => {
+    planWatchState.pushLastSyncResult = result;
+    return result;
+  }).catch((error) => {
+    const result = { ok: false, reason: cleanError(error) || "sync-failed" };
+    planWatchState.pushLastSyncResult = result;
+    return result;
+  }).finally(() => {
     planWatchState.pushSyncPromise = null;
   });
   return planWatchState.pushSyncPromise;
+}
+
+async function syncPlanWatchNotificationsNow() {
+  const result = await syncPlanWatchNotificationSubscription({ force: true, reason: "manual-sync" });
+  renderGlobalMemorySheet();
+  return result;
 }
 
 function planWatchNotificationPlanCopy(memoryId) {
@@ -1066,6 +1087,240 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
           </div>
         `).join("")}
       </dl>
+    </section>
+  `;
+}
+
+function planWatchNotificationHubStatus(watchItems) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const supported = planWatchNotificationsSupported();
+  const permission = planWatchNotificationPermission();
+  const enabled = planWatchNotificationsEnabled();
+  const planTargets = planWatchNotificationEnabledCount(active);
+  const placeTargets = placeWatchNotificationSelectedCount();
+  const placeRequested = placeWatchNotificationsRequested();
+  const totalTargets = planTargets + (placeRequested ? placeTargets : 0);
+  if (!supported) {
+    return {
+      tone: "pending",
+      eyebrow: "In-app only",
+      title: "Watching works here, device alerts do not",
+      body: "Nearcast can still show plan and saved-place changes when you open the app. This browser cannot receive push notifications.",
+      primary: "",
+      primaryLabel: ""
+    };
+  }
+  if (permission === "denied") {
+    return {
+      tone: "caution",
+      eyebrow: "Blocked",
+      title: "Notifications are blocked",
+      body: "Nearcast still watches in the app. Change browser notification settings if you want device alerts.",
+      primary: "",
+      primaryLabel: ""
+    };
+  }
+  if (enabled && totalTargets) {
+    return {
+      tone: "good",
+      eyebrow: "Ready",
+      title: "Nearcast can interrupt you when it matters",
+      body: "Only selected plans and saved places can notify this device. Routine forecast noise stays in the app.",
+      primary: "pause",
+      primaryLabel: "Pause all"
+    };
+  }
+  if (enabled) {
+    return {
+      tone: "neutral",
+      eyebrow: "Ready",
+      title: "Choose what can notify you",
+      body: "Device notifications are allowed. Select the plans or saved places that should be allowed to interrupt.",
+      primary: "",
+      primaryLabel: ""
+    };
+  }
+  if (totalTargets) {
+    return {
+      tone: "neutral",
+      eyebrow: "Paused",
+      title: "Selected watches are paused",
+      body: "Your choices are kept here. Resume notifications when you want this device to receive alerts.",
+      primary: "resume",
+      primaryLabel: "Resume"
+    };
+  }
+  return {
+    tone: "neutral",
+    eyebrow: "Optional",
+    title: "Notify only for meaningful changes",
+    body: "Enable device notifications, then choose exactly which plans and saved places can interrupt you.",
+    primary: "enable",
+    primaryLabel: "Enable"
+  };
+}
+
+function planWatchSyncResultText() {
+  const result = planWatchState.pushLastSyncResult;
+  if (!result) {
+    const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
+    return lastSync ? `Checked ${lastSync}` : "Not synced yet";
+  }
+  if (result.ok === false) {
+    return `Needs attention: ${result.reason || result.state || "sync failed"}`;
+  }
+  if (result.state === "stored") {
+    const planCount = Number(result.planCount || 0);
+    const placeCount = Number(result.placeCount || 0);
+    const parts = [];
+    if (planCount) parts.push(`${planCount} ${planCount === 1 ? "plan" : "plans"}`);
+    if (placeCount) parts.push(`${placeCount} ${placeCount === 1 ? "place" : "places"}`);
+    return parts.length ? `Synced ${parts.join(" + ")}` : "Synced";
+  }
+  if (result.state === "deleted" || result.reason === "no-enabled-watches" || result.reason === "notifications-disabled") {
+    return "Paused on server";
+  }
+  return result.reason || result.state || "Synced";
+}
+
+function planWatchNotificationHubStats(watchItems) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const enabledPlans = planWatchNotificationEnabledCount(active);
+  const selectedPlaces = placeWatchNotificationSelectedCount();
+  const savedPlaces = placeWatchSavedPlaces().length;
+  const permission = planWatchNotificationPermission();
+  const device = planWatchNotificationsEnabled()
+    ? "Allowed"
+    : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "Unsupported";
+  const rows = [
+    { label: "Device", value: device },
+    {
+      label: "Plans",
+      value: active.length
+        ? `${enabledPlans}/${active.length} selected`
+        : "None active"
+    },
+    {
+      label: "Saved places",
+      value: savedPlaces
+        ? placeWatchNotificationsRequested()
+          ? `${selectedPlaces}/${Math.min(savedPlaces, PLACE_WATCH_MAX_SYNC_PLACES)} selected`
+          : "Off"
+        : "None saved"
+    },
+    { label: "Sync", value: planWatchSyncResultText() }
+  ];
+  const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
+  if (lastSignal) rows.push({ label: "Last match", value: lastSignal });
+  return rows;
+}
+
+function planWatchNotificationRuleRows() {
+  return [
+    { label: "Alerts", value: "Warning or watch overlaps a plan" },
+    { label: "Plans", value: "Rain, heat, wind, storms, or score changes meaningfully" },
+    { label: "Saved places", value: "Today or tomorrow gets stormier, wetter, hotter, windier, or clears up" }
+  ];
+}
+
+function renderPlanWatchNotificationHubStats(watchItems) {
+  const rows = planWatchNotificationHubStats(watchItems);
+  return `
+    <dl class="watch-notify-stats">
+      ${rows.map((row) => `
+        <div>
+          <dt>${escapeHtml(row.label)}</dt>
+          <dd>${escapeHtml(row.value)}</dd>
+        </div>
+      `).join("")}
+    </dl>
+  `;
+}
+
+function renderPlanWatchNotificationRules() {
+  return `
+    <div class="watch-notify-rules">
+      <span>What can interrupt you</span>
+      <div>
+        ${planWatchNotificationRuleRows().map((row) => `
+          <small><b>${escapeHtml(row.label)}</b>${escapeHtml(row.value)}</small>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderPlanWatchNotificationHubActions(status) {
+  const buttons = [];
+  if (status.primaryLabel) {
+    buttons.push(`<button class="is-primary" type="button" data-watch-notify>${escapeHtml(status.primaryLabel)}</button>`);
+  }
+  if (planWatchNotificationsEnabled()) {
+    buttons.push(`<button type="button" data-watch-sync>Sync now</button>`);
+  }
+  if (!buttons.length) return "";
+  return `<div class="watch-notify-actions">${buttons.join("")}</div>`;
+}
+
+function renderPlanWatchNotificationTargets(watchItems, options = {}) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const savedPlaces = placeWatchSavedPlaces();
+  if (!active.length && !savedPlaces.length) return "";
+  const placeCopy = savedPlaceWatchNotificationPanelCopy();
+  const placeRequested = placeWatchNotificationsRequested();
+  return `
+    <div class="watch-notify-targets">
+      ${active.length ? `
+        <div class="watch-notify-target-group">
+          <div class="watch-notify-target-title">
+            <span>Plans</span>
+            <small>${escapeHtml(planWatchNotificationEnabledCount(active))}/${active.length} selected</small>
+          </div>
+          <div class="plan-watch-manage-list">
+            ${active.map(renderPlanWatchManagePlanItem).join("")}
+          </div>
+        </div>
+      ` : ""}
+      ${savedPlaces.length ? `
+        <div class="watch-notify-target-group">
+          <div class="watch-notify-target-title">
+            <span>Saved places</span>
+            <small>${escapeHtml(placeWatchNotificationSelectedCount())}/${PLACE_WATCH_MAX_SYNC_PLACES} selected</small>
+          </div>
+          ${placeRequested ? `
+            <div class="plan-watch-manage-list">
+              ${savedPlaces.map(renderPlanWatchManagePlaceItem).join("")}
+            </div>
+          ` : `
+            <div class="plan-watch-manage-empty">
+              <span>${escapeHtml(placeCopy?.body || "Get a heads-up when today or tomorrow changes meaningfully.")}</span>
+              ${placeCopy?.button ? `<button type="button" data-place-watch-notify>${escapeHtml(placeCopy.button)}</button>` : ""}
+            </div>
+          `}
+        </div>
+      ` : ""}
+      ${options.compact ? "" : `<small class="watch-notify-note">You can change these at any time. Pausing notifications does not delete plans or saved places.</small>`}
+    </div>
+  `;
+}
+
+function renderPlanWatchNotificationManagementSurface(watchItems, options = {}) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const savedPlaces = placeWatchSavedPlaces();
+  if (!active.length && !savedPlaces.length) return "";
+  const status = planWatchNotificationHubStatus(active);
+  const compactClass = options.compact ? " is-compact" : "";
+  return `
+    <section class="watch-notify-hub${compactClass} is-${escapeHtml(status.tone)}">
+      <div class="watch-notify-head">
+        <span>${escapeHtml(status.eyebrow)}</span>
+        <strong>${escapeHtml(status.title)}</strong>
+        <small>${escapeHtml(status.body)}</small>
+      </div>
+      ${renderPlanWatchNotificationHubActions(status)}
+      ${renderPlanWatchNotificationHubStats(active)}
+      ${renderPlanWatchNotificationRules()}
+      ${renderPlanWatchNotificationTargets(active, options)}
     </section>
   `;
 }
@@ -4434,9 +4689,7 @@ function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past
   const otherUpcoming = upcoming.filter((item) => item.memory.id !== focusedItem.memory.id);
   return `
     ${renderFocusedPlanWatchHero(focusedItem, focusedWatch)}
-    ${renderPlanWatchNotificationPanel(watchItems, { compact: true })}
-    ${renderPlanWatchActivityPanel(watchItems, { compact: true })}
-    ${renderPlanWatchManagementPanel(watchItems, { compact: true })}
+    ${renderPlanWatchNotificationManagementSurface(watchItems, { compact: true })}
     ${renderGlobalMemoryGroup("Other watched plans", otherUpcoming, {
       sub: otherUpcoming.length === 1 ? "1 upcoming" : `${otherUpcoming.length} upcoming`,
       watchById
@@ -4492,7 +4745,7 @@ function renderGlobalMemorySheet() {
 
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
-      ${renderPlanWatchManagementPanel(watchItems)}
+      ${renderPlanWatchNotificationManagementSurface(watchItems)}
       <section class="memory-empty-state">
         <strong>Nothing being watched yet</strong>
         <p>Ask the Planner about a real plan, then save it when the answer looks right.</p>
@@ -4503,9 +4756,7 @@ function renderGlobalMemorySheet() {
   }
 
   els.memorySheetBody.innerHTML =
-    renderPlanWatchNotificationPanel(watchItems) +
-    renderPlanWatchActivityPanel(watchItems) +
-    renderPlanWatchManagementPanel(watchItems) +
+    renderPlanWatchNotificationManagementSurface(watchItems) +
     renderGlobalMemoryGroup("This place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById
