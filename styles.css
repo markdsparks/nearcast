@@ -4446,6 +4446,119 @@ h2 {
   font-weight: 920;
   line-height: 1.2;
 }
+.plan-watch-manage {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(54, 76, 98, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(91, 141, 220, 0.05)),
+    rgba(255, 255, 255, 0.035);
+}
+.plan-watch-manage.is-compact {
+  gap: 10px;
+  padding: 10px 11px;
+}
+.plan-watch-manage-head,
+.plan-watch-manage-group {
+  display: grid;
+  gap: 6px;
+}
+.plan-watch-manage-head span,
+.plan-watch-manage-title span {
+  color: var(--blue);
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+.plan-watch-manage-head strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 950;
+  line-height: 1.15;
+}
+.plan-watch-manage-head small,
+.plan-watch-manage-title small,
+.plan-watch-manage-empty span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+  line-height: 1.3;
+}
+.plan-watch-manage-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.plan-watch-manage-list {
+  display: grid;
+  gap: 7px;
+}
+.plan-watch-manage-item,
+.plan-watch-manage-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(54, 76, 98, 0.10);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.plan-watch-manage-item span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.plan-watch-manage-item strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 920;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-watch-manage-item small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 740;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-watch-manage button {
+  min-height: 31px;
+  padding: 6px 10px;
+  border: 1px solid rgba(53, 111, 183, 0.25);
+  border-radius: 999px;
+  background: rgba(53, 111, 183, 0.10);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 920;
+  white-space: nowrap;
+}
+.plan-watch-manage button[aria-pressed="true"] {
+  border-color: rgba(52, 125, 98, 0.34);
+  background: rgba(52, 125, 98, 0.13);
+}
+.plan-watch-manage button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.plan-watch-manage button:hover,
+.plan-watch-manage button:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
 .past-plan-disclosure {
   display: grid;
   gap: 8px;
@@ -5477,6 +5590,16 @@ h2 {
 
   .plan-watch-activity-list {
     grid-template-columns: 1fr;
+  }
+
+  .plan-watch-manage-item,
+  .plan-watch-manage-empty {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .plan-watch-manage button {
+    justify-self: start;
   }
 
   .global-memory-main em {

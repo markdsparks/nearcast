@@ -522,6 +522,7 @@ function togglePlaceWatchNotificationPlace(placeId) {
     selectedIds: Array.from(next)
   });
   if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
   syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-selection" });
 }
 
@@ -870,6 +871,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
 async function requestPlaceWatchNotifications() {
   if (!planWatchNotificationsSupported()) {
     if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+    if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
     return;
   }
   const prefs = readPlaceWatchNotificationPlaces();
@@ -879,6 +881,7 @@ async function requestPlaceWatchNotifications() {
       selectedIds: placeWatchNotificationSelectedIds()
     });
     if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+    if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
     syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-disabled" });
     return;
   }
@@ -896,6 +899,7 @@ async function requestPlaceWatchNotifications() {
     selectedIds
   });
   if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
   if (permission === "granted") {
     syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-enabled" });
   }
@@ -1062,6 +1066,98 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
           </div>
         `).join("")}
       </dl>
+    </section>
+  `;
+}
+
+function renderPlanWatchManagePlanItem(watch) {
+  if (!watch?.memory?.id) return "";
+  const id = escapeHtml(watch.memory.id);
+  const copy = planWatchNotificationPlanCopy(watch.memory.id);
+  return `
+    <div class="plan-watch-manage-item is-${escapeHtml(watch.tone || "pending")}">
+      <span>
+        <strong>${escapeHtml(planMemoryTitle(watch.memory))}</strong>
+        <small>${escapeHtml(planWatchMetaText(watch.memory, watch))}</small>
+      </span>
+      <button
+        type="button"
+        data-watch-notify="${id}"
+        aria-pressed="${copy.pressed ? "true" : "false"}"
+        aria-label="${escapeHtml(copy.aria)}"
+        ${copy.disabled ? "disabled" : ""}
+      >${escapeHtml(copy.label)}</button>
+    </div>
+  `;
+}
+
+function renderPlanWatchManagePlaceItem(place) {
+  if (!place?.id) return "";
+  const copy = placeWatchNotificationPlaceCopy(place.id);
+  const disabled = copy?.disabled ? " disabled" : "";
+  const pressed = copy?.pressed ? "true" : "false";
+  return `
+    <div class="plan-watch-manage-item">
+      <span>
+        <strong>${escapeHtml(placeLabel(place))}</strong>
+        <small>${escapeHtml(formatPlaceResultMeta(place) || "Saved place")}</small>
+      </span>
+      ${copy ? `
+        <button
+          type="button"
+          data-place-watch-toggle="${escapeHtml(place.id)}"
+          aria-pressed="${pressed}"
+          aria-label="${escapeHtml(copy.aria)}"
+          title="${escapeHtml(copy.title || copy.aria)}"${disabled}
+        >${escapeHtml(copy.label)}</button>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderPlanWatchManagementPanel(watchItems, options = {}) {
+  const active = (watchItems || []).filter((watch) => !watch?.isPast);
+  const savedPlaces = placeWatchSavedPlaces();
+  if (!active.length && !savedPlaces.length) return "";
+  const compactClass = options.compact ? " is-compact" : "";
+  const placeCopy = savedPlaceWatchNotificationPanelCopy();
+  const placeRequested = placeWatchNotificationsRequested();
+  return `
+    <section class="plan-watch-manage${compactClass}">
+      <div class="plan-watch-manage-head">
+        <span>Watching controls</span>
+        <strong>Choose what can notify you</strong>
+        <small>Plans and saved places stay local unless notifications are enabled for them.</small>
+      </div>
+      ${active.length ? `
+        <div class="plan-watch-manage-group">
+          <div class="plan-watch-manage-title">
+            <span>Plans</span>
+            <small>${escapeHtml(planWatchNotificationEnabledCount(active) || 0)} selected</small>
+          </div>
+          <div class="plan-watch-manage-list">
+            ${active.map(renderPlanWatchManagePlanItem).join("")}
+          </div>
+        </div>
+      ` : ""}
+      ${savedPlaces.length ? `
+        <div class="plan-watch-manage-group">
+          <div class="plan-watch-manage-title">
+            <span>Saved places</span>
+            <small>${escapeHtml(placeWatchNotificationSelectedCount())}/${PLACE_WATCH_MAX_SYNC_PLACES} selected</small>
+          </div>
+          ${placeRequested ? `
+            <div class="plan-watch-manage-list">
+              ${savedPlaces.map(renderPlanWatchManagePlaceItem).join("")}
+            </div>
+          ` : `
+            <div class="plan-watch-manage-empty">
+              <span>${escapeHtml(placeCopy?.body || "Get a heads-up when today or tomorrow changes meaningfully.")}</span>
+              ${placeCopy?.button ? `<button type="button" data-place-watch-notify>${escapeHtml(placeCopy.button)}</button>` : ""}
+            </div>
+          `}
+        </div>
+      ` : ""}
     </section>
   `;
 }
@@ -4340,6 +4436,7 @@ function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past
     ${renderFocusedPlanWatchHero(focusedItem, focusedWatch)}
     ${renderPlanWatchNotificationPanel(watchItems, { compact: true })}
     ${renderPlanWatchActivityPanel(watchItems, { compact: true })}
+    ${renderPlanWatchManagementPanel(watchItems, { compact: true })}
     ${renderGlobalMemoryGroup("Other watched plans", otherUpcoming, {
       sub: otherUpcoming.length === 1 ? "1 upcoming" : `${otherUpcoming.length} upcoming`,
       watchById
@@ -4395,6 +4492,7 @@ function renderGlobalMemorySheet() {
 
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
+      ${renderPlanWatchManagementPanel(watchItems)}
       <section class="memory-empty-state">
         <strong>Nothing being watched yet</strong>
         <p>Ask the Planner about a real plan, then save it when the answer looks right.</p>
@@ -4407,6 +4505,7 @@ function renderGlobalMemorySheet() {
   els.memorySheetBody.innerHTML =
     renderPlanWatchNotificationPanel(watchItems) +
     renderPlanWatchActivityPanel(watchItems) +
+    renderPlanWatchManagementPanel(watchItems) +
     renderGlobalMemoryGroup("This place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById
