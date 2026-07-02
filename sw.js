@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30136";
-const ASSET_VERSION = "3.0.136";
+const CACHE = "nearcast-v30137";
+const ASSET_VERSION = "3.0.137";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -123,6 +123,40 @@ self.addEventListener("fetch", e => {
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );
+});
+
+function pushNotificationPayload(data) {
+  if (!data) return {};
+  try {
+    const text = data.text();
+    if (!text) return {};
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" ? parsed : { body: text };
+    } catch {
+      return { body: text };
+    }
+  } catch {
+    return {};
+  }
+}
+
+self.addEventListener("push", event => {
+  const payload = pushNotificationPayload(event.data);
+  const title = payload.title || "Nearcast";
+  const options = {
+    body: payload.body || "A watched plan changed.",
+    tag: payload.tag || "nearcast-plan-watch",
+    renotify: Boolean(payload.renotify),
+    icon: payload.icon || `${BASE}icons/icon-192.png`,
+    badge: payload.badge || `${BASE}icons/icon-192.png`,
+    data: {
+      url: payload.url || BASE,
+      memoryId: payload.memoryId || "",
+      source: payload.source || "plan-watch-push"
+    }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", event => {

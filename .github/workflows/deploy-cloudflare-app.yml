@@ -51,6 +51,14 @@ jobs:
             npx --yes wrangler r2 bucket create nearcast-radar-state
           fi
 
+      - name: Ensure private plan watch state bucket
+        run: |
+          if npx --yes wrangler r2 bucket list | grep -q 'nearcast-plan-watch-state'; then
+            echo "Plan watch bucket already exists."
+          else
+            npx --yes wrangler r2 bucket create nearcast-plan-watch-state
+          fi
+
       - name: Remove public preview request-state objects
         run: |
           npx --yes wrangler r2 object delete 'nearcast-radar/radar/mrms/request-state/radar-generation:v1:auto:radar:35.00:-90.00:z10.json' --remote --force || true

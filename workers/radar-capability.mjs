@@ -7,6 +7,10 @@ import {
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
 const CAPABILITY_REQUEST_PROVIDER = "nearcast-radar-capability-request";
 const CAPABILITY_ENDPOINT_PATH = "/api/radar/capability";
+const PLAN_WATCH_PROVIDER = "nearcast-plan-watch-notifications";
+const PLAN_WATCH_CONFIG_ENDPOINT_PATH = "/api/watch/notifications/config";
+const PLAN_WATCH_REGISTER_ENDPOINT_PATH = "/api/watch/notifications/register";
+const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
@@ -14,7 +18,10 @@ const RADAR_GENERATION_ACCEPT_REQUESTS_ENV = "RADAR_GENERATION_ACCEPT_REQUESTS";
 const RADAR_GENERATION_RUNNER_MODE_ENV = "RADAR_GENERATION_RUNNER_MODE";
 const RADAR_GENERATION_POLL_AFTER_SECONDS_ENV = "RADAR_GENERATION_POLL_AFTER_SECONDS";
 const RADAR_GENERATION_REQUESTS_R2_PREFIX_ENV = "RADAR_GENERATION_REQUESTS_R2_PREFIX";
+const PLAN_WATCH_R2_PREFIX_ENV = "PLAN_WATCH_R2_PREFIX";
+const PLAN_WATCH_VAPID_PUBLIC_KEY_ENV = "PLAN_WATCH_VAPID_PUBLIC_KEY";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
+const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
 const GENERATION_DEDUPE_TTL_SECONDS = 8 * 60;
 const GENERATION_BUDGET_WINDOW_SECONDS = 60 * 60;
 const GENERATION_BUDGET_EXPIRATION_SECONDS = GENERATION_BUDGET_WINDOW_SECONDS + 10 * 60;
@@ -28,12 +35,23 @@ const ENHANCED_MIN_ZOOM_GRACE = 0.001;
 const ENHANCED_MIN_VIEWPORT_ZOOM = 7.5;
 const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
+const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 40;
+const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
     const url = new URL(request.url);
     if (url.pathname === CAPABILITY_ENDPOINT_PATH) {
       return handleRadarCapabilityRequest(request, env, ctx);
+    }
+    if (url.pathname === PLAN_WATCH_CONFIG_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationConfigRequest(request, env);
+    }
+    if (url.pathname === PLAN_WATCH_REGISTER_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationRegisterRequest(request, env);
+    }
+    if (url.pathname === PLAN_WATCH_UNREGISTER_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationUnregisterRequest(request, env);
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -57,6 +75,105 @@ export async function handleRadarCapabilityRequest(request, env = {}, ctx = {}) 
     : capabilityUnavailable(base, indexResult);
   capability.generation = await generationState(capability, payload, env, ctx);
   return jsonResponse(capability);
+}
+
+export async function handlePlanWatchNotificationConfigRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const publicKey = configuredPlanWatchVapidPublicKey(env);
+  const store = planWatchStore(env);
+  return jsonResponse({
+    provider: PLAN_WATCH_PROVIDER,
+    version: 1,
+    checkedAt: new Date().toISOString(),
+    push: {
+      state: publicKey ? "ready" : "missing-vapid-key",
+      vapidPublicKey: publicKey,
+      registerUrl: PLAN_WATCH_REGISTER_ENDPOINT_PATH,
+      unregisterUrl: PLAN_WATCH_UNREGISTER_ENDPOINT_PATH
+    },
+    storage: {
+      state: store ? "ready" : "unavailable",
+      kind: store?.kind || ""
+    }
+  });
+}
+
+export async function handlePlanWatchNotificationRegisterRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const payload = await readJsonRequest(request);
+  const subscription = normalizeWebPushSubscription(payload.subscription);
+  if (!subscription) {
+    return jsonResponse({ ok: false, error: "invalid-subscription" }, { status: 400 });
+  }
+  const store = planWatchStore(env);
+  if (!store) {
+    return jsonResponse({
+      ok: false,
+      provider: PLAN_WATCH_PROVIDER,
+      state: "not-stored",
+      reason: "plan-watch-store-unavailable"
+    }, { status: 202 });
+  }
+
+  const subscriptionId = await planWatchSubscriptionId(subscription);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PLAN_WATCH_SUBSCRIPTION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const record = {
+    provider: PLAN_WATCH_PROVIDER,
+    version: 1,
+    subscriptionId,
+    platform: normalizePlatform(payload.platform),
+    client: normalizePlanWatchClient(payload.client),
+    subscription,
+    plans: normalizePlanWatchPlans(payload.plans),
+    registeredAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    expiresAt
+  };
+  await store.putJson(planWatchSubscriptionStorageName(subscriptionId), record);
+  return jsonResponse({
+    ok: true,
+    provider: PLAN_WATCH_PROVIDER,
+    state: "stored",
+    subscriptionId,
+    planCount: record.plans.length,
+    expiresAt
+  });
+}
+
+export async function handlePlanWatchNotificationUnregisterRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const payload = await readJsonRequest(request);
+  const subscription = normalizeWebPushSubscription(payload.subscription);
+  const subscriptionId = String(payload.subscriptionId || (subscription ? await planWatchSubscriptionId(subscription) : "")).trim();
+  if (!subscriptionId) {
+    return jsonResponse({ ok: false, error: "missing-subscription" }, { status: 400 });
+  }
+  const store = planWatchStore(env);
+  if (!store) {
+    return jsonResponse({
+      ok: false,
+      provider: PLAN_WATCH_PROVIDER,
+      state: "not-deleted",
+      reason: "plan-watch-store-unavailable"
+    }, { status: 202 });
+  }
+  await store.deleteJson(planWatchSubscriptionStorageName(subscriptionId));
+  return jsonResponse({
+    ok: true,
+    provider: PLAN_WATCH_PROVIDER,
+    state: "deleted",
+    subscriptionId
+  });
 }
 
 async function readJsonRequest(request) {
@@ -589,6 +706,157 @@ function r2GenerationRequestStore(bucket, env = {}) {
   };
 }
 
+function configuredPlanWatchVapidPublicKey(env = {}) {
+  return String(env?.[PLAN_WATCH_VAPID_PUBLIC_KEY_ENV] || "").trim();
+}
+
+function planWatchStore(env = {}) {
+  const bucket = env?.PLAN_WATCH_R2 || env?.RADAR_GENERATION_REQUESTS_R2;
+  if (!bucket?.put) return null;
+  const prefix = cleanStoragePrefix(env?.[PLAN_WATCH_R2_PREFIX_ENV] || DEFAULT_PLAN_WATCH_R2_PREFIX);
+  return {
+    kind: "r2",
+    async putJson(name, value) {
+      return bucket.put([prefix, name].filter(Boolean).join("/"), JSON.stringify(value), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+        customMetadata: {
+          provider: value?.provider || PLAN_WATCH_PROVIDER,
+          subscriptionId: value?.subscriptionId || "",
+          expiresAt: value?.expiresAt || ""
+        }
+      });
+    },
+    async deleteJson(name) {
+      if (bucket.delete) return bucket.delete([prefix, name].filter(Boolean).join("/"));
+      return null;
+    }
+  };
+}
+
+function normalizeWebPushSubscription(value) {
+  if (!value || typeof value !== "object") return null;
+  const endpoint = String(value.endpoint || "").trim();
+  if (!/^https:\/\/.+/i.test(endpoint)) return null;
+  const keys = value.keys && typeof value.keys === "object" ? value.keys : {};
+  const p256dh = String(keys.p256dh || "").trim();
+  const auth = String(keys.auth || "").trim();
+  if (!p256dh || !auth) return null;
+  return {
+    endpoint,
+    expirationTime: value.expirationTime || null,
+    keys: { p256dh, auth }
+  };
+}
+
+function normalizePlatform(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    kind: cleanToken(source.kind || "web-push", 32),
+    userAgent: cleanText(source.userAgent, 240),
+    standalone: Boolean(source.standalone),
+    displayMode: cleanToken(source.displayMode || "", 32)
+  };
+}
+
+function normalizePlanWatchClient(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    appVersion: cleanText(source.appVersion, 24),
+    locale: cleanText(source.locale, 48),
+    timezone: cleanText(source.timezone, 80),
+    unit: ["fahrenheit", "celsius"].includes(source.unit) ? source.unit : ""
+  };
+}
+
+function normalizePlanWatchPlans(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION)
+    .map(normalizePlanWatchPlan)
+    .filter(Boolean);
+}
+
+function normalizePlanWatchPlan(value) {
+  if (!value || typeof value !== "object") return null;
+  const id = cleanText(value.id, 96);
+  const targetDate = cleanText(value.targetDate, 16);
+  if (!id || !targetDate) return null;
+  const place = normalizePlanWatchPlace(value.place);
+  if (!place) return null;
+  return {
+    id,
+    title: cleanText(value.title, 120),
+    targetDate,
+    startHour: finiteNumber(value.startHour, null),
+    endHour: finiteNumber(value.endHour, null),
+    place,
+    lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
+  };
+}
+
+function normalizePlanWatchPlace(value = {}) {
+  if (!value || typeof value !== "object") return null;
+  const latitude = finiteNumber(value.latitude, null);
+  const longitude = normalizeLongitude(value.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    name: cleanText(value.name, 120),
+    admin1: cleanText(value.admin1, 120),
+    country: cleanText(value.country, 120),
+    countryCode: cleanToken(value.countryCode || value.country_code || "", 8),
+    latitude,
+    longitude
+  };
+}
+
+function normalizePlanWatchLastKnown(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    eventKey: cleanText(source.eventKey, 240),
+    signal: cleanToken(source.signal, 64),
+    tone: cleanToken(source.tone, 32),
+    label: cleanText(source.label, 120),
+    reason: cleanText(source.reason, 240),
+    body: cleanText(source.body, 240),
+    checkedAt: cleanText(source.checkedAt, 40)
+  };
+}
+
+function planWatchSubscriptionStorageName(subscriptionId) {
+  return `subscriptions/${cleanStorageName(subscriptionId)}.json`;
+}
+
+async function planWatchSubscriptionId(subscription) {
+  return `web-${await sha256Hex(subscription.endpoint)}`;
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(String(value || ""));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 48);
+}
+
+function cleanStorageName(value) {
+  return String(value || "item")
+    .replace(/[\\/]+/g, "_")
+    .replace(/[^a-zA-Z0-9._:-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "item";
+}
+
+function cleanText(value, maxLength) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanToken(value, maxLength) {
+  return cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function generationRequestStorageKey(prefix, key) {
   const name = String(key || "request")
     .replace(/[\\/]+/g, "_")
@@ -996,7 +1264,7 @@ function jsonResponse(body, options = {}) {
   headers.set("Content-Type", "application/json; charset=utf-8");
   headers.set("Cache-Control", "no-store");
   headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Content-Type, Accept");
   return new Response(options.status === 204 ? null : JSON.stringify(body, null, 2), {
     status: options.status || 200,

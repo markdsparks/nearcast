@@ -13,6 +13,10 @@ bucket_name = "nearcast-radar-state"
 binding = "RADAR_GENERATION_PLANS_R2"
 bucket_name = "nearcast-radar-state"
 
+[[r2_buckets]]
+binding = "PLAN_WATCH_R2"
+bucket_name = "nearcast-plan-watch-state"
+
 [[queues.producers]]
 binding = "RADAR_GENERATION_QUEUE"
 queue = "nearcast-radar-generation-preview"
@@ -37,3 +41,4 @@ RADAR_GENERATION_POLL_AFTER_SECONDS = "20"
 RADAR_GENERATION_GLOBAL_HOURLY_LIMIT = "20"
 RADAR_GENERATION_VIEWPORT_HOURLY_LIMIT = "2"
 RADAR_GENERATION_MAX_CANDIDATE_TILES = "220"
+PLAN_WATCH_R2_PREFIX = "plan-watch"

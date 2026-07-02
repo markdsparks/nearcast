@@ -281,6 +281,10 @@ const PLAN_WATCH_NOTIFICATION_PLANS_KEY = "nearcast-plan-watch-notification-plan
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
 const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
+const PLAN_WATCH_PUSH_CONFIG_ENDPOINT = "/api/watch/notifications/config";
+const PLAN_WATCH_PUSH_REGISTER_ENDPOINT = "/api/watch/notifications/register";
+const PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT = "/api/watch/notifications/unregister";
+const PLAN_WATCH_PUSH_SYNC_THROTTLE_MS = 30 * 1000;
 
 const planWatchState = {
   data: {},
@@ -288,7 +292,11 @@ const planWatchState = {
   loading: {},
   errors: {},
   lastFetchAt: {},
-  baselineStore: null
+  baselineStore: null,
+  pushConfig: null,
+  pushConfigPromise: null,
+  pushLastSyncAt: 0,
+  pushSyncPromise: null
 };
 let planWatchFocusMemoryId = "";
 
@@ -399,6 +407,208 @@ function planWatchNotificationsEnabled() {
     planWatchNotificationPreference() === "enabled";
 }
 
+function planWatchPushSupported() {
+  return planWatchNotificationsSupported() &&
+    "PushManager" in window &&
+    typeof fetch === "function";
+}
+
+function planWatchEndpoint(path) {
+  try {
+    return new URL(path, window.location.href).toString();
+  } catch {
+    return path;
+  }
+}
+
+async function planWatchPushConfig() {
+  if (planWatchState.pushConfig) return planWatchState.pushConfig;
+  if (planWatchState.pushConfigPromise) return planWatchState.pushConfigPromise;
+  planWatchState.pushConfigPromise = fetch(planWatchEndpoint(PLAN_WATCH_PUSH_CONFIG_ENDPOINT), {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store"
+  }).then(async (response) => {
+    if (!response.ok) throw new Error("Plan watch push config unavailable.");
+    const config = await response.json();
+    planWatchState.pushConfig = config;
+    return config;
+  }).catch((error) => {
+    planWatchState.pushConfig = {
+      provider: "nearcast-plan-watch-notifications",
+      push: { state: "unavailable", reason: cleanError(error) || "config-unavailable" },
+      storage: { state: "unknown" }
+    };
+    return planWatchState.pushConfig;
+  }).finally(() => {
+    planWatchState.pushConfigPromise = null;
+  });
+  return planWatchState.pushConfigPromise;
+}
+
+function planWatchVapidKeyBytes(publicKey) {
+  const value = String(publicKey || "").trim();
+  if (!value) return null;
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+
+async function ensurePlanWatchPushSubscription() {
+  if (!planWatchPushSupported()) return { subscription: null, reason: "push-unsupported" };
+  const config = await planWatchPushConfig();
+  const publicKey = config?.push?.vapidPublicKey || "";
+  if (!publicKey) return { subscription: null, reason: config?.push?.state || "missing-vapid-key" };
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  if (existing) return { subscription: existing, config, reason: "existing-subscription" };
+  const applicationServerKey = planWatchVapidKeyBytes(publicKey);
+  if (!applicationServerKey) return { subscription: null, config, reason: "invalid-vapid-key" };
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey
+  });
+  return { subscription, config, reason: "created-subscription" };
+}
+
+function planWatchNotificationSyncPlans() {
+  const watchById = new Map(currentPlanWatchItems().map((watch) => [watch.memory.id, watch]));
+  return (state.planMemories || [])
+    .filter((memory) => planWatchNotificationPlanEnabled(memory.id))
+    .filter((memory) => !planWatchMemoryIsPast(memory))
+    .map((memory) => planWatchServerPlanFromMemory(memory, watchById.get(memory.id)))
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+function planWatchMemoryIsPast(memory) {
+  if (!memory?.targetDate) return false;
+  const endHour = Number.isFinite(Number(memory.endHour)) ? Number(memory.endHour) : 23.99;
+  const end = new Date(`${memory.targetDate}T${String(Math.floor(endHour)).padStart(2, "0")}:00:00`);
+  if (!Number.isFinite(end.getTime())) return false;
+  return end.getTime() < Date.now() - 60 * 60 * 1000;
+}
+
+function planWatchServerPlanFromMemory(memory, watch = null) {
+  const place = memory?.place;
+  if (!memory?.id || !place) return null;
+  const notification = watch?.notification || (watch ? planWeatherNotificationState(watch) : null);
+  return {
+    id: memory.id,
+    title: planMemoryTitle(memory),
+    targetDate: memory.targetDate || "",
+    startHour: Number(memory.startHour),
+    endHour: Number(memory.endHour),
+    place: {
+      name: place.name || "",
+      admin1: place.admin1 || "",
+      country: place.country || "",
+      countryCode: placeCountryCode(place),
+      latitude: Number(place.latitude),
+      longitude: Number(place.longitude)
+    },
+    lastKnown: {
+      eventKey: watch ? planWatchNotificationEventKey(watch) : "",
+      signal: notification?.signal || watch?.change?.type || watch?.tone || "",
+      tone: watch?.tone || "",
+      label: watch?.label || "",
+      reason: watch?.reason || "",
+      body: notification?.body || watch?.change?.body || "",
+      checkedAt: new Date().toISOString()
+    }
+  };
+}
+
+function planWatchPushPlatform() {
+  const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    navigator.standalone === true;
+  return {
+    kind: "web-push",
+    userAgent: navigator.userAgent || "",
+    standalone,
+    displayMode: standalone ? "standalone" : "browser"
+  };
+}
+
+function planWatchPushClient() {
+  return {
+    appVersion: typeof VERSION === "string" ? VERSION : "",
+    locale: navigator.language || "",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    unit: state.unit || ""
+  };
+}
+
+async function postPlanWatchPush(endpoint, body) {
+  const response = await fetch(planWatchEndpoint(endpoint), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error("Plan watch push sync failed.");
+  return response.json().catch(() => ({}));
+}
+
+async function unregisterPlanWatchPushSubscription(options = {}) {
+  if (!planWatchPushSupported()) return { ok: false, reason: "push-unsupported" };
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return { ok: true, reason: "no-subscription" };
+    const config = await planWatchPushConfig();
+    const endpoint = config?.push?.unregisterUrl || PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT;
+    const result = await postPlanWatchPush(endpoint, {
+      provider: "nearcast-plan-watch-notification-client",
+      version: 1,
+      subscription: subscription.toJSON(),
+      client: planWatchPushClient(),
+      reason: options.reason || "disabled"
+    }).catch((error) => ({ ok: false, reason: cleanError(error) || "unregister-failed" }));
+    if (options.unsubscribe !== false) await subscription.unsubscribe().catch(() => false);
+    return result;
+  } catch (error) {
+    return { ok: false, reason: cleanError(error) || "unregister-failed" };
+  }
+}
+
+async function syncPlanWatchNotificationSubscription(options = {}) {
+  if (!planWatchPushSupported()) return { ok: false, reason: "push-unsupported" };
+  const now = Date.now();
+  if (!options.force && now - planWatchState.pushLastSyncAt < PLAN_WATCH_PUSH_SYNC_THROTTLE_MS) {
+    return { ok: true, reason: "sync-throttled" };
+  }
+  if (planWatchState.pushSyncPromise) return planWatchState.pushSyncPromise;
+  planWatchState.pushSyncPromise = (async () => {
+    planWatchState.pushLastSyncAt = Date.now();
+    if (!planWatchNotificationsEnabled()) {
+      return unregisterPlanWatchPushSubscription({ reason: options.reason || "notifications-disabled" });
+    }
+    const plans = planWatchNotificationSyncPlans();
+    if (!plans.length) {
+      return unregisterPlanWatchPushSubscription({ reason: options.reason || "no-enabled-plans" });
+    }
+    const { subscription, config, reason } = await ensurePlanWatchPushSubscription();
+    if (!subscription) return { ok: false, reason };
+    const endpoint = config?.push?.registerUrl || PLAN_WATCH_PUSH_REGISTER_ENDPOINT;
+    return postPlanWatchPush(endpoint, {
+      provider: "nearcast-plan-watch-notification-client",
+      version: 1,
+      subscription: subscription.toJSON(),
+      plans,
+      platform: planWatchPushPlatform(),
+      client: planWatchPushClient(),
+      reason: options.reason || "sync"
+    });
+  })().catch((error) => ({ ok: false, reason: cleanError(error) || "sync-failed" })).finally(() => {
+    planWatchState.pushSyncPromise = null;
+  });
+  return planWatchState.pushSyncPromise;
+}
+
 function planWatchNotificationPlanCopy(memoryId) {
   const id = String(memoryId || "").trim();
   const supported = planWatchNotificationsSupported();
@@ -453,12 +663,14 @@ async function requestPlanWatchNotifications(memoryId = "") {
     setPlanWatchNotificationPlan(planId, false);
     renderGlobalMemorySheet();
     if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+    syncPlanWatchNotificationSubscription({ force: true, reason: "plan-disabled" });
     return;
   }
   if (!planId && planWatchNotificationsEnabled()) {
     writePlanWatchNotificationPreference("off");
     renderGlobalMemorySheet();
     if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
+    unregisterPlanWatchPushSubscription({ reason: "paused-all" });
     return;
   }
 
@@ -473,6 +685,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
   renderGlobalMemorySheet();
   if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
   if (permission === "granted") {
+    syncPlanWatchNotificationSubscription({ force: true, reason: "permission-granted" });
     maybeSyncPlanWatchNotifications(null, { userInitiated: true });
   }
 }
@@ -2280,6 +2493,7 @@ function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
   savePlanMemories();
   clearPlannerMemoryEdit();
   refreshPlanMemorySurfaces();
+  syncPlanWatchNotificationSubscription({ force: true, reason: "plan-edited" });
   return true;
 }
 
@@ -2294,6 +2508,7 @@ function forgetPlanMemory(id) {
   if (state.planMemories.length !== before) savePlanMemories();
   renderAsk();
   refreshPlanMemorySurfaces();
+  syncPlanWatchNotificationSubscription({ force: true, reason: "plan-forgotten" });
 }
 
 function startPlanMemoryEdit(idOrRow) {
@@ -3851,6 +4066,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
       delete planWatchState.errors[key];
       if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
       maybeSyncPlanWatchNotifications();
+      syncPlanWatchNotificationSubscription({ reason: "watch-forecast-refreshed" });
     }).catch((err) => {
       planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
     }).finally(() => {

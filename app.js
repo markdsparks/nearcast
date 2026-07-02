@@ -1,4 +1,4 @@
-const VERSION = "3.0.136";
+const VERSION = "3.0.137";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -5500,6 +5500,9 @@ function renderForecastPlan(ctx) {
   renderPlanPulse(ctx.data, ctx.place);
   if (typeof refreshPlanWatchForecasts === "function") refreshPlanWatchForecasts();
   if (typeof maybeSyncPlanWatchNotifications === "function") maybeSyncPlanWatchNotifications();
+  if (typeof syncPlanWatchNotificationSubscription === "function") {
+    syncPlanWatchNotificationSubscription({ reason: "forecast-rendered" });
+  }
 }
 
 function renderForecastLists(ctx, lanes) {
