@@ -409,23 +409,131 @@ function readPlaceWatchNotificationPlaces() {
     return parsed && typeof parsed === "object"
       ? {
           enabled: Boolean(parsed.enabled),
+          selectedIds: Array.isArray(parsed.selectedIds)
+            ? cleanPlaceWatchSelectedIds(parsed.selectedIds)
+            : [],
+          hasExplicitSelection: Array.isArray(parsed.selectedIds),
           updatedAt: parsed.updatedAt || ""
         }
-      : { enabled: false, updatedAt: "" };
+      : { enabled: false, selectedIds: [], hasExplicitSelection: false, updatedAt: "" };
   } catch {
-    return { enabled: false, updatedAt: "" };
+    return { enabled: false, selectedIds: [], hasExplicitSelection: false, updatedAt: "" };
   }
 }
 
 function writePlaceWatchNotificationPlaces(value) {
   try {
+    const current = readPlaceWatchNotificationPlaces();
+    const selectedIds = Array.isArray(value?.selectedIds)
+      ? cleanPlaceWatchSelectedIds(value.selectedIds, { filterSaved: true })
+      : cleanPlaceWatchSelectedIds(current.selectedIds, { filterSaved: true });
     localStorage.setItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY, JSON.stringify({
       enabled: Boolean(value?.enabled),
+      selectedIds,
       updatedAt: new Date().toISOString()
     }));
   } catch {
     /* Saved-place notification intent is optional. */
   }
+}
+
+function cleanPlaceWatchSelectedIds(ids, options = {}) {
+  const savedIdSet = options.filterSaved ? placeWatchSavedPlaceIdSet() : null;
+  const clean = [];
+  const seen = new Set();
+  (ids || []).forEach((value) => {
+    const id = String(value || "").trim();
+    if (!id || seen.has(id)) return;
+    if (savedIdSet && !savedIdSet.has(id)) return;
+    seen.add(id);
+    clean.push(id);
+  });
+  return clean.slice(0, PLACE_WATCH_MAX_SYNC_PLACES);
+}
+
+function placeWatchSavedPlaces() {
+  return (typeof state !== "undefined" && Array.isArray(state.savedPlaces))
+    ? state.savedPlaces
+    : [];
+}
+
+function placeWatchSavedPlaceIdSet() {
+  return new Set(placeWatchSavedPlaces().map((place) => String(place?.id || "").trim()).filter(Boolean));
+}
+
+function defaultPlaceWatchSelectedIds() {
+  return placeWatchSavedPlaces()
+    .map((place) => String(place?.id || "").trim())
+    .filter(Boolean)
+    .slice(0, PLACE_WATCH_MAX_SYNC_PLACES);
+}
+
+function placeWatchNotificationSelectedIds() {
+  const prefs = readPlaceWatchNotificationPlaces();
+  if (!prefs.enabled) return [];
+  if (prefs.hasExplicitSelection) {
+    return cleanPlaceWatchSelectedIds(prefs.selectedIds, { filterSaved: true });
+  }
+  return defaultPlaceWatchSelectedIds();
+}
+
+function placeWatchNotificationSelectedCount() {
+  return placeWatchNotificationSelectedIds().length;
+}
+
+function placeWatchNotificationPlaceEnabled(placeId) {
+  const id = String(placeId || "").trim();
+  if (!id) return false;
+  return placeWatchNotificationSelectedIds().includes(id);
+}
+
+function placeWatchNotificationPlaceCopy(placeId) {
+  if (!placeWatchNotificationsRequested()) return null;
+  const id = String(placeId || "").trim();
+  if (!id) return null;
+  const selectedIds = placeWatchNotificationSelectedIds();
+  const pressed = selectedIds.includes(id);
+  const atLimit = selectedIds.length >= PLACE_WATCH_MAX_SYNC_PLACES;
+  return {
+    label: pressed ? "Watching" : "Watch",
+    aria: pressed ? "Stop watching this saved place" : "Watch this saved place",
+    pressed,
+    disabled: !pressed && atLimit,
+    title: !pressed && atLimit
+      ? `You can watch up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places.`
+      : ""
+  };
+}
+
+function togglePlaceWatchNotificationPlace(placeId) {
+  const id = String(placeId || "").trim();
+  if (!id || !placeWatchNotificationsRequested()) return;
+  const selectedIds = placeWatchNotificationSelectedIds();
+  const next = new Set(selectedIds);
+  if (next.has(id)) {
+    next.delete(id);
+  } else if (next.size < PLACE_WATCH_MAX_SYNC_PLACES) {
+    next.add(id);
+  } else {
+    return;
+  }
+  writePlaceWatchNotificationPlaces({
+    enabled: true,
+    selectedIds: Array.from(next)
+  });
+  if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+  syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-selection" });
+}
+
+function prunePlaceWatchNotificationPlaces() {
+  const prefs = readPlaceWatchNotificationPlaces();
+  if (!prefs.hasExplicitSelection) return;
+  const selectedIds = cleanPlaceWatchSelectedIds(prefs.selectedIds, { filterSaved: true });
+  if (selectedIds.length === prefs.selectedIds.length) return;
+  writePlaceWatchNotificationPlaces({
+    enabled: prefs.enabled,
+    selectedIds
+  });
 }
 
 function placeWatchNotificationsRequested() {
@@ -554,7 +662,10 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
 
 function placeWatchNotificationSyncPlaces() {
   if (!placeWatchNotificationsRequested()) return [];
+  const selectedIds = new Set(placeWatchNotificationSelectedIds());
+  if (!selectedIds.size) return [];
   return (state.savedPlaces || [])
+    .filter((place) => selectedIds.has(String(place?.id || "").trim()))
     .map(placeWatchServerPlaceFromSavedPlace)
     .filter(Boolean)
     .slice(0, PLACE_WATCH_MAX_SYNC_PLACES);
@@ -759,8 +870,12 @@ async function requestPlaceWatchNotifications() {
     if (typeof renderSavedPlaces === "function") renderSavedPlaces();
     return;
   }
+  const prefs = readPlaceWatchNotificationPlaces();
   if (placeWatchNotificationsRequested() && planWatchNotificationsEnabled()) {
-    writePlaceWatchNotificationPlaces({ enabled: false });
+    writePlaceWatchNotificationPlaces({
+      enabled: false,
+      selectedIds: placeWatchNotificationSelectedIds()
+    });
     if (typeof renderSavedPlaces === "function") renderSavedPlaces();
     syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-disabled" });
     return;
@@ -771,7 +886,13 @@ async function requestPlaceWatchNotifications() {
     permission = await Notification.requestPermission();
   }
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
-  writePlaceWatchNotificationPlaces({ enabled: permission === "granted" });
+  const selectedIds = prefs.hasExplicitSelection
+    ? cleanPlaceWatchSelectedIds(prefs.selectedIds, { filterSaved: true })
+    : defaultPlaceWatchSelectedIds();
+  writePlaceWatchNotificationPlaces({
+    enabled: permission === "granted",
+    selectedIds
+  });
   if (typeof renderSavedPlaces === "function") renderSavedPlaces();
   if (permission === "granted") {
     syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-enabled" });
@@ -841,7 +962,7 @@ function renderPlanWatchNotificationPanel(watchItems, options = {}) {
 
 function savedPlaceWatchNotificationPanelCopy() {
   const savedCount = (state.savedPlaces || []).length;
-  const watchedCount = Math.min(savedCount, PLACE_WATCH_MAX_SYNC_PLACES);
+  const selectedCount = placeWatchNotificationSelectedCount();
   const supported = planWatchNotificationsSupported();
   const permission = planWatchNotificationPermission();
   const enabled = placeWatchNotificationsRequested() && planWatchNotificationsEnabled();
@@ -865,15 +986,16 @@ function savedPlaceWatchNotificationPanelCopy() {
     };
   }
   if (enabled) {
-    const limited = savedCount > watchedCount;
     return {
-      tone: "good",
-      title: `Watching ${watchedCount} saved ${watchedCount === 1 ? "place" : "places"}`,
-      body: limited
-        ? `Nearcast will notify on meaningful today/tomorrow changes for the first ${watchedCount} saved places.`
-        : "Nearcast will only interrupt for meaningful today/tomorrow changes.",
+      tone: selectedCount ? "good" : "neutral",
+      title: selectedCount
+        ? `Watching ${selectedCount} saved ${selectedCount === 1 ? "place" : "places"}`
+        : "Choose places to watch",
+      body: selectedCount
+        ? `Pick up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below. Nearcast will only interrupt for meaningful today/tomorrow changes.`
+        : `Choose up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below to receive alerts.`,
       button: "Pause",
-      meta: limited ? `${watchedCount} of ${savedCount}` : "On"
+      meta: `${selectedCount}/${PLACE_WATCH_MAX_SYNC_PLACES}`
     };
   }
   return {

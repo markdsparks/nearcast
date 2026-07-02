@@ -22,8 +22,9 @@ weather changes without caring whether the client is a PWA or a native app.
   Nearcast.
 - The browser syncs enabled watched plans when notification permission is granted,
   when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
-- The browser syncs saved places when saved-place notifications are enabled or
-  when the saved-place list changes.
+- The browser syncs the selected saved places when saved-place notifications are
+  enabled, when the saved-place list changes, or when the user changes the
+  watched-place selection.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
 - A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
@@ -39,8 +40,8 @@ into an open-ended backend job:
   their own plan state.
 - `PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION=3`: each subscribed device can sync at
   most 3 notifying plans.
-- `PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION=3`: each subscribed device can sync at
-  most 3 saved places.
+- `PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION=3`: each subscribed device can select
+  and sync at most 3 saved places.
 - `PLAN_WATCH_EVALUATOR_LIMIT=5`: each scheduled run checks at most 5
   subscriptions.
 - The scheduler checks the least-recently-evaluated subscriptions first, so a
@@ -112,7 +113,8 @@ per subscription per run.
 ## Target Flow
 
 1. User enables notifications for a watched plan.
-2. User can also enable saved-place notifications from the Places sheet.
+2. User can also enable saved-place notifications from the Places sheet and
+   choose up to 3 saved places to watch.
 3. Client registers one delivery channel with watched-plan and saved-place
    intent.
 4. A scheduled worker refreshes forecasts for stored watch places.

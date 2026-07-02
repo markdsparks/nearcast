@@ -5545,6 +5545,9 @@ h2 {
   align-items: stretch;
   gap: 8px;
 }
+.place-item.has-watch-control {
+  grid-template-columns: minmax(0, 1fr) minmax(74px, auto) 38px;
+}
 .place-item-main {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) auto;
@@ -5629,6 +5632,34 @@ h2 {
 .place-item-remove:hover {
   color: var(--red);
   border-color: rgba(190, 56, 56, 0.45);
+}
+.place-watch-toggle {
+  min-width: 74px;
+  padding: 0 10px;
+  border: 1px solid rgba(53, 111, 183, 0.20);
+  border-radius: 10px;
+  background: rgba(53, 111, 183, 0.08);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 950;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.place-watch-toggle.is-on {
+  border-color: rgba(29, 122, 87, 0.38);
+  background: rgba(29, 122, 87, 0.13);
+  color: var(--green);
+}
+.place-watch-toggle:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+.place-watch-toggle:not(:disabled):hover,
+.place-watch-toggle:not(:disabled):focus-visible {
+  border-color: var(--blue);
+  color: var(--ink);
+  outline: none;
 }
 .place-empty {
   display: flex;

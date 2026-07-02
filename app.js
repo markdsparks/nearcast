@@ -1,4 +1,4 @@
-const VERSION = "3.0.142";
+const VERSION = "3.0.143";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3195,6 +3195,11 @@ function bindEvents() {
       requestPlaceWatchNotifications();
     }
   });
+  bindTapDelegate(els.savedPlaces, "[data-place-watch-toggle]", (event, target) => {
+    if (typeof togglePlaceWatchNotificationPlace === "function") {
+      togglePlaceWatchNotificationPlace(target.dataset.placeWatchToggle);
+    }
+  });
   bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
   bindTapAction(els.glanceDetailClose, closeGlanceDetail);
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
@@ -4666,8 +4671,22 @@ function renderSavedPlaces() {
     const g = glanceData[place.id];
     const isActive = state.activePlace && state.activePlace.id === place.id;
     const placeName = escapeHtml(place.name);
+    const watchCopy = typeof placeWatchNotificationPlaceCopy === "function"
+      ? placeWatchNotificationPlaceCopy(place.id)
+      : null;
+    const watchButton = watchCopy ? `
+      <button
+        class="place-watch-toggle${watchCopy.pressed ? " is-on" : ""}"
+        type="button"
+        data-place-watch-toggle="${escapeHtml(place.id)}"
+        aria-pressed="${watchCopy.pressed ? "true" : "false"}"
+        aria-label="${escapeHtml(watchCopy.aria)}"
+        title="${escapeHtml(watchCopy.title || watchCopy.aria)}"
+        ${watchCopy.disabled ? "disabled" : ""}
+      >${escapeHtml(watchCopy.label)}</button>
+    ` : "";
     const item = document.createElement("article");
-    item.className = `place-item${isActive ? " active" : ""}`;
+    item.className = `place-item${isActive ? " active" : ""}${watchCopy ? " has-watch-control" : ""}`;
     item.dataset.placeId = place.id;
     item.innerHTML = `
       <button class="place-item-main" type="button" aria-label="Load ${placeName}">
@@ -4678,6 +4697,7 @@ function renderSavedPlaces() {
         </span>
         <span class="place-item-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
       </button>
+      ${watchButton}
       <button class="place-item-remove" type="button" aria-label="Remove ${placeName}">×</button>
     `;
     bindTapAction(item.querySelector(".place-item-main"), () => {
@@ -8503,6 +8523,9 @@ function savePlace(place) {
 function removeSavedPlace(id) {
   state.savedPlaces = state.savedPlaces.filter((place) => place.id !== id);
   localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
+  if (typeof prunePlaceWatchNotificationPlaces === "function") {
+    prunePlaceWatchNotificationPlaces();
+  }
   renderSavedPlaces();
   updateMode();
   if (typeof syncPlanWatchNotificationSubscription === "function") {
