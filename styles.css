@@ -3690,7 +3690,7 @@ h2 {
   }
 }
 
-/* ---------- Ask the forecast (Q&A) ---------- */
+/* ---------- Plan Check ---------- */
 .ai-ask[hidden] {
   display: none;
 }
@@ -3701,11 +3701,11 @@ h2 {
   display: grid;
   gap: 12px;
   margin: 0 0 12px;
-  padding: 14px;
+  padding: 15px;
   border: 1px solid rgba(91, 141, 220, 0.22);
-  border-radius: 14px;
+  border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(91, 141, 220, 0.14), rgba(52, 125, 98, 0.08)),
+    linear-gradient(135deg, rgba(91, 141, 220, 0.13), rgba(52, 125, 98, 0.08)),
     rgba(255, 255, 255, 0.30);
 }
 .ask-plan-copy {
@@ -3722,7 +3722,7 @@ h2 {
 .ask-plan-copy h3 {
   margin: 0;
   color: var(--ink);
-  font-size: 1.38rem;
+  font-size: 1.42rem;
   line-height: 1.08;
   letter-spacing: 0;
 }
@@ -5518,11 +5518,11 @@ h2 {
 }
 .ask-decision {
   display: grid;
-  gap: 11px;
+  gap: 12px;
   margin-top: 11px;
-  padding: 14px;
+  padding: 15px;
   border: 1px solid rgba(91, 141, 220, 0.22);
-  border-radius: 14px;
+  border-radius: 8px;
   background:
     linear-gradient(135deg, rgba(91, 141, 220, 0.10), rgba(255, 255, 255, 0.14)),
     var(--panel-soft);
@@ -5560,7 +5560,7 @@ h2 {
 }
 .ask-decision-head strong {
   color: var(--ink);
-  font-size: 1.26rem;
+  font-size: 1.36rem;
   font-weight: 950;
   line-height: 1.08;
   overflow-wrap: anywhere;
@@ -5583,19 +5583,28 @@ h2 {
   line-height: 1.36;
   overflow-wrap: anywhere;
 }
+.ask-decision-story {
+  display: grid;
+  gap: 8px;
+}
+.ask-decision-reason,
+.ask-decision-action {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(54, 76, 98, 0.11);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.22);
+}
 .ask-decision-reason {
   color: var(--ink);
   font-size: 0.9rem;
   font-weight: 850;
 }
 .ask-decision-action {
-  display: grid;
-  gap: 2px;
-  padding: 9px 10px;
-  border: 1px solid rgba(54, 76, 98, 0.11);
-  border-radius: 10px;
   background: rgba(255, 255, 255, 0.24);
 }
+.ask-decision-reason span,
 .ask-decision-action span {
   color: var(--blue);
   font-size: 0.64rem;

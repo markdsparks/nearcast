@@ -4748,7 +4748,7 @@ function renderGlobalMemorySheet() {
       ${renderPlanWatchNotificationManagementSurface(watchItems)}
       <section class="memory-empty-state">
         <strong>Nothing being watched yet</strong>
-        <p>Ask the Planner about a real plan, then save it when the answer looks right.</p>
+        <p>Use Plan Check for a real plan, then watch it when the forecast matters.</p>
         <button type="button" data-memory-new>Create a plan</button>
       </section>
     `;
@@ -6143,10 +6143,10 @@ function renderPlannerClarification(disabledAttr = "") {
     const facts = pending.facts || {};
     const notes = (pending.notes || []).filter(Boolean);
     return `
-      <div class="ask-confirm" aria-label="Planner interpretation confirmation">
+      <div class="ask-confirm" aria-label="Plan Check interpretation confirmation">
         <div class="ask-confirm-head">
-          <strong>Nearcast read this as</strong>
-          <small>Confirm the plan before checking the forecast</small>
+          <strong>I read your plan as</strong>
+          <small>Confirm the timing and place before Nearcast checks the weather.</small>
         </div>
         <dl class="ask-confirm-facts">
           <div><dt>Plan</dt><dd>${escapeHtml(facts.plan || "Plan")}</dd></div>
@@ -6163,7 +6163,7 @@ function renderPlannerClarification(disabledAttr = "") {
       </div>
     `;
   }
-  return `<div class="ask-clarify" aria-label="Planner follow-up choices">` +
+  return `<div class="ask-clarify" aria-label="Plan Check follow-up choices">` +
     pending.options.map((option, index) =>
       `<button class="ask-clarify-chip" type="button" data-ask-clarify="${index}"${disabledAttr}>${escapeHtml(option.label)}</button>`
     ).join("") +
@@ -6172,8 +6172,8 @@ function renderPlannerClarification(disabledAttr = "") {
 
 function plannerStarterExamples() {
   return [
-    { label: "Pool party", template: "pool party Saturday 2-6" },
-    { label: "Golf", template: "golf tomorrow morning" },
+    { label: "4th party", template: "4th party Friday 3-8" },
+    { label: "Soccer practice", template: "soccer practice tomorrow 6-8" },
     { label: "Dinner outside", template: "dinner outside tonight" }
   ];
 }
@@ -6227,32 +6227,37 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
   const reason = item.fullReason || item.primaryReason || exchange.a;
   const action = item.action || (item.tone === "good" ? "" : item.advice);
   const signals = planContextSignalRows(item).map(renderPlanSignalChip).join("");
+  const decisionLabel = item.label || item.verdict || "Forecast checked";
+  const reasonLabel = item.tone === "good" ? "Why it works" : "Main concern";
+  const actionLabel = item.tone === "good" ? "Good to know" : "Plan for this";
   const watchAction = rememberedId
-    ? `<button class="ask-decision-primary-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Open watch</button>` +
-      `<span class="ask-memory-state">Saved for updates</span>`
+    ? `<button class="ask-decision-primary-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Open watched plan</button>` +
+      `<span class="ask-memory-state">Nearcast is watching this window</span>`
     : `<button class="ask-decision-primary-btn" type="button" data-memory-remember="${index}">Watch this plan</button>` +
-      `<span class="ask-decision-action-note">Nearcast can keep checking this window.</span>`;
+      `<span class="ask-decision-action-note">Get meaningful updates if the forecast changes.</span>`;
   const changeTarget = rememberedId || index;
   return `
     <article class="ask-decision is-${escapeHtml(item.tone || "pending")}${streaming ? " answering" : ""}">
       <div class="ask-decision-head">
-        <span>Plan check</span>
-        <strong>${escapeHtml(item.label || item.verdict || "Forecast checked")}</strong>
+        <span>Plan Check</span>
+        <strong>${escapeHtml(decisionLabel)}</strong>
       </div>
       <div class="ask-decision-plan">
         <h3>${escapeHtml(title)}</h3>
         <p>${escapeHtml(meta)}</p>
       </div>
-      ${reason ? `<p class="ask-decision-reason">${escapeHtml(reason)}</p>` : ""}
-      ${action ? `<p class="ask-decision-action"><span>What to do</span>${escapeHtml(action)}</p>` : ""}
+      <div class="ask-decision-story">
+        ${reason ? `<p class="ask-decision-reason"><span>${escapeHtml(reasonLabel)}</span>${escapeHtml(reason)}</p>` : ""}
+        ${action ? `<p class="ask-decision-action"><span>${escapeHtml(actionLabel)}</span>${escapeHtml(action)}</p>` : ""}
+      </div>
       ${signals ? `<div class="plan-watch-signals ask-decision-signals">${signals}</div>` : ""}
       <div class="ask-decision-actions">
         <div class="ask-decision-primary-row">
           ${watchAction}
         </div>
         <div class="ask-decision-secondary-actions">
-          <button class="ask-show" type="button" data-ask-show="${index}">See hourly</button>
-          <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change details</button>
+          <button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>
+          <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change plan</button>
         </div>
       </div>
     </article>
@@ -6298,28 +6303,28 @@ function renderAsk() {
     `</button>`
   ).join("");
   const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
-  const promptTitle = editing ? "Change this plan" : "What are you planning?";
+  const promptTitle = editing ? "Update this plan" : "Check a plan";
   const promptCopy = editing
-    ? "Update the activity, time, or place. Nearcast will re-check the forecast context."
-    : "Tell Nearcast the plan, time, and place. It checks rain, heat, wind, UV, and alerts for that exact window.";
+    ? "Change the activity, time, or place. Nearcast will re-check the same weather truth."
+    : "Type what you are doing and when. Nearcast checks rain, heat, wind, UV, and alerts for that exact window.";
   const thread = askThread.map(renderAskExchange).join("");
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
 
   panel.innerHTML =
-    `<section class="ask-plan-check" aria-label="Plan check">` +
+    `<section class="ask-plan-check" aria-label="Plan Check">` +
       `<div class="ask-plan-copy">` +
-        `<span>Plan check</span>` +
+        `<span>Plan Check</span>` +
         `<h3>${escapeHtml(promptTitle)}</h3>` +
         `<p>${escapeHtml(promptCopy)}</p>` +
       `</div>` +
       `<form class="ask-form" id="askForm">` +
         `<input id="askInput" type="text" autocomplete="off" ` +
-          `placeholder="pool party Saturday 2-6"${dis}>` +
+          `placeholder="soccer practice tomorrow 6-8"${dis}>` +
         `<button type="submit" class="ask-send" aria-label="Check plan"${dis}>↑</button>` +
       `</form>` +
       `<div class="ask-plan-examples" aria-label="Plan examples">${examples}</div>` +
-      `<p class="ask-helper">Use your own words. Add the place only if it is away from here.</p>` +
+      `<p class="ask-helper">Use normal language. Add a place only if it is away from ${escapeHtml(state.activePlace ? placeLabel(state.activePlace) : "here")}.</p>` +
     `</section>` +
     ((thread || errLine || clarification) ? `<div class="ask-thread">${thread}${errLine}${clarification}</div>` : "") +
     memorySection;
@@ -6397,7 +6402,7 @@ function plannerEventSheetTitle(event, dayStr, dayIndex) {
 function plannerEventContextLabel(event) {
   const place = event?.place ? placeLabel(event.place) : "";
   const title = String(event?.title || "").trim();
-  return ["Planner", place, title].filter(Boolean).join(" · ");
+  return ["Plan Check", place, title].filter(Boolean).join(" · ");
 }
 
 /* ---------- Planner launcher + sheet ---------- */
@@ -6409,10 +6414,8 @@ function renderAILauncher() {
   btn.hidden = !show;
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
-      aiState.phase === "idle" ? "Check a plan against the forecast"
-      : aiState.phase === "unsupported" ? "Check a plan against the forecast"
-      : aiState.phase === "error" ? "Planner works · summary needs attention"
-      : "Forecast-grounded plan checks";
+      aiState.phase === "error" ? "Plan checks work · private summary needs attention"
+      : "Will weather affect something you are doing?";
   }
 }
 

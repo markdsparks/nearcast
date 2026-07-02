@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.150**.
+Living product roadmap. Current as of **v3.0.151**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -239,6 +239,9 @@ First shipped slice:
 - The Watch sheet now has a single notification management hub that explains
   device readiness, selected plans, selected saved places, sync health, and the
   kinds of changes that can interrupt the user.
+- The planner is now framed as `Plan Check`: a simpler flow where the user types
+  a real plan, gets one forecast-grounded decision, and can watch that plan for
+  meaningful changes.
 
 ### 4. Trust And Craft Hardening
 

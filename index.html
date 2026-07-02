@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.150">
-    <link rel="manifest" href="manifest.json?v=3.0.150">
+    <link rel="stylesheet" href="styles.css?v=3.0.151">
+    <link rel="manifest" href="manifest.json?v=3.0.151">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.150">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.150">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.151">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.151">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -296,8 +296,8 @@
           <button class="ai-launcher" id="aiLauncher" type="button" hidden>
             <span class="ai-launcher-spark" aria-hidden="true">✦</span>
             <span class="ai-launcher-copy">
-              <strong>NearAI Planner</strong>
-              <small id="aiLauncherSub">Local AI · forecast-grounded</small>
+              <strong>Plan Check</strong>
+              <small id="aiLauncherSub">Will weather affect something you are doing?</small>
             </span>
             <span class="ai-launcher-chev" aria-hidden="true">›</span>
           </button>
@@ -580,18 +580,18 @@
     </aside>
 
     <div class="sheet-backdrop" id="aiBackdrop" hidden></div>
-    <aside class="day-sheet ai-sheet" id="aiSheet" hidden aria-label="NearAI Planner" role="dialog" aria-modal="true">
+    <aside class="day-sheet ai-sheet" id="aiSheet" hidden aria-label="Plan Check" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close NearAI Planner">✕</button>
+      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Plan Check">✕</button>
       <header class="sheet-head ai-sheet-head">
         <span class="ai-sheet-spark" aria-hidden="true">✦</span>
         <div class="sheet-head-text">
-          <h2>NearAI Planner</h2>
-          <p class="ai-sheet-sub">Plan checks against the forecast</p>
+          <h2>Plan Check</h2>
+          <p class="ai-sheet-sub">Weather for something you are doing</p>
         </div>
       </header>
       <p class="ai-trust-note">
-        Describe the plan in your own words. Nearcast checks the timing, place, alerts, and weather context.
+        Describe a real plan. Nearcast checks the timing, place, alerts, and forecast window, then tells you what matters.
       </p>
       <div class="ai-ask" id="aiAsk" hidden></div>
       <div class="briefing" id="briefing" hidden></div>
@@ -643,12 +643,12 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.150"></script>
-    <script src="planner.js?v=3.0.150"></script>
-    <script src="app.js?v=3.0.150"></script>
-    <script src="map.js?v=3.0.150"></script>
-    <script src="sky.js?v=3.0.150"></script>
-    <script src="daygraph.js?v=3.0.150"></script>
-    <script src="boot.js?v=3.0.150"></script>
+    <script src="weather-truth.js?v=3.0.151"></script>
+    <script src="planner.js?v=3.0.151"></script>
+    <script src="app.js?v=3.0.151"></script>
+    <script src="map.js?v=3.0.151"></script>
+    <script src="sky.js?v=3.0.151"></script>
+    <script src="daygraph.js?v=3.0.151"></script>
+    <script src="boot.js?v=3.0.151"></script>
   </body>
 </html>
