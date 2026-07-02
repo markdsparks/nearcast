@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.146**.
+Living product roadmap. Current as of **v3.0.147**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -226,6 +226,9 @@ First shipped slice:
 - Planner result cards now lead with one primary decision action, then tuck
   hourly detail and plan changes into secondary actions so saving a watch feels
   like the natural next step instead of a tool menu.
+- Forecast-change language now says `Forecast changed` instead of implying the
+  user's last tap was the baseline, and the watched-plan baseline refreshes
+  after new continuity snapshots are saved.
 
 ### 4. Trust And Craft Hardening
 

@@ -4195,6 +4195,12 @@ h2 {
   font-size: 0.76rem;
   font-weight: 820;
 }
+.focused-plan-change small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 760;
+  line-height: 1.25;
+}
 .focused-plan-hero small {
   color: var(--muted);
   font-size: 0.74rem;

@@ -1,4 +1,4 @@
-const VERSION = "3.0.146";
+const VERSION = "3.0.147";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6907,7 +6907,7 @@ function forYouMeta(context) {
   const place = context?.place || context;
   const memoryCount = Number(context?.memoryCount ?? (Array.isArray(state.planMemories) ? state.planMemories.length : 0));
   const placeText = place ? placeLabel(place) : "Current place";
-  if (context?.continuityCard) return `${placeText} · changed since last check`;
+  if (context?.continuityCard) return `${placeText} · forecast changed`;
   if (context?.watchingCard) return `${placeText} · watching ${context.watchingCount || memoryCount}`;
   if (memoryCount) return `${placeText} · watching`;
   return placeText;
@@ -6995,6 +6995,18 @@ function saveContinuityStore(store) {
     localStorage.setItem(CONTINUITY_KEY, JSON.stringify(store));
   } catch {
     // Continuity is an enhancement; the forecast should never depend on storage.
+  }
+  syncContinuityBaselineStore(store);
+}
+
+function syncContinuityBaselineStore(store) {
+  if (!store || typeof store !== "object") return;
+  state.continuityBaseline = {
+    ...(state.continuityBaseline || { key: "" }),
+    store
+  };
+  if (typeof refreshPlanWatchBaselineStore === "function") {
+    refreshPlanWatchBaselineStore(store);
   }
 }
 
@@ -7192,7 +7204,7 @@ function forYouPlanContinuityCard(planSnapshots, store) {
     memoryId: current.memoryId,
     html: `
       <button class="for-you-card is-plan is-continuity is-${escapeHtml(change.tone)}" type="button" data-memory-show="${escapeHtml(current.memoryId)}" data-for-you-signal="memory-show">
-        <span class="for-you-kicker"><span>Changed</span><em>Plan watch</em></span>
+        <span class="for-you-kicker"><span>Forecast changed</span><em>Plan watch</em></span>
         <strong>${escapeHtml(change.title)}</strong>
         <span class="for-you-body">${escapeHtml(change.body)}</span>
         <small>Check plan</small>
@@ -7266,7 +7278,7 @@ function forYouPlaceContinuityCard(current, store, weatherItems, tempUnit, windU
     memoryId: "",
     html: `
       <button class="for-you-card is-interruption is-continuity is-${escapeHtml(change.summaryTone || change.type)}" type="button" data-for-you-summary="${summaryIndex}" data-for-you-signal="launch-summary">
-        <span class="for-you-kicker"><span>Since last check</span><em>Here</em></span>
+        <span class="for-you-kicker"><span>Forecast changed</span><em>Here</em></span>
         <strong>${escapeHtml(change.title)}</strong>
         <span class="for-you-body">${escapeHtml(change.body)}</span>
         <small>Hourly detail</small>

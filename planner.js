@@ -4074,8 +4074,15 @@ function planWatchPendingItem(memory, source, isPast = false) {
   };
 }
 
+function refreshPlanWatchBaselineStore(store = null) {
+  planWatchState.baselineStore = store ||
+    state.continuityBaseline?.store ||
+    (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+  return planWatchState.baselineStore;
+}
+
 function planWatchBaselineStore() {
-  return planWatchState.baselineStore || state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+  return state.continuityBaseline?.store || planWatchState.baselineStore || refreshPlanWatchBaselineStore();
 }
 
 function planWatchChangeForItem(item, source) {
@@ -4251,9 +4258,10 @@ function renderFocusedPlanChangeBlock(watch) {
   const tone = change.tone || watch?.tone || "caution";
   return `
     <section class="focused-plan-change is-${escapeHtml(tone)}">
-      <span>Changed since last check</span>
+      <span>Forecast changed</span>
       <strong>${escapeHtml(change.title || "Plan changed")}</strong>
       <p>${escapeHtml(change.body)}</p>
+      <small>Compared with the previous forecast saved on this device.</small>
     </section>
   `;
 }
@@ -4441,10 +4449,19 @@ function planWatchFetchPlaces(items) {
     .slice(0, PLAN_WATCH_MAX_AUTO_FETCH_PLACES);
 }
 
+function savePlanWatchContinuitySnapshot(data, place) {
+  if (!data || !place || typeof saveContinuitySnapshot !== "function") return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const truth = typeof weatherTruth === "function" ? weatherTruth(data) : null;
+  saveContinuitySnapshot(data, place, tempUnit, windUnit, truth);
+  refreshPlanWatchBaselineStore();
+}
+
 function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, state.activePlace, { includePast: false })) {
   if (!items?.length || typeof fetchForecast !== "function") return;
   if (!planWatchState.baselineStore) {
-    planWatchState.baselineStore = state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+    refreshPlanWatchBaselineStore();
   }
 
   planWatchFetchPlaces(items).forEach(({ key, place }) => {
@@ -4471,6 +4488,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
       if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
       maybeSyncPlanWatchNotifications();
       syncPlanWatchNotificationSubscription({ reason: "watch-forecast-refreshed" });
+      savePlanWatchContinuitySnapshot(data, place);
     }).catch((err) => {
       planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
     }).finally(() => {
@@ -4488,7 +4506,7 @@ function openGlobalMemorySheet(options = {}) {
   } else if (!focusMemoryId) {
     planWatchFocusMemoryId = "";
   }
-  planWatchState.baselineStore = state.continuityBaseline?.store || (typeof loadContinuityStore === "function" ? loadContinuityStore() : null);
+  refreshPlanWatchBaselineStore();
   renderGlobalMemorySheet();
   els.memoryBackdrop.hidden = false;
   els.memorySheet.hidden = false;
