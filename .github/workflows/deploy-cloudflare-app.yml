@@ -83,3 +83,13 @@ jobs:
 
       - name: Deploy app and radar capability Worker
         run: npx --yes wrangler deploy
+
+      - name: Purge app edge cache
+        env:
+          CLOUDFLARE_ZONE_NAME: getnearcast.app
+        run: |
+          ZONE_ID=$(node -e 'const token=process.env.CLOUDFLARE_API_TOKEN; const name=process.env.CLOUDFLARE_ZONE_NAME; fetch(`https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(name)}`, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }).then((response) => response.json()).then((body) => { const id = body?.result?.[0]?.id; if (!body?.success || !id) { console.error(JSON.stringify(body)); process.exit(1); } process.stdout.write(id); }).catch((error) => { console.error(error); process.exit(1); });')
+          curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}'
