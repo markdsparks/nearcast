@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30137";
-const ASSET_VERSION = "3.0.137";
+const CACHE = "nearcast-v30138";
+const ASSET_VERSION = "3.0.138";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -141,8 +141,39 @@ function pushNotificationPayload(data) {
   }
 }
 
-self.addEventListener("push", event => {
-  const payload = pushNotificationPayload(event.data);
+function hasPushNotificationContent(payload) {
+  return Boolean(payload && (payload.title || payload.body));
+}
+
+async function pendingPlanWatchNotificationPayload() {
+  try {
+    const subscription = await self.registration.pushManager.getSubscription();
+    if (!subscription) return {};
+    const response = await fetch(new URL("api/watch/notifications/pending", self.location.origin + BASE), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        provider: "nearcast-plan-watch-service-worker",
+        version: 1,
+        subscription: subscription.toJSON()
+      })
+    });
+    if (!response.ok) return {};
+    const body = await response.json().catch(() => null);
+    return body?.notification && typeof body.notification === "object" ? body.notification : {};
+  } catch {
+    return {};
+  }
+}
+
+async function showPlanWatchPushNotification(data) {
+  const directPayload = pushNotificationPayload(data);
+  const payload = hasPushNotificationContent(directPayload)
+    ? directPayload
+    : await pendingPlanWatchNotificationPayload();
   const title = payload.title || "Nearcast";
   const options = {
     body: payload.body || "A watched plan changed.",
@@ -156,7 +187,11 @@ self.addEventListener("push", event => {
       source: payload.source || "plan-watch-push"
     }
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  return self.registration.showNotification(title, options);
+}
+
+self.addEventListener("push", event => {
+  event.waitUntil(showPlanWatchPushNotification(event.data));
 });
 
 self.addEventListener("notificationclick", event => {

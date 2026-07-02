@@ -13,6 +13,10 @@ without caring whether the client is a PWA or a native app.
   with a VAPID public key.
 - `POST /api/watch/notifications/test` is a token-protected backend smoke route
   that sends an empty Web Push to a stored subscription using VAPID signing.
+- `POST /api/watch/notifications/evaluate` is a token-protected evaluator route
+  that checks stored watched plans against fresh forecast/alert data.
+- `POST /api/watch/notifications/pending` lets the service worker pull the
+  queued notification body after an empty wake-up push.
 - The service worker handles `push` events and displays a notification that opens
   Nearcast.
 - The browser syncs enabled watched plans when notification permission is granted,
@@ -35,10 +39,26 @@ service worker. Tapping it opens Nearcast. If the workflow reports
 subscription yet; revisit the app, confirm notification permission, and update or
 watch a plan again.
 
+## Manual Evaluator Test
+
+1. Open Nearcast on the test device and make sure the app version is current.
+2. Open the watched plan and leave notifications on so the latest plan snapshot
+   syncs to the backend.
+3. In GitHub Actions, run `Evaluate plan watch notifications`.
+4. Use `dryRun: true` to inspect whether the evaluator sees the subscription and
+   plan without sending a push.
+5. Use `dryRun: false` to let the evaluator send a notification only if it sees
+   a meaningful change.
+
+The evaluator currently watches for high-signal changes: a new alert overlapping
+the plan window, rain increasing materially, serious heat getting worse, gusts
+getting meaningfully stronger, or the overall plan window degrading enough to
+cross a score band.
+
 ## Intentionally Not Built Yet
 
-- Scheduled server-side plan evaluation.
 - Encrypted notification payloads with plan-specific copy.
+- Automatic scheduled evaluator runs.
 - Native APNs token registration.
 - User accounts or cross-device plan sync.
 

@@ -515,7 +515,8 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
       label: watch?.label || "",
       reason: watch?.reason || "",
       body: notification?.body || watch?.change?.body || "",
-      checkedAt: new Date().toISOString()
+      checkedAt: new Date().toISOString(),
+      snapshot: watch && typeof planWeatherChangeSnapshot === "function" ? planWeatherChangeSnapshot(watch) : null
     }
   };
 }

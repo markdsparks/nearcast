@@ -12,6 +12,8 @@ const PLAN_WATCH_CONFIG_ENDPOINT_PATH = "/api/watch/notifications/config";
 const PLAN_WATCH_REGISTER_ENDPOINT_PATH = "/api/watch/notifications/register";
 const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister";
 const PLAN_WATCH_TEST_ENDPOINT_PATH = "/api/watch/notifications/test";
+const PLAN_WATCH_PENDING_ENDPOINT_PATH = "/api/watch/notifications/pending";
+const PLAN_WATCH_EVALUATE_ENDPOINT_PATH = "/api/watch/notifications/evaluate";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
@@ -43,6 +45,10 @@ const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 40;
 const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
 const PLAN_WATCH_PUSH_TTL_SECONDS = 30 * 60;
+const PLAN_WATCH_PENDING_TTL_SECONDS = 2 * 60 * 60;
+const PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT = 25;
+const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
+const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -62,11 +68,23 @@ export default {
     if (url.pathname === PLAN_WATCH_TEST_ENDPOINT_PATH) {
       return handlePlanWatchNotificationTestRequest(request, env);
     }
+    if (url.pathname === PLAN_WATCH_PENDING_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationPendingRequest(request, env);
+    }
+    if (url.pathname === PLAN_WATCH_EVALUATE_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationEvaluateRequest(request, env);
+    }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
   },
   async queue(batch, env = {}, ctx = {}) {
     return handleRadarGenerationQueue(batch, env, ctx);
+  },
+  async scheduled(event, env = {}, ctx = {}) {
+    ctx.waitUntil(evaluatePlanWatchNotifications(env, {
+      reason: "scheduled",
+      limit: PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT
+    }));
   }
 };
 
@@ -102,7 +120,8 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
       state: publicKey ? "ready" : "missing-vapid-key",
       vapidPublicKey: publicKey,
       registerUrl: PLAN_WATCH_REGISTER_ENDPOINT_PATH,
-      unregisterUrl: PLAN_WATCH_UNREGISTER_ENDPOINT_PATH
+      unregisterUrl: PLAN_WATCH_UNREGISTER_ENDPOINT_PATH,
+      pendingUrl: PLAN_WATCH_PENDING_ENDPOINT_PATH
     },
     delivery: {
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
@@ -229,6 +248,57 @@ export async function handlePlanWatchNotificationTestRequest(request, env = {}) 
   }, {
     status: push.ok ? 200 : 502
   });
+}
+
+export async function handlePlanWatchNotificationPendingRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const payload = await readJsonRequest(request);
+  const subscription = normalizeWebPushSubscription(payload.subscription);
+  if (!subscription) {
+    return jsonResponse({ ok: false, error: "invalid-subscription" }, { status: 400 });
+  }
+  const store = planWatchStore(env);
+  if (!store?.getJson) {
+    return jsonResponse({ ok: false, error: "plan-watch-store-unavailable" }, { status: 503 });
+  }
+  const subscriptionId = await planWatchSubscriptionId(subscription);
+  const pendingName = planWatchPendingStorageName(subscriptionId);
+  const pending = await store.getJson(pendingName);
+  if (!pending?.notification || planWatchPendingExpired(pending)) {
+    if (pending && store.deleteJson) await store.deleteJson(pendingName);
+    return jsonResponse({ ok: false, state: "no-pending-notification" }, { status: 204 });
+  }
+  if (store.deleteJson) await store.deleteJson(pendingName);
+  return jsonResponse({
+    ok: true,
+    provider: PLAN_WATCH_PROVIDER,
+    notification: normalizePendingPlanWatchNotification(pending.notification)
+  });
+}
+
+export async function handlePlanWatchNotificationEvaluateRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const auth = planWatchTestAuthorization(request, env);
+  if (!auth.available) {
+    return jsonResponse({ ok: false, error: "evaluate-disabled" }, { status: 404 });
+  }
+  if (!auth.authorized) {
+    return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  const payload = await readJsonRequest(request);
+  const result = await evaluatePlanWatchNotifications(env, {
+    reason: "manual",
+    dryRun: Boolean(payload.dryRun),
+    subscriptionId: cleanText(payload.subscriptionId, 120),
+    limit: nonNegativeInteger(payload.limit, PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT)
+  });
+  return jsonResponse(result, { status: result.ok ? 200 : 500 });
 }
 
 async function readJsonRequest(request) {
@@ -795,6 +865,11 @@ function planWatchTestAuthorization(request, env = {}) {
   return { available: true, authorized: token === expected };
 }
 
+function planWatchEvaluationLimit(value) {
+  const limit = nonNegativeInteger(value, PLAN_WATCH_EVALUATOR_DEFAULT_LIMIT);
+  return Math.max(1, Math.min(100, limit));
+}
+
 function planWatchStore(env = {}) {
   const bucket = env?.PLAN_WATCH_R2 || env?.RADAR_GENERATION_REQUESTS_R2;
   if (!bucket?.put) return null;
@@ -866,9 +941,613 @@ async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
   return null;
 }
 
+async function planWatchSubscriptionRecords(store, options = {}) {
+  if (!store?.getJson || !store?.listNames) return [];
+  const subscriptionId = cleanText(options.subscriptionId, 120);
+  if (subscriptionId) {
+    const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
+    return record?.subscription ? [record] : [];
+  }
+  const names = await store.listNames("subscriptions/", planWatchEvaluationLimit(options.limit));
+  const records = [];
+  for (const name of names) {
+    const record = await store.getJson(name);
+    if (record?.subscription && !planWatchSubscriptionExpired(record)) records.push(record);
+  }
+  return records;
+}
+
 function planWatchSubscriptionExpired(record) {
   const expiresAt = timestamp(record?.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+function planWatchPendingExpired(record) {
+  const expiresAt = timestamp(record?.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt < Date.now();
+}
+
+async function evaluatePlanWatchNotifications(env = {}, options = {}) {
+  const store = planWatchStore(env);
+  if (!store?.getJson || !store?.putJson || !store?.listNames) {
+    return {
+      ok: false,
+      provider: PLAN_WATCH_PROVIDER,
+      state: "store-unavailable",
+      reason: options.reason || ""
+    };
+  }
+  const records = await planWatchSubscriptionRecords(store, options);
+  const summary = {
+    ok: true,
+    provider: PLAN_WATCH_PROVIDER,
+    state: "evaluated",
+    reason: options.reason || "",
+    dryRun: Boolean(options.dryRun),
+    checkedAt: new Date().toISOString(),
+    subscriptions: records.length,
+    plans: 0,
+    candidates: 0,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+    updated: 0,
+    errors: 0,
+    results: []
+  };
+
+  for (const record of records) {
+    const result = await evaluatePlanWatchSubscription(record, store, env, options);
+    summary.plans += result.plans;
+    summary.candidates += result.candidates;
+    summary.sent += result.sent;
+    summary.skipped += result.skipped;
+    summary.failed += result.failed;
+    summary.updated += result.updated;
+    summary.errors += result.errors;
+    summary.results.push(result);
+  }
+  return summary;
+}
+
+async function evaluatePlanWatchSubscription(record, store, env = {}, options = {}) {
+  const plans = Array.isArray(record?.plans) ? record.plans : [];
+  const result = {
+    subscriptionId: record?.subscriptionId || "",
+    endpointHost: safeUrlHost(record?.subscription?.endpoint),
+    plans: plans.length,
+    candidates: 0,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+    updated: 0,
+    errors: 0,
+    reasons: []
+  };
+  if (!plans.length) return result;
+
+  const evaluatedPlans = [];
+  const candidates = [];
+  for (const plan of plans) {
+    const evaluation = await evaluatePlanWatchPlan(plan, record).catch((error) => ({
+      plan,
+      error: error?.message || String(error)
+    }));
+    if (evaluation?.error) {
+      result.errors += 1;
+      result.reasons.push(`${plan?.id || "plan"}:${evaluation.error}`);
+      evaluatedPlans.push(plan);
+      continue;
+    }
+    evaluatedPlans.push(evaluation.plan);
+    if (evaluation.updated) result.updated += 1;
+    if (evaluation.candidate) candidates.push(evaluation.candidate);
+    else result.skipped += 1;
+  }
+  result.candidates = candidates.length;
+
+  const top = candidates.sort((a, b) => b.priority - a.priority)[0];
+  if (top) {
+    if (options.dryRun) {
+      result.sent = 0;
+      result.reasons.push(`dry-run:${top.type}`);
+    } else {
+      const pending = buildPendingPlanWatchNotification(record, top);
+      await store.putJson(planWatchPendingStorageName(record.subscriptionId), pending);
+      const push = await sendPlanWatchPush(record.subscription, env);
+      if (push.ok) result.sent = 1;
+      else {
+        result.failed = 1;
+        result.reasons.push(`push-failed:${push.status || 0}`);
+        if ((push.status === 404 || push.status === 410) && store.deleteJson) {
+          await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+        }
+      }
+    }
+  }
+
+  const nextRecord = {
+    ...record,
+    plans: evaluatedPlans,
+    evaluatedAt: new Date().toISOString()
+  };
+  await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
+  return result;
+}
+
+async function evaluatePlanWatchPlan(plan, record = {}) {
+  if (!plan || planWatchPlanIsPast(plan)) {
+    return { plan, updated: false, candidate: null };
+  }
+  const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
+  const forecast = await fetchPlanWatchForecast(plan.place, unit);
+  const stats = planWatchWindowStats(plan, forecast, unit);
+  if (!stats) return { plan, updated: false, candidate: null, error: "forecast-window-unavailable" };
+  const alerts = await fetchPlanWatchAlerts(plan.place).catch(() => []);
+  const windowMs = planWatchWindowMs(plan, forecast);
+  const alert = topPlanWatchAlert(alerts, windowMs.startMs, windowMs.endMs);
+  const current = planWatchCurrentState(plan, stats, alert, unit);
+  const change = planWatchStateChange(plan.lastKnown, current);
+  const lastKnown = planWatchLastKnownFromState(plan, current, change);
+  const nextPlan = change?.updateBaseline ? { ...plan, lastKnown } : {
+    ...plan,
+    lastKnown: {
+      ...(plan.lastKnown || {}),
+      checkedAt: new Date().toISOString()
+    }
+  };
+  const candidate = change?.notify ? planWatchNotificationCandidate(plan, current, change) : null;
+  return {
+    plan: nextPlan,
+    updated: Boolean(change?.updateBaseline),
+    candidate
+  };
+}
+
+function planWatchPlanIsPast(plan) {
+  if (!plan?.targetDate) return false;
+  const endOfDate = new Date(`${plan.targetDate}T23:59:59Z`);
+  return Number.isFinite(endOfDate.getTime()) && endOfDate.getTime() < Date.now() - 12 * 60 * 60 * 1000;
+}
+
+async function fetchPlanWatchForecast(place = {}, unit = "fahrenheit") {
+  const params = new URLSearchParams({
+    latitude: String(place.latitude),
+    longitude: String(place.longitude),
+    hourly: [
+      "temperature_2m",
+      "apparent_temperature",
+      "precipitation_probability",
+      "precipitation",
+      "weather_code",
+      "wind_speed_10m",
+      "wind_gusts_10m",
+      "uv_index"
+    ].join(","),
+    daily: [
+      "weather_code",
+      "temperature_2m_max",
+      "temperature_2m_min",
+      "apparent_temperature_max",
+      "apparent_temperature_min",
+      "precipitation_sum",
+      "precipitation_probability_max",
+      "wind_speed_10m_max",
+      "wind_gusts_10m_max",
+      "uv_index_max"
+    ].join(","),
+    temperature_unit: unit,
+    wind_speed_unit: unit === "fahrenheit" ? "mph" : "kmh",
+    precipitation_unit: unit === "fahrenheit" ? "inch" : "mm",
+    timezone: "auto",
+    forecast_days: "10"
+  });
+  return fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, PLAN_WATCH_FORECAST_TIMEOUT_MS);
+}
+
+async function fetchPlanWatchAlerts(place = {}) {
+  const countryCode = cleanToken(place.countryCode || place.country_code || "", 8).toUpperCase();
+  if (countryCode && !["US", "USA"].includes(countryCode)) return [];
+  if (!Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return [];
+  const url = `https://api.weather.gov/alerts/active?point=${Number(place.latitude).toFixed(4)},${Number(place.longitude).toFixed(4)}`;
+  const json = await fetchJsonWithTimeout(url, PLAN_WATCH_ALERT_TIMEOUT_MS, {
+    headers: { Accept: "application/geo+json" }
+  });
+  return (json?.features || []).map((feature) => feature.properties).filter(Boolean);
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs, init = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) throw new Error(`fetch-${response.status}`);
+    return response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function planWatchWindowStats(plan, forecast, unit = "fahrenheit") {
+  const hourly = forecast?.hourly || {};
+  const times = Array.isArray(hourly.time) ? hourly.time : [];
+  if (!times.length || !plan?.targetDate) return null;
+  const startHour = finiteNumber(plan.startHour, 0);
+  const endHour = finiteNumber(plan.endHour, 24);
+  const indexes = times.reduce((result, time, index) => {
+    if (!String(time).startsWith(plan.targetDate)) return result;
+    const hour = planWatchLocalHour(time);
+    if (hour >= startHour && hour < endHour) result.push(index);
+    return result;
+  }, []);
+  const dailyIndex = Array.isArray(forecast?.daily?.time)
+    ? forecast.daily.time.indexOf(plan.targetDate)
+    : -1;
+  const values = (key, fallback = 0) => indexes.length
+    ? indexes.map((index) => finiteNumber(hourly?.[key]?.[index], fallback))
+    : [fallback];
+  const dayValue = (key, fallback = 0) => dailyIndex >= 0
+    ? finiteNumber(forecast?.daily?.[key]?.[dailyIndex], fallback)
+    : fallback;
+  const temps = values("temperature_2m", dayValue("temperature_2m_max", 0));
+  const feels = values("apparent_temperature", dayValue("apparent_temperature_max", temps[0] || 0));
+  const pop = values("precipitation_probability", dayValue("precipitation_probability_max", 0));
+  const precip = values("precipitation", 0);
+  const wind = values("wind_speed_10m", dayValue("wind_speed_10m_max", 0));
+  const gust = values("wind_gusts_10m", dayValue("wind_gusts_10m_max", 0));
+  const uv = values("uv_index", dayValue("uv_index_max", 0));
+  const codes = indexes.length ? indexes.map((index) => hourly.weather_code?.[index]) : [dayValue("weather_code", 0)];
+  return {
+    tempMin: roundNumber(Math.min(...temps)),
+    tempMax: roundNumber(Math.max(...temps)),
+    feelsAvg: roundNumber(avgNumber(feels)),
+    feelsMin: roundNumber(Math.min(...feels)),
+    feelsMax: roundNumber(Math.max(...feels)),
+    rainChance: roundNumber(Math.max(...pop)),
+    rainChanceMin: roundNumber(Math.min(...pop)),
+    precipTotal: roundNumber(precip.reduce((sum, item) => sum + Number(item || 0), 0), unit === "fahrenheit" ? 2 : 1),
+    windMin: roundNumber(Math.min(...wind)),
+    windMax: roundNumber(Math.max(...wind)),
+    gustMax: roundNumber(Math.max(...gust)),
+    uvMax: roundNumber(Math.max(...uv)),
+    stormPotential: codes.some((code) => Number(code) >= 95)
+  };
+}
+
+function planWatchLocalHour(value) {
+  const match = String(value || "").match(/T(\d{1,2})(?::(\d{2}))?/);
+  if (!match) return 0;
+  return Number(match[1]) + Number(match[2] || 0) / 60;
+}
+
+function planWatchWindowMs(plan, forecast = {}) {
+  const offset = finiteNumber(forecast.utc_offset_seconds, 0) * 1000;
+  const start = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.startHour, 0), offset);
+  const end = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.endHour, 24), offset);
+  return { startMs: start, endMs: Math.max(end, start + 60 * 60 * 1000) };
+}
+
+function planWatchLocalDateHourMs(date, hour, utcOffsetMs) {
+  const [year, month, day] = String(date || "").split("-").map(Number);
+  if (![year, month, day].every(Number.isFinite)) return NaN;
+  const wholeHour = Math.floor(hour);
+  const minute = Math.round((hour - wholeHour) * 60);
+  return Date.UTC(year, month - 1, day, wholeHour, minute) - utcOffsetMs;
+}
+
+function topPlanWatchAlert(alerts = [], startMs, endMs) {
+  return alerts
+    .filter((alert) => planWatchAlertOverlaps(alert, startMs, endMs))
+    .sort((a, b) => planWatchAlertPriority(b) - planWatchAlertPriority(a))[0] || null;
+}
+
+function planWatchAlertOverlaps(alert, startMs, endMs) {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+  const alertStart = timestamp(alert?.onset || alert?.effective);
+  const alertEnd = timestamp(alert?.ends || alert?.expires);
+  const startsBeforeEnd = alertStart === null || alertStart < endMs;
+  const endsAfterStart = alertEnd === null || alertEnd > startMs;
+  return startsBeforeEnd && endsAfterStart;
+}
+
+function planWatchAlertTone(alert) {
+  const event = String(alert?.event || "").toLowerCase();
+  if (event.includes("warning")) return "warning";
+  if (event.includes("watch")) return "watch";
+  if (event.includes("advisory")) return "advisory";
+  if (alert?.severity === "Extreme" || alert?.severity === "Severe") return "warning";
+  if (alert?.severity === "Moderate" || alert?.severity === "Minor") return "advisory";
+  return alert ? "notice" : "";
+}
+
+function planWatchAlertPriority(alert) {
+  const tone = planWatchAlertTone(alert);
+  const toneRank = { warning: 4, watch: 3, advisory: 2, notice: 1 }[tone] || 0;
+  const severityRank = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 }[alert?.severity] || 0;
+  return toneRank * 100 + severityRank * 10;
+}
+
+function planWatchCurrentState(plan, stats, alert, unit = "fahrenheit") {
+  const alertTone = planWatchAlertTone(alert);
+  const score = planWatchWindowScore(stats, unit);
+  const riskKind = planWatchRiskKindForStats(stats, alert, unit);
+  const tone = alertTone === "warning" || alertTone === "watch" || score < 45 || stats.stormPotential
+    ? "watch"
+    : score < 65 || stats.rainChance >= 35 || stats.gustMax >= (unit === "fahrenheit" ? 25 : 40) ? "caution" : "good";
+  const label = planWatchStateLabel({ tone, riskKind, alert });
+  const reason = planWatchStateReason(stats, alert, unit);
+  const body = `${label}: ${reason}.`;
+  const snapshot = {
+    title: plan.title || "Plan",
+    targetDate: plan.targetDate || "",
+    startHour: roundNumber(finiteNumber(plan.startHour, null)),
+    endHour: roundNumber(finiteNumber(plan.endHour, null)),
+    rainChance: roundNumber(stats.rainChance),
+    gustMax: roundNumber(stats.gustMax),
+    windUnit: unit === "fahrenheit" ? "mph" : "km/h",
+    feelsMax: roundNumber(stats.feelsMax),
+    tempUnit: unit === "fahrenheit" ? "°F" : "°C",
+    score,
+    tone,
+    verdict: planWatchVerdict(score, tone),
+    alertTone,
+    alertEvent: alert?.event || "",
+    riskKind
+  };
+  const signal = alert ? "plan-alert" : tone;
+  return {
+    signal,
+    tone,
+    label,
+    reason,
+    body,
+    snapshot,
+    alert
+  };
+}
+
+function planWatchRiskKindForStats(stats = {}, alert = null, unit = "fahrenheit") {
+  const text = [alert?.event, alert?.headline, alert?.description, alert?.instruction].filter(Boolean).join(" ").toLowerCase();
+  if (/\b(excessive heat|extreme heat|heat warning|heat advisory|heat|hot|humid|uv)\b/.test(text)) return "heat";
+  if (/\b(thunder|lightning|hail|tornado|severe thunderstorm)\b/.test(text)) return "storm";
+  if (/\b(flood|flash flood|heavy rain|downpour)\b/.test(text)) return "rain";
+  if (/\b(high wind|wind advisory|strong wind|gust)\b/.test(text)) return "wind";
+  if (stats.stormPotential) return "storm";
+  if (stats.rainChance >= 35 || stats.precipTotal > (unit === "fahrenheit" ? 0.02 : 0.5)) return "rain";
+  if (stats.gustMax >= (unit === "fahrenheit" ? 25 : 40)) return "wind";
+  if (stats.feelsMax >= (unit === "fahrenheit" ? 92 : 33) || stats.uvMax >= 8) return "heat";
+  return "good";
+}
+
+function planWatchStateLabel({ tone, riskKind, alert }) {
+  if (tone === "good") return "Looks good";
+  if (riskKind === "heat") return "Plan around heat";
+  if (riskKind === "storm") return alert ? "Alert overlaps" : "Keep an eye on storms";
+  if (riskKind === "rain") return "Expect rain";
+  if (riskKind === "wind") return "Wind may matter";
+  if (alert) return "Alert overlaps";
+  return "Keep an eye on it";
+}
+
+function planWatchStateReason(stats = {}, alert = null, unit = "fahrenheit") {
+  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
+  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
+  if (alert?.event) return `${alert.event} overlaps that window`;
+  if (stats.stormPotential) return "thunderstorms are possible";
+  if (stats.rainChance >= 35) return `${stats.rainChance}% rain chance`;
+  if (stats.gustMax >= (unit === "fahrenheit" ? 25 : 40)) return `gusts near ${stats.gustMax} ${windUnit}`;
+  if (stats.uvMax >= 8) return `UV up to ${stats.uvMax}`;
+  if (stats.feelsMax >= (unit === "fahrenheit" ? 88 : 31)) return `feels up to ${stats.feelsMax}${tempUnit}`;
+  return `rain looks low (${stats.rainChance}%)`;
+}
+
+function planWatchWindowScore(stats = {}, unit = "fahrenheit") {
+  const feelsF = unit === "celsius" ? (stats.feelsAvg * 9) / 5 + 32 : stats.feelsAvg;
+  const windMph = unit === "celsius" ? stats.windMax / 1.609344 : stats.windMax;
+  const gustMph = unit === "celsius" ? stats.gustMax / 1.609344 : stats.gustMax;
+  const target = 72;
+  const tempPenalty = Math.abs(feelsF - target) * 0.8;
+  const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80;
+  const windPenalty = Math.max(0, windMph - 24) * 2 + Math.max(0, gustMph - 32) * 2;
+  const uvPenalty = Math.max(0, stats.uvMax - 8 + 1) * 5;
+  return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
+}
+
+function planWatchVerdict(score, tone) {
+  if (tone === "watch") return "Watch closely";
+  if (score >= 80) return "Looks good";
+  if (score >= 65) return "Pretty good";
+  if (score >= 45) return "Iffy";
+  return "Not ideal";
+}
+
+function planWatchStateChange(previousLastKnown = {}, current = {}) {
+  const previous = normalizePlanWatchSnapshot(previousLastKnown?.snapshot);
+  const currentSnapshot = current.snapshot;
+  if (!currentSnapshot) return { updateBaseline: false, notify: false };
+
+  if (!previous) {
+    const hadAlert = /alert|warning|watch|advisory/i.test([
+      previousLastKnown?.signal,
+      previousLastKnown?.label,
+      previousLastKnown?.reason,
+      previousLastKnown?.body
+    ].filter(Boolean).join(" "));
+    if (currentSnapshot.alertTone && !hadAlert) {
+      return {
+        type: "plan-alert",
+        tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
+        notify: true,
+        updateBaseline: true,
+        priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
+        title: `${currentSnapshot.title}: alert started`,
+        body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
+      };
+    }
+    return { type: "baseline", notify: false, updateBaseline: true, priority: 0 };
+  }
+
+  if (
+    currentSnapshot.alertTone &&
+    currentSnapshot.alertTone !== "none" &&
+    (currentSnapshot.alertTone !== previous.alertTone || currentSnapshot.alertEvent !== previous.alertEvent)
+  ) {
+    return {
+      type: "plan-alert",
+      tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
+      notify: true,
+      updateBaseline: true,
+      priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
+      title: `${currentSnapshot.title}: alert started`,
+      body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
+    };
+  }
+
+  if (previous.alertTone && !currentSnapshot.alertTone) {
+    return { type: "plan-alert-ended", tone: "good", notify: false, updateBaseline: true, priority: 45 };
+  }
+
+  const rainDelta = numberDelta(currentSnapshot.rainChance, previous.rainChance);
+  if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(currentSnapshot.rainChance, previous.rainChance) >= 35) {
+    const wetter = rainDelta > 0;
+    return {
+      type: "plan-rain",
+      tone: wetter ? "watch" : "good",
+      notify: wetter,
+      updateBaseline: true,
+      priority: 90 + Math.abs(rainDelta),
+      title: `${currentSnapshot.title} ${wetter ? "got wetter" : "got drier"}`,
+      body: `Rain now ${currentSnapshot.rainChance}%, ${wetter ? "up" : "down"} from ${previous.rainChance}%.`
+    };
+  }
+
+  const heatDelta = numberDelta(currentSnapshot.feelsMax, previous.feelsMax);
+  const seriousHeat = currentSnapshot.tempUnit === "°C" ? 38 : 100;
+  const notableHeat = currentSnapshot.tempUnit === "°C" ? 33 : 92;
+  const crossedSeriousHeat = Number.isFinite(previous.feelsMax) &&
+    Number.isFinite(currentSnapshot.feelsMax) &&
+    previous.feelsMax < seriousHeat &&
+    currentSnapshot.feelsMax >= seriousHeat;
+  if (
+    heatDelta !== null &&
+    (crossedSeriousHeat || (Math.abs(heatDelta) >= (currentSnapshot.tempUnit === "°C" ? 3 : 5) && Math.max(currentSnapshot.feelsMax, previous.feelsMax) >= notableHeat))
+  ) {
+    const hotter = heatDelta > 0;
+    return {
+      type: "plan-heat",
+      tone: hotter ? (currentSnapshot.feelsMax >= seriousHeat ? "watch" : "caution") : "good",
+      notify: hotter,
+      updateBaseline: true,
+      priority: (hotter ? 88 : 52) + Math.abs(heatDelta),
+      title: `${currentSnapshot.title} ${hotter ? "got hotter" : "cooled down"}`,
+      body: `Feels like now peaks at ${currentSnapshot.feelsMax}${currentSnapshot.tempUnit}, ${hotter ? "up" : "down"} from ${previous.feelsMax}${currentSnapshot.tempUnit}.`
+    };
+  }
+
+  const gustDelta = numberDelta(currentSnapshot.gustMax, previous.gustMax);
+  const windThreshold = currentSnapshot.windUnit === "mph" ? 8 : 13;
+  const notableWind = currentSnapshot.windUnit === "mph" ? 24 : 39;
+  if (
+    currentSnapshot.windUnit === previous.windUnit &&
+    gustDelta !== null &&
+    Math.abs(gustDelta) >= windThreshold &&
+    Math.max(currentSnapshot.gustMax, previous.gustMax) >= notableWind
+  ) {
+    const stronger = gustDelta > 0;
+    return {
+      type: "plan-wind",
+      tone: stronger ? "caution" : "good",
+      notify: stronger,
+      updateBaseline: true,
+      priority: 70 + Math.abs(gustDelta),
+      title: `${currentSnapshot.title} ${stronger ? "got windier" : "eased up"}`,
+      body: `Gusts now ${currentSnapshot.gustMax} ${currentSnapshot.windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${currentSnapshot.windUnit}.`
+    };
+  }
+
+  const scoreDelta = numberDelta(currentSnapshot.score, previous.score);
+  if (scoreDelta !== null && Math.abs(scoreDelta) >= 18 && scoreBand(currentSnapshot.score) !== scoreBand(previous.score)) {
+    const better = scoreDelta > 0;
+    return {
+      type: "plan-score",
+      tone: better ? "good" : "caution",
+      notify: !better,
+      updateBaseline: true,
+      priority: 55 + Math.abs(scoreDelta),
+      title: `${currentSnapshot.title} looks ${better ? "better" : "iffy now"}`,
+      body: `Plan window moved from ${scoreBand(previous.score)} to ${scoreBand(currentSnapshot.score)}.`
+    };
+  }
+
+  return { updateBaseline: false, notify: false };
+}
+
+function planWatchLastKnownFromState(plan, current, change = {}) {
+  const body = change?.body || current.body || "";
+  const signal = change?.type || current.signal || current.tone || "watch";
+  const eventKey = [
+    plan.id,
+    plan.targetDate,
+    plan.startHour,
+    plan.endHour,
+    signal,
+    body || current.reason || ""
+  ].join("|");
+  return {
+    eventKey,
+    signal,
+    tone: current.tone || "",
+    label: current.label || "",
+    reason: current.reason || "",
+    body,
+    checkedAt: new Date().toISOString(),
+    snapshot: current.snapshot
+  };
+}
+
+function planWatchNotificationCandidate(plan, current, change = {}) {
+  return {
+    type: change.type || current.signal || "plan-watch",
+    priority: change.priority || 50,
+    notification: {
+      title: change.title || `Nearcast: ${plan.title || "Watched plan"}`,
+      body: change.body || current.body || "Weather changed for this plan.",
+      tag: `nearcast-plan-${cleanToken(plan.id, 80)}`,
+      renotify: false,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      url: "./",
+      memoryId: plan.id || "",
+      source: "plan-watch-evaluator"
+    }
+  };
+}
+
+function buildPendingPlanWatchNotification(record, candidate) {
+  const createdAt = new Date();
+  return {
+    provider: PLAN_WATCH_PROVIDER,
+    version: 1,
+    subscriptionId: record.subscriptionId,
+    notification: normalizePendingPlanWatchNotification(candidate.notification),
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + PLAN_WATCH_PENDING_TTL_SECONDS * 1000).toISOString()
+  };
+}
+
+function normalizePendingPlanWatchNotification(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    title: cleanText(source.title || "Nearcast", 120),
+    body: cleanText(source.body || "A watched plan changed.", 220),
+    tag: cleanText(source.tag || "nearcast-plan-watch", 120),
+    renotify: Boolean(source.renotify),
+    icon: cleanText(source.icon || "/icons/icon-192.png", 120),
+    badge: cleanText(source.badge || "/icons/icon-192.png", 120),
+    url: cleanText(source.url || "./", 200),
+    memoryId: cleanText(source.memoryId || "", 96),
+    source: cleanToken(source.source || "plan-watch-evaluator", 64)
+  };
 }
 
 async function sendPlanWatchPush(subscription, env = {}) {
@@ -1016,12 +1695,38 @@ function normalizePlanWatchLastKnown(value = {}) {
     label: cleanText(source.label, 120),
     reason: cleanText(source.reason, 240),
     body: cleanText(source.body, 240),
-    checkedAt: cleanText(source.checkedAt, 40)
+    checkedAt: cleanText(source.checkedAt, 40),
+    snapshot: normalizePlanWatchSnapshot(source.snapshot)
   };
 }
 
 function planWatchSubscriptionStorageName(subscriptionId) {
   return `subscriptions/${cleanStorageName(subscriptionId)}.json`;
+}
+
+function planWatchPendingStorageName(subscriptionId) {
+  return `pending/${cleanStorageName(subscriptionId)}.json`;
+}
+
+function normalizePlanWatchSnapshot(value = {}) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    title: cleanText(value.title, 120),
+    targetDate: cleanText(value.targetDate, 16),
+    startHour: finiteNumber(value.startHour, null),
+    endHour: finiteNumber(value.endHour, null),
+    rainChance: finiteNumber(value.rainChance, null),
+    gustMax: finiteNumber(value.gustMax, null),
+    windUnit: cleanText(value.windUnit, 16),
+    feelsMax: finiteNumber(value.feelsMax, null),
+    tempUnit: cleanText(value.tempUnit, 8),
+    score: finiteNumber(value.score, null),
+    tone: cleanToken(value.tone, 32),
+    verdict: cleanText(value.verdict, 60),
+    alertTone: cleanToken(value.alertTone, 32),
+    alertEvent: cleanText(value.alertEvent, 120),
+    riskKind: cleanToken(value.riskKind, 32)
+  };
 }
 
 async function planWatchSubscriptionId(subscription) {
@@ -1035,6 +1740,30 @@ async function sha256Hex(value) {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 48);
+}
+
+function avgNumber(values) {
+  const numbers = (values || []).map(Number).filter(Number.isFinite);
+  if (!numbers.length) return 0;
+  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+}
+
+function roundNumber(value, digits = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = 10 ** digits;
+  return Math.round(number * factor) / factor;
+}
+
+function numberDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  return current - previous;
+}
+
+function scoreBand(score) {
+  if (score >= 65) return "good";
+  if (score >= 45) return "iffy";
+  return "poor";
 }
 
 function base64UrlEncodeJson(value) {
