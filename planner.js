@@ -3436,31 +3436,64 @@ function planWatchRiskKind(item) {
 
 function planWatchLabel(item) {
   if (!item) return "Waiting on forecast";
+  if (item.isPast) return "Past";
+  const risk = planWatchRiskKind(item);
   if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") {
-    const risk = planWatchRiskKind(item);
-    if (risk === "heat") return item.alertTone === "warning" ? "Plan for serious heat" : "Add heat precautions";
-    if (risk === "storm") return "Keep an indoor option";
-    if (risk === "flood") return "Avoid low spots";
-    if (risk === "rain") return "Plan around rain";
-    if (risk === "wind") return "Secure the setup";
-    if (risk === "air") return "Limit outdoor strain";
-    if (risk === "pollen") return "Plan for allergies";
-    if (risk === "cold") return "Plan for the cold";
-    return "Adjust this plan";
+    if (risk === "heat") return "Plan around heat";
+    if (risk === "storm") return item.alert ? "Alert overlaps" : "Keep an eye on it";
+    if (risk === "flood" || risk === "rain") return "Expect rain";
+    if (risk === "wind") return "Wind may matter";
+    if (risk === "air") return "Air may matter";
+    if (risk === "pollen") return "Allergies may matter";
+    if (risk === "cold") return "Plan around cold";
+    if (item.alert) return "Alert overlaps";
+    return "Keep an eye on it";
   }
-  if (item.tone === "caution") return "Weather may affect this";
+  if (item.tone === "caution") {
+    if (risk === "heat") return "Plan around heat";
+    if (risk === "rain" || risk === "flood") return "Keep an eye on rain";
+    if (risk === "wind") return "Wind may matter";
+    if (risk === "air") return "Air may matter";
+    if (risk === "cold") return "Plan around cold";
+    return "Keep an eye on it";
+  }
   return "Looks good";
 }
 
 function planWatchFullReason(item) {
   if (!item) return "";
   const reason = capitalize(String(item.primaryReason || item.reasons?.[0] || "weather looks manageable").replace(/[.!?]+$/, ""));
-  if (item.tone === "good") return reason;
-  return `${reason}. ${item.advice || ""}`.trim();
+  return reason;
 }
 
 function planWatchReason(item) {
   return planWatchCompactText(planWatchFullReason(item));
+}
+
+function planWatchActionText(item) {
+  if (!item || item.isPast) return "";
+  if (item.change) return "Check the hourly timing before you go.";
+  if (item.tone === "good") return "";
+  const stats = item.stats || {};
+  const risk = planWatchRiskKind(item);
+  if (risk === "heat") {
+    if ((stats.feelsMax ?? stats.feelsAvg ?? 0) >= 100 || item.alertTone === "warning") {
+      return "Plan shade, water, cooling breaks, and an indoor option if needed.";
+    }
+    return "Bring water and plan shade during the hottest part.";
+  }
+  if (risk === "storm") return "Keep an indoor or delay option if thunder gets close.";
+  if (risk === "flood") return "Avoid low spots and check routes before you leave.";
+  if (risk === "rain") {
+    if ((stats.rainChance || 0) >= 60) return "Bring rain gear and expect possible interruptions.";
+    return "Keep rain gear close and watch the timing.";
+  }
+  if (risk === "wind") return "Secure loose items and choose a less exposed setup.";
+  if (risk === "air") return "Limit strenuous outdoor time, especially for sensitive people.";
+  if (risk === "pollen") return "Allergy-sensitive people should plan ahead.";
+  if (risk === "cold") return "Add layers and keep the outdoor window flexible.";
+  if (item.alert) return "Check local guidance and keep the plan flexible.";
+  return item.advice || "Keep an alternate window or location handy.";
 }
 
 function planWatchBaselineStore() {
@@ -3507,6 +3540,7 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
     label: past ? "Past" : planWatchLabel(item),
     fullReason: past ? "Kept here until you forget it." : planWatchFullReason(item),
     reason: past ? "Kept here until you forget it." : planWatchReason(item),
+    action: past ? "" : planWatchActionText({ ...item, change, isPast: past }),
     change,
     isPast: past
   };
@@ -3550,6 +3584,17 @@ function planSignalRangeText(min, max, unit = "") {
   return `${low}${unit}-${high}${unit}`;
 }
 
+function planSignalChanceRangeText(min, max) {
+  const low = Math.round(Number(min));
+  const high = Math.round(Number(max));
+  if (!Number.isFinite(low) && !Number.isFinite(high)) return "";
+  if (!Number.isFinite(low)) return `${high}% max`;
+  if (!Number.isFinite(high)) return `${low}%`;
+  if (high <= 0) return "0%";
+  if (low === high) return `${high}%`;
+  return `${low}-${high}%`;
+}
+
 function planSignalUnitRangeText(min, max, unit = "") {
   const low = Math.round(Number(min));
   const high = Math.round(Number(max));
@@ -3569,7 +3614,7 @@ function planSignalPeakText(value, unit = "") {
 
 function planSignalPrecipTotalText(value, unit) {
   const text = planSignalPrecipText(value, unit);
-  return text === "None" ? text : `Total ${text} ${unit}`;
+  return text === "None" ? text : `${text} ${unit} total`;
 }
 
 function uniquePlanSignalRows(rows, limit = 3) {
@@ -3595,7 +3640,7 @@ function planContextSignalRows(item) {
   const risk = planSignalRiskKind(item);
   const feelsRow = { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" };
   const tempRow = { label: "Temp", value: planSignalRangeText(stats.tempMin, stats.tempMax, temp), kind: "temp" };
-  const rainRow = { label: "Rain", value: `Max ${Math.round(Number(stats.rainChance || 0))}%`, kind: "rain" };
+  const rainRow = { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" };
   const amountRow = { label: "Amount", value: planSignalPrecipTotalText(stats.precipTotal, precip), kind: "rain" };
   const gustRow = { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" };
   const windRow = { label: "Wind", value: planSignalUnitRangeText(stats.windMin ?? stats.windMax, stats.windMax, wind), kind: "wind" };
@@ -3730,6 +3775,18 @@ function setGlobalMemorySheetFocusedMode(focused) {
   els.memorySheet?.classList.toggle("is-focused-plan", Boolean(focused));
 }
 
+function renderFocusedPlanNotifyAction(watch, effectivePast) {
+  if (
+    effectivePast ||
+    !planWatchNotificationsSupported() ||
+    planWatchNotificationsEnabled() ||
+    planWatchNotificationPermission() === "denied"
+  ) return "";
+  const label = "Notify me";
+  const aria = `Notify me if ${planMemoryTitle(watch?.memory)} changes`;
+  return `<button type="button" data-watch-notify aria-label="${escapeHtml(aria)}">${escapeHtml(label)}</button>`;
+}
+
 function renderFocusedPlanWatchHero(item, watch) {
   const memory = item.memory;
   const id = escapeHtml(memory.id);
@@ -3741,7 +3798,7 @@ function renderFocusedPlanWatchHero(item, watch) {
     watch?.fullReason ||
     watch?.reason ||
     "Nearcast is checking this plan against the forecast.";
-  const advice = watch?.change ? "" : String(watch?.advice || "").trim();
+  const advice = String(watch?.action || (!watch?.change ? watch?.advice : "") || "").trim();
   const effectivePast = Boolean(item.isPast || watch?.isPast);
   return `
     <section class="focused-plan-hero is-${escapeHtml(tone)}">
@@ -3754,6 +3811,7 @@ function renderFocusedPlanWatchHero(item, watch) {
       ${renderPlanWatchSignals(watch)}
       <div class="focused-plan-actions">
         ${effectivePast ? "" : `<button class="is-primary" type="button" data-memory-hourly="${id}">Hourly detail</button>`}
+        ${renderFocusedPlanNotifyAction(watch, effectivePast)}
         <button type="button" data-memory-edit="${id}">Change plan</button>
       </div>
       <button class="focused-plan-forget" type="button" data-memory-forget="${id}">Forget this plan</button>

@@ -4410,13 +4410,14 @@ h2 {
 .plan-watch-change {
   display: block;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-size: 0.74rem;
   font-weight: 790;
   line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-overflow: clip;
+  white-space: normal;
 }
 .plan-watch-change {
   grid-column: 1 / -1;
