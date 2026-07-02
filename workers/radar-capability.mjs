@@ -1066,12 +1066,14 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     }
   }
 
-  const nextRecord = {
-    ...record,
-    plans: evaluatedPlans,
-    evaluatedAt: new Date().toISOString()
-  };
-  await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
+  if (!options.dryRun && result.failed === 0) {
+    const nextRecord = {
+      ...record,
+      plans: evaluatedPlans,
+      evaluatedAt: new Date().toISOString()
+    };
+    await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
+  }
   return result;
 }
 
