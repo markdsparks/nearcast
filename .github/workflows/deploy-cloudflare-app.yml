@@ -85,6 +85,7 @@ jobs:
         run: npx --yes wrangler deploy
 
       - name: Purge app edge cache
+        continue-on-error: true
         env:
           CLOUDFLARE_ZONE_NAME: getnearcast.app
         run: |
