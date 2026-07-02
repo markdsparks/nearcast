@@ -1178,6 +1178,14 @@ function renderBriefing() {
     slot.hidden = true;
     return;
   }
+  const showSummarySurface = aiState.phase === "loading" ||
+    aiState.phase === "generating" ||
+    aiState.phase === "error" ||
+    Boolean(aiState.text);
+  if (!showSummarySurface) {
+    slot.hidden = true;
+    return;
+  }
   slot.hidden = false;
 
   // Privacy is the headline feature: the model runs entirely on-device.
@@ -1428,12 +1436,8 @@ function fillPlannerTemplate(template, options = {}) {
   input.value = template || "";
   if (form) {
     form.classList.add("is-drafting");
-    if (els.aiSheet && !els.aiSheet.hidden) {
-      els.aiSheet.scrollTo({ top: els.aiSheet.scrollHeight, behavior: "smooth" });
-      restoreSheetScrollAnchor(els.aiSheet);
-    } else {
-      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
+    form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (els.aiSheet && !els.aiSheet.hidden) restoreSheetScrollAnchor(els.aiSheet);
   }
   if (helper) {
     helper.textContent = helperText;
@@ -5374,8 +5378,8 @@ function renderPlannerClarification(disabledAttr = "") {
     return `
       <div class="ask-confirm" aria-label="Planner interpretation confirmation">
         <div class="ask-confirm-head">
-          <strong>Confirm the plan</strong>
-          <small>Nearcast read your text this way</small>
+          <strong>Nearcast read this as</strong>
+          <small>Confirm the plan before checking the forecast</small>
         </div>
         <dl class="ask-confirm-facts">
           <div><dt>Plan</dt><dd>${escapeHtml(facts.plan || "Plan")}</dd></div>
@@ -5399,6 +5403,103 @@ function renderPlannerClarification(disabledAttr = "") {
   `</div>`;
 }
 
+function plannerStarterExamples() {
+  return [
+    { label: "Pool party", template: "pool party Saturday 2-6" },
+    { label: "Golf", template: "golf tomorrow morning" },
+    { label: "Dinner outside", template: "dinner outside tonight" }
+  ];
+}
+
+function previewPlanMemoryFromEvent(event, exchange = {}, index = 0) {
+  if (!event?.data || !event.place) return null;
+  const targetDate = event.data.daily?.time?.[event.dayIndex];
+  if (!targetDate) return null;
+  return normalizePlanMemory({
+    id: event.memoryId || `plan-preview-${index}`,
+    kind: "plan",
+    title: event.title || event.label || "Plan",
+    label: event.label || "Plan window",
+    original: exchange.q || "",
+    answer: exchange.a || "",
+    place: event.place,
+    targetDate,
+    startHour: event.startHour,
+    endHour: event.endHour,
+    createdAt: Number(event.startMs) || Date.now(),
+    updatedAt: Number(event.endMs) || Date.now()
+  });
+}
+
+function planDecisionItemForExchange(exchange, index) {
+  const event = exchange?.event;
+  if (!event?.data || !event.place) return null;
+  const rememberedId = exchange.memoryId || rememberedPlanIdForEvent(event);
+  const remembered = rememberedId
+    ? state.planMemories.find((memory) => memory.id === rememberedId)
+    : null;
+  const memory = remembered || previewPlanMemoryFromEvent(event, exchange, index);
+  if (!memory) return null;
+  const alerts = event.alerts || [];
+  const context = buildAIContext(event.data, event.place, alerts);
+  return planBriefingItemFromEvent(memory, event, event.data, event.place, context, alerts);
+}
+
+function renderPlanDecisionExchange(exchange, index, streaming = false) {
+  const item = planDecisionItemForExchange(exchange, index);
+  if (!item) return "";
+  const event = exchange.event;
+  const rememberedId = exchange.memoryId || rememberedPlanIdForEvent(event);
+  const memory = item.memory;
+  const title = planMemoryTitle(memory);
+  const meta = [
+    planMemoryDayLabel(memory, event.data),
+    planMemoryTimeText(memory),
+    placeLabel(memory.place)
+  ].filter(Boolean).join(" · ");
+  const reason = item.fullReason || item.primaryReason || exchange.a;
+  const action = item.action || (item.tone === "good" ? "" : item.advice);
+  const signals = planContextSignalRows(item).map(renderPlanSignalChip).join("");
+  const watchAction = rememberedId
+    ? `<span class="ask-memory-state">Watching</span>` +
+      `<button class="ask-memory-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Review</button>`
+    : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${index}">Watch this plan</button>`;
+  const changeTarget = rememberedId || index;
+  return `
+    <article class="ask-decision is-${escapeHtml(item.tone || "pending")}${streaming ? " answering" : ""}">
+      <div class="ask-decision-head">
+        <span>Plan check</span>
+        <strong>${escapeHtml(item.label || item.verdict || "Forecast checked")}</strong>
+      </div>
+      <div class="ask-decision-plan">
+        <h3>${escapeHtml(title)}</h3>
+        <p>${escapeHtml(meta)}</p>
+      </div>
+      ${reason ? `<p class="ask-decision-reason">${escapeHtml(reason)}</p>` : ""}
+      ${action ? `<p class="ask-decision-action"><span>What to do</span>${escapeHtml(action)}</p>` : ""}
+      ${signals ? `<div class="plan-watch-signals ask-decision-signals">${signals}</div>` : ""}
+      <div class="ask-exchange-actions ask-decision-actions">
+        ${watchAction}
+        <button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>
+        <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change plan</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderAskExchange(exchange, index) {
+  const streaming = askStreaming && index === askThread.length - 1;
+  if (exchange.event && !streaming) return renderPlanDecisionExchange(exchange, index, streaming);
+  const showAction = exchange.event && !streaming
+    ? `<button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>`
+    : "";
+  return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
+    `<p class="ask-q">${escapeHtml(exchange.q)}</p>` +
+    `<p class="ask-a">${escapeHtml(exchange.a)}</p>` +
+    (showAction ? `<div class="ask-exchange-actions">${showAction}</div>` : "") +
+  `</div>`;
+}
+
 function renderAsk() {
   const perf = perfStart();
   const panel = els.aiAsk;
@@ -5419,69 +5520,37 @@ function renderAsk() {
   const dis = busy ? " disabled" : "";
 
   const memorySection = renderPlanMemorySection();
-  const bestCards = buildBestWindowCards().map((card) =>
-    `<button class="best-window-card" type="button" data-ask-q="${escapeHtml(card.q)}"` +
-      `${card.intent ? ` data-ask-intent="${escapeHtml(card.intent)}"` : ""}${dis}>` +
-      `<span class="best-window-copy">` +
-        `<span class="best-window-top">` +
-          `<strong>${escapeHtml(card.title)}</strong>` +
-          `<span class="best-window-badge">${escapeHtml(card.badge)}</span>` +
-        `</span>` +
-        `<em>${escapeHtml(card.window)}</em>` +
-        `<small>${escapeHtml(card.meta)}</small>` +
-      `</span>` +
+  const examples = plannerStarterExamples().map((example) =>
+    `<button class="ask-example-chip" type="button" data-ask-template="${escapeHtml(example.template)}"${dis}>` +
+      `${escapeHtml(example.label)}` +
     `</button>`
   ).join("");
-
-  const chips = ACTIVITY_CHIPS.map((c) => {
-    if (c.template) {
-      return `<button class="ask-chip ask-template-chip" type="button" ` +
-        `data-ask-template="${escapeHtml(c.template)}"${dis}>${escapeHtml(c.label)}</button>`;
-    }
-    return `<button class="ask-chip" type="button" data-ask-q="${escapeHtml(c.q)}"` +
-      `${c.intent ? ` data-ask-intent="${escapeHtml(c.intent)}"` : ""}${dis}>${escapeHtml(c.label)}</button>`;
-  }).join("");
-
-  const thread = askThread.map((ex, i) => {
-    const streaming = askStreaming && i === askThread.length - 1;
-    const showAction = ex.event && !streaming
-      ? `<button class="ask-show" type="button" data-ask-show="${i}">Show me</button>`
-      : "";
-    const rememberedId = ex.event && !streaming ? (ex.memoryId || rememberedPlanIdForEvent(ex.event)) : "";
-    const memoryAction = ex.event && !streaming
-      ? rememberedId
-        ? `<span class="ask-memory-state">Watching</span>` +
-          `<button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(rememberedId)}">Edit</button>` +
-          `<button class="ask-memory-btn" type="button" data-memory-forget="${escapeHtml(rememberedId)}">Forget</button>`
-        : `<button class="ask-memory-btn primary" type="button" data-memory-remember="${i}">Watch this</button>` +
-          `<button class="ask-memory-btn" type="button" data-memory-edit="${i}">Edit</button>`
-      : "";
-    return `<div class="ask-exchange${streaming ? " answering" : ""}">` +
-      `<p class="ask-q">${escapeHtml(ex.q)}</p>` +
-      `<p class="ask-a">${escapeHtml(ex.a)}</p>` +
-      ((showAction || memoryAction) ? `<div class="ask-exchange-actions">${showAction}${memoryAction}</div>` : "") +
-    `</div>`;
-  }).join("");
+  const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
+  const promptTitle = editing ? "Change this plan" : "What are you planning?";
+  const promptCopy = editing
+    ? "Update the activity, time, or place. Nearcast will re-check the forecast context."
+    : "Tell Nearcast the plan, time, and place. It checks rain, heat, wind, UV, and alerts for that exact window.";
+  const thread = askThread.map(renderAskExchange).join("");
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
 
   panel.innerHTML =
-    memorySection +
-    (bestCards ? `<section class="best-windows" aria-label="Weather windows">` +
-      `<div class="ai-section-title"><strong>Weather windows</strong><span>Forecast-grounded</span></div>` +
-      `<div class="best-window-grid">${bestCards}</div>` +
-    `</section>` : "") +
-    `<section class="plan-presets" aria-label="Plan presets">` +
-      `<div class="ai-section-title"><strong>Plan something</strong><span>Templates, no guesses</span></div>` +
-      `<div class="ask-chips">${chips}</div>` +
-      `<p class="ask-helper">Tap a template, then add the day, time, and place if it is away from here.</p>` +
+    `<section class="ask-plan-check" aria-label="Plan check">` +
+      `<div class="ask-plan-copy">` +
+        `<span>Plan check</span>` +
+        `<h3>${escapeHtml(promptTitle)}</h3>` +
+        `<p>${escapeHtml(promptCopy)}</p>` +
+      `</div>` +
+      `<form class="ask-form" id="askForm">` +
+        `<input id="askInput" type="text" autocomplete="off" ` +
+          `placeholder="pool party Saturday 2-6"${dis}>` +
+        `<button type="submit" class="ask-send" aria-label="Check plan"${dis}>↑</button>` +
+      `</form>` +
+      `<div class="ask-plan-examples" aria-label="Plan examples">${examples}</div>` +
+      `<p class="ask-helper">Use your own words. Add the place only if it is away from here.</p>` +
     `</section>` +
-    (thread ? `<div class="ask-thread">${thread}${errLine}${clarification}</div>` : clarification) +
-    `<form class="ask-form" id="askForm">` +
-      `<input id="askInput" type="text" autocomplete="off" ` +
-        `placeholder="golf Saturday morning in Silvis"${dis}>` +
-      `<button type="submit" class="ask-send" aria-label="Ask"${dis}>↑</button>` +
-    `</form>`;
+    ((thread || errLine || clarification) ? `<div class="ask-thread">${thread}${errLine}${clarification}</div>` : "") +
+    memorySection;
   bindAskSendButton();
   const input = document.getElementById("askInput");
   bindInputResponsiveness(input, "planner-input");
@@ -5568,10 +5637,10 @@ function renderAILauncher() {
   btn.hidden = !show;
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
-      aiState.phase === "idle" ? "Local AI available · optional summary"
-      : aiState.phase === "unsupported" ? "Forecast-grounded planning"
+      aiState.phase === "idle" ? "Check a plan against the forecast"
+      : aiState.phase === "unsupported" ? "Check a plan against the forecast"
       : aiState.phase === "error" ? "Planner works · summary needs attention"
-      : "Local AI · forecast-grounded";
+      : "Forecast-grounded plan checks";
   }
 }
 
