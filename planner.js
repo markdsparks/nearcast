@@ -278,6 +278,8 @@ const PLAN_WATCH_FORECAST_MAX_AGE_MS = 60 * 60 * 1000;
 const PLAN_WATCH_REFRESH_THROTTLE_MS = 90 * 1000;
 const PLAN_WATCH_NOTIFICATION_PREF_KEY = "nearcast-plan-watch-notifications-v1";
 const PLAN_WATCH_NOTIFICATION_PLANS_KEY = "nearcast-plan-watch-notification-plans-v1";
+const PLACE_WATCH_NOTIFICATION_PLACES_KEY = "nearcast-place-watch-notification-places-v1";
+const PLACE_WATCH_MAX_SYNC_PLACES = 3;
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
 const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
@@ -401,6 +403,35 @@ function planWatchNotificationEnabledCount(watchItems) {
   ).length;
 }
 
+function readPlaceWatchNotificationPlaces() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY) || "null");
+    return parsed && typeof parsed === "object"
+      ? {
+          enabled: Boolean(parsed.enabled),
+          updatedAt: parsed.updatedAt || ""
+        }
+      : { enabled: false, updatedAt: "" };
+  } catch {
+    return { enabled: false, updatedAt: "" };
+  }
+}
+
+function writePlaceWatchNotificationPlaces(value) {
+  try {
+    localStorage.setItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY, JSON.stringify({
+      enabled: Boolean(value?.enabled),
+      updatedAt: new Date().toISOString()
+    }));
+  } catch {
+    /* Saved-place notification intent is optional. */
+  }
+}
+
+function placeWatchNotificationsRequested() {
+  return readPlaceWatchNotificationPlaces().enabled === true;
+}
+
 function planWatchNotificationsEnabled() {
   return planWatchNotificationsSupported() &&
     planWatchNotificationPermission() === "granted" &&
@@ -521,6 +552,36 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
   };
 }
 
+function placeWatchNotificationSyncPlaces() {
+  if (!placeWatchNotificationsRequested()) return [];
+  return (state.savedPlaces || [])
+    .map(placeWatchServerPlaceFromSavedPlace)
+    .filter(Boolean)
+    .slice(0, PLACE_WATCH_MAX_SYNC_PLACES);
+}
+
+function placeWatchServerPlaceFromSavedPlace(place) {
+  if (!place) return null;
+  const normalized = typeof normalizePlace === "function" ? normalizePlace(place) : place;
+  const latitude = Number(normalized.latitude);
+  const longitude = Number(normalized.longitude);
+  if (!normalized?.id || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const countryCode = typeof placeCountryCode === "function"
+    ? placeCountryCode(normalized)
+    : normalized.countryCode || normalized.country_code || "";
+  return {
+    id: normalized.id,
+    place: {
+      name: normalized.name || "",
+      admin1: normalized.admin1 || "",
+      country: normalized.country || "",
+      countryCode,
+      latitude,
+      longitude
+    }
+  };
+}
+
 function planWatchPushPlatform() {
   const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches ||
     navigator.standalone === true;
@@ -589,8 +650,9 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
       return unregisterPlanWatchPushSubscription({ reason: options.reason || "notifications-disabled" });
     }
     const plans = planWatchNotificationSyncPlans();
-    if (!plans.length) {
-      return unregisterPlanWatchPushSubscription({ reason: options.reason || "no-enabled-plans" });
+    const places = placeWatchNotificationSyncPlaces();
+    if (!plans.length && !places.length) {
+      return unregisterPlanWatchPushSubscription({ reason: options.reason || "no-enabled-watches" });
     }
     const { subscription, config, reason } = await ensurePlanWatchPushSubscription();
     if (!subscription) return { ok: false, reason };
@@ -600,6 +662,7 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
       version: 1,
       subscription: subscription.toJSON(),
       plans,
+      places,
       platform: planWatchPushPlatform(),
       client: planWatchPushClient(),
       reason: options.reason || "sync"
@@ -691,6 +754,30 @@ async function requestPlanWatchNotifications(memoryId = "") {
   }
 }
 
+async function requestPlaceWatchNotifications() {
+  if (!planWatchNotificationsSupported()) {
+    if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+    return;
+  }
+  if (placeWatchNotificationsRequested() && planWatchNotificationsEnabled()) {
+    writePlaceWatchNotificationPlaces({ enabled: false });
+    if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+    syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-disabled" });
+    return;
+  }
+
+  let permission = planWatchNotificationPermission();
+  if (permission !== "granted") {
+    permission = await Notification.requestPermission();
+  }
+  writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
+  writePlaceWatchNotificationPlaces({ enabled: permission === "granted" });
+  if (typeof renderSavedPlaces === "function") renderSavedPlaces();
+  if (permission === "granted") {
+    syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-enabled" });
+  }
+}
+
 function planWatchNotificationPanelCopy(watchItems) {
   const count = (watchItems || []).filter((watch) => !watch.isPast).length;
   const enabledCount = planWatchNotificationEnabledCount(watchItems);
@@ -748,6 +835,67 @@ function renderPlanWatchNotificationPanel(watchItems, options = {}) {
         <small>${escapeHtml(copy.body)}</small>
       </div>
       ${copy.button ? `<button type="button" data-watch-notify>${escapeHtml(copy.button)}</button>` : ""}
+    </section>
+  `;
+}
+
+function savedPlaceWatchNotificationPanelCopy() {
+  const savedCount = (state.savedPlaces || []).length;
+  const watchedCount = Math.min(savedCount, PLACE_WATCH_MAX_SYNC_PLACES);
+  const supported = planWatchNotificationsSupported();
+  const permission = planWatchNotificationPermission();
+  const enabled = placeWatchNotificationsRequested() && planWatchNotificationsEnabled();
+  if (!savedCount) return null;
+  if (!supported) {
+    return {
+      tone: "pending",
+      title: "Saved-place watches ready",
+      body: "Device notifications need browser support and a secure installed app.",
+      button: "",
+      meta: `${savedCount} saved`
+    };
+  }
+  if (permission === "denied") {
+    return {
+      tone: "caution",
+      title: "Notifications blocked",
+      body: "Change browser notification settings to receive saved-place alerts.",
+      button: "",
+      meta: "Blocked"
+    };
+  }
+  if (enabled) {
+    const limited = savedCount > watchedCount;
+    return {
+      tone: "good",
+      title: `Watching ${watchedCount} saved ${watchedCount === 1 ? "place" : "places"}`,
+      body: limited
+        ? `Nearcast will notify on meaningful today/tomorrow changes for the first ${watchedCount} saved places.`
+        : "Nearcast will only interrupt for meaningful today/tomorrow changes.",
+      button: "Pause",
+      meta: limited ? `${watchedCount} of ${savedCount}` : "On"
+    };
+  }
+  return {
+    tone: "neutral",
+    title: "Watch saved places",
+    body: "Get a heads-up when today or tomorrow changes meaningfully.",
+    button: "Enable",
+    meta: savedCount === 1 ? "1 saved" : `${savedCount} saved`
+  };
+}
+
+function renderSavedPlaceWatchNotificationPanel() {
+  const copy = savedPlaceWatchNotificationPanelCopy();
+  if (!copy) return "";
+  return `
+    <section class="plan-watch-notify place-watch-notify is-${escapeHtml(copy.tone)}">
+      <div class="plan-watch-notify-main">
+        <span>${escapeHtml(copy.meta)}</span>
+        <strong>${escapeHtml(copy.title)}</strong>
+        <small>${escapeHtml(copy.body)}</small>
+      </div>
+      ${copy.button ? `<button type="button" data-place-watch-notify>${escapeHtml(copy.button)}</button>` : ""}
     </section>
   `;
 }

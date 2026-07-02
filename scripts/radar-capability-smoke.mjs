@@ -467,6 +467,111 @@ assert.equal(budgetLimited.body.generation.reason, "global-budget-exhausted");
 assert.equal(budgetLimited.body.generation.budget.scope, "global");
 assert.equal(budgetEnv.RADAR_GENERATION_QUEUE.messages.length, 1);
 
+const originalFetch = globalThis.fetch;
+try {
+  globalThis.fetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.hostname === "api.open-meteo.com") {
+      return Response.json({
+        utc_offset_seconds: -18000,
+        hourly: { time: [] },
+        daily: {
+          time: ["2026-07-02", "2026-07-03"],
+          weather_code: [1, 95],
+          temperature_2m_max: [90, 88],
+          temperature_2m_min: [74, 73],
+          apparent_temperature_max: [92, 93],
+          apparent_temperature_min: [75, 76],
+          precipitation_sum: [0, 0.4],
+          precipitation_probability_max: [20, 75],
+          wind_speed_10m_max: [12, 18],
+          wind_gusts_10m_max: [18, 24],
+          uv_index_max: [8, 6]
+        }
+      });
+    }
+    if (url.hostname === "api.weather.gov") {
+      return Response.json({ features: [] });
+    }
+    return originalFetch(input);
+  };
+
+  const placeWatchBucket = createR2Bucket();
+  const placeWatchEnv = {
+    PLAN_WATCH_R2: placeWatchBucket,
+    PLAN_WATCH_TEST_TOKEN: "smoke-token",
+    PLAN_WATCH_EVALUATOR_LIMIT: "5",
+    PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION: "3"
+  };
+  const registerPlaceWatch = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subscription: {
+        endpoint: "https://push.example.test/nearcast-place-watch",
+        keys: { p256dh: "p256dh", auth: "auth" }
+      },
+      client: { unit: "fahrenheit" },
+      plans: [],
+      places: [{
+        id: "mobile-al",
+        place: {
+          name: "Mobile",
+          admin1: "Alabama",
+          country: "United States",
+          countryCode: "US",
+          latitude: 30.695,
+          longitude: -88.04
+        },
+        lastKnown: {
+          snapshot: {
+            placeId: "mobile-al",
+            placeName: "Mobile",
+            unit: "fahrenheit",
+            days: [
+              {
+                date: "2026-07-02",
+                label: "today",
+                rainChance: 20,
+                feelsMax: 92,
+                gustMax: 18,
+                stormPotential: false
+              },
+              {
+                date: "2026-07-03",
+                label: "tomorrow",
+                rainChance: 10,
+                feelsMax: 91,
+                gustMax: 18,
+                stormPotential: false
+              }
+            ]
+          }
+        }
+      }]
+    })
+  }), placeWatchEnv, {});
+  assert.equal(registerPlaceWatch.status, 200);
+  const registerPlaceWatchBody = await registerPlaceWatch.json();
+  assert.equal(registerPlaceWatchBody.placeCount, 1);
+
+  const evaluatePlaceWatch = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/evaluate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Nearcast-Test-Token": "smoke-token"
+    },
+    body: JSON.stringify({ dryRun: true, limit: 5 })
+  }), placeWatchEnv, {});
+  assert.equal(evaluatePlaceWatch.status, 200);
+  const evaluatePlaceWatchBody = await evaluatePlaceWatch.json();
+  assert.equal(evaluatePlaceWatchBody.places, 1);
+  assert.equal(evaluatePlaceWatchBody.candidates, 1);
+  assert.equal(evaluatePlaceWatchBody.results[0].reasons[0], "dry-run:place-storm");
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
@@ -487,6 +592,7 @@ console.log(JSON.stringify({
   r2Queued: r2Queued.body.generation.state,
   r2Deduped: r2Deduped.body.generation.state,
   limited: budgetLimited.body.generation.reason,
+  placeWatch: "place-storm",
   requestId: queued.body.generation.requestId
 }, null, 2));
 
@@ -549,6 +655,19 @@ function createR2Bucket() {
         body: String(body),
         options
       });
+    },
+    async delete(key) {
+      objects.delete(key);
+    },
+    async list(options = {}) {
+      const prefix = String(options.prefix || "");
+      const limit = Number.isFinite(Number(options.limit)) ? Number(options.limit) : 1000;
+      return {
+        objects: [...objects.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .slice(0, limit)
+          .map((key) => ({ key }))
+      };
     }
   };
 }

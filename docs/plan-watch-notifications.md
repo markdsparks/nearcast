@@ -1,26 +1,29 @@
-# Plan Watch Notifications
+# Watch Notifications
 
-Nearcast keeps plan notifications platform-neutral: the app syncs a watched-plan
-intent plus a delivery channel, and the server can later evaluate weather changes
-without caring whether the client is a PWA or a native app.
+Nearcast keeps notifications platform-neutral: the app syncs watched-plan and
+saved-place intent plus a delivery channel, and the server can later evaluate
+weather changes without caring whether the client is a PWA or a native app.
 
 ## Current Foundation
 
-- `POST /api/watch/notifications/register` stores a web push subscription and the
-  enabled watched plans for that browser.
+- `POST /api/watch/notifications/register` stores a web push subscription plus
+  the enabled watched plans and saved places for that browser.
 - `POST /api/watch/notifications/unregister` removes the stored subscription.
 - `GET /api/watch/notifications/config` advertises whether Web Push is configured
   with a VAPID public key.
 - `POST /api/watch/notifications/test` is a token-protected backend smoke route
   that sends an empty Web Push to a stored subscription using VAPID signing.
 - `POST /api/watch/notifications/evaluate` is a token-protected evaluator route
-  that checks stored watched plans against fresh forecast/alert data.
+  that checks stored watched plans and saved places against fresh forecast/alert
+  data.
 - `POST /api/watch/notifications/pending` lets the service worker pull the
   queued notification body after an empty wake-up push.
 - The service worker handles `push` events and displays a notification that opens
   Nearcast.
 - The browser syncs enabled watched plans when notification permission is granted,
   when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
+- The browser syncs saved places when saved-place notifications are enabled or
+  when the saved-place list changes.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
 - A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
@@ -36,6 +39,8 @@ into an open-ended backend job:
   their own plan state.
 - `PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION=3`: each subscribed device can sync at
   most 3 notifying plans.
+- `PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION=3`: each subscribed device can sync at
+  most 3 saved places.
 - `PLAN_WATCH_EVALUATOR_LIMIT=5`: each scheduled run checks at most 5
   subscriptions.
 - The scheduler checks the least-recently-evaluated subscriptions first, so a
@@ -43,16 +48,19 @@ into an open-ended backend job:
   same records.
 - Forecast and alert calls are cached per place/unit within each evaluation run.
 
-With the default beta settings, the upper bound is 5 subscriptions x 3 plans x
-48 runs/day, or 720 plan evaluations/day. Each unique place can require one
-Open-Meteo forecast request and, for US places, one NWS alert request.
+With the default beta settings, the upper bound is 5 subscriptions x 6 watched
+items x 48 runs/day, or 1,440 item evaluations/day. Each unique place can
+require one Open-Meteo forecast request and, for US places, one NWS alert
+request. Per-run forecast and alert caching means a saved place and plan at the
+same coordinates usually share the same external requests.
 
 At this beta size the expected Cloudflare-side cost should remain effectively
-inside normal free/very-low-cost usage: roughly 1,440 external weather requests
-per day at the cap, 1,440 scheduled Worker invocations/month, and small R2 JSON
+inside normal free/very-low-cost usage: roughly 2,880 external weather requests
+per day at the cap before per-run place caching, 1,440 scheduled Worker
+invocations/month, and small R2 JSON
 reads/writes. Scaling is linear:
 
-`monthly plan evaluations = evaluated subscriptions per run x plans per subscription x 48 x 30`
+`monthly item evaluations = evaluated subscriptions per run x watched items per subscription x 48 x 30`
 
 Before raising the caps meaningfully, revisit the Worker subrequest limit,
 Open-Meteo/NWS fair-use behavior, R2 operation volume, and push-provider failure
@@ -89,6 +97,12 @@ the plan window, rain increasing materially, serious heat getting worse, gusts
 getting meaningfully stronger, or the overall plan window degrading enough to
 cross a score band.
 
+Saved-place notifications baseline silently on first evaluation. After that they
+watch today/tomorrow for high-signal changes: a new alert, storms becoming
+likely, rain becoming materially more likely, tomorrow clearing up, heat risk
+rising, or gusts jumping. The evaluator sends only the highest-priority candidate
+per subscription per run.
+
 ## Intentionally Not Built Yet
 
 - Encrypted notification payloads with plan-specific copy.
@@ -98,8 +112,10 @@ cross a score band.
 ## Target Flow
 
 1. User enables notifications for a watched plan.
-2. Client registers a delivery channel and watched-plan intent.
-3. A scheduled worker refreshes forecasts for stored plan places.
-4. The worker compares new weather truth to the stored last-known plan state.
-5. A push is sent only when a plan meaningfully changes.
-6. Tapping the notification opens Nearcast to the watched plan.
+2. User can also enable saved-place notifications from the Places sheet.
+3. Client registers one delivery channel with watched-plan and saved-place
+   intent.
+4. A scheduled worker refreshes forecasts for stored watch places.
+5. The worker compares new weather truth to the stored last-known state.
+6. A push is sent only when a plan or saved place meaningfully changes.
+7. Tapping the notification opens Nearcast.

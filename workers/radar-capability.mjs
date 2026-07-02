@@ -30,6 +30,7 @@ const PLAN_WATCH_EVALUATOR_MODE_ENV = "PLAN_WATCH_EVALUATOR_MODE";
 const PLAN_WATCH_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_EVALUATOR_LIMIT";
 const PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV = "PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS";
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION";
+const PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
 const DEFAULT_PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app";
@@ -48,6 +49,7 @@ const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
 const DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = 10;
 const DEFAULT_PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 3;
+const DEFAULT_PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION = 3;
 const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
 const PLAN_WATCH_PUSH_TTL_SECONDS = 30 * 60;
 const PLAN_WATCH_PENDING_TTL_SECONDS = 2 * 60 * 60;
@@ -143,6 +145,7 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
       mode: configuredPlanWatchEvaluatorMode(env),
       maxActiveSubscriptions: configuredPlanWatchMaxActiveSubscriptions(env),
       maxPlansPerSubscription: configuredPlanWatchMaxPlansPerSubscription(env),
+      maxPlacesPerSubscription: configuredPlanWatchMaxPlacesPerSubscription(env),
       scheduledEvaluationLimit: configuredPlanWatchEvaluatorLimit(env)
     }
   });
@@ -210,6 +213,10 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     client: normalizePlanWatchClient(payload.client),
     subscription,
     plans: normalizePlanWatchPlans(payload.plans, env),
+    places: mergePlanWatchPlacesWithExisting(
+      normalizePlanWatchPlaces(payload.places, env),
+      existingRecord?.places
+    ),
     registeredAt: existingRecord?.registeredAt || now.toISOString(),
     updatedAt: now.toISOString(),
     expiresAt
@@ -224,6 +231,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     state: "stored",
     subscriptionId,
     planCount: record.plans.length,
+    placeCount: record.places.length,
     expiresAt
   });
 }
@@ -941,6 +949,15 @@ function configuredPlanWatchMaxPlansPerSubscription(env = {}) {
   );
 }
 
+function configuredPlanWatchMaxPlacesPerSubscription(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV],
+    DEFAULT_PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION,
+    1,
+    25
+  );
+}
+
 function planWatchTestAuthorization(request, env = {}) {
   const expected = configuredPlanWatchTestToken(env);
   if (!expected) return { available: false, authorized: false };
@@ -1137,6 +1154,7 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     checkedAt: new Date().toISOString(),
     subscriptions: records.length,
     plans: 0,
+    places: 0,
     candidates: 0,
     sent: 0,
     skipped: 0,
@@ -1149,6 +1167,7 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
   for (const record of records) {
     const result = await evaluatePlanWatchSubscription(record, store, env, options);
     summary.plans += result.plans;
+    summary.places += result.places;
     summary.candidates += result.candidates;
     summary.sent += result.sent;
     summary.skipped += result.skipped;
@@ -1162,10 +1181,12 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
 
 async function evaluatePlanWatchSubscription(record, store, env = {}, options = {}) {
   const plans = Array.isArray(record?.plans) ? record.plans : [];
+  const places = Array.isArray(record?.places) ? record.places : [];
   const result = {
     subscriptionId: record?.subscriptionId || "",
     endpointHost: safeUrlHost(record?.subscription?.endpoint),
     plans: plans.length,
+    places: places.length,
     candidates: 0,
     sent: 0,
     skipped: 0,
@@ -1174,9 +1195,10 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     errors: 0,
     reasons: []
   };
-  if (!plans.length) return result;
+  if (!plans.length && !places.length) return result;
 
   const evaluatedPlans = [];
+  const evaluatedPlaces = [];
   const candidates = [];
   const context = {
     forecastCache: new Map(),
@@ -1194,6 +1216,22 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
       continue;
     }
     evaluatedPlans.push(evaluation.plan);
+    if (evaluation.updated) result.updated += 1;
+    if (evaluation.candidate) candidates.push(evaluation.candidate);
+    else result.skipped += 1;
+  }
+  for (const place of places) {
+    const evaluation = await evaluateSavedPlaceWatch(place, record, context).catch((error) => ({
+      place,
+      error: error?.message || String(error)
+    }));
+    if (evaluation?.error) {
+      result.errors += 1;
+      result.reasons.push(`${place?.id || "place"}:${evaluation.error}`);
+      evaluatedPlaces.push(place);
+      continue;
+    }
+    evaluatedPlaces.push(evaluation.place);
     if (evaluation.updated) result.updated += 1;
     if (evaluation.candidate) candidates.push(evaluation.candidate);
     else result.skipped += 1;
@@ -1224,6 +1262,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     const nextRecord = {
       ...record,
       plans: evaluatedPlans,
+      places: evaluatedPlaces,
       evaluatedAt: new Date().toISOString()
     };
     await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
@@ -1257,6 +1296,302 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
     plan: nextPlan,
     updated: Boolean(change?.updateBaseline),
     candidate
+  };
+}
+
+async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) {
+  if (!watchedPlace?.place) return { place: watchedPlace, updated: false, candidate: null };
+  const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
+  const forecast = await cachedPlanWatchForecast(watchedPlace.place, unit, context);
+  const alerts = await cachedPlanWatchAlerts(watchedPlace.place, context).catch(() => []);
+  const current = savedPlaceWatchCurrentState(watchedPlace, forecast, alerts, unit);
+  const change = savedPlaceWatchStateChange(watchedPlace.lastKnown, current);
+  const lastKnown = savedPlaceWatchLastKnownFromState(watchedPlace, current, change);
+  const nextPlace = change?.updateBaseline ? { ...watchedPlace, lastKnown } : {
+    ...watchedPlace,
+    lastKnown: {
+      ...(watchedPlace.lastKnown || {}),
+      checkedAt: new Date().toISOString()
+    }
+  };
+  const candidate = change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change) : null;
+  return {
+    place: nextPlace,
+    updated: Boolean(change?.updateBaseline),
+    candidate
+  };
+}
+
+function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alerts = [], unit = "fahrenheit") {
+  const place = watchedPlace.place || {};
+  const days = [0, 1]
+    .map((dayIndex) => savedPlaceWatchDayStats(forecast, dayIndex, alerts, unit))
+    .filter(Boolean);
+  if (!days.length) return { snapshot: null };
+  const placeName = place.name || "Saved place";
+  const snapshot = {
+    placeId: watchedPlace.id || "",
+    placeName,
+    unit,
+    days
+  };
+  return {
+    signal: "place-watch",
+    tone: days.some((day) => day.alertTone === "warning" || day.alertTone === "watch" || day.stormPotential) ? "watch" : "good",
+    label: "Saved place forecast",
+    reason: savedPlaceWatchSnapshotReason(snapshot, unit),
+    body: savedPlaceWatchSnapshotReason(snapshot, unit),
+    snapshot
+  };
+}
+
+function savedPlaceWatchDayStats(forecast = {}, dayIndex = 0, alerts = [], unit = "fahrenheit") {
+  const daily = forecast?.daily || {};
+  const hourly = forecast?.hourly || {};
+  const date = Array.isArray(daily.time) ? cleanText(daily.time[dayIndex], 16) : "";
+  if (!date) return null;
+  const hourlyIndexes = Array.isArray(hourly.time)
+    ? hourly.time.reduce((indexes, time, index) => {
+        if (String(time || "").startsWith(date)) indexes.push(index);
+        return indexes;
+      }, [])
+    : [];
+  const dayValue = (key, fallback = 0) => Array.isArray(daily?.[key])
+    ? finiteNumber(daily[key][dayIndex], fallback)
+    : fallback;
+  const hourlyValues = (key, fallback = 0) => {
+    const values = hourlyIndexes
+      .map((index) => finiteNumber(hourly?.[key]?.[index], null))
+      .filter(Number.isFinite);
+    return values.length ? values : [fallback];
+  };
+  const temps = hourlyValues("temperature_2m", dayValue("temperature_2m_max", 0));
+  const feels = hourlyValues("apparent_temperature", dayValue("apparent_temperature_max", temps[0] || 0));
+  const rain = hourlyValues("precipitation_probability", dayValue("precipitation_probability_max", 0));
+  const precip = hourlyValues("precipitation", 0);
+  const gust = hourlyValues("wind_gusts_10m", dayValue("wind_gusts_10m_max", 0));
+  const uv = hourlyValues("uv_index", dayValue("uv_index_max", 0));
+  const codes = hourlyIndexes.length
+    ? hourlyIndexes.map((index) => Number(hourly.weather_code?.[index])).filter(Number.isFinite)
+    : [dayValue("weather_code", 0)];
+  const offset = finiteNumber(forecast.utc_offset_seconds, 0) * 1000;
+  const startMs = planWatchLocalDateHourMs(date, 0, offset);
+  const endMs = planWatchLocalDateHourMs(date, 24, offset);
+  const alert = topPlanWatchAlert(alerts, startMs, endMs);
+  const alertTone = planWatchAlertTone(alert);
+  return {
+    date,
+    label: dayIndex === 0 ? "today" : "tomorrow",
+    rainChance: roundNumber(Math.max(...rain)),
+    precipTotal: roundNumber(precip.reduce((sum, item) => sum + Number(item || 0), 0), unit === "fahrenheit" ? 2 : 1),
+    tempMin: roundNumber(Math.min(...temps)),
+    tempMax: roundNumber(Math.max(...temps)),
+    feelsMax: roundNumber(Math.max(...feels)),
+    gustMax: roundNumber(Math.max(...gust)),
+    uvMax: roundNumber(Math.max(...uv)),
+    stormPotential: codes.some((code) => code >= 95),
+    alertTone,
+    alertEvent: cleanText(alert?.event || "", 120)
+  };
+}
+
+function savedPlaceWatchSnapshotReason(snapshot = {}, unit = "fahrenheit") {
+  const tomorrow = (snapshot.days || []).find((day) => day.label === "tomorrow");
+  const today = (snapshot.days || [])[0];
+  const day = tomorrow || today;
+  if (!day) return "Watching saved place weather.";
+  const tempUnit = unit === "fahrenheit" ? "°F" : "°C";
+  if (day.alertEvent) return `${day.alertEvent} ${day.label}.`;
+  if (day.stormPotential) return `Storms are possible ${day.label}.`;
+  if (day.rainChance >= 50) return `Rain chance ${day.rainChance}% ${day.label}.`;
+  if (day.feelsMax >= (unit === "fahrenheit" ? 95 : 35)) return `Feels up to ${day.feelsMax}${tempUnit} ${day.label}.`;
+  return `${day.label} still looks mostly steady.`;
+}
+
+function savedPlaceWatchStateChange(previousLastKnown = {}, current = {}) {
+  const previous = normalizePlanWatchSnapshot(previousLastKnown?.snapshot);
+  const currentSnapshot = current.snapshot;
+  if (!currentSnapshot?.days?.length) return { updateBaseline: false, notify: false };
+  if (!previous?.days?.length) {
+    return { type: "place-baseline", notify: false, updateBaseline: true, priority: 0 };
+  }
+
+  let sawComparableDay = false;
+  let missingCurrentDayBaseline = false;
+  const changes = [];
+  for (const day of currentSnapshot.days) {
+    const previousDay = previous.days.find((item) => item.date === day.date);
+    if (!previousDay) {
+      missingCurrentDayBaseline = true;
+      continue;
+    }
+    sawComparableDay = true;
+    const change = savedPlaceWatchDayChange(currentSnapshot, previousDay, day);
+    if (change?.notify || change?.updateBaseline) changes.push(change);
+  }
+  if (!sawComparableDay) {
+    return { type: "place-baseline-rollover", notify: false, updateBaseline: true, priority: 0 };
+  }
+  return changes.sort((a, b) => b.priority - a.priority)[0] ||
+    (missingCurrentDayBaseline
+      ? { type: "place-baseline-partial", notify: false, updateBaseline: true, priority: 0 }
+      : { updateBaseline: false, notify: false });
+}
+
+function savedPlaceWatchDayChange(snapshot = {}, previous = {}, current = {}) {
+  const placeName = snapshot.placeName || "saved place";
+  const tempUnit = snapshot.unit === "celsius" ? "°C" : "°F";
+  const windUnit = snapshot.unit === "celsius" ? "km/h" : "mph";
+
+  if (
+    current.alertTone &&
+    current.alertTone !== "none" &&
+    (current.alertTone !== previous.alertTone || current.alertEvent !== previous.alertEvent)
+  ) {
+    return {
+      type: "place-alert",
+      tone: current.alertTone === "warning" || current.alertTone === "watch" ? "watch" : "caution",
+      notify: true,
+      updateBaseline: true,
+      priority: current.alertTone === "warning" ? 135 : current.alertTone === "watch" ? 122 : 105,
+      title: `${placeName}: weather alert ${current.label}`,
+      body: `${current.alertEvent || "A weather alert"} is active ${current.label}.`,
+      day: current
+    };
+  }
+
+  const stormStarted = Boolean(current.stormPotential) && !Boolean(previous.stormPotential);
+  if (stormStarted || (Boolean(current.stormPotential) && current.rainChance >= 50 && previous.rainChance < 35)) {
+    return {
+      type: "place-storm",
+      tone: "watch",
+      notify: true,
+      updateBaseline: true,
+      priority: 112 + Math.max(0, current.rainChance - previous.rainChance),
+      title: `Storms possible ${current.label} in ${placeName}`,
+      body: `Thunderstorms are now showing for ${current.label}.`,
+      day: current
+    };
+  }
+
+  const rainDelta = numberDelta(current.rainChance, previous.rainChance);
+  const gotWetter = rainDelta !== null &&
+    ((previous.rainChance <= 35 && current.rainChance >= 60) || (rainDelta >= 30 && current.rainChance >= 50));
+  if (gotWetter) {
+    return {
+      type: "place-rain",
+      tone: "caution",
+      notify: true,
+      updateBaseline: true,
+      priority: 82 + Math.min(40, Math.abs(rainDelta)),
+      title: `Rain is more likely ${current.label} in ${placeName}`,
+      body: `Rain chance is now ${current.rainChance}%, up from ${previous.rainChance}%.`,
+      day: current
+    };
+  }
+  const clearedUp = rainDelta !== null &&
+    ((previous.rainChance >= 50 && current.rainChance <= 25) || (rainDelta <= -30 && previous.rainChance >= 50));
+  if (clearedUp) {
+    return {
+      type: "place-clearing",
+      tone: "good",
+      notify: true,
+      updateBaseline: true,
+      priority: 72 + Math.min(30, Math.abs(rainDelta)),
+      title: `${capitalizeWord(current.label)} cleared up in ${placeName}`,
+      body: `Rain chance dropped to ${current.rainChance}%, from ${previous.rainChance}%.`,
+      day: current
+    };
+  }
+
+  const heatDelta = numberDelta(current.feelsMax, previous.feelsMax);
+  const seriousHeat = snapshot.unit === "celsius" ? 38 : 100;
+  const notableHeat = snapshot.unit === "celsius" ? 35 : 95;
+  const heatJump = snapshot.unit === "celsius" ? 4 : 8;
+  if (
+    heatDelta !== null &&
+    heatDelta > 0 &&
+    ((previous.feelsMax < seriousHeat && current.feelsMax >= seriousHeat) ||
+      (heatDelta >= heatJump && current.feelsMax >= notableHeat))
+  ) {
+    return {
+      type: "place-heat",
+      tone: current.feelsMax >= seriousHeat ? "watch" : "caution",
+      notify: true,
+      updateBaseline: true,
+      priority: 84 + Math.min(30, Math.abs(heatDelta)),
+      title: `Heat risk rises ${current.label} in ${placeName}`,
+      body: `Feels-like temperature now peaks near ${current.feelsMax}${tempUnit}.`,
+      day: current
+    };
+  }
+
+  const gustDelta = numberDelta(current.gustMax, previous.gustMax);
+  const strongWind = snapshot.unit === "celsius" ? 48 : 30;
+  const notableWind = snapshot.unit === "celsius" ? 40 : 25;
+  const windJump = snapshot.unit === "celsius" ? 20 : 12;
+  if (
+    gustDelta !== null &&
+    gustDelta > 0 &&
+    ((previous.gustMax < strongWind && current.gustMax >= strongWind) ||
+      (gustDelta >= windJump && current.gustMax >= notableWind))
+  ) {
+    return {
+      type: "place-wind",
+      tone: "caution",
+      notify: true,
+      updateBaseline: true,
+      priority: 76 + Math.min(25, Math.abs(gustDelta)),
+      title: `Wind picks up ${current.label} in ${placeName}`,
+      body: `Gusts now peak near ${current.gustMax} ${windUnit}.`,
+      day: current
+    };
+  }
+
+  if (previous.alertTone && !current.alertTone) {
+    return { type: "place-alert-ended", tone: "good", notify: false, updateBaseline: true, priority: 35, day: current };
+  }
+
+  return null;
+}
+
+function savedPlaceWatchLastKnownFromState(watchedPlace, current, change = {}) {
+  const body = change?.body || current.body || "";
+  const signal = change?.type || current.signal || "place-watch";
+  const eventKey = [
+    watchedPlace.id,
+    signal,
+    change?.day?.date || "",
+    body || current.reason || ""
+  ].join("|");
+  return {
+    eventKey,
+    signal,
+    tone: change?.tone || current.tone || "",
+    label: current.label || "",
+    reason: current.reason || "",
+    body,
+    checkedAt: new Date().toISOString(),
+    snapshot: current.snapshot
+  };
+}
+
+function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}) {
+  const id = cleanToken(watchedPlace.id, 80);
+  return {
+    type: change.type || current.signal || "place-watch",
+    priority: change.priority || 50,
+    notification: {
+      title: change.title || `Nearcast: ${watchedPlace.place?.name || "Saved place"}`,
+      body: change.body || current.body || "Weather changed for this saved place.",
+      tag: `nearcast-place-${id}`,
+      renotify: false,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      url: "./",
+      placeId: watchedPlace.id || "",
+      source: "place-watch-evaluator"
+    }
   };
 }
 
@@ -1726,6 +2061,7 @@ function normalizePendingPlanWatchNotification(value = {}) {
     badge: cleanText(source.badge || "/icons/icon-192.png", 120),
     url: cleanText(source.url || "./", 200),
     memoryId: cleanText(source.memoryId || "", 96),
+    placeId: cleanText(source.placeId || "", 96),
     source: cleanToken(source.source || "plan-watch-evaluator", 64)
   };
 }
@@ -1833,6 +2169,41 @@ function normalizePlanWatchPlans(value, env = {}) {
     .filter(Boolean);
 }
 
+function normalizePlanWatchPlaces(value, env = {}) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, configuredPlanWatchMaxPlacesPerSubscription(env))
+    .map(normalizePlanWatchWatchedPlace)
+    .filter(Boolean);
+}
+
+function normalizePlanWatchWatchedPlace(value) {
+  if (!value || typeof value !== "object") return null;
+  const place = normalizePlanWatchPlace(value.place || value);
+  if (!place) return null;
+  const id = cleanText(value.id || planWatchPlaceStableId(place), 96);
+  if (!id) return null;
+  return {
+    id,
+    place,
+    lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
+  };
+}
+
+function mergePlanWatchPlacesWithExisting(places = [], existingPlaces = []) {
+  const existingById = new Map((Array.isArray(existingPlaces) ? existingPlaces : [])
+    .filter(Boolean)
+    .map((place) => [place.id, place]));
+  return places.map((place) => {
+    const existing = existingById.get(place.id);
+    const hasIncomingSnapshot = Boolean(place?.lastKnown?.snapshot);
+    return {
+      ...place,
+      lastKnown: hasIncomingSnapshot ? place.lastKnown : (existing?.lastKnown || place.lastKnown)
+    };
+  });
+}
+
 function normalizePlanWatchPlan(value) {
   if (!value || typeof value !== "object") return null;
   const id = cleanText(value.id, 96);
@@ -1866,6 +2237,13 @@ function normalizePlanWatchPlace(value = {}) {
   };
 }
 
+function planWatchPlaceStableId(place = {}) {
+  const name = cleanToken(place.name || "place", 40).toLowerCase();
+  const lat = Number.isFinite(Number(place.latitude)) ? Number(place.latitude).toFixed(3) : "lat";
+  const lon = Number.isFinite(Number(place.longitude)) ? Number(place.longitude).toFixed(3) : "lon";
+  return [name, lat, lon].join("-");
+}
+
 function normalizePlanWatchLastKnown(value = {}) {
   const source = value && typeof value === "object" ? value : {};
   return {
@@ -1895,6 +2273,9 @@ function planWatchRegistrationCapStorageName() {
 function normalizePlanWatchSnapshot(value = {}) {
   if (!value || typeof value !== "object") return null;
   return {
+    placeId: cleanText(value.placeId, 96),
+    placeName: cleanText(value.placeName, 120),
+    unit: cleanToken(value.unit, 16),
     title: cleanText(value.title, 120),
     targetDate: cleanText(value.targetDate, 16),
     startHour: finiteNumber(value.startHour, null),
@@ -1909,8 +2290,30 @@ function normalizePlanWatchSnapshot(value = {}) {
     verdict: cleanText(value.verdict, 60),
     alertTone: cleanToken(value.alertTone, 32),
     alertEvent: cleanText(value.alertEvent, 120),
-    riskKind: cleanToken(value.riskKind, 32)
+    riskKind: cleanToken(value.riskKind, 32),
+    days: normalizePlanWatchSnapshotDays(value.days)
   };
+}
+
+function normalizePlanWatchSnapshotDays(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 2).map((day) => {
+    const source = day && typeof day === "object" ? day : {};
+    return {
+      date: cleanText(source.date, 16),
+      label: cleanToken(source.label, 24),
+      rainChance: finiteNumber(source.rainChance, null),
+      precipTotal: finiteNumber(source.precipTotal, null),
+      tempMin: finiteNumber(source.tempMin, null),
+      tempMax: finiteNumber(source.tempMax, null),
+      feelsMax: finiteNumber(source.feelsMax, null),
+      gustMax: finiteNumber(source.gustMax, null),
+      uvMax: finiteNumber(source.uvMax, null),
+      stormPotential: Boolean(source.stormPotential),
+      alertTone: cleanToken(source.alertTone, 32),
+      alertEvent: cleanText(source.alertEvent, 120)
+    };
+  }).filter((day) => day.date);
 }
 
 async function planWatchSubscriptionId(subscription) {
@@ -1989,6 +2392,11 @@ function cleanText(value, maxLength) {
 
 function cleanToken(value, maxLength) {
   return cleanText(value, maxLength).replace(/[^a-zA-Z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function capitalizeWord(value) {
+  const text = cleanText(value, 40);
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
 }
 
 function generationRequestStorageKey(prefix, key) {

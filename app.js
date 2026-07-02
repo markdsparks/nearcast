@@ -1,4 +1,4 @@
-const VERSION = "3.0.141";
+const VERSION = "3.0.142";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3190,6 +3190,11 @@ function bindEvents() {
   });
   bindTapAction(els.placeBackdrop, closePlaceSheet);
   bindTapAction(document.getElementById("placeSheetClose"), closePlaceSheet);
+  bindTapDelegate(els.savedPlaces, "[data-place-watch-notify]", () => {
+    if (typeof requestPlaceWatchNotifications === "function") {
+      requestPlaceWatchNotifications();
+    }
+  });
   bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
   bindTapAction(els.glanceDetailClose, closeGlanceDetail);
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
@@ -4643,6 +4648,10 @@ function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
   updatePlaceSaveButton();
   updatePlaceSwitcher();
+
+  if (state.savedPlaces.length && typeof renderSavedPlaceWatchNotificationPanel === "function") {
+    els.savedPlaces.insertAdjacentHTML("beforeend", renderSavedPlaceWatchNotificationPanel());
+  }
 
   if (!state.savedPlaces.length) {
     els.savedPlaces.innerHTML = `
@@ -8485,6 +8494,9 @@ function savePlace(place) {
     localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
     renderSavedPlaces();
     updateMode();
+    if (typeof syncPlanWatchNotificationSubscription === "function") {
+      syncPlanWatchNotificationSubscription({ force: true, reason: "saved-place-added" });
+    }
   }
 }
 
@@ -8493,6 +8505,9 @@ function removeSavedPlace(id) {
   localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
   renderSavedPlaces();
   updateMode();
+  if (typeof syncPlanWatchNotificationSubscription === "function") {
+    syncPlanWatchNotificationSubscription({ force: true, reason: "saved-place-removed" });
+  }
 }
 
 function openGlanceDetail(kind) {
