@@ -1,4 +1,4 @@
-const VERSION = "3.0.135";
+const VERSION = "3.0.136";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -40,6 +40,7 @@ const PERF_RENDER_WARN_MS = 50;
 const PERF_INPUT_WARN_MS = 80;
 const PERF_LONG_TASK_WARN_MS = 120;
 const PERF_MAX_ENTRIES = 80;
+const PLACE_APOSTROPHE_GLOBAL_PATTERN = /['\u2018\u2019`\u00b4\u02bb]/g;
 const FOR_YOU_SIGNAL_IDS = [
   "best-dry",
   "best-walk",
@@ -3887,19 +3888,41 @@ function buildPlaceSearchAttempts(parsed) {
   const attempts = [];
   const seen = new Set();
   const add = (name, countryCode = "") => {
-    const cleanName = String(name || "").trim();
+    const cleanName = String(name || "").trim().replace(/\s+/g, " ");
     const cleanCountry = String(countryCode || "").toUpperCase();
     if (!cleanName) return;
-    const key = `${cleanName.toLowerCase()}|${cleanCountry}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    attempts.push({ name: cleanName, countryCode: cleanCountry });
+    placeNameSearchVariants(cleanName).forEach((variant) => {
+      const key = `${variant.toLowerCase()}|${cleanCountry}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      attempts.push({ name: variant, countryCode: cleanCountry });
+    });
   };
 
   add(parsed.primary || parsed.raw, parsed.countryCode);
   if (parsed.countryCode) add(parsed.primary || parsed.raw);
   if (parsed.primary !== parsed.raw) add(parsed.raw);
   return attempts;
+}
+
+function placeNameSearchVariants(name) {
+  const cleanName = String(name || "").trim().replace(/\s+/g, " ");
+  if (!cleanName) return [];
+  const variants = [];
+  const seen = new Set();
+  const add = (value) => {
+    const clean = String(value || "").trim().replace(/\s+/g, " ");
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) return;
+    seen.add(key);
+    variants.push(clean);
+  };
+  const asciiApostrophe = cleanName.replace(PLACE_APOSTROPHE_GLOBAL_PATTERN, "'");
+  add(cleanName);
+  add(asciiApostrophe);
+  const singleLetterPrefix = asciiApostrophe.match(/^([A-Za-z])\s+(.{2,})$/);
+  if (singleLetterPrefix) add(`${singleLetterPrefix[1]}'${singleLetterPrefix[2]}`);
+  return variants;
 }
 
 async function fetchPlaceResults(name, count = 12, { countryCode = "" } = {}) {
@@ -4067,6 +4090,10 @@ function normalizeQualifierKey(value) {
     .toLowerCase();
 }
 
+function compactQualifierKey(value) {
+  return normalizeQualifierKey(value).replace(/\s+/g, "");
+}
+
 function rankPlaceResults(results, parsed) {
   return results
     .map((place, index) => ({ place, index, score: placeScore(place, parsed) }))
@@ -4076,10 +4103,14 @@ function rankPlaceResults(results, parsed) {
 
 function placeScore(place, parsed) {
   let score = 0;
-  const primary = parsed.primary.toLowerCase();
+  const primary = String(parsed.primary || "").toLowerCase();
+  const primaryKey = normalizeQualifierKey(parsed.primary);
+  const primaryCompact = compactQualifierKey(parsed.primary);
   const stateName = parsed.stateName.toLowerCase();
   const explicitCountry = String(parsed.countryCode || "").toUpperCase();
   const name = String(place.name || "").toLowerCase();
+  const nameKey = normalizeQualifierKey(place.name);
+  const nameCompact = compactQualifierKey(place.name);
   const admin = String(place.admin1 || "").toLowerCase();
   const country = String(place.country || "").toLowerCase();
   const countryCode = placeCountryCode(place);
@@ -4087,8 +4118,14 @@ function placeScore(place, parsed) {
   const population = Number(place.population) || 0;
 
   if (name === primary) score += 35;
-  else if (name.startsWith(primary)) score += 18;
+  else if (primaryKey && nameKey === primaryKey) score += 34;
+  else if (primaryCompact && nameCompact === primaryCompact) score += 33;
+  else if (primary && name.startsWith(primary)) score += 18;
+  else if (primaryKey && nameKey.startsWith(primaryKey)) score += 18;
+  else if (primaryCompact && nameCompact.startsWith(primaryCompact)) score += 16;
   else if (primary && name.includes(primary)) score += 8;
+  else if (primaryKey && nameKey.includes(primaryKey)) score += 8;
+  else if (primaryCompact && nameCompact.includes(primaryCompact)) score += 6;
 
   if (explicitCountry) score += countryCode === explicitCountry ? 70 : -50;
   if (stateName && admin === stateName) score += 80;
