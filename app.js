@@ -1,4 +1,4 @@
-const VERSION = "3.0.151";
+const VERSION = "3.0.152";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3104,18 +3104,11 @@ function bindEvents() {
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-watch-sync], [data-place-watch-notify], [data-place-watch-toggle]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-place-watch-notify], [data-place-watch-toggle]", (event, target) => {
     const watchNotify = target.closest("[data-watch-notify]");
     if (watchNotify) {
       if (typeof requestPlanWatchNotifications === "function") {
         requestPlanWatchNotifications(watchNotify.dataset.watchNotify || "");
-      }
-      return;
-    }
-    const watchSync = target.closest("[data-watch-sync]");
-    if (watchSync) {
-      if (typeof syncPlanWatchNotificationsNow === "function") {
-        syncPlanWatchNotificationsNow();
       }
       return;
     }

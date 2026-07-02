@@ -802,12 +802,6 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
   return planWatchState.pushSyncPromise;
 }
 
-async function syncPlanWatchNotificationsNow() {
-  const result = await syncPlanWatchNotificationSubscription({ force: true, reason: "manual-sync" });
-  renderGlobalMemorySheet();
-  return result;
-}
-
 function planWatchNotificationPlanCopy(memoryId) {
   const id = String(memoryId || "").trim();
   const supported = planWatchNotificationsSupported();
@@ -1164,10 +1158,10 @@ function planWatchSyncResultText() {
   const result = planWatchState.pushLastSyncResult;
   if (!result) {
     const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
-    return lastSync ? `Checked ${lastSync}` : "Not synced yet";
+    return lastSync ? `Checked ${lastSync}` : "Automatic";
   }
   if (result.ok === false) {
-    return `Needs attention: ${result.reason || result.state || "sync failed"}`;
+    return "Needs attention";
   }
   if (result.state === "stored") {
     const planCount = Number(result.planCount || 0);
@@ -1175,12 +1169,12 @@ function planWatchSyncResultText() {
     const parts = [];
     if (planCount) parts.push(`${planCount} ${planCount === 1 ? "plan" : "plans"}`);
     if (placeCount) parts.push(`${placeCount} ${placeCount === 1 ? "place" : "places"}`);
-    return parts.length ? `Synced ${parts.join(" + ")}` : "Synced";
+    return parts.length ? `Ready for ${parts.join(" + ")}` : "Ready";
   }
   if (result.state === "deleted" || result.reason === "no-enabled-watches" || result.reason === "notifications-disabled") {
-    return "Paused on server";
+    return "Paused";
   }
-  return result.reason || result.state || "Synced";
+  return "Ready";
 }
 
 function planWatchNotificationHubStats(watchItems) {
@@ -1208,7 +1202,7 @@ function planWatchNotificationHubStats(watchItems) {
           : "Off"
         : "None saved"
     },
-    { label: "Sync", value: planWatchSyncResultText() }
+    { label: "Updates", value: planWatchSyncResultText() }
   ];
   const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
   if (lastSignal) rows.push({ label: "Last match", value: lastSignal });
@@ -1254,9 +1248,6 @@ function renderPlanWatchNotificationHubActions(status) {
   const buttons = [];
   if (status.primaryLabel) {
     buttons.push(`<button class="is-primary" type="button" data-watch-notify>${escapeHtml(status.primaryLabel)}</button>`);
-  }
-  if (planWatchNotificationsEnabled()) {
-    buttons.push(`<button type="button" data-watch-sync>Sync now</button>`);
   }
   if (!buttons.length) return "";
   return `<div class="watch-notify-actions">${buttons.join("")}</div>`;
