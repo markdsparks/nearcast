@@ -1,0 +1,63 @@
+name: Send plan watch test notification
+
+on:
+  workflow_dispatch:
+    inputs:
+      subscriptionId:
+        description: "Optional stored subscription id. Leave blank to send to the first fresh subscription."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PLAN_WATCH_TEST_TOKEN: ${{ secrets.PLAN_WATCH_TEST_TOKEN }}
+      PLAN_WATCH_TEST_ENDPOINT: https://getnearcast.app/api/watch/notifications/test
+      SUBSCRIPTION_ID: ${{ inputs.subscriptionId }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify smoke token
+        run: |
+          if [ -z "$PLAN_WATCH_TEST_TOKEN" ]; then
+            echo "Missing PLAN_WATCH_TEST_TOKEN secret."
+            exit 1
+          fi
+
+      - name: Send test notification
+        run: |
+          request_body="$(node -e 'const id = String(process.env.SUBSCRIPTION_ID || "").trim(); process.stdout.write(JSON.stringify(id ? { subscriptionId: id } : {}));')"
+          response_file="$(mktemp)"
+          status="$(curl -sS -o "$response_file" -w "%{http_code}" \
+            -X POST "$PLAN_WATCH_TEST_ENDPOINT" \
+            -H "Authorization: Bearer $PLAN_WATCH_TEST_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$request_body")"
+
+          echo "HTTP $status"
+          cat "$response_file"
+          echo ""
+
+          STATUS="$status" RESPONSE_FILE="$response_file" node <<'NODE'
+          const fs = require("node:fs");
+          const status = Number(process.env.STATUS);
+          const text = fs.readFileSync(process.env.RESPONSE_FILE, "utf8");
+          let body = {};
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = {};
+          }
+          if (status < 200 || status >= 300 || body.ok !== true) {
+            const reason = body.error || body.state || `http-${status}`;
+            console.error(`Plan watch smoke failed: ${reason}`);
+            process.exit(1);
+          }
+          NODE

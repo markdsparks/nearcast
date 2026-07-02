@@ -20,6 +20,21 @@ without caring whether the client is a PWA or a native app.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
 
+## Manual E2E Smoke
+
+1. Open Nearcast on the device/browser you want to test.
+2. Create or open a watched plan, then enable notifications.
+3. Wait a few seconds for the browser subscription and watched-plan intent to
+   sync to the backend.
+4. In GitHub Actions, run `Send plan watch test notification`.
+5. Leave `subscriptionId` blank to send to the first fresh stored subscription.
+
+Expected result: the device receives a generic Nearcast notification from the
+service worker. Tapping it opens Nearcast. If the workflow reports
+`subscription-not-found`, the backend does not have a fresh registered
+subscription yet; revisit the app, confirm notification permission, and update or
+watch a plan again.
+
 ## Intentionally Not Built Yet
 
 - Scheduled server-side plan evaluation.
