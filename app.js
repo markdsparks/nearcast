@@ -1,4 +1,4 @@
-const VERSION = "3.0.157";
+const VERSION = "3.0.159";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -8007,6 +8007,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
   const dailyArr = [];
   for (let i = 0; i < daily.time.length && i < 10; i++) {
     dailyArr.push({
+      date: daily.time[i],
       dow: new Date(`${daily.time[i]}T12:00:00`).getDay(),
       label: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayName(daily.time[i]),
       hi: r(daily.temperature_2m_max[i]),

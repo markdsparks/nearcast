@@ -2344,6 +2344,7 @@ const ACTIVITY_CHIPS = [
 const PLANNER_TERM_ALIASES = {
   morn: "morning",
   mornin: "morning",
+  nxt: "next",
   tmr: "tomorrow",
   tmrw: "tomorrow",
   tmrrow: "tomorrow",
@@ -2364,8 +2365,9 @@ const PLANNER_TERM_ALIASES = {
 
 const PLANNER_CANONICAL_TERMS = [
   "today", "tomorrow", "tonight", "morning", "afternoon", "evening", "night",
-  "overnight", "midday", "weekend", "daytime", "sunday", "monday", "tuesday",
-  "wednesday", "thursday", "friday", "saturday"
+  "overnight", "midday", "weekend", "daytime", "this", "next", "coming",
+  "following", "sunday", "monday", "tuesday", "wednesday", "thursday",
+  "friday", "saturday"
 ];
 const PLANNER_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -2422,7 +2424,26 @@ function resolveDayIndex(s, c) {
   if (/\btomorrow\b/.test(s)) return 1;
   const inN = s.match(/\bin (\d+) days?\b/);
   if (inN) { const n = +inN[1]; if (n >= 0 && n < days.length) return n; }
-  // Weekday names → next occurrence (today counts if it matches).
+
+  for (let wd = 0; wd < 7; wd++) {
+    const dayName = PLANNER_WEEKDAY_NAMES[wd];
+    if (new RegExp(`\\b(?:next|following)\\s+${dayName}\\b`).test(s)) {
+      const matches = days.map((day, index) => day.dow === wd ? index : -1).filter((index) => index >= 0);
+      return matches[1] ?? null;
+    }
+    if (new RegExp(`\\b(?:this|coming)\\s+${dayName}\\b`).test(s)) {
+      for (let i = 0; i < days.length; i++) if (days[i].dow === wd) return i;
+    }
+  }
+  if (/\b(?:next|following)\s+weekend\b/.test(s)) {
+    const saturdays = days.map((day, index) => day.dow === 6 ? index : -1).filter((index) => index >= 0);
+    return saturdays[1] ?? null;
+  }
+  if (/\b(?:this|coming)\s+weekend\b/.test(s)) {
+    for (let i = 0; i < days.length; i++) if (days[i].dow === 6) return i;
+  }
+
+  // Bare weekday names → next occurrence (today counts if it matches).
   for (let wd = 0; wd < 7; wd++) {
     if (s.includes(PLANNER_WEEKDAY_NAMES[wd])) {
       for (let i = 0; i < days.length; i++) if (days[i].dow === wd) return i;
@@ -5574,8 +5595,8 @@ function resolvePlanDayIndex(plan, data, c) {
 
 function buildDayClarification(plan, c = buildAIContext()) {
   const label = planDisplayName(plan).toLowerCase();
-  const days = (c?.daily || []).slice(0, 5).map((day, index) => ({
-    label: day.label || (index === 0 ? "Today" : index === 1 ? "Tomorrow" : `Day ${index + 1}`),
+  const days = (c?.daily || []).slice(0, 10).map((day, index) => ({
+    label: planDayClarificationLabel(day, index),
     dayIdx: index
   }));
   return {
@@ -5584,6 +5605,17 @@ function buildDayClarification(plan, c = buildAIContext()) {
     prompt: `Which day should I use for ${label}?`,
     options: days
   };
+}
+
+function planDayClarificationLabel(day, index) {
+  const iso = day?.date || "";
+  if (!iso) return day?.label || (index === 0 ? "Today" : index === 1 ? "Tomorrow" : `Day ${index + 1}`);
+  const date = new Date(`${iso}T12:00:00`);
+  const dateLabel = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+  if (index === 0) return `Today, ${dateLabel}`;
+  if (index === 1) return `Tomorrow, ${dateLabel}`;
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
+  return `${weekday}, ${dateLabel}`;
 }
 
 function buildTimeClarification(plan, options = {}) {
