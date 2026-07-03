@@ -169,7 +169,9 @@ assert.equal(windChange.notify, true);
 const alertChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, alertTone: "warning", alertEvent: "Extreme Heat Warning" });
 assert.equal(alertChange.type, "plan-alert");
 assert.equal(alertChange.notify, true);
+assert.equal(alertChange.title, "4th Party: Extreme Heat Warning now applies");
 assert.match(alertChange.body, /Extreme Heat Warning/);
+assert.doesNotMatch(alertChange.title, /alert started/i);
 
 const noMeaningfulChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 25, gustMax: 20, feelsMax: 93, score: 79 });
 assert.equal(noMeaningfulChange, null);
@@ -200,6 +202,7 @@ const sharedInitialChange = truth.planWeatherWatchStateChange({}, sharedCurrentS
 assert.equal(sharedInitialChange.type, "plan-alert");
 assert.equal(sharedInitialChange.notify, true);
 assert.equal(sharedInitialChange.updateBaseline, true);
+assert.equal(sharedInitialChange.title, "4th Party: Extreme Heat Warning now applies");
 
 const sharedLastKnown = truth.planWeatherLastKnownFromState(
   { id: "party-1", targetDate: "2026-07-03", startHour: 15, endHour: 20 },

@@ -64,6 +64,23 @@ function planWatchCompactText(value, limit = 98) {
   return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
+function planWeatherAlertName(value) {
+  return weatherTruthCleanText(value || "Weather alert", 96) || "Weather alert";
+}
+
+function planWeatherAlertChangeTitle(planTitle, alertName, cleared = false) {
+  const title = planTitle || "Plan";
+  const event = planWeatherAlertName(alertName);
+  return planWatchCompactText(`${title}: ${event} ${cleared ? "cleared" : "now applies"}`, 92);
+}
+
+function planWeatherAlertChangeBody(alertName, cleared = false) {
+  const event = planWeatherAlertName(alertName);
+  return cleared
+    ? `${event} no longer overlaps this plan window.`
+    : `${event} overlaps this plan window.`;
+}
+
 function planConditionRiskKind(stats = {}, alert = null, text = "", unit = weatherTruthUnitPreference()) {
   const preference = unit === "celsius" ? "celsius" : "fahrenheit";
   const precipThreshold = preference === "fahrenheit" ? 0.02 : 0.5;
@@ -372,8 +389,8 @@ function planWeatherWatchStateChange(previousLastKnown = {}, current = {}) {
         notify: true,
         updateBaseline: true,
         priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
-        title: `${currentSnapshot.title || "Plan"}: alert started`,
-        body: `${currentSnapshot.alertEvent || "A weather alert"} now overlaps this plan.`
+        title: planWeatherAlertChangeTitle(currentSnapshot.title || "Plan", currentSnapshot.alertEvent),
+        body: planWeatherAlertChangeBody(currentSnapshot.alertEvent)
       };
     }
     return { type: "baseline", notify: false, updateBaseline: true, priority: 0 };
@@ -474,8 +491,8 @@ function planWeatherChange(previousItem, currentItem) {
       tone,
       notify: true,
       priority: current.alertTone === "warning" ? 140 : current.alertTone === "watch" ? 125 : 105,
-      title: `${title}: alert started`,
-      body: `${alertName} now overlaps this plan.`
+      title: planWeatherAlertChangeTitle(title, alertName),
+      body: planWeatherAlertChangeBody(alertName)
     };
   }
 
@@ -485,8 +502,8 @@ function planWeatherChange(previousItem, currentItem) {
       tone: "good",
       notify: false,
       priority: 45,
-      title: `${title}: alert ended`,
-      body: `${previous.alertEvent || "The weather alert"} no longer overlaps this plan.`
+      title: planWeatherAlertChangeTitle(title, previous.alertEvent, true),
+      body: planWeatherAlertChangeBody(previous.alertEvent || "The weather alert", true)
     };
   }
 
