@@ -2471,7 +2471,7 @@ let launchSummaryTargets = [];
 function fillPlannerTemplate(template, options = {}) {
   const input = document.getElementById("askInput");
   if (!input) return;
-  const { helperText = "Finish the thought: add the day, time, and place if it is away from here." } = options || {};
+  const { helperText = "Nearcast will use this place unless you name another one." } = options || {};
   const form = document.getElementById("askForm");
   const helper = document.querySelector(".ask-helper");
   input.value = template || "";
@@ -4892,23 +4892,14 @@ function renderPlanMemorySection() {
   const allItems = planMemoryListItems(state.forecast, state.activePlace, { includePast: true });
   if (!allItems.length) return "";
   const upcoming = allItems.filter((item) => !item.isPast);
-  const items = upcoming.slice(0, 6);
-  const here = items.filter((item) => item.isHere);
-  const elsewhere = items.filter((item) => !item.isHere);
-  const summaryParts = [
-    upcoming.length ? `${upcoming.length} upcoming` : "",
-    allItems.length - upcoming.length ? `${allItems.length - upcoming.length} past` : ""
-  ].filter(Boolean);
-  const summary = summaryParts.join(" · ") || `${allItems.length} watched`;
-  return `<section class="memory-section" aria-label="Watched plans">` +
+  if (!upcoming.length) return "";
+  const summary = upcoming.length === 1 ? "1 watched plan" : `${upcoming.length} watched plans`;
+  return `<section class="memory-section ask-watch-summary" aria-label="Watched plans">` +
     `<div class="ai-section-title memory-section-title">` +
       `<strong>Watching</strong>` +
       `<span>${escapeHtml(summary)}</span>` +
-      `<button class="memory-manage-btn" type="button" data-memory-open>Review</button>` +
+      `<button class="memory-manage-btn" type="button" data-memory-open>Open</button>` +
     `</div>` +
-    (items.length
-      ? renderPlanMemoryGroup("Here", here) + renderPlanMemoryGroup("Elsewhere", elsewhere)
-      : `<p class="memory-empty-inline">No upcoming watched plans.</p>`) +
   `</section>`;
 }
 
@@ -6803,9 +6794,9 @@ function renderPlannerClarification(disabledAttr = "") {
 
 function plannerStarterExamples() {
   return [
-    { label: "4th party", template: "4th party Friday 3-8" },
-    { label: "Soccer practice", template: "soccer practice tomorrow 6-8" },
-    { label: "Dinner outside", template: "dinner outside tonight" }
+    { label: "Outdoor party", template: "outdoor party Friday 3-8" },
+    { label: "Practice", template: "soccer practice tomorrow 6-8" },
+    { label: "Patio dinner", template: "dinner outside tonight" }
   ];
 }
 
@@ -6870,7 +6861,7 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
   return `
     <article class="ask-decision is-${escapeHtml(item.tone || "pending")}${streaming ? " answering" : ""}">
       <div class="ask-decision-head">
-        <span>Plan Check</span>
+        <span>Forecast read</span>
         <strong>${escapeHtml(decisionLabel)}</strong>
       </div>
       <div class="ask-decision-plan">
@@ -6908,6 +6899,67 @@ function renderAskExchange(exchange, index) {
   `</div>`;
 }
 
+function latestAskDecisionIndex() {
+  for (let index = askThread.length - 1; index >= 0; index -= 1) {
+    const streaming = askStreaming && index === askThread.length - 1;
+    if (askThread[index]?.event && !streaming) return index;
+  }
+  return -1;
+}
+
+function renderLatestAskDecision(index) {
+  if (index < 0) return "";
+  return `
+    <section class="ask-latest-result" aria-label="Latest Plan Check">
+      <div class="ai-section-title ask-latest-title">
+        <strong>Latest check</strong>
+        <span>Forecast window ready</span>
+      </div>
+      ${renderAskExchange(askThread[index], index)}
+    </section>
+  `;
+}
+
+function renderAskWorkingThread(excludeIndex, errLine, clarification) {
+  const activeTailIndex = excludeIndex >= 0 && (askStreaming || clarification || errLine)
+    ? askThread.length - 1
+    : -1;
+  const active = askThread
+    .map((exchange, index) => ({ exchange, index }))
+    .filter(({ index }) => index !== excludeIndex)
+    .filter(({ index }) => excludeIndex < 0 || index === activeTailIndex);
+  if (!active.length && !errLine && !clarification) return "";
+  return `<div class="ask-thread ask-active-thread">` +
+    active.map(({ exchange, index }) => renderAskExchange(exchange, index)).join("") +
+    errLine +
+    clarification +
+  `</div>`;
+}
+
+function renderAskHistory(excludeIndex) {
+  const activeTailIndex = excludeIndex >= 0 && (askStreaming || plannerClarification || askError)
+    ? askThread.length - 1
+    : -1;
+  const history = askThread
+    .map((exchange, index) => ({ exchange, index }))
+    .filter(({ index }) => index !== excludeIndex)
+    .filter(({ index }) => index !== activeTailIndex)
+    .filter(({ index }) => !(askStreaming && index === askThread.length - 1));
+  if (excludeIndex < 0 || !history.length) return "";
+  const label = history.length === 1 ? "1 earlier check" : `${history.length} earlier checks`;
+  return `
+    <details class="ask-history">
+      <summary>
+        <span>Earlier checks</span>
+        <small>${escapeHtml(label)}</small>
+      </summary>
+      <div class="ask-history-list">
+        ${history.map(({ exchange, index }) => renderAskExchange(exchange, index)).join("")}
+      </div>
+    </details>
+  `;
+}
+
 function renderAsk() {
   const perf = perfStart();
   const panel = els.aiAsk;
@@ -6934,13 +6986,17 @@ function renderAsk() {
     `</button>`
   ).join("");
   const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
-  const promptTitle = editing ? "Update this plan" : "Check a plan";
+  const place = state.activePlace ? placeLabel(state.activePlace) : "this place";
+  const promptTitle = editing ? "Update this plan" : "What should Nearcast check?";
   const promptCopy = editing
-    ? "Change the activity, time, or place. Nearcast will re-check the same weather truth."
-    : "Type what you are doing and when. Nearcast checks rain, heat, wind, UV, and alerts for that exact window.";
-  const thread = askThread.map(renderAskExchange).join("");
+    ? "Change the activity, time, or place. Nearcast will check the new window against the forecast."
+    : `Using ${place} unless you mention another place.`;
+  const latestIndex = latestAskDecisionIndex();
+  const latest = renderLatestAskDecision(latestIndex);
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
+  const activeThread = renderAskWorkingThread(latestIndex, errLine, clarification);
+  const history = renderAskHistory(latestIndex);
 
   panel.innerHTML =
     `<section class="ask-plan-check" aria-label="Plan Check">` +
@@ -6951,13 +7007,15 @@ function renderAsk() {
       `</div>` +
       `<form class="ask-form" id="askForm">` +
         `<input id="askInput" type="text" autocomplete="off" ` +
-          `placeholder="soccer practice tomorrow 6-8"${dis}>` +
+          `placeholder="outdoor party Friday 3-8"${dis}>` +
         `<button type="submit" class="ask-send" aria-label="Check plan"${dis}>↑</button>` +
       `</form>` +
       `<div class="ask-plan-examples" aria-label="Plan examples">${examples}</div>` +
-      `<p class="ask-helper">Use normal language. Add a place only if it is away from ${escapeHtml(state.activePlace ? placeLabel(state.activePlace) : "here")}.</p>` +
+      `<p class="ask-helper">Name another city only when the plan is away from ${escapeHtml(place)}.</p>` +
     `</section>` +
-    ((thread || errLine || clarification) ? `<div class="ask-thread">${thread}${errLine}${clarification}</div>` : "") +
+    latest +
+    activeThread +
+    history +
     memorySection;
   bindAskSendButton();
   const input = document.getElementById("askInput");
@@ -7046,7 +7104,7 @@ function renderAILauncher() {
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
       aiState.phase === "error" ? "Plan checks work · private summary needs attention"
-      : "Will weather affect something you are doing?";
+      : "Check a plan against the forecast.";
   }
 }
 

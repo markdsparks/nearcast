@@ -3762,6 +3762,62 @@ h2 {
   cursor: default;
   opacity: 0.55;
 }
+.ask-latest-result {
+  margin: 12px 0;
+}
+.ask-latest-title {
+  margin-top: 2px;
+}
+.ask-latest-result .ask-decision {
+  margin-top: 0;
+  box-shadow: 0 10px 26px rgba(29, 45, 60, 0.08);
+}
+.ask-active-thread {
+  margin: 10px 0 12px;
+}
+.ask-history {
+  margin: 10px 0 12px;
+  border: 1px solid rgba(54, 76, 98, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.ask-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+}
+.ask-history summary::-webkit-details-marker {
+  display: none;
+}
+.ask-history summary span {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ask-history summary small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+.ask-history[open] summary {
+  border-bottom: 1px solid rgba(54, 76, 98, 0.10);
+}
+.ask-history-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+.ask-history-list .ask-exchange,
+.ask-history-list .ask-decision {
+  margin-top: 0;
+}
 .ai-section-title {
   display: flex;
   align-items: baseline;
@@ -3785,6 +3841,16 @@ h2 {
 }
 .memory-section-title span {
   margin-left: auto;
+}
+.ask-watch-summary {
+  margin-top: 12px;
+}
+.ask-watch-summary .memory-section-title {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(54, 76, 98, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.22);
 }
 .memory-manage-btn {
   min-height: 28px;
