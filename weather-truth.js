@@ -71,7 +71,7 @@ function planWeatherAlertName(value) {
 function planWeatherAlertChangeTitle(planTitle, alertName, cleared = false) {
   const title = planTitle || "Plan";
   const event = planWeatherAlertName(alertName);
-  return planWatchCompactText(`${title}: ${event} ${cleared ? "cleared" : "now applies"}`, 92);
+  return planWatchCompactText(`${title}: ${event} ${cleared ? "cleared" : "overlaps plan"}`, 92);
 }
 
 function planWeatherAlertChangeBody(alertName, cleared = false) {
@@ -127,13 +127,13 @@ function planWatchLabel(item) {
   const risk = planWatchRiskKind(item);
   if (item.alertTone === "warning" || item.alertTone === "watch" || item.tone === "watch") {
     if (risk === "heat") return "Plan around heat";
-    if (risk === "storm") return item.alert ? "Alert overlaps" : "Keep an eye on it";
+    if (risk === "storm") return item.alert ? "Weather alert overlaps" : "Keep an eye on it";
     if (risk === "flood" || risk === "rain") return "Expect rain";
     if (risk === "wind") return "Wind may matter";
     if (risk === "air") return "Air may matter";
     if (risk === "pollen") return "Allergies may matter";
     if (risk === "cold") return "Plan around cold";
-    if (item.alert) return "Alert overlaps";
+    if (item.alert) return "Weather alert overlaps";
     return "Keep an eye on it";
   }
   if (item.tone === "caution") {
@@ -248,7 +248,7 @@ function planAdvice(stats = {}, alert = null, score = 100, alertSignal = null, u
     if (risk === "cold") return "Add warm layers and a shorter outdoor window.";
     if (tone === "warning") return "Check local guidance and adjust the plan before you go.";
     if (tone === "watch") return "Stay weather-aware and keep an alternate window or location available.";
-    return "Keep an eye on the alert details.";
+    return "Keep an eye on the official alert details.";
   }
   if (stats.stormPotential) return "Have a delay or indoor fallback.";
   if (stats.rainChance >= 55) return "Bring rain gear and expect interruptions.";
@@ -605,7 +605,7 @@ function planWeatherReceiptLines(item) {
 
   if (item.alert?.event) {
     lines.push({
-      label: "Alert",
+      label: "Weather alert",
       value: `${item.alert.event} overlaps this window`,
       kind: "storm"
     });

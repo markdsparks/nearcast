@@ -40,8 +40,8 @@ assert.equal(heatTruth.label, "Plan around heat");
 assert.equal(heatTruth.notification.eligible, false);
 assert.equal(heatTruth.notification.signal, "warning");
 assert.deepEqual(heatTruth.signalRows.map(row => row.label), ["Feels", "Temp", "UV"]);
-assert.deepEqual(heatTruth.receiptLines.map(row => row.label), ["Alert", "Feels", "Temp", "UV"]);
-assert.match(heatTruth.receipt, /Alert: Extreme Heat Warning overlaps this window/);
+assert.deepEqual(heatTruth.receiptLines.map(row => row.label), ["Weather alert", "Feels", "Temp", "UV"]);
+assert.match(heatTruth.receipt, /Weather alert: Extreme Heat Warning overlaps this window/);
 assert.match(heatTruth.receipt, /Feels: 92°F-101°F/);
 
 const rainWatch = {
@@ -169,9 +169,9 @@ assert.equal(windChange.notify, true);
 const alertChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, alertTone: "warning", alertEvent: "Extreme Heat Warning" });
 assert.equal(alertChange.type, "plan-alert");
 assert.equal(alertChange.notify, true);
-assert.equal(alertChange.title, "4th Party: Extreme Heat Warning now applies");
+assert.equal(alertChange.title, "4th Party: Extreme Heat Warning overlaps plan");
 assert.match(alertChange.body, /Extreme Heat Warning/);
-assert.doesNotMatch(alertChange.title, /alert started/i);
+assert.doesNotMatch(alertChange.title, /started/i);
 
 const noMeaningfulChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 25, gustMax: 20, feelsMax: 93, score: 79 });
 assert.equal(noMeaningfulChange, null);
@@ -202,7 +202,7 @@ const sharedInitialChange = truth.planWeatherWatchStateChange({}, sharedCurrentS
 assert.equal(sharedInitialChange.type, "plan-alert");
 assert.equal(sharedInitialChange.notify, true);
 assert.equal(sharedInitialChange.updateBaseline, true);
-assert.equal(sharedInitialChange.title, "4th Party: Extreme Heat Warning now applies");
+assert.equal(sharedInitialChange.title, "4th Party: Extreme Heat Warning overlaps plan");
 
 const sharedLastKnown = truth.planWeatherLastKnownFromState(
   { id: "party-1", targetDate: "2026-07-03", startHour: 15, endHour: 20 },

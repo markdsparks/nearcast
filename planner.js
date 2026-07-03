@@ -1218,7 +1218,7 @@ function planWatchNotificationPanelCopy(watchItems) {
     return {
       tone: "caution",
       title: "Notifications blocked",
-      body: "Nearcast still watches in the app. Change browser notification settings to receive device alerts.",
+      body: "Nearcast still watches in the app. Change browser notification settings to receive notifications.",
       button: "",
       meta: "Blocked"
     };
@@ -1239,7 +1239,7 @@ function planWatchNotificationPanelCopy(watchItems) {
   return {
     tone: "neutral",
     title: "Notify on meaningful changes",
-    body: "Enable device notifications, then choose the plans that should be allowed to interrupt you.",
+    body: "Enable notifications, then choose the plans that should be allowed to send a heads-up.",
     button: "Enable",
     meta: count ? `${count} active` : "Optional"
   };
@@ -1344,7 +1344,7 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
   const compactClass = options.compact ? " is-compact" : "";
   const body = planWatchNotificationsEnabled()
     ? "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
-    : "Nearcast still checks watched plans in the app. Turn on notifications when you want device alerts.";
+    : "Nearcast still checks watched plans in the app. Turn on notifications when you want phone/browser updates.";
   return `
     <section class="plan-watch-activity${compactClass}">
       <div class="plan-watch-activity-head">
@@ -1416,7 +1416,7 @@ function planWatchNotificationHubStatus(watchItems) {
     return {
       tone: "pending",
       eyebrow: "In-app only",
-      title: "Nearcast can watch, but cannot alert this device",
+      title: "Nearcast can watch, but cannot notify this device",
       body: "You will still see important plan and saved-place changes when you open the app.",
       primary: "",
       primaryLabel: ""
@@ -1427,7 +1427,7 @@ function planWatchNotificationHubStatus(watchItems) {
       tone: "caution",
       eyebrow: "Blocked",
       title: "Notifications are blocked",
-      body: "Nearcast still watches in the app. Change browser notification settings if you want alerts outside the app.",
+      body: "Nearcast still watches in the app. Change browser notification settings if you want notifications outside the app.",
       primary: "",
       primaryLabel: ""
     };
@@ -1436,8 +1436,8 @@ function planWatchNotificationHubStatus(watchItems) {
     return {
       tone: "good",
       eyebrow: "Ready",
-      title: "Nearcast can alert you when it matters",
-      body: "Only the plans and saved places you choose can interrupt you. Routine forecast noise stays in the app.",
+      title: "Nearcast can notify you when it matters",
+      body: "Only the plans and saved places you choose can send a notification. Routine forecast noise stays in the app.",
       primary: "pause",
       primaryLabel: "Pause all"
     };
@@ -1446,7 +1446,7 @@ function planWatchNotificationHubStatus(watchItems) {
     return {
       tone: "neutral",
       eyebrow: "Ready",
-      title: "Choose what can alert you",
+      title: "Choose what can notify you",
       body: "Notifications are allowed. Pick the plans or saved places worth hearing about.",
       primary: "",
       primaryLabel: ""
@@ -1456,8 +1456,8 @@ function planWatchNotificationHubStatus(watchItems) {
     return {
       tone: "neutral",
       eyebrow: "Paused",
-      title: "Alerts are paused",
-      body: "Your choices are saved. Resume alerts when you want this device to interrupt you again.",
+      title: "Notifications are paused",
+      body: "Your choices are saved. Resume notifications when you want this device to interrupt you again.",
       primary: "resume",
       primaryLabel: "Resume"
     };
@@ -1465,8 +1465,8 @@ function planWatchNotificationHubStatus(watchItems) {
   return {
     tone: "neutral",
     eyebrow: "Optional",
-    title: "Get alerted only for meaningful changes",
-    body: "Turn on alerts, then choose exactly which plans and saved places can interrupt you.",
+    title: "Get notified only for meaningful changes",
+    body: "Turn on notifications, then choose exactly which plans and saved places can interrupt you.",
     primary: "enable",
     primaryLabel: "Enable"
   };
@@ -1501,22 +1501,22 @@ function planWatchNotificationHubStats(watchItems) {
   const selectedPlaces = placeWatchNotificationSelectedCount();
   const savedPlaces = placeWatchSavedPlaces().length;
   const permission = planWatchNotificationPermission();
-  const alerts = planWatchNotificationsEnabled()
+  const notificationMode = planWatchNotificationsEnabled()
     ? "On"
     : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const rows = [
-    { label: "Alerts", value: alerts },
+    { label: "Notifications", value: notificationMode },
     {
       label: "Plans",
       value: active.length
-        ? enabledPlans ? `${enabledPlans}/${active.length} can alert` : `${active.length} watched`
+        ? enabledPlans ? `${enabledPlans}/${active.length} can notify` : `${active.length} watched`
         : "None active"
     },
     {
       label: "Places",
       value: savedPlaces
         ? placeWatchNotificationsRequested()
-          ? selectedPlaces ? `${selectedPlaces}/${Math.min(savedPlaces, PLACE_WATCH_MAX_SYNC_PLACES)} can alert` : "Choose places"
+          ? selectedPlaces ? `${selectedPlaces}/${Math.min(savedPlaces, PLACE_WATCH_MAX_SYNC_PLACES)} can notify` : "Choose places"
           : `${savedPlaces} saved`
         : "None saved"
     },
@@ -1529,7 +1529,7 @@ function planWatchNotificationHubStats(watchItems) {
 
 function planWatchNotificationRuleRows() {
   return [
-    { label: "Weather alerts", value: "A warning or watch overlaps a plan." },
+    { label: "Official weather alerts", value: "A warning or watch overlaps a plan." },
     { label: "Plans", value: "Rain, heat, wind, storms, or the overall read changes meaningfully." },
     { label: "Saved places", value: "Today or tomorrow gets stormier, wetter, hotter, windier, smokier, or clears up." }
   ];
@@ -1582,7 +1582,7 @@ function renderPlanWatchNotificationTargets(watchItems, options = {}) {
       ${active.length ? `
         <div class="watch-notify-target-group">
           <div class="watch-notify-target-title">
-            <span>Plans that can alert you</span>
+            <span>Plans that can notify you</span>
             <small>${escapeHtml(planWatchNotificationEnabledCount(active))}/${active.length}</small>
           </div>
           <div class="plan-watch-manage-list">
@@ -1593,7 +1593,7 @@ function renderPlanWatchNotificationTargets(watchItems, options = {}) {
       ${savedPlaces.length ? `
         <div class="watch-notify-target-group">
           <div class="watch-notify-target-title">
-            <span>Saved places that can alert you</span>
+            <span>Saved places that can notify you</span>
             <small>${escapeHtml(placeWatchNotificationSelectedCount())}/${PLACE_WATCH_MAX_SYNC_PLACES}</small>
           </div>
           ${placeRequested ? `
@@ -1608,7 +1608,7 @@ function renderPlanWatchNotificationTargets(watchItems, options = {}) {
           `}
         </div>
       ` : ""}
-      ${options.compact ? "" : `<small class="watch-notify-note">Choose only what is worth an interruption. Pausing alerts does not delete plans or saved places.</small>`}
+      ${options.compact ? "" : `<small class="watch-notify-note">Choose only what is worth an interruption. Pausing notifications does not delete plans or saved places.</small>`}
     </div>
   `;
 }
@@ -1746,7 +1746,7 @@ function savedPlaceWatchNotificationPanelCopy() {
     return {
       tone: "caution",
       title: "Notifications blocked",
-      body: "Change browser notification settings to receive saved-place alerts.",
+      body: "Change browser notification settings to receive saved-place notifications.",
       button: "",
       meta: "Blocked"
     };
@@ -1758,8 +1758,8 @@ function savedPlaceWatchNotificationPanelCopy() {
         ? `Watching ${selectedCount} saved ${selectedCount === 1 ? "place" : "places"}`
         : "Choose places to watch",
       body: selectedCount
-        ? `Pick up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below. Nearcast will only interrupt for meaningful today/tomorrow changes.`
-        : `Choose up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below to receive alerts.`,
+        ? `Pick up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below. Nearcast will only notify for meaningful today/tomorrow changes.`
+        : `Choose up to ${PLACE_WATCH_MAX_SYNC_PLACES} saved places below to receive notifications.`,
       button: "Pause",
       meta: `${selectedCount}/${PLACE_WATCH_MAX_SYNC_PLACES}`
     };
@@ -4248,7 +4248,7 @@ async function updateMemoryEditPreview(options = {}) {
     <div><span>Rain</span><strong>${stats.rainChance}%</strong></div>
     <div><span>Wind</span><strong>${stats.windMax} ${escapeHtml(c.units.wind)}</strong></div>
     <div><span>Temp</span><strong>${stats.tempMin}${escapeHtml(c.units.temp)}-${stats.tempMax}${escapeHtml(c.units.temp)}</strong></div>
-    ${alert ? `<div><span>Alert</span><strong>${escapeHtml(alert.event)}</strong></div>` : ""}
+    ${alert ? `<div><span>Weather alert</span><strong>${escapeHtml(alert.event)}</strong></div>` : ""}
   `);
 }
 
@@ -5294,7 +5294,7 @@ function planWatchOverviewFactRows(watchItems) {
   const savedPlaces = placeWatchSavedPlaces().length;
   const selectedPlaces = placeWatchNotificationSelectedCount();
   const enabledPlans = planWatchNotificationEnabledCount(upcoming);
-  const alertsOn = planWatchNotificationsEnabled();
+  const notificationsOn = planWatchNotificationsEnabled();
   const allowedCount = enabledPlans + (placeWatchNotificationsRequested() ? selectedPlaces : 0);
   const facts = [
     {
@@ -5304,14 +5304,14 @@ function planWatchOverviewFactRows(watchItems) {
     {
       value: selectedPlaces ? String(selectedPlaces) : String(savedPlaces),
       label: selectedPlaces
-        ? selectedPlaces === 1 ? "place can alert" : "places can alert"
+        ? selectedPlaces === 1 ? "place can notify" : "places can notify"
         : savedPlaces === 1 ? "saved place" : "saved places"
     },
     {
-      value: alertsOn ? String(allowedCount) : planWatchNotificationPermission() === "denied" ? "Blocked" : "In app",
-      label: alertsOn
-        ? allowedCount === 1 ? "can alert you" : "can alert you"
-        : "alerts"
+      value: notificationsOn ? String(allowedCount) : planWatchNotificationPermission() === "denied" ? "Blocked" : "In app",
+      label: notificationsOn
+        ? allowedCount === 1 ? "can notify you" : "can notify you"
+        : "notifications"
     }
   ];
   return facts.filter((fact) => fact.value !== "0");
@@ -5343,7 +5343,7 @@ function renderPlanWatchOverview(watchItems) {
   } else if (savedPlaces) {
     kicker = "Saved places";
     title = "Your places are ready to watch";
-    body = "Choose which saved places are worth alerts for meaningful today or tomorrow changes.";
+    body = "Choose which saved places are worth notifications for meaningful today or tomorrow changes.";
   }
   const facts = planWatchOverviewFactRows(upcoming);
   return `
