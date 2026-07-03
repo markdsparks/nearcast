@@ -1,4 +1,4 @@
-const VERSION = "3.0.163";
+const VERSION = "3.0.164";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4859,7 +4859,7 @@ function warmStartForecast(place) {
     }
     renderSavedPlaces();
     updateMapPlace();
-    renderAlerts([]);
+    setAlertsLoading();
     renderForecast(cached.data, normalized, { refreshMap: false });
     setLoadingStatus("");
     return true;
@@ -4892,7 +4892,7 @@ async function loadPlace(place, force = false) {
   }
   renderSavedPlaces();
   updateMapPlace();
-  renderAlerts([]); // clear prior place's alerts until this one resolves
+  setAlertsLoading(); // clear prior place's alerts until this one resolves
   setStatus(`Updating ${state.activePlace.name}...`);
 
   try {
@@ -4928,7 +4928,7 @@ async function loadPlace(place, force = false) {
     renderAlerts(alerts);
   } catch {
     if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
-    renderAlerts([]);
+    setAlertsLoading();
   }
 }
 
@@ -7221,6 +7221,7 @@ function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
     tone: truth?.tone || item.tone || "",
     verdict: item.verdict || "",
     riskKind: truth?.riskKind || item.riskKind || "",
+    alertsReady: typeof activeAlertsReady === "undefined" ? true : Boolean(activeAlertsReady),
     alertTone: truth?.alertTone || item.alertTone || "",
     alertEvent: item.alert?.event || item.alertEvent || "",
     when: typeof planPulseWhenText === "function" ? planPulseWhenText(memory, data) : ""
@@ -7265,6 +7266,7 @@ function saveContinuitySnapshot(data, place, tempUnit, windUnit, truth = weather
   store.places[snapshots.place.placeKey] = snapshots.place;
   snapshots.plans.forEach((snapshot) => {
     const key = continuityPlanKey(snapshot);
+    if (snapshot.alertsReady === false) return;
     if (key) store.plans[key] = snapshot;
   });
   store = pruneContinuityStore(store, snapshots.place.placeKey);
@@ -7312,7 +7314,15 @@ function forYouPlanContinuityCard(planSnapshots, store) {
 function continuityPlanChange(current, previous) {
   if (!current || !previous) return null;
   if (current.targetDate !== previous.targetDate || current.startHour !== previous.startHour || current.endHour !== previous.endHour) return null;
-  if (typeof planWeatherChange === "function") return planWeatherChange(previous, current);
+  if (typeof planWeatherChange === "function") {
+    if (current.alertsReady === false) {
+      return planWeatherChange(
+        { ...previous, alertTone: "", alertEvent: "" },
+        { ...current, alertTone: "", alertEvent: "" }
+      );
+    }
+    return planWeatherChange(previous, current);
+  }
   const rainDelta = continuityDelta(current.rainChance, previous.rainChance);
   if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainChance, previous.rainChance) >= 35) {
     const wetter = rainDelta > 0;
@@ -9423,6 +9433,8 @@ function escapeHtml(value) {
 const SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1, Unknown: 0 };
 const ALERT_TONE_RANK = { warning: 4, watch: 3, advisory: 2, notice: 1 };
 let activeAlerts = [];
+// Loading/unknown alerts are different from a confirmed empty alert list.
+let activeAlertsReady = false;
 
 async function fetchAlerts(place) {
   const cacheKey = `alerts:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
@@ -9483,11 +9495,29 @@ function alertCountLabel(count) {
   return count === 1 ? "1 active alert" : `${count} active alerts`;
 }
 
+function setAlertsLoading() {
+  activeAlerts = [];
+  activeAlertsReady = false;
+  const bar = document.getElementById("alertBar");
+  if (bar) bar.hidden = true;
+}
+
+function syncLaunchAfterAlertsReady() {
+  if (!state.forecast || !state.activePlace) return;
+  refreshPlanAwareLaunchSurfaces(state.forecast, state.activePlace);
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const truth = state.weatherTruth || weatherTruth(state.forecast);
+  saveContinuitySnapshot(state.forecast, state.activePlace, tempUnit, windUnit, truth);
+}
+
 function renderAlerts(alerts) {
   activeAlerts = alerts || [];
+  activeAlertsReady = true;
   const bar = document.getElementById("alertBar");
   if (!activeAlerts.length) {
     bar.hidden = true;
+    syncLaunchAfterAlertsReady();
     return;
   }
   const top = activeAlerts[0];
@@ -9500,6 +9530,7 @@ function renderAlerts(alerts) {
     activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
   bar.setAttribute("aria-label", `${top.event}${top.ends || top.expires ? ` until ${formatAlertTime(top.ends || top.expires)}` : ""}. ${alertCountLabel(activeAlerts.length)}. Open alert details.`);
   bar.hidden = false;
+  syncLaunchAfterAlertsReady();
 }
 
 function formatAlertTime(iso) {
