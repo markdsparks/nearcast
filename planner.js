@@ -281,8 +281,11 @@ const PLAN_WATCH_NOTIFICATION_PLANS_KEY = "nearcast-plan-watch-notification-plan
 const PLACE_WATCH_NOTIFICATION_PLACES_KEY = "nearcast-place-watch-notification-places-v1";
 const PLACE_WATCH_MAX_SYNC_PLACES = 3;
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
+const PLAN_WATCH_RECENT_UPDATES_KEY = "nearcast-plan-watch-recent-updates-v1";
 const PLAN_WATCH_NOTIFICATION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_NOTIFICATION_MAX_EVENTS = 48;
+const PLAN_WATCH_RECENT_UPDATE_MAX_ITEMS = 10;
+const PLAN_WATCH_RECENT_UPDATE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PLAN_WATCH_REVIEWED_CHANGES_KEY = "nearcast-plan-watch-reviewed-changes-v1";
 const PLAN_WATCH_REVIEWED_MAX_CHANGES = 120;
 const PLAN_WATCH_REVIEWED_CHANGE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -307,6 +310,7 @@ const planWatchState = {
   pushSyncPromise: null
 };
 let planWatchFocusMemoryId = "";
+let planWatchNotificationRouteConsumed = "";
 
 function planWatchReviewedChangesStore() {
   try {
@@ -397,6 +401,212 @@ function writePlanWatchNotificationState(stateValue) {
   } catch {
     /* Notification dedupe is optional. */
   }
+}
+
+function cleanPlanWatchRecentUpdate(update = {}) {
+  const at = Number(update.at || Date.now());
+  const targetType = ["plan", "place", "watching"].includes(update.targetType)
+    ? update.targetType
+    : "watching";
+  const targetId = String(update.targetId || "").trim().slice(0, 96);
+  const title = planWatchCompactText(update.title || "Nearcast update", 90);
+  const body = planWatchCompactText(update.body || "Nearcast found something worth checking.", 140);
+  const tone = ["good", "caution", "watch", "pending", "neutral"].includes(update.tone)
+    ? update.tone
+    : "neutral";
+  const key = String(update.key || [targetType, targetId, title, body].join("|"))
+    .trim()
+    .slice(0, 240);
+  return {
+    key,
+    targetType,
+    targetId,
+    title,
+    body,
+    tone,
+    at: Number.isFinite(at) && at > 0 ? at : Date.now()
+  };
+}
+
+function readPlanWatchRecentUpdates() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_RECENT_UPDATES_KEY) || "null");
+    const raw = Array.isArray(parsed?.updates) ? parsed.updates : Array.isArray(parsed) ? parsed : [];
+    const now = Date.now();
+    return raw
+      .map(cleanPlanWatchRecentUpdate)
+      .filter((update) => now - update.at <= PLAN_WATCH_RECENT_UPDATE_MAX_AGE_MS)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, PLAN_WATCH_RECENT_UPDATE_MAX_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function writePlanWatchRecentUpdates(updates) {
+  try {
+    const now = Date.now();
+    const clean = (updates || [])
+      .map(cleanPlanWatchRecentUpdate)
+      .filter((update) => now - update.at <= PLAN_WATCH_RECENT_UPDATE_MAX_AGE_MS)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, PLAN_WATCH_RECENT_UPDATE_MAX_ITEMS);
+    localStorage.setItem(PLAN_WATCH_RECENT_UPDATES_KEY, JSON.stringify({ updates: clean }));
+  } catch {
+    /* Recent-update history is helpful, not required. */
+  }
+}
+
+function recordPlanWatchRecentUpdate(update = {}) {
+  const clean = cleanPlanWatchRecentUpdate(update);
+  const existing = readPlanWatchRecentUpdates().filter((item) => item.key !== clean.key);
+  writePlanWatchRecentUpdates([clean, ...existing]);
+  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
+  return clean;
+}
+
+function planWatchRecentUpdateFromWatch(watch, options = {}) {
+  if (!watch?.memory?.id) return null;
+  const notification = watch.notification || planWeatherNotificationState(watch);
+  return {
+    key: `plan:${watch.memory.id}:${planWatchNotificationEventKey(watch)}`,
+    targetType: "plan",
+    targetId: watch.memory.id,
+    tone: watch.tone || notification?.tone || "caution",
+    title: planMemoryTitle(watch.memory),
+    body: notification?.body || watch.change?.body || watch.reason || "Nearcast found a meaningful change.",
+    at: options.at || Date.now()
+  };
+}
+
+function planWatchRecentUpdateFromRoute(route = {}) {
+  const memoryId = String(route.memoryId || "").trim();
+  const placeId = String(route.placeId || "").trim();
+  if (memoryId) {
+    const memory = state.planMemories.find((item) => item.id === memoryId);
+    return {
+      key: `route:plan:${memoryId}:${route.source || "notification"}`,
+      targetType: "plan",
+      targetId: memoryId,
+      tone: "caution",
+      title: memory ? planMemoryTitle(memory) : "Watched plan",
+      body: "Nearcast had a meaningful update for this plan.",
+      at: Date.now()
+    };
+  }
+  if (placeId) {
+    const place = placeWatchSavedPlaces().find((item) => String(item?.id || "") === placeId);
+    return {
+      key: `route:place:${placeId}:${route.source || "notification"}`,
+      targetType: "place",
+      targetId: placeId,
+      tone: "caution",
+      title: place ? placeLabel(place) : "Saved place",
+      body: "Nearcast had a meaningful update for this saved place.",
+      at: Date.now()
+    };
+  }
+  return {
+    key: `route:watching:${route.source || "notification"}`,
+    targetType: "watching",
+    targetId: "",
+    tone: "neutral",
+    title: "Watching update",
+    body: "Nearcast opened your watched weather.",
+    at: Date.now()
+  };
+}
+
+function planWatchNotificationTargetPath({ target = "watching", memoryId = "", placeId = "", source = "plan-watch" } = {}) {
+  if (typeof planWatchNotificationTargetUrl === "function") {
+    return planWatchNotificationTargetUrl({ target, memoryId, placeId, source });
+  }
+  const params = new URLSearchParams();
+  params.set("nearcast", "notification");
+  params.set("target", memoryId ? "plan" : placeId ? "place" : target);
+  if (memoryId) params.set("memoryId", memoryId);
+  if (placeId) params.set("placeId", placeId);
+  if (source) params.set("source", source);
+  return `./?${params.toString()}`;
+}
+
+function nearcastNotificationRouteFromLocation() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const marker = params.get("nearcast") || params.get("nearcastTarget") || "";
+    const memoryId = (params.get("memoryId") || params.get("planId") || params.get("plan") || "").trim();
+    const placeId = (params.get("placeId") || params.get("place") || "").trim();
+    if (!memoryId && !placeId && marker !== "notification") return null;
+    const target = (params.get("target") || (memoryId ? "plan" : placeId ? "place" : "watching")).trim();
+    return {
+      marker,
+      target,
+      memoryId,
+      placeId,
+      source: (params.get("source") || "notification").trim(),
+      signature: `${marker}|${target}|${memoryId}|${placeId}|${params.get("source") || ""}`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function nearcastNotificationRoutePlace(route = nearcastNotificationRouteFromLocation()) {
+  if (!route) return null;
+  if (route.memoryId) {
+    const memory = state.planMemories.find((item) => item.id === route.memoryId);
+    return memory?.place || null;
+  }
+  if (route.placeId) {
+    return placeWatchSavedPlaces().find((place) => String(place?.id || "") === route.placeId) || null;
+  }
+  return null;
+}
+
+function clearNearcastNotificationRouteUrl() {
+  try {
+    const url = new URL(window.location.href);
+    [
+      "nearcast",
+      "nearcastTarget",
+      "target",
+      "memoryId",
+      "planId",
+      "plan",
+      "placeId",
+      "place",
+      "source"
+    ].forEach((key) => url.searchParams.delete(key));
+    const clean = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", clean || "./");
+  } catch {
+    /* URL cleanup is best-effort. */
+  }
+}
+
+function consumeNearcastNotificationRoute() {
+  const route = nearcastNotificationRouteFromLocation();
+  if (!route || route.signature === planWatchNotificationRouteConsumed) return false;
+  planWatchNotificationRouteConsumed = route.signature;
+  const update = planWatchRecentUpdateFromRoute(route);
+  if (update) recordPlanWatchRecentUpdate(update);
+  clearNearcastNotificationRouteUrl();
+
+  if (route.memoryId && state.planMemories.some((memory) => memory.id === route.memoryId)) {
+    openPlanWatchForMemory(route.memoryId, { source: "notification" });
+    return true;
+  }
+
+  if (route.placeId) {
+    const place = placeWatchSavedPlaces().find((item) => String(item?.id || "") === route.placeId);
+    if (place && state.activePlace && samePlanPlace(place, state.activePlace)) {
+      openGlobalMemorySheet({ source: "notification" });
+      return true;
+    }
+  }
+
+  openGlobalMemorySheet({ source: "notification" });
+  return true;
 }
 
 function planWatchNotificationsSupported() {
@@ -1154,6 +1364,44 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
   `;
 }
 
+function renderPlanWatchRecentUpdates() {
+  const updates = readPlanWatchRecentUpdates();
+  if (!updates.length) return "";
+  return `
+    <section class="plan-watch-recent-updates">
+      <div class="plan-watch-recent-head">
+        <span>Recent updates</span>
+        <strong>What Nearcast called out</strong>
+      </div>
+      <div class="plan-watch-recent-list">
+        ${updates.slice(0, 4).map((update) => {
+          const memory = update.targetType === "plan"
+            ? state.planMemories.find((item) => item.id === update.targetId)
+            : null;
+          const place = update.targetType === "place"
+            ? placeWatchSavedPlaces().find((item) => String(item?.id || "") === update.targetId)
+            : null;
+          const action = memory
+            ? `<button type="button" data-memory-show="${escapeHtml(memory.id)}">Open plan</button>`
+            : place
+              ? `<button type="button" data-notification-place="${escapeHtml(place.id)}">Open place</button>`
+              : "";
+          return `
+            <article class="plan-watch-recent-item is-${escapeHtml(update.tone || "neutral")}">
+              <div>
+                <span>${escapeHtml(formatPlanWatchRelativeTimestamp(update.at) || "recently")}</span>
+                <strong>${escapeHtml(update.title)}</strong>
+                <small>${escapeHtml(update.body)}</small>
+              </div>
+              ${action}
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function planWatchNotificationHubStatus(watchItems) {
   const active = (watchItems || []).filter((watch) => !watch?.isPast);
   const supported = planWatchNotificationsSupported();
@@ -1585,11 +1833,16 @@ async function showPlanWatchNotification(watch) {
       icon: "icons/icon-192.png",
       badge: "icons/icon-192.png",
       data: {
-        url: "./",
+        url: planWatchNotificationTargetPath({
+          memoryId: watch.memory.id,
+          source: "plan-watch"
+        }),
         memoryId: watch.memory.id,
         source: "plan-watch"
       }
     });
+    const update = planWatchRecentUpdateFromWatch(watch);
+    if (update) recordPlanWatchRecentUpdate(update);
     return true;
   } catch {
     return false;
@@ -5120,6 +5373,7 @@ function renderGlobalMemorySheet() {
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
       ${renderPlanWatchNotificationManagementSurface(watchItems)}
+      ${renderPlanWatchRecentUpdates()}
       <section class="memory-empty-state">
         <strong>Nothing being watched yet</strong>
         <p>Use Plan Check for a real plan, then watch it when the forecast matters.</p>
@@ -5131,6 +5385,7 @@ function renderGlobalMemorySheet() {
 
   els.memorySheetBody.innerHTML =
     renderPlanWatchNotificationManagementSurface(watchItems) +
+    renderPlanWatchRecentUpdates() +
     renderGlobalMemoryGroup("This place", here, {
       sub: state.activePlace ? placeLabel(state.activePlace) : "",
       watchById

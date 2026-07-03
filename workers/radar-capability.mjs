@@ -9,7 +9,8 @@ const {
   planWeatherWatchCurrentState: sharedPlanWeatherWatchCurrentState,
   planWeatherWatchStateChange: sharedPlanWeatherWatchStateChange,
   planWeatherLastKnownFromState: sharedPlanWeatherLastKnownFromState,
-  planWeatherNotificationCandidate: sharedPlanWeatherNotificationCandidate
+  planWeatherNotificationCandidate: sharedPlanWeatherNotificationCandidate,
+  planWatchNotificationTargetUrl: sharedPlanWatchNotificationTargetUrl
 } = globalThis.NearcastWeatherTruth || {};
 
 const CAPABILITY_PROVIDER = "nearcast-radar-capabilities";
@@ -1617,7 +1618,9 @@ function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}
       renotify: false,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      url: "./",
+      url: typeof sharedPlanWatchNotificationTargetUrl === "function"
+        ? sharedPlanWatchNotificationTargetUrl({ placeId: watchedPlace.id || "", source: "place-watch-evaluator" })
+        : "./",
       placeId: watchedPlace.id || "",
       source: "place-watch-evaluator"
     }

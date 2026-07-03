@@ -219,6 +219,10 @@ const sharedCandidate = truth.planWeatherNotificationCandidate(
 assert.equal(sharedCandidate.type, "plan-alert");
 assert.equal(sharedCandidate.notification.tag, "nearcast-plan-party-1");
 assert.match(sharedCandidate.notification.body, /Extreme Heat Warning/);
+const sharedCandidateUrl = new URL(sharedCandidate.notification.url, "https://getnearcast.app/");
+assert.equal(sharedCandidateUrl.searchParams.get("nearcast"), "notification");
+assert.equal(sharedCandidateUrl.searchParams.get("target"), "plan");
+assert.equal(sharedCandidateUrl.searchParams.get("memoryId"), "party 1");
 
 const sharedBaselineChange = truth.planWeatherWatchStateChange({}, truth.planWeatherWatchCurrentState(
   {

@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.155**.
+Living product roadmap. Current as of **v3.0.156**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -34,6 +34,9 @@ turning weather into timely, human guidance for places and plans.
 - **Human-centered watched-plan UI**: watched plans now lead with what matters,
   show contextual weather metrics, and avoid exposing plan/watch/memory
   complexity as separate mental models.
+- **Contextual notification entry**: plan and saved-place notifications now
+  deep-link back into the relevant watched context, with recent updates kept
+  locally in the Watching surface.
 - **Cleaner normal settings**: debug controls for map renderer, radar provider,
   radar zoom, and diagnostics are hidden unless explicitly enabled.
 - **Local-first memory**: personal plan context stays inspectable and forgettable

@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30155";
-const ASSET_VERSION = "3.0.155";
+const CACHE = "nearcast-v30156";
+const ASSET_VERSION = "3.0.156";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -145,6 +145,29 @@ function hasPushNotificationContent(payload) {
   return Boolean(payload && (payload.title || payload.body));
 }
 
+function nearcastNotificationTargetUrl(payload = {}) {
+  const rawUrl = payload.url || BASE;
+  let url;
+  try {
+    url = new URL(rawUrl, self.location.origin + BASE);
+  } catch {
+    url = new URL(BASE, self.location.origin + BASE);
+  }
+  if (url.origin !== self.location.origin) {
+    url = new URL(BASE, self.location.origin + BASE);
+  }
+
+  const memoryId = String(payload.memoryId || "").trim();
+  const placeId = String(payload.placeId || "").trim();
+  const target = memoryId ? "plan" : placeId ? "place" : "watching";
+  url.searchParams.set("nearcast", "notification");
+  url.searchParams.set("target", target);
+  if (memoryId) url.searchParams.set("memoryId", memoryId);
+  if (placeId) url.searchParams.set("placeId", placeId);
+  if (payload.source) url.searchParams.set("source", String(payload.source).slice(0, 64));
+  return url.href;
+}
+
 async function pendingPlanWatchNotificationPayload() {
   try {
     const subscription = await self.registration.pushManager.getSubscription();
@@ -182,8 +205,9 @@ async function showPlanWatchPushNotification(data) {
     icon: payload.icon || `${BASE}icons/icon-192.png`,
     badge: payload.badge || `${BASE}icons/icon-192.png`,
     data: {
-      url: payload.url || BASE,
+      url: nearcastNotificationTargetUrl(payload),
       memoryId: payload.memoryId || "",
+      placeId: payload.placeId || "",
       source: payload.source || "plan-watch-push"
     }
   };
@@ -196,15 +220,24 @@ self.addEventListener("push", event => {
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  const targetUrl = new URL(event.notification.data?.url || BASE, self.location.origin + BASE).href;
+  const targetUrl = nearcastNotificationTargetUrl(event.notification.data || {});
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(clients => {
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async clients => {
       const existing = clients.find(client => client.url.startsWith(self.location.origin + BASE));
       if (existing) {
-        existing.focus();
-        return;
+        if (existing.navigate && existing.url !== targetUrl) {
+          try {
+            const navigated = await existing.navigate(targetUrl);
+            if (navigated?.focus) return navigated.focus();
+          } catch {
+            /* Focus the existing app if navigation is unavailable. */
+          }
+        }
+        return existing.focus();
       }
-      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
     })
   );
 });

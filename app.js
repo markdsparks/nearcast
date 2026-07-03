@@ -1,4 +1,4 @@
-const VERSION = "3.0.155";
+const VERSION = "3.0.156";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2653,7 +2653,12 @@ function init() {
   // Returning users open straight to their weather (last viewed → first saved).
   // First-timers get the welcome state to find a place — no arbitrary default.
   const lastPlace = readStorageJson("weather-last-place");
-  const startingPlace = lastPlace && lastPlace.latitude != null
+  const notificationRoutePlace = typeof nearcastNotificationRoutePlace === "function"
+    ? nearcastNotificationRoutePlace()
+    : null;
+  const startingPlace = notificationRoutePlace && notificationRoutePlace.latitude != null
+    ? notificationRoutePlace
+    : lastPlace && lastPlace.latitude != null
     ? lastPlace
     : state.savedPlaces.length ? state.savedPlaces[0] : null;
   if (startingPlace) {
@@ -2662,6 +2667,7 @@ function init() {
     maybeShowReleaseSplash();
   } else {
     updateMode(); // welcome mode
+    if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
   }
 }
 
@@ -3104,7 +3110,16 @@ function bindEvents() {
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-place-watch-notify], [data-place-watch-toggle]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
+    const notificationPlace = target.closest("[data-notification-place]");
+    if (notificationPlace) {
+      const place = state.savedPlaces.find((item) => item.id === notificationPlace.dataset.notificationPlace);
+      if (place) {
+        closeGlobalMemorySheet();
+        loadPlace(place);
+      }
+      return;
+    }
     const watchNotify = target.closest("[data-watch-notify]");
     if (watchNotify) {
       if (typeof requestPlanWatchNotifications === "function") {
@@ -4877,6 +4892,7 @@ async function loadPlace(place, force = false) {
     startRadarPrecipProbe(state.activePlace, data, force);
     setStatus("");
     lastLoadedAt = Date.now();
+    if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
   } catch (error) {
     setStatus("Could not load weather data. Try another place or reload the page.", true);
   }

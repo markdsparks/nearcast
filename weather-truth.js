@@ -29,6 +29,18 @@ function weatherTruthCleanToken(value, maxLength = 64) {
     .replace(/^-+|-+$/g, "");
 }
 
+function planWatchNotificationTargetUrl({ target = "watching", memoryId = "", placeId = "", source = "plan-watch-evaluator" } = {}) {
+  const params = new URLSearchParams();
+  const cleanMemoryId = weatherTruthCleanText(memoryId, 96);
+  const cleanPlaceId = weatherTruthCleanText(placeId, 96);
+  params.set("nearcast", "notification");
+  params.set("target", cleanMemoryId ? "plan" : cleanPlaceId ? "place" : weatherTruthCleanToken(target, 32) || "watching");
+  if (cleanMemoryId) params.set("memoryId", cleanMemoryId);
+  if (cleanPlaceId) params.set("placeId", cleanPlaceId);
+  if (source) params.set("source", weatherTruthCleanToken(source, 64));
+  return `./?${params.toString()}`;
+}
+
 function weatherTruthDegree(unit) {
   if (typeof degree === "function") return degree(unit);
   return `°${unit}`;
@@ -406,7 +418,7 @@ function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) 
       renotify: false,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      url: "./",
+      url: planWatchNotificationTargetUrl({ memoryId: plan.id || "", source: "plan-watch-evaluator" }),
       memoryId: plan.id || "",
       source: "plan-watch-evaluator"
     }
@@ -830,6 +842,7 @@ const NearcastWeatherTruth = {
   weatherTruthDisplayTempUnit,
   planWeatherUnitFromItem,
   planWatchCompactText,
+  planWatchNotificationTargetUrl,
   planConditionRiskKind,
   planWatchRiskKind,
   planWatchLabel,
