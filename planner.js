@@ -2489,6 +2489,17 @@ let memoryDetailMode = "facts";
 let memoryEditState = null;
 let launchSummaryTargets = [];
 
+function setPlannerClarification(clarification, rowIndex = null) {
+  if (!clarification) {
+    plannerClarification = null;
+    return;
+  }
+  plannerClarification = {
+    ...clarification,
+    rowIndex: Number.isInteger(rowIndex) ? rowIndex : clarification.rowIndex ?? null
+  };
+}
+
 function fillPlannerTemplate(template, options = {}) {
   const input = document.getElementById("askInput");
   if (!input) return;
@@ -2536,7 +2547,7 @@ async function runAsk(question, intent) {
   if (intent) {
     const row = beginAskResponse(question);
     try {
-      finishAskResponse(row, await answerPresetIntent(intent, question));
+      finishAskResponse(row, await answerPresetIntent(intent, question, row));
     } catch {
       finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
     }
@@ -2556,7 +2567,7 @@ async function runAsk(question, intent) {
   try {
     const plan = await answerPlanRequest(question);
     if (plan?.clarification) {
-      plannerClarification = plan.clarification;
+      setPlannerClarification(plan.clarification, row);
       finishAskResponse(row, plan.clarification.prompt);
       return;
     }
@@ -2573,7 +2584,7 @@ async function runMemoryEdit(question, memoryId) {
   try {
     const result = await answerPlanRequest(question);
     if (result?.clarification) {
-      plannerClarification = result.clarification;
+      setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
@@ -2656,9 +2667,19 @@ async function runPlannerClarification(index) {
   const pending = plannerClarification;
   const editingMemoryId = plannerEditingMemoryId;
   plannerClarification = null;
-  const row = beginAskResponse(option.label);
+  let row = null;
   try {
     if (pending.type === "confirm") {
+      if (option.editPlan) {
+        renderAsk();
+        startPlanConfirmationEdit(pending, {
+          updateMemoryId: editingMemoryId,
+          original: plannerEditingMemoryDraft || pending.plan?.original || "",
+          rowIndex: pending.rowIndex
+        });
+        return;
+      }
+      row = beginAskResponse(option.label);
       if (option.confirmPlan) {
         finishAskResponse(row, pending.result, editingMemoryId ? {
           updateMemoryId: editingMemoryId,
@@ -2668,14 +2689,15 @@ async function runPlannerClarification(index) {
       }
       const nextClarification = buildPlanConfirmationAdjustment(pending, option.field);
       if (nextClarification) {
-        plannerClarification = nextClarification;
+        setPlannerClarification(nextClarification, row);
         finishAskResponse(row, nextClarification.prompt);
         return;
       }
     }
+    row = beginAskResponse(option.label);
     const result = await completePlanRequest(pending.plan, option);
     if (result?.clarification) {
-      plannerClarification = result.clarification;
+      setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
@@ -2684,7 +2706,13 @@ async function runPlannerClarification(index) {
       original: plannerEditingMemoryDraft || pending.plan?.original || option.label
     } : {});
   } catch {
-    finishAskResponse(row, "I could not check that plan. Try adding the city/state and a time window.");
+    if (Number.isInteger(row)) {
+      finishAskResponse(row, "I could not check that plan. Try adding the city/state and a time window.");
+    } else {
+      askError = "I could not open the plan editor. Try adding the city/state and a time window.";
+      askStreaming = false;
+      renderAsk();
+    }
   }
 }
 
@@ -2707,7 +2735,7 @@ async function continuePlannerClarificationWithText(text) {
     }
     const result = await completePlanRequest(pending.plan, option);
     if (result?.clarification) {
-      plannerClarification = result.clarification;
+      setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
       return;
     }
@@ -3582,6 +3610,18 @@ function startPlanMemoryEdit(idOrRow) {
   const rowIndex = Number(idOrRow);
   const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
   const memory = exchange ? null : state.planMemories.find((item) => item.id === idOrRow);
+  if (exchange?.event) {
+    const preview = previewPlanMemoryFromEvent(exchange.event, exchange, rowIndex);
+    if (preview) {
+      openStructuredPlanEdit(preview, {
+        source: "thread",
+        rowIndex,
+        data: exchange.event.data,
+        alerts: exchange.event.alerts || []
+      });
+      return;
+    }
+  }
   if (!memory) {
     editPlanMemory(idOrRow);
     return;
@@ -3791,25 +3831,63 @@ function openStructuredMemoryEdit(id) {
     startMemoryTextEdit(id);
     return;
   }
+  openStructuredPlanEdit(memory, { source: "memory" });
+}
+
+function startPlanConfirmationEdit(pending, options = {}) {
+  const event = pending?.result?.event;
+  if (!event) return;
+  const memory = previewPlanMemoryFromEvent(event, {
+    q: options.original || pending.plan?.original || "",
+    a: pending.result?.answer || ""
+  }, "confirm");
+  if (!memory) return;
+  openStructuredPlanEdit(memory, {
+    source: "confirm",
+    updateMemoryId: options.updateMemoryId || "",
+    original: options.original || pending.plan?.original || "",
+    rowIndex: Number.isInteger(options.rowIndex) ? options.rowIndex : pending.rowIndex,
+    restoreClarification: pending,
+    data: event.data,
+    alerts: event.alerts || []
+  });
+}
+
+function memoryEditForecastKeyForPlace(place) {
+  if (!place) return "";
+  const lat = Number(place.latitude);
+  const lon = Number(place.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "";
+  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${state.unit}`;
+}
+
+function openStructuredPlanEdit(memory, options = {}) {
+  if (!memory || !els.memoryEditSheet || !els.memoryEditBackdrop || !els.memoryEditBody) return;
   if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
 
   const place = normalizePlace(memory.place);
   const here = samePlanPlace(place, state.activePlace);
+  const initialData = options.data || (here ? state.forecast : null);
+  const initialAlerts = options.alerts || (here ? activeAlerts : []);
   memoryEditState = {
-    memoryId: memory.id,
+    source: options.source || "memory",
+    memoryId: options.source === "memory" ? memory.id : options.updateMemoryId || "",
+    rowIndex: Number.isInteger(options.rowIndex) ? options.rowIndex : null,
+    restoreClarification: options.restoreClarification || null,
+    applied: false,
+    original: options.original || memory.original || "",
     title: planMemoryTitle(memory),
-    original: memory.original || "",
     place,
     placeQuery: placeLabel(place),
     targetDate: memory.targetDate,
     startHour: Math.max(0, Math.min(23, Math.floor(Number(memory.startHour) || 0))),
     endHour: Math.max(1, Math.min(24, Math.ceil(Number(memory.endHour) || 1))),
-    data: here ? state.forecast : null,
-    alerts: here ? activeAlerts : [],
+    data: initialData,
+    alerts: initialAlerts,
     results: [],
     searchSeq: 0,
     previewSeq: 0,
-    forecastKey: "",
+    forecastKey: initialData ? memoryEditForecastKeyForPlace(place) : "",
     error: "",
     saving: false
   };
@@ -3829,6 +3907,11 @@ function openStructuredMemoryEdit(id) {
 function renderMemoryEditSheet() {
   if (!memoryEditState || !els.memoryEditBody) return;
   const placeValue = memoryEditState.placeQuery || placeLabel(memoryEditState.place);
+  const editingSavedPlan = memoryEditState.source === "memory";
+  const saveLabel = editingSavedPlan ? "Save changes" : "Apply changes";
+  const textEditAction = editingSavedPlan
+    ? `<button type="button" data-memory-edit-text>Edit with text</button>`
+    : "";
   els.memoryEditBody.innerHTML = `
     <form class="memory-edit-form" id="memoryEditForm">
       <label class="memory-edit-field">
@@ -3859,8 +3942,8 @@ function renderMemoryEditSheet() {
       </div>
       <div class="memory-edit-preview" id="memoryEditPreview" role="status"></div>
       <div class="memory-edit-actions">
-        <button class="memory-edit-save" type="submit"${memoryEditState.saving ? " disabled" : ""}>Save changes</button>
-        <button type="button" data-memory-edit-text>Edit with text</button>
+        <button class="memory-edit-save" type="submit"${memoryEditState.saving ? " disabled" : ""}>${saveLabel}</button>
+        ${textEditAction}
       </div>
     </form>
   `;
@@ -4068,9 +4151,7 @@ async function ensureMemoryEditPlace() {
 }
 
 function memoryEditForecastKey() {
-  const place = memoryEditState?.place;
-  if (!place) return "";
-  return `${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}:${state.unit}`;
+  return memoryEditForecastKeyForPlace(memoryEditState?.place);
 }
 
 async function ensureMemoryEditForecast() {
@@ -4181,6 +4262,21 @@ function structuredMemoryAnswer(draft, stats, c, alert) {
   return `${draft.title} ${memoryEditWindowText(draft)} in ${placeLabel(draft.place)}: ${verdict}. Why: ${reasons}. ${planAdvice(stats, alert, score)}`.replace(/\s+/g, " ").trim();
 }
 
+function structuredMemoryResult(draft, data, window, stats, c, alert) {
+  return {
+    answer: structuredMemoryAnswer(draft, stats, c, alert),
+    event: plannerShowEvent({
+      title: draft.title,
+      place: draft.place,
+      data,
+      alerts: draft.alerts || [],
+      window,
+      stats,
+      label: draft.label
+    })
+  };
+}
+
 async function saveStructuredMemoryEdit(event) {
   event?.preventDefault();
   if (!memoryEditState || memoryEditState.saving) return;
@@ -4210,19 +4306,49 @@ async function saveStructuredMemoryEdit(event) {
     const startMs = planBoundaryMs(data, window.startHour, dayIdx);
     const endMs = planBoundaryMs(data, window.endHour, dayIdx);
     const alert = topAlertForPlanRange(memoryEditState.alerts || [], startMs, endMs);
-    const existing = state.planMemories.find((memory) => memory.id === memoryEditState.memoryId);
-    if (!existing) throw new Error("Plan missing.");
     const draft = {
       ...memoryEditState,
       data,
       label: memoryEditWindowText(memoryEditState)
     };
+    const result = structuredMemoryResult(draft, data, window, stats, c, alert);
+
+    if (memoryEditState.source === "thread") {
+      const rowIndex = memoryEditState.rowIndex;
+      if (!Number.isInteger(rowIndex) || !askThread[rowIndex]) throw new Error("Plan result missing.");
+      const normalized = normalizeAskResult(result);
+      askThread[rowIndex].a = normalized.answer;
+      askThread[rowIndex].event = normalized.event;
+      askThread[rowIndex].memoryId = "";
+      clearPlannerMemoryEdit();
+      renderAsk();
+      refreshPlanMemorySurfaces();
+      closeMemoryEditSheet();
+      return;
+    }
+
+    if (memoryEditState.source === "confirm") {
+      memoryEditState.applied = true;
+      const existingRow = Number.isInteger(memoryEditState.rowIndex) && askThread[memoryEditState.rowIndex]
+        ? memoryEditState.rowIndex
+        : null;
+      const row = existingRow ?? beginAskResponse(memoryEditState.original || draft.title);
+      finishAskResponse(row, result, memoryEditState.memoryId ? {
+        updateMemoryId: memoryEditState.memoryId,
+        original: memoryEditState.original || draft.title
+      } : {});
+      closeMemoryEditSheet();
+      return;
+    }
+
+    const existing = state.planMemories.find((memory) => memory.id === memoryEditState.memoryId);
+    if (!existing) throw new Error("Plan missing.");
     const updated = normalizePlanMemory({
       ...existing,
       title: draft.title,
       label: draft.label,
       original: existing.original || `${draft.title} ${hourText(draft.startHour)}-${hourText(draft.endHour)} in ${placeLabel(draft.place)}`,
-      answer: structuredMemoryAnswer(draft, stats, c, alert),
+      answer: result.answer,
       place: draft.place,
       targetDate: draft.targetDate,
       startHour: draft.startHour,
@@ -4247,6 +4373,9 @@ async function saveStructuredMemoryEdit(event) {
 
 function closeMemoryEditSheet() {
   if (!els.memoryEditSheet || !els.memoryEditBackdrop || els.memoryEditSheet.hidden) return;
+  const restoreClarification = memoryEditState?.source === "confirm" && !memoryEditState.applied
+    ? memoryEditState.restoreClarification
+    : null;
   els.memoryEditBackdrop.classList.remove("show");
   els.memoryEditSheet.classList.remove("show");
   const keepLocked =
@@ -4262,6 +4391,10 @@ function closeMemoryEditSheet() {
     els.memoryEditBackdrop.hidden = true;
     els.memoryEditSheet.hidden = true;
     memoryEditState = null;
+    if (restoreClarification) {
+      setPlannerClarification(restoreClarification, restoreClarification.rowIndex);
+      renderAsk();
+    }
     if (typeof updateSheetNowJump === "function") updateSheetNowJump();
   }, 260);
 }
@@ -5654,9 +5787,7 @@ function buildPlanConfirmation(plan, result, context = {}) {
     notes: planConfirmationNotes(plan, place),
     options: [
       { label: "Looks right", confirmPlan: true },
-      { label: "Change day", field: "day" },
-      { label: "Change time", field: "time" },
-      { label: "Change place", field: "location" }
+      { label: "Edit details", editPlan: true }
     ]
   };
 }
@@ -6523,14 +6654,14 @@ function detectAskActivity(q) {
   return null;
 }
 
-async function answerPresetIntent(intent, question) {
+async function answerPresetIntent(intent, question, rowIndex = null) {
   const c = buildAIContext();
   if (!c) return null;
 
   if (intent === "plan") {
     const result = await answerPlanRequest(question);
     if (result?.clarification) {
-      plannerClarification = result.clarification;
+      setPlannerClarification(result.clarification, rowIndex);
       return result.clarification.prompt;
     }
     return result || answerFreeform(question);
