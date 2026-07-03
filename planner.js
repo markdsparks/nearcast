@@ -2211,6 +2211,7 @@ let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
 let plannerEditingMemoryDraft = "";
 let memoryDetailIds = [];
+let memoryDetailMode = "facts";
 let memoryEditState = null;
 let launchSummaryTargets = [];
 
@@ -3398,6 +3399,16 @@ function openPlanWatchForMemory(id, options = {}) {
   openGlobalMemorySheet({ focusMemoryId: memory.id, source: options.source || "plan" });
 }
 
+function openPlanMemoryWindowDetail(id) {
+  const memory = state.planMemories.find((item) => item.id === id);
+  if (!memory) return false;
+  openMemoryDetail(memory.id, { mode: "plan-window" });
+  if (!samePlanPlace(memory.place, state.activePlace)) {
+    refreshPlanWatchForecasts([{ memory, isHere: false, isPast: planWatchMemoryIsPast(memory) }]);
+  }
+  return true;
+}
+
 function memoryIdsFromValue(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   return String(value || "")
@@ -3406,20 +3417,27 @@ function memoryIdsFromValue(value) {
     .filter(Boolean);
 }
 
-function openMemoryDetail(idsOrValue) {
+function openMemoryDetail(idsOrValue, options = {}) {
   const ids = [...new Set(memoryIdsFromValue(idsOrValue))];
   const memories = ids
     .map((id) => state.planMemories.find((memory) => memory.id === id))
     .filter(Boolean);
   if (!memories.length || !els.memoryDetailSheet || !els.memoryDetailBackdrop || !els.memoryDetailBody) return;
+  memoryDetailMode = options.mode === "plan-window" && memories.length === 1 ? "plan-window" : "facts";
   memoryDetailIds = memories.map((memory) => memory.id);
-  document.getElementById("memoryDetailTitle").textContent = memories.length === 1
-    ? planMemoryTitle(memories[0])
-    : `${memories.length} plans`;
-  document.getElementById("memoryDetailSub").textContent = memories.length === 1
-    ? "Local context · under your control"
-    : "Overlapping local context";
-  els.memoryDetailBody.innerHTML = memories.map(renderMemoryDetailPanel).join("");
+  document.getElementById("memoryDetailTitle").textContent = memoryDetailMode === "plan-window"
+    ? "Hourly detail"
+    : memories.length === 1
+      ? planMemoryTitle(memories[0])
+      : `${memories.length} plans`;
+  document.getElementById("memoryDetailSub").textContent = memoryDetailMode === "plan-window"
+    ? `${planMemoryTitle(memories[0])} · ${planMemoryTimeText(memories[0])}`
+    : memories.length === 1
+      ? "Local context · under your control"
+      : "Overlapping local context";
+  els.memoryDetailBody.innerHTML = memoryDetailMode === "plan-window"
+    ? renderPlanWindowDetailPanel(memories[0])
+    : memories.map(renderMemoryDetailPanel).join("");
   els.memoryDetailBackdrop.hidden = false;
   els.memoryDetailSheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
@@ -3428,12 +3446,13 @@ function openMemoryDetail(idsOrValue) {
 }
 
 function refreshOpenMemoryDetail() {
+  if (!els.memoryDetailSheet || els.memoryDetailSheet.hidden) return;
   const ids = memoryDetailIds.filter((id) => state.planMemories.some((memory) => memory.id === id));
   if (!ids.length) {
     closeMemoryDetail();
     return;
   }
-  openMemoryDetail(ids);
+  openMemoryDetail(ids, { mode: memoryDetailMode });
 }
 
 function closeMemoryDetail() {
@@ -4001,6 +4020,246 @@ function renderMemoryDetailPanel(memory) {
       <div class="memory-detail-actions">
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit plan</button>
         <button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>
+        <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
+      </div>
+    </article>
+  `;
+}
+
+function planWindowDetailContext(memory) {
+  const isHere = samePlanPlace(memory.place, state.activePlace);
+  const source = planWatchSourceForMemory(memory, isHere);
+  if (!source.data) {
+    return {
+      source,
+      watch: planWatchPendingItem(memory, source, planWatchMemoryIsPast(memory)),
+      event: null
+    };
+  }
+  const event = planMemoryEventForData(memory, source.data, source.place, source.alerts);
+  const watch = planWatchItemForMemoryItem({ memory, event, isHere, isPast: planWatchMemoryIsPast(memory) });
+  return { source, event, watch };
+}
+
+function planWindowDetailTempUnit(watch) {
+  return watch?.units?.temp || degree(state.unit === "fahrenheit" ? "F" : "C");
+}
+
+function planWindowDetailWindUnit(watch) {
+  return watch?.units?.wind || (state.unit === "fahrenheit" ? "mph" : "km/h");
+}
+
+function planWindowDetailPrecipUnit(watch) {
+  return watch?.units?.precip || (state.unit === "fahrenheit" ? "in" : "mm");
+}
+
+function planWindowDetailUnitValue(value, unit) {
+  if (!Number.isFinite(Number(value))) return "--";
+  return `${Math.round(Number(value))}${unit || ""}`;
+}
+
+function planWindowDetailAmount(value, unit) {
+  const amount = Number(value || 0);
+  if (!amount) return "0";
+  return `${formatAmount(amount)} ${unit}`.trim();
+}
+
+function planWindowDetailHourLabel(row) {
+  if (typeof formatHour === "function") return formatHour(row.time);
+  return formatHourFloat(row.hour);
+}
+
+function planWindowDetailRowPosition(row, event) {
+  if (row.inWindow) return "Plan hour";
+  return row.ms < event.startMs ? "Before" : "After";
+}
+
+function planWindowDetailRows(event, data) {
+  if (!event?.startMs || !event?.endMs || !data?.hourly?.time?.length) return [];
+  const bufferMs = 60 * 60 * 1000;
+  const startMs = event.startMs - bufferMs;
+  const endMs = event.endMs + bufferMs;
+  return data.hourly.time
+    .map((time, index) => {
+      const ms = parseForecastTimestamp(time, data);
+      if (ms === null) return null;
+      const code = Number(data.hourly.weather_code?.[index]);
+      const precip = Number(data.hourly.precipitation?.[index] || 0);
+      const pop = Math.round(Number(data.hourly.precipitation_probability?.[index] || 0));
+      const wind = Math.round(Number(data.hourly.wind_speed_10m?.[index] || 0));
+      const gust = Math.round(Number(data.hourly.wind_gusts_10m?.[index] || wind));
+      const temp = Math.round(Number(data.hourly.temperature_2m?.[index] || 0));
+      const feels = Math.round(Number(data.hourly.apparent_temperature?.[index] ?? temp));
+      const uv = Math.round(Number(data.hourly.uv_index?.[index] || 0));
+      return {
+        index,
+        time,
+        ms,
+        hour: forecastLocalHour(time),
+        inWindow: ms >= event.startMs && ms < event.endMs,
+        code,
+        label: weatherCodes[code] || "Weather",
+        temp,
+        feels,
+        pop,
+        precip,
+        wind,
+        gust,
+        uv,
+        isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true,
+        storm: [95, 96, 99].includes(code)
+      };
+    })
+    .filter((row) => row && row.ms >= startMs && row.ms < endMs);
+}
+
+function planWindowDetailHourScore(row, risk, unit) {
+  if (!row) return -Infinity;
+  const preference = unit === "celsius" ? "celsius" : "fahrenheit";
+  const feels = Number(row.feels || 0);
+  const gust = Number(row.gust || 0);
+  const rain = Number(row.pop || 0);
+  const precip = Number(row.precip || 0);
+  if (risk === "heat") return feels * 1.6 + Number(row.uv || 0) * 5 + Math.max(0, rain - 35) * 0.25;
+  if (risk === "cold") return -feels * 1.4 + gust * 0.7 + rain * 0.2;
+  if (risk === "rain" || risk === "flood") return rain + precip * 160 + gust * 0.25;
+  if (risk === "storm") return rain + precip * 140 + gust * 0.45 + (row.storm ? 35 : 0);
+  if (risk === "wind") return gust * 2 + Number(row.wind || 0) + rain * 0.15;
+  const target = preference === "celsius" ? 22 : 72;
+  return rain * 0.55 + Math.abs(feels - target) * 1.2 + Math.max(0, gust - 20);
+}
+
+function planWindowDetailPeakHour(rows, watch) {
+  const risk = planWatchRiskKind(watch);
+  const unit = planWeatherUnitFromItem(watch);
+  return rows
+    .filter((row) => row.inWindow)
+    .map((row) => ({ row, score: planWindowDetailHourScore(row, risk, unit) }))
+    .sort((a, b) => b.score - a.score)[0]?.row || null;
+}
+
+function planWindowDetailPeakLabel(watch) {
+  const risk = planWatchRiskKind(watch);
+  if (watch?.tone === "good") return "Key hour";
+  if (risk === "heat") return "Hottest part";
+  if (risk === "cold") return "Coldest part";
+  if (risk === "rain" || risk === "flood") return "Wettest part";
+  if (risk === "storm") return "Stormiest part";
+  if (risk === "wind") return "Windiest part";
+  return "Key hour";
+}
+
+function planWindowDetailPeakText(row, watch) {
+  if (!row) return "";
+  const risk = planWatchRiskKind(watch);
+  const tempUnit = planWindowDetailTempUnit(watch);
+  const windUnit = planWindowDetailWindUnit(watch);
+  const precipUnit = planWindowDetailPrecipUnit(watch);
+  const time = planWindowDetailHourLabel(row);
+  if (risk === "heat") return `${time}: feels ${planWindowDetailUnitValue(row.feels, tempUnit)}, UV ${row.uv || "low"}.`;
+  if (risk === "cold") return `${time}: feels ${planWindowDetailUnitValue(row.feels, tempUnit)}, gusts ${row.gust} ${windUnit}.`;
+  if (risk === "rain" || risk === "flood") return `${time}: rain ${row.pop}%, ${planWindowDetailAmount(row.precip, precipUnit)}.`;
+  if (risk === "storm") return `${time}: rain ${row.pop}%, gusts ${row.gust} ${windUnit}.`;
+  if (risk === "wind") return `${time}: gusts ${row.gust} ${windUnit}.`;
+  return `${time}: ${row.label.toLowerCase()}, feels ${planWindowDetailUnitValue(row.feels, tempUnit)}.`;
+}
+
+function planWindowDetailAdjustmentHint(rows, peak, watch) {
+  const action = String(watch?.action || "").trim();
+  if (!peak || !watch || watch.tone === "good") return action || "The plan window looks manageable right now.";
+  const risk = planWatchRiskKind(watch);
+  const unit = planWeatherUnitFromItem(watch);
+  const peakScore = planWindowDetailHourScore(peak, risk, unit);
+  const outside = rows
+    .filter((row) => !row.inWindow)
+    .map((row) => ({ row, score: planWindowDetailHourScore(row, risk, unit) }))
+    .sort((a, b) => a.score - b.score)[0];
+  const threshold = risk === "heat" || risk === "cold" || risk === "wind" ? 8 : 18;
+  if (outside && peakScore - outside.score >= threshold) {
+    return `If timing can move, ${planWindowDetailHourLabel(outside.row)} looks easier than the peak hour.`;
+  }
+  return action || "Keep the plan flexible and check the timing before you go.";
+}
+
+function renderPlanWindowPendingPanel(memory, watch) {
+  const status = watch?.status || "idle";
+  const copy = status === "error"
+    ? "Nearcast could not refresh this place yet. Try opening the place or checking again shortly."
+    : "Nearcast is checking this place's forecast. The plan-window detail will appear when the forecast is ready.";
+  return `
+    <article class="plan-window-detail is-pending">
+      <div class="plan-window-detail-head">
+        <span>Plan window</span>
+        <h3>${escapeHtml(planMemoryTitle(memory))}</h3>
+        <p>${escapeHtml(planWatchMetaText(memory, watch))}</p>
+      </div>
+      <p class="plan-window-empty">${escapeHtml(copy)}</p>
+      <div class="memory-detail-actions">
+        <button type="button" data-memory-show="${escapeHtml(memory.id)}">Open watched plan</button>
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Change plan</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderPlanWindowHourRow(row, event, peak, watch) {
+  const tempUnit = planWindowDetailTempUnit(watch);
+  const windUnit = planWindowDetailWindUnit(watch);
+  const precipUnit = planWindowDetailPrecipUnit(watch);
+  const isPeak = peak && row.index === peak.index;
+  return `
+    <article class="plan-window-hour${row.inWindow ? " is-in-window" : " is-buffer"}${isPeak ? " is-peak" : ""}">
+      <span class="plan-window-hour-time">${escapeHtml(planWindowDetailHourLabel(row))}</span>
+      <span class="plan-window-hour-icon" aria-hidden="true">${weatherIcon(row.code, row.isDay, { density: "dense" })}</span>
+      <span class="plan-window-hour-main">
+        <strong>${escapeHtml(row.label)}</strong>
+        <small>${escapeHtml(planWindowDetailRowPosition(row, event))}${isPeak ? " · key hour" : ""}</small>
+      </span>
+      <dl>
+        <div><dt>Feels</dt><dd>${escapeHtml(planWindowDetailUnitValue(row.feels, tempUnit))}</dd></div>
+        <div><dt>Rain</dt><dd>${row.pop}%${row.precip ? ` · ${escapeHtml(planWindowDetailAmount(row.precip, precipUnit))}` : ""}</dd></div>
+        <div><dt>Gust</dt><dd>${row.gust} ${escapeHtml(windUnit)}</dd></div>
+        <div><dt>UV</dt><dd>${row.uv || "Low"}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function renderPlanWindowDetailPanel(memory) {
+  const detail = planWindowDetailContext(memory);
+  const watch = detail.watch;
+  if (!detail.event || !watch?.stats) return renderPlanWindowPendingPanel(memory, watch);
+
+  const rows = planWindowDetailRows(detail.event, watch.data || detail.source.data);
+  const peak = planWindowDetailPeakHour(rows, watch);
+  const signals = planContextSignalRows(watch).map(renderPlanSignalChip).join("");
+  const reason = watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
+  const hint = planWindowDetailAdjustmentHint(rows, peak, watch);
+  return `
+    <article class="plan-window-detail is-${escapeHtml(watch.tone || "pending")}">
+      <div class="plan-window-detail-head">
+        <span>Plan window</span>
+        <h3>${escapeHtml(watch.label || "Forecast checked")}</h3>
+        <p>${escapeHtml(planWatchMetaText(memory, watch))}</p>
+      </div>
+      <section class="plan-window-story">
+        <p><span>Main read</span>${escapeHtml(reason)}</p>
+        ${hint ? `<p><span>Best adjustment</span>${escapeHtml(hint)}</p>` : ""}
+      </section>
+      ${signals ? `<div class="plan-watch-signals plan-window-signals">${signals}</div>` : ""}
+      ${peak ? `
+        <section class="plan-window-peak">
+          <span>${escapeHtml(planWindowDetailPeakLabel(watch))}</span>
+          <strong>${escapeHtml(planWindowDetailPeakText(peak, watch))}</strong>
+        </section>
+      ` : ""}
+      ${renderFocusedPlanReceipt(watch)}
+      <section class="plan-window-hours" aria-label="Plan-window hourly forecast">
+        ${rows.map((row) => renderPlanWindowHourRow(row, detail.event, peak, watch)).join("")}
+      </section>
+      <div class="memory-detail-actions">
+        <button type="button" data-memory-day-hourly="${escapeHtml(memory.id)}">Full day hourly</button>
+        <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Change plan</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
     </article>
@@ -4959,6 +5218,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
     }).finally(() => {
       delete planWatchState.loading[key];
       refreshOpenGlobalMemorySheet();
+      refreshOpenMemoryDetail();
     });
   });
 }

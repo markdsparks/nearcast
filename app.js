@@ -1,4 +1,4 @@
-const VERSION = "3.0.154";
+const VERSION = "3.0.155";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3136,6 +3136,7 @@ function bindEvents() {
     const memoryHourly = target.closest("[data-memory-hourly]");
     if (memoryHourly) {
       closeGlobalMemorySheet();
+      if (typeof openPlanMemoryWindowDetail === "function" && openPlanMemoryWindowDetail(memoryHourly.dataset.memoryHourly)) return;
       showPlanMemory(memoryHourly.dataset.memoryHourly);
       return;
     }
@@ -3164,9 +3165,16 @@ function bindEvents() {
   bindTapAction(els.memoryEditBackdrop, closeMemoryEditSheet);
   bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
   bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
-  bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-day-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+    const memoryDayHourly = target.closest("[data-memory-day-hourly]");
+    if (memoryDayHourly) {
+      closeMemoryDetail();
+      showPlanMemory(memoryDayHourly.dataset.memoryDayHourly);
+      return;
+    }
     const memoryHourly = target.closest("[data-memory-hourly]");
     if (memoryHourly) {
+      if (typeof openPlanMemoryWindowDetail === "function" && openPlanMemoryWindowDetail(memoryHourly.dataset.memoryHourly)) return;
       closeMemoryDetail();
       showPlanMemory(memoryHourly.dataset.memoryHourly);
       return;

@@ -5284,6 +5284,175 @@ h2 {
   font-weight: 900;
   cursor: pointer;
 }
+.plan-window-detail {
+  display: grid;
+  gap: 14px;
+}
+.plan-window-detail-head {
+  display: grid;
+  gap: 5px;
+}
+.plan-window-detail-head span,
+.plan-window-story span,
+.plan-window-peak span {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.plan-window-detail-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 2.05rem;
+  line-height: 0.98;
+  font-weight: 950;
+}
+.plan-window-detail-head p,
+.plan-window-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+.plan-window-story {
+  display: grid;
+  gap: 9px;
+}
+.plan-window-story p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px solid rgba(91, 141, 220, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 820;
+  line-height: 1.34;
+}
+.plan-window-detail.is-watch .plan-window-story p:first-child,
+.plan-window-detail.is-caution .plan-window-story p:first-child {
+  border-color: rgba(222, 120, 98, 0.34);
+  background: linear-gradient(135deg, rgba(255, 244, 239, 0.86), rgba(244, 249, 255, 0.72));
+}
+.plan-window-signals {
+  margin-top: -2px;
+}
+.plan-window-peak {
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid rgba(45, 62, 86, 0.12);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--ink) 8%, var(--panel));
+}
+.plan-window-peak strong {
+  color: var(--ink);
+  font-size: 1.02rem;
+  line-height: 1.25;
+  font-weight: 950;
+}
+.plan-window-hours {
+  display: grid;
+  gap: 8px;
+}
+.plan-window-hour {
+  display: grid;
+  grid-template-columns: minmax(52px, 0.34fr) 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 11px 10px;
+  border: 1px solid rgba(91, 141, 220, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.46);
+}
+.plan-window-hour.is-buffer {
+  opacity: 0.74;
+}
+.plan-window-hour.is-in-window {
+  border-color: rgba(54, 120, 74, 0.25);
+  background: rgba(238, 249, 242, 0.68);
+}
+.plan-window-hour.is-peak {
+  border-color: rgba(222, 120, 98, 0.42);
+  background: linear-gradient(135deg, rgba(255, 240, 232, 0.9), rgba(239, 248, 242, 0.78));
+  box-shadow: 0 12px 28px rgba(31, 45, 68, 0.08);
+}
+.plan-window-hour-time {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 950;
+}
+.plan-window-hour-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+}
+.plan-window-hour-icon svg {
+  width: 28px;
+  height: 28px;
+}
+.plan-window-hour-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.plan-window-hour-main strong,
+.plan-window-hour-main small {
+  overflow-wrap: anywhere;
+}
+.plan-window-hour-main strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 920;
+}
+.plan-window-hour-main small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+.plan-window-hour dl {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 2px 0 0;
+}
+.plan-window-hour dl div {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.52);
+}
+.plan-window-hour dt,
+.plan-window-hour dd {
+  margin: 0;
+}
+.plan-window-hour dt {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.plan-window-hour dd {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 920;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .plan-window-detail-head h3 {
+    font-size: 1.65rem;
+  }
+  .plan-window-hour dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .memory-detail-actions button:first-child {
   border-color: rgba(91, 141, 220, 0.34);
   background: rgba(91, 141, 220, 0.14);

@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.154**.
+Living product roadmap. Current as of **v3.0.155**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -251,6 +251,9 @@ First shipped slice:
 - The Watching sheet no longer exposes manual push subscription sync. Notification
   registration stays automatic and the sheet uses plain `Updates` readiness
   language instead of server-sync controls.
+- Watched-plan `Hourly detail` now opens a plan-window trust view instead of a
+  generic hourly sheet: it shows the main read, best adjustment, contextual
+  metrics, a key-hour callout, and only the hours around the plan.
 
 ### 4. Trust And Craft Hardening
 
