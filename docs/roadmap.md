@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.165**.
+Living product roadmap. Current as of **v3.0.166**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -34,6 +34,9 @@ turning weather into timely, human guidance for places and plans.
 - **Human-centered watched-plan UI**: watched plans now lead with what matters,
   show contextual weather metrics, and avoid exposing plan/watch/memory
   complexity as separate mental models.
+- **Watching command center**: the main Watching sheet now starts with the human
+  read, then explains what can alert the user, recent calls, and watched
+  plans/places from one surface.
 - **Contextual notification entry**: plan and saved-place notifications now
   deep-link back into the relevant watched context, with recent updates kept
   locally in the Watching surface.
@@ -266,6 +269,9 @@ First shipped slice:
 - Watched-plan `Hourly detail` now opens a plan-window trust view instead of a
   generic hourly sheet: it shows the main read, best adjustment, contextual
   metrics, a key-hour callout, and only the hours around the plan.
+- The main Watching overview now opens as a user-facing command center: first the
+  plain-language watch read, then alert readiness, recent calls, and the selected
+  plan/place targets.
 
 ### 4. Trust And Craft Hardening
 
