@@ -1,4 +1,4 @@
-const VERSION = "3.0.160";
+const VERSION = "3.0.162";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -30,6 +30,11 @@ const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
 const FORECAST_WARM_START_MAX_AGE_MS = 60 * 60 * 1000;
 const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
+const FORECAST_FETCH_TIMEOUT_MS = 10000;
+const AIR_QUALITY_FETCH_TIMEOUT_MS = 5500;
+const ALERTS_FETCH_TIMEOUT_MS = 6500;
+const FORECAST_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
+const FORECAST_CACHE_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const PULL_REFRESH_TOP_TOLERANCE_PX = 28;
 const PULL_REFRESH_THRESHOLD_PX = 44;
 const PULL_REFRESH_MAX_PX = 92;
@@ -4464,14 +4469,14 @@ function applyWelcomeAmbience(data, place, options = {}) {
   setWelcomeAmbientLabel(welcomeAmbientCopy(data, place, truth, source), { source });
 }
 
-async function fetchJsonWithTimeout(url, timeoutMs, signal = null) {
+async function fetchJsonWithTimeout(url, timeoutMs, signal = null, init = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   if (signal) signal.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) controller.abort();
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) throw new Error("Request failed.");
     return await response.json();
   } finally {
@@ -4864,8 +4869,12 @@ function warmStartForecast(place) {
 }
 
 async function loadPlace(place, force = false) {
+  const requestId = ++loadPlaceRequestSeq;
   state.welcomeOverride = false;
-  state.activePlace = normalizePlace(place);
+  const previousPlace = state.activePlace;
+  const previousForecast = state.forecast;
+  const nextPlace = normalizePlace(place);
+  state.activePlace = nextPlace;
   state.radarPrecipSeq += 1;
   state.radarPrecipSignal = null;
   state.radarPrecipPlaceId = state.activePlace.id;
@@ -4887,20 +4896,38 @@ async function loadPlace(place, force = false) {
   setStatus(`Updating ${state.activePlace.name}...`);
 
   try {
-    const data = await fetchForecast(state.activePlace, force);
-    renderForecast(data, state.activePlace);
-    startRadarPrecipProbe(state.activePlace, data, force);
+    const data = await fetchForecast(nextPlace, force);
+    if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
+    renderForecast(data, nextPlace);
+    startRadarPrecipProbe(nextPlace, data, force);
     setStatus("");
     lastLoadedAt = Date.now();
+    lastLoadUsedForecastFallback = forecastUsedCacheFallback(data);
     if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
   } catch (error) {
-    setStatus("Could not load weather data. Try another place or reload the page.", true);
+    if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
+    lastLoadUsedForecastFallback = false;
+    const canKeepPreviousPlace = previousPlace && previousForecast && !samePlanPlace(previousPlace, nextPlace);
+    if (canKeepPreviousPlace) {
+      state.activePlace = previousPlace;
+      state.radarPrecipPlaceId = previousPlace.id;
+      localStorage.setItem("weather-last-place", JSON.stringify(previousPlace));
+      updatePlaceSwitcher();
+      renderSavedPlaces();
+      updateMapPlace();
+      setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
+    } else {
+      setStatus("Could not load weather data. Try another place or reload the page.", true);
+    }
   }
 
   // Alerts are best-effort and US-only — never block or break the forecast
   try {
-    renderAlerts(await fetchAlerts(state.activePlace));
+    const alerts = await fetchAlerts(nextPlace);
+    if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
+    renderAlerts(alerts);
   } catch {
+    if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
     renderAlerts([]);
   }
 }
@@ -4909,6 +4936,8 @@ async function loadPlace(place, force = false) {
 // where the frozen page is restored without re-running), pull fresh data.
 let lastLoadedAt = Date.now();
 let lastBackgroundedAt = null;
+let loadPlaceRequestSeq = 0;
+let lastLoadUsedForecastFallback = false;
 const FOREGROUND_STALE_MS = 8 * 60 * 1000;
 const VIEW_RESET_IDLE_MS = 20 * 60 * 1000;
 
@@ -5109,8 +5138,13 @@ async function triggerPullRefresh() {
     pullRefreshState.refreshing = false;
     setManualRefreshBusy(false);
     pullRefreshState.lastRefreshAt = Date.now();
-    const updated = lastLoadedAt !== beforeLoadedAt;
-    setPullRefreshVisual(42, updated ? "Updated" : "Could not update");
+    const updated = lastLoadedAt !== beforeLoadedAt && !lastLoadUsedForecastFallback;
+    const label = updated
+      ? "Updated"
+      : lastLoadUsedForecastFallback
+        ? "Using last forecast"
+        : "Could not update";
+    setPullRefreshVisual(42, label);
     schedulePullRefreshHide(updated ? 700 : 1200);
   }
 }
@@ -5219,10 +5253,32 @@ function readForecastCache(place, options = {}) {
   return cached;
 }
 
+function markForecastCacheFallback(data, cached, reason = "network-timeout") {
+  if (!data || typeof data !== "object") return data;
+  const meta = {
+    cacheFallback: true,
+    savedAt: Number(cached?.savedAt) || 0,
+    reason
+  };
+  try {
+    Object.defineProperty(data, "_nearcastMeta", {
+      value: meta,
+      configurable: true
+    });
+  } catch {
+    data._nearcastMeta = meta;
+  }
+  return data;
+}
+
+function forecastUsedCacheFallback(data) {
+  return Boolean(data?._nearcastMeta?.cacheFallback);
+}
+
 async function fetchForecast(place, force = false) {
   const cacheKey = forecastCacheKey(place);
-  const maxCacheAge = 15 * 60 * 1000;
-  const cached = readForecastCache(place, { maxAge: maxCacheAge });
+  const cached = readForecastCache(place, { maxAge: FORECAST_CACHE_MAX_AGE_MS });
+  const fallbackCached = cached || readForecastCache(place, { maxAge: FORECAST_CACHE_FALLBACK_MAX_AGE_MS });
 
   if (!force && cached) {
     return cached.data;
@@ -5296,15 +5352,19 @@ async function fetchForecast(place, force = false) {
     forecast_days: "10"
   });
 
-  const forecastPromise = fetch(`https://api.open-meteo.com/v1/forecast?${params}`).then(async (response) => {
-    if (!response.ok) throw new Error("Forecast failed.");
-    return response.json();
-  });
-  const airQualityPromise = fetchAirQuality(place, force).catch(() => null);
-  const data = await forecastPromise;
-  data.airQuality = await airQualityPromise;
-  localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
-  return data;
+  try {
+    const forecastPromise = fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, FORECAST_FETCH_TIMEOUT_MS);
+    const airQualityPromise = fetchAirQuality(place, force).catch(() => null);
+    const data = await forecastPromise;
+    data.airQuality = await airQualityPromise;
+    localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
+    return data;
+  } catch (error) {
+    if (fallbackCached?.data) {
+      return markForecastCacheFallback(fallbackCached.data, fallbackCached, error?.name || "forecast-fetch-failed");
+    }
+    throw error;
+  }
 }
 
 async function fetchAirQuality(place, force = false) {
@@ -5321,9 +5381,7 @@ async function fetchAirQuality(place, force = false) {
     forecast_days: "2",
     timezone: "auto"
   });
-  const response = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?${params}`);
-  if (!response.ok) throw new Error("Air quality failed.");
-  const data = await response.json();
+  const data = await fetchJsonWithTimeout(`https://air-quality-api.open-meteo.com/v1/air-quality?${params}`, AIR_QUALITY_FETCH_TIMEOUT_MS);
   localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
   return data;
 }
@@ -9372,9 +9430,9 @@ async function fetchAlerts(place) {
   if (cached && Date.now() - cached.savedAt < 5 * 60 * 1000) return cached.data;
 
   const url = `https://api.weather.gov/alerts/active?point=${place.latitude.toFixed(4)},${place.longitude.toFixed(4)}`;
-  const res = await fetch(url, { headers: { Accept: "application/geo+json" } });
-  if (!res.ok) return [];
-  const json = await res.json();
+  const json = await fetchJsonWithTimeout(url, ALERTS_FETCH_TIMEOUT_MS, null, {
+    headers: { Accept: "application/geo+json" }
+  });
   const alerts = (json.features || [])
     .map((f) => f.properties)
     .sort((a, b) => (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0));

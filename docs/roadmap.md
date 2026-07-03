@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.160**.
+Living product roadmap. Current as of **v3.0.162**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
