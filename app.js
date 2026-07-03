@@ -1,4 +1,4 @@
-const VERSION = "3.0.164";
+const VERSION = "3.0.165";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -22,7 +22,10 @@ const MAPLIBRE_CSS_ID = "maplibreCss";
 const MAPLIBRE_SCRIPT_ID = "maplibreScript";
 const MAPLIBRE_CSS_URL = `vendor/maplibre/maplibre-gl.css?v=${VERSION}`;
 const MAPLIBRE_SCRIPT_URL = `vendor/maplibre/maplibre-gl.js?v=${VERSION}`;
-const RELEASE_SPLASH_KEY = "nearcast-release-v3-seen";
+const INSTALL_PROMPT_DISMISSED_UNTIL_KEY = "nearcast-install-dismissed-until";
+const INSTALL_PROMPT_ACCEPTED_KEY = "nearcast-install-accepted";
+const INSTALL_PROMPT_VISIT_COUNT_KEY = "nearcast-install-visit-count";
+const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
@@ -687,6 +690,12 @@ const pullRefreshState = {
   lastRefreshAt: 0
 };
 
+const installPromptState = {
+  deferredPrompt: null,
+  nativePromptAvailable: false,
+  visitCount: 0
+};
+
 const els = {
   themeColorMeta: document.querySelector("meta[name='theme-color']"),
   statusBarMeta: document.querySelector("meta[name='apple-mobile-web-app-status-bar-style']"),
@@ -700,10 +709,18 @@ const els = {
   welcomeLocate: document.querySelector("#welcomeLocate"),
   pullRefresh: document.querySelector("#pullRefresh"),
   pullRefreshLabel: document.querySelector("[data-pull-refresh-label]"),
-  releaseBackdrop: document.querySelector("#releaseBackdrop"),
-  releaseSplash: document.querySelector("#releaseSplash"),
-  releaseSplashClose: document.querySelector("#releaseSplashClose"),
-  releaseSplashPrimary: document.querySelector("#releaseSplashPrimary"),
+  installCard: document.querySelector("#installCard"),
+  installCardCopy: document.querySelector("#installCardCopy"),
+  installAction: document.querySelector("#installAction"),
+  installDismiss: document.querySelector("#installDismiss"),
+  installBackdrop: document.querySelector("#installBackdrop"),
+  installSheet: document.querySelector("#installSheet"),
+  installSheetClose: document.querySelector("#installSheetClose"),
+  installSheetContext: document.querySelector("#installSheetContext"),
+  installSheetSummary: document.querySelector("#installSheetSummary"),
+  installSteps: document.querySelector("#installSteps"),
+  installSheetPrimary: document.querySelector("#installSheetPrimary"),
+  installSheetSnooze: document.querySelector("#installSheetSnooze"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
   timeFormatButtons: document.querySelectorAll("[data-time-format]"),
@@ -2235,7 +2252,6 @@ function skyWorkInteractiveTarget(target) {
     ".search-popover",
     ".day-sheet",
     ".sheet-backdrop",
-    ".release-splash",
     ".map-controls",
     ".map-timeline",
     ".imm-controls",
@@ -2275,7 +2291,6 @@ function skyWorkSurfaceIsOpen() {
     (!els.appMenu?.hidden) ||
     els.shell?.classList.contains("search-open") ||
     document.querySelector(".day-sheet.show:not([hidden])") ||
-    document.querySelector(".release-splash:not([hidden])") ||
     document.querySelector(".sheet-backdrop.show:not([hidden])")
   );
 }
@@ -2651,6 +2666,7 @@ function init() {
   updateRadarSourceZoomControl();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
+  initInstallPrompt();
   initMetricTipListeners();
   initDaylightScrubListeners();
   detectAI();
@@ -2669,7 +2685,6 @@ function init() {
   if (startingPlace) {
     warmStartForecast(startingPlace);
     loadPlace(startingPlace);
-    maybeShowReleaseSplash();
   } else {
     updateMode(); // welcome mode
     if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
@@ -2689,50 +2704,207 @@ function userHasWeatherContext() {
   return Boolean(state.activePlace || state.savedPlaces.length || readStorageJson("weather-last-place"));
 }
 
-function releaseSplashWasSeen() {
+function incrementInstallVisitCount() {
   try {
-    return localStorage.getItem(RELEASE_SPLASH_KEY) === "seen";
+    const next = Math.min(999, Number(localStorage.getItem(INSTALL_PROMPT_VISIT_COUNT_KEY) || 0) + 1);
+    localStorage.setItem(INSTALL_PROMPT_VISIT_COUNT_KEY, String(next));
+    installPromptState.visitCount = next;
+    return next;
   } catch {
-    return true;
+    installPromptState.visitCount = 1;
+    return 1;
   }
 }
 
-function markReleaseSplashSeen() {
+function installPromptAccepted() {
   try {
-    localStorage.setItem(RELEASE_SPLASH_KEY, "seen");
+    return localStorage.getItem(INSTALL_PROMPT_ACCEPTED_KEY) === "yes";
   } catch {
-    // Release notes are nonessential; privacy/storage failures should not interrupt the app.
+    return false;
   }
 }
 
-function maybeShowReleaseSplash() {
-  if (!els.releaseSplash || !els.releaseBackdrop) return;
-  if (releaseSplashWasSeen() || !userHasWeatherContext()) return;
-  window.setTimeout(openReleaseSplash, 420);
+function markInstallPromptAccepted() {
+  try {
+    localStorage.setItem(INSTALL_PROMPT_ACCEPTED_KEY, "yes");
+  } catch {
+    // Install prompting is an enhancement; storage failure should not interrupt weather.
+  }
 }
 
-function openReleaseSplash() {
-  if (!els.releaseSplash || !els.releaseBackdrop || releaseSplashWasSeen()) return;
-  els.releaseBackdrop.hidden = false;
-  els.releaseSplash.hidden = false;
-  showSheet(els.releaseBackdrop, els.releaseSplash);
+function installPromptDismissed() {
+  try {
+    return Date.now() < Number(localStorage.getItem(INSTALL_PROMPT_DISMISSED_UNTIL_KEY) || 0);
+  } catch {
+    return false;
+  }
+}
+
+function snoozeInstallPrompt(durationMs = INSTALL_PROMPT_SNOOZE_MS) {
+  try {
+    localStorage.setItem(INSTALL_PROMPT_DISMISSED_UNTIL_KEY, String(Date.now() + durationMs));
+  } catch {
+    // Ignore.
+  }
+  updateInstallPromptUI();
+  refreshPlanAwareLaunchSurfaces();
+}
+
+function isInstalledPwa() {
+  return Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    window.matchMedia?.("(display-mode: fullscreen)")?.matches ||
+    window.navigator?.standalone === true
+  );
+}
+
+function isIosLikeDevice() {
+  const ua = navigator.userAgent || "";
+  return /iphone|ipad|ipod/i.test(ua) ||
+    (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints || 0) > 1);
+}
+
+function installPromptEarned() {
+  return Boolean(
+    state.savedPlaces.length ||
+    (Array.isArray(state.planMemories) && state.planMemories.length) ||
+    (state.activePlace && state.forecast) ||
+    installPromptState.visitCount >= 2
+  );
+}
+
+function installPromptCanShow() {
+  if (isInstalledPwa() || installPromptAccepted() || installPromptDismissed()) return false;
+  if (!userHasWeatherContext() || !installPromptEarned()) return false;
+  return Boolean(installPromptState.nativePromptAvailable || isIosLikeDevice());
+}
+
+function installPromptMode() {
+  if (installPromptState.nativePromptAvailable) return "native";
+  if (isIosLikeDevice()) return "ios";
+  return "manual";
+}
+
+function installPromptCopy() {
+  const mode = installPromptMode();
+  if (mode === "ios") return "Use Share, then Add to Home Screen.";
+  if (mode === "native") return "Open faster in a clean app window.";
+  return "Add it from your browser menu.";
+}
+
+function updateInstallPromptUI() {
+  const show = installPromptCanShow();
+  if (els.installCard) els.installCard.hidden = !show;
+  if (!show) return;
+  if (els.installCardCopy) els.installCardCopy.textContent = installPromptCopy();
+  if (els.installAction) els.installAction.textContent = installPromptMode() === "native" ? "Add" : "How";
+}
+
+function installInstructionSteps() {
+  if (installPromptMode() === "ios") {
+    return [
+      "Open Nearcast in Safari.",
+      "Tap the Share button.",
+      "Choose Add to Home Screen, then tap Add."
+    ];
+  }
+  return [
+    "Open your browser menu.",
+    "Choose Install app or Add to Home Screen.",
+    "Launch Nearcast from your apps or Home Screen."
+  ];
+}
+
+function renderInstallSheet() {
+  if (!els.installSteps) return;
+  const mode = installPromptMode();
+  if (els.installSheetContext) {
+    els.installSheetContext.textContent = mode === "ios"
+      ? "Safari needs one manual step."
+      : "Your browser controls the final install step.";
+  }
+  if (els.installSheetSummary) {
+    els.installSheetSummary.textContent = "Add Nearcast for a cleaner full-screen weather app, faster launch, and notification support when your browser allows it.";
+  }
+  els.installSteps.innerHTML = installInstructionSteps()
+    .map((step) => `<li>${escapeHtml(step)}</li>`)
+    .join("");
+}
+
+function openInstallSheet() {
+  if (!els.installSheet || !els.installBackdrop) return;
+  renderInstallSheet();
+  els.installBackdrop.hidden = false;
+  els.installSheet.hidden = false;
+  showSheet(els.installBackdrop, els.installSheet);
   document.body.style.overflow = "hidden";
-  requestAnimationFrame(() => {
-    try { els.releaseSplashPrimary?.focus({ preventScroll: true }); }
-    catch { els.releaseSplashPrimary?.focus(); }
-  });
 }
 
-function closeReleaseSplash() {
-  if (!els.releaseSplash || !els.releaseBackdrop || els.releaseSplash.hidden) return;
-  markReleaseSplashSeen();
-  els.releaseBackdrop.classList.remove("show");
-  els.releaseSplash.classList.remove("show");
+function closeInstallSheet(options = {}) {
+  if (!els.installSheet || !els.installBackdrop || els.installSheet.hidden) return;
+  if (options.snooze) snoozeInstallPrompt();
+  els.installBackdrop.classList.remove("show");
+  els.installSheet.classList.remove("show");
   document.body.style.overflow = mapState.immersive ? "hidden" : "";
   setTimeout(() => {
-    els.releaseBackdrop.hidden = true;
-    els.releaseSplash.hidden = true;
+    els.installBackdrop.hidden = true;
+    els.installSheet.hidden = true;
   }, 260);
+}
+
+async function handleInstallAction() {
+  if (isInstalledPwa()) {
+    updateInstallPromptUI();
+    return;
+  }
+
+  const promptEvent = installPromptState.deferredPrompt;
+  if (promptEvent) {
+    installPromptState.deferredPrompt = null;
+    installPromptState.nativePromptAvailable = false;
+    updateInstallPromptUI();
+    try {
+      const promptResult = await promptEvent.prompt();
+      const choice = promptResult || (promptEvent.userChoice ? await promptEvent.userChoice.catch(() => null) : null);
+      if (choice?.outcome === "accepted") {
+        markInstallPromptAccepted();
+      } else {
+        snoozeInstallPrompt();
+      }
+    } catch {
+      openInstallSheet();
+    } finally {
+      updateInstallPromptUI();
+      refreshPlanAwareLaunchSurfaces();
+    }
+    return;
+  }
+
+  openInstallSheet();
+}
+
+function dismissInstallPrompt() {
+  snoozeInstallPrompt();
+}
+
+function initInstallPrompt() {
+  incrementInstallVisitCount();
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPromptState.deferredPrompt = event;
+    installPromptState.nativePromptAvailable = true;
+    updateInstallPromptUI();
+    refreshPlanAwareLaunchSurfaces();
+  });
+  window.addEventListener("appinstalled", () => {
+    installPromptState.deferredPrompt = null;
+    installPromptState.nativePromptAvailable = false;
+    markInstallPromptAccepted();
+    updateInstallPromptUI();
+    refreshPlanAwareLaunchSurfaces();
+  });
+  window.matchMedia?.("(display-mode: standalone)")?.addEventListener?.("change", updateInstallPromptUI);
+  updateInstallPromptUI();
 }
 
 const TAP_MOVE_TOLERANCE = 22;
@@ -2995,7 +3167,7 @@ function bindEvents() {
       openPlanWatchForMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
-  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+  bindTapDelegate(els.forYouToday, "[data-for-you-summary], [data-for-you-ask], [data-for-you-template], [data-for-you-install], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
     const signal = target.dataset.forYouSignal;
     if (signal) recordForYouSignal(signal);
 
@@ -3023,6 +3195,12 @@ function bindEvents() {
         if (typeof renderAsk === "function") renderAsk();
         fillPlannerTemplate(template.dataset.forYouTemplate || "");
       });
+      return;
+    }
+    const install = target.closest("[data-for-you-install]");
+    if (install) {
+      if (!signal) recordForYouSignal("install");
+      handleInstallAction();
       return;
     }
     const memoryOpen = target.closest("[data-memory-open]");
@@ -3247,9 +3425,12 @@ function bindEvents() {
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
-  bindTapAction(els.releaseSplashClose, closeReleaseSplash);
-  bindTapAction(els.releaseSplashPrimary, closeReleaseSplash);
-  bindTapAction(els.releaseBackdrop, closeReleaseSplash);
+  bindTapAction(els.installAction, handleInstallAction);
+  bindTapAction(els.installDismiss, dismissInstallPrompt);
+  bindTapAction(els.installSheetClose, closeInstallSheet);
+  bindTapAction(els.installSheetPrimary, closeInstallSheet);
+  bindTapAction(els.installSheetSnooze, () => closeInstallSheet({ snooze: true }));
+  bindTapAction(els.installBackdrop, () => closeInstallSheet({ snooze: false }));
   bindTapAction(document.getElementById("searchLocate"), () => {
     toggleSearch(false);
     useCurrentLocation();
@@ -3356,9 +3537,9 @@ function bindEvents() {
     if (event.key === "Escape" && !els.glanceDetailSheet.hidden) closeGlanceDetail();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && els.releaseSplash && !els.releaseSplash.hidden) {
+    if (event.key === "Escape" && els.installSheet && !els.installSheet.hidden) {
       event.stopImmediatePropagation();
-      closeReleaseSplash();
+      closeInstallSheet();
     }
   });
 
@@ -4695,6 +4876,7 @@ function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
   updatePlaceSaveButton();
   updatePlaceSwitcher();
+  updateInstallPromptUI();
 
   if (state.savedPlaces.length && typeof renderSavedPlaceWatchNotificationPanel === "function") {
     els.savedPlaces.insertAdjacentHTML("beforeend", renderSavedPlaceWatchNotificationPanel());
@@ -4990,7 +5172,6 @@ function pullRefreshAtTop() {
 function pullRefreshModalOpen() {
   return Boolean(
     document.querySelector(".day-sheet:not([hidden])") ||
-    document.querySelector(".release-splash:not([hidden])") ||
     document.querySelector(".sheet-backdrop.show:not([hidden])")
   );
 }
@@ -6927,6 +7108,7 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
   renderLaunchShortcuts(data, place);
+  updateInstallPromptUI();
 }
 
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
@@ -6963,6 +7145,7 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
   const continuity = forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, continuityBaselineStore(data, place));
   const watching = forYouWatchingCard(data, place);
   const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
+  const install = forYouInstallCard();
   return {
     data,
     place,
@@ -6978,6 +7161,7 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     watchingCount: watching.count,
     interruptionCard: interruption.html,
     interruptionType: interruption.type,
+    installCard: install.html,
     memoryCount: Array.isArray(state.planMemories) ? state.planMemories.length : 0
   };
 }
@@ -6994,6 +7178,10 @@ function todayPriorityCards(context) {
 
   if (context.interruptionCard && context.interruptionType !== context.continuityType) {
     cards.push(context.interruptionCard);
+  }
+
+  if (context.installCard && cards.length < 2) {
+    cards.push(context.installCard);
   }
 
   return cards.filter(Boolean).slice(0, 2);
@@ -7065,6 +7253,20 @@ function forYouWatchingCard(data, place) {
       <small>${opensPlan ? "View plan" : "Review"}</small>
     </button>
   `
+  };
+}
+
+function forYouInstallCard() {
+  if (!installPromptCanShow()) return { html: "" };
+  return {
+    html: `
+      <button class="for-you-card is-action is-install" type="button" data-for-you-install data-for-you-signal="install">
+        <span class="for-you-kicker"><span>Nearcast app</span><em>${escapeHtml(installPromptMode() === "native" ? "1 tap" : "Home Screen")}</em></span>
+        <strong>Add Nearcast</strong>
+        <span class="for-you-body">${escapeHtml(installPromptCopy())}</span>
+        <small>${escapeHtml(installPromptMode() === "native" ? "Install" : "Show me")}</small>
+      </button>
+    `
   };
 }
 
