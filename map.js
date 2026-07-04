@@ -13,7 +13,7 @@ const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 30000;
 const XWEATHER_STORM_TIMELINE_PAST_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_FUTURE_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_STEPS = 1000;
-const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 8;
+const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 14;
 const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
@@ -503,6 +503,11 @@ function syncXweatherStormLightningVisibility(record = mapLibreCurrentRecord(), 
     setXweatherObservedLightningVisible(record, false, "future");
     return;
   }
+  if (mapState.playing) {
+    clearXweatherObservedLightningSettle(record);
+    setXweatherObservedLightningVisible(record, false, "playback");
+    return;
+  }
   if (options.scrubbing) {
     setXweatherObservedLightningVisible(record, false, "scrubbing");
     scheduleXweatherObservedLightningRestore(record, effectiveCurrentMs);
@@ -704,6 +709,8 @@ function setXweatherStormTimelinePlaying(record = mapLibreCurrentRecord(), playi
     storm.timelinePlaybackClock = 0;
     mapState.playing = true;
     mapState.userPausedRadar = false;
+    clearXweatherObservedLightningSettle(record);
+    setXweatherObservedLightningVisible(record, false, "playback");
     setPlaybackButtonState(els.playRadar, true);
     showTimelineTimeBubble();
     startXweatherStormTimelineHudLoop(record);
@@ -715,6 +722,11 @@ function setXweatherStormTimelinePlaying(record = mapLibreCurrentRecord(), playi
     storm.timelinePlaybackClock = 0;
     try { timeline.pause?.(); } catch {}
     mapState.playing = false;
+    const snapshot = xweatherStormTimelineSnapshot(record);
+    if (snapshot.currentMs <= snapshot.nowMs + XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS) {
+      setXweatherObservedLightningVisible(record, false, "settling");
+      scheduleXweatherObservedLightningRestore(record, snapshot.currentMs);
+    }
     setPlaybackButtonState(els.playRadar, false);
     scheduleTimelineBubbleHide();
   }
@@ -821,6 +833,7 @@ async function startXweatherStormLayer(record) {
       }
     });
     if (!addedLayers.length) throw new Error("No Xweather storm layers loaded");
+    setMapLibreStormLabelEmphasis(record, true);
     stopRadarPlayback({ renderStatic: false });
     record.xweatherStorm = {
       status: "active",
@@ -842,6 +855,7 @@ async function startXweatherStormLayer(record) {
       message: "Storm view"
     };
     bindXweatherStormTimeline(record);
+    setMapLibreStormLabelEmphasis(record, true);
     renderMapCredit();
     recordXweatherStormSession(record);
     clearMapLibreWeatherRecord(record);
@@ -875,6 +889,7 @@ function stopXweatherStormLayer(record, reason = "off") {
     });
   }
   hideXweatherStormTimelineJumpControls();
+  setMapLibreStormLabelEmphasis(record, false);
   try { storm.controller?.removeLegendControl?.(); } catch {}
   try { storm.controller?.removeDataInspectorControl?.(); } catch {}
   try { storm.controller?.dispose?.(); } catch {}
@@ -1588,6 +1603,17 @@ function setMapLibreLayerVisibility(map, layerId, visible) {
   const next = visible ? "visible" : "none";
   if (map.getLayoutProperty?.(layerId, "visibility") === next) return;
   map.setLayoutProperty(layerId, "visibility", next);
+}
+
+function setMapLibreStormLabelEmphasis(record = mapLibreCurrentRecord(), enabled = false) {
+  const map = record?.map;
+  if (!map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID)) return;
+  try { map.moveLayer(MAPLIBRE_LABEL_LAYER_ID); } catch {}
+  try { map.setPaintProperty(MAPLIBRE_LABEL_LAYER_ID, "raster-opacity", enabled ? 1 : 0.96); } catch {}
+  try { map.setPaintProperty(MAPLIBRE_LABEL_LAYER_ID, "raster-contrast", enabled ? 0.18 : 0); } catch {}
+  try { map.setPaintProperty(MAPLIBRE_LABEL_LAYER_ID, "raster-saturation", enabled ? -0.12 : 0); } catch {}
+  try { map.setPaintProperty(MAPLIBRE_LABEL_LAYER_ID, "raster-brightness-min", enabled ? 0.02 : 0); } catch {}
+  try { map.setPaintProperty(MAPLIBRE_LABEL_LAYER_ID, "raster-brightness-max", 1); } catch {}
 }
 
 function mapLibreTileStyle() {
