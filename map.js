@@ -8,7 +8,8 @@ const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
-const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 10000;
+const XWEATHER_MAPSGL_SLOW_READY_MS = 7000;
+const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 30000;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
 const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
@@ -294,7 +295,7 @@ function xweatherStormStatusForChip() {
   const status = record?.xweatherStorm?.status || xweatherStormGuard().status;
   const message = record?.xweatherStorm?.message || xweatherStormGuard().message || "";
   if (status === "active") return { visible: true, ready: true, text: "Storm view" };
-  if (status === "loading") return { visible: true, ready: false, text: "Loading storm view" };
+  if (status === "loading") return { visible: true, ready: false, text: message || "Loading storm view" };
   if (status === "error") return { visible: true, ready: false, text: message || "Storm view unavailable" };
   if (status === "missing-keys" || status === "budget" || status === "paused") {
     return { visible: true, ready: false, text: message || "Storm view paused" };
@@ -349,8 +350,7 @@ function waitForXweatherControllerReady(controller) {
       return false;
     };
 
-    addControllerListener("load");
-    addControllerListener("MapController:load");
+    ["load", "ready", "load:complete", "MapController:load", "MapController:ready"].forEach(addControllerListener);
     pollTimer = setInterval(() => {
       if (controller.isReady) finish(true);
     }, 50);
@@ -376,7 +376,13 @@ async function startXweatherStormLayer(record) {
     if (!sdk?.Account || !sdk?.MaplibreMapController) throw new Error("Xweather MapLibre controller unavailable");
     const account = new sdk.Account(credentials.clientId, credentials.clientSecret);
     const controller = new sdk.MaplibreMapController(record.map, { account });
+    const slowReadyTimer = setTimeout(() => {
+      if (mapLibreCurrentRecord() === record && record.xweatherStorm?.loadingPromise) {
+        setXweatherStormStatus(record, "loading", "Still loading storm view");
+      }
+    }, XWEATHER_MAPSGL_SLOW_READY_MS);
     const controllerReady = await waitForXweatherControllerReady(controller);
+    clearTimeout(slowReadyTimer);
     if (mapLibreCurrentRecord() !== record || !mapState.immersive || !xweatherStormPreferenceEnabled()) {
       try { controller.dispose?.(); } catch {}
       try { controller.destroy?.(); } catch {}
@@ -385,7 +391,7 @@ async function startXweatherStormLayer(record) {
     if (!controllerReady) {
       try { controller.dispose?.(); } catch {}
       try { controller.destroy?.(); } catch {}
-      throw new Error("Xweather storm view timed out");
+      throw new Error("Storm view is taking too long");
     }
     const addedLayers = [];
     layerCodes.forEach((code) => {
