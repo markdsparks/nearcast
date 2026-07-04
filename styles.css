@@ -7889,6 +7889,14 @@ body.map-immersive-active #mapLegend {
   animation: none;
 }
 
+.map-radar-status.is-storm-view::before {
+  background: #f5ca45;
+}
+
+.map-radar-status.is-storm-view.is-ready::before {
+  background: #f5ca45;
+}
+
 .map-radar-status[hidden] {
   display: none;
 }

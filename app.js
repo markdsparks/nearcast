@@ -1,4 +1,4 @@
-const VERSION = "3.0.168";
+const VERSION = "3.0.169";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -13,6 +13,19 @@ const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
 const RADAR_INDEX_URL_KEY = "nearcast-radar-index-url";
 const RADAR_SOURCE_ZOOM_KEY = "nearcast-radar-source-zoom";
 const RADAR_CAPABILITY_ENDPOINT_KEY = "nearcast-radar-capability-endpoint";
+const XWEATHER_STORM_MODE_KEY = "nearcast-xweather-storm-mode";
+const XWEATHER_CLIENT_ID_KEY = "nearcast-xweather-client-id";
+const XWEATHER_CLIENT_SECRET_KEY = "nearcast-xweather-client-secret";
+const XWEATHER_LAYER_CODES_KEY = "nearcast-xweather-layer-codes";
+const XWEATHER_USAGE_KEY = "nearcast-xweather-usage-v1";
+const XWEATHER_MAPSGL_SCRIPT_ID = "xweatherMapsglScript";
+const XWEATHER_MAPSGL_CSS_ID = "xweatherMapsglCss";
+const XWEATHER_MAPSGL_SCRIPT_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.js";
+const XWEATHER_MAPSGL_CSS_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.css";
+const XWEATHER_STORM_DEFAULT_LAYERS = "radar,lightning-strikes-icons";
+const XWEATHER_MAPSGL_SESSION_ACCESS_COST = 150;
+const XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
+const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
 const DEFAULT_RADAR_CAPABILITY_ENDPOINT = "/api/radar/capability";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_FRAME_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json";
@@ -213,6 +226,34 @@ if (DEBUG_SETTINGS_ENABLED && radarProviderQueryFlag !== null) {
   localStorage.setItem(RADAR_PROVIDER_KEY, sanitizeRadarProvider(radarProviderQueryFlag));
 }
 
+const xweatherStormQueryFlag = queryValue("xweatherStorm", "xweatherstorm", "stormView", "stormview");
+if (DEBUG_SETTINGS_ENABLED && xweatherStormQueryFlag !== null) {
+  localStorage.setItem(XWEATHER_STORM_MODE_KEY, sanitizeXweatherStormMode(xweatherStormQueryFlag));
+} else if (!DEBUG_SETTINGS_ENABLED) {
+  localStorage.removeItem(XWEATHER_STORM_MODE_KEY);
+}
+
+const xweatherClientIdQueryFlag = queryValue("xweatherClientId", "xweatherclientid", "xweatherId", "xweatherid");
+if (DEBUG_SETTINGS_ENABLED && xweatherClientIdQueryFlag !== null) {
+  const value = String(xweatherClientIdQueryFlag || "").trim();
+  if (!value || ["0", "off", "none", "clear"].includes(value.toLowerCase())) localStorage.removeItem(XWEATHER_CLIENT_ID_KEY);
+  else localStorage.setItem(XWEATHER_CLIENT_ID_KEY, value);
+}
+
+const xweatherClientSecretQueryFlag = queryValue("xweatherClientSecret", "xweatherclientsecret", "xweatherSecret", "xweathersecret");
+if (DEBUG_SETTINGS_ENABLED && xweatherClientSecretQueryFlag !== null) {
+  const value = String(xweatherClientSecretQueryFlag || "").trim();
+  if (!value || ["0", "off", "none", "clear"].includes(value.toLowerCase())) localStorage.removeItem(XWEATHER_CLIENT_SECRET_KEY);
+  else localStorage.setItem(XWEATHER_CLIENT_SECRET_KEY, value);
+}
+
+const xweatherLayersQueryFlag = queryValue("xweatherLayers", "xweatherlayers");
+if (DEBUG_SETTINGS_ENABLED && xweatherLayersQueryFlag !== null) {
+  const value = sanitizeXweatherLayerCodes(xweatherLayersQueryFlag).join(",");
+  if (value) localStorage.setItem(XWEATHER_LAYER_CODES_KEY, value);
+  else localStorage.removeItem(XWEATHER_LAYER_CODES_KEY);
+}
+
 const radarManifestQueryFlag = queryValue("radarManifest", "radarmanifest", "mrmsManifest", "mrmsmanifest");
 if (DEBUG_SETTINGS_ENABLED && radarManifestQueryFlag !== null) {
   const value = String(radarManifestQueryFlag || "").trim();
@@ -287,6 +328,7 @@ const state = {
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
   radarProvider: sanitizeRadarProvider(localStorage.getItem(RADAR_PROVIDER_KEY)),
   radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
+  xweatherStormMode: sanitizeXweatherStormMode(localStorage.getItem(XWEATHER_STORM_MODE_KEY)),
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -734,6 +776,8 @@ const els = {
   radarProviderMeta: document.querySelector("#radarProviderMeta"),
   radarSourceZoom: document.querySelector("#radarSourceZoom"),
   radarSourceMeta: document.querySelector("#radarSourceMeta"),
+  xweatherStormMode: document.querySelector("#xweatherStormMode"),
+  xweatherStormMeta: document.querySelector("#xweatherStormMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2664,6 +2708,7 @@ function init() {
   updateMapRendererButtons();
   updateMapDiagnosticModeControl();
   updateRadarSourceZoomControl();
+  updateXweatherStormControl();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
   initInstallPrompt();
@@ -3126,6 +3171,9 @@ function bindEvents() {
   }
   if (els.radarSourceZoom) {
     els.radarSourceZoom.addEventListener("change", () => setRadarSourceZoom(els.radarSourceZoom.value));
+  }
+  if (els.xweatherStormMode) {
+    els.xweatherStormMode.addEventListener("change", () => setXweatherStormMode(els.xweatherStormMode.value));
   }
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
@@ -3788,6 +3836,51 @@ function sanitizeRadarProvider(value) {
   return "auto";
 }
 
+function sanitizeXweatherStormMode(value) {
+  const mode = String(value || "off").trim().toLowerCase();
+  if (["1", "true", "on", "yes", "xweather", "storm", "storm-view", "enhanced"].includes(mode)) return "xweather";
+  return "off";
+}
+
+function sanitizeXweatherLayerCodes(value) {
+  return String(value || "")
+    .split(/[,\s]+/)
+    .map((code) => code.trim().toLowerCase())
+    .filter((code) => /^[a-z0-9-]+$/.test(code))
+    .slice(0, 6);
+}
+
+function storedXweatherLayerCodes() {
+  return sanitizeXweatherLayerCodes(localStorage.getItem(XWEATHER_LAYER_CODES_KEY) || XWEATHER_STORM_DEFAULT_LAYERS);
+}
+
+function xweatherStormEnabled() {
+  return Boolean(DEBUG_SETTINGS_ENABLED && state.xweatherStormMode === "xweather");
+}
+
+function xweatherStormCredentialsReady() {
+  return Boolean(localStorage.getItem(XWEATHER_CLIENT_ID_KEY) && localStorage.getItem(XWEATHER_CLIENT_SECRET_KEY));
+}
+
+function xweatherUsageMonthKey(date = new Date()) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function readXweatherUsageRecord() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(XWEATHER_USAGE_KEY) || "null");
+    if (!parsed || parsed.month !== xweatherUsageMonthKey()) return { month: xweatherUsageMonthKey(), sessions: 0, accesses: 0, updatedAt: 0 };
+    return {
+      month: parsed.month,
+      sessions: Math.max(0, Number(parsed.sessions) || 0),
+      accesses: Math.max(0, Number(parsed.accesses) || 0),
+      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0)
+    };
+  } catch {
+    return { month: xweatherUsageMonthKey(), sessions: 0, accesses: 0, updatedAt: 0 };
+  }
+}
+
 function radarProviderValueIsGenerated(value) {
   const mode = String(value || "").toLowerCase();
   return mode === "mrms" || mode === "mrms-generated" || mode === "generated";
@@ -3871,6 +3964,32 @@ function radarProviderMetaText() {
   if (state.radarProvider === "mrms-generated") return "Experimental MRMS spike, NOAA fallback";
   if (state.radarProvider === "noaa-wms") return "NOAA WMS with RainViewer fallback";
   return "Auto: free radar coverage";
+}
+
+function xweatherStormMetaText() {
+  if (!DEBUG_SETTINGS_ENABLED) return "Hidden";
+  const usage = readXweatherUsageRecord();
+  const layers = storedXweatherLayerCodes();
+  const usageText = `${usage.accesses}/${XWEATHER_MONTHLY_ACCESS_LIMIT} est. accesses`;
+  if (state.xweatherStormMode !== "xweather") return `Off · ${usageText}`;
+  if (!xweatherStormCredentialsReady()) return "Add Xweather keys in URL";
+  if (!layers.length) return "No layer codes configured";
+  if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) return `Budget paused · ${usageText}`;
+  return `On in map · ${layers.join(" + ")} · ${usageText}`;
+}
+
+function updateXweatherStormControl() {
+  if (els.xweatherStormMode) els.xweatherStormMode.value = state.xweatherStormMode;
+  if (els.xweatherStormMeta) els.xweatherStormMeta.textContent = xweatherStormMetaText();
+}
+
+function setXweatherStormMode(value) {
+  const next = sanitizeXweatherStormMode(value);
+  if (next === state.xweatherStormMode) return;
+  state.xweatherStormMode = next;
+  localStorage.setItem(XWEATHER_STORM_MODE_KEY, next);
+  updateXweatherStormControl();
+  if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
 }
 
 function syncGeneratedRadarProviderOption() {
