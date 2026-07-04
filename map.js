@@ -174,10 +174,24 @@ function xweatherStormLayerCodes() {
 }
 
 function xweatherStormCredentials() {
+  if (typeof window.nearcastXweatherStormCredentials === "function") {
+    const credentials = window.nearcastXweatherStormCredentials();
+    if (credentials?.clientId && credentials?.clientSecret) {
+      return {
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret
+      };
+    }
+  }
   return {
-    clientId: localStorage.getItem(XWEATHER_CLIENT_ID_KEY) || "",
-    clientSecret: localStorage.getItem(XWEATHER_CLIENT_SECRET_KEY) || ""
+    clientId: "",
+    clientSecret: ""
   };
+}
+
+function xweatherStormConfigStatus() {
+  if (typeof window.nearcastXweatherStormConfig !== "function") return { status: "unknown" };
+  return window.nearcastXweatherStormConfig() || { status: "unknown" };
 }
 
 function xweatherStormMapsglNamespace() {
@@ -189,7 +203,13 @@ function xweatherStormGuard() {
   if (!mapState.immersive) return { ok: false, status: "standby", message: "Open full map" };
   if (!mapDiagnosticAllowsRadar()) return { ok: false, status: "paused", message: "Map test hides radar" };
   const credentials = xweatherStormCredentials();
-  if (!credentials.clientId || !credentials.clientSecret) return { ok: false, status: "missing-keys", message: "Add Xweather keys" };
+  const config = xweatherStormConfigStatus();
+  if (!credentials.clientId || !credentials.clientSecret) {
+    if (config.status === "unknown" || config.status === "loading") {
+      return { ok: false, status: "loading", message: "Checking storm view" };
+    }
+    return { ok: false, status: "missing-keys", message: "Storm view not configured" };
+  }
   if (!xweatherStormLayerCodes().length) return { ok: false, status: "paused", message: "No storm layers" };
   const usage = typeof readXweatherUsageRecord === "function" ? readXweatherUsageRecord() : { accesses: 0 };
   if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) {
@@ -911,6 +931,13 @@ function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
   if (!record || !mapLibreRecordReady(record)) return false;
   const guard = xweatherStormGuard();
   if (!guard.ok) {
+    if (guard.status === "loading" && typeof window.nearcastLoadXweatherStormConfig === "function") {
+      Promise.resolve(window.nearcastLoadXweatherStormConfig())
+        .then(() => {
+          if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
+        })
+        .catch(() => {});
+    }
     if (xweatherStormActive(record)) stopXweatherStormLayer(record, guard.status);
     else if (xweatherStormPreferenceEnabled() && mapState.immersive) setXweatherStormStatus(record, guard.status, guard.message);
     return false;

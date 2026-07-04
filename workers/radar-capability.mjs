@@ -23,6 +23,7 @@ const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister
 const PLAN_WATCH_TEST_ENDPOINT_PATH = "/api/watch/notifications/test";
 const PLAN_WATCH_PENDING_ENDPOINT_PATH = "/api/watch/notifications/pending";
 const PLAN_WATCH_EVALUATE_ENDPOINT_PATH = "/api/watch/notifications/evaluate";
+const XWEATHER_CONFIG_ENDPOINT_PATH = "/api/xweather/config";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
@@ -40,6 +41,10 @@ const PLAN_WATCH_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_EVALUATOR_LIMIT";
 const PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV = "PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS";
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION";
 const PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION";
+const XWEATHER_CLIENT_ID_ENV = "XWEATHER_CLIENT_ID";
+const XWEATHER_CLIENT_SECRET_ENV = "XWEATHER_CLIENT_SECRET";
+const XWEATHER_LAYER_CODES_ENV = "XWEATHER_LAYER_CODES";
+const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
 const DEFAULT_PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app";
@@ -91,6 +96,9 @@ export default {
     }
     if (url.pathname === PLAN_WATCH_EVALUATE_ENDPOINT_PATH) {
       return handlePlanWatchNotificationEvaluateRequest(request, env);
+    }
+    if (url.pathname === XWEATHER_CONFIG_ENDPOINT_PATH) {
+      return handleXweatherConfigRequest(request, env);
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -157,6 +165,25 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
       maxPlacesPerSubscription: configuredPlanWatchMaxPlacesPerSubscription(env),
       scheduledEvaluationLimit: configuredPlanWatchEvaluatorLimit(env)
     }
+  });
+}
+
+export async function handleXweatherConfigRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const clientId = configuredXweatherClientId(env);
+  const clientSecret = configuredXweatherClientSecret(env);
+  const ready = Boolean(clientId && clientSecret);
+  return jsonResponse({
+    provider: "nearcast-xweather-config",
+    version: 1,
+    checkedAt: new Date().toISOString(),
+    state: ready ? "ready" : "missing-credentials",
+    message: ready ? "" : "Xweather credentials are not configured on the Nearcast Worker.",
+    credentials: ready ? { clientId, clientSecret } : null,
+    layerCodes: configuredXweatherLayerCodes(env)
   });
 }
 
@@ -899,6 +926,25 @@ function r2GenerationRequestStore(bucket, env = {}) {
 
 function configuredPlanWatchVapidPublicKey(env = {}) {
   return String(env?.[PLAN_WATCH_VAPID_PUBLIC_KEY_ENV] || "").trim();
+}
+
+function configuredXweatherClientId(env = {}) {
+  return String(env?.[XWEATHER_CLIENT_ID_ENV] || "").trim();
+}
+
+function configuredXweatherClientSecret(env = {}) {
+  return String(env?.[XWEATHER_CLIENT_SECRET_ENV] || "").trim();
+}
+
+function configuredXweatherLayerCodes(env = {}) {
+  const value = String(env?.[XWEATHER_LAYER_CODES_ENV] || DEFAULT_XWEATHER_LAYER_CODES);
+  const codes = value
+    .split(/[,\s]+/)
+    .map((code) => cleanToken(code, 48).toLowerCase())
+    .filter(Boolean)
+    .filter((code) => /^[a-z0-9-]+$/.test(code))
+    .slice(0, 6);
+  return codes.length ? codes : DEFAULT_XWEATHER_LAYER_CODES.split(",");
 }
 
 function configuredPlanWatchVapidPrivateKey(env = {}) {

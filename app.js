@@ -1,4 +1,4 @@
-const VERSION = "3.0.175";
+const VERSION = "3.0.176";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -18,6 +18,7 @@ const XWEATHER_CLIENT_ID_KEY = "nearcast-xweather-client-id";
 const XWEATHER_CLIENT_SECRET_KEY = "nearcast-xweather-client-secret";
 const XWEATHER_LAYER_CODES_KEY = "nearcast-xweather-layer-codes";
 const XWEATHER_USAGE_KEY = "nearcast-xweather-usage-v1";
+const XWEATHER_CONFIG_ENDPOINT = "/api/xweather/config";
 const XWEATHER_MAPSGL_SCRIPT_ID = "xweatherMapsglScript";
 const XWEATHER_MAPSGL_CSS_ID = "xweatherMapsglCss";
 const XWEATHER_MAPSGL_SCRIPT_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.js";
@@ -233,8 +234,6 @@ if (DEBUG_SETTINGS_ENABLED && radarProviderQueryFlag !== null) {
 const xweatherStormQueryFlag = queryValue("xweatherStorm", "xweatherstorm", "stormView", "stormview");
 if (DEBUG_SETTINGS_ENABLED && xweatherStormQueryFlag !== null) {
   localStorage.setItem(XWEATHER_STORM_MODE_KEY, sanitizeXweatherStormMode(xweatherStormQueryFlag));
-} else if (!DEBUG_SETTINGS_ENABLED) {
-  localStorage.removeItem(XWEATHER_STORM_MODE_KEY);
 }
 
 const xweatherClientIdQueryFlag = queryValue("xweatherClientId", "xweatherclientid", "xweatherId", "xweatherid");
@@ -354,6 +353,9 @@ const state = {
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
+
+let xweatherStormConfigRecord = { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
+let xweatherStormConfigPromise = null;
 
 if (state.mapDiagnosticMode !== "full" && state.mapRenderer !== "gl") {
   state.mapRenderer = "gl";
@@ -2713,6 +2715,7 @@ function init() {
   updateMapDiagnosticModeControl();
   updateRadarSourceZoomControl();
   updateXweatherStormControl();
+  loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
   initInstallPrompt();
@@ -3854,17 +3857,110 @@ function sanitizeXweatherLayerCodes(value) {
     .slice(0, 6);
 }
 
-function storedXweatherLayerCodes() {
+function legacyXweatherDebugCredentials() {
+  if (!DEBUG_SETTINGS_ENABLED) return null;
+  const clientId = String(localStorage.getItem(XWEATHER_CLIENT_ID_KEY) || "").trim();
+  const clientSecret = String(localStorage.getItem(XWEATHER_CLIENT_SECRET_KEY) || "").trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+function normalizeXweatherStormConfig(payload = {}) {
+  const credentials = payload.credentials || {};
+  const clientId = String(credentials.clientId || payload.clientId || "").trim();
+  const clientSecret = String(credentials.clientSecret || payload.clientSecret || "").trim();
+  const layerCodes = sanitizeXweatherLayerCodes(
+    Array.isArray(payload.layerCodes) ? payload.layerCodes.join(",") : payload.layerCodes
+  );
+  const ready = Boolean(clientId && clientSecret && String(payload.state || "").toLowerCase() === "ready");
+  return {
+    provider: payload.provider || "nearcast-xweather-config",
+    version: Number(payload.version) || 1,
+    status: ready ? "ready" : String(payload.state || payload.status || "missing-credentials").trim() || "missing-credentials",
+    checkedAt: Date.now(),
+    credentials: ready ? { clientId, clientSecret } : null,
+    layerCodes: layerCodes.length ? layerCodes : sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
+    message: String(payload.message || "").trim()
+  };
+}
+
+function xweatherStormConfigSnapshot() {
+  const debugCredentials = legacyXweatherDebugCredentials();
+  if (debugCredentials) {
+    return {
+      status: "ready",
+      checkedAt: Date.now(),
+      credentials: debugCredentials,
+      layerCodes: storedXweatherLayerCodes({ ignoreConfig: true }),
+      message: "Using debug credentials"
+    };
+  }
+  return xweatherStormConfigRecord || { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
+}
+
+function xweatherStormCredentialsSnapshot() {
+  const snapshot = xweatherStormConfigSnapshot();
+  return snapshot.credentials?.clientId && snapshot.credentials?.clientSecret ? snapshot.credentials : null;
+}
+
+async function loadXweatherStormConfig(options = {}) {
+  if (legacyXweatherDebugCredentials()) {
+    xweatherStormConfigRecord = xweatherStormConfigSnapshot();
+    updateXweatherStormControl();
+    return xweatherStormConfigRecord;
+  }
+  if (xweatherStormConfigPromise && !options.force) return xweatherStormConfigPromise;
+  if (!xweatherStormConfigRecord || xweatherStormConfigRecord.status === "unknown" || options.force) {
+    xweatherStormConfigRecord = {
+      ...(xweatherStormConfigRecord || {}),
+      status: "loading",
+      checkedAt: Date.now(),
+      credentials: null
+    };
+    updateXweatherStormControl();
+  }
+  xweatherStormConfigPromise = fetchJsonWithTimeout(XWEATHER_CONFIG_ENDPOINT, 5000, null, {
+    cache: "no-store",
+    headers: { Accept: "application/json" }
+  })
+    .then((payload) => {
+      xweatherStormConfigRecord = normalizeXweatherStormConfig(payload);
+      return xweatherStormConfigRecord;
+    })
+    .catch((error) => {
+      xweatherStormConfigRecord = {
+        status: "error",
+        checkedAt: Date.now(),
+        credentials: null,
+        layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
+        message: error?.message || "Storm view config unavailable"
+      };
+      return xweatherStormConfigRecord;
+    })
+    .finally(() => {
+      xweatherStormConfigPromise = null;
+      updateXweatherStormControl();
+      if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
+    });
+  return xweatherStormConfigPromise;
+}
+
+function storedXweatherLayerCodes(options = {}) {
+  const snapshot = options.ignoreConfig ? null : xweatherStormConfigSnapshot();
+  if (snapshot?.layerCodes?.length) return sanitizeXweatherLayerCodes(snapshot.layerCodes.join(","));
   return sanitizeXweatherLayerCodes(localStorage.getItem(XWEATHER_LAYER_CODES_KEY) || XWEATHER_STORM_DEFAULT_LAYERS);
 }
 
 function xweatherStormEnabled() {
-  return Boolean(DEBUG_SETTINGS_ENABLED && state.xweatherStormMode === "xweather");
+  return state.xweatherStormMode === "xweather";
 }
 
 function xweatherStormCredentialsReady() {
-  return Boolean(localStorage.getItem(XWEATHER_CLIENT_ID_KEY) && localStorage.getItem(XWEATHER_CLIENT_SECRET_KEY));
+  return Boolean(xweatherStormCredentialsSnapshot());
 }
+
+window.nearcastXweatherStormConfig = xweatherStormConfigSnapshot;
+window.nearcastXweatherStormCredentials = xweatherStormCredentialsSnapshot;
+window.nearcastLoadXweatherStormConfig = loadXweatherStormConfig;
 
 function xweatherUsageMonthKey(date = new Date()) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -3971,12 +4067,17 @@ function radarProviderMetaText() {
 }
 
 function xweatherStormMetaText() {
-  if (!DEBUG_SETTINGS_ENABLED) return "Hidden";
   const usage = readXweatherUsageRecord();
   const layers = storedXweatherLayerCodes();
   const usageText = `${usage.accesses}/${XWEATHER_MONTHLY_ACCESS_LIMIT} est. accesses`;
-  if (state.xweatherStormMode !== "xweather") return `Off · ${usageText}`;
-  if (!xweatherStormCredentialsReady()) return "Add Xweather keys in URL";
+  const config = xweatherStormConfigSnapshot();
+  if (state.xweatherStormMode !== "xweather") {
+    if (config.status === "ready") return `Off · ready for storm maps`;
+    if (config.status === "loading" || config.status === "unknown") return "Checking storm map access";
+    return "Off · storm maps not configured";
+  }
+  if (config.status === "loading" || config.status === "unknown") return "Checking storm map access";
+  if (!xweatherStormCredentialsReady()) return "Storm maps not configured";
   if (!layers.length) return "No layer codes configured";
   if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) return `Budget paused · ${usageText}`;
   return `On in map · ${layers.join(" + ")} · ${usageText}`;
@@ -3993,6 +4094,7 @@ function setXweatherStormMode(value) {
   state.xweatherStormMode = next;
   localStorage.setItem(XWEATHER_STORM_MODE_KEY, next);
   updateXweatherStormControl();
+  if (next === "xweather") loadXweatherStormConfig({ force: true });
   if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
 }
 

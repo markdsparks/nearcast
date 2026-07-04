@@ -73,6 +73,8 @@ jobs:
         env:
           PLAN_WATCH_VAPID_PRIVATE_KEY: ${{ secrets.PLAN_WATCH_VAPID_PRIVATE_KEY }}
           PLAN_WATCH_TEST_TOKEN: ${{ secrets.PLAN_WATCH_TEST_TOKEN }}
+          XWEATHER_CLIENT_ID: ${{ secrets.XWEATHER_CLIENT_ID }}
+          XWEATHER_CLIENT_SECRET: ${{ secrets.XWEATHER_CLIENT_SECRET }}
         run: |
           if [ -n "$PLAN_WATCH_VAPID_PRIVATE_KEY" ]; then
             printf '%s' "$PLAN_WATCH_VAPID_PRIVATE_KEY" | npx --yes wrangler secret put PLAN_WATCH_VAPID_PRIVATE_KEY
@@ -83,6 +85,16 @@ jobs:
             printf '%s' "$PLAN_WATCH_TEST_TOKEN" | npx --yes wrangler secret put PLAN_WATCH_TEST_TOKEN
           else
             echo "Skipping PLAN_WATCH_TEST_TOKEN because the GitHub secret is not set."
+          fi
+          if [ -n "$XWEATHER_CLIENT_ID" ]; then
+            printf '%s' "$XWEATHER_CLIENT_ID" | npx --yes wrangler secret put XWEATHER_CLIENT_ID
+          else
+            echo "Skipping XWEATHER_CLIENT_ID because the GitHub secret is not set."
+          fi
+          if [ -n "$XWEATHER_CLIENT_SECRET" ]; then
+            printf '%s' "$XWEATHER_CLIENT_SECRET" | npx --yes wrangler secret put XWEATHER_CLIENT_SECRET
+          else
+            echo "Skipping XWEATHER_CLIENT_SECRET because the GitHub secret is not set."
           fi
 
       - name: Purge app edge cache
