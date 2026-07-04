@@ -8,6 +8,7 @@ const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
+const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 10000;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
 const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
@@ -301,6 +302,62 @@ function xweatherStormStatusForChip() {
   return { visible: false };
 }
 
+function waitForXweatherControllerReady(controller) {
+  if (!controller) return Promise.resolve(false);
+  if (controller.isReady) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutTimer = 0;
+    let pollTimer = 0;
+    const cleanupFns = [];
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (pollTimer) clearInterval(pollTimer);
+      cleanupFns.forEach((cleanup) => {
+        try { cleanup(); } catch {}
+      });
+      resolve(Boolean(ready || controller.isReady));
+    };
+    const onLoad = () => finish(true);
+    const addControllerListener = (eventName) => {
+      try {
+        if (typeof controller.once === "function") {
+          controller.once(eventName, onLoad);
+          cleanupFns.push(() => {
+            controller.off?.(eventName, onLoad);
+            controller.removeListener?.(eventName, onLoad);
+          });
+          return true;
+        }
+        if (typeof controller.on === "function") {
+          controller.on(eventName, onLoad);
+          cleanupFns.push(() => {
+            controller.off?.(eventName, onLoad);
+            controller.removeListener?.(eventName, onLoad);
+          });
+          return true;
+        }
+        if (typeof controller.addEventListener === "function") {
+          controller.addEventListener(eventName, onLoad, { once: true });
+          cleanupFns.push(() => controller.removeEventListener?.(eventName, onLoad));
+          return true;
+        }
+      } catch {}
+      return false;
+    };
+
+    addControllerListener("load");
+    addControllerListener("MapController:load");
+    pollTimer = setInterval(() => {
+      if (controller.isReady) finish(true);
+    }, 50);
+    timeoutTimer = setTimeout(() => finish(false), XWEATHER_MAPSGL_READY_TIMEOUT_MS);
+  });
+}
+
 async function startXweatherStormLayer(record) {
   if (!record || record.xweatherStorm?.loadingPromise || xweatherStormActive(record)) return;
   const guard = xweatherStormGuard();
@@ -319,6 +376,17 @@ async function startXweatherStormLayer(record) {
     if (!sdk?.Account || !sdk?.MaplibreMapController) throw new Error("Xweather MapLibre controller unavailable");
     const account = new sdk.Account(credentials.clientId, credentials.clientSecret);
     const controller = new sdk.MaplibreMapController(record.map, { account });
+    const controllerReady = await waitForXweatherControllerReady(controller);
+    if (mapLibreCurrentRecord() !== record || !mapState.immersive || !xweatherStormPreferenceEnabled()) {
+      try { controller.dispose?.(); } catch {}
+      try { controller.destroy?.(); } catch {}
+      return;
+    }
+    if (!controllerReady) {
+      try { controller.dispose?.(); } catch {}
+      try { controller.destroy?.(); } catch {}
+      throw new Error("Xweather storm view timed out");
+    }
     const addedLayers = [];
     layerCodes.forEach((code) => {
       try {
