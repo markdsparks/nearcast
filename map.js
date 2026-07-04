@@ -14,6 +14,8 @@ const XWEATHER_STORM_TIMELINE_PAST_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_FUTURE_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_STEPS = 1000;
 const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 8;
+const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
+const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
 const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
@@ -425,7 +427,7 @@ function xweatherStormTimelineSnapshot(record = mapLibreCurrentRecord()) {
 function xweatherStormTimelineCopy(snapshot = xweatherStormTimelineSnapshot()) {
   const delta = snapshot.currentMs - snapshot.nowMs;
   const abs = Math.abs(delta);
-  const isNow = abs < 45 * 1000;
+  const isNow = abs < XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS;
   const title = isNow ? "Now" : formatTimelineRelative(snapshot.currentMs);
   const meta = delta <= 0
     ? `Observed radar · ${formatTimelineTime(snapshot.currentMs, { showMinutes: true, dayStyle: "none" })}`
@@ -437,6 +439,105 @@ function xweatherStormTimelineCopy(snapshot = xweatherStormTimelineSnapshot()) {
     label,
     source: delta > 0 ? "forecast" : "radar"
   };
+}
+
+function xweatherStormLayerIsObservedLightning(code) {
+  const value = String(code || "").toLowerCase();
+  return value.startsWith("lightning-strikes") || value === "lightning-icons";
+}
+
+function xweatherStormObservedLightningLayerCodes(record = mapLibreCurrentRecord()) {
+  const storm = record?.xweatherStorm;
+  const codes = Array.isArray(storm?.addedLayers) && storm.addedLayers.length
+    ? storm.addedLayers
+    : storm?.layerCodes;
+  return (Array.isArray(codes) ? codes : []).filter(xweatherStormLayerIsObservedLightning);
+}
+
+function setXweatherObservedLightningVisible(record = mapLibreCurrentRecord(), visible = true, reason = "") {
+  const storm = record?.xweatherStorm;
+  const controller = storm?.controller;
+  const codes = xweatherStormObservedLightningLayerCodes(record);
+  if (!storm || !controller || !codes.length) return false;
+  const next = Boolean(visible);
+  if (storm.observedLightningVisible === next) return true;
+  codes.forEach((code) => {
+    try { controller.setWeatherLayerVisibility?.(code, next); } catch {}
+  });
+  storm.observedLightningVisible = next;
+  storm.observedLightningHiddenReason = next ? "" : reason;
+  return true;
+}
+
+function clearXweatherObservedLightningSettle(record = mapLibreCurrentRecord()) {
+  const storm = record?.xweatherStorm;
+  if (!storm?.observedLightningSettleTimer) return;
+  clearTimeout(storm.observedLightningSettleTimer);
+  storm.observedLightningSettleTimer = 0;
+}
+
+function scheduleXweatherObservedLightningRestore(record = mapLibreCurrentRecord(), targetMs = null) {
+  const storm = record?.xweatherStorm;
+  if (!storm) return;
+  clearXweatherObservedLightningSettle(record);
+  const snapshot = xweatherStormTimelineSnapshot(record);
+  const effectiveTargetMs = Number.isFinite(Number(targetMs)) ? Number(targetMs) : snapshot.currentMs;
+  if (effectiveTargetMs > snapshot.nowMs + XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS) return;
+  storm.observedLightningSettleTimer = setTimeout(() => {
+    if (record.xweatherStorm !== storm) return;
+    storm.observedLightningSettleTimer = 0;
+    const latest = xweatherStormTimelineSnapshot(record);
+    if (latest.currentMs <= latest.nowMs + XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS) {
+      setXweatherObservedLightningVisible(record, true);
+    }
+  }, XWEATHER_STORM_LIGHTNING_SETTLE_MS);
+}
+
+function syncXweatherStormLightningVisibility(record = mapLibreCurrentRecord(), snapshot = xweatherStormTimelineSnapshot(record), options = {}) {
+  const storm = record?.xweatherStorm;
+  if (!storm || !xweatherStormObservedLightningLayerCodes(record).length) return;
+  const effectiveCurrentMs = Number.isFinite(Number(options.targetMs)) ? Number(options.targetMs) : snapshot.currentMs;
+  const isFuture = effectiveCurrentMs > snapshot.nowMs + XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS;
+  if (isFuture) {
+    clearXweatherObservedLightningSettle(record);
+    setXweatherObservedLightningVisible(record, false, "future");
+    return;
+  }
+  if (options.scrubbing) {
+    setXweatherObservedLightningVisible(record, false, "scrubbing");
+    scheduleXweatherObservedLightningRestore(record, effectiveCurrentMs);
+    return;
+  }
+  if (!storm.observedLightningSettleTimer) {
+    setXweatherObservedLightningVisible(record, true);
+  }
+}
+
+function syncXweatherStormTimelineJumpControls(record = mapLibreCurrentRecord(), snapshot = xweatherStormTimelineSnapshot(record)) {
+  const wrap = document.getElementById("immTimeJumps");
+  if (!wrap) return;
+  const show = mapState.immersive && xweatherStormActive(record);
+  wrap.hidden = !show;
+  if (!show) return;
+  const currentOffsetMinutes = Math.round((snapshot.currentMs - snapshot.nowMs) / 60000);
+  wrap.querySelectorAll("[data-storm-jump]").forEach((button) => {
+    const minutes = Number(button.getAttribute("data-storm-jump"));
+    const targetMs = snapshot.nowMs + minutes * 60000;
+    const active = Math.abs(currentOffsetMinutes - minutes) <= 3;
+    button.disabled = targetMs < snapshot.startMs || targetMs > snapshot.endMs;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function hideXweatherStormTimelineJumpControls() {
+  const wrap = document.getElementById("immTimeJumps");
+  if (!wrap) return;
+  wrap.hidden = true;
+  wrap.querySelectorAll("[data-storm-jump]").forEach((button) => {
+    button.classList.remove("is-active");
+    button.setAttribute("aria-pressed", "false");
+  });
 }
 
 function syncXweatherStormTimelineHud(record = mapLibreCurrentRecord(), options = {}) {
@@ -461,6 +562,8 @@ function syncXweatherStormTimelineHud(record = mapLibreCurrentRecord(), options 
   }
 
   setFrameLabel(`Storm motion · ${copy.label}`);
+  syncXweatherStormLightningVisibility(record, snapshot, options);
+  syncXweatherStormTimelineJumpControls(record, snapshot);
   renderXweatherStormTimelineBubble(snapshot, options);
   return true;
 }
@@ -492,14 +595,33 @@ function scheduleXweatherStormTimelineHudSync(record = mapLibreCurrentRecord(), 
 function startXweatherStormTimelineHudLoop(record = mapLibreCurrentRecord()) {
   const storm = record?.xweatherStorm;
   if (!storm || storm.timelineLoopRaf) return;
-  const tick = () => {
+  const tick = (now) => {
     if (!xweatherStormActive(record) || !mapState.playing) {
-      if (storm) storm.timelineLoopRaf = 0;
+      if (storm) {
+        storm.timelineLoopRaf = 0;
+        storm.timelinePlaybackClock = 0;
+      }
       return;
+    }
+    const timeline = storm.timeline || storm.controller?.timeline;
+    if (timeline) {
+      const snapshot = xweatherStormTimelineSnapshot(record);
+      const previousClock = Number.isFinite(Number(storm.timelinePlaybackClock)) && storm.timelinePlaybackClock
+        ? storm.timelinePlaybackClock
+        : now;
+      const dt = Math.max(0, now - previousClock);
+      storm.timelinePlaybackClock = now;
+      const durationMs = Math.max(1000, XWEATHER_STORM_TIMELINE_LOOP_SECONDS * 1000);
+      const nextPosition = (snapshot.position + dt / durationMs) % 1;
+      try { timeline.goTo(nextPosition); } catch {
+        const targetMs = snapshot.startMs + nextPosition * Math.max(1, snapshot.endMs - snapshot.startMs);
+        try { timeline.goToDate(new Date(targetMs)); } catch {}
+      }
     }
     syncXweatherStormTimelineHud(record);
     storm.timelineLoopRaf = requestAnimationFrame(tick);
   };
+  storm.timelinePlaybackClock = 0;
   storm.timelineLoopRaf = requestAnimationFrame(tick);
 }
 
@@ -518,6 +640,8 @@ function clearXweatherStormTimelineBindings(record) {
     cancelAnimationFrame(storm.timelineLoopRaf);
     storm.timelineLoopRaf = 0;
   }
+  storm.timelinePlaybackClock = 0;
+  clearXweatherObservedLightningSettle(record);
   try { storm.timeline?.pause?.(); } catch {}
 }
 
@@ -567,17 +691,28 @@ function setXweatherStormTimelinePlaying(record = mapLibreCurrentRecord(), playi
   if (playing) {
     const snapshot = xweatherStormTimelineSnapshot(record);
     const atEnd = snapshot.position >= 0.995;
-    try {
-      timeline.play?.(atEnd ? 0 : snapshot.position);
-    } catch {
-      try { timeline.resume?.(); } catch {}
+    try { timeline.pause?.(); } catch {}
+    if (atEnd) {
+      try { timeline.goTo(0); } catch {
+        try { timeline.goToDate(new Date(snapshot.startMs)); } catch {}
+      }
     }
+    if (storm.timelineLoopRaf) {
+      cancelAnimationFrame(storm.timelineLoopRaf);
+      storm.timelineLoopRaf = 0;
+    }
+    storm.timelinePlaybackClock = 0;
     mapState.playing = true;
     mapState.userPausedRadar = false;
     setPlaybackButtonState(els.playRadar, true);
     showTimelineTimeBubble();
     startXweatherStormTimelineHudLoop(record);
   } else {
+    if (storm.timelineLoopRaf) {
+      cancelAnimationFrame(storm.timelineLoopRaf);
+      storm.timelineLoopRaf = 0;
+    }
+    storm.timelinePlaybackClock = 0;
     try { timeline.pause?.(); } catch {}
     mapState.playing = false;
     setPlaybackButtonState(els.playRadar, false);
@@ -597,13 +732,28 @@ function scrubXweatherStormTimeline(position) {
   const timeline = record.xweatherStorm.timeline || record.xweatherStorm.controller?.timeline;
   if (!timeline) return false;
   const normalized = clamp(Number(position) / XWEATHER_STORM_TIMELINE_STEPS, 0, 1);
+  const before = xweatherStormTimelineSnapshot(record);
+  const targetMs = before.startMs + normalized * Math.max(1, before.endMs - before.startMs);
   try { timeline.goTo(normalized); } catch {
-    const snapshot = xweatherStormTimelineSnapshot(record);
-    const targetMs = snapshot.startMs + normalized * Math.max(1, snapshot.endMs - snapshot.startMs);
     try { timeline.goToDate(new Date(targetMs)); } catch {}
   }
-  syncXweatherStormTimelineHud(record, { show: true });
+  syncXweatherStormTimelineHud(record, { show: true, scrubbing: true, targetMs });
   return true;
+}
+
+function jumpXweatherStormTimeline(minutes) {
+  const record = mapLibreCurrentRecord();
+  if (!xweatherStormActive(record)) return false;
+  const snapshot = xweatherStormTimelineSnapshot(record);
+  const offsetMinutes = Number(minutes);
+  if (!Number.isFinite(offsetMinutes)) return false;
+  const targetMs = clamp(
+    snapshot.nowMs + offsetMinutes * 60000,
+    snapshot.startMs,
+    snapshot.endMs
+  );
+  const normalized = (targetMs - snapshot.startMs) / Math.max(1, snapshot.endMs - snapshot.startMs);
+  return scrubXweatherStormTimeline(normalized * XWEATHER_STORM_TIMELINE_STEPS);
 }
 
 function toggleXweatherStormTimelinePlayback(record = mapLibreCurrentRecord()) {
@@ -682,6 +832,9 @@ async function startXweatherStormLayer(record) {
       timelineCleanupFns: [],
       timelineSyncRaf: 0,
       timelineLoopRaf: 0,
+      timelinePlaybackClock: 0,
+      observedLightningVisible: null,
+      observedLightningSettleTimer: 0,
       addedLayers,
       layerCodes,
       startedAt: Date.now(),
@@ -721,6 +874,7 @@ function stopXweatherStormLayer(record, reason = "off") {
       try { storm.controller.removeWeatherLayer?.(code); } catch {}
     });
   }
+  hideXweatherStormTimelineJumpControls();
   try { storm.controller?.removeLegendControl?.(); } catch {}
   try { storm.controller?.removeDataInspectorControl?.(); } catch {}
   try { storm.controller?.dispose?.(); } catch {}
@@ -6392,6 +6546,7 @@ function updateMapModeButtons() {
 
 function updateTimelineEraVisuals() {
   if (syncXweatherStormTimelineHud(mapLibreCurrentRecord())) return;
+  hideXweatherStormTimelineJumpControls();
   const slider = els.frameSlider;
   if (!slider) return;
   const max = Math.max(0, mapState.frames.length - 1);
@@ -7614,6 +7769,9 @@ function bindImmersiveModeButtons() {
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
+  document.querySelectorAll("#immTimeJumps [data-storm-jump]").forEach((button) => {
+    bindTapAction(button, () => jumpXweatherStormTimeline(button.getAttribute("data-storm-jump")));
+  });
   const slider = document.getElementById("immSlider");
   slider.oninput = (e) => scrubToFrame(Number(e.target.value));
   slider.onpointerdown = () => showTimelineTimeBubble(2400);

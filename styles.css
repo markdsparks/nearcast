@@ -7525,6 +7525,56 @@ body.map-immersive-active #mapLegend {
   height: 48px;
 }
 
+.imm-time-jumps {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 36px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.imm-time-jumps[hidden] {
+  display: none;
+}
+
+.imm-time-jumps button {
+  min-width: 0;
+  min-height: 22px;
+  padding: 3px 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.32);
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow: 0 7px 18px rgba(2, 6, 12, 0.14);
+  cursor: pointer;
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+
+.imm-time-jumps button.is-active {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.72);
+  color: rgba(8, 12, 18, 0.88);
+}
+
+.imm-time-jumps button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.imm-time-jumps button:not(:disabled):active {
+  transform: scale(0.95);
+}
+
 .imm-timeline .imm-play-button {
   position: relative;
   z-index: 1;
