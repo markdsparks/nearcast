@@ -1,4 +1,4 @@
-const VERSION = "3.0.167";
+const VERSION = "3.0.168";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -8577,13 +8577,17 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const label = position === 0 ? "Now" : formatHour(time);
     const title = stormPotential ? `${code}; thunder possible` : code;
-    const rainLabel = measuredWet ? "Rain" : nowPrecipPhase === "imminent" ? "Soon" : rain >= 20 ? `${rain}%` : "";
-    const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rain)) : rain;
+    const rainChance = Math.max(0, Math.min(100, Math.round(Number(rain) || 0)));
+    const hasRainChance = rainChance > 0;
+    const rainLabel = measuredWet ? "Rain" : nowPrecipPhase === "imminent" ? "Soon" : hasRainChance ? `${rainChance}%` : "";
+    const rainIsEmphasized = measuredWet || nowPrecipPhase === "imminent" || rainChance >= 20;
+    const rainClass = rainLabel ? ` has-rain${rainIsEmphasized ? " wet" : " is-low"}` : "";
+    const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rainChance)) : rainChance;
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
     const memoryItems = planMemory.markers.get(index) || [];
     const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
     const hasPlanMemory = planMemory.overlaps.has(index);
-    const rainAria = measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : rain >= 20 ? `, ${rain}% rain` : "";
+    const rainAria = measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : hasRainChance ? `, ${rainChance}% rain` : "";
     const cardLabel = `${label}: ${code}, ${temp} degrees${rainAria}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
     return `
       <article class="hour-card${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
@@ -8591,7 +8595,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
-        <span class="hour-rain${rainLabel ? " wet" : ""}">${rainLabel}</span>
+        <span class="hour-rain${rainClass}">${rainLabel}</span>
         <div class="rain-bar" aria-hidden="true"><i style="width:${rainBarWidth}%"></i></div>
       </article>
     `;

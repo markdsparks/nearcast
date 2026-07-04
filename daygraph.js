@@ -569,7 +569,7 @@ function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
 
   if (hour.activePrecip) {
     signals.push({ label: "Rain now", tone: " is-wet" });
-  } else if (hour.pop >= 20) {
+  } else if (hour.pop > 0) {
     signals.push({ label: `${hour.pop}% rain`, tone: hour.precipPrimary ? " is-wet" : "" });
   }
 

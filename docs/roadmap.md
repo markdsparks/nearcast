@@ -1,6 +1,6 @@
 # Nearcast roadmap - from beautiful to indispensable
 
-Living product roadmap. Current as of **v3.0.167**.
+Living product roadmap. Current as of **v3.0.168**.
 
 Nearcast is no longer a generic weather-app build. The product thesis is:
 
@@ -43,6 +43,9 @@ turning weather into timely, human guidance for places and plans.
 - **Contextual PWA install entry**: install guidance is now an earned,
   dismissible nudge in the app menu and Today surface instead of an old release
   splash.
+- **Hourly rain visibility**: hourly surfaces now keep nonzero rain chance
+  visible by default, while still reserving stronger emphasis for active or
+  meaningful rain signals.
 - **Cleaner normal settings**: debug controls for map renderer, radar provider,
   radar zoom, and diagnostics are hidden unless explicitly enabled.
 - **Local-first memory**: personal plan context stays inspectable and forgettable

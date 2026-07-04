@@ -6793,11 +6793,23 @@ h2 {
 
 .hour-card .hour-rain {
   min-height: 0.95em;
-  color: var(--blue);
+  color: var(--muted);
   font-size: 0.7rem;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+.hour-card .hour-rain.has-rain {
+  color: color-mix(in srgb, var(--blue) 76%, var(--muted));
+}
+
+.hour-card .hour-rain.wet {
+  color: var(--blue);
+}
+
+.hour-card .hour-rain.is-low {
+  opacity: 0.72;
 }
 
 .hour-icon {
