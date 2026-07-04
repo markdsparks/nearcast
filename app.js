@@ -1,4 +1,4 @@
-const VERSION = "3.0.174";
+const VERSION = "3.0.175";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -26,6 +26,10 @@ const XWEATHER_STORM_DEFAULT_LAYERS = "radar,lightning-strikes-icons";
 const XWEATHER_MAPSGL_SESSION_ACCESS_COST = 150;
 const XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
 const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
+const DEVICE_LOCATION_KEY = "nearcast-device-location-v1";
+const DEVICE_LOCATION_MAP_MAX_AGE_MS = 30 * 60 * 1000;
+const DEVICE_LOCATION_REFRESH_MAX_AGE_MS = 5 * 60 * 1000;
+const DEVICE_LOCATION_REFRESH_TIMEOUT_MS = 4000;
 const DEFAULT_RADAR_CAPABILITY_ENDPOINT = "/api/radar/capability";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_FRAME_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json";
@@ -3991,6 +3995,80 @@ function setXweatherStormMode(value) {
   updateXweatherStormControl();
   if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
 }
+
+function persistDeviceLocation(coords, source = "gps") {
+  const latitude = Number(coords?.latitude);
+  const longitude = Number(coords?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const location = {
+    id: "device-location",
+    name: "You",
+    latitude,
+    longitude,
+    accuracy: Number.isFinite(Number(coords?.accuracy)) ? Math.max(0, Number(coords.accuracy)) : null,
+    heading: Number.isFinite(Number(coords?.heading)) ? Number(coords.heading) : null,
+    speed: Number.isFinite(Number(coords?.speed)) ? Number(coords.speed) : null,
+    source,
+    savedAt: Date.now()
+  };
+  try { localStorage.setItem(DEVICE_LOCATION_KEY, JSON.stringify(location)); } catch {}
+  return location;
+}
+
+function readDeviceLocation(options = {}) {
+  const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
+    ? Math.max(0, Number(options.maxAgeMs))
+    : DEVICE_LOCATION_MAP_MAX_AGE_MS;
+  try {
+    const location = JSON.parse(localStorage.getItem(DEVICE_LOCATION_KEY) || "null");
+    if (!location || !Number.isFinite(Number(location.latitude)) || !Number.isFinite(Number(location.longitude))) return null;
+    const savedAt = Number(location.savedAt) || 0;
+    if (maxAgeMs && Date.now() - savedAt > maxAgeMs) return null;
+    return {
+      id: "device-location",
+      name: "You",
+      latitude: Number(location.latitude),
+      longitude: Number(location.longitude),
+      accuracy: Number.isFinite(Number(location.accuracy)) ? Number(location.accuracy) : null,
+      savedAt
+    };
+  } catch {
+    return null;
+  }
+}
+
+function requestDeviceLocationOnce() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(persistDeviceLocation(position.coords, "gps")),
+      () => resolve(readDeviceLocation()),
+      {
+        enableHighAccuracy: false,
+        timeout: DEVICE_LOCATION_REFRESH_TIMEOUT_MS,
+        maximumAge: DEVICE_LOCATION_REFRESH_MAX_AGE_MS
+      }
+    );
+  });
+}
+
+async function refreshDeviceLocationForMapIfAllowed() {
+  const recent = readDeviceLocation();
+  if (!navigator.geolocation) return recent;
+  if (navigator.permissions?.query) {
+    try {
+      const permission = await navigator.permissions.query({ name: "geolocation" });
+      if (permission?.state !== "granted") return recent;
+      return await requestDeviceLocationOnce();
+    } catch {
+      return recent;
+    }
+  }
+  return recent;
+}
+
+window.nearcastLastDeviceLocation = readDeviceLocation;
+window.nearcastRefreshDeviceLocationForMap = refreshDeviceLocationForMapIfAllowed;
 
 function syncGeneratedRadarProviderOption() {
   if (!els.radarProvider) return;
@@ -8850,6 +8928,7 @@ async function useCurrentLocation() {
     async (position) => {
       if (lookupSeq !== locationLookupSeq) return;
       clearLocationLookupWatchdog(lookupSeq);
+      persistDeviceLocation(position.coords, "gps");
       const fallback = placeFromCoordinates(position.coords);
       setStatus("Naming your location...");
       try {

@@ -5,6 +5,7 @@ const MAP_PAN_REBASE_PX = 96;
 const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
 const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
 const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
+const MAP_DEVICE_LOCATION_KEY = "device-location";
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
@@ -2971,6 +2972,7 @@ function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
         placedBounds.push(layout.bounds);
       });
   }
+  renderMapLibreDeviceLocationMarker(record);
 
   record.markerEntries.forEach((entry, key) => {
     if (liveKeys.has(key)) return;
@@ -2978,6 +2980,89 @@ function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
     record.markerEntries.delete(key);
   });
   syncMapLibreDiagnosticReadout(record);
+}
+
+function mapDeviceLocation() {
+  if (!mapState.immersive || typeof window.nearcastLastDeviceLocation !== "function") return null;
+  const location = window.nearcastLastDeviceLocation();
+  const latitude = Number(location?.latitude);
+  const longitude = Number(location?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    id: MAP_DEVICE_LOCATION_KEY,
+    name: "You",
+    latitude,
+    longitude,
+    accuracy: Number.isFinite(Number(location.accuracy)) ? Math.max(0, Number(location.accuracy)) : null,
+    savedAt: Number(location.savedAt) || 0
+  };
+}
+
+function deviceLocationPointInView(record, location) {
+  if (!record?.map || !location) return null;
+  const size = record.map.getContainer()?.getBoundingClientRect?.();
+  const point = record.map.project([Number(location.longitude), Number(location.latitude)]);
+  if (!point || !size) return null;
+  if (point.x < -64 || point.x > size.width + 64 || point.y < -64 || point.y > size.height + 64) return null;
+  return point;
+}
+
+function deviceLocationElement(location) {
+  const element = document.createElement("div");
+  element.className = "map-device-location nearcast-gl-marker";
+  element.setAttribute("role", "img");
+  element.setAttribute("aria-label", deviceLocationAria(location));
+  element.innerHTML = `
+    <span class="map-device-accuracy" aria-hidden="true"></span>
+    <span class="map-device-pulse" aria-hidden="true"></span>
+    <span class="map-device-dot" aria-hidden="true"></span>
+  `;
+  applyDeviceLocationAccuracy(element, location);
+  return element;
+}
+
+function deviceLocationAria(location) {
+  const accuracy = Number(location?.accuracy);
+  return Number.isFinite(accuracy) && accuracy > 0
+    ? `Your current location, accurate to about ${Math.round(accuracy)} meters`
+    : "Your current location";
+}
+
+function applyDeviceLocationAccuracy(element, location) {
+  const accuracy = Number(location?.accuracy);
+  const radius = Number.isFinite(accuracy) && accuracy > 0
+    ? Math.round(clamp(accuracy / 8, 18, 58))
+    : 30;
+  element.style.setProperty("--device-accuracy-size", `${radius}px`);
+  element.setAttribute("aria-label", deviceLocationAria(location));
+}
+
+function renderMapLibreDeviceLocationMarker(record = mapLibreCurrentRecord()) {
+  const location = mapDeviceLocation();
+  const point = deviceLocationPointInView(record, location);
+  if (!location || !point) {
+    clearMapLibreDeviceLocationMarker(record);
+    return;
+  }
+  if (!record.deviceLocationMarker) {
+    const element = deviceLocationElement(location);
+    const marker = new maplibregl.Marker({
+      element,
+      anchor: "center"
+    })
+      .setLngLat([Number(location.longitude), Number(location.latitude)])
+      .addTo(record.map);
+    record.deviceLocationMarker = { marker, element };
+  } else {
+    record.deviceLocationMarker.marker.setLngLat([Number(location.longitude), Number(location.latitude)]);
+    applyDeviceLocationAccuracy(record.deviceLocationMarker.element, location);
+  }
+}
+
+function clearMapLibreDeviceLocationMarker(record = mapLibreCurrentRecord()) {
+  if (!record?.deviceLocationMarker) return;
+  record.deviceLocationMarker.marker.remove();
+  record.deviceLocationMarker = null;
 }
 
 function mapLibreMarkerLayout(record, place) {
@@ -3034,9 +3119,12 @@ function applyMapLibreMarkerData(element, data) {
 }
 
 function clearMapLibreMarkers(record) {
-  if (!record?.markerEntries) return;
-  record.markerEntries.forEach((entry) => entry.marker.remove());
-  record.markerEntries.clear();
+  if (!record) return;
+  if (record.markerEntries) {
+    record.markerEntries.forEach((entry) => entry.marker.remove());
+    record.markerEntries.clear();
+  }
+  clearMapLibreDeviceLocationMarker(record);
   syncMapLibreDiagnosticReadout(record);
 }
 
@@ -4202,6 +4290,7 @@ function renderMapMarkers() {
         const marker = renderMapMarker(place, { viewport, layout, markerNodes, liveKeys });
         if (marker?.bounds) placedBounds.push(marker.bounds);
       });
+    renderDeviceLocationMarker({ viewport, markerNodes, liveKeys });
   }
 
   markerNodes.forEach((node, key) => {
@@ -4209,6 +4298,40 @@ function renderMapMarkers() {
     node.remove();
     markerNodes.delete(key);
   });
+}
+
+function renderDeviceLocationMarker(options = {}) {
+  const location = mapDeviceLocation();
+  const viewport = options.viewport || getMapViewport();
+  const layout = deviceLocationLayout(location, viewport);
+  if (!layout || !els.markerLayer) return null;
+
+  const markerNodes = options.markerNodes || mapMarkerNodes();
+  const liveKeys = options.liveKeys || new Set();
+  let marker = markerNodes.get(MAP_DEVICE_LOCATION_KEY);
+  if (!marker || !marker.isConnected) {
+    marker = deviceLocationElement(location);
+    marker.dataset.markerKey = MAP_DEVICE_LOCATION_KEY;
+    els.markerLayer.appendChild(marker);
+    markerNodes.set(MAP_DEVICE_LOCATION_KEY, marker);
+  }
+  liveKeys.add(MAP_DEVICE_LOCATION_KEY);
+  applyDeviceLocationAccuracy(marker, location);
+  marker.style.transform = `translate3d(${Math.round(layout.left)}px, ${Math.round(layout.top)}px, 0) translate(-50%, -50%)`;
+  return layout;
+}
+
+function deviceLocationLayout(location, viewport = getMapViewport()) {
+  if (!location) return null;
+  const point = projectLatLon(location.latitude, location.longitude, mapState.zoom);
+  const left = point.x - (viewport.center.x - viewport.width / 2);
+  const top = point.y - (viewport.center.y - viewport.height / 2);
+  if (left < -64 || left > viewport.width + 64 || top < -64 || top > viewport.height + 64) return null;
+  return {
+    left,
+    top,
+    bounds: mapMarkerBounds(left, top, 44, 44)
+  };
 }
 
 async function setMapMode(mode) {
@@ -7726,6 +7849,7 @@ function enterImmersiveMap() {
     renderMapLegend();
     showFrame(mapState.frameIndex);
   };
+  refreshDeviceLocationForImmersiveMap();
   requestAnimationFrame(() => requestAnimationFrame(renderImmersiveFrame));
   setTimeout(renderImmersiveFrame, 140);
   loadMapFrames(true, { timelineKind: "precip", focusNow: true });
@@ -7741,6 +7865,16 @@ function enterImmersiveMap() {
     bindImmersiveDrag();
   }
   document.addEventListener("keydown", onImmersiveKey);
+}
+
+function refreshDeviceLocationForImmersiveMap() {
+  if (typeof window.nearcastRefreshDeviceLocationForMap !== "function") return;
+  Promise.resolve(window.nearcastRefreshDeviceLocationForMap())
+    .then(() => {
+      if (!mapState.immersive) return;
+      renderMapMarkers();
+    })
+    .catch(() => {});
 }
 
 function exitImmersiveMap() {
