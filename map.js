@@ -443,7 +443,7 @@ function xweatherStormStatusForChip() {
   const record = mapLibreCurrentRecord();
   const status = record?.xweatherStorm?.status || xweatherStormGuard().status;
   const message = record?.xweatherStorm?.message || xweatherStormGuard().message || "";
-  if (status === "active") return { visible: true, ready: true, text: "Storm view" };
+  if (status === "active") return { visible: false };
   if (status === "loading") return { visible: false };
   if (status === "error") return { visible: true, ready: false, text: message || "Storm view unavailable" };
   if ([
@@ -616,30 +616,21 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
 }
 
 function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
-  const button = document.getElementById("immStormActivate");
   const entry = document.getElementById("immStormEntry");
-  if (!button && !entry) return;
+  if (!entry) return;
   const state = xweatherStormActivationControlState(record);
-  const entryVisible = Boolean(state.visible && state.enabled && state.action === "activate");
-  if (entry) {
-    entry.hidden = !entryVisible;
-    entry.disabled = !entryVisible;
-    entry.dataset.tone = entryVisible ? "ready" : state.tone || "standby";
-    entry.dataset.action = entryVisible ? "explain" : state.action || "";
-    entry.setAttribute("aria-label", state.detail ? `${state.label}. ${state.detail}` : state.label || "Enhanced Storm View available");
-    entry.setAttribute("title", state.label || "Enhanced Storm View");
-  }
-  if (!button) return;
-  const statusVisible = Boolean(state.visible && !entryVisible);
-  button.hidden = !statusVisible;
-  button.disabled = !state.enabled;
-  button.dataset.tone = state.tone || "standby";
-  button.dataset.action = state.action || "";
-  button.setAttribute("aria-pressed", String(state.tone === "active"));
-  const label = button.querySelector("[data-storm-activate-label]");
-  const detail = button.querySelector("[data-storm-activate-detail]");
-  if (label) label.textContent = state.label || "Storm View";
-  if (detail) detail.textContent = state.detail || "";
+  const entryVisible = Boolean(
+    state.visible &&
+    state.enabled &&
+    ["activate", "retry", "cancel", "deactivate"].includes(state.action)
+  );
+  entry.hidden = !entryVisible;
+  entry.disabled = !entryVisible;
+  entry.dataset.tone = state.tone || "standby";
+  entry.dataset.action = state.action || "";
+  entry.setAttribute("aria-pressed", String(state.tone === "active"));
+  entry.setAttribute("aria-label", state.detail ? `${state.label}. ${state.detail}` : state.label || "Enhanced Storm View");
+  entry.setAttribute("title", state.label || "Enhanced Storm View");
 }
 
 function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
@@ -722,6 +713,16 @@ function activateXweatherStormFromSheet() {
   const record = mapLibreCurrentRecord();
   closeXweatherStormSheet();
   startXweatherStormActivation(record);
+}
+
+function handleXweatherStormEntry() {
+  const state = xweatherStormActivationControlState(mapLibreCurrentRecord());
+  if (!state.enabled) return;
+  if (state.action === "activate") {
+    openXweatherStormSheet();
+    return;
+  }
+  toggleXweatherStormActivation();
 }
 
 function waitForXweatherControllerReady(controller) {
@@ -8372,8 +8373,7 @@ function bindImmersiveModeButtons() {
     exitImmersiveMap();
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
-  bindTapAction(document.getElementById("immStormEntry"), openXweatherStormSheet);
-  bindTapAction(document.getElementById("immStormActivate"), toggleXweatherStormActivation);
+  bindTapAction(document.getElementById("immStormEntry"), handleXweatherStormEntry);
   bindTapAction(document.getElementById("stormViewSheetClose"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewBackdrop"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewCancel"), closeXweatherStormSheet);
