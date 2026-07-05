@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30196";
-const ASSET_VERSION = "3.0.196";
+const CACHE = "nearcast-v30197";
+const ASSET_VERSION = "3.0.197";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -145,6 +145,15 @@ function hasPushNotificationContent(payload) {
   return Boolean(payload && (payload.title || payload.body));
 }
 
+function cleanNotificationRouteParam(value, maxLength = 64) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength)
+    .replace(/[^a-zA-Z0-9._:-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function nearcastNotificationTargetUrl(payload = {}) {
   const rawUrl = payload.url || BASE;
   let url;
@@ -157,13 +166,22 @@ function nearcastNotificationTargetUrl(payload = {}) {
     url = new URL(BASE, self.location.origin + BASE);
   }
 
-  const memoryId = String(payload.memoryId || "").trim();
-  const placeId = String(payload.placeId || "").trim();
-  const target = memoryId ? "plan" : placeId ? "place" : "watching";
+  const memoryId = String(payload.memoryId || url.searchParams.get("memoryId") || "").trim();
+  const placeId = String(payload.placeId || url.searchParams.get("placeId") || "").trim();
+  const target = cleanNotificationRouteParam(payload.target || url.searchParams.get("target"), 40) ||
+    (memoryId ? "plan" : placeId ? "place" : "watching");
+  const detail = cleanNotificationRouteParam(payload.detail || url.searchParams.get("detail"), 32);
+  const signal = cleanNotificationRouteParam(payload.signal || url.searchParams.get("signal"), 64);
+  const timeScope = cleanNotificationRouteParam(payload.timeScope || url.searchParams.get("timeScope"), 32);
+  const mode = cleanNotificationRouteParam(payload.mode || url.searchParams.get("mode"), 40);
   url.searchParams.set("nearcast", "notification");
   url.searchParams.set("target", target);
   if (memoryId) url.searchParams.set("memoryId", memoryId);
   if (placeId) url.searchParams.set("placeId", placeId);
+  if (detail) url.searchParams.set("detail", detail);
+  if (signal) url.searchParams.set("signal", signal);
+  if (timeScope) url.searchParams.set("timeScope", timeScope);
+  if (mode) url.searchParams.set("mode", mode);
   if (payload.source) url.searchParams.set("source", String(payload.source).slice(0, 64));
   return url.href;
 }
@@ -208,6 +226,11 @@ async function showPlanWatchPushNotification(data) {
       url: nearcastNotificationTargetUrl(payload),
       memoryId: payload.memoryId || "",
       placeId: payload.placeId || "",
+      target: payload.target || "",
+      detail: payload.detail || "",
+      signal: payload.signal || "",
+      timeScope: payload.timeScope || "",
+      mode: payload.mode || "",
       source: payload.source || "plan-watch-push"
     }
   };

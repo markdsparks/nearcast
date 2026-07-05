@@ -2131,10 +2131,30 @@ function savedPlaceWatchLastKnownFromState(watchedPlace, current, change = {}) {
   };
 }
 
+function savedPlaceWatchNotificationRoute(change = {}, current = {}) {
+  const type = cleanToken(change.type || current.signal || "place-watch", 64).toLowerCase();
+  const dayLabel = cleanToken(change.day?.label || "", 32).toLowerCase();
+  if (type.includes("alert")) {
+    return { target: "alerts", detail: "alerts", timeScope: dayLabel || "today" };
+  }
+  if (type.includes("heat")) {
+    return { target: "place-detail", detail: "feels", timeScope: dayLabel || "today" };
+  }
+  if (type.includes("wind")) {
+    return { target: "place-detail", detail: "wind", timeScope: dayLabel || "today" };
+  }
+  if (type.includes("storm") || type.includes("rain") || type.includes("clear") || type.includes("precip")) {
+    return { target: "place-detail", detail: "rain", timeScope: dayLabel || "today" };
+  }
+  return { target: "watching", detail: "", timeScope: dayLabel || "" };
+}
+
 function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}) {
   const id = cleanToken(watchedPlace.id, 80);
+  const signal = change.type || current.signal || "place-watch";
+  const route = savedPlaceWatchNotificationRoute(change, current);
   return {
-    type: change.type || current.signal || "place-watch",
+    type: signal,
     priority: change.priority || 50,
     notification: {
       title: change.title || `Nearcast: ${watchedPlace.place?.name || "Saved place"}`,
@@ -2144,9 +2164,20 @@ function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
       url: typeof sharedPlanWatchNotificationTargetUrl === "function"
-        ? sharedPlanWatchNotificationTargetUrl({ placeId: watchedPlace.id || "", source: "place-watch-evaluator" })
+        ? sharedPlanWatchNotificationTargetUrl({
+          target: route.target,
+          placeId: watchedPlace.id || "",
+          detail: route.detail,
+          signal,
+          timeScope: route.timeScope,
+          source: "place-watch-evaluator"
+        })
         : "./",
       placeId: watchedPlace.id || "",
+      target: route.target,
+      detail: route.detail,
+      signal,
+      timeScope: route.timeScope,
       source: "place-watch-evaluator"
     }
   };
@@ -2363,6 +2394,11 @@ function normalizePendingPlanWatchNotification(value = {}) {
     url: cleanText(source.url || "./", 200),
     memoryId: cleanText(source.memoryId || "", 96),
     placeId: cleanText(source.placeId || "", 96),
+    target: cleanToken(source.target || "", 40),
+    detail: cleanToken(source.detail || "", 32),
+    signal: cleanToken(source.signal || "", 64),
+    timeScope: cleanToken(source.timeScope || "", 32),
+    mode: cleanToken(source.mode || "", 40),
     source: cleanToken(source.source || "plan-watch-evaluator", 64)
   };
 }

@@ -1,4 +1,4 @@
-const VERSION = "3.0.196";
+const VERSION = "3.0.197";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -5607,9 +5607,11 @@ async function loadPlace(place, force = false) {
     const alerts = await fetchAlerts(nextPlace);
     if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
     renderAlerts(alerts);
+    if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute({ forceAlerts: true });
   } catch {
     if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
     setAlertsLoading();
+    if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute({ forceAlerts: true });
   }
 }
 

@@ -226,6 +226,23 @@ const sharedCandidateUrl = new URL(sharedCandidate.notification.url, "https://ge
 assert.equal(sharedCandidateUrl.searchParams.get("nearcast"), "notification");
 assert.equal(sharedCandidateUrl.searchParams.get("target"), "plan");
 assert.equal(sharedCandidateUrl.searchParams.get("memoryId"), "party 1");
+assert.equal(sharedCandidateUrl.searchParams.get("detail"), "alerts");
+assert.equal(sharedCandidateUrl.searchParams.get("signal"), "plan-alert");
+assert.equal(sharedCandidateUrl.searchParams.get("timeScope"), "plan-window");
+
+const placeDetailUrl = new URL(truth.planWatchNotificationTargetUrl({
+  target: "place-detail",
+  placeId: "maryville-home",
+  detail: "feels",
+  signal: "place-heat",
+  timeScope: "tomorrow",
+  source: "place-watch-evaluator"
+}), "https://getnearcast.app/");
+assert.equal(placeDetailUrl.searchParams.get("target"), "place-detail");
+assert.equal(placeDetailUrl.searchParams.get("placeId"), "maryville-home");
+assert.equal(placeDetailUrl.searchParams.get("detail"), "feels");
+assert.equal(placeDetailUrl.searchParams.get("signal"), "place-heat");
+assert.equal(placeDetailUrl.searchParams.get("timeScope"), "tomorrow");
 
 const sharedBaselineChange = truth.planWeatherWatchStateChange({}, truth.planWeatherWatchCurrentState(
   {

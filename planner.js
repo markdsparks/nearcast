@@ -517,15 +517,28 @@ function planWatchRecentUpdateFromRoute(route = {}) {
   };
 }
 
-function planWatchNotificationTargetPath({ target = "watching", memoryId = "", placeId = "", source = "plan-watch" } = {}) {
+function planWatchNotificationTargetPath({
+  target = "",
+  memoryId = "",
+  placeId = "",
+  detail = "",
+  signal = "",
+  timeScope = "",
+  mode = "",
+  source = "plan-watch"
+} = {}) {
   if (typeof planWatchNotificationTargetUrl === "function") {
-    return planWatchNotificationTargetUrl({ target, memoryId, placeId, source });
+    return planWatchNotificationTargetUrl({ target, memoryId, placeId, detail, signal, timeScope, mode, source });
   }
   const params = new URLSearchParams();
   params.set("nearcast", "notification");
-  params.set("target", memoryId ? "plan" : placeId ? "place" : target);
+  params.set("target", target || (memoryId ? "plan" : placeId ? "place" : "watching"));
   if (memoryId) params.set("memoryId", memoryId);
   if (placeId) params.set("placeId", placeId);
+  if (detail) params.set("detail", detail);
+  if (signal) params.set("signal", signal);
+  if (timeScope) params.set("timeScope", timeScope);
+  if (mode) params.set("mode", mode);
   if (source) params.set("source", source);
   return `./?${params.toString()}`;
 }
@@ -538,13 +551,21 @@ function nearcastNotificationRouteFromLocation() {
     const placeId = (params.get("placeId") || params.get("place") || "").trim();
     if (!memoryId && !placeId && marker !== "notification") return null;
     const target = (params.get("target") || (memoryId ? "plan" : placeId ? "place" : "watching")).trim();
+    const detail = (params.get("detail") || params.get("kind") || "").trim();
+    const signal = (params.get("signal") || params.get("type") || "").trim();
+    const timeScope = (params.get("timeScope") || params.get("scope") || "").trim();
+    const mode = (params.get("mode") || params.get("layer") || "").trim();
     return {
       marker,
       target,
+      detail,
+      signal,
+      timeScope,
+      mode,
       memoryId,
       placeId,
       source: (params.get("source") || "notification").trim(),
-      signature: `${marker}|${target}|${memoryId}|${placeId}|${params.get("source") || ""}`
+      signature: `${marker}|${target}|${detail}|${signal}|${timeScope}|${mode}|${memoryId}|${placeId}|${params.get("source") || ""}`
     };
   } catch {
     return null;
@@ -575,6 +596,14 @@ function clearNearcastNotificationRouteUrl() {
       "plan",
       "placeId",
       "place",
+      "detail",
+      "kind",
+      "signal",
+      "type",
+      "timeScope",
+      "scope",
+      "mode",
+      "layer",
       "source"
     ].forEach((key) => url.searchParams.delete(key));
     const clean = `${url.pathname}${url.search}${url.hash}`;
@@ -584,16 +613,60 @@ function clearNearcastNotificationRouteUrl() {
   }
 }
 
-function consumeNearcastNotificationRoute() {
+function nearcastNotificationDetailKind(route = {}) {
+  const value = String(route.detail || route.signal || route.target || "").toLowerCase();
+  if (["feels", "rain", "wind", "air"].includes(value)) return value;
+  if (value.includes("heat") || value.includes("feels") || value.includes("uv")) return "feels";
+  if (value.includes("wind") || value.includes("gust")) return "wind";
+  if (value.includes("air") || value.includes("smoke") || value.includes("pollen") || value.includes("aqi")) return "air";
+  if (value.includes("rain") || value.includes("storm") || value.includes("precip") || value.includes("clear")) return "rain";
+  return "";
+}
+
+function consumeNearcastNotificationRoute(options = {}) {
   const route = nearcastNotificationRouteFromLocation();
   if (!route || route.signature === planWatchNotificationRouteConsumed) return false;
+
+  const wantsAlerts = route.target === "alerts" || (!route.memoryId && (route.detail === "alerts" || route.signal.includes("alert")));
+  if (
+    wantsAlerts &&
+    !options.forceAlerts &&
+    typeof activeAlertsReady !== "undefined" &&
+    activeAlertsReady === false
+  ) {
+    return false;
+  }
+
   planWatchNotificationRouteConsumed = route.signature;
   const update = planWatchRecentUpdateFromRoute(route);
   if (update) recordPlanWatchRecentUpdate(update);
   clearNearcastNotificationRouteUrl();
 
   if (route.memoryId && state.planMemories.some((memory) => memory.id === route.memoryId)) {
+    if (route.target === "plan-hourly" && typeof showPlanMemory === "function") {
+      showPlanMemory(route.memoryId, { returnToPlanner: false, source: "notification" });
+      return true;
+    }
     openPlanWatchForMemory(route.memoryId, { source: "notification" });
+    return true;
+  }
+
+  if (wantsAlerts && typeof openAlertSheet === "function" && Array.isArray(activeAlerts) && activeAlerts.length) {
+    openAlertSheet();
+    return true;
+  }
+
+  const detailKind = nearcastNotificationDetailKind(route);
+  if ((route.target === "place-detail" || route.target === "place" || detailKind) && detailKind && typeof openGlanceDetail === "function") {
+    openGlanceDetail(detailKind);
+    return true;
+  }
+
+  if (route.target === "map" && typeof enterImmersiveMap === "function") {
+    enterImmersiveMap();
+    if (route.mode === "stormscope-available" && typeof openXweatherStormSheet === "function") {
+      setTimeout(() => openXweatherStormSheet({ force: true }), 450);
+    }
     return true;
   }
 
@@ -1835,10 +1908,22 @@ async function showPlanWatchNotification(watch) {
       badge: "icons/icon-192.png",
       data: {
         url: planWatchNotificationTargetPath({
+          target: "plan",
           memoryId: watch.memory.id,
+          detail: typeof planWeatherNotificationDetail === "function"
+            ? planWeatherNotificationDetail((watch.notification || planWeatherNotificationState(watch)).signal)
+            : "",
+          signal: (watch.notification || planWeatherNotificationState(watch)).signal || "plan-watch",
+          timeScope: "plan-window",
           source: "plan-watch"
         }),
         memoryId: watch.memory.id,
+        target: "plan",
+        detail: typeof planWeatherNotificationDetail === "function"
+          ? planWeatherNotificationDetail((watch.notification || planWeatherNotificationState(watch)).signal)
+          : "",
+        signal: (watch.notification || planWeatherNotificationState(watch)).signal || "plan-watch",
+        timeScope: "plan-window",
         source: "plan-watch"
       }
     });

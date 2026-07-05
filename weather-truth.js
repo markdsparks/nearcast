@@ -29,16 +29,38 @@ function weatherTruthCleanToken(value, maxLength = 64) {
     .replace(/^-+|-+$/g, "");
 }
 
-function planWatchNotificationTargetUrl({ target = "watching", memoryId = "", placeId = "", source = "plan-watch-evaluator" } = {}) {
+function planWatchNotificationTargetUrl({
+  target = "",
+  memoryId = "",
+  placeId = "",
+  detail = "",
+  signal = "",
+  timeScope = "",
+  mode = "",
+  source = "plan-watch-evaluator"
+} = {}) {
   const params = new URLSearchParams();
   const cleanMemoryId = weatherTruthCleanText(memoryId, 96);
   const cleanPlaceId = weatherTruthCleanText(placeId, 96);
   params.set("nearcast", "notification");
-  params.set("target", cleanMemoryId ? "plan" : cleanPlaceId ? "place" : weatherTruthCleanToken(target, 32) || "watching");
+  params.set("target", weatherTruthCleanToken(target, 32) || (cleanMemoryId ? "plan" : cleanPlaceId ? "place" : "watching"));
   if (cleanMemoryId) params.set("memoryId", cleanMemoryId);
   if (cleanPlaceId) params.set("placeId", cleanPlaceId);
+  if (detail) params.set("detail", weatherTruthCleanToken(detail, 32));
+  if (signal) params.set("signal", weatherTruthCleanToken(signal, 64));
+  if (timeScope) params.set("timeScope", weatherTruthCleanToken(timeScope, 32));
+  if (mode) params.set("mode", weatherTruthCleanToken(mode, 40));
   if (source) params.set("source", weatherTruthCleanToken(source, 64));
   return `./?${params.toString()}`;
+}
+
+function planWeatherNotificationDetail(type = "") {
+  const value = weatherTruthCleanToken(type, 64).toLowerCase();
+  if (value.includes("alert")) return "alerts";
+  if (value.includes("heat")) return "feels";
+  if (value.includes("wind")) return "wind";
+  if (value.includes("rain") || value.includes("storm") || value.includes("clearing") || value.includes("precip")) return "rain";
+  return "";
 }
 
 function weatherTruthDegree(unit) {
@@ -425,8 +447,10 @@ function planWeatherLastKnownFromState(plan = {}, current = {}, change = {}, che
 }
 
 function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) {
+  const signal = change.type || current.signal || "plan-watch";
+  const detail = planWeatherNotificationDetail(signal);
   return {
-    type: change.type || current.signal || "plan-watch",
+    type: signal,
     priority: change.priority || 50,
     notification: {
       title: change.title || `Nearcast: ${plan.title || "Watched plan"}`,
@@ -435,8 +459,19 @@ function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) 
       renotify: false,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      url: planWatchNotificationTargetUrl({ memoryId: plan.id || "", source: "plan-watch-evaluator" }),
+      url: planWatchNotificationTargetUrl({
+        target: "plan",
+        memoryId: plan.id || "",
+        detail,
+        signal,
+        timeScope: "plan-window",
+        source: "plan-watch-evaluator"
+      }),
       memoryId: plan.id || "",
+      target: "plan",
+      detail,
+      signal,
+      timeScope: "plan-window",
       source: "plan-watch-evaluator"
     }
   };
@@ -879,6 +914,7 @@ const NearcastWeatherTruth = {
   planWeatherWatchStateChange,
   planWeatherLastKnownFromState,
   planWeatherNotificationCandidate,
+  planWeatherNotificationDetail,
   planWeatherChangeSnapshot,
   samePlanWeatherWindow,
   planWeatherChange,
