@@ -51,6 +51,7 @@ const XWEATHER_MONTHLY_ACCESS_LIMIT_ENV = "XWEATHER_MONTHLY_ACCESS_LIMIT";
 const XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT_ENV = "XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT";
 const XWEATHER_PROVIDER_MIN_REMAINING_ENV = "XWEATHER_PROVIDER_MIN_REMAINING";
 const XWEATHER_SESSION_ACCESS_COST_ENV = "XWEATHER_SESSION_ACCESS_COST";
+const XWEATHER_BYPASS_BUDGET_CHECKS_ENV = "XWEATHER_BYPASS_BUDGET_CHECKS";
 const XWEATHER_USAGE_PROBE_URL_ENV = "XWEATHER_USAGE_PROBE_URL";
 const XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV = "XWEATHER_USAGE_PROBE_CACHE_SECONDS";
 const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
@@ -215,7 +216,7 @@ export async function handleXweatherConfigRequest(request, env = {}) {
     version: 1,
     checkedAt: new Date().toISOString(),
     state: ready ? "ready" : gate.state,
-    reason: ready ? "lease-granted" : gate.reason,
+    reason: ready ? (gate.reason || "lease-granted") : gate.reason,
     message: ready ? "" : gate.message,
     credentials: ready ? { clientId, clientSecret } : null,
     layerCodes: configuredXweatherLayerCodes(env),
@@ -1054,6 +1055,26 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
     };
   }
 
+  if (limits.bypassBudgetChecks) {
+    const bypassUsage = await xweatherBudgetBypassUsageState(payload, request, limits, now);
+    return {
+      ...base,
+      allowed: true,
+      state: "ready",
+      reason: "budget-bypassed",
+      message: "",
+      lease: bypassUsage.lease,
+      usage: {
+        local: bypassUsage,
+        provider: {
+          provider: "nearcast-xweather-budget-bypass",
+          bypassed: true,
+          checkedAt: new Date(now).toISOString()
+        }
+      }
+    };
+  }
+
   const store = generationRequestStore(env);
   if (!store?.getJson || !store?.putJson) {
     return {
@@ -1160,7 +1181,8 @@ function xweatherStormLimits(env = {}) {
       60,
       60 * 60
     ),
-    usageProbeConfigured: Boolean(configuredXweatherUsageProbeUrl(env))
+    usageProbeConfigured: Boolean(configuredXweatherUsageProbeUrl(env)),
+    bypassBudgetChecks: booleanValue(env?.[XWEATHER_BYPASS_BUDGET_CHECKS_ENV])
   };
 }
 
@@ -1270,6 +1292,32 @@ async function fetchWithTimeout(url, options = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function xweatherBudgetBypassUsageState(payload = {}, request, limits = xweatherStormLimits(), now = Date.now()) {
+  const month = xweatherUsageMonthKey(new Date(now));
+  const windowStart = Math.floor(now / (XWEATHER_STORM_SESSION_SECONDS * 1000)) * XWEATHER_STORM_SESSION_SECONDS * 1000;
+  const clientKey = await xweatherClientBudgetKey(payload, request);
+  const lease = {
+    id: await sha256Hex(`xweather-budget-bypass:${month}:${Math.floor(windowStart / 1000)}:${clientKey}`),
+    month,
+    sessionWindowStart: new Date(windowStart).toISOString(),
+    expiresAt: new Date(windowStart + XWEATHER_STORM_SESSION_SECONDS * 1000).toISOString(),
+    estimatedAccessCost: limits.sessionAccessCost,
+    budgetBypassed: true
+  };
+  return {
+    allowed: true,
+    reason: "budget-bypassed",
+    month,
+    accesses: 0,
+    sessions: 0,
+    limit: limits.localMonthlyAccessLimit,
+    remaining: limits.localMonthlyAccessLimit,
+    deduped: false,
+    bypassed: true,
+    lease
+  };
 }
 
 async function xweatherLocalUsageState(store, payload = {}, request, limits = xweatherStormLimits(), now = Date.now()) {

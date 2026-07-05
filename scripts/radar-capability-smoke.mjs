@@ -761,6 +761,49 @@ const xweatherBudgetPaused = await xweatherConfig({
 assert.equal(xweatherBudgetPaused.body.state, "budget-paused");
 assert.equal(xweatherBudgetPaused.body.credentials, null);
 
+const xweatherBypassEnv = {
+  ...xweatherEnv,
+  XWEATHER_BYPASS_BUDGET_CHECKS: "true",
+  XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT: "150",
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const xweatherBypassFirst = await xweatherConfig({
+  ...xweatherPayload,
+  client: { instanceId: "smoke-bypass-a" }
+}, xweatherBypassEnv);
+assert.equal(xweatherBypassFirst.body.state, "ready");
+assert.equal(xweatherBypassFirst.body.reason, "budget-bypassed");
+assert.equal(xweatherBypassFirst.body.credentials.clientId, "smoke-client");
+assert.equal(xweatherBypassFirst.body.lease.budgetBypassed, true);
+assert.equal(xweatherBypassFirst.body.usage.local.bypassed, true);
+assert.equal(xweatherBypassFirst.body.limits.bypassBudgetChecks, true);
+const xweatherBypassSecond = await xweatherConfig({
+  ...xweatherPayload,
+  client: { instanceId: "smoke-bypass-b" }
+}, xweatherBypassEnv);
+assert.equal(xweatherBypassSecond.body.state, "ready");
+assert.equal(xweatherBypassSecond.body.reason, "budget-bypassed");
+assert.equal(xweatherBypassSecond.body.credentials.clientSecret, "smoke-secret");
+
+const xweatherBypassNeedsActivation = await xweatherConfig({
+  ...xweatherPayload,
+  activation: { requested: false },
+  client: { instanceId: "smoke-bypass-needs-activation" }
+}, xweatherBypassEnv);
+assert.equal(xweatherBypassNeedsActivation.body.state, "activation-required");
+assert.equal(xweatherBypassNeedsActivation.body.credentials, null);
+
+const xweatherBypassNoWeather = await xweatherConfig({
+  ...xweatherPayload,
+  storm: {
+    activeWeather: false,
+    activeWeatherReason: "empty-map"
+  },
+  client: { instanceId: "smoke-bypass-no-weather" }
+}, xweatherBypassEnv);
+assert.equal(xweatherBypassNoWeather.body.state, "no-active-weather");
+assert.equal(xweatherBypassNoWeather.body.credentials, null);
+
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
@@ -785,6 +828,7 @@ console.log(JSON.stringify({
   placeWatch: "place-storm",
   xweather: xweatherReady.body.state,
   xweatherBudget: xweatherBudgetPaused.body.state,
+  xweatherBypass: xweatherBypassSecond.body.reason,
   requestId: queued.body.generation.requestId
 }, null, 2));
 
