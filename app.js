@@ -1,4 +1,4 @@
-const VERSION = "3.0.197";
+const VERSION = "3.0.198";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4888,7 +4888,7 @@ function hideSearchResults() {
 // Two modes: "welcome" (no place yet — search/location is the hero) and
 // "browse" (a place is loaded — weather is the hero, search collapses to an icon).
 function updateMode() {
-  const hasContext = !state.welcomeOverride && (Boolean(state.activePlace) || state.savedPlaces.length > 0);
+  const hasContext = !state.welcomeOverride && Boolean(state.activePlace);
   els.shell.classList.toggle("mode-welcome", !hasContext);
   document.documentElement.toggleAttribute("data-welcome", !hasContext);
   if (!hasContext) {
@@ -4901,6 +4901,29 @@ function updateMode() {
     clearWelcomeTransientUi();
     cancelWelcomeAmbience();
   }
+}
+
+function setForecastLaunchLoading(place) {
+  const label = placeLabel(place);
+  els.shell?.classList.add("is-loading-place");
+  if (els.locationName) els.locationName.textContent = label;
+  if (els.nowTemp) els.nowTemp.textContent = "";
+  if (els.heroIcon) els.heroIcon.innerHTML = "";
+  if (els.heroRange) els.heroRange.hidden = true;
+  if (els.nowSummary) {
+    els.nowSummary.classList.remove("summary-strip");
+    els.nowSummary.textContent = `Waking up ${label}...`;
+    els.nowSummary.setAttribute("aria-label", `Waking up ${label}.`);
+  }
+  if (els.glanceTitle) els.glanceTitle.textContent = "Building your local weather read.";
+  if (els.forYouToday) els.forYouToday.hidden = true;
+  if (els.launchShortcuts) els.launchShortcuts.hidden = true;
+  const alertBar = document.getElementById("alertBar");
+  if (alertBar) alertBar.hidden = true;
+}
+
+function clearForecastLaunchLoading() {
+  els.shell?.classList.remove("is-loading-place");
 }
 
 function browserApproximateIsDay(date = new Date()) {
@@ -5530,6 +5553,7 @@ function warmStartForecast(place) {
     if (typeof clearStormImpact === "function") clearStormImpact();
 
     updateMode();
+    clearForecastLaunchLoading();
     updateFloatingChrome({ forceReveal: true });
     updatePlaceSwitcher();
     if (typeof resetMapForPlaceChange === "function") {
@@ -5556,6 +5580,7 @@ async function loadPlace(place, force = false) {
   const previousForecast = state.forecast;
   const nextPlace = normalizePlace(place);
   state.activePlace = nextPlace;
+  const shouldShowLaunchLoading = !previousForecast || !samePlanPlace(previousPlace, nextPlace);
   state.radarPrecipSeq += 1;
   state.radarPrecipSignal = null;
   state.radarPrecipPlaceId = state.activePlace.id;
@@ -5563,6 +5588,8 @@ async function loadPlace(place, force = false) {
   if (typeof clearStormImpact === "function") clearStormImpact();
   localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
   updateMode();
+  if (shouldShowLaunchLoading) setForecastLaunchLoading(nextPlace);
+  else clearForecastLaunchLoading();
   updateFloatingChrome({ forceReveal: true });
   updatePlaceSwitcher();
   if (typeof resetMapForPlaceChange === "function") {
@@ -5579,6 +5606,7 @@ async function loadPlace(place, force = false) {
   try {
     const data = await fetchForecast(nextPlace, force);
     if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
+    clearForecastLaunchLoading();
     renderForecast(data, nextPlace);
     startRadarPrecipProbe(nextPlace, data, force);
     setStatus("");
@@ -5590,6 +5618,7 @@ async function loadPlace(place, force = false) {
     lastLoadUsedForecastFallback = false;
     const canKeepPreviousPlace = previousPlace && previousForecast && !samePlanPlace(previousPlace, nextPlace);
     if (canKeepPreviousPlace) {
+      clearForecastLaunchLoading();
       state.activePlace = previousPlace;
       state.radarPrecipPlaceId = previousPlace.id;
       localStorage.setItem("weather-last-place", JSON.stringify(previousPlace));
@@ -5598,6 +5627,7 @@ async function loadPlace(place, force = false) {
       updateMapPlace();
       setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
     } else {
+      clearForecastLaunchLoading();
       setStatus("Could not load weather data. Try another place or reload the page.", true);
     }
   }

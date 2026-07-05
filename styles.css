@@ -11438,6 +11438,32 @@ button.sheet-plan-badge:focus-visible {
   padding: 0 18px;
 }
 
+.shell.is-loading-place #forecastView > :not(.launch-stage) {
+  display: none !important;
+}
+
+.shell.is-loading-place .launch-stage {
+  min-height: min(58svh, 560px);
+  display: grid;
+  align-content: center;
+}
+
+.shell.is-loading-place .launch-current,
+.shell.is-loading-place .launch-shortcuts,
+.shell.is-loading-place .for-you-today {
+  display: none !important;
+}
+
+.shell.is-loading-place .launch-location {
+  pointer-events: none;
+}
+
+.shell.is-loading-place .summary {
+  max-width: min(620px, 100%);
+  margin-inline: auto;
+  text-align: center;
+}
+
 .welcome-brand-mark {
   display: grid;
   place-items: center;
