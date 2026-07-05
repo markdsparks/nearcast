@@ -25,6 +25,17 @@ const XWEATHER_STORM_CONTEXT_FADE_START_ZOOM = 12.8;
 const XWEATHER_STORM_CONTEXT_FADE_END_ZOOM = 16.2;
 const XWEATHER_STORM_CONTEXT_MAX_OPACITY = 0.94;
 const XWEATHER_STORM_CONTEXT_MIN_OPACITY = 0.62;
+const XWEATHER_STORM_RADAR_COLOR_SCALE = Object.freeze({
+  stops: [
+    5, "#3bd45a",
+    18, "#0a5f18",
+    30, "#efd000",
+    40, "#ef7f00",
+    50, "#d90000"
+  ],
+  interpolate: false
+});
+const XWEATHER_STORM_RADAR_DRAW_RANGE = Object.freeze({ min: 5, max: 85 });
 const XWEATHER_STORM_ACCESS_PRICE_USD = 0.0006;
 const XWEATHER_STORM_COST_CLOSEOUT_MS = 5200;
 const XWEATHER_STORM_CLIENT_MIN_ZOOM = 7.5;
@@ -1542,6 +1553,8 @@ function xweatherStormLayerOptions(code, sdk, options = {}) {
       sample: {
         interpolation: xweatherMapsglEnumValue(sdk?.InterpolationMode, "bilinear", "bilinear"),
         smoothing: XWEATHER_STORM_SPATIAL_SMOOTHING,
+        colorscale: XWEATHER_STORM_RADAR_COLOR_SCALE,
+        drawRange: XWEATHER_STORM_RADAR_DRAW_RANGE,
         // Keep the radar shape crisp while blending between valid times.
         meld: XWEATHER_STORM_TEMPORAL_MELD
       }
