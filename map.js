@@ -19,6 +19,8 @@ const XWEATHER_STORM_TIMELINE_STEPS = 1000;
 const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 14;
 const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
+const XWEATHER_STORM_SPATIAL_SMOOTHING = 0;
+const XWEATHER_STORM_TEMPORAL_MELD = true;
 const XWEATHER_STORM_CLIENT_MIN_ZOOM = 7.5;
 const XWEATHER_STORM_DISPLAY_NAME = "Nearcast StormScope";
 const XWEATHER_STORM_SHORT_NAME = "StormScope";
@@ -1333,8 +1335,9 @@ function xweatherStormLayerOptions(code, sdk) {
     paint: {
       sample: {
         interpolation: xweatherMapsglEnumValue(sdk?.InterpolationMode, "bilinear", "bilinear"),
-        smoothing: 0,
-        meld: false
+        smoothing: XWEATHER_STORM_SPATIAL_SMOOTHING,
+        // Keep the radar shape crisp while blending between valid times.
+        meld: XWEATHER_STORM_TEMPORAL_MELD
       }
     }
   };
