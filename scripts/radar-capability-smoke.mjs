@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import worker, { handleRadarCapabilityRequest } from "../workers/radar-capability.mjs";
+import worker, {
+  handleRadarCapabilityRequest,
+  handleXweatherConfigRequest
+} from "../workers/radar-capability.mjs";
 
 const futureExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
@@ -476,11 +479,11 @@ try {
         utc_offset_seconds: -18000,
         hourly: {
           time: [
-            "2026-07-03T15:00",
-            "2026-07-03T16:00",
-            "2026-07-03T17:00",
-            "2026-07-03T18:00",
-            "2026-07-03T19:00"
+            "2026-07-07T15:00",
+            "2026-07-07T16:00",
+            "2026-07-07T17:00",
+            "2026-07-07T18:00",
+            "2026-07-07T19:00"
           ],
           temperature_2m: [91, 93, 94, 92, 90],
           apparent_temperature: [97, 100, 102, 99, 96],
@@ -492,7 +495,7 @@ try {
           weather_code: [1, 1, 95, 1, 1]
         },
         daily: {
-          time: ["2026-07-02", "2026-07-03"],
+          time: ["2026-07-06", "2026-07-07"],
           weather_code: [1, 95],
           temperature_2m_max: [90, 88],
           temperature_2m_min: [74, 73],
@@ -513,8 +516,8 @@ try {
             properties: {
               event: "Extreme Heat Warning",
               severity: "Severe",
-              onset: "2026-07-03T12:00:00-05:00",
-              ends: "2026-07-03T22:00:00-05:00",
+              onset: "2026-07-07T12:00:00-05:00",
+              ends: "2026-07-07T22:00:00-05:00",
               headline: "Extreme Heat Warning issued for the plan area"
             }
           }]
@@ -544,7 +547,7 @@ try {
       plans: [{
         id: "party-1",
         title: "4th Party",
-        targetDate: "2026-07-03",
+        targetDate: "2026-07-07",
         startHour: 15,
         endHour: 20,
         place: {
@@ -558,7 +561,7 @@ try {
         lastKnown: {
           snapshot: {
             title: "4th Party",
-            targetDate: "2026-07-03",
+            targetDate: "2026-07-07",
             startHour: 15,
             endHour: 20,
             rainChance: 9,
@@ -629,7 +632,7 @@ try {
             unit: "fahrenheit",
             days: [
               {
-                date: "2026-07-02",
+                date: "2026-07-06",
                 label: "today",
                 rainChance: 20,
                 feelsMax: 92,
@@ -637,7 +640,7 @@ try {
                 stormPotential: false
               },
               {
-                date: "2026-07-03",
+                date: "2026-07-07",
                 label: "tomorrow",
                 rainChance: 10,
                 feelsMax: 91,
@@ -671,6 +674,81 @@ try {
   globalThis.fetch = originalFetch;
 }
 
+const xweatherEnv = {
+  XWEATHER_CLIENT_ID: "smoke-client",
+  XWEATHER_CLIENT_SECRET: "smoke-secret",
+  XWEATHER_LAYER_CODES: "radar,lightning-strikes-icons",
+  XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT: "300",
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const xweatherPayload = {
+  provider: "nearcast-xweather-config-request",
+  version: 1,
+  viewport: {
+    ...basePayload.viewport,
+    zoom: 8,
+    key: "47.50,-111.30,z8"
+  },
+  storm: {
+    activeWeather: true,
+    activeWeatherReason: "smoke-radar"
+  },
+  client: {
+    instanceId: "smoke-device-a"
+  }
+};
+const xweatherReady = await xweatherConfig(xweatherPayload, xweatherEnv);
+assert.equal(xweatherReady.status, 200);
+assert.equal(xweatherReady.body.state, "ready");
+assert.equal(xweatherReady.body.credentials.clientId, "smoke-client");
+assert.equal(xweatherReady.body.lease.estimatedAccessCost, 150);
+assert.equal(xweatherReady.body.usage.local.accesses, 150);
+
+const xweatherDeduped = await xweatherConfig(xweatherPayload, xweatherEnv);
+assert.equal(xweatherDeduped.body.state, "ready");
+assert.equal(xweatherDeduped.body.usage.local.accesses, 150);
+assert.equal(xweatherDeduped.body.usage.local.deduped, true);
+
+const xweatherBelowZoom = await xweatherConfig({
+  ...xweatherPayload,
+  viewport: {
+    ...xweatherPayload.viewport,
+    zoom: 7,
+    key: "47.50,-111.30,z7"
+  },
+  client: { instanceId: "smoke-device-b" }
+}, xweatherEnv);
+assert.equal(xweatherBelowZoom.body.state, "below-min-zoom");
+assert.equal(xweatherBelowZoom.body.credentials, null);
+
+const xweatherNoWeather = await xweatherConfig({
+  ...xweatherPayload,
+  storm: {
+    activeWeather: false,
+    activeWeatherReason: "empty-map"
+  },
+  client: { instanceId: "smoke-device-c" }
+}, xweatherEnv);
+assert.equal(xweatherNoWeather.body.state, "no-active-weather");
+assert.equal(xweatherNoWeather.body.credentials, null);
+
+const xweatherBudgetEnv = {
+  ...xweatherEnv,
+  XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT: "150",
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+const xweatherBudgetFirst = await xweatherConfig({
+  ...xweatherPayload,
+  client: { instanceId: "smoke-budget-a" }
+}, xweatherBudgetEnv);
+assert.equal(xweatherBudgetFirst.body.state, "ready");
+const xweatherBudgetPaused = await xweatherConfig({
+  ...xweatherPayload,
+  client: { instanceId: "smoke-budget-b" }
+}, xweatherBudgetEnv);
+assert.equal(xweatherBudgetPaused.body.state, "budget-paused");
+assert.equal(xweatherBudgetPaused.body.credentials, null);
+
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
@@ -693,6 +771,8 @@ console.log(JSON.stringify({
   limited: budgetLimited.body.generation.reason,
   planWatch: "plan-alert",
   placeWatch: "place-storm",
+  xweather: xweatherReady.body.state,
+  xweatherBudget: xweatherBudgetPaused.body.state,
   requestId: queued.body.generation.requestId
 }, null, 2));
 
@@ -702,6 +782,18 @@ async function capability(payload, capabilityEnv = env) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   }), capabilityEnv, {});
+  return {
+    status: response.status,
+    body: await response.json()
+  };
+}
+
+async function xweatherConfig(payload, configEnv) {
+  const response = await handleXweatherConfigRequest(new Request("https://getnearcast.app/api/xweather/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }), configEnv);
   return {
     status: response.status,
     body: await response.json()

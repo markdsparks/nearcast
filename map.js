@@ -17,6 +17,7 @@ const XWEATHER_STORM_TIMELINE_STEPS = 1000;
 const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 14;
 const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
+const XWEATHER_STORM_CLIENT_MIN_ZOOM = 7.5;
 const MAPLIBRE_WEATHER_PREFIX = "nearcast-weather";
 const MAPLIBRE_RADAR_CHUNK_LAYER_ID = "nearcast-radar-chunks";
 const MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL = "radar/chunks/synthetic-smoke/index.json";
@@ -194,28 +195,81 @@ function xweatherStormConfigStatus() {
   return window.nearcastXweatherStormConfig() || { status: "unknown" };
 }
 
+function xweatherStormClientMinZoom() {
+  const config = xweatherStormConfigStatus();
+  const configured = Number(config?.limits?.minZoom);
+  return Number.isFinite(configured) ? configured : XWEATHER_STORM_CLIENT_MIN_ZOOM;
+}
+
+function xweatherStormViewportContext(record = mapLibreCurrentRecord()) {
+  const viewport = radarCapabilityViewport(generatedMrmsSelectionContext());
+  const contextKey = viewport?.key || generatedRadarViewportKey() || "";
+  const currentFrame = mapState.frames[mapState.frameIndex] || null;
+  const currentLayers = currentFrame?.layers || (currentFrame?.url ? [{ url: currentFrame.url }] : []);
+  const hasFallbackRadar = currentLayers.some((layer) => layer?.url);
+  const hasGeneratedRadar = Boolean(mapState.generatedRadarSelectionKey || record?.radarChunkLayerState);
+  const activeWeather = Boolean(hasFallbackRadar || hasGeneratedRadar);
+  return {
+    contextKey,
+    viewport,
+    storm: {
+      activeWeather,
+      activeWeatherReason: activeWeather ? "radar-frame-ready" : "no-radar-frame"
+    }
+  };
+}
+
+function xweatherStormConfigMatchesContext(config, context) {
+  const wanted = String(context?.contextKey || "").trim();
+  if (!wanted) return false;
+  return String(config?.contextKey || config?.context?.key || "").trim() === wanted;
+}
+
 function xweatherStormMapsglNamespace() {
   return window.mapsgl || window.aerisweather?.mapsgl || window.xweather?.mapsgl || null;
 }
 
-function xweatherStormGuard() {
+function xweatherStormGuard(record = mapLibreCurrentRecord()) {
   if (!xweatherStormPreferenceEnabled()) return { ok: false, status: "off", message: "" };
   if (!mapState.immersive) return { ok: false, status: "standby", message: "Open full map" };
   if (!mapDiagnosticAllowsRadar()) return { ok: false, status: "paused", message: "Map test hides radar" };
+  const requestContext = xweatherStormViewportContext(record);
+  const zoom = Number(requestContext.viewport?.zoom);
+  if (Number.isFinite(zoom) && zoom + 0.001 < xweatherStormClientMinZoom()) {
+    return { ok: false, status: "below-min-zoom", message: "Zoom in to start storm view", context: requestContext };
+  }
+  if (!requestContext.storm.activeWeather) {
+    return { ok: false, status: "no-active-weather", message: "Storm view starts when radar is active", context: requestContext };
+  }
   const credentials = xweatherStormCredentials();
   const config = xweatherStormConfigStatus();
+  if (
+    config.status &&
+    !["unknown", "loading"].includes(config.status) &&
+    !xweatherStormConfigMatchesContext(config, requestContext)
+  ) {
+    return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
+  }
   if (!credentials.clientId || !credentials.clientSecret) {
     if (config.status === "unknown" || config.status === "loading") {
-      return { ok: false, status: "loading", message: "Checking storm view" };
+      return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
     }
-    return { ok: false, status: "missing-keys", message: "Storm view not configured" };
+    if (["needs-context", "below-min-zoom", "no-active-weather", "budget-paused", "provider-budget-paused", "paused"].includes(config.status)) {
+      return {
+        ok: false,
+        status: config.status,
+        message: config.message || "Storm view paused",
+        context: requestContext
+      };
+    }
+    return { ok: false, status: "missing-keys", message: "Storm view not configured", context: requestContext };
   }
   if (!xweatherStormLayerCodes().length) return { ok: false, status: "paused", message: "No storm layers" };
   const usage = typeof readXweatherUsageRecord === "function" ? readXweatherUsageRecord() : { accesses: 0 };
   if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) {
     return { ok: false, status: "budget", message: "Storm view budget paused" };
   }
-  return { ok: true, status: "ready", message: "" };
+  return { ok: true, status: "ready", message: "", context: requestContext };
 }
 
 function ensureXweatherMapsglStylesheet() {
@@ -796,7 +850,7 @@ function toggleXweatherStormTimelinePlayback(record = mapLibreCurrentRecord()) {
 
 async function startXweatherStormLayer(record) {
   if (!record || record.xweatherStorm?.loadingPromise || xweatherStormActive(record)) return;
-  const guard = xweatherStormGuard();
+  const guard = xweatherStormGuard(record);
   if (!guard.ok) {
     setXweatherStormStatus(record, guard.status, guard.message);
     return;
@@ -929,10 +983,13 @@ function stopXweatherStormLayer(record, reason = "off") {
 
 function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
   if (!record || !mapLibreRecordReady(record)) return false;
-  const guard = xweatherStormGuard();
+  const guard = xweatherStormGuard(record);
   if (!guard.ok) {
     if (guard.status === "loading" && typeof window.nearcastLoadXweatherStormConfig === "function") {
-      Promise.resolve(window.nearcastLoadXweatherStormConfig())
+      Promise.resolve(window.nearcastLoadXweatherStormConfig({
+        force: true,
+        context: guard.context || xweatherStormViewportContext(record)
+      }))
         .then(() => {
           if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
         })

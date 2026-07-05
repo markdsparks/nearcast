@@ -44,7 +44,24 @@ const PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLACES_PER_SU
 const XWEATHER_CLIENT_ID_ENV = "XWEATHER_CLIENT_ID";
 const XWEATHER_CLIENT_SECRET_ENV = "XWEATHER_CLIENT_SECRET";
 const XWEATHER_LAYER_CODES_ENV = "XWEATHER_LAYER_CODES";
+const XWEATHER_STORM_MODE_ENV = "XWEATHER_STORM_MODE";
+const XWEATHER_MIN_VIEWPORT_ZOOM_ENV = "XWEATHER_MIN_VIEWPORT_ZOOM";
+const XWEATHER_REQUIRE_ACTIVE_WEATHER_ENV = "XWEATHER_REQUIRE_ACTIVE_WEATHER";
+const XWEATHER_MONTHLY_ACCESS_LIMIT_ENV = "XWEATHER_MONTHLY_ACCESS_LIMIT";
+const XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT_ENV = "XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT";
+const XWEATHER_PROVIDER_MIN_REMAINING_ENV = "XWEATHER_PROVIDER_MIN_REMAINING";
+const XWEATHER_SESSION_ACCESS_COST_ENV = "XWEATHER_SESSION_ACCESS_COST";
+const XWEATHER_USAGE_PROBE_URL_ENV = "XWEATHER_USAGE_PROBE_URL";
+const XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV = "XWEATHER_USAGE_PROBE_CACHE_SECONDS";
 const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
+const DEFAULT_XWEATHER_STORM_MODE = "beta";
+const DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM = 7.5;
+const DEFAULT_XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
+const DEFAULT_XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT = 12000;
+const DEFAULT_XWEATHER_PROVIDER_MIN_REMAINING = 1800;
+const DEFAULT_XWEATHER_SESSION_ACCESS_COST = 150;
+const DEFAULT_XWEATHER_USAGE_PROBE_CACHE_SECONDS = 10 * 60;
+const XWEATHER_STORM_SESSION_SECONDS = 5 * 60;
 const DEFAULT_GENERATION_REQUESTS_R2_PREFIX = "radar/mrms/request-state";
 const DEFAULT_PLAN_WATCH_R2_PREFIX = "plan-watch";
 const DEFAULT_PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app";
@@ -170,20 +187,28 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
 
 export async function handleXweatherConfigRequest(request, env = {}) {
   if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
-  if (request.method !== "GET") {
+  if (request.method !== "GET" && request.method !== "POST") {
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
+  const payload = request.method === "POST" ? await readJsonRequest(request) : {};
   const clientId = configuredXweatherClientId(env);
   const clientSecret = configuredXweatherClientSecret(env);
-  const ready = Boolean(clientId && clientSecret);
+  const requestedAt = Date.now();
+  const gate = await xweatherStormGate(payload, request, env, requestedAt);
+  const ready = Boolean(clientId && clientSecret && gate.allowed);
   return jsonResponse({
     provider: "nearcast-xweather-config",
     version: 1,
     checkedAt: new Date().toISOString(),
-    state: ready ? "ready" : "missing-credentials",
-    message: ready ? "" : "Xweather credentials are not configured on the Nearcast Worker.",
+    state: ready ? "ready" : gate.state,
+    reason: ready ? "lease-granted" : gate.reason,
+    message: ready ? "" : gate.message,
     credentials: ready ? { clientId, clientSecret } : null,
-    layerCodes: configuredXweatherLayerCodes(env)
+    layerCodes: configuredXweatherLayerCodes(env),
+    lease: ready ? gate.lease : null,
+    limits: gate.limits,
+    usage: gate.usage,
+    context: gate.context
   });
 }
 
@@ -945,6 +970,387 @@ function configuredXweatherLayerCodes(env = {}) {
     .filter((code) => /^[a-z0-9-]+$/.test(code))
     .slice(0, 6);
   return codes.length ? codes : DEFAULT_XWEATHER_LAYER_CODES.split(",");
+}
+
+async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now()) {
+  const clientId = configuredXweatherClientId(env);
+  const clientSecret = configuredXweatherClientSecret(env);
+  const limits = xweatherStormLimits(env);
+  const mode = configuredXweatherStormMode(env);
+  const viewport = normalizeViewport(payload.viewport || {});
+  const context = normalizeXweatherStormContext(payload, viewport, now);
+  const base = {
+    limits,
+    context,
+    usage: null,
+    lease: null
+  };
+  if (!xweatherStormModeEnabled(mode)) {
+    return {
+      ...base,
+      allowed: false,
+      state: "paused",
+      reason: "storm-view-disabled",
+      message: "Storm view is paused."
+    };
+  }
+  if (!clientId || !clientSecret) {
+    return {
+      ...base,
+      allowed: false,
+      state: "missing-credentials",
+      reason: "missing-credentials",
+      message: "Xweather credentials are not configured on the Nearcast Worker."
+    };
+  }
+  if (!context.hasViewport) {
+    return {
+      ...base,
+      allowed: false,
+      state: "needs-context",
+      reason: "viewport-required",
+      message: "Open the map before starting storm view."
+    };
+  }
+  if (context.zoom + 0.001 < limits.minZoom) {
+    return {
+      ...base,
+      allowed: false,
+      state: "below-min-zoom",
+      reason: "below-min-zoom",
+      message: `Zoom in to start storm view.`
+    };
+  }
+  if (limits.requireActiveWeather && !context.activeWeather) {
+    return {
+      ...base,
+      allowed: false,
+      state: "no-active-weather",
+      reason: "no-active-weather",
+      message: "Storm view starts when radar is active nearby."
+    };
+  }
+
+  const store = generationRequestStore(env);
+  if (!store?.getJson || !store?.putJson) {
+    return {
+      ...base,
+      allowed: false,
+      state: "budget-paused",
+      reason: "budget-store-unavailable",
+      message: "Storm view is paused until budget tracking is available.",
+      usage: {
+        local: {
+          allowed: false,
+          reason: "budget-store-unavailable",
+          accesses: 0,
+          sessions: 0,
+          limit: limits.localMonthlyAccessLimit
+        }
+      }
+    };
+  }
+  const providerUsage = await xweatherProviderUsageSnapshot(env, store, now);
+  if (
+    Number.isFinite(providerUsage?.remainingPeriod) &&
+    providerUsage.remainingPeriod < limits.providerMinRemaining + limits.sessionAccessCost
+  ) {
+    return {
+      ...base,
+      allowed: false,
+      state: "provider-budget-paused",
+      reason: "provider-remaining-low",
+      message: "Storm view is paused to protect the Xweather free tier.",
+      usage: {
+        provider: providerUsage
+      }
+    };
+  }
+
+  const localUsage = await xweatherLocalUsageState(store, payload, request, limits, now);
+  if (!localUsage.allowed) {
+    return {
+      ...base,
+      allowed: false,
+      state: "budget-paused",
+      reason: localUsage.reason,
+      message: "Storm view is paused for this month.",
+      usage: {
+        local: localUsage,
+        provider: providerUsage
+      }
+    };
+  }
+
+  return {
+    ...base,
+    allowed: true,
+    state: "ready",
+    reason: localUsage.deduped ? "lease-reused" : "lease-granted",
+    message: "",
+    lease: localUsage.lease,
+    usage: {
+      local: localUsage,
+      provider: providerUsage
+    }
+  };
+}
+
+function configuredXweatherStormMode(env = {}) {
+  return cleanToken(env?.[XWEATHER_STORM_MODE_ENV] || DEFAULT_XWEATHER_STORM_MODE, 24).toLowerCase() || "off";
+}
+
+function xweatherStormModeEnabled(mode) {
+  return ["1", "true", "on", "yes", "beta", "enabled"].includes(String(mode || "").toLowerCase());
+}
+
+function xweatherStormLimits(env = {}) {
+  const monthlyAccessLimit = nonNegativeInteger(
+    env?.[XWEATHER_MONTHLY_ACCESS_LIMIT_ENV],
+    DEFAULT_XWEATHER_MONTHLY_ACCESS_LIMIT
+  );
+  const localMonthlyAccessLimit = Math.min(
+    monthlyAccessLimit,
+    nonNegativeInteger(env?.[XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT_ENV], DEFAULT_XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT)
+  );
+  return {
+    mode: configuredXweatherStormMode(env),
+    minZoom: Math.max(0, finiteNumber(env?.[XWEATHER_MIN_VIEWPORT_ZOOM_ENV], DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM)),
+    requireActiveWeather: env?.[XWEATHER_REQUIRE_ACTIVE_WEATHER_ENV] === undefined
+      ? true
+      : booleanValue(env?.[XWEATHER_REQUIRE_ACTIVE_WEATHER_ENV]),
+    sessionAccessCost: boundedInteger(
+      env?.[XWEATHER_SESSION_ACCESS_COST_ENV],
+      DEFAULT_XWEATHER_SESSION_ACCESS_COST,
+      1,
+      1000
+    ),
+    monthlyAccessLimit,
+    localMonthlyAccessLimit,
+    providerMinRemaining: nonNegativeInteger(
+      env?.[XWEATHER_PROVIDER_MIN_REMAINING_ENV],
+      DEFAULT_XWEATHER_PROVIDER_MIN_REMAINING
+    ),
+    usageProbeCacheSeconds: boundedInteger(
+      env?.[XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV],
+      DEFAULT_XWEATHER_USAGE_PROBE_CACHE_SECONDS,
+      60,
+      60 * 60
+    ),
+    usageProbeConfigured: Boolean(configuredXweatherUsageProbeUrl(env))
+  };
+}
+
+function normalizeXweatherStormContext(payload = {}, viewport = {}, now = Date.now()) {
+  const zoom = finiteNumber(viewport.zoom, NaN);
+  const hasViewport = Number.isFinite(zoom);
+  const storm = payload.storm && typeof payload.storm === "object" ? payload.storm : {};
+  const client = payload.client && typeof payload.client === "object" ? payload.client : {};
+  const activeWeather = booleanValue(storm.activeWeather);
+  const key = cleanToken(
+    payload.contextKey ||
+    viewport.key ||
+    `${roundNumber(viewport.center?.latitude, 2) ?? "na"}:${roundNumber(viewport.center?.longitude, 2) ?? "na"}:z${roundNumber(zoom, 1) ?? "na"}`,
+    96
+  );
+  return {
+    hasViewport,
+    key,
+    zoom: Number.isFinite(zoom) ? roundNumber(zoom, 2) : null,
+    activeWeather,
+    activeWeatherReason: cleanText(storm.activeWeatherReason || "", 80),
+    clientEstimatedAccesses: nonNegativeInteger(client.estimatedAccesses, 0),
+    requestedAt: new Date(now).toISOString()
+  };
+}
+
+async function xweatherProviderUsageSnapshot(env = {}, store = null, now = Date.now()) {
+  const probeUrl = configuredXweatherUsageProbeUrl(env);
+  if (!probeUrl) return null;
+  const cacheSeconds = boundedInteger(
+    env?.[XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV],
+    DEFAULT_XWEATHER_USAGE_PROBE_CACHE_SECONDS,
+    60,
+    60 * 60
+  );
+  const cacheKey = "xweather-provider-usage:v1:latest";
+  if (store?.getJson) {
+    const cached = await store.getJson(cacheKey);
+    const checkedAt = timestamp(cached?.checkedAt);
+    if (checkedAt && now - checkedAt < cacheSeconds * 1000) {
+      return { ...cached, cached: true };
+    }
+  }
+  const clientId = configuredXweatherClientId(env);
+  const clientSecret = configuredXweatherClientSecret(env);
+  let response;
+  try {
+    response = await fetchWithTimeout(xweatherProbeUrlWithCredentials(probeUrl, clientId, clientSecret), {
+      timeoutMs: 2500,
+      headers: { Accept: "application/json" }
+    });
+  } catch (error) {
+    return {
+      provider: "xweather",
+      state: "unavailable",
+      reason: "probe-failed",
+      message: cleanText(error?.message || "probe failed", 120),
+      checkedAt: new Date(now).toISOString()
+    };
+  }
+  const snapshot = {
+    provider: "xweather",
+    state: response.ok ? "ready" : "unavailable",
+    status: response.status,
+    limitPeriod: headerNumber(response.headers, "X-RateLimit-Limit-Period"),
+    remainingPeriod: headerNumber(response.headers, "X-RateLimit-Remaining-Period"),
+    resetPeriod: headerNumber(response.headers, "X-RateLimit-Reset-Period"),
+    costTokens: headerNumber(response.headers, "X-Cost-Tokens"),
+    checkedAt: new Date(now).toISOString(),
+    cached: false
+  };
+  if (store?.putJson) {
+    try {
+      await store.putJson(cacheKey, snapshot, { expirationTtl: cacheSeconds + 60 });
+    } catch {
+      /* Provider headers are an extra guardrail; do not fail closed on storage. */
+    }
+  }
+  return snapshot;
+}
+
+function configuredXweatherUsageProbeUrl(env = {}) {
+  return String(env?.[XWEATHER_USAGE_PROBE_URL_ENV] || "").trim();
+}
+
+function xweatherProbeUrlWithCredentials(url, clientId, clientSecret) {
+  const parsed = new URL(url);
+  if (!parsed.searchParams.has("client_id")) parsed.searchParams.set("client_id", clientId);
+  if (!parsed.searchParams.has("client_secret")) parsed.searchParams.set("client_secret", clientSecret);
+  return parsed.toString();
+}
+
+function headerNumber(headers, name) {
+  const value = headers?.get?.(name);
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, options.timeoutMs || 5000));
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function xweatherLocalUsageState(store, payload = {}, request, limits = xweatherStormLimits(), now = Date.now()) {
+  const month = xweatherUsageMonthKey(new Date(now));
+  const windowStart = Math.floor(now / (XWEATHER_STORM_SESSION_SECONDS * 1000)) * XWEATHER_STORM_SESSION_SECONDS * 1000;
+  const clientKey = await xweatherClientBudgetKey(payload, request);
+  const sessionKey = ["xweather-storm-session", "v1", month, Math.floor(windowStart / 1000), clientKey].join(":");
+  const budgetKey = ["xweather-storm-budget", "v1", month].join(":");
+  const lease = {
+    id: await sha256Hex(`${sessionKey}:${month}`),
+    month,
+    sessionWindowStart: new Date(windowStart).toISOString(),
+    expiresAt: new Date(windowStart + XWEATHER_STORM_SESSION_SECONDS * 1000).toISOString(),
+    estimatedAccessCost: limits.sessionAccessCost
+  };
+  if (!store?.getJson || !store?.putJson) {
+    return {
+      allowed: false,
+      state: "budget-paused",
+      reason: "budget-store-unavailable",
+      month,
+      accesses: 0,
+      sessions: 0,
+      limit: limits.localMonthlyAccessLimit,
+      lease
+    };
+  }
+  const existingSession = await store.getJson(sessionKey);
+  const budget = await store.getJson(budgetKey);
+  const accesses = Math.max(0, Math.floor(finiteNumber(budget?.accesses, 0)));
+  const sessions = Math.max(0, Math.floor(finiteNumber(budget?.sessions, 0)));
+  if (existingSession?.leaseId) {
+    return {
+      allowed: true,
+      reason: "lease-reused",
+      month,
+      accesses,
+      sessions,
+      limit: limits.localMonthlyAccessLimit,
+      remaining: Math.max(0, limits.localMonthlyAccessLimit - accesses),
+      deduped: true,
+      lease: {
+        ...lease,
+        id: existingSession.leaseId,
+        reused: true
+      }
+    };
+  }
+  if (accesses + limits.sessionAccessCost > limits.localMonthlyAccessLimit) {
+    return {
+      allowed: false,
+      reason: "local-monthly-budget-exhausted",
+      month,
+      accesses,
+      sessions,
+      limit: limits.localMonthlyAccessLimit,
+      remaining: Math.max(0, limits.localMonthlyAccessLimit - accesses),
+      lease
+    };
+  }
+  const updated = {
+    provider: "nearcast-xweather-budget",
+    version: 1,
+    month,
+    accesses: accesses + limits.sessionAccessCost,
+    sessions: sessions + 1,
+    sessionAccessCost: limits.sessionAccessCost,
+    limit: limits.localMonthlyAccessLimit,
+    updatedAt: new Date(now).toISOString()
+  };
+  await store.putJson(budgetKey, updated);
+  await store.putJson(sessionKey, {
+    provider: "nearcast-xweather-session",
+    version: 1,
+    month,
+    leaseId: lease.id,
+    clientKey,
+    sessionWindowStart: lease.sessionWindowStart,
+    expiresAt: lease.expiresAt,
+    accessCost: limits.sessionAccessCost,
+    updatedAt: new Date(now).toISOString()
+  });
+  return {
+    allowed: true,
+    reason: "lease-granted",
+    month,
+    accesses: updated.accesses,
+    sessions: updated.sessions,
+    limit: limits.localMonthlyAccessLimit,
+    remaining: Math.max(0, limits.localMonthlyAccessLimit - updated.accesses),
+    deduped: false,
+    lease
+  };
+}
+
+async function xweatherClientBudgetKey(payload = {}, request) {
+  const client = payload.client && typeof payload.client === "object" ? payload.client : {};
+  const id = cleanToken(client.instanceId || client.id || "", 96);
+  if (id) return `client:${await sha256Hex(id)}`;
+  const ip = request?.headers?.get?.("CF-Connecting-IP") || "";
+  const ua = request?.headers?.get?.("User-Agent") || "";
+  return `anon:${await sha256Hex(`${ip}:${ua}`)}`;
+}
+
+function xweatherUsageMonthKey(date = new Date()) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function configuredPlanWatchVapidPrivateKey(env = {}) {
