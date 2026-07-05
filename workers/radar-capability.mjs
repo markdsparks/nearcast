@@ -57,7 +57,7 @@ const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
 const DEFAULT_XWEATHER_STORM_MODE = "beta";
 const DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM = 7.5;
 const DEFAULT_XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
-const DEFAULT_XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT = 12000;
+const DEFAULT_XWEATHER_LOCAL_MONTHLY_ACCESS_LIMIT = 1500;
 const DEFAULT_XWEATHER_PROVIDER_MIN_REMAINING = 1800;
 const DEFAULT_XWEATHER_SESSION_ACCESS_COST = 150;
 const DEFAULT_XWEATHER_USAGE_PROBE_CACHE_SECONDS = 10 * 60;
@@ -1044,6 +1044,15 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       message: "Storm view starts when radar is active nearby."
     };
   }
+  if (!context.activationRequested) {
+    return {
+      ...base,
+      allowed: false,
+      state: "activation-required",
+      reason: "user-activation-required",
+      message: "Tap Storm View on the map to start."
+    };
+  }
 
   const store = generationRequestStore(env);
   if (!store?.getJson || !store?.putJson) {
@@ -1173,6 +1182,8 @@ function normalizeXweatherStormContext(payload = {}, viewport = {}, now = Date.n
     zoom: Number.isFinite(zoom) ? roundNumber(zoom, 2) : null,
     activeWeather,
     activeWeatherReason: cleanText(storm.activeWeatherReason || "", 80),
+    activationRequested: booleanValue(payload.activation?.requested || payload.activate || payload.userActivated),
+    activationSource: cleanText(payload.activation?.source || "", 48),
     clientEstimatedAccesses: nonNegativeInteger(client.estimatedAccesses, 0),
     requestedAt: new Date(now).toISOString()
   };

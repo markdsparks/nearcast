@@ -1,4 +1,4 @@
-const VERSION = "3.0.180";
+const VERSION = "3.0.181";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -26,7 +26,7 @@ const XWEATHER_MAPSGL_SCRIPT_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dis
 const XWEATHER_MAPSGL_CSS_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.css";
 const XWEATHER_STORM_DEFAULT_LAYERS = "radar,lightning-strikes-icons";
 const XWEATHER_MAPSGL_SESSION_ACCESS_COST = 150;
-const XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
+const XWEATHER_MONTHLY_ACCESS_LIMIT = 1500;
 const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
 const XWEATHER_CONFIG_TIMEOUT_MS = 10000;
 const XWEATHER_CONFIG_RETRY_MS = 8000;
@@ -360,6 +360,8 @@ const state = {
 let xweatherStormConfigRecord = { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
 let xweatherStormConfigPromise = null;
 let xweatherStormConfigPromiseKey = "";
+let xweatherStormActivatedUntil = 0;
+let xweatherStormActivationTimer = 0;
 
 if (state.mapDiagnosticMode !== "full" && state.mapRenderer !== "gl") {
   state.mapRenderer = "gl";
@@ -3938,6 +3940,44 @@ function xweatherStormConfigSnapshot() {
   return xweatherStormConfigRecord || { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
 }
 
+function xweatherStormActivated() {
+  return state.xweatherStormMode === "xweather" && Date.now() < xweatherStormActivatedUntil;
+}
+
+function xweatherStormActivationSnapshot() {
+  return {
+    active: xweatherStormActivated(),
+    expiresAt: xweatherStormActivated() ? new Date(xweatherStormActivatedUntil).toISOString() : ""
+  };
+}
+
+function activateXweatherStormView() {
+  if (xweatherStormActivationTimer) clearTimeout(xweatherStormActivationTimer);
+  xweatherStormActivatedUntil = Date.now() + XWEATHER_STORM_SESSION_MS;
+  xweatherStormActivationTimer = setTimeout(() => {
+    xweatherStormActivationTimer = 0;
+    deactivateXweatherStormView();
+  }, XWEATHER_STORM_SESSION_MS + 250);
+  if (state.xweatherStormMode !== "xweather") {
+    state.xweatherStormMode = "xweather";
+    localStorage.setItem(XWEATHER_STORM_MODE_KEY, state.xweatherStormMode);
+  }
+  updateXweatherStormControl();
+  if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
+  return xweatherStormActivationSnapshot();
+}
+
+function deactivateXweatherStormView() {
+  if (xweatherStormActivationTimer) {
+    clearTimeout(xweatherStormActivationTimer);
+    xweatherStormActivationTimer = 0;
+  }
+  xweatherStormActivatedUntil = 0;
+  updateXweatherStormControl();
+  if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
+  return xweatherStormActivationSnapshot();
+}
+
 function xweatherStormCredentialsSnapshot() {
   const snapshot = xweatherStormConfigSnapshot();
   return snapshot.credentials?.clientId && snapshot.credentials?.clientSecret ? snapshot.credentials : null;
@@ -4000,6 +4040,10 @@ async function loadXweatherStormConfig(options = {}) {
       contextKey,
       viewport: requestContext.viewport || null,
       storm: requestContext.storm || {},
+      activation: {
+        requested: xweatherStormActivated(),
+        source: "storm-view-button"
+      },
       client: {
         instanceId: xweatherClientInstanceId(),
         estimatedAccesses: readXweatherUsageRecord().accesses
@@ -4065,6 +4109,10 @@ function xweatherStormCredentialsReady() {
 window.nearcastXweatherStormConfig = xweatherStormConfigSnapshot;
 window.nearcastXweatherStormCredentials = xweatherStormCredentialsSnapshot;
 window.nearcastLoadXweatherStormConfig = loadXweatherStormConfig;
+window.nearcastXweatherStormActivated = xweatherStormActivated;
+window.nearcastXweatherStormActivation = xweatherStormActivationSnapshot;
+window.nearcastActivateXweatherStorm = activateXweatherStormView;
+window.nearcastDeactivateXweatherStorm = deactivateXweatherStormView;
 
 function xweatherUsageMonthKey(date = new Date()) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -4183,6 +4231,7 @@ function xweatherStormMetaText() {
   }
   if (config.status === "loading") return "Checking storm map access";
   if (config.status === "unknown" || config.status === "needs-context") return "Open full map to start";
+  if (config.status === "activation-required") return "Tap Storm View on the map to start";
   if (config.status === "below-min-zoom") return "Zoom in to start storm view";
   if (config.status === "no-active-weather") return "Starts when radar is active";
   if (config.status === "budget-paused" || config.status === "provider-budget-paused") return `Budget paused · ${usageText}`;
@@ -4203,6 +4252,7 @@ function setXweatherStormMode(value) {
   if (next === state.xweatherStormMode) return;
   state.xweatherStormMode = next;
   localStorage.setItem(XWEATHER_STORM_MODE_KEY, next);
+  if (next !== "xweather") xweatherStormActivatedUntil = 0;
   updateXweatherStormControl();
   if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
 }

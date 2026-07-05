@@ -693,10 +693,22 @@ const xweatherPayload = {
     activeWeather: true,
     activeWeatherReason: "smoke-radar"
   },
+  activation: {
+    requested: true,
+    source: "smoke"
+  },
   client: {
     instanceId: "smoke-device-a"
   }
 };
+const xweatherNeedsActivation = await xweatherConfig({
+  ...xweatherPayload,
+  activation: { requested: false },
+  client: { instanceId: "smoke-device-needs-activation" }
+}, xweatherEnv);
+assert.equal(xweatherNeedsActivation.status, 200);
+assert.equal(xweatherNeedsActivation.body.state, "activation-required");
+assert.equal(xweatherNeedsActivation.body.credentials, null);
 const xweatherReady = await xweatherConfig(xweatherPayload, xweatherEnv);
 assert.equal(xweatherReady.status, 200);
 assert.equal(xweatherReady.body.state, "ready");
