@@ -203,7 +203,7 @@ export async function handleXweatherConfigRequest(request, env = {}) {
       allowed: false,
       state: "error",
       reason: "storm-view-config-failed",
-      message: "Storm view is temporarily unavailable.",
+      message: "StormScope is temporarily unavailable.",
       limits: xweatherStormLimits(env),
       usage: null,
       lease: null,
@@ -1006,7 +1006,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "paused",
       reason: "storm-view-disabled",
-      message: "Storm view is paused."
+      message: "StormScope is paused."
     };
   }
   if (!clientId || !clientSecret) {
@@ -1024,7 +1024,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "needs-context",
       reason: "viewport-required",
-      message: "Open the map before starting storm view."
+      message: "Open the map before starting StormScope."
     };
   }
   if (context.zoom + 0.001 < limits.minZoom) {
@@ -1033,7 +1033,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "below-min-zoom",
       reason: "below-min-zoom",
-      message: `Zoom in to start storm view.`
+      message: `Zoom in to start StormScope.`
     };
   }
   if (limits.requireActiveWeather && !context.activeWeather) {
@@ -1042,7 +1042,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "no-active-weather",
       reason: "no-active-weather",
-      message: "Storm view starts when radar is active nearby."
+      message: "StormScope starts when radar is active nearby."
     };
   }
   if (!context.activationRequested) {
@@ -1051,7 +1051,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "activation-required",
       reason: "user-activation-required",
-      message: "Tap Storm View on the map to start."
+      message: "Tap StormScope on the map to start."
     };
   }
 
@@ -1082,7 +1082,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "budget-paused",
       reason: "budget-store-unavailable",
-      message: "Storm view is paused until budget tracking is available.",
+      message: "StormScope is paused until budget tracking is available.",
       usage: {
         local: {
           allowed: false,
@@ -1104,7 +1104,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "provider-budget-paused",
       reason: "provider-remaining-low",
-      message: "Storm view is paused to protect the Xweather free tier.",
+      message: "StormScope is paused to protect the Xweather free tier.",
       usage: {
         provider: providerUsage
       }
@@ -1118,7 +1118,7 @@ async function xweatherStormGate(payload = {}, request, env = {}, now = Date.now
       allowed: false,
       state: "budget-paused",
       reason: localUsage.reason,
-      message: "Storm view is paused for this month.",
+      message: "StormScope is paused for this month.",
       usage: {
         local: localUsage,
         provider: providerUsage

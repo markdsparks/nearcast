@@ -1,4 +1,4 @@
-const VERSION = "3.0.188";
+const VERSION = "3.0.189";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3914,8 +3914,8 @@ function xweatherStormConfigErrorMessage(error) {
   const name = String(error?.name || "").toLowerCase();
   const message = String(error?.message || "").trim();
   const lower = message.toLowerCase();
-  if (name === "aborterror" || lower.includes("abort") || lower.includes("timed out")) return "Storm view timed out";
-  return message || "Storm view config unavailable";
+  if (name === "aborterror" || lower.includes("abort") || lower.includes("timed out")) return "StormScope timed out";
+  return message || "StormScope config unavailable";
 }
 
 function xweatherStormConfigLoadingStale(record = xweatherStormConfigRecord, now = Date.now()) {
@@ -3933,7 +3933,7 @@ function expireStaleXweatherStormConfig(now = Date.now()) {
     checkedAt: now,
     credentials: null,
     layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
-    message: "Storm view timed out",
+    message: "StormScope timed out",
     retryAt: 0
   };
   xweatherStormConfigPromise = null;
@@ -4025,7 +4025,7 @@ async function loadXweatherStormConfig(options = {}) {
       checkedAt: Date.now(),
       credentials: null,
       layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
-      message: "Open the full map to start storm view.",
+      message: "Open the full map to start StormScope.",
       contextKey: ""
     };
     updateXweatherStormControl();
@@ -4260,16 +4260,16 @@ function xweatherStormMetaText() {
   }
   if (!xweatherStormActivated()) {
     if (config.status === "budget-paused" || config.status === "provider-budget-paused") return `Budget paused · ${usageText}`;
-    if (config.status === "error") return "Storm view unavailable";
-    return "Tap Storm View on the map to start";
+    if (config.status === "error") return "StormScope unavailable";
+    return "Tap StormScope on the map to start";
   }
   if (config.status === "loading") return "Checking storm map access";
   if (config.status === "unknown" || config.status === "needs-context") return "Open full map to start";
-  if (config.status === "activation-required") return "Tap Storm View on the map to start";
-  if (config.status === "below-min-zoom") return "Zoom in to start storm view";
+  if (config.status === "activation-required") return "Tap StormScope on the map to start";
+  if (config.status === "below-min-zoom") return "Zoom in to start StormScope";
   if (config.status === "no-active-weather") return "Starts when radar is active";
   if (config.status === "budget-paused" || config.status === "provider-budget-paused") return `Budget paused · ${usageText}`;
-  if (config.status === "error") return "Storm view unavailable";
+  if (config.status === "error") return "StormScope unavailable";
   if (!xweatherStormCredentialsReady()) return "Storm maps not configured";
   if (!layers.length) return "No layer codes configured";
   return `On in map · ${layers.join(" + ")} · ${usageText}`;
