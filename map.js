@@ -10,6 +10,7 @@ const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const XWEATHER_MAPSGL_SLOW_READY_MS = 7000;
+const XWEATHER_MAPSGL_ASSET_TIMEOUT_MS = 12000;
 const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 30000;
 const XWEATHER_STORM_TIMELINE_PAST_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_FUTURE_MS = 90 * 60 * 1000;
@@ -336,11 +337,19 @@ function ensureXweatherMapsglStylesheet() {
   link.rel = "stylesheet";
   link.href = XWEATHER_MAPSGL_CSS_URL;
   xweatherMapsglCssPromise = new Promise((resolve) => {
-    link.addEventListener("load", () => resolve(true), { once: true });
+    let settled = false;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Boolean(ready));
+    };
+    const timer = setTimeout(() => finish(false), XWEATHER_MAPSGL_ASSET_TIMEOUT_MS);
+    link.addEventListener("load", () => finish(true), { once: true });
     link.addEventListener("error", () => {
       link.remove();
       xweatherMapsglCssPromise = null;
-      resolve(false);
+      finish(false);
     }, { once: true });
   });
   document.head.appendChild(link);
@@ -352,6 +361,7 @@ function ensureXweatherMapsglAssets() {
   const cssPromise = ensureXweatherMapsglStylesheet();
   if (!xweatherMapsglAssetPromise) {
     xweatherMapsglAssetPromise = new Promise((resolve) => {
+      let settled = false;
       let script = document.getElementById(XWEATHER_MAPSGL_SCRIPT_ID);
       if (!script) {
         script = document.createElement("script");
@@ -359,8 +369,17 @@ function ensureXweatherMapsglAssets() {
         script.src = XWEATHER_MAPSGL_SCRIPT_URL;
         script.async = true;
       }
-      script.addEventListener("load", () => resolve(true), { once: true });
-      script.addEventListener("error", () => resolve(false), { once: true });
+      const finish = (ready) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (ready) script.dataset.nearcastLoaded = "1";
+        resolve(Boolean(ready));
+      };
+      const timer = setTimeout(() => finish(false), XWEATHER_MAPSGL_ASSET_TIMEOUT_MS);
+      if (script.dataset.nearcastLoaded === "1") finish(true);
+      script.addEventListener("load", () => finish(true), { once: true });
+      script.addEventListener("error", () => finish(false), { once: true });
       if (!script.isConnected) document.body.appendChild(script);
     }).then((loaded) => Promise.all([Promise.resolve(loaded), cssPromise]))
       .then(([scriptLoaded]) => Boolean(scriptLoaded && xweatherStormMapsglNamespace()))
@@ -429,7 +448,16 @@ function xweatherStormStatusForChip() {
   if (status === "active") return { visible: true, ready: true, text: "Storm view" };
   if (status === "loading") return { visible: true, ready: false, text: message || "Loading storm view" };
   if (status === "error") return { visible: true, ready: false, text: message || "Storm view unavailable" };
-  if (status === "missing-keys" || status === "activation-required" || status === "budget" || status === "paused") {
+  if ([
+    "missing-keys",
+    "activation-required",
+    "budget",
+    "budget-paused",
+    "provider-budget-paused",
+    "paused",
+    "below-min-zoom",
+    "no-active-weather"
+  ].includes(status)) {
     return { visible: true, ready: false, text: message || "Storm view paused" };
   }
   return { visible: false };
@@ -458,6 +486,42 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       tone: "paused",
       label: "Storm View paused",
       detail: "Budget protected"
+    };
+  }
+  if (config.status === "below-min-zoom") {
+    return {
+      visible: true,
+      enabled: false,
+      tone: "standby",
+      label: "Zoom in",
+      detail: "Storm View at street radar"
+    };
+  }
+  if (config.status === "no-active-weather") {
+    return {
+      visible: true,
+      enabled: false,
+      tone: "standby",
+      label: "No storm nearby",
+      detail: "Using standard radar"
+    };
+  }
+  if (config.status === "paused" || config.status === "missing-credentials") {
+    return {
+      visible: true,
+      enabled: false,
+      tone: "paused",
+      label: "Storm View paused",
+      detail: "Unavailable"
+    };
+  }
+  if (config.status === "activation-required" && activated) {
+    return {
+      visible: true,
+      enabled: true,
+      tone: "standby",
+      label: "Retry Storm View",
+      detail: "Tap to start"
     };
   }
   if (config.status === "error") {
