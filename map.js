@@ -201,9 +201,21 @@ function xweatherStormClientMinZoom() {
   return Number.isFinite(configured) ? configured : XWEATHER_STORM_CLIENT_MIN_ZOOM;
 }
 
+function xweatherStormViewportContextKey(viewport) {
+  const center = viewport?.center || viewport?.activePoint || null;
+  const lat = Number(center?.latitude);
+  const lon = Number(center?.longitude);
+  const zoom = Number(viewport?.zoom);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(zoom)) {
+    const zoomBucket = Math.floor(zoom * 2) / 2;
+    return `storm:${lat.toFixed(1)},${lon.toFixed(1)},z${zoomBucket.toFixed(1)}`;
+  }
+  return String(viewport?.key || generatedRadarViewportKey() || "").trim();
+}
+
 function xweatherStormViewportContext(record = mapLibreCurrentRecord()) {
   const viewport = radarCapabilityViewport(generatedMrmsSelectionContext());
-  const contextKey = viewport?.key || generatedRadarViewportKey() || "";
+  const contextKey = xweatherStormViewportContextKey(viewport);
   const currentFrame = mapState.frames[mapState.frameIndex] || null;
   const currentLayers = currentFrame?.layers || (currentFrame?.url ? [{ url: currentFrame.url }] : []);
   const hasFallbackRadar = currentLayers.some((layer) => layer?.url);
@@ -223,6 +235,20 @@ function xweatherStormConfigMatchesContext(config, context) {
   const wanted = String(context?.contextKey || "").trim();
   if (!wanted) return false;
   return String(config?.contextKey || config?.context?.key || "").trim() === wanted;
+}
+
+function xweatherStormConfigLeaseActive(config, now = Date.now()) {
+  if (config?.status !== "ready") return false;
+  const expiresAt = Date.parse(config?.lease?.expiresAt || "");
+  if (Number.isFinite(expiresAt)) return now < expiresAt - 2000;
+  const checkedAt = Number(config?.checkedAt || 0);
+  const sessionMs = Number(XWEATHER_STORM_SESSION_MS) || 5 * 60 * 1000;
+  return checkedAt > 0 && now - checkedAt < sessionMs;
+}
+
+function xweatherStormConfigUsableForContext(config, context) {
+  if (config?.status === "ready") return xweatherStormConfigLeaseActive(config);
+  return xweatherStormConfigMatchesContext(config, context);
 }
 
 function xweatherStormMapsglNamespace() {
@@ -267,7 +293,7 @@ function xweatherStormGuard(record = mapLibreCurrentRecord()) {
   if (
     config.status &&
     !["unknown", "loading", "error"].includes(config.status) &&
-    !xweatherStormConfigMatchesContext(config, requestContext)
+    !xweatherStormConfigUsableForContext(config, requestContext)
   ) {
     return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
   }

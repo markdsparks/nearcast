@@ -1,4 +1,4 @@
-const VERSION = "3.0.179";
+const VERSION = "3.0.180";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3915,6 +3915,15 @@ function xweatherStormConfigErrorMessage(error) {
   return message || "Storm view config unavailable";
 }
 
+function xweatherStormConfigLeaseActive(record = xweatherStormConfigRecord, now = Date.now()) {
+  if (record?.status !== "ready") return false;
+  const expiresAt = Date.parse(record?.lease?.expiresAt || "");
+  if (Number.isFinite(expiresAt)) return now < expiresAt - 2000;
+  const checkedAt = Number(record?.checkedAt || 0);
+  const sessionMs = Number(XWEATHER_STORM_SESSION_MS) || 5 * 60 * 1000;
+  return checkedAt > 0 && now - checkedAt < sessionMs;
+}
+
 function xweatherStormConfigSnapshot() {
   const debugCredentials = legacyXweatherDebugCredentials();
   if (debugCredentials) {
@@ -3957,10 +3966,10 @@ async function loadXweatherStormConfig(options = {}) {
     updateXweatherStormControl();
     return xweatherStormConfigRecord;
   }
-  if (xweatherStormConfigPromise && xweatherStormConfigPromiseKey === contextKey) return xweatherStormConfigPromise;
-  if (!options.force && xweatherStormConfigRecord?.status === "ready" && existingContextKey === contextKey) {
+  if (xweatherStormConfigRecord?.status === "ready" && xweatherStormConfigLeaseActive(xweatherStormConfigRecord)) {
     return xweatherStormConfigRecord;
   }
+  if (xweatherStormConfigPromise) return xweatherStormConfigPromise;
   if (xweatherStormConfigRecord?.status === "error" && existingContextKey === contextKey) {
     const retryAt = Number(xweatherStormConfigRecord.retryAt || 0);
     if (retryAt && Date.now() < retryAt && !options.force) return xweatherStormConfigRecord;
@@ -4000,7 +4009,7 @@ async function loadXweatherStormConfig(options = {}) {
     .then((payload) => {
       const nextRecord = normalizeXweatherStormConfig(payload);
       nextRecord.contextKey = nextRecord.contextKey || requestKey;
-      if (xweatherStormConfigPromiseKey === requestKey) xweatherStormConfigRecord = nextRecord;
+      if (xweatherStormConfigPromiseKey === requestKey || nextRecord.status === "ready") xweatherStormConfigRecord = nextRecord;
       return nextRecord;
     })
     .catch((error) => {
