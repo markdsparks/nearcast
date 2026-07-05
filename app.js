@@ -1,4 +1,4 @@
-const VERSION = "3.0.178";
+const VERSION = "3.0.179";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -28,6 +28,8 @@ const XWEATHER_STORM_DEFAULT_LAYERS = "radar,lightning-strikes-icons";
 const XWEATHER_MAPSGL_SESSION_ACCESS_COST = 150;
 const XWEATHER_MONTHLY_ACCESS_LIMIT = 15000;
 const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
+const XWEATHER_CONFIG_TIMEOUT_MS = 10000;
+const XWEATHER_CONFIG_RETRY_MS = 8000;
 const DEVICE_LOCATION_KEY = "nearcast-device-location-v1";
 const DEVICE_LOCATION_MAP_MAX_AGE_MS = 30 * 60 * 1000;
 const DEVICE_LOCATION_REFRESH_MAX_AGE_MS = 5 * 60 * 1000;
@@ -357,6 +359,7 @@ const state = {
 
 let xweatherStormConfigRecord = { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
 let xweatherStormConfigPromise = null;
+let xweatherStormConfigPromiseKey = "";
 
 if (state.mapDiagnosticMode !== "full" && state.mapRenderer !== "gl") {
   state.mapRenderer = "gl";
@@ -3904,6 +3907,14 @@ function xweatherClientInstanceId() {
   }
 }
 
+function xweatherStormConfigErrorMessage(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").trim();
+  const lower = message.toLowerCase();
+  if (name === "aborterror" || lower.includes("abort") || lower.includes("timed out")) return "Storm view timed out";
+  return message || "Storm view config unavailable";
+}
+
 function xweatherStormConfigSnapshot() {
   const debugCredentials = legacyXweatherDebugCredentials();
   if (debugCredentials) {
@@ -3931,6 +3942,7 @@ async function loadXweatherStormConfig(options = {}) {
   }
   const requestContext = options.context && typeof options.context === "object" ? options.context : null;
   const contextKey = String(requestContext?.contextKey || requestContext?.viewport?.key || "").trim();
+  const existingContextKey = String(xweatherStormConfigRecord?.contextKey || xweatherStormConfigRecord?.context?.key || "").trim();
   if (!requestContext) {
     xweatherStormConfigRecord = {
       ...(xweatherStormConfigRecord || {}),
@@ -3945,7 +3957,14 @@ async function loadXweatherStormConfig(options = {}) {
     updateXweatherStormControl();
     return xweatherStormConfigRecord;
   }
-  if (xweatherStormConfigPromise && !options.force) return xweatherStormConfigPromise;
+  if (xweatherStormConfigPromise && xweatherStormConfigPromiseKey === contextKey) return xweatherStormConfigPromise;
+  if (!options.force && xweatherStormConfigRecord?.status === "ready" && existingContextKey === contextKey) {
+    return xweatherStormConfigRecord;
+  }
+  if (xweatherStormConfigRecord?.status === "error" && existingContextKey === contextKey) {
+    const retryAt = Number(xweatherStormConfigRecord.retryAt || 0);
+    if (retryAt && Date.now() < retryAt && !options.force) return xweatherStormConfigRecord;
+  }
   if (!xweatherStormConfigRecord || xweatherStormConfigRecord.status === "unknown" || options.force) {
     xweatherStormConfigRecord = {
       ...(xweatherStormConfigRecord || {}),
@@ -3956,7 +3975,9 @@ async function loadXweatherStormConfig(options = {}) {
     };
     updateXweatherStormControl();
   }
-  xweatherStormConfigPromise = fetchJsonWithTimeout(XWEATHER_CONFIG_ENDPOINT, 5000, null, {
+  xweatherStormConfigPromiseKey = contextKey;
+  const requestKey = contextKey;
+  xweatherStormConfigPromise = fetchJsonWithTimeout(XWEATHER_CONFIG_ENDPOINT, XWEATHER_CONFIG_TIMEOUT_MS, null, {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -3977,24 +3998,41 @@ async function loadXweatherStormConfig(options = {}) {
     })
   })
     .then((payload) => {
-      xweatherStormConfigRecord = normalizeXweatherStormConfig(payload);
-      xweatherStormConfigRecord.contextKey = xweatherStormConfigRecord.contextKey || contextKey;
-      return xweatherStormConfigRecord;
+      const nextRecord = normalizeXweatherStormConfig(payload);
+      nextRecord.contextKey = nextRecord.contextKey || requestKey;
+      if (xweatherStormConfigPromiseKey === requestKey) xweatherStormConfigRecord = nextRecord;
+      return nextRecord;
     })
     .catch((error) => {
-      xweatherStormConfigRecord = {
+      const message = xweatherStormConfigErrorMessage(error);
+      const nextRecord = {
         status: "error",
         reason: "config-request-failed",
         checkedAt: Date.now(),
         credentials: null,
         layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
-        message: error?.message || "Storm view config unavailable",
-        contextKey
+        message,
+        contextKey: requestKey,
+        retryAt: Date.now() + XWEATHER_CONFIG_RETRY_MS
       };
-      return xweatherStormConfigRecord;
+      if (xweatherStormConfigPromiseKey === requestKey) xweatherStormConfigRecord = nextRecord;
+      setTimeout(() => {
+        if (
+          xweatherStormEnabled() &&
+          xweatherStormConfigRecord?.status === "error" &&
+          String(xweatherStormConfigRecord.contextKey || "") === requestKey &&
+          typeof applyXweatherStormPreference === "function"
+        ) {
+          applyXweatherStormPreference();
+        }
+      }, XWEATHER_CONFIG_RETRY_MS + 100);
+      return nextRecord;
     })
     .finally(() => {
-      xweatherStormConfigPromise = null;
+      if (xweatherStormConfigPromiseKey === requestKey) {
+        xweatherStormConfigPromise = null;
+        xweatherStormConfigPromiseKey = "";
+      }
       updateXweatherStormControl();
       if (typeof applyXweatherStormPreference === "function") applyXweatherStormPreference();
     });

@@ -229,6 +229,15 @@ function xweatherStormMapsglNamespace() {
   return window.mapsgl || window.aerisweather?.mapsgl || window.xweather?.mapsgl || null;
 }
 
+function xweatherStormUserMessage(error, fallback = "Storm view unavailable") {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").trim();
+  const lower = message.toLowerCase();
+  if (name === "aborterror" || lower.includes("abort")) return "Storm view timed out";
+  if (lower.includes("timed out") || lower.includes("taking too long")) return "Storm view timed out";
+  return message || fallback;
+}
+
 function xweatherStormGuard(record = mapLibreCurrentRecord()) {
   if (!xweatherStormPreferenceEnabled()) return { ok: false, status: "off", message: "" };
   if (!mapState.immersive) return { ok: false, status: "standby", message: "Open full map" };
@@ -243,6 +252,10 @@ function xweatherStormGuard(record = mapLibreCurrentRecord()) {
   }
   const config = xweatherStormConfigStatus();
   if (config.status === "error" && xweatherStormConfigMatchesContext(config, requestContext)) {
+    const retryAt = Number(config.retryAt || 0);
+    if (retryAt && Date.now() >= retryAt) {
+      return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
+    }
     return {
       ok: false,
       status: "error",
@@ -951,7 +964,7 @@ async function startXweatherStormLayer(record) {
     console.warn("[Nearcast] Xweather storm view failed", error);
     if (mapLibreRecords.get(record.container) === record) {
       stopXweatherStormLayer(record, "error");
-      setXweatherStormStatus(record, "error", error?.message || "Storm view unavailable");
+      setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
     }
   }).finally(() => {
     if (record.xweatherStorm) record.xweatherStorm.loadingPromise = null;
