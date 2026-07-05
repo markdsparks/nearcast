@@ -1,4 +1,4 @@
-const VERSION = "3.0.181";
+const VERSION = "3.0.182";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4228,6 +4228,11 @@ function xweatherStormMetaText() {
     if (config.status === "loading") return "Checking storm map access";
     if (config.status === "unknown" || config.status === "needs-context") return "Off · starts in full map";
     return "Off · storm maps not configured";
+  }
+  if (!xweatherStormActivated()) {
+    if (config.status === "budget-paused" || config.status === "provider-budget-paused") return `Budget paused · ${usageText}`;
+    if (config.status === "error") return "Storm view unavailable";
+    return "Tap Storm View on the map to start";
   }
   if (config.status === "loading") return "Checking storm map access";
   if (config.status === "unknown" || config.status === "needs-context") return "Open full map to start";

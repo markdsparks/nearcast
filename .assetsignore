@@ -1,9 +1,13 @@
 .git/
 .github/
 .wrangler/
+.agents/
+.codex/
 .claude/
 .local-design/
 node_modules/
+native/ios/DerivedData/
+native/ios/.build/
 docs/
 scripts/
 .DS_Store
