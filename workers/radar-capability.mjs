@@ -194,7 +194,21 @@ export async function handleXweatherConfigRequest(request, env = {}) {
   const clientId = configuredXweatherClientId(env);
   const clientSecret = configuredXweatherClientSecret(env);
   const requestedAt = Date.now();
-  const gate = await xweatherStormGate(payload, request, env, requestedAt);
+  let gate;
+  try {
+    gate = await xweatherStormGate(payload, request, env, requestedAt);
+  } catch {
+    gate = {
+      allowed: false,
+      state: "error",
+      reason: "storm-view-config-failed",
+      message: "Storm view is temporarily unavailable.",
+      limits: xweatherStormLimits(env),
+      usage: null,
+      lease: null,
+      context: normalizeXweatherStormContext(payload, normalizeViewport(payload.viewport || {}), requestedAt)
+    };
+  }
   const ready = Boolean(clientId && clientSecret && gate.allowed);
   return jsonResponse({
     provider: "nearcast-xweather-config",

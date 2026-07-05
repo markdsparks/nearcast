@@ -241,11 +241,19 @@ function xweatherStormGuard(record = mapLibreCurrentRecord()) {
   if (!requestContext.storm.activeWeather) {
     return { ok: false, status: "no-active-weather", message: "Storm view starts when radar is active", context: requestContext };
   }
-  const credentials = xweatherStormCredentials();
   const config = xweatherStormConfigStatus();
+  if (config.status === "error" && xweatherStormConfigMatchesContext(config, requestContext)) {
+    return {
+      ok: false,
+      status: "error",
+      message: config.message || "Storm view unavailable",
+      context: requestContext
+    };
+  }
+  const credentials = xweatherStormCredentials();
   if (
     config.status &&
-    !["unknown", "loading"].includes(config.status) &&
+    !["unknown", "loading", "error"].includes(config.status) &&
     !xweatherStormConfigMatchesContext(config, requestContext)
   ) {
     return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
@@ -254,7 +262,7 @@ function xweatherStormGuard(record = mapLibreCurrentRecord()) {
     if (config.status === "unknown" || config.status === "loading") {
       return { ok: false, status: "loading", message: "Checking storm view", context: requestContext };
     }
-    if (["needs-context", "below-min-zoom", "no-active-weather", "budget-paused", "provider-budget-paused", "paused"].includes(config.status)) {
+    if (["needs-context", "below-min-zoom", "no-active-weather", "budget-paused", "provider-budget-paused", "paused", "error"].includes(config.status)) {
       return {
         ok: false,
         status: config.status,

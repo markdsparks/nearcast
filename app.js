@@ -1,4 +1,4 @@
-const VERSION = "3.0.177";
+const VERSION = "3.0.178";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3984,10 +3984,12 @@ async function loadXweatherStormConfig(options = {}) {
     .catch((error) => {
       xweatherStormConfigRecord = {
         status: "error",
+        reason: "config-request-failed",
         checkedAt: Date.now(),
         credentials: null,
         layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
-        message: error?.message || "Storm view config unavailable"
+        message: error?.message || "Storm view config unavailable",
+        contextKey
       };
       return xweatherStormConfigRecord;
     })
@@ -4137,6 +4139,7 @@ function xweatherStormMetaText() {
   if (config.status === "below-min-zoom") return "Zoom in to start storm view";
   if (config.status === "no-active-weather") return "Starts when radar is active";
   if (config.status === "budget-paused" || config.status === "provider-budget-paused") return `Budget paused · ${usageText}`;
+  if (config.status === "error") return "Storm view unavailable";
   if (!xweatherStormCredentialsReady()) return "Storm maps not configured";
   if (!layers.length) return "No layer codes configured";
   if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) return `Budget paused · ${usageText}`;
