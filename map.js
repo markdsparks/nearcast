@@ -21,6 +21,8 @@ const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
 const XWEATHER_STORM_SPATIAL_SMOOTHING = 0;
 const XWEATHER_STORM_TEMPORAL_MELD = true;
+const XWEATHER_STORM_ACCESS_PRICE_USD = 0.0006;
+const XWEATHER_STORM_COST_CLOSEOUT_MS = 5200;
 const XWEATHER_STORM_CLIENT_MIN_ZOOM = 7.5;
 const XWEATHER_STORM_DISPLAY_NAME = "Nearcast StormScope";
 const XWEATHER_STORM_SHORT_NAME = "StormScope";
@@ -424,11 +426,50 @@ function xweatherStormSessionWindow(now = Date.now()) {
   return Math.floor(now / interval) * interval;
 }
 
+function xweatherStormSessionAccessCost(record = mapLibreCurrentRecord()) {
+  const storm = record?.xweatherStorm || {};
+  const config = xweatherStormConfigStatus();
+  const candidates = [
+    storm.lease?.estimatedAccessCost,
+    storm.usage?.local?.lease?.estimatedAccessCost,
+    config?.lease?.estimatedAccessCost,
+    config?.usage?.local?.lease?.estimatedAccessCost,
+    config?.limits?.sessionAccessCost,
+    typeof XWEATHER_MAPSGL_SESSION_ACCESS_COST !== "undefined" ? XWEATHER_MAPSGL_SESSION_ACCESS_COST : null
+  ];
+  const value = candidates.map(Number).find((candidate) => Number.isFinite(candidate) && candidate > 0);
+  return value || 150;
+}
+
+function xweatherStormEstimatedUsd(accesses = xweatherStormSessionAccessCost()) {
+  const value = Number(accesses) * XWEATHER_STORM_ACCESS_PRICE_USD;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function formatXweatherStormEstimatedUsd(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "$0.00";
+  if (amount < 0.01) return "<$0.01";
+  return `$${amount.toFixed(2)}`;
+}
+
 function recordXweatherStormSession(record) {
   const now = Date.now();
   const windowStart = xweatherStormSessionWindow(now);
-  if (record?.xweatherStorm?.sessionWindowStart === windowStart) return;
-  if (record?.xweatherStorm) record.xweatherStorm.sessionWindowStart = windowStart;
+  if (!record?.xweatherStorm) return null;
+  const accessCost = xweatherStormSessionAccessCost(record);
+  const estimatedUsd = xweatherStormEstimatedUsd(accessCost);
+  record.xweatherStorm.sessionEstimatedAccessCost = accessCost;
+  record.xweatherStorm.sessionEstimatedUsd = estimatedUsd;
+  if (record.xweatherStorm.sessionWindowStart === windowStart) {
+    return {
+      windowStart,
+      accesses: accessCost,
+      usd: estimatedUsd,
+      recorded: false
+    };
+  }
+  record.xweatherStorm.sessionWindowStart = windowStart;
   try {
     const usage = typeof readXweatherUsageRecord === "function" ? readXweatherUsageRecord() : {
       month: new Date().toISOString().slice(0, 7),
@@ -437,11 +478,17 @@ function recordXweatherStormSession(record) {
       updatedAt: 0
     };
     usage.sessions = (Number(usage.sessions) || 0) + 1;
-    usage.accesses = (Number(usage.accesses) || 0) + XWEATHER_MAPSGL_SESSION_ACCESS_COST;
+    usage.accesses = (Number(usage.accesses) || 0) + accessCost;
     usage.updatedAt = now;
     localStorage.setItem(XWEATHER_USAGE_KEY, JSON.stringify(usage));
     if (typeof updateXweatherStormControl === "function") updateXweatherStormControl();
   } catch {}
+  return {
+    windowStart,
+    accesses: accessCost,
+    usd: estimatedUsd,
+    recorded: true
+  };
 }
 
 function setXweatherStormStatus(record, status, message = "") {
@@ -486,6 +533,36 @@ function xweatherStormStatusForChip() {
     return { visible: true, ready: false, text: message || `${XWEATHER_STORM_SHORT_NAME} paused` };
   }
   return { visible: false };
+}
+
+function xweatherStormCloseoutReason(reason = "off") {
+  if (reason === "exit") return "map closed";
+  if (reason === "destroy") return "map reset";
+  if (reason === "expired") return "session ended";
+  return "turned off";
+}
+
+function showXweatherStormCostCloseout(storm = {}, reason = "off") {
+  if (!storm || storm.status !== "active") return;
+  const accessCost = Number(storm.sessionEstimatedAccessCost || xweatherStormSessionAccessCost({ xweatherStorm: storm }));
+  const usd = Number.isFinite(Number(storm.sessionEstimatedUsd))
+    ? Number(storm.sessionEstimatedUsd)
+    : xweatherStormEstimatedUsd(accessCost);
+  if (!Number.isFinite(accessCost) || accessCost <= 0 || !Number.isFinite(usd) || usd <= 0) return;
+  const amount = formatXweatherStormEstimatedUsd(usd);
+  mapState.xweatherStormCloseout = {
+    text: `${XWEATHER_STORM_SHORT_NAME} ended · est. ${amount}`,
+    detail: `${Math.round(accessCost)} access units · ${xweatherStormCloseoutReason(reason)}`,
+    visibleUntil: Date.now() + XWEATHER_STORM_COST_CLOSEOUT_MS
+  };
+  if (mapState.xweatherStormCloseoutHideTimer) clearTimeout(mapState.xweatherStormCloseoutHideTimer);
+  mapState.xweatherStormCloseoutHideTimer = setTimeout(() => {
+    mapState.xweatherStormCloseoutHideTimer = 0;
+    if (Date.now() >= Number(mapState.xweatherStormCloseout?.visibleUntil || 0)) {
+      mapState.xweatherStormCloseout = { text: "", visibleUntil: 0 };
+      syncGeneratedRadarStatusChip();
+    }
+  }, XWEATHER_STORM_COST_CLOSEOUT_MS + 80);
 }
 
 function xweatherStormRecordLoadingStale(record = mapLibreCurrentRecord(), now = Date.now()) {
@@ -1367,6 +1444,7 @@ async function startXweatherStormLayer(record) {
   }
   const credentials = xweatherStormCredentials();
   const layerCodes = xweatherStormLayerCodes();
+  const config = xweatherStormConfigStatus();
   setXweatherStormStatus(record, "loading", `Loading ${XWEATHER_STORM_SHORT_NAME}`);
   record.xweatherStorm.loadingPromise = (async () => {
     const ready = await ensureXweatherMapsglAssets();
@@ -1433,6 +1511,8 @@ async function startXweatherStormLayer(record) {
       timelinePlaybackClock: 0,
       observedLightningVisible: null,
       observedLightningSettleTimer: 0,
+      lease: config.lease || null,
+      usage: config.usage || null,
       addedLayers,
       layerCodes,
       startedAt: Date.now(),
@@ -1495,6 +1575,7 @@ function restoreStandardRadarTimelineAfterStorm(record, options = {}) {
 function stopXweatherStormLayer(record, reason = "off") {
   const storm = record?.xweatherStorm;
   if (!record || !storm) return;
+  if (reason !== "error") showXweatherStormCostCloseout(storm, reason);
   clearXweatherStormTimelineBindings(record);
   if (mapState.timer) {
     cancelAnimationFrame(mapState.timer);
@@ -4517,9 +4598,23 @@ function syncGeneratedRadarStatusChip() {
     chip.hidden = false;
     chip.classList.toggle("is-ready", Boolean(stormStatus.ready));
     chip.classList.toggle("is-storm-view", true);
+    chip.classList.toggle("is-cost-closeout", false);
+    chip.removeAttribute("title");
     chip.textContent = stormStatus.text || XWEATHER_STORM_SHORT_NAME;
     return;
   }
+  const closeout = mapState.xweatherStormCloseout || {};
+  if (closeout.text && Date.now() < Number(closeout.visibleUntil || 0)) {
+    chip.hidden = false;
+    chip.classList.toggle("is-ready", true);
+    chip.classList.toggle("is-storm-view", true);
+    chip.classList.toggle("is-cost-closeout", true);
+    chip.textContent = closeout.text;
+    if (closeout.detail) chip.title = closeout.detail;
+    return;
+  }
+  chip.classList.remove("is-cost-closeout");
+  chip.removeAttribute("title");
   chip.classList.remove("is-storm-view");
   const warmup = generatedRadarWarmupState();
   const visible = generatedRadarWarmupIsActive(warmup) || warmup.state === "ready";

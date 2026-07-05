@@ -1,4 +1,4 @@
-const VERSION = "3.0.191";
+const VERSION = "3.0.192";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -461,6 +461,11 @@ const mapState = {
     timeoutAt: 0
   },
   generatedRadarStatusHideTimer: 0,
+  xweatherStormCloseout: {
+    text: "",
+    visibleUntil: 0
+  },
+  xweatherStormCloseoutHideTimer: 0,
   radarCapability: null,
   radarCapabilityLog: [],
   radarSourceDecision: null,

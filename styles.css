@@ -8032,6 +8032,11 @@ body.map-immersive-active #mapLegend {
   background: #f5ca45;
 }
 
+.map-radar-status.is-cost-closeout::before {
+  background: #8ee6b6;
+  animation: none;
+}
+
 .map-radar-status[hidden] {
   display: none;
 }
