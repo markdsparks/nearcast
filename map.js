@@ -21,6 +21,10 @@ const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
 const XWEATHER_STORM_SPATIAL_SMOOTHING = 0;
 const XWEATHER_STORM_TEMPORAL_MELD = true;
+const XWEATHER_STORM_CONTEXT_FADE_START_ZOOM = 12.8;
+const XWEATHER_STORM_CONTEXT_FADE_END_ZOOM = 16.2;
+const XWEATHER_STORM_CONTEXT_MAX_OPACITY = 0.94;
+const XWEATHER_STORM_CONTEXT_MIN_OPACITY = 0.62;
 const XWEATHER_STORM_ACCESS_PRICE_USD = 0.0006;
 const XWEATHER_STORM_COST_CLOSEOUT_MS = 5200;
 const XWEATHER_STORM_CLIENT_MIN_ZOOM = 7.5;
@@ -1507,14 +1511,34 @@ function xweatherMapsglEnumValue(group, key, fallback) {
   return fallback;
 }
 
-function xweatherStormLayerOptions(code, sdk) {
+function xweatherStormContextBlend(zoom = mapState.zoom) {
+  const value = Number(zoom);
+  if (!Number.isFinite(value)) return 0;
+  const span = Math.max(0.001, XWEATHER_STORM_CONTEXT_FADE_END_ZOOM - XWEATHER_STORM_CONTEXT_FADE_START_ZOOM);
+  const linear = clamp((value - XWEATHER_STORM_CONTEXT_FADE_START_ZOOM) / span, 0, 1);
+  return linear * linear * (3 - 2 * linear);
+}
+
+function xweatherStormContextOpacity(context = {}) {
+  const zoom = Number(context?.zoom ?? context?.map?.getZoom?.() ?? mapState.zoom);
+  const blend = xweatherStormContextBlend(zoom);
+  return XWEATHER_STORM_CONTEXT_MAX_OPACITY - ((XWEATHER_STORM_CONTEXT_MAX_OPACITY - XWEATHER_STORM_CONTEXT_MIN_OPACITY) * blend);
+}
+
+function xweatherStormStreetContextActive(zoom = mapState.zoom) {
+  return xweatherStormContextBlend(zoom) > 0.15;
+}
+
+function xweatherStormLayerOptions(code, sdk, options = {}) {
   const layer = String(code || "").toLowerCase();
   if (layer !== "radar") return null;
+  const dynamicOpacity = options.dynamicOpacity !== false;
   return {
     data: {
       quality: xweatherMapsglEnumValue(sdk?.DataQuality, "high", "high")
     },
     paint: {
+      opacity: dynamicOpacity ? xweatherStormContextOpacity : xweatherStormContextOpacity(),
       sample: {
         interpolation: xweatherMapsglEnumValue(sdk?.InterpolationMode, "bilinear", "bilinear"),
         smoothing: XWEATHER_STORM_SPATIAL_SMOOTHING,
@@ -1534,6 +1558,13 @@ function addXweatherStormWeatherLayer(controller, code, sdk) {
     } catch (error) {
       console.warn(`[Nearcast] Xweather styled layer failed: ${code}`, error);
       try { controller.removeWeatherLayer?.(code); } catch {}
+      try {
+        controller.addWeatherLayer(code, xweatherStormLayerOptions(code, sdk, { dynamicOpacity: false }));
+        return true;
+      } catch (staticError) {
+        console.warn(`[Nearcast] Xweather static styled layer failed: ${code}`, staticError);
+        try { controller.removeWeatherLayer?.(code); } catch {}
+      }
     }
   }
   controller.addWeatherLayer(code);
@@ -8000,6 +8031,10 @@ function renderMapLegend() {
   if (xweatherStormActive(mapLibreCurrentRecord())) {
     const storm = mapLibreCurrentRecord()?.xweatherStorm || {};
     const hasLightning = (storm.layerCodes || storm.addedLayers || []).some((code) => String(code).includes("lightning"));
+    const note = [
+      hasLightning ? "Lightning icons show recent strikes" : "Drag the timeline to see past and future motion",
+      xweatherStormStreetContextActive() ? "Street detail preserved at this zoom" : ""
+    ].filter(Boolean).join(" · ");
     els.mapLegend.innerHTML = `
       <div class="legend-header">
         <strong>Storm intensity</strong>
@@ -8010,7 +8045,7 @@ function renderMapLegend() {
       <div class="legend-labels">
         ${["Light", "Steady", "Heavy", "Strong", "Severe"].map((label) => `<span>${escapeHtml(label)}</span>`).join("")}
       </div>
-      <span class="legend-note">${escapeHtml(hasLightning ? "Lightning icons show recent strikes" : "Drag the timeline to see past and future motion")}</span>
+      <span class="legend-note">${escapeHtml(note)}</span>
     `;
     return;
   }
