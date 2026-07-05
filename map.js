@@ -617,9 +617,21 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
 
 function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   const button = document.getElementById("immStormActivate");
-  if (!button) return;
+  const entry = document.getElementById("immStormEntry");
+  if (!button && !entry) return;
   const state = xweatherStormActivationControlState(record);
-  button.hidden = !state.visible;
+  const entryVisible = Boolean(state.visible && state.enabled && state.action === "activate");
+  if (entry) {
+    entry.hidden = !entryVisible;
+    entry.disabled = !entryVisible;
+    entry.dataset.tone = entryVisible ? "ready" : state.tone || "standby";
+    entry.dataset.action = entryVisible ? "explain" : state.action || "";
+    entry.setAttribute("aria-label", state.detail ? `${state.label}. ${state.detail}` : state.label || "Enhanced Storm View available");
+    entry.setAttribute("title", state.label || "Enhanced Storm View");
+  }
+  if (!button) return;
+  const statusVisible = Boolean(state.visible && !entryVisible);
+  button.hidden = !statusVisible;
   button.disabled = !state.enabled;
   button.dataset.tone = state.tone || "standby";
   button.dataset.action = state.action || "";
@@ -628,6 +640,30 @@ function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   const detail = button.querySelector("[data-storm-activate-detail]");
   if (label) label.textContent = state.label || "Storm View";
   if (detail) detail.textContent = state.detail || "";
+}
+
+function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
+  const state = xweatherStormActivationControlState(record);
+  if (!state.enabled || !["activate", "retry"].includes(state.action)) return false;
+  if (typeof window.nearcastActivateXweatherStorm !== "function") return false;
+  window.nearcastActivateXweatherStorm();
+  setXweatherStormStatus(record, "loading", "Checking access");
+  syncXweatherStormActivationControl(record);
+  if (typeof window.nearcastLoadXweatherStormConfig === "function") {
+    Promise.resolve(window.nearcastLoadXweatherStormConfig({
+      force: true,
+      context: xweatherStormViewportContext(record)
+    }))
+      .then(() => {
+        if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
+      })
+      .catch((error) => {
+        if (mapLibreCurrentRecord() === record) setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
+      });
+  } else {
+    syncXweatherStormLayer(record);
+  }
+  return true;
 }
 
 function toggleXweatherStormActivation() {
@@ -640,26 +676,52 @@ function toggleXweatherStormActivation() {
     renderMapLibreOverlays({ forceRadar: true });
     return;
   }
-  if (!state.enabled) return;
-  if (typeof window.nearcastActivateXweatherStorm === "function") {
-    window.nearcastActivateXweatherStorm();
-    setXweatherStormStatus(record, "loading", "Checking access");
-    syncXweatherStormActivationControl(record);
-    if (typeof window.nearcastLoadXweatherStormConfig === "function") {
-      Promise.resolve(window.nearcastLoadXweatherStormConfig({
-        force: true,
-        context: xweatherStormViewportContext(record)
-      }))
-        .then(() => {
-          if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
-        })
-        .catch((error) => {
-          if (mapLibreCurrentRecord() === record) setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
-        });
-    } else {
-      syncXweatherStormLayer(record);
-    }
+  startXweatherStormActivation(record);
+}
+
+function stormViewSheetElements() {
+  return {
+    backdrop: document.getElementById("stormViewBackdrop"),
+    sheet: document.getElementById("stormViewSheet")
+  };
+}
+
+function stormViewSheetOpen() {
+  const { sheet } = stormViewSheetElements();
+  return Boolean(sheet && !sheet.hidden);
+}
+
+function openXweatherStormSheet() {
+  const state = xweatherStormActivationControlState(mapLibreCurrentRecord());
+  if (!state.enabled || state.action !== "activate") return;
+  const { backdrop, sheet } = stormViewSheetElements();
+  if (!backdrop || !sheet) return;
+  backdrop.hidden = false;
+  sheet.hidden = false;
+  if (typeof showSheet === "function") showSheet(backdrop, sheet);
+  else {
+    backdrop.classList.add("show");
+    sheet.classList.add("show");
   }
+  document.body.style.overflow = "hidden";
+}
+
+function closeXweatherStormSheet() {
+  const { backdrop, sheet } = stormViewSheetElements();
+  if (!backdrop || !sheet) return;
+  backdrop.classList.remove("show");
+  sheet.classList.remove("show");
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
+  setTimeout(() => {
+    backdrop.hidden = true;
+    sheet.hidden = true;
+  }, 260);
+}
+
+function activateXweatherStormFromSheet() {
+  const record = mapLibreCurrentRecord();
+  closeXweatherStormSheet();
+  startXweatherStormActivation(record);
 }
 
 function waitForXweatherControllerReady(controller) {
@@ -1261,6 +1323,17 @@ function stopXweatherStormLayer(record, reason = "off") {
 
 function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
   if (!record || !mapLibreRecordReady(record)) return false;
+  if (xweatherStormActive(record)) {
+    if (!xweatherStormPreferenceEnabled() || !mapState.immersive || !mapDiagnosticAllowsRadar()) {
+      stopXweatherStormLayer(record, "off");
+      return false;
+    }
+    syncXweatherStormActivationControl(record);
+    recordXweatherStormSession(record);
+    clearMapLibreWeatherRecord(record);
+    removeMapLibreRadarChunkLayer(record);
+    return true;
+  }
   const guard = xweatherStormGuard(record);
   syncXweatherStormActivationControl(record);
   if (!guard.ok) {
@@ -1278,13 +1351,7 @@ function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
     else if (xweatherStormPreferenceEnabled() && mapState.immersive) setXweatherStormStatus(record, guard.status, guard.message);
     return false;
   }
-  if (!xweatherStormActive(record)) startXweatherStormLayer(record);
-  if (xweatherStormActive(record)) {
-    recordXweatherStormSession(record);
-    clearMapLibreWeatherRecord(record);
-    removeMapLibreRadarChunkLayer(record);
-    return true;
-  }
+  startXweatherStormLayer(record);
   return false;
 }
 
@@ -8251,6 +8318,7 @@ function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
   clearMapLibreInteractionState();
+  closeXweatherStormSheet();
   stopXweatherStormLayer(mapLibreCurrentRecord(), "exit");
   clearStormImpact();
   Object.assign(els, mapState._normalEls);
@@ -8278,7 +8346,12 @@ function exitImmersiveMap() {
 }
 
 function onImmersiveKey(e) {
-  if (e.key === "Escape") exitImmersiveMap();
+  if (e.key !== "Escape") return;
+  if (stormViewSheetOpen()) {
+    closeXweatherStormSheet();
+    return;
+  }
+  exitImmersiveMap();
 }
 
 function updateImmersiveHUD() {
@@ -8299,7 +8372,12 @@ function bindImmersiveModeButtons() {
     exitImmersiveMap();
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
+  bindTapAction(document.getElementById("immStormEntry"), openXweatherStormSheet);
   bindTapAction(document.getElementById("immStormActivate"), toggleXweatherStormActivation);
+  bindTapAction(document.getElementById("stormViewSheetClose"), closeXweatherStormSheet);
+  bindTapAction(document.getElementById("stormViewBackdrop"), closeXweatherStormSheet);
+  bindTapAction(document.getElementById("stormViewCancel"), closeXweatherStormSheet);
+  bindTapAction(document.getElementById("stormViewStart"), activateXweatherStormFromSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   document.querySelectorAll("#immTimeJumps [data-storm-jump]").forEach((button) => {
     bindTapAction(button, () => jumpXweatherStormTimeline(button.getAttribute("data-storm-jump")));

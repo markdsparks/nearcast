@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.186">
-    <link rel="manifest" href="manifest.json?v=3.0.186">
+    <link rel="stylesheet" href="styles.css?v=3.0.187">
+    <link rel="manifest" href="manifest.json?v=3.0.187">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.186">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.186">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.187">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.187">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -404,6 +404,13 @@
                 <path d="M17.5 4.5h1.2A3.3 3.3 0 0 1 22 7.8v7.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
             </button>
+            <button class="imm-btn imm-storm-entry" id="immStormEntry" type="button" hidden aria-label="Enhanced Storm View available" title="Enhanced Storm View">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4.5 14.4c1.5-4.6 5.2-7.2 9.9-7.2 2.3 0 4.1.5 5.1 1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M5.4 17.7c1.6-3.3 4.6-5 8.2-5 1.8 0 3.4.3 4.8 1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".72"/>
+                <path d="m13.2 3.8-3 6h3.1l-2.4 6.3 6-8h-3.2l2.1-4.3h-2.6Z" fill="currentColor"/>
+              </svg>
+            </button>
           </div>
           <button class="imm-storm-activate" id="immStormActivate" type="button" hidden aria-pressed="false">
             <span data-storm-activate-label>Storm View</span>
@@ -648,12 +655,53 @@
       <div class="memory-detail-body" id="memoryDetailBody"></div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.186"></script>
-    <script src="planner.js?v=3.0.186"></script>
-    <script src="app.js?v=3.0.186"></script>
-    <script src="map.js?v=3.0.186"></script>
-    <script src="sky.js?v=3.0.186"></script>
-    <script src="daygraph.js?v=3.0.186"></script>
-    <script src="boot.js?v=3.0.186"></script>
+    <div class="sheet-backdrop storm-view-backdrop" id="stormViewBackdrop" hidden></div>
+    <aside class="day-sheet storm-view-sheet" id="stormViewSheet" hidden aria-label="Enhanced Storm View" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="stormViewSheetClose" type="button" aria-label="Close Enhanced Storm View">✕</button>
+      <header class="storm-view-head">
+        <span class="storm-view-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4.5 14.4c1.5-4.6 5.2-7.2 9.9-7.2 2.3 0 4.1.5 5.1 1.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M5.4 17.7c1.6-3.3 4.6-5 8.2-5 1.8 0 3.4.3 4.8 1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".72"/>
+            <path d="m13.2 3.8-3 6h3.1l-2.4 6.3 6-8h-3.2l2.1-4.3h-2.6Z" fill="currentColor"/>
+          </svg>
+        </span>
+        <div>
+          <p class="storm-view-kicker">Enhanced map</p>
+          <h2>Storm View is available</h2>
+          <p>Use the premium storm layer when you want a closer read on active weather nearby.</p>
+        </div>
+      </header>
+      <div class="storm-view-features">
+        <section>
+          <strong>Cleaner storm shape</strong>
+          <span>Smoother radar rendering that is easier to read while panning and zooming.</span>
+        </section>
+        <section>
+          <strong>Lightning context</strong>
+          <span>Recent strikes appear with the radar when lightning data is available.</span>
+        </section>
+        <section>
+          <strong>Motion timeline</strong>
+          <span>Scrub backward and forward to understand where the storm has been and where it may go.</span>
+        </section>
+      </div>
+      <p class="storm-view-cost">
+        Storm View uses paid map data. Nearcast asks before starting so we can keep this feature intentional and protect the budget.
+      </p>
+      <div class="storm-view-actions">
+        <button class="storm-view-primary" id="stormViewStart" type="button">Activate Storm View</button>
+        <button class="storm-view-secondary" id="stormViewCancel" type="button">Not now</button>
+      </div>
+    </aside>
+
+    <script src="weather-truth.js?v=3.0.187"></script>
+    <script src="planner.js?v=3.0.187"></script>
+    <script src="app.js?v=3.0.187"></script>
+    <script src="map.js?v=3.0.187"></script>
+    <script src="sky.js?v=3.0.187"></script>
+    <script src="daygraph.js?v=3.0.187"></script>
+    <script src="boot.js?v=3.0.187"></script>
   </body>
 </html>

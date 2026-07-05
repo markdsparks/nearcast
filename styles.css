@@ -7421,6 +7421,59 @@ body.map-immersive-active #mapLegend {
   height: 24px;
 }
 
+.imm-btn.imm-storm-entry {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 52% 24%, rgba(255, 226, 103, 0.30), transparent 36%),
+    rgba(16, 24, 35, 0.72);
+}
+
+.imm-btn.imm-storm-entry[hidden] {
+  display: none;
+}
+
+.imm-storm-entry svg {
+  width: 25px;
+  height: 25px;
+  filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.24));
+}
+
+.imm-storm-entry[data-tone="ready"] {
+  color: #ffe66d;
+  border-color: rgba(255, 230, 109, 0.38);
+  animation: storm-entry-pulse 1.7s ease-out infinite;
+}
+
+.imm-storm-entry[data-tone="ready"]::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #65f39b;
+  box-shadow: 0 0 0 5px rgba(101, 243, 155, 0.15);
+}
+
+@keyframes storm-entry-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 230, 109, 0.30), 0 12px 26px rgba(2, 7, 13, 0.18); }
+  72% { box-shadow: 0 0 0 14px rgba(255, 230, 109, 0), 0 12px 26px rgba(2, 7, 13, 0.18); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 230, 109, 0), 0 12px 26px rgba(2, 7, 13, 0.18); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imm-storm-entry[data-tone="ready"] {
+    animation: none;
+  }
+}
+
 .storm-impact-card {
   align-self: start;
   display: grid;
@@ -9292,6 +9345,185 @@ body.map-immersive-active .day-sheet {
 
 body.map-immersive-active .day-sheet.show {
   transform: translateY(0);
+}
+
+.day-sheet.storm-view-sheet {
+  max-width: 520px;
+  padding: 10px 20px max(28px, calc(22px + env(safe-area-inset-bottom, 0px)));
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255, 214, 83, 0.18), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(89, 208, 255, 0.18), transparent 32%),
+    linear-gradient(180deg, rgba(250, 253, 255, 0.94), rgba(239, 246, 252, 0.92));
+  color: #101824;
+}
+
+:root[data-theme="dark"] .day-sheet.storm-view-sheet {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255, 214, 83, 0.18), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(89, 208, 255, 0.16), transparent 32%),
+    linear-gradient(180deg, rgba(14, 22, 34, 0.96), rgba(9, 15, 24, 0.94));
+  color: rgba(241, 247, 252, 0.96);
+}
+
+.storm-view-head {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 22px 48px 10px 0;
+}
+
+.storm-view-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 231, 107, 0.56), transparent 38%),
+    linear-gradient(145deg, rgba(35, 63, 92, 0.12), rgba(53, 124, 183, 0.20));
+  color: #2d6fbc;
+}
+
+:root[data-theme="dark"] .storm-view-icon {
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 231, 107, 0.38), transparent 38%),
+    linear-gradient(145deg, rgba(99, 172, 255, 0.20), rgba(34, 49, 71, 0.58));
+  color: #9fd7ff;
+}
+
+.storm-view-icon svg {
+  width: 31px;
+  height: 31px;
+}
+
+.storm-view-kicker {
+  margin: 0 0 4px;
+  color: #2d6fbc;
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:root[data-theme="dark"] .storm-view-kicker {
+  color: #8dc8ff;
+}
+
+.storm-view-head h2 {
+  margin: 0;
+  color: inherit;
+  font-size: clamp(1.55rem, 6vw, 2.2rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.98;
+}
+
+.storm-view-head p:last-child {
+  margin: 8px 0 0;
+  color: rgba(48, 70, 91, 0.86);
+  font-size: 0.98rem;
+  font-weight: 690;
+  line-height: 1.3;
+}
+
+:root[data-theme="dark"] .storm-view-head p:last-child {
+  color: rgba(213, 229, 241, 0.76);
+}
+
+.storm-view-features {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.storm-view-features section {
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 1px solid rgba(53, 111, 183, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+:root[data-theme="dark"] .storm-view-features section {
+  border-color: rgba(142, 199, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.storm-view-features strong {
+  color: inherit;
+  font-size: 0.95rem;
+  font-weight: 930;
+  line-height: 1.16;
+}
+
+.storm-view-features span,
+.storm-view-cost {
+  color: rgba(48, 70, 91, 0.76);
+  font-size: 0.86rem;
+  font-weight: 680;
+  line-height: 1.36;
+}
+
+:root[data-theme="dark"] .storm-view-features span,
+:root[data-theme="dark"] .storm-view-cost {
+  color: rgba(213, 229, 241, 0.70);
+}
+
+.storm-view-cost {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 216, 83, 0.16);
+}
+
+:root[data-theme="dark"] .storm-view-cost {
+  background: rgba(255, 216, 83, 0.10);
+}
+
+.storm-view-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.storm-view-primary,
+.storm-view-secondary {
+  min-height: 48px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.98rem;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.storm-view-primary {
+  flex: 1 1 auto;
+  border: 0;
+  background: #101824;
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(16, 24, 36, 0.18);
+}
+
+:root[data-theme="dark"] .storm-view-primary {
+  background: #f0f7ff;
+  color: #101824;
+}
+
+.storm-view-secondary {
+  flex: 0 0 auto;
+  padding: 0 18px;
+  border: 1px solid rgba(41, 55, 72, 0.16);
+  background: rgba(255, 255, 255, 0.48);
+  color: inherit;
+}
+
+:root[data-theme="dark"] .storm-view-secondary {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .install-card {
