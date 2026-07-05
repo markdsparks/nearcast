@@ -27,11 +27,17 @@ const XWEATHER_STORM_CONTEXT_MAX_OPACITY = 0.94;
 const XWEATHER_STORM_CONTEXT_MIN_OPACITY = 0.62;
 const XWEATHER_STORM_RADAR_COLOR_SCALE = Object.freeze({
   stops: [
-    5, "#3bd45a",
-    18, "#0a5f18",
-    30, "#efd000",
-    40, "#ef7f00",
-    50, "#d90000"
+    5, "#5ee56b",
+    10, "#31d85d",
+    16, "#15a846",
+    22, "#087329",
+    28, "#0a561a",
+    32, "#e7d42a",
+    36, "#f2b72f",
+    42, "#ef7f00",
+    48, "#e8451b",
+    54, "#d90000",
+    62, "#9f2144"
   ],
   interpolate: false
 });
@@ -8053,7 +8059,7 @@ function renderMapLegend() {
         <strong>Storm intensity</strong>
       </div>
       <div class="legend-scale" aria-hidden="true">
-        ${["#3bd45a", "#0a5f18", "#efd000", "#ef7f00", "#d90000"].map((color) => `<i style="background: ${color}"></i>`).join("")}
+        ${["#5ee56b", "#31d85d", "#15a846", "#087329", "#0a561a", "#e7d42a", "#f2b72f", "#ef7f00", "#e8451b", "#d90000", "#9f2144"].map((color) => `<i style="background: ${color}"></i>`).join("")}
       </div>
       <div class="legend-labels">
         ${["Light", "Steady", "Heavy", "Strong", "Severe"].map((label) => `<span>${escapeHtml(label)}</span>`).join("")}
