@@ -318,10 +318,6 @@ function xweatherStormGuard(record = mapLibreCurrentRecord()) {
     return { ok: false, status: "missing-keys", message: "Storm view not configured", context: requestContext };
   }
   if (!xweatherStormLayerCodes().length) return { ok: false, status: "paused", message: "No storm layers" };
-  const usage = typeof readXweatherUsageRecord === "function" ? readXweatherUsageRecord() : { accesses: 0 };
-  if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) {
-    return { ok: false, status: "budget", message: "Storm view budget paused" };
-  }
   return { ok: true, status: "ready", message: "", context: requestContext };
 }
 

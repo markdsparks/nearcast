@@ -1,4 +1,4 @@
-const VERSION = "3.0.184";
+const VERSION = "3.0.185";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4272,7 +4272,6 @@ function xweatherStormMetaText() {
   if (config.status === "error") return "Storm view unavailable";
   if (!xweatherStormCredentialsReady()) return "Storm maps not configured";
   if (!layers.length) return "No layer codes configured";
-  if (usage.accesses + XWEATHER_MAPSGL_SESSION_ACCESS_COST > XWEATHER_MONTHLY_ACCESS_LIMIT) return `Budget paused · ${usageText}`;
   return `On in map · ${layers.join(" + ")} · ${usageText}`;
 }
 
