@@ -12,6 +12,7 @@ const MAPLIBRE_RADAR_SETTLE_MS = 90;
 const XWEATHER_MAPSGL_SLOW_READY_MS = 7000;
 const XWEATHER_MAPSGL_ASSET_TIMEOUT_MS = 12000;
 const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 30000;
+const XWEATHER_STORM_LOADING_TIMEOUT_MS = 45000;
 const XWEATHER_STORM_TIMELINE_PAST_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_FUTURE_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_STEPS = 1000;
@@ -446,7 +447,7 @@ function xweatherStormStatusForChip() {
   const status = record?.xweatherStorm?.status || xweatherStormGuard().status;
   const message = record?.xweatherStorm?.message || xweatherStormGuard().message || "";
   if (status === "active") return { visible: true, ready: true, text: "Storm view" };
-  if (status === "loading") return { visible: true, ready: false, text: message || "Loading storm view" };
+  if (status === "loading") return { visible: false };
   if (status === "error") return { visible: true, ready: false, text: message || "Storm view unavailable" };
   if ([
     "missing-keys",
@@ -463,6 +464,12 @@ function xweatherStormStatusForChip() {
   return { visible: false };
 }
 
+function xweatherStormRecordLoadingStale(record = mapLibreCurrentRecord(), now = Date.now()) {
+  if (record?.xweatherStorm?.status !== "loading") return false;
+  const updatedAt = Number(record.xweatherStorm.updatedAt || 0);
+  return updatedAt > 0 && now - updatedAt > XWEATHER_STORM_LOADING_TIMEOUT_MS;
+}
+
 function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
   if (!mapState.immersive) return { visible: false };
   const active = xweatherStormActive(record);
@@ -472,8 +479,39 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: true,
       tone: "active",
+      action: "deactivate",
       label: "Standard radar",
       detail: "Leave Storm View"
+    };
+  }
+  if (record?.xweatherStorm?.status === "error") {
+    return {
+      visible: true,
+      enabled: true,
+      tone: "paused",
+      action: "retry",
+      label: "Retry Storm View",
+      detail: record.xweatherStorm.message || "Storm view failed"
+    };
+  }
+  if (record?.xweatherStorm?.status === "loading") {
+    if (xweatherStormRecordLoadingStale(record)) {
+      return {
+        visible: true,
+        enabled: true,
+        tone: "paused",
+        action: "retry",
+        label: "Retry Storm View",
+        detail: "Storm view timed out"
+      };
+    }
+    return {
+      visible: true,
+      enabled: true,
+      tone: "loading",
+      action: "cancel",
+      label: "Cancel Storm View",
+      detail: record.xweatherStorm.message || "Starting"
     };
   }
   const context = xweatherStormViewportContext(record);
@@ -484,6 +522,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: false,
       tone: "paused",
+      action: "none",
       label: "Storm View paused",
       detail: "Budget protected"
     };
@@ -493,6 +532,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: false,
       tone: "standby",
+      action: "none",
       label: "Zoom in",
       detail: "Storm View at street radar"
     };
@@ -502,6 +542,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: false,
       tone: "standby",
+      action: "none",
       label: "No storm nearby",
       detail: "Using standard radar"
     };
@@ -511,6 +552,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: false,
       tone: "paused",
+      action: "none",
       label: "Storm View paused",
       detail: "Unavailable"
     };
@@ -520,6 +562,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: true,
       tone: "standby",
+      action: "retry",
       label: "Retry Storm View",
       detail: "Tap to start"
     };
@@ -529,17 +572,29 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: true,
       tone: "paused",
+      action: "retry",
       label: "Retry Storm View",
       detail: "Access failed"
+    };
+  }
+  if (activated && config.status === "loading") {
+    return {
+      visible: true,
+      enabled: true,
+      tone: "loading",
+      action: "cancel",
+      label: "Cancel Storm View",
+      detail: "Checking access"
     };
   }
   if (activated) {
     return {
       visible: true,
-      enabled: false,
+      enabled: true,
       tone: "loading",
-      label: "Starting Storm View",
-      detail: "Checking budget"
+      action: "cancel",
+      label: "Cancel Storm View",
+      detail: "Starting"
     };
   }
   if (!context.storm.activeWeather) return { visible: false };
@@ -548,6 +603,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       visible: true,
       enabled: false,
       tone: "standby",
+      action: "none",
       label: "Zoom in",
       detail: "Storm View at street radar"
     };
@@ -556,6 +612,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
     visible: true,
     enabled: true,
     tone: "ready",
+    action: "activate",
     label: "Storm View",
     detail: "Use enhanced storm map"
   };
@@ -568,6 +625,7 @@ function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   button.hidden = !state.visible;
   button.disabled = !state.enabled;
   button.dataset.tone = state.tone || "standby";
+  button.dataset.action = state.action || "";
   button.setAttribute("aria-pressed", String(state.tone === "active"));
   const label = button.querySelector("[data-storm-activate-label]");
   const detail = button.querySelector("[data-storm-activate-detail]");
@@ -577,19 +635,33 @@ function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
 
 function toggleXweatherStormActivation() {
   const record = mapLibreCurrentRecord();
-  if (xweatherStormActive(record)) {
+  const state = xweatherStormActivationControlState(record);
+  if (xweatherStormActive(record) || state.action === "cancel" || state.action === "deactivate") {
     if (typeof window.nearcastDeactivateXweatherStorm === "function") window.nearcastDeactivateXweatherStorm();
     stopXweatherStormLayer(record, "off");
     syncXweatherStormActivationControl(record);
     renderMapLibreOverlays({ forceRadar: true });
     return;
   }
-  const state = xweatherStormActivationControlState(record);
   if (!state.enabled) return;
   if (typeof window.nearcastActivateXweatherStorm === "function") {
     window.nearcastActivateXweatherStorm();
+    setXweatherStormStatus(record, "loading", "Checking access");
     syncXweatherStormActivationControl(record);
-    syncXweatherStormLayer(record);
+    if (typeof window.nearcastLoadXweatherStormConfig === "function") {
+      Promise.resolve(window.nearcastLoadXweatherStormConfig({
+        force: true,
+        context: xweatherStormViewportContext(record)
+      }))
+        .then(() => {
+          if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
+        })
+        .catch((error) => {
+          if (mapLibreCurrentRecord() === record) setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
+        });
+    } else {
+      syncXweatherStormLayer(record);
+    }
   }
 }
 

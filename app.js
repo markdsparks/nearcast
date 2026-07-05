@@ -1,4 +1,4 @@
-const VERSION = "3.0.183";
+const VERSION = "3.0.184";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -30,6 +30,7 @@ const XWEATHER_MONTHLY_ACCESS_LIMIT = 1500;
 const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
 const XWEATHER_CONFIG_TIMEOUT_MS = 10000;
 const XWEATHER_CONFIG_RETRY_MS = 8000;
+const XWEATHER_CONFIG_STALE_MS = XWEATHER_CONFIG_TIMEOUT_MS + 4000;
 const DEVICE_LOCATION_KEY = "nearcast-device-location-v1";
 const DEVICE_LOCATION_MAP_MAX_AGE_MS = 30 * 60 * 1000;
 const DEVICE_LOCATION_REFRESH_MAX_AGE_MS = 5 * 60 * 1000;
@@ -3917,6 +3918,29 @@ function xweatherStormConfigErrorMessage(error) {
   return message || "Storm view config unavailable";
 }
 
+function xweatherStormConfigLoadingStale(record = xweatherStormConfigRecord, now = Date.now()) {
+  if (record?.status !== "loading") return false;
+  const checkedAt = Number(record.checkedAt || 0);
+  return checkedAt > 0 && now - checkedAt > XWEATHER_CONFIG_STALE_MS;
+}
+
+function expireStaleXweatherStormConfig(now = Date.now()) {
+  if (!xweatherStormConfigLoadingStale(xweatherStormConfigRecord, now)) return false;
+  xweatherStormConfigRecord = {
+    ...(xweatherStormConfigRecord || {}),
+    status: "error",
+    reason: "config-timeout",
+    checkedAt: now,
+    credentials: null,
+    layerCodes: sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS),
+    message: "Storm view timed out",
+    retryAt: 0
+  };
+  xweatherStormConfigPromise = null;
+  xweatherStormConfigPromiseKey = "";
+  return true;
+}
+
 function xweatherStormConfigLeaseActive(record = xweatherStormConfigRecord, now = Date.now()) {
   if (record?.status !== "ready") return false;
   const expiresAt = Date.parse(record?.lease?.expiresAt || "");
@@ -3927,6 +3951,7 @@ function xweatherStormConfigLeaseActive(record = xweatherStormConfigRecord, now 
 }
 
 function xweatherStormConfigSnapshot() {
+  expireStaleXweatherStormConfig();
   const debugCredentials = legacyXweatherDebugCredentials();
   if (debugCredentials) {
     return {
@@ -4008,6 +4033,10 @@ async function loadXweatherStormConfig(options = {}) {
   }
   if (xweatherStormConfigRecord?.status === "ready" && xweatherStormConfigLeaseActive(xweatherStormConfigRecord)) {
     return xweatherStormConfigRecord;
+  }
+  if (expireStaleXweatherStormConfig()) {
+    updateXweatherStormControl();
+    if (!options.force) return xweatherStormConfigRecord;
   }
   if (xweatherStormConfigPromise) return xweatherStormConfigPromise;
   if (xweatherStormConfigRecord?.status === "error" && existingContextKey === contextKey) {
