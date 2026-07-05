@@ -426,6 +426,7 @@ function setXweatherStormStatus(record, status, message = "") {
     updatedAt: Date.now()
   };
   syncGeneratedRadarStatusChip();
+  syncXweatherStormActivationControl(record);
   syncMapLibreDiagnosticReadout(record);
 }
 
