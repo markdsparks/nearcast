@@ -1143,7 +1143,7 @@ function xweatherStormLimits(env = {}) {
 
 function normalizeXweatherStormContext(payload = {}, viewport = {}, now = Date.now()) {
   const zoom = finiteNumber(viewport.zoom, NaN);
-  const hasViewport = Number.isFinite(zoom);
+  const hasViewport = Boolean(payload.viewport && typeof payload.viewport === "object" && Number.isFinite(zoom));
   const storm = payload.storm && typeof payload.storm === "object" ? payload.storm : {};
   const client = payload.client && typeof payload.client === "object" ? payload.client : {};
   const activeWeather = booleanValue(storm.activeWeather);
