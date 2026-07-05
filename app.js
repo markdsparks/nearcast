@@ -1,4 +1,4 @@
-const VERSION = "3.0.192";
+const VERSION = "3.0.193";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4160,7 +4160,10 @@ function readXweatherUsageRecord() {
       month: parsed.month,
       sessions: Math.max(0, Number(parsed.sessions) || 0),
       accesses: Math.max(0, Number(parsed.accesses) || 0),
-      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0)
+      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0),
+      leaseIds: Array.isArray(parsed.leaseIds)
+        ? parsed.leaseIds.map((id) => String(id || "").trim()).filter(Boolean).slice(-60)
+        : []
     };
   } catch {
     return { month: xweatherUsageMonthKey(), sessions: 0, accesses: 0, updatedAt: 0 };

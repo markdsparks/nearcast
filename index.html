@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.192">
-    <link rel="manifest" href="manifest.json?v=3.0.192">
+    <link rel="stylesheet" href="styles.css?v=3.0.193">
+    <link rel="manifest" href="manifest.json?v=3.0.193">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.192">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.192">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.193">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.193">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -692,12 +692,51 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.192"></script>
-    <script src="planner.js?v=3.0.192"></script>
-    <script src="app.js?v=3.0.192"></script>
-    <script src="map.js?v=3.0.192"></script>
-    <script src="sky.js?v=3.0.192"></script>
-    <script src="daygraph.js?v=3.0.192"></script>
-    <script src="boot.js?v=3.0.192"></script>
+    <div class="sheet-backdrop storm-receipt-backdrop" id="stormReceiptBackdrop" hidden></div>
+    <aside class="day-sheet storm-view-sheet storm-receipt-sheet" id="stormReceiptSheet" hidden aria-label="StormScope session receipt" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="stormReceiptClose" type="button" aria-label="Close StormScope receipt">✕</button>
+      <header class="storm-view-head">
+        <span class="storm-view-icon storm-receipt-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M7 3.8h10a2 2 0 0 1 2 2v14l-3-1.6-2.2 1.6-2.3-1.6-2.3 1.6L7 18.2 4 19.8v-14a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M8 8h8M8 11.5h8M8 15h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div>
+          <p class="storm-view-kicker">Premium session receipt</p>
+          <h2>StormScope session ended</h2>
+          <p id="stormReceiptSummary">Standard radar is back on.</p>
+        </div>
+      </header>
+      <div class="storm-receipt-total">
+        <span>Estimated budget impact</span>
+        <strong id="stormReceiptAmount">About $0.09</strong>
+      </div>
+      <div class="storm-view-features storm-receipt-facts">
+        <section>
+          <strong id="stormReceiptSessionTitle">Used 1 premium storm-map session</strong>
+          <span id="stormReceiptSessionBody">StormScope runs in a short protected window so panning, zooming, and scrubbing stay intentional.</span>
+        </section>
+        <section>
+          <strong>Budget guard stayed on</strong>
+          <span>Nearcast tracks an estimated session cost so premium storm maps do not run accidentally.</span>
+        </section>
+      </div>
+      <p class="storm-view-cost" id="stormReceiptDetail">
+        Estimate based on 150 MapsGL access units at $0.0006 per access.
+      </p>
+      <div class="storm-view-actions">
+        <button class="storm-view-primary" id="stormReceiptDone" type="button">Done</button>
+      </div>
+    </aside>
+
+    <script src="weather-truth.js?v=3.0.193"></script>
+    <script src="planner.js?v=3.0.193"></script>
+    <script src="app.js?v=3.0.193"></script>
+    <script src="map.js?v=3.0.193"></script>
+    <script src="sky.js?v=3.0.193"></script>
+    <script src="daygraph.js?v=3.0.193"></script>
+    <script src="boot.js?v=3.0.193"></script>
   </body>
 </html>

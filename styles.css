@@ -9343,6 +9343,20 @@ body.map-immersive-active .day-sheet.show {
   color: #9fd7ff;
 }
 
+.storm-receipt-icon {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(142, 230, 182, 0.50), transparent 38%),
+    linear-gradient(145deg, rgba(36, 136, 95, 0.14), rgba(53, 111, 183, 0.16));
+  color: #24885f;
+}
+
+:root[data-theme="dark"] .storm-receipt-icon {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(142, 230, 182, 0.32), transparent 38%),
+    linear-gradient(145deg, rgba(63, 184, 132, 0.16), rgba(34, 49, 71, 0.58));
+  color: #a3f0c6;
+}
+
 .storm-view-icon svg {
   width: 31px;
   height: 31px;
@@ -9431,6 +9445,50 @@ body.map-immersive-active .day-sheet.show {
 
 :root[data-theme="dark"] .storm-view-cost {
   background: rgba(255, 216, 83, 0.10);
+}
+
+.storm-receipt-total {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 18px 16px;
+  border: 1px solid rgba(36, 136, 95, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(142, 230, 182, 0.26), transparent 38%),
+    rgba(255, 255, 255, 0.58);
+}
+
+:root[data-theme="dark"] .storm-receipt-total {
+  border-color: rgba(142, 230, 182, 0.16);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(142, 230, 182, 0.16), transparent 38%),
+    rgba(255, 255, 255, 0.07);
+}
+
+.storm-receipt-total span {
+  color: rgba(48, 70, 91, 0.72);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.10em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.storm-receipt-total strong {
+  color: inherit;
+  font-size: clamp(2rem, 11vw, 3.1rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.95;
+}
+
+:root[data-theme="dark"] .storm-receipt-total span {
+  color: rgba(213, 229, 241, 0.68);
+}
+
+.storm-receipt-facts {
+  margin-top: 10px;
 }
 
 .storm-view-actions {

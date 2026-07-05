@@ -459,6 +459,8 @@ function recordXweatherStormSession(record) {
   if (!record?.xweatherStorm) return null;
   const accessCost = xweatherStormSessionAccessCost(record);
   const estimatedUsd = xweatherStormEstimatedUsd(accessCost);
+  const leaseId = String(record.xweatherStorm.lease?.id || "").trim();
+  const sessionKey = leaseId || `window:${xweatherStormConfigStatus()?.lease?.month || new Date(now).toISOString().slice(0, 7)}:${windowStart}`;
   record.xweatherStorm.sessionEstimatedAccessCost = accessCost;
   record.xweatherStorm.sessionEstimatedUsd = estimatedUsd;
   if (record.xweatherStorm.sessionWindowStart === windowStart) {
@@ -477,17 +479,25 @@ function recordXweatherStormSession(record) {
       accesses: 0,
       updatedAt: 0
     };
-    usage.sessions = (Number(usage.sessions) || 0) + 1;
-    usage.accesses = (Number(usage.accesses) || 0) + accessCost;
+    const leaseIds = Array.isArray(usage.leaseIds) ? usage.leaseIds : [];
+    const alreadyRecorded = sessionKey && leaseIds.includes(sessionKey);
+    if (!alreadyRecorded) {
+      usage.sessions = (Number(usage.sessions) || 0) + 1;
+      usage.accesses = (Number(usage.accesses) || 0) + accessCost;
+      usage.leaseIds = [...leaseIds, sessionKey].slice(-60);
+    } else {
+      usage.leaseIds = leaseIds.slice(-60);
+    }
     usage.updatedAt = now;
     localStorage.setItem(XWEATHER_USAGE_KEY, JSON.stringify(usage));
     if (typeof updateXweatherStormControl === "function") updateXweatherStormControl();
+    record.xweatherStorm.sessionBudgetRecorded = !alreadyRecorded;
   } catch {}
   return {
     windowStart,
     accesses: accessCost,
     usd: estimatedUsd,
-    recorded: true
+    recorded: Boolean(record.xweatherStorm.sessionBudgetRecorded)
   };
 }
 
@@ -542,6 +552,89 @@ function xweatherStormCloseoutReason(reason = "off") {
   return "turned off";
 }
 
+let stormReceiptSheetCloseTimer = 0;
+
+function stormReceiptSheetElements() {
+  return {
+    backdrop: document.getElementById("stormReceiptBackdrop"),
+    sheet: document.getElementById("stormReceiptSheet"),
+    close: document.getElementById("stormReceiptClose"),
+    summary: document.getElementById("stormReceiptSummary"),
+    amount: document.getElementById("stormReceiptAmount"),
+    sessionTitle: document.getElementById("stormReceiptSessionTitle"),
+    sessionBody: document.getElementById("stormReceiptSessionBody"),
+    detail: document.getElementById("stormReceiptDetail"),
+    done: document.getElementById("stormReceiptDone")
+  };
+}
+
+function stormReceiptSheetOpen() {
+  const { sheet } = stormReceiptSheetElements();
+  return Boolean(sheet && !sheet.hidden);
+}
+
+function renderXweatherStormReceiptSheet(receipt = mapState.xweatherStormCloseout || {}) {
+  const elements = stormReceiptSheetElements();
+  const amount = receipt.budgetRecorded === false ? "No additional budget" : `About ${receipt.amount || "$0.09"}`;
+  if (elements.summary) elements.summary.textContent = "Standard radar is back on.";
+  if (elements.amount) elements.amount.textContent = amount;
+  if (elements.sessionTitle) {
+    elements.sessionTitle.textContent = receipt.budgetRecorded === false
+      ? "Reused an active premium session"
+      : "Used 1 premium storm-map session";
+  }
+  if (elements.sessionBody) {
+    elements.sessionBody.textContent = receipt.budgetRecorded === false
+      ? "You were still inside the same protected StormScope window, so this did not add another estimated budget hit."
+      : "StormScope runs in a short protected window so panning, zooming, and scrubbing stay intentional.";
+  }
+  if (elements.detail) {
+    elements.detail.textContent = receipt.detail || "Estimate based on 150 MapsGL access units at $0.0006 per access.";
+  }
+}
+
+function openXweatherStormReceiptSheet(receipt = mapState.xweatherStormCloseout || {}) {
+  const { backdrop, sheet } = stormReceiptSheetElements();
+  if (!backdrop || !sheet) return false;
+  if (stormViewSheetOpen()) closeXweatherStormSheet();
+  renderXweatherStormReceiptSheet(receipt);
+  if (stormReceiptSheetCloseTimer) {
+    clearTimeout(stormReceiptSheetCloseTimer);
+    stormReceiptSheetCloseTimer = 0;
+  }
+  mapState.xweatherStormCloseout = {
+    ...(mapState.xweatherStormCloseout || {}),
+    ...receipt,
+    sheetOpen: true
+  };
+  backdrop.hidden = false;
+  sheet.hidden = false;
+  if (typeof showSheet === "function") showSheet(backdrop, sheet);
+  else {
+    backdrop.classList.add("show");
+    sheet.classList.add("show");
+  }
+  document.body.style.overflow = "hidden";
+  syncGeneratedRadarStatusChip();
+  return true;
+}
+
+function closeXweatherStormReceiptSheet() {
+  const { backdrop, sheet } = stormReceiptSheetElements();
+  if (!backdrop || !sheet) return;
+  backdrop.classList.remove("show");
+  sheet.classList.remove("show");
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
+  if (stormReceiptSheetCloseTimer) clearTimeout(stormReceiptSheetCloseTimer);
+  stormReceiptSheetCloseTimer = setTimeout(() => {
+    stormReceiptSheetCloseTimer = 0;
+    backdrop.hidden = true;
+    sheet.hidden = true;
+    mapState.xweatherStormCloseout = { text: "", visibleUntil: 0 };
+    syncGeneratedRadarStatusChip();
+  }, 260);
+}
+
 function showXweatherStormCostCloseout(storm = {}, reason = "off") {
   if (!storm || storm.status !== "active") return;
   const accessCost = Number(storm.sessionEstimatedAccessCost || xweatherStormSessionAccessCost({ xweatherStorm: storm }));
@@ -550,19 +643,31 @@ function showXweatherStormCostCloseout(storm = {}, reason = "off") {
     : xweatherStormEstimatedUsd(accessCost);
   if (!Number.isFinite(accessCost) || accessCost <= 0 || !Number.isFinite(usd) || usd <= 0) return;
   const amount = formatXweatherStormEstimatedUsd(usd);
+  const budgetRecorded = storm.sessionBudgetRecorded !== false;
   mapState.xweatherStormCloseout = {
-    text: `${XWEATHER_STORM_SHORT_NAME} ended · est. ${amount}`,
-    detail: `${Math.round(accessCost)} access units · ${xweatherStormCloseoutReason(reason)}`,
+    text: budgetRecorded
+      ? `${XWEATHER_STORM_SHORT_NAME} ended · est. ${amount}`
+      : `${XWEATHER_STORM_SHORT_NAME} ended · same session`,
+    amount,
+    accessCost,
+    budgetRecorded,
+    reason,
+    detail: `Estimate based on ${Math.round(accessCost)} MapsGL access units at $${XWEATHER_STORM_ACCESS_PRICE_USD.toFixed(4)} per access · ${xweatherStormCloseoutReason(reason)}.`,
     visibleUntil: Date.now() + XWEATHER_STORM_COST_CLOSEOUT_MS
   };
-  if (mapState.xweatherStormCloseoutHideTimer) clearTimeout(mapState.xweatherStormCloseoutHideTimer);
-  mapState.xweatherStormCloseoutHideTimer = setTimeout(() => {
-    mapState.xweatherStormCloseoutHideTimer = 0;
-    if (Date.now() >= Number(mapState.xweatherStormCloseout?.visibleUntil || 0)) {
-      mapState.xweatherStormCloseout = { text: "", visibleUntil: 0 };
-      syncGeneratedRadarStatusChip();
-    }
-  }, XWEATHER_STORM_COST_CLOSEOUT_MS + 80);
+  const presentCloseout = () => {
+    if (openXweatherStormReceiptSheet(mapState.xweatherStormCloseout)) return;
+    if (mapState.xweatherStormCloseoutHideTimer) clearTimeout(mapState.xweatherStormCloseoutHideTimer);
+    mapState.xweatherStormCloseoutHideTimer = setTimeout(() => {
+      mapState.xweatherStormCloseoutHideTimer = 0;
+      if (Date.now() >= Number(mapState.xweatherStormCloseout?.visibleUntil || 0)) {
+        mapState.xweatherStormCloseout = { text: "", visibleUntil: 0 };
+        syncGeneratedRadarStatusChip();
+      }
+    }, XWEATHER_STORM_COST_CLOSEOUT_MS + 80);
+  };
+  if (["exit", "destroy"].includes(reason)) setTimeout(presentCloseout, 0);
+  else presentCloseout();
 }
 
 function xweatherStormRecordLoadingStale(record = mapLibreCurrentRecord(), now = Date.now()) {
@@ -4604,7 +4709,7 @@ function syncGeneratedRadarStatusChip() {
     return;
   }
   const closeout = mapState.xweatherStormCloseout || {};
-  if (closeout.text && Date.now() < Number(closeout.visibleUntil || 0)) {
+  if (closeout.text && !closeout.sheetOpen && Date.now() < Number(closeout.visibleUntil || 0)) {
     chip.hidden = false;
     chip.classList.toggle("is-ready", true);
     chip.classList.toggle("is-storm-view", true);
@@ -8650,6 +8755,10 @@ function exitImmersiveMap() {
 
 function onImmersiveKey(e) {
   if (e.key !== "Escape") return;
+  if (stormReceiptSheetOpen()) {
+    closeXweatherStormReceiptSheet();
+    return;
+  }
   if (stormViewSheetOpen()) {
     closeXweatherStormSheet();
     return;
@@ -8680,6 +8789,9 @@ function bindImmersiveModeButtons() {
   bindTapAction(document.getElementById("stormViewBackdrop"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewCancel"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewStart"), activateXweatherStormFromSheet);
+  bindTapAction(document.getElementById("stormReceiptClose"), closeXweatherStormReceiptSheet);
+  bindTapAction(document.getElementById("stormReceiptBackdrop"), closeXweatherStormReceiptSheet);
+  bindTapAction(document.getElementById("stormReceiptDone"), closeXweatherStormReceiptSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   document.querySelectorAll("#immTimeJumps [data-storm-jump]").forEach((button) => {
     bindTapAction(button, () => jumpXweatherStormTimeline(button.getAttribute("data-storm-jump")));
