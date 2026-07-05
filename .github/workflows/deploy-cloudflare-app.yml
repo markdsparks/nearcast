@@ -65,6 +65,26 @@ jobs:
           npx --yes wrangler r2 object delete 'nearcast-radar/radar/mrms/request-state/radar-generation-budget:v1:global:all:495215.json' --remote --force || true
           npx --yes wrangler r2 object delete 'nearcast-radar/radar/mrms/request-state/radar-generation-budget:v1:viewport:radar-generation:v1:auto:radar:35.00:-90.00:z10:495215.json' --remote --force || true
 
+      - name: Apply StormScope budget bypass override
+        env:
+          XWEATHER_BYPASS_BUDGET_CHECKS: ${{ vars.XWEATHER_BYPASS_BUDGET_CHECKS }}
+        run: |
+          if [ -z "$XWEATHER_BYPASS_BUDGET_CHECKS" ]; then
+            echo "Using wrangler.toml StormScope budget bypass default."
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const path = "wrangler.toml";
+            const raw = String(process.env.XWEATHER_BYPASS_BUDGET_CHECKS || "").trim().toLowerCase();
+            const value = ["1", "true", "yes", "on", "enabled"].includes(raw) ? "true" : "false";
+            const text = fs.readFileSync(path, "utf8");
+            const next = text.replace(/^XWEATHER_BYPASS_BUDGET_CHECKS = ".*"$/m, `XWEATHER_BYPASS_BUDGET_CHECKS = "${value}"`);
+            if (next === text) throw new Error("XWEATHER_BYPASS_BUDGET_CHECKS was not found in wrangler.toml");
+            fs.writeFileSync(path, next);
+            console.log(`StormScope budget bypass deploy override: ${value}`);
+          '
+
       - name: Deploy app and radar capability Worker
         run: npx --yes wrangler deploy
 
