@@ -31,6 +31,7 @@ struct NearcastWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         guard webView.url?.absoluteString != model.currentURL.absoluteString else { return }
+        guard !model.isLoading else { return }
         webView.load(URLRequest(url: model.currentURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
     }
 
@@ -52,11 +53,24 @@ struct NearcastWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            guard !Self.isCancelledNavigation(error) else {
+                model?.ignoreCancelledNavigation()
+                return
+            }
             model?.setError(error)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            guard !Self.isCancelledNavigation(error) else {
+                model?.ignoreCancelledNavigation()
+                return
+            }
             model?.setError(error)
+        }
+
+        private static func isCancelledNavigation(_ error: Error) -> Bool {
+            let nsError = error as NSError
+            return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
         }
     }
 }

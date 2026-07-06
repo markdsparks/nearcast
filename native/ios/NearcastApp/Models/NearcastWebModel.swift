@@ -90,6 +90,10 @@ final class NearcastWebModel: ObservableObject {
         lastError = error?.localizedDescription
     }
 
+    func ignoreCancelledNavigation() {
+        lastError = nil
+    }
+
     func recordBridgeMessage(_ body: Any) {
         if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted]),
            let value = String(data: data, encoding: .utf8) {
