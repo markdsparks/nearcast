@@ -18,6 +18,8 @@ struct NearcastWidgetSnapshot: Codable {
     var rainChance: Int
     var wind: Int
     var windUnit: String
+    var windDirection: Int?
+    var windLabel: String?
     var uv: Int
     var nowLabel: String
     var nowValue: String
@@ -25,11 +27,15 @@ struct NearcastWidgetSnapshot: Codable {
     var nextValue: String
     var laterLabel: String
     var laterValue: String
+    var planTitle: String?
+    var planLabel: String?
+    var planDetail: String?
+    var planTone: String?
 }
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 1,
+        version: 2,
         savedAt: Date().timeIntervalSince1970,
         placeName: "Nearcast",
         temperature: 82,
@@ -42,13 +48,19 @@ extension NearcastWidgetSnapshot {
         rainChance: 0,
         wind: 5,
         windUnit: "mph",
+        windDirection: nil,
+        windLabel: nil,
         uv: 4,
         nowLabel: "Now",
         nowValue: "Open Nearcast",
         nextLabel: "Next",
         nextValue: "Load a place",
         laterLabel: "Later",
-        laterValue: "Plans stay visible"
+        laterValue: "Plans stay visible",
+        planTitle: nil,
+        planLabel: nil,
+        planDetail: nil,
+        planTone: nil
     )
 
     static func current() -> NearcastWidgetSnapshot {
@@ -79,7 +91,7 @@ struct NearcastWidgetProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastWidgetEntry>) -> Void) {
         let entry = NearcastWidgetEntry(date: Date(), snapshot: NearcastWidgetSnapshot.current())
-        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 20, to: Date()) ?? Date().addingTimeInterval(20 * 60)
+        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(15 * 60)
         completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
     }
 }
@@ -124,7 +136,7 @@ struct NearcastSmallWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Text(cityName(snapshot.placeName))
                     .font(.system(size: 13, weight: .black, design: .rounded))
@@ -138,15 +150,29 @@ struct NearcastSmallWidget: View {
 
             Spacer(minLength: 0)
 
-            Text("\(snapshot.temperature)°")
-                .font(.system(size: 52, weight: .black, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
-
-            Text(compactSignalValue(primarySignal(snapshot)))
-                .font(.system(size: 18, weight: .black, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text("\(snapshot.temperature)°")
+                    .font(.system(size: 48, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+                Spacer(minLength: 2)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("FEELS")
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundStyle(.black.opacity(0.48))
+                    Text("\(snapshot.feelsLike)°")
+                        .font(.system(size: 19, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                    if let high = snapshot.high, let low = snapshot.low {
+                        Text("H\(high) L\(low)")
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.black.opacity(0.56))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                }
+            }
 
             Text(compactSignalValue(snapshot.nextValue))
                 .font(.system(size: 12, weight: .heavy, design: .rounded))
@@ -165,8 +191,8 @@ struct NearcastMediumWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(shortPlaceName(snapshot.placeName))
                     .font(.system(size: 14, weight: .black, design: .rounded))
                     .lineLimit(1)
@@ -186,6 +212,12 @@ struct NearcastMediumWidget: View {
                 Text("Feels \(snapshot.feelsLike)°")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.black.opacity(0.58))
+
+                Text(windSummary(snapshot, includeDirection: true))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.52))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -204,7 +236,7 @@ struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(shortPlaceName(snapshot.placeName))
@@ -237,14 +269,56 @@ struct NearcastLargeWidget: View {
                 SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: .primary.opacity(0.78))
             }
 
+            if hasPlanSummary(snapshot) {
+                PlanSummaryStrip(snapshot: snapshot)
+            }
+
             HStack(spacing: 8) {
                 MetricTile(label: "Feels", value: "\(snapshot.feelsLike)°")
                 MetricTile(label: "Rain", value: "\(snapshot.rainChance)%")
-                MetricTile(label: "Wind", value: "\(snapshot.wind) \(snapshot.windUnit)")
+                MetricTile(label: "Wind", value: "\(snapshot.wind)", detail: windUnitAndDirection(snapshot))
                 MetricTile(label: "UV", value: "\(snapshot.uv)")
             }
+
+            Text(freshnessText(snapshot))
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .foregroundStyle(.black.opacity(0.42))
+                .lineLimit(1)
         }
         .padding(18)
+    }
+}
+
+struct PlanSummaryStrip: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: planSymbol(snapshot))
+                .font(.system(size: 16, weight: .black))
+                .foregroundStyle(planToneColor(snapshot))
+                .frame(width: 24, height: 24)
+                .background(planToneColor(snapshot).opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text([snapshot.planLabel, snapshot.planTitle].compactMap(cleanOptional).joined(separator: " · "))
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(cleanOptional(snapshot.planDetail) ?? "Plan checked against the forecast.")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.55))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(planToneColor(snapshot).opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(planToneColor(snapshot).opacity(0.18), lineWidth: 1)
+        )
     }
 }
 
@@ -277,6 +351,7 @@ struct SignalRow: View {
 struct MetricTile: View {
     let label: String
     let value: String
+    var detail: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -288,6 +363,13 @@ struct MetricTile: View {
                 .font(.system(size: 15, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
+            if let detail = cleanOptional(detail) {
+                Text(detail)
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.48))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(9)
@@ -304,6 +386,15 @@ struct NearcastWidgetBackdrop: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+        .overlay {
+            let accent = placeAccentColor(snapshot)
+            RadialGradient(
+                colors: [accent.opacity(snapshot.isDay ? 0.24 : 0.18), .clear],
+                center: .bottomTrailing,
+                startRadius: 0,
+                endRadius: 190
+            )
+        }
         .overlay {
             if snapshot.isDay {
                 Circle()
@@ -353,6 +444,64 @@ private func shortPlaceName(_ value: String) -> String {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.count <= 20 { return trimmed }
     return cityName(trimmed)
+}
+
+private func cleanOptional(_ value: String?) -> String? {
+    let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+private func highLowText(_ snapshot: NearcastWidgetSnapshot) -> String? {
+    guard let high = snapshot.high, let low = snapshot.low else { return nil }
+    return "H\(high) L\(low)"
+}
+
+private func windSummary(_ snapshot: NearcastWidgetSnapshot, includeDirection: Bool) -> String {
+    let base = "\(snapshot.wind) \(snapshot.windUnit)"
+    guard includeDirection, let label = cleanOptional(snapshot.windLabel) else { return "Wind \(base)" }
+    return "Wind \(base) \(label)"
+}
+
+private func windUnitAndDirection(_ snapshot: NearcastWidgetSnapshot) -> String {
+    guard let label = cleanOptional(snapshot.windLabel) else { return snapshot.windUnit }
+    return "\(snapshot.windUnit) \(label)"
+}
+
+private func hasPlanSummary(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    cleanOptional(snapshot.planTitle) != nil || cleanOptional(snapshot.planDetail) != nil
+}
+
+private func planToneColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    switch cleanOptional(snapshot.planTone)?.lowercased() {
+    case "watch", "caution":
+        return Color(red: 0.78, green: 0.33, blue: 0.28)
+    case "changed":
+        return Color(red: 0.29, green: 0.43, blue: 0.82)
+    case "good":
+        return Color(red: 0.14, green: 0.48, blue: 0.34)
+    default:
+        return Color(red: 0.22, green: 0.35, blue: 0.55)
+    }
+}
+
+private func planSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
+    switch cleanOptional(snapshot.planTone)?.lowercased() {
+    case "watch", "caution":
+        return "exclamationmark.triangle.fill"
+    case "good":
+        return "checkmark.circle.fill"
+    default:
+        return "calendar.badge.clock"
+    }
+}
+
+private func freshnessText(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let saved = Date(timeIntervalSince1970: snapshot.savedAt)
+    let minutes = max(0, Int(Date().timeIntervalSince(saved) / 60))
+    if minutes < 1 { return "Updated just now" }
+    if minutes < 60 { return "Updated \(minutes)m ago" }
+    let hours = max(1, minutes / 60)
+    return "Updated \(hours)h ago"
 }
 
 private func compactSignalLabel(_ value: String) -> String {
@@ -424,4 +573,18 @@ private func backdropColors(_ snapshot: NearcastWidgetSnapshot) -> [Color] {
     if snowy { return [Color(red: 0.92, green: 0.97, blue: 1.0), Color(red: 0.75, green: 0.84, blue: 0.93), Color(red: 0.64, green: 0.74, blue: 0.86)] }
     if hot { return [Color(red: 1.0, green: 0.89, blue: 0.50), Color(red: 0.96, green: 0.62, blue: 0.33), Color(red: 0.55, green: 0.78, blue: 0.96)] }
     return [Color(red: 0.74, green: 0.90, blue: 1.0), Color(red: 0.58, green: 0.80, blue: 0.96), Color(red: 0.98, green: 0.88, blue: 0.55)]
+}
+
+private func placeAccentColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    let hue = stableHue(snapshot.placeName)
+    return Color(hue: hue, saturation: snapshot.isDay ? 0.36 : 0.46, brightness: snapshot.isDay ? 0.96 : 0.56)
+}
+
+private func stableHue(_ value: String) -> Double {
+    var hash: UInt32 = 2166136261
+    for byte in value.utf8 {
+        hash ^= UInt32(byte)
+        hash = hash &* 16777619
+    }
+    return Double(hash % 360) / 360.0
 }

@@ -1,4 +1,4 @@
-const VERSION = "3.0.208";
+const VERSION = "3.0.209";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7669,8 +7669,11 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const item = (index, fallbackLabel, fallbackValue) => items[index] || { label: fallbackLabel, value: fallbackValue };
     const high = data.daily?.temperature_2m_max?.[todayIndex];
     const low = data.daily?.temperature_2m_min?.[todayIndex];
+    const windDirection = normalizeWindDegrees(current.wind_direction_10m);
+    const windCue = windDirectionCue(current.wind_direction_10m);
+    const widgetPlan = nativeWidgetPlanSummary(data, place);
     const snapshot = {
-      version: 1,
+      version: 2,
       savedAt: Date.now() / 1000,
       placeName: placeLabel(place),
       temperature: Math.round(current.temperature_2m),
@@ -7683,18 +7686,53 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       rainChance: Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0),
       wind: Math.round(current.wind_speed_10m || 0),
       windUnit,
+      windDirection,
+      windLabel: windCue?.label || null,
       uv: Math.round(data.daily?.uv_index_max?.[todayIndex] || 0),
       nowLabel: item(0, "Now", "Open Nearcast").label,
       nowValue: item(0, "Now", "Open Nearcast").value,
       nextLabel: item(1, "Next", "Check forecast").label,
       nextValue: item(1, "Next", "Check forecast").value,
       laterLabel: item(2, "Later", "Plan ahead").label,
-      laterValue: item(2, "Later", "Plan ahead").value
+      laterValue: item(2, "Later", "Plan ahead").value,
+      planTitle: widgetPlan?.title || null,
+      planLabel: widgetPlan?.label || null,
+      planDetail: widgetPlan?.detail || null,
+      planTone: widgetPlan?.tone || null
     };
     window.NearcastNative.postMessage({ type: "widget.snapshot", snapshot });
   } catch (error) {
     console.debug("[Nearcast native] Widget snapshot skipped", error);
   }
+}
+
+function nativeWidgetPlanSummary(data, place) {
+  if (
+    !Array.isArray(state.planMemories) ||
+    !state.planMemories.length ||
+    typeof planMemoryListItems !== "function" ||
+    typeof planWatchItemForMemoryItem !== "function"
+  ) return null;
+
+  const watches = planMemoryListItems(data, place, { includePast: false })
+    .map(planWatchItemForMemoryItem)
+    .filter(Boolean)
+    .sort((a, b) => (
+      (typeof planWatchAttentionRank === "function" ? planWatchAttentionRank(b) - planWatchAttentionRank(a) : 0) ||
+      (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
+    ));
+  const top = watches[0];
+  if (!top?.memory) return null;
+
+  const title = typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : (top.memory.title || "Plan");
+  const label = top.change ? "Changed" : (top.label && !["Looks good", "Past"].includes(top.label) ? top.label : "Watching");
+  const detail = top.change?.body || top.reason || top.fullReason || (typeof planWatchWhenText === "function" ? planWatchWhenText(top.memory, data) : "");
+  return {
+    title,
+    label,
+    detail: compactForYouText(detail || "Plan checked against the forecast.", 72),
+    tone: top.tone || (top.change ? "changed" : "neutral")
+  };
 }
 
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
