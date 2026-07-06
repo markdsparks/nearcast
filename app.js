@@ -1,4 +1,4 @@
-const VERSION = "3.0.209";
+const VERSION = "3.0.210";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7698,6 +7698,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       planTitle: widgetPlan?.title || null,
       planLabel: widgetPlan?.label || null,
       planDetail: widgetPlan?.detail || null,
+      planPlace: widgetPlan?.place || null,
       planTone: widgetPlan?.tone || null
     };
     window.NearcastNative.postMessage({ type: "widget.snapshot", snapshot });
@@ -7727,12 +7728,21 @@ function nativeWidgetPlanSummary(data, place) {
   const title = typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : (top.memory.title || "Plan");
   const label = top.change ? "Changed" : (top.label && !["Looks good", "Past"].includes(top.label) ? top.label : "Watching");
   const detail = top.change?.body || top.reason || top.fullReason || (typeof planWatchWhenText === "function" ? planWatchWhenText(top.memory, data) : "");
+  const planPlace = top.place || top.memory.place || null;
+  const samePlace = planPlace && typeof samePlanPlace === "function" ? samePlanPlace(planPlace, place) : false;
   return {
     title,
     label,
     detail: compactForYouText(detail || "Plan checked against the forecast.", 72),
+    place: !samePlace && planPlace ? placeCityLabel(planPlace) : null,
     tone: top.tone || (top.change ? "changed" : "neutral")
   };
+}
+
+function placeCityLabel(place) {
+  const name = String(place?.name || "").trim();
+  if (name) return name;
+  return String(placeLabel(place || {})).split(",")[0]?.trim() || "";
 }
 
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {

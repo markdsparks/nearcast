@@ -30,6 +30,7 @@ struct NearcastWidgetSnapshot: Codable {
     var planTitle: String?
     var planLabel: String?
     var planDetail: String?
+    var planPlace: String?
     var planTone: String?
 }
 
@@ -60,6 +61,7 @@ extension NearcastWidgetSnapshot {
         planTitle: nil,
         planLabel: nil,
         planDetail: nil,
+        planPlace: nil,
         planTone: nil
     )
 
@@ -255,8 +257,8 @@ struct NearcastLargeWidget: View {
             HStack(spacing: 8) {
                 MetricTile(label: "Feels", value: "\(snapshot.feelsLike)°")
                 MetricTile(label: "Rain", value: "\(snapshot.rainChance)%")
-                MetricTile(label: "Wind", value: "\(snapshot.wind)", detail: windUnitAndDirection(snapshot))
-                MetricTile(label: "UV", value: "\(snapshot.uv)")
+                WindMetricTile(snapshot: snapshot)
+                UvMetricTile(value: snapshot.uv)
             }
 
             Text(footerText(snapshot))
@@ -295,10 +297,22 @@ struct PlanSummaryStrip: View {
                 .frame(width: 24, height: 24)
                 .background(planToneColor(snapshot).opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text([snapshot.planLabel, snapshot.planTitle].compactMap(cleanOptional).joined(separator: " · "))
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                HStack(spacing: 6) {
+                    Text([snapshot.planLabel, snapshot.planTitle].compactMap(cleanOptional).joined(separator: " · "))
+                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    if let place = cleanOptional(snapshot.planPlace) {
+                        Text(cityName(place))
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .foregroundStyle(planToneColor(snapshot).opacity(0.88))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(planToneColor(snapshot).opacity(0.13), in: Capsule())
+                    }
+                }
                 Text(cleanOptional(snapshot.planDetail) ?? "Plan checked against the forecast.")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.black.opacity(0.55))
@@ -367,8 +381,78 @@ struct MetricTile: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 54)
         .padding(9)
         .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+struct WindMetricTile: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("WIND")
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(.black.opacity(0.46))
+            HStack(spacing: 5) {
+                Text("\(snapshot.wind)")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                Text(snapshot.windUnit)
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.50))
+                Spacer(minLength: 0)
+                if let direction = snapshot.windDirection {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .black))
+                        .rotationEffect(.degrees(Double((direction + 180) % 360)))
+                        .frame(width: 22, height: 22)
+                        .background(.black.opacity(0.08), in: Circle())
+                    Text(windShortLabel(snapshot))
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.50))
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 54)
+        .padding(9)
+        .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+struct UvMetricTile: View {
+    let value: Int
+
+    var body: some View {
+        let color = uvToneColor(value)
+        VStack(alignment: .leading, spacing: 5) {
+            Text("UV")
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .tracking(0.8)
+                .foregroundStyle(.black.opacity(0.48))
+            HStack(spacing: 5) {
+                Text("\(value)")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                Text(uvRiskLabel(value))
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .foregroundStyle(color.opacity(0.95))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 54)
+        .padding(9)
+        .background(color.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color.opacity(0.18), lineWidth: 1)
+        )
     }
 }
 
@@ -463,13 +547,30 @@ private func windSummary(_ snapshot: NearcastWidgetSnapshot, includeDirection: B
     return "Wind \(base) \(label)"
 }
 
-private func windUnitAndDirection(_ snapshot: NearcastWidgetSnapshot) -> String {
-    guard let label = cleanOptional(snapshot.windLabel) else { return snapshot.windUnit }
-    return "\(snapshot.windUnit) \(label)"
-}
-
 private func hasPlanSummary(_ snapshot: NearcastWidgetSnapshot) -> Bool {
     cleanOptional(snapshot.planTitle) != nil || cleanOptional(snapshot.planDetail) != nil
+}
+
+private func windShortLabel(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let label = cleanOptional(snapshot.windLabel) ?? ""
+    return label
+        .replacingOccurrences(of: "from ", with: "", options: .caseInsensitive)
+        .uppercased()
+}
+
+private func uvRiskLabel(_ value: Int) -> String {
+    if value >= 11 { return "Extreme" }
+    if value >= 8 { return "Very high" }
+    if value >= 6 { return "High" }
+    if value >= 3 { return "Moderate" }
+    return "Low"
+}
+
+private func uvToneColor(_ value: Int) -> Color {
+    if value >= 8 { return Color(red: 0.80, green: 0.18, blue: 0.16) }
+    if value >= 6 { return Color(red: 0.88, green: 0.55, blue: 0.10) }
+    if value >= 3 { return Color(red: 0.78, green: 0.62, blue: 0.12) }
+    return Color(red: 0.15, green: 0.50, blue: 0.32)
 }
 
 private func planToneColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
