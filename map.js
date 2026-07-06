@@ -2461,6 +2461,7 @@ function renderMapLibreOverlays(options = {}) {
     } else {
       syncMapLibreRadarChunkLayer(record);
     }
+    if (mapState.immersive) renderStormImpactOverlay();
     mapLibreInteraction.needsRadarRender = true;
   }
   syncMapLibreDiagnosticReadout(record);
@@ -9060,6 +9061,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
   const latestWorld = latestSample.centroidWorld || latestSample.targetWorld;
   const latestLatLon = unprojectWorldPoint(latestWorld, z);
   const radiusPx = stormImpactRadius(latestSample);
+  const coreRadiusPx = stormImpactCoreRadius(latestSample);
   const places = stormImpactPlaces();
   const selection = stormImpactSelection(latestSample);
   const impactResult = computeStormImpacts({
@@ -9084,6 +9086,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
     sampleCount: samples.length,
     motion,
     radiusPx,
+    coreRadiusPx,
     latestWorld,
     latestLatLon,
     trailWorld: significant
@@ -9938,15 +9941,24 @@ function distanceFromPointToSegment(point, a, b) {
 
 function stormImpactDetail(tone, crossPx, latitude, z) {
   const distance = formatImpactDistance(crossPx, latitude, z);
-  if (tone === "likely") return crossPx < 8 ? "Selected storm area tracks over this place." : `Selected storm area passes within ${distance}.`;
-  if (tone === "possible") return `Selected storm edge passes within ${distance}.`;
-  return `Selected storm should pass nearby, about ${distance} away.`;
+  if (tone === "likely") return crossPx < 8 ? "Storm core tracks over this place." : `Storm core passes within ${distance}.`;
+  if (tone === "possible") return `Storm core may clip this place, passing within ${distance}.`;
+  return `Storm core should pass nearby, about ${distance} away.`;
 }
 
 function stormImpactRadius(sample) {
   if (sample?.cellRadiusPx) return Number(Math.max(28, Math.min(112, sample.cellRadiusPx)).toFixed(1));
   const radius = Math.max(24, Math.min(58, (sample.weightedRadius || 18) + 16));
   return Number(radius.toFixed(1));
+}
+
+function stormImpactCoreRadius(sample) {
+  const weighted = Number(sample?.weightedRadius);
+  const maxDistance = Number(sample?.maxDistance);
+  const base = Number.isFinite(weighted) && weighted > 0
+    ? weighted * 0.56 + 10
+    : Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance * 0.36 + 8 : 24;
+  return Number(Math.max(16, Math.min(44, base)).toFixed(1));
 }
 
 function stormImpactSelection(sample) {
@@ -10062,10 +10074,10 @@ function stormImpactSummary(analysis) {
   }
 
   if (!analysis.motion) {
-    return `${analysis.label} is highlighted, but recent radar frames do not show enough movement for an ETA yet.${evidenceNote}${sourceNote}`;
+    return `${analysis.label} core is highlighted, but recent radar frames do not show enough movement for an ETA yet.${evidenceNote}${sourceNote}`;
   }
   if (analysis.impacts.length) {
-    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this selected area holds. ${motion}${evidenceNote}${sourceNote}`;
+    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this storm core holds together. ${motion}${evidenceNote}${sourceNote}`;
   }
   if (analysis.closestMiss) {
     return `Selected storm misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${evidenceNote}${sourceNote}`;
@@ -10097,8 +10109,8 @@ function renderStormImpactCard() {
   }
 
   if (status === "loading") {
-    if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Finding storm area";
-    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Selecting the tapped storm, then checking its path against your places.";
+    if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Finding storm core";
+    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Finding the strongest nearby core, then checking its path against your places.";
     if (els.stormImpactList) els.stormImpactList.innerHTML = "";
     return;
   }
@@ -10112,8 +10124,8 @@ function stormImpactKickerLabel(analysis) {
   if (!analysis) return "";
   if (analysis.selection) {
     return analysis.forecastGuidance?.hasForecastPrecip
-      ? "Selected storm + forecast"
-      : "Selected storm";
+      ? "Storm core + forecast"
+      : "Storm core";
   }
   return analysis.source || "";
 }
@@ -10160,8 +10172,7 @@ function renderStormImpactOverlay(viewport = null) {
   const lookaheadMin = stormImpactLookaheadMin(analysis);
   const coneHtml = stormImpactConeHtml(analysis, vp, lookaheadMin);
   const trailHtml = stormImpactTrailHtml(analysis, vp);
-  const selectionHtml = stormImpactSelectionHtml(analysis, vp);
-  const placesHtml = stormImpactPlaceBadgesHtml(analysis, vp);
+  const coreHtml = stormImpactCoreHtml(analysis, vp);
   let pathHtml = "";
 
   if (analysis.hasPrecip && analysis.motion && analysis.latestWorld) {
@@ -10178,7 +10189,7 @@ function renderStormImpactOverlay(viewport = null) {
     `;
   }
 
-  layer.innerHTML = `${coneHtml}${trailHtml}${selectionHtml}${pathHtml}${placesHtml}${targetHtml}`;
+  layer.innerHTML = `${coneHtml}${trailHtml}${pathHtml}${coreHtml}${targetHtml}`;
 }
 
 function stormImpactLookaheadMin(analysis) {
@@ -10207,6 +10218,18 @@ function stormImpactSelectionHtml(analysis, viewport) {
   `;
 }
 
+function stormImpactCoreHtml(analysis, viewport) {
+  if (!analysis?.hasPrecip || !analysis.latestWorld) return "";
+  const center = mapScreenPointForWorld(analysis.latestWorld, analysis.z, viewport);
+  const radius = screenRadiusForWorldRadius(analysis.latestWorld, analysis.z, analysis.coreRadiusPx || analysis.radiusPx || 28, viewport);
+  const outer = Math.max(26, radius * 1.8);
+  return `
+    <span class="impact-core-label" style="left:${center.x.toFixed(1)}px;top:${(center.y - outer - 14).toFixed(1)}px">Storm core</span>
+    <span class="impact-core-ring" style="left:${center.x.toFixed(1)}px;top:${center.y.toFixed(1)}px;width:${(outer * 2).toFixed(1)}px;height:${(outer * 2).toFixed(1)}px"></span>
+    <span class="impact-core-dot" style="left:${center.x.toFixed(1)}px;top:${center.y.toFixed(1)}px;width:${(Math.max(16, radius * 0.92) * 2).toFixed(1)}px;height:${(Math.max(16, radius * 0.92) * 2).toFixed(1)}px"></span>
+  `;
+}
+
 function stormImpactConeHtml(analysis, viewport, lookaheadMin) {
   if (!analysis?.hasPrecip || !analysis.motion || !analysis.latestWorld) return "";
   const speed = Math.hypot(analysis.motion.vx, analysis.motion.vy);
@@ -10216,8 +10239,9 @@ function stormImpactConeHtml(analysis, viewport, lookaheadMin) {
   const uy = analysis.motion.vy / speed;
   const nx = -uy;
   const ny = ux;
-  const startWidth = Math.max(18, (analysis.radiusPx || STORM_IMPACT_PATH_RADIUS_PX) * 0.54);
-  const endWidth = Math.max(startWidth * 1.6, STORM_IMPACT_NEAR_PATH_RADIUS_PX * 1.25);
+  const coreRadius = analysis.coreRadiusPx || Math.min(analysis.radiusPx || STORM_IMPACT_PATH_RADIUS_PX, 42);
+  const startWidth = Math.max(14, coreRadius * 0.72);
+  const endWidth = Math.max(startWidth * 1.9, STORM_IMPACT_NEAR_PATH_RADIUS_PX * 0.9);
   const segments = 4;
   const left = [];
   const right = [];
@@ -10240,11 +10264,17 @@ function stormImpactConeHtml(analysis, viewport, lookaheadMin) {
     .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
     .join(" ");
   if (!points) return "";
+  const labelWorld = {
+    x: analysis.latestWorld.x + analysis.motion.vx * Math.min(lookaheadMin * 0.62, 58),
+    y: analysis.latestWorld.y + analysis.motion.vy * Math.min(lookaheadMin * 0.62, 58)
+  };
+  const label = mapScreenPointForWorld(labelWorld, analysis.z, viewport);
 
   return `
     <svg class="impact-cone-svg" aria-hidden="true">
       <polygon class="impact-path-cone" points="${points}"></polygon>
     </svg>
+    <span class="impact-path-label" style="left:${label.x.toFixed(1)}px;top:${label.y.toFixed(1)}px">Likely path</span>
   `;
 }
 
@@ -10322,6 +10352,14 @@ function mapScreenPointForLatLon(latitude, longitude, viewport = getMapViewport(
 function mapScreenPointForWorld(world, sourceZoom, viewport = getMapViewport()) {
   const latLon = unprojectWorldPoint(world, sourceZoom);
   return mapScreenPointForLatLon(latLon.latitude, latLon.longitude, viewport);
+}
+
+function screenRadiusForWorldRadius(world, sourceZoom, radiusPx, viewport = getMapViewport()) {
+  if (!world || !Number.isFinite(radiusPx) || radiusPx <= 0) return 24;
+  const center = mapScreenPointForWorld(world, sourceZoom, viewport);
+  const edge = mapScreenPointForWorld({ x: world.x + radiusPx, y: world.y }, sourceZoom, viewport);
+  const radius = Math.hypot(edge.x - center.x, edge.y - center.y);
+  return Number.isFinite(radius) && radius > 0 ? radius : 24;
 }
 
 function unprojectWorldPoint(point, zoom) {
