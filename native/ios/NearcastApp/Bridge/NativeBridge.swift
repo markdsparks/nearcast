@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import WebKit
+import WidgetKit
 
 @MainActor
 final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelegate {
@@ -341,6 +342,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             return
         }
         defaults.set(data, forKey: NativeWidgetSnapshotStore.snapshotKey)
+        WidgetCenter.shared.reloadTimelines(ofKind: NativeWidgetSnapshotStore.widgetKind)
     }
 
     private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {
@@ -358,4 +360,5 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
 enum NativeWidgetSnapshotStore {
     static let suiteName = "group.app.nearcast.ios"
     static let snapshotKey = "nearcast.widget.snapshot.v1"
+    static let widgetKind = "NearcastWidget"
 }

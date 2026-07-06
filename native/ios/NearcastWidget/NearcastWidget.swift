@@ -89,12 +89,15 @@ struct NearcastWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "NearcastWidget", provider: NearcastWidgetProvider()) { entry in
             NearcastWidgetView(entry: entry)
-                .containerBackground(.clear, for: .widget)
+                .containerBackground(for: .widget) {
+                    NearcastWidgetBackdrop(snapshot: entry.snapshot)
+                }
                 .widgetURL(URL(string: "nearcast://weather"))
         }
         .configurationDisplayName("Nearcast")
         .description("A glance at the weather that matters next.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
 
@@ -103,8 +106,7 @@ struct NearcastWidgetView: View {
     let entry: NearcastWidgetEntry
 
     var body: some View {
-        ZStack {
-            NearcastWidgetBackdrop(snapshot: entry.snapshot)
+        Group {
             switch family {
             case .systemSmall:
                 NearcastSmallWidget(snapshot: entry.snapshot)
@@ -114,6 +116,7 @@ struct NearcastWidgetView: View {
                 NearcastMediumWidget(snapshot: entry.snapshot)
             }
         }
+        .foregroundStyle(.black.opacity(0.84))
     }
 }
 
@@ -121,35 +124,40 @@ struct NearcastSmallWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(snapshot.placeName)
-                .font(.caption.weight(.bold))
-                .lineLimit(1)
-                .foregroundStyle(.primary.opacity(0.78))
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(cityName(snapshot.placeName))
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 4)
+                Image(systemName: conditionSymbol(snapshot))
+                    .font(.system(size: 18, weight: .bold))
+                    .accessibilityHidden(true)
+            }
 
             Spacer(minLength: 0)
 
-            Text(primarySignal(snapshot))
-                .font(.system(size: 24, weight: .black, design: .rounded))
-                .lineLimit(2)
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 52, weight: .black, design: .rounded))
+                .lineLimit(1)
                 .minimumScaleFactor(0.68)
 
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(snapshot.temperature)")
-                    .font(.system(size: 42, weight: .black, design: .rounded))
-                    .minimumScaleFactor(0.78)
-                Text("°")
-                    .font(.system(size: 26, weight: .black, design: .rounded))
-            }
-            .accessibilityLabel("\(snapshot.temperature) degrees")
-
-            Text(snapshot.nextValue)
-                .font(.caption.weight(.semibold))
+            Text(compactSignalValue(primarySignal(snapshot)))
+                .font(.system(size: 18, weight: .black, design: .rounded))
                 .lineLimit(1)
-                .foregroundStyle(.primary.opacity(0.78))
+                .minimumScaleFactor(0.68)
+
+            Text(compactSignalValue(snapshot.nextValue))
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(.white.opacity(0.30), in: Capsule())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(14)
+        .padding(16)
     }
 }
 
@@ -157,40 +165,38 @@ struct NearcastMediumWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(snapshot.placeName)
-                    .font(.caption.weight(.bold))
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(shortPlaceName(snapshot.placeName))
+                    .font(.system(size: 14, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .foregroundStyle(.primary.opacity(0.72))
+                    .minimumScaleFactor(0.72)
+                    .foregroundStyle(.black.opacity(0.62))
 
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("\(snapshot.temperature)")
-                        .font(.system(size: 48, weight: .black, design: .rounded))
-                    Text("°")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
-                }
-                .minimumScaleFactor(0.75)
+                Text("\(snapshot.temperature)°")
+                    .font(.system(size: 52, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
 
                 Text(snapshot.condition)
-                    .font(.callout.weight(.bold))
+                    .font(.system(size: 17, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .minimumScaleFactor(0.72)
 
                 Text("Feels \(snapshot.feelsLike)°")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary.opacity(0.7))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.58))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(spacing: 7) {
+            VStack(spacing: 8) {
                 SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: .primary)
                 SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue))
                 SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: .primary.opacity(0.78))
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(15)
+        .padding(18)
     }
 }
 
@@ -198,13 +204,14 @@ struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(snapshot.placeName)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.primary.opacity(0.72))
+                    Text(shortPlaceName(snapshot.placeName))
+                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.62))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text(primarySignal(snapshot))
                         .font(.system(size: 31, weight: .black, design: .rounded))
                         .lineLimit(2)
@@ -214,10 +221,12 @@ struct NearcastLargeWidget: View {
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(snapshot.temperature)°")
                         .font(.system(size: 43, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
                     if let high = snapshot.high, let low = snapshot.low {
                         Text("H \(high)°  L \(low)°")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.primary.opacity(0.68))
+                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.black.opacity(0.58))
                     }
                 }
             }
@@ -235,7 +244,7 @@ struct NearcastLargeWidget: View {
                 MetricTile(label: "UV", value: "\(snapshot.uv)")
             }
         }
-        .padding(16)
+        .padding(18)
     }
 }
 
@@ -245,21 +254,23 @@ struct SignalRow: View {
     let tone: Color
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(label.uppercased())
-                .font(.caption2.weight(.black))
-                .tracking(1.2)
+        HStack(spacing: 9) {
+            Text(compactSignalLabel(label))
+                .font(.system(size: 10, weight: .black, design: .rounded))
+                .tracking(0.8)
                 .foregroundStyle(tone.opacity(0.75))
-                .frame(width: 42, alignment: .leading)
-            Text(value)
-                .font(.caption.weight(.bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.78)
+                .frame(width: 44, alignment: .leading)
+            Text(compactSignalValue(value))
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial.opacity(0.78), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -270,17 +281,17 @@ struct MetricTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
-                .font(.system(size: 8, weight: .black))
+                .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
-                .foregroundStyle(.primary.opacity(0.52))
+                .foregroundStyle(.black.opacity(0.46))
             Text(value)
-                .font(.caption.weight(.black))
+                .font(.system(size: 15, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(.ultraThinMaterial.opacity(0.62), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(9)
+        .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -327,6 +338,67 @@ private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
     if snapshot.feelsLike >= 95 { return "Serious heat" }
     if snapshot.feelsLike <= 32 { return "Freezing" }
     return snapshot.condition
+}
+
+private func cityName(_ value: String) -> String {
+    let city = value
+        .split(separator: ",", maxSplits: 1)
+        .first
+        .map { String($0) } ?? value
+    let trimmed = city.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? value : trimmed
+}
+
+private func shortPlaceName(_ value: String) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.count <= 20 { return trimmed }
+    return cityName(trimmed)
+}
+
+private func compactSignalLabel(_ value: String) -> String {
+    let upper = value.uppercased()
+    if upper.contains("LATER") { return "LATER" }
+    if upper.contains("NEXT") { return "NEXT" }
+    if upper.contains("NOW") { return "NOW" }
+    return String(upper.prefix(5))
+}
+
+private func compactSignalValue(_ value: String) -> String {
+    var text = value
+        .replacingOccurrences(of: "°F", with: "°")
+        .replacingOccurrences(of: "next 2 hours", with: "2h", options: .caseInsensitive)
+        .replacingOccurrences(of: "next two hours", with: "2h", options: .caseInsensitive)
+        .replacingOccurrences(of: " PM", with: "", options: .caseInsensitive)
+        .replacingOccurrences(of: " AM", with: "", options: .caseInsensitive)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let lower = text.lowercased()
+    if lower.hasPrefix("hot - feels") {
+        text = text.replacingOccurrences(of: "Hot - feels", with: "Feels", options: .caseInsensitive)
+    }
+    if lower.hasPrefix("dangerously hot - feels") {
+        text = text.replacingOccurrences(of: "Dangerously hot - feels", with: "Feels", options: .caseInsensitive)
+    }
+    if lower.hasPrefix("dry ") {
+        text = text.replacingOccurrences(of: "Dry next", with: "Dry", options: .caseInsensitive)
+    }
+    if lower.contains("thunderstorm") {
+        return "Storms possible"
+    }
+    if lower.contains("sunset") {
+        return text.replacingOccurrences(of: "Sunset ", with: "Sunset ", options: .caseInsensitive)
+    }
+    return text
+}
+
+private func conditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let code = snapshot.conditionCode
+    if (95...99).contains(code) { return "cloud.bolt.rain.fill" }
+    if (71...86).contains(code) { return "snowflake" }
+    if (51...67).contains(code) || (80...82).contains(code) { return "cloud.rain.fill" }
+    if !snapshot.isDay { return "moon.stars.fill" }
+    if (1...3).contains(code) { return "cloud.sun.fill" }
+    return "sun.max.fill"
 }
 
 private func signalColor(_ value: String) -> Color {
