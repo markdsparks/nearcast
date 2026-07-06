@@ -1,5 +1,6 @@
 /* Nearcast radar/map timeline and immersive map interactions. */
 
+const STORM_IMPACT_ENABLED = false;
 const MAP_PAN_MOVE_EPSILON_PX = 0.5;
 const MAP_PAN_REBASE_PX = 96;
 const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
@@ -68,6 +69,10 @@ const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
+
+function stormImpactFeatureEnabled() {
+  return STORM_IMPACT_ENABLED === true;
+}
 const GENERATED_RADAR_TILE_PREFLIGHT_FRAME_LIMIT = 3;
 const GENERATED_RADAR_TILE_PREFLIGHT_MAX_URLS = 48;
 const GENERATED_RADAR_TILE_PREFLIGHT_TIMEOUT_MS = 1600;
@@ -4936,7 +4941,7 @@ function ensureMapLibreMap() {
   map.on("moveend", () => scheduleMapLibreSettle(map));
   map.on("zoomend", () => scheduleMapLibreSettle(map));
   map.on("click", (event) => {
-    if (!mapState.immersive || !event.originalEvent) return;
+    if (!stormImpactFeatureEnabled() || !mapState.immersive || !event.originalEvent) return;
     syncMapLibreStateAndOverlays(map);
     inspectStormImpactAt(event.originalEvent.clientX, event.originalEvent.clientY);
   });
@@ -8565,7 +8570,7 @@ function mapMarkerKey(place) {
 function mapMarkerData(place) {
   const key = mapMarkerKey(place);
   const isActive = isActiveMapPlace(place);
-  const impact = stormImpactForPlace(place);
+  const impact = stormImpactFeatureEnabled() ? stormImpactForPlace(place) : null;
   const name = mapMarkerName(place);
   const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
   const impactText = impact ? formatImpactMarkerEta(impact.etaMin) : "";
@@ -8630,7 +8635,7 @@ function mapMarkerLayout(place, viewport = getMapViewport()) {
 
   const isActive = isActiveMapPlace(place);
   const tempText = mapState.immersive && isActive ? activeMapMarkerTemp() : "";
-  const impact = stormImpactForPlace(place);
+  const impact = stormImpactFeatureEnabled() ? stormImpactForPlace(place) : null;
   const impactText = impact ? formatImpactMarkerEta(impact.etaMin) : "";
   const name = mapMarkerName(place);
   return {
@@ -8922,6 +8927,7 @@ function bindImmersiveDrag() {
 }
 
 function startStormImpactTap(x, y) {
+  if (!stormImpactFeatureEnabled()) return;
   if (!mapState.immersive || !state.activePlace) return;
   impactTapState.active = true;
   impactTapState.moved = false;
@@ -8937,6 +8943,10 @@ function updateStormImpactTap(x, y) {
 }
 
 function finishStormImpactTap(x, y, canvas = els.weatherMap) {
+  if (!stormImpactFeatureEnabled()) {
+    cancelStormImpactTap();
+    return false;
+  }
   updateStormImpactTap(x, y);
   const rect = canvas?.getBoundingClientRect();
   const inside = rect
@@ -8953,6 +8963,7 @@ function cancelStormImpactTap() {
 }
 
 async function inspectStormImpactAt(clientX, clientY) {
+  if (!stormImpactFeatureEnabled()) return;
   const target = mapLatLonFromClientPoint(clientX, clientY);
   if (!target) return;
 
@@ -9985,7 +9996,7 @@ function stormImpactPlaces() {
 }
 
 function stormImpactForPlace(place) {
-  if (!mapState.immersive) return null;
+  if (!stormImpactFeatureEnabled() || !mapState.immersive) return null;
   const impacts = mapState.stormImpact?.analysis?.impacts || [];
   const key = stormImpactPlaceKey(place);
   return impacts.find((impact) => impact.placeKey === key) || null;
@@ -10093,6 +10104,10 @@ function stormMotionCopy(motion, latitude, z) {
 function renderStormImpactCard() {
   const card = els.stormImpactCard;
   if (!card) return;
+  if (!stormImpactFeatureEnabled()) {
+    card.hidden = true;
+    return;
+  }
   const status = mapState.stormImpact?.status || "idle";
   const analysis = mapState.stormImpact?.analysis;
   if (status === "idle" || !analysis) {
@@ -10160,6 +10175,10 @@ function stormImpactRowHtml(impact) {
 function renderStormImpactOverlay(viewport = null) {
   const layer = document.getElementById("immersiveImpactLayer");
   if (!layer) return;
+  if (!stormImpactFeatureEnabled()) {
+    layer.innerHTML = "";
+    return;
+  }
   const analysis = mapState.stormImpact?.analysis;
   if (!mapState.immersive || !analysis?.target) {
     layer.innerHTML = "";
@@ -10297,6 +10316,7 @@ function stormImpactTrailHtml(analysis, viewport) {
 }
 
 function stormImpactPlaceBadgesHtml(analysis, viewport) {
+  if (!stormImpactFeatureEnabled()) return "";
   if (!analysis?.hasPrecip) return "";
   const impactsByKey = new Map((analysis.impacts || []).map((impact) => [impact.placeKey, impact]));
   const places = stormImpactPlaces();
