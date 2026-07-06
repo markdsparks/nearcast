@@ -130,14 +130,51 @@ struct NearcastWidgetView: View {
                 NearcastMediumWidget(snapshot: entry.snapshot)
             }
         }
-        .foregroundStyle(.black.opacity(0.84))
+        .foregroundStyle(widgetPalette(entry.snapshot).primary)
     }
+}
+
+struct WidgetPalette {
+    let primary: Color
+    let secondary: Color
+    let muted: Color
+    let subtle: Color
+    let surface: Color
+    let surfaceStrong: Color
+    let surfaceSoft: Color
+    let stroke: Color
+}
+
+private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette {
+    if snapshot.isDay {
+        return WidgetPalette(
+            primary: .black.opacity(0.84),
+            secondary: .black.opacity(0.62),
+            muted: .black.opacity(0.48),
+            subtle: .black.opacity(0.36),
+            surface: .white.opacity(0.28),
+            surfaceStrong: .white.opacity(0.34),
+            surfaceSoft: .white.opacity(0.20),
+            stroke: .white.opacity(0.22)
+        )
+    }
+    return WidgetPalette(
+        primary: .white.opacity(0.94),
+        secondary: .white.opacity(0.72),
+        muted: .white.opacity(0.56),
+        subtle: .white.opacity(0.40),
+        surface: .white.opacity(0.15),
+        surfaceStrong: .white.opacity(0.20),
+        surfaceSoft: .white.opacity(0.10),
+        stroke: .white.opacity(0.16)
+    )
 }
 
 struct NearcastSmallWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
+        let palette = widgetPalette(snapshot)
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Text(cityName(snapshot.placeName))
@@ -163,8 +200,8 @@ struct NearcastSmallWidget: View {
                 .minimumScaleFactor(0.68)
 
             HStack(spacing: 6) {
-                MiniPill(text: "Feels \(snapshot.feelsLike)°")
-                MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue))
+                MiniPill(text: "Feels \(snapshot.feelsLike)°", palette: palette)
+                MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue), palette: palette)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -176,13 +213,14 @@ struct NearcastMediumWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
+        let palette = widgetPalette(snapshot)
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(shortPlaceName(snapshot.placeName))
                     .font(.system(size: 14, weight: .black, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
-                    .foregroundStyle(.black.opacity(0.62))
+                    .foregroundStyle(palette.secondary)
 
                 Text("\(snapshot.temperature)°")
                     .font(.system(size: 52, weight: .black, design: .rounded))
@@ -196,16 +234,16 @@ struct NearcastMediumWidget: View {
 
                 Text(mediumMetaText(snapshot))
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.58))
+                    .foregroundStyle(palette.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 8) {
-                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: .primary)
-                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue))
-                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: .primary.opacity(0.78))
+                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: palette.primary, palette: palette)
+                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue), palette: palette)
+                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: palette.secondary, palette: palette)
             }
             .frame(maxWidth: .infinity)
         }
@@ -217,12 +255,13 @@ struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
+        let palette = widgetPalette(snapshot)
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
                         .font(.system(size: 16, weight: .black, design: .rounded))
-                        .foregroundStyle(.black.opacity(0.62))
+                        .foregroundStyle(palette.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(primarySignal(snapshot))
@@ -239,31 +278,31 @@ struct NearcastLargeWidget: View {
                     if let high = snapshot.high, let low = snapshot.low {
                         Text("H \(high)°  L \(low)°")
                             .font(.system(size: 14, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.black.opacity(0.58))
+                            .foregroundStyle(palette.secondary)
                     }
                 }
             }
 
             VStack(spacing: 8) {
-                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: .primary)
-                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue))
-                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: .primary.opacity(0.78))
+                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: palette.primary, palette: palette)
+                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue), palette: palette)
+                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: palette.secondary, palette: palette)
             }
 
             if hasPlanSummary(snapshot) {
-                PlanSummaryStrip(snapshot: snapshot)
+                PlanSummaryStrip(snapshot: snapshot, palette: palette)
             }
 
             HStack(spacing: 8) {
-                MetricTile(label: "Feels", value: "\(snapshot.feelsLike)°")
-                MetricTile(label: "Rain", value: "\(snapshot.rainChance)%")
-                WindMetricTile(snapshot: snapshot)
-                UvMetricTile(value: snapshot.uv)
+                MetricTile(label: "Feels", value: "\(snapshot.feelsLike)°", palette: palette)
+                MetricTile(label: "Rain", value: "\(snapshot.rainChance)%", palette: palette)
+                WindMetricTile(snapshot: snapshot, palette: palette)
+                UvMetricTile(value: snapshot.uv, palette: palette)
             }
 
-            Text(footerText(snapshot))
+            Text(freshnessText(snapshot))
                 .font(.system(size: 9, weight: .heavy, design: .rounded))
-                .foregroundStyle(.black.opacity(0.34))
+                .foregroundStyle(palette.subtle)
                 .lineLimit(1)
         }
         .padding(18)
@@ -272,22 +311,24 @@ struct NearcastLargeWidget: View {
 
 struct MiniPill: View {
     let text: String
-    var tone: Color = .primary
+    var tone: Color? = nil
+    let palette: WidgetPalette
 
     var body: some View {
         Text(text)
             .font(.system(size: 11, weight: .heavy, design: .rounded))
-            .foregroundStyle(tone.opacity(0.88))
+            .foregroundStyle((tone ?? palette.primary).opacity(0.90))
             .lineLimit(1)
             .minimumScaleFactor(0.66)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(.white.opacity(0.30), in: Capsule())
+            .background(palette.surfaceStrong, in: Capsule())
     }
 }
 
 struct PlanSummaryStrip: View {
     let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
 
     var body: some View {
         HStack(spacing: 9) {
@@ -300,6 +341,7 @@ struct PlanSummaryStrip: View {
                 HStack(spacing: 6) {
                     Text([snapshot.planLabel, snapshot.planTitle].compactMap(cleanOptional).joined(separator: " · "))
                         .font(.system(size: 13, weight: .black, design: .rounded))
+                        .foregroundStyle(palette.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     if let place = cleanOptional(snapshot.planPlace) {
@@ -315,7 +357,7 @@ struct PlanSummaryStrip: View {
                 }
                 Text(cleanOptional(snapshot.planDetail) ?? "Plan checked against the forecast.")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.55))
+                    .foregroundStyle(palette.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
@@ -323,10 +365,10 @@ struct PlanSummaryStrip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(planToneColor(snapshot).opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(planSurfaceColor(snapshot), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(planToneColor(snapshot).opacity(0.18), lineWidth: 1)
+                .stroke(planStrokeColor(snapshot), lineWidth: 1)
         )
     }
 }
@@ -335,6 +377,7 @@ struct SignalRow: View {
     let label: String
     let value: String
     let tone: Color
+    let palette: WidgetPalette
 
     var body: some View {
         HStack(spacing: 9) {
@@ -347,13 +390,14 @@ struct SignalRow: View {
                 .frame(width: 44, alignment: .leading)
             Text(compactSignalValue(value))
                 .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(palette.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -361,21 +405,23 @@ struct MetricTile: View {
     let label: String
     let value: String
     var detail: String? = nil
+    let palette: WidgetPalette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
-                .foregroundStyle(.black.opacity(0.46))
+                .foregroundStyle(palette.muted)
             Text(value)
                 .font(.system(size: 15, weight: .black, design: .rounded))
+                .foregroundStyle(palette.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
             if let detail = cleanOptional(detail) {
                 Text(detail)
                     .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.48))
+                    .foregroundStyle(palette.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
             }
@@ -383,49 +429,58 @@ struct MetricTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 54)
         .padding(9)
-        .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
 struct WindMetricTile: View {
     let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("WIND")
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
-                .foregroundStyle(.black.opacity(0.46))
+                .foregroundStyle(palette.muted)
             HStack(spacing: 5) {
                 Text("\(snapshot.wind)")
                     .font(.system(size: 15, weight: .black, design: .rounded))
+                    .foregroundStyle(palette.primary)
                     .lineLimit(1)
                 Text(snapshot.windUnit)
-                    .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.50))
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 0)
                 if let direction = snapshot.windDirection {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(palette.primary)
                         .rotationEffect(.degrees(Double((direction + 180) % 360)))
                         .frame(width: 22, height: 22)
-                        .background(.black.opacity(0.08), in: Circle())
+                        .background(palette.surfaceStrong, in: Circle())
                     Text(windShortLabel(snapshot))
                         .font(.system(size: 8, weight: .black, design: .rounded))
-                        .foregroundStyle(.black.opacity(0.50))
+                        .foregroundStyle(palette.muted)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 54)
         .padding(9)
-        .background(.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
 struct UvMetricTile: View {
     let value: Int
+    let palette: WidgetPalette
 
     var body: some View {
         let color = uvToneColor(value)
@@ -433,10 +488,11 @@ struct UvMetricTile: View {
             Text("UV")
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
-                .foregroundStyle(.black.opacity(0.48))
+                .foregroundStyle(palette.muted)
             HStack(spacing: 5) {
                 Text("\(value)")
                     .font(.system(size: 15, weight: .black, design: .rounded))
+                    .foregroundStyle(palette.primary)
                     .lineLimit(1)
                 Text(uvRiskLabel(value))
                     .font(.system(size: 8, weight: .black, design: .rounded))
@@ -448,10 +504,10 @@ struct UvMetricTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 54)
         .padding(9)
-        .background(color.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(uvSurfaceColor(value), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(color.opacity(0.18), lineWidth: 1)
+                .stroke(color.opacity(0.26), lineWidth: 1)
         )
     }
 }
@@ -474,20 +530,20 @@ struct NearcastWidgetBackdrop: View {
                 endRadius: 190
             )
         }
-        .overlay {
+        .overlay(alignment: .topTrailing) {
             if snapshot.isDay {
                 Circle()
-                    .fill(.white.opacity(0.34))
+                    .fill(.white.opacity(0.28))
                     .blur(radius: 16)
                     .frame(width: 96, height: 96)
-                    .offset(x: 78, y: -70)
+                    .offset(x: 24, y: -28)
             } else {
                 ZStack {
-                    Circle().fill(.white.opacity(0.72)).frame(width: 54, height: 54)
-                    Circle().fill(.black.opacity(0.18)).frame(width: 52, height: 52).offset(x: 16, y: -8)
+                    Circle().fill(.white.opacity(0.62)).frame(width: 54, height: 54)
+                    Circle().fill(.black.opacity(0.22)).frame(width: 52, height: 52).offset(x: 16, y: -8)
                 }
                 .blur(radius: 0.4)
-                .offset(x: 82, y: -72)
+                .offset(x: 16, y: -20)
             }
         }
         .overlay {
@@ -573,6 +629,10 @@ private func uvToneColor(_ value: Int) -> Color {
     return Color(red: 0.15, green: 0.50, blue: 0.32)
 }
 
+private func uvSurfaceColor(_ value: Int) -> Color {
+    uvToneColor(value).opacity(value >= 6 ? 0.24 : 0.16)
+}
+
 private func planToneColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
     switch cleanOptional(snapshot.planTone)?.lowercased() {
     case "watch", "caution":
@@ -584,6 +644,14 @@ private func planToneColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
     default:
         return Color(red: 0.22, green: 0.35, blue: 0.55)
     }
+}
+
+private func planSurfaceColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    planToneColor(snapshot).opacity(snapshot.isDay ? 0.10 : 0.20)
+}
+
+private func planStrokeColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    planToneColor(snapshot).opacity(snapshot.isDay ? 0.18 : 0.34)
 }
 
 private func planSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
@@ -604,11 +672,6 @@ private func freshnessText(_ snapshot: NearcastWidgetSnapshot) -> String {
     if minutes < 60 { return "Updated \(minutes)m ago" }
     let hours = max(1, minutes / 60)
     return "Updated \(hours)h ago"
-}
-
-private func footerText(_ snapshot: NearcastWidgetSnapshot) -> String {
-    let wind = windSummary(snapshot, includeDirection: true)
-    return "\(wind) · \(freshnessText(snapshot))"
 }
 
 private func compactSignalLabel(_ value: String) -> String {
