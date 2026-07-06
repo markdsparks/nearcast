@@ -23,7 +23,6 @@ struct NearcastWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.delegate = context.coordinator
-        webView.scrollView.panGestureRecognizer.delegate = context.coordinator
         webView.scrollView.pinchGestureRecognizer?.delegate = context.coordinator
         webView.isOpaque = true
         webView.backgroundColor = UIColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 1.0)
