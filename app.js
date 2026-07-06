@@ -1,4 +1,4 @@
-const VERSION = "3.0.204";
+const VERSION = "3.0.205";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -705,7 +705,9 @@ const pinchState = {
   startDistance: 0,
   startZoom: 0,
   anchorX: 0,
-  anchorY: 0
+  anchorY: 0,
+  lastMidX: 0,
+  lastMidY: 0
 };
 
 const mapTapState = {
@@ -2814,6 +2816,10 @@ function snoozeInstallPrompt(durationMs = INSTALL_PROMPT_SNOOZE_MS) {
   refreshPlanAwareLaunchSurfaces();
 }
 
+function isNativeNearcastApp() {
+  return Boolean(window.NearcastNative?.platform === "ios" || /\bNearcastNative\//.test(navigator.userAgent || ""));
+}
+
 function isInstalledPwa() {
   return Boolean(
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -2838,7 +2844,7 @@ function installPromptEarned() {
 }
 
 function installPromptCanShow() {
-  if (isInstalledPwa() || installPromptAccepted() || installPromptDismissed()) return false;
+  if (isNativeNearcastApp() || isInstalledPwa() || installPromptAccepted() || installPromptDismissed()) return false;
   if (!userHasWeatherContext() || !installPromptEarned()) return false;
   return Boolean(installPromptState.nativePromptAvailable || isIosLikeDevice());
 }
@@ -2917,7 +2923,7 @@ function closeInstallSheet(options = {}) {
 }
 
 async function handleInstallAction() {
-  if (isInstalledPwa()) {
+  if (isNativeNearcastApp() || isInstalledPwa()) {
     updateInstallPromptUI();
     return;
   }
@@ -2953,7 +2959,14 @@ function dismissInstallPrompt() {
 
 function initInstallPrompt() {
   incrementInstallVisitCount();
+  window.addEventListener("nearcast-native-ready", () => {
+    installPromptState.deferredPrompt = null;
+    installPromptState.nativePromptAvailable = false;
+    updateInstallPromptUI();
+    refreshPlanAwareLaunchSurfaces();
+  });
   window.addEventListener("beforeinstallprompt", (event) => {
+    if (isNativeNearcastApp()) return;
     event.preventDefault();
     installPromptState.deferredPrompt = event;
     installPromptState.nativePromptAvailable = true;

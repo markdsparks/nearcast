@@ -5070,6 +5070,8 @@ function startMapPinch(a, b) {
   pinchState.startZoom = mapState.zoom;
   pinchState.anchorX = mid.x;
   pinchState.anchorY = mid.y;
+  pinchState.lastMidX = mid.x;
+  pinchState.lastMidY = mid.y;
 }
 
 function moveMapPinch(a, b) {
@@ -5078,6 +5080,14 @@ function moveMapPinch(a, b) {
   const ratio = touchDistance(a, b) / pinchState.startDistance;
   if (!Number.isFinite(ratio) || ratio <= 0) return;
   const mid = touchMidpoint(a, b);
+  const dx = mid.x - (Number.isFinite(pinchState.lastMidX) ? pinchState.lastMidX : mid.x);
+  const dy = mid.y - (Number.isFinite(pinchState.lastMidY) ? pinchState.lastMidY : mid.y);
+  if (dx || dy) {
+    mapState.panX -= dx;
+    mapState.panY -= dy;
+    pinchState.lastMidX = mid.x;
+    pinchState.lastMidY = mid.y;
+  }
   const nextZoom = pinchState.startZoom + Math.log2(ratio);
   setMapZoom(nextZoom, mid.x, mid.y);
 }

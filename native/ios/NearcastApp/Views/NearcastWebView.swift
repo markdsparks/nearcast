@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WebKit
 
 struct NearcastWebView: UIViewRepresentable {
@@ -21,6 +22,9 @@ struct NearcastWebView: UIViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.delegate = context.coordinator
+        webView.scrollView.panGestureRecognizer.delegate = context.coordinator
+        webView.scrollView.pinchGestureRecognizer?.delegate = context.coordinator
         webView.isOpaque = true
         webView.backgroundColor = UIColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 1.0)
         webView.scrollView.backgroundColor = webView.backgroundColor
@@ -37,7 +41,7 @@ struct NearcastWebView: UIViewRepresentable {
         context.coordinator.load(model.currentURL, in: webView)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         let bridge: NativeBridge
         private weak var model: NearcastWebModel?
         private var requestedURL: URL?
@@ -99,6 +103,13 @@ struct NearcastWebView: UIViewRepresentable {
             }
 
             return components.string ?? url.absoluteString
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
     }
 }
