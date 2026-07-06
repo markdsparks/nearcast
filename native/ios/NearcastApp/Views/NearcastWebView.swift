@@ -18,12 +18,14 @@ struct NearcastWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = true
         webView.backgroundColor = UIColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 1.0)
         webView.scrollView.backgroundColor = webView.backgroundColor
 
+        context.coordinator.bridge.webView = webView
         model.attach(webView)
         context.coordinator.load(model.currentURL, in: webView)
         return webView
@@ -35,7 +37,7 @@ struct NearcastWebView: UIViewRepresentable {
         context.coordinator.load(model.currentURL, in: webView)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let bridge: NativeBridge
         private weak var model: NearcastWebModel?
         private var requestedURL: URL?

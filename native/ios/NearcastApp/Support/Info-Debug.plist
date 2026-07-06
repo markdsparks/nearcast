@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Nearcast can load your local development server while testing native builds.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Nearcast uses your location to show the forecast for where you are.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
