@@ -9050,7 +9050,7 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
       source,
       title: "No selected storm",
       summary: base.tapSource === "forecast"
-        ? "This forecast frame is display guidance; storm impact uses the latest observed radar, which is weak or clear at this spot."
+        ? "This forecast frame is display guidance; Storm Check uses the latest observed radar, which is weak or clear at this spot."
         : "The latest radar is weak or clear where you tapped."
     };
   }
@@ -9086,10 +9086,15 @@ async function analyzeObservedStormImpactAtPoint(target, base) {
     radiusPx,
     latestWorld,
     latestLatLon,
+    trailWorld: significant
+      .slice(-6)
+      .map((sample) => sample.centroidWorld || sample.targetWorld)
+      .filter(Boolean),
     selection,
     impacts: impactResult.impacts,
     closestMiss: impactResult.closestMiss
   };
+  analysis.confidence = stormImpactConfidence(analysis);
   analysis.title = stormImpactTitle(analysis);
   analysis.summary = stormImpactSummary(analysis);
   return analysis;
@@ -9180,6 +9185,7 @@ function mergeStormImpactGuidance(observed, guidance) {
     impacts,
     closestMiss: impacts.length ? null : observed.closestMiss
   };
+  merged.confidence = stormImpactConfidence(merged);
   merged.title = stormImpactTitle(merged);
   merged.summary = stormImpactSummary(merged);
   return merged;
@@ -9992,22 +9998,55 @@ function stormImpactRainLabel(sample) {
   return "Light rain";
 }
 
+function stormImpactConfidence(analysis) {
+  if (!analysis?.hasPrecip) return "";
+  if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.hasObservedPrecip) return "low";
+  if (!analysis.motion) return "low";
+  if (analysis.motion.confidence === "high" && (analysis.sampleCount || 0) >= 5 && analysis.selection) return "high";
+  if (analysis.motion.confidence === "low" || (analysis.sampleCount || 0) < 3) return "low";
+  return "medium";
+}
+
+function stormImpactConfidenceLabel(analysis) {
+  const confidence = analysis?.confidence || stormImpactConfidence(analysis);
+  if (confidence === "high") return "High confidence";
+  if (confidence === "medium") return "Medium confidence";
+  if (confidence === "low") return "Low confidence";
+  return "";
+}
+
+function stormImpactEvidenceCopy(analysis) {
+  if (!analysis?.hasPrecip) return "";
+  if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.hasObservedPrecip) {
+    return "Forecast guidance only";
+  }
+  if (!analysis.motion) return "Not enough recent motion for a clean ETA";
+  const frames = Math.max(1, Math.round(analysis.motion.frameCount || analysis.sampleCount || 1));
+  const windowMin = Math.max(1, Math.round(analysis.motion.windowMin || 0));
+  return `Radar motion from ${frames} frames over ${windowMin} min`;
+}
+
 function stormImpactTitle(analysis) {
   if (!analysis.hasPrecip) return analysis.title || "No radar return";
   if (analysis.impacts.length) {
     const first = analysis.impacts[0];
-    if (first.impactSource === "forecast") return `Forecast near ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
-    return `${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
+    if (first.impactSource === "forecast") return `May reach ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
+    if (first.tone === "likely") return `Likely near ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
+    if (first.tone === "possible") return `May clip ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
+    return `Passing near ${first.placeName} ${formatImpactEtaSentence(first.etaMin)}`;
   }
   if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.hasObservedPrecip) {
     return "Forecast rain nearby";
   }
-  return analysis.selection ? "Selected storm track" : `${analysis.label} track`;
+  return analysis.selection ? "Not tracking toward your places" : `${analysis.label} track`;
 }
 
 function stormImpactSummary(analysis) {
   if (!analysis.hasPrecip) return analysis.summary || "No observed radar return was found at this tap.";
   const motion = analysis.motion ? stormMotionCopy(analysis.motion, analysis.latestLatLon.latitude, analysis.z) : "";
+  const confidence = stormImpactConfidenceLabel(analysis);
+  const evidence = stormImpactEvidenceCopy(analysis);
+  const evidenceNote = confidence || evidence ? ` ${[confidence, evidence].filter(Boolean).join(" · ")}.` : "";
   const sourceNote = analysis.tapSource === "forecast"
     ? " Observed radar still drives motion when a current track is available."
     : "";
@@ -10016,22 +10055,22 @@ function stormImpactSummary(analysis) {
     const observedNote = analysis.hasObservedPrecip
       ? "Observed radar track misses your places for now."
       : "Observed radar is weak or clear at the tap.";
-    return `Forecast guidance brings precipitation near ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)}. ${observedNote}${sourceNote}`;
+    return `Forecast guidance brings precipitation near ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)}. ${observedNote}${evidenceNote}${sourceNote}`;
   }
   if (analysis.forecastGuidance?.hasForecastPrecip && !analysis.impacts.length) {
-    return `Forecast guidance has precipitation near the tap, but not near your places in the sampled forecast window.${sourceNote}`;
+    return `Forecast guidance has precipitation near the tap, but not near your places in the sampled forecast window.${evidenceNote}${sourceNote}`;
   }
 
   if (!analysis.motion) {
-    return `${analysis.label} is highlighted, but recent radar frames do not show enough movement for an ETA yet.${sourceNote}`;
+    return `${analysis.label} is highlighted, but recent radar frames do not show enough movement for an ETA yet.${evidenceNote}${sourceNote}`;
   }
   if (analysis.impacts.length) {
-    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this selected area holds. ${motion}${sourceNote}`;
+    return `${firstImpact.toneLabel} for ${firstImpact.placeName} ${formatImpactEtaPhrase(firstImpact.etaMin)} if this selected area holds. ${motion}${evidenceNote}${sourceNote}`;
   }
   if (analysis.closestMiss) {
-    return `Selected storm misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${sourceNote}`;
+    return `Selected storm misses your places for now. Closest pass is ${analysis.closestMiss.distanceLabel} from ${analysis.closestMiss.placeName}. ${motion}${evidenceNote}${sourceNote}`;
   }
-  return `Selected storm misses your places for now. ${motion}${sourceNote}`;
+  return `Selected storm misses your places for now. ${motion}${evidenceNote}${sourceNote}`;
 }
 
 function stormMotionCopy(motion, latitude, z) {
@@ -10053,18 +10092,18 @@ function renderStormImpactCard() {
   if (els.stormImpactKicker) {
     const sourceLabel = stormImpactKickerLabel(analysis);
     els.stormImpactKicker.textContent = sourceLabel
-      ? `Storm impact · ${sourceLabel}`
-      : "Storm impact";
+      ? `Storm Check · ${sourceLabel}`
+      : "Storm Check";
   }
 
   if (status === "loading") {
     if (els.stormImpactTitle) els.stormImpactTitle.textContent = "Finding storm area";
-    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Selecting the nearby radar area, then checking whether it reaches your places.";
+    if (els.stormImpactSummary) els.stormImpactSummary.textContent = "Selecting the tapped storm, then checking its path against your places.";
     if (els.stormImpactList) els.stormImpactList.innerHTML = "";
     return;
   }
 
-  if (els.stormImpactTitle) els.stormImpactTitle.textContent = analysis.title || "Storm impact";
+  if (els.stormImpactTitle) els.stormImpactTitle.textContent = analysis.title || "Storm Check";
   if (els.stormImpactSummary) els.stormImpactSummary.textContent = analysis.summary || "";
   if (els.stormImpactList) els.stormImpactList.innerHTML = stormImpactRowsHtml(analysis);
 }
@@ -10118,14 +10157,15 @@ function renderStormImpactOverlay(viewport = null) {
   const vp = viewport || getMapViewport();
   const target = mapScreenPointForLatLon(analysis.target.latitude, analysis.target.longitude, vp);
   const targetHtml = `<span class="impact-target" style="left:${target.x.toFixed(1)}px;top:${target.y.toFixed(1)}px"></span>`;
+  const lookaheadMin = stormImpactLookaheadMin(analysis);
+  const coneHtml = stormImpactConeHtml(analysis, vp, lookaheadMin);
+  const trailHtml = stormImpactTrailHtml(analysis, vp);
   const selectionHtml = stormImpactSelectionHtml(analysis, vp);
+  const placesHtml = stormImpactPlaceBadgesHtml(analysis, vp);
   let pathHtml = "";
 
   if (analysis.hasPrecip && analysis.motion && analysis.latestWorld) {
     const start = mapScreenPointForWorld(analysis.latestWorld, analysis.z, vp);
-    const lookaheadMin = analysis.impacts?.length
-      ? clamp(Math.max(...analysis.impacts.map((impact) => impact.etaMin || 0)) + 24, 34, 120)
-      : 72;
     const endWorld = {
       x: analysis.latestWorld.x + analysis.motion.vx * lookaheadMin,
       y: analysis.latestWorld.y + analysis.motion.vy * lookaheadMin
@@ -10138,7 +10178,16 @@ function renderStormImpactOverlay(viewport = null) {
     `;
   }
 
-  layer.innerHTML = `${selectionHtml}${pathHtml}${targetHtml}`;
+  layer.innerHTML = `${coneHtml}${trailHtml}${selectionHtml}${pathHtml}${placesHtml}${targetHtml}`;
+}
+
+function stormImpactLookaheadMin(analysis) {
+  if (!analysis?.hasPrecip || !analysis.motion) return 72;
+  if (analysis.impacts?.length) {
+    return clamp(Math.max(...analysis.impacts.map((impact) => impact.etaMin || 0)) + 24, 34, 120);
+  }
+  if (analysis.closestMiss?.closestMin != null) return clamp(analysis.closestMiss.closestMin + 24, 34, 120);
+  return 72;
 }
 
 function stormImpactSelectionHtml(analysis, viewport) {
@@ -10156,6 +10205,98 @@ function stormImpactSelectionHtml(analysis, viewport) {
       <polygon class="impact-cell-polygon" points="${points}"></polygon>
     </svg>
   `;
+}
+
+function stormImpactConeHtml(analysis, viewport, lookaheadMin) {
+  if (!analysis?.hasPrecip || !analysis.motion || !analysis.latestWorld) return "";
+  const speed = Math.hypot(analysis.motion.vx, analysis.motion.vy);
+  if (!Number.isFinite(speed) || speed < 0.001) return "";
+
+  const ux = analysis.motion.vx / speed;
+  const uy = analysis.motion.vy / speed;
+  const nx = -uy;
+  const ny = ux;
+  const startWidth = Math.max(18, (analysis.radiusPx || STORM_IMPACT_PATH_RADIUS_PX) * 0.54);
+  const endWidth = Math.max(startWidth * 1.6, STORM_IMPACT_NEAR_PATH_RADIUS_PX * 1.25);
+  const segments = 4;
+  const left = [];
+  const right = [];
+
+  for (let index = 0; index <= segments; index += 1) {
+    const t = index / segments;
+    const eased = t * t * (3 - 2 * t);
+    const minutes = lookaheadMin * t;
+    const width = startWidth + (endWidth - startWidth) * eased;
+    const center = {
+      x: analysis.latestWorld.x + analysis.motion.vx * minutes,
+      y: analysis.latestWorld.y + analysis.motion.vy * minutes
+    };
+    left.push({ x: center.x + nx * width, y: center.y + ny * width });
+    right.push({ x: center.x - nx * width, y: center.y - ny * width });
+  }
+
+  const points = [...left, ...right.reverse()]
+    .map((point) => mapScreenPointForWorld(point, analysis.z, viewport))
+    .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(" ");
+  if (!points) return "";
+
+  return `
+    <svg class="impact-cone-svg" aria-hidden="true">
+      <polygon class="impact-path-cone" points="${points}"></polygon>
+    </svg>
+  `;
+}
+
+function stormImpactTrailHtml(analysis, viewport) {
+  const trail = (analysis?.trailWorld || [])
+    .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+  if (!analysis?.hasPrecip || trail.length < 2) return "";
+
+  const screen = trail.map((point) => mapScreenPointForWorld(point, analysis.z, viewport));
+  const points = screen.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const dots = screen.map((point, index) => `
+    <circle class="impact-trail-dot" data-age="${trail.length - index}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${Math.max(3, 7 - (trail.length - index) * 0.7).toFixed(1)}"></circle>
+  `).join("");
+  return `
+    <svg class="impact-trail-svg" aria-hidden="true">
+      <polyline class="impact-trail-line" points="${points}"></polyline>
+      ${dots}
+    </svg>
+  `;
+}
+
+function stormImpactPlaceBadgesHtml(analysis, viewport) {
+  if (!analysis?.hasPrecip) return "";
+  const impactsByKey = new Map((analysis.impacts || []).map((impact) => [impact.placeKey, impact]));
+  const places = stormImpactPlaces();
+  const rows = places.map((place) => {
+    const point = mapScreenPointForLatLon(place.latitude, place.longitude, viewport);
+    if (point.x < -80 || point.x > viewport.width + 80 || point.y < -80 || point.y > viewport.height + 80) return null;
+    const key = stormImpactPlaceKey(place);
+    const impact = impactsByKey.get(key) || null;
+    const isClosestMiss = !impact && analysis.closestMiss?.placeKey === key;
+    const tone = impact?.tone || (isClosestMiss ? "miss" : "clear");
+    const sortRank = stormImpactBadgeRank(tone, isActiveMapPlace(place));
+    const label = impact
+      ? formatImpactMarkerEta(impact.etaMin)
+      : isClosestMiss ? "miss" : "not likely";
+    return { place, point, tone, label, sortRank };
+  }).filter(Boolean)
+    .sort((a, b) => a.sortRank - b.sortRank)
+    .slice(0, 7);
+
+  return rows.map((row) => `
+    <span class="impact-place-badge" data-tone="${escapeHtml(row.tone)}" style="left:${row.point.x.toFixed(1)}px;top:${row.point.y.toFixed(1)}px">
+      <strong>${escapeHtml(mapMarkerName(row.place))}</strong>
+      <em>${escapeHtml(row.label)}</em>
+    </span>
+  `).join("");
+}
+
+function stormImpactBadgeRank(tone, active) {
+  const toneRank = { likely: 0, possible: 1, nearby: 2, miss: 3, clear: 4 };
+  return (active ? -1 : 0) + (toneRank[tone] ?? 5);
 }
 
 function mapLatLonFromClientPoint(clientX, clientY) {
