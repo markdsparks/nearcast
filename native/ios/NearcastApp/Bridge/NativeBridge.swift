@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import WebKit
+import WidgetKit
 
 @MainActor
 final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelegate {
@@ -203,6 +204,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             requestNativeNotifications(payload)
         } else if type == "notifications.status" {
             sendNativeNotificationStatus(payload)
+        } else if type == "widget.snapshot" {
+            saveWidgetSnapshot(payload)
         }
     }
 
@@ -329,6 +332,20 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         }
     }
 
+    private func saveWidgetSnapshot(_ payload: [String: Any]) {
+        guard let snapshot = payload["snapshot"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(snapshot),
+              let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
+            return
+        }
+        let defaults = UserDefaults(suiteName: NativeWidgetSnapshotStore.suiteName) ?? .standard
+        defaults.set(data, forKey: NativeWidgetSnapshotStore.snapshotKey)
+        defaults.synchronize()
+        if #available(iOS 14.0, *) {
+            WidgetCenter.shared.reloadTimelines(ofKind: NativeWidgetSnapshotStore.widgetKind)
+        }
+    }
+
     private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
@@ -339,4 +356,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         let script = "window.NearcastNative&&window.NearcastNative.\(resolver)&&window.NearcastNative.\(resolver)(\(json));"
         webView?.evaluateJavaScript(script)
     }
+}
+
+enum NativeWidgetSnapshotStore {
+    static let suiteName = "group.app.nearcast.ios"
+    static let snapshotKey = "nearcast.widget.snapshot.v1"
+    static let widgetKind = "NearcastWidget"
 }
