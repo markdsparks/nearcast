@@ -6,5 +6,6 @@ node_modules/
 radar/mrms/live/
 radar/mrms/packs/
 native/ios/DerivedData/
+native/ios/build/
 native/ios/Nearcast.xcodeproj/xcuserdata/
 native/ios/Nearcast.xcodeproj/project.xcworkspace/xcuserdata/
