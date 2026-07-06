@@ -6,11 +6,13 @@ weather changes without caring whether the client is a PWA or a native app.
 
 ## Current Foundation
 
-- `POST /api/watch/notifications/register` stores a web push subscription plus
-  the enabled watched plans and saved places for that browser.
-- `POST /api/watch/notifications/unregister` removes the stored subscription.
+- `POST /api/watch/notifications/register` stores one delivery channel plus the
+  enabled watched plans and saved places for that device. The delivery channel
+  can be a Web Push subscription or a native iOS APNs token.
+- `POST /api/watch/notifications/unregister` removes the stored delivery
+  channel.
 - `GET /api/watch/notifications/config` advertises whether Web Push is configured
-  with a VAPID public key.
+  with a VAPID public key and whether native APNs delivery is configured.
 - `POST /api/watch/notifications/test` is a token-protected backend smoke route
   that sends an empty Web Push to a stored subscription using VAPID signing.
 - `POST /api/watch/notifications/evaluate` is a token-protected evaluator route
@@ -20,6 +22,9 @@ weather changes without caring whether the client is a PWA or a native app.
   queued notification body after an empty wake-up push.
 - The service worker handles `push` events and displays a notification that opens
   Nearcast.
+- The iOS shell exposes `window.NearcastNative.notifications`, asks iOS for
+  notification permission, registers for remote notifications, and syncs an
+  `ios-apns` delivery channel to the same registration endpoint.
 - The browser syncs enabled watched plans when notification permission is granted,
   when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
 - The browser syncs the selected saved places when saved-place notifications are
@@ -27,6 +32,10 @@ weather changes without caring whether the client is a PWA or a native app.
   watched-place selection.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
+- Native iOS delivery also needs APNs credentials installed as Worker secrets:
+  `PLAN_WATCH_APNS_TEAM_ID`, `PLAN_WATCH_APNS_KEY_ID`, and
+  `PLAN_WATCH_APNS_PRIVATE_KEY`. `PLAN_WATCH_APNS_BUNDLE_ID` is optional when the
+  bundle remains `app.nearcast.ios`.
 - A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
   `PLAN_WATCH_EVALUATOR_MODE=beta`.
 
@@ -104,10 +113,20 @@ likely, rain becoming materially more likely, tomorrow clearing up, heat risk
 rising, or gusts jumping. The evaluator sends only the highest-priority candidate
 per subscription per run.
 
+## Native iOS Notes
+
+The native app can now ask for permission and register an APNs token. If the
+Worker does not have APNs credentials yet, Nearcast stores the channel but
+returns `native-push-not-configured`; the app should explain that native delivery
+needs server setup instead of showing a silent failure.
+
+APNs delivery uses the bundle id as the `apns-topic`, sends alert pushes through
+the production APNs host for TestFlight/App Store builds, and uses the sandbox
+host for debug builds.
+
 ## Intentionally Not Built Yet
 
 - Encrypted notification payloads with plan-specific copy.
-- Native APNs token registration.
 - User accounts or cross-device plan sync.
 
 ## Target Flow

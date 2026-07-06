@@ -122,6 +122,66 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             }
           }
 
+          const pendingNotificationRequests = new Map();
+          let nativeNotificationRequestId = 0;
+
+          window.NearcastNative.notificationPermission = "default";
+          window.NearcastNative.notificationChannel = null;
+          window.NearcastNative.__resolveNotificationRequest = function(result) {
+            const requestId = result && result.requestId ? String(result.requestId) : "";
+            if (result && typeof result.permission === "string") {
+              window.NearcastNative.notificationPermission = result.permission;
+            }
+            if (result && result.channel) {
+              window.NearcastNative.notificationChannel = result.channel;
+            }
+            const pending = pendingNotificationRequests.get(requestId);
+            if (!pending) return;
+            pendingNotificationRequests.delete(requestId);
+            if (pending.timer) window.clearTimeout(pending.timer);
+            pending.resolve(result || { ok: false, permission: "default", reason: "native-notification-empty-result" });
+          };
+
+          function nativeNotificationRequest(type, options) {
+            const requestId = String(++nativeNotificationRequestId);
+            return new Promise((resolve) => {
+              const timer = window.setTimeout(() => {
+                if (!pendingNotificationRequests.has(requestId)) return;
+                pendingNotificationRequests.delete(requestId);
+                resolve({
+                  ok: false,
+                  permission: window.NearcastNative.notificationPermission || "default",
+                  state: "timeout",
+                  reason: "native-notification-timeout"
+                });
+              }, 12000);
+              pendingNotificationRequests.set(requestId, { resolve, timer });
+              window.NearcastNative.postMessage({
+                type,
+                requestId,
+                options: options || {}
+              });
+            });
+          }
+
+          window.NearcastNative.notifications = {
+            supported: true,
+            permission() {
+              return window.NearcastNative.notificationPermission || "default";
+            },
+            channel() {
+              return window.NearcastNative.notificationChannel || null;
+            },
+            requestPermission(options) {
+              return nativeNotificationRequest("notifications.request", options);
+            },
+            status() {
+              return nativeNotificationRequest("notifications.status", {});
+            }
+          };
+
+          window.NearcastNative.notifications.status().catch(() => {});
+
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
             detail: { platform: "ios", version: "0.1.0" }
           }));
@@ -139,6 +199,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
 
         if type == "geolocation.getCurrentPosition" {
             requestCurrentLocation(payload)
+        } else if type == "notifications.request" {
+            requestNativeNotifications(payload)
+        } else if type == "notifications.status" {
+            sendNativeNotificationStatus(payload)
         }
     }
 
@@ -242,17 +306,37 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
     private func completeLocationRequest(_ requestId: String, payload: [String: Any]) {
         pendingLocationRequests[requestId]?.cancel()
         pendingLocationRequests[requestId] = nil
-        sendJavaScriptCallback(payload)
+        sendJavaScriptCallback(payload, resolver: "__resolveGeolocation")
     }
 
-    private func sendJavaScriptCallback(_ payload: [String: Any]) {
+    private func requestNativeNotifications(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        let reason = options["reason"] as? String ?? "plan-watch"
+        Task { @MainActor in
+            var result = await NativeNotificationRegistry.shared.requestChannel(reason: reason)
+            result["requestId"] = requestId
+            sendJavaScriptCallback(result, resolver: "__resolveNotificationRequest")
+        }
+    }
+
+    private func sendNativeNotificationStatus(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        Task { @MainActor in
+            var result = await NativeNotificationRegistry.shared.currentStatus()
+            result["requestId"] = requestId
+            sendJavaScriptCallback(result, resolver: "__resolveNotificationRequest")
+        }
+    }
+
+    private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let json = String(data: data, encoding: .utf8) else {
             return
         }
 
-        let script = "window.NearcastNative&&window.NearcastNative.__resolveGeolocation&&window.NearcastNative.__resolveGeolocation(\(json));"
+        let script = "window.NearcastNative&&window.NearcastNative.\(resolver)&&window.NearcastNative.\(resolver)(\(json));"
         webView?.evaluateJavaScript(script)
     }
 }

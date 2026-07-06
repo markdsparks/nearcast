@@ -294,6 +294,8 @@ const PLAN_WATCH_PUSH_CONFIG_ENDPOINT = "/api/watch/notifications/config";
 const PLAN_WATCH_PUSH_REGISTER_ENDPOINT = "/api/watch/notifications/register";
 const PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT = "/api/watch/notifications/unregister";
 const PLAN_WATCH_PUSH_SYNC_THROTTLE_MS = 30 * 1000;
+const PLAN_WATCH_NATIVE_CHANNEL_KEY = "nearcast-plan-watch-native-channel-v1";
+const PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY = "nearcast-plan-watch-native-subscription-id-v1";
 
 const planWatchState = {
   data: {},
@@ -682,7 +684,16 @@ function consumeNearcastNotificationRoute(options = {}) {
   return true;
 }
 
-function planWatchNotificationsSupported() {
+function planWatchNativeNotifications() {
+  return window.NearcastNative?.notifications || null;
+}
+
+function planWatchNativeNotificationsSupported() {
+  const native = planWatchNativeNotifications();
+  return Boolean(native?.supported && typeof native.requestPermission === "function");
+}
+
+function planWatchWebNotificationsSupported() {
   return Boolean(
     window.isSecureContext &&
     "Notification" in window &&
@@ -690,9 +701,31 @@ function planWatchNotificationsSupported() {
   );
 }
 
+function planWatchNotificationsSupported() {
+  return planWatchWebNotificationsSupported() || planWatchNativeNotificationsSupported();
+}
+
 function planWatchNotificationPermission() {
+  const native = planWatchNativeNotifications();
+  if (planWatchNativeNotificationsSupported() && typeof native.permission === "function") {
+    return native.permission() || "default";
+  }
   if (!("Notification" in window)) return "unsupported";
   return Notification.permission || "default";
+}
+
+async function requestPlanWatchNotificationPermission(reason = "plan-watch") {
+  const native = planWatchNativeNotifications();
+  if (planWatchNativeNotificationsSupported()) {
+    const result = await native.requestPermission({ reason });
+    if (result?.channel) writePlanWatchNativeChannel(result.channel);
+    return {
+      permission: result?.permission || "default",
+      result
+    };
+  }
+  const permission = await Notification.requestPermission();
+  return { permission, result: { ok: permission === "granted", permission } };
 }
 
 function planWatchNotificationPreference() {
@@ -900,10 +933,56 @@ function planWatchNotificationsEnabled() {
     planWatchNotificationPreference() === "enabled";
 }
 
+function planWatchNativeDeliveryNotConfigured() {
+  if (!planWatchNativeNotificationsSupported()) return false;
+  const result = planWatchState.pushLastSyncResult || {};
+  const reason = String(result.reason || result.state || result.error || "").toLowerCase();
+  const nativeState = String(planWatchState.pushConfig?.nativePush?.state || "").toLowerCase();
+  return nativeState === "missing-apns-config" ||
+    reason.includes("native-push-not-configured") ||
+    reason.includes("missing-apns");
+}
+
 function planWatchPushSupported() {
-  return planWatchNotificationsSupported() &&
-    "PushManager" in window &&
-    typeof fetch === "function";
+  return typeof fetch === "function" && (
+    planWatchNativeNotificationsSupported() ||
+    (planWatchWebNotificationsSupported() && "PushManager" in window)
+  );
+}
+
+function readPlanWatchNativeChannel() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_NATIVE_CHANNEL_KEY) || "null");
+    return parsed && typeof parsed === "object" && parsed.token ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePlanWatchNativeChannel(channel) {
+  if (!channel?.token) return;
+  try {
+    localStorage.setItem(PLAN_WATCH_NATIVE_CHANNEL_KEY, JSON.stringify(channel));
+  } catch {
+    /* Native channel caching is optional. */
+  }
+}
+
+function readPlanWatchNativeSubscriptionId() {
+  try {
+    return localStorage.getItem(PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writePlanWatchNativeSubscriptionId(subscriptionId) {
+  try {
+    if (subscriptionId) localStorage.setItem(PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY, subscriptionId);
+    else localStorage.removeItem(PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY);
+  } catch {
+    /* Native channel caching is optional. */
+  }
 }
 
 function planWatchEndpoint(path) {
@@ -930,6 +1009,7 @@ async function planWatchPushConfig() {
     planWatchState.pushConfig = {
       provider: "nearcast-plan-watch-notifications",
       push: { state: "unavailable", reason: cleanError(error) || "config-unavailable" },
+      nativePush: { state: "unknown" },
       storage: { state: "unknown" }
     };
     return planWatchState.pushConfig;
@@ -951,6 +1031,25 @@ function planWatchVapidKeyBytes(publicKey) {
 async function ensurePlanWatchPushSubscription() {
   if (!planWatchPushSupported()) return { subscription: null, reason: "push-unsupported" };
   const config = await planWatchPushConfig();
+  if (planWatchNativeNotificationsSupported()) {
+    const native = planWatchNativeNotifications();
+    const result = await native.requestPermission({ reason: "plan-watch-sync" });
+    if (result?.channel) {
+      writePlanWatchNativeChannel(result.channel);
+      return {
+        subscription: null,
+        nativeChannel: result.channel,
+        config,
+        reason: "native-channel"
+      };
+    }
+    return {
+      subscription: null,
+      nativeChannel: null,
+      config,
+      reason: result?.reason || result?.state || "native-channel-unavailable"
+    };
+  }
   const publicKey = config?.push?.vapidPublicKey || "";
   if (!publicKey) return { subscription: null, reason: config?.push?.state || "missing-vapid-key" };
   const registration = await navigator.serviceWorker.ready;
@@ -1050,6 +1149,14 @@ function placeWatchServerPlaceFromSavedPlace(place) {
 }
 
 function planWatchPushPlatform() {
+  if (planWatchNativeNotificationsSupported()) {
+    return {
+      kind: "ios-apns",
+      userAgent: navigator.userAgent || "",
+      standalone: true,
+      displayMode: "native"
+    };
+  }
   const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches ||
     navigator.standalone === true;
   return {
@@ -1084,6 +1191,30 @@ async function postPlanWatchPush(endpoint, body) {
 
 async function unregisterPlanWatchPushSubscription(options = {}) {
   if (!planWatchPushSupported()) return { ok: false, reason: "push-unsupported" };
+  if (planWatchNativeNotificationsSupported()) {
+    const subscriptionId = readPlanWatchNativeSubscriptionId();
+    const nativeChannel = readPlanWatchNativeChannel() || planWatchNativeNotifications()?.channel?.() || null;
+    if (!subscriptionId && !nativeChannel?.token) {
+      const noNativeChannel = { ok: true, reason: "no-native-channel" };
+      planWatchState.pushLastSyncResult = noNativeChannel;
+      return noNativeChannel;
+    }
+    const config = await planWatchPushConfig();
+    const endpoint = config?.push?.unregisterUrl || PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT;
+    const result = await postPlanWatchPush(endpoint, {
+      provider: "nearcast-plan-watch-notification-client",
+      version: 1,
+      subscriptionId,
+      nativeChannel,
+      client: planWatchPushClient(),
+      reason: options.reason || "disabled"
+    }).catch((error) => ({ ok: false, reason: cleanError(error) || "native-unregister-failed" }));
+    if (result.ok !== false && options.unsubscribe !== false) {
+      writePlanWatchNativeSubscriptionId("");
+    }
+    planWatchState.pushLastSyncResult = result;
+    return result;
+  }
   try {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
@@ -1128,30 +1259,48 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
     if (!plans.length && !places.length) {
       return unregisterPlanWatchPushSubscription({ reason: options.reason || "no-enabled-watches" });
     }
-    const { subscription, config, reason } = await ensurePlanWatchPushSubscription();
-    if (!subscription) return { ok: false, reason };
+    const { subscription, nativeChannel, config, reason } = await ensurePlanWatchPushSubscription();
+    if (!subscription && !nativeChannel) return { ok: false, reason };
     const endpoint = config?.push?.registerUrl || PLAN_WATCH_PUSH_REGISTER_ENDPOINT;
-    return postPlanWatchPush(endpoint, {
+    const subscriptionPayload = subscription?.toJSON ? subscription.toJSON() : subscription;
+    const result = await postPlanWatchPush(endpoint, {
       provider: "nearcast-plan-watch-notification-client",
       version: 1,
-      subscription: subscription.toJSON(),
+      subscription: subscriptionPayload,
+      nativeChannel,
       plans,
       places,
       platform: planWatchPushPlatform(),
       client: planWatchPushClient(),
       reason: options.reason || "sync"
     });
+    if (nativeChannel && result.subscriptionId) {
+      writePlanWatchNativeChannel(nativeChannel);
+      writePlanWatchNativeSubscriptionId(result.subscriptionId);
+    }
+    return result;
   })().then((result) => {
     planWatchState.pushLastSyncResult = result;
+    reportPlanWatchNotificationSyncResult(result);
     return result;
   }).catch((error) => {
     const result = { ok: false, reason: cleanError(error) || "sync-failed" };
     planWatchState.pushLastSyncResult = result;
+    reportPlanWatchNotificationSyncResult(result);
     return result;
   }).finally(() => {
     planWatchState.pushSyncPromise = null;
   });
   return planWatchState.pushSyncPromise;
+}
+
+function reportPlanWatchNotificationSyncResult(result) {
+  if (!result || result.ok !== false || typeof setStatus !== "function") return;
+  const reason = String(result.reason || result.error || "").toLowerCase();
+  if (reason.includes("native") || reason.includes("apns")) {
+    setStatus("Native notification delivery needs server setup before it can send.", true);
+    if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
+  }
 }
 
 function planWatchNotificationPlanCopy(memoryId) {
@@ -1175,6 +1324,14 @@ function planWatchNotificationPlanCopy(memoryId) {
     };
   }
   if (id && planWatchNotificationPlanEnabled(id) && planWatchNotificationsEnabled()) {
+    if (planWatchNativeDeliveryNotConfigured()) {
+      return {
+        label: "Delivery setup needed",
+        aria: "Native notification delivery needs server setup",
+        pressed: true,
+        disabled: false
+      };
+    }
     return {
       label: "Notifications on",
       aria: "Turn off notifications for this plan",
@@ -1221,7 +1378,8 @@ async function requestPlanWatchNotifications(memoryId = "") {
 
   let permission = planWatchNotificationPermission();
   if (permission !== "granted") {
-    permission = await Notification.requestPermission();
+    const permissionResult = await requestPlanWatchNotificationPermission("plan-watch");
+    permission = permissionResult.permission;
   }
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
   if (permission === "granted" && planId) {
@@ -1230,7 +1388,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
   renderGlobalMemorySheet();
   if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
   if (permission === "granted") {
-    syncPlanWatchNotificationSubscription({ force: true, reason: "permission-granted" });
+    syncPlanWatchNotificationSubscription({ force: true, reason: planWatchNativeNotificationsSupported() ? "native-permission-granted" : "permission-granted" });
     maybeSyncPlanWatchNotifications(null, { userInitiated: true });
   }
 }
@@ -1255,7 +1413,8 @@ async function requestPlaceWatchNotifications() {
 
   let permission = planWatchNotificationPermission();
   if (permission !== "granted") {
-    permission = await Notification.requestPermission();
+    const permissionResult = await requestPlanWatchNotificationPermission("place-watch");
+    permission = permissionResult.permission;
   }
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
   const selectedIds = prefs.hasExplicitSelection
@@ -1268,7 +1427,7 @@ async function requestPlaceWatchNotifications() {
   if (typeof renderSavedPlaces === "function") renderSavedPlaces();
   if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
   if (permission === "granted") {
-    syncPlanWatchNotificationSubscription({ force: true, reason: "place-watch-enabled" });
+    syncPlanWatchNotificationSubscription({ force: true, reason: planWatchNativeNotificationsSupported() ? "native-place-watch-enabled" : "place-watch-enabled" });
   }
 }
 
@@ -1278,6 +1437,7 @@ function planWatchNotificationPanelCopy(watchItems) {
   const supported = planWatchNotificationsSupported();
   const permission = planWatchNotificationPermission();
   const enabled = planWatchNotificationsEnabled();
+  const nativeDeliveryMissing = planWatchNativeDeliveryNotConfigured();
   if (!supported) {
     return {
       tone: "pending",
@@ -1297,6 +1457,15 @@ function planWatchNotificationPanelCopy(watchItems) {
     };
   }
   if (enabled) {
+    if (nativeDeliveryMissing) {
+      return {
+        tone: "caution",
+        title: "Native delivery needs setup",
+        body: "This iPhone can allow notifications, but Nearcast needs APNs server setup before it can send them outside the app.",
+        button: enabledCount ? "Pause all" : "",
+        meta: "Setup needed"
+      };
+    }
     return {
       tone: enabledCount ? "good" : "neutral",
       title: enabledCount
@@ -1367,13 +1536,16 @@ function planWatchActivityRows(watchItems) {
   const active = (watchItems || []).filter((watch) => !watch?.isPast);
   const enabledPlans = planWatchNotificationEnabledCount(active);
   const notificationsReady = planWatchNotificationsEnabled();
+  const nativeDeliveryMissing = planWatchNativeDeliveryNotConfigured();
   const placesRequested = placeWatchNotificationsRequested();
   const selectedPlaces = placeWatchNotificationSelectedCount();
   const savedPlaces = placeWatchSavedPlaces().length;
   const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
   const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
   const notificationState = notificationsReady
-    ? "Notifications ready"
+    ? nativeDeliveryMissing
+      ? "Delivery setup needed"
+      : "Notifications ready"
     : planWatchNotificationPermission() === "denied"
       ? "Notifications blocked"
       : "In-app watching";
@@ -1416,7 +1588,9 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
   const rows = planWatchActivityRows(watchItems);
   const compactClass = options.compact ? " is-compact" : "";
   const body = planWatchNotificationsEnabled()
-    ? "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
+    ? planWatchNativeDeliveryNotConfigured()
+      ? "Nearcast will still check enabled plans and saved places in the app. Native delivery needs server setup before it can interrupt you."
+      : "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
     : "Nearcast still checks watched plans in the app. Turn on notifications when you want phone/browser updates.";
   return `
     <section class="plan-watch-activity${compactClass}">
@@ -1481,6 +1655,7 @@ function planWatchNotificationHubStatus(watchItems) {
   const supported = planWatchNotificationsSupported();
   const permission = planWatchNotificationPermission();
   const enabled = planWatchNotificationsEnabled();
+  const nativeDeliveryMissing = planWatchNativeDeliveryNotConfigured();
   const planTargets = planWatchNotificationEnabledCount(active);
   const placeTargets = placeWatchNotificationSelectedCount();
   const placeRequested = placeWatchNotificationsRequested();
@@ -1506,6 +1681,16 @@ function planWatchNotificationHubStatus(watchItems) {
     };
   }
   if (enabled && totalTargets) {
+    if (nativeDeliveryMissing) {
+      return {
+        tone: "caution",
+        eyebrow: "Setup needed",
+        title: "Native delivery needs server setup",
+        body: "This iPhone is allowed and saved, but Nearcast needs APNs credentials before it can send notifications outside the app.",
+        primary: "pause",
+        primaryLabel: "Pause all"
+      };
+    }
     return {
       tone: "good",
       eyebrow: "Ready",
@@ -1552,6 +1737,8 @@ function planWatchSyncResultText() {
     return lastSync ? `Checked ${lastSync}` : "Automatic";
   }
   if (result.ok === false) {
+    const reason = String(result.reason || result.error || result.state || "").toLowerCase();
+    if (reason.includes("native") || reason.includes("apns")) return "APNs setup needed";
     return "Needs attention";
   }
   if (result.state === "stored") {
@@ -1575,7 +1762,7 @@ function planWatchNotificationHubStats(watchItems) {
   const savedPlaces = placeWatchSavedPlaces().length;
   const permission = planWatchNotificationPermission();
   const notificationMode = planWatchNotificationsEnabled()
-    ? "On"
+    ? planWatchNativeDeliveryNotConfigured() ? "Setup needed" : "On"
     : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const rows = [
     { label: "Notifications", value: notificationMode },

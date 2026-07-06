@@ -15,6 +15,8 @@
 		A10000000000000000000006 /* NativeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* NativeBridge.swift */; };
 		A10000000000000000000007 /* NativeRuntimeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* NativeRuntimeConfiguration.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* Assets.xcassets */; };
+		A10000000000000000000009 /* NearcastAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* NearcastAppDelegate.swift */; };
+		A1000000000000000000000A /* NativeNotificationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* NativeNotificationRegistry.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +31,10 @@
 		A20000000000000000000009 /* Nearcast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nearcast.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000000000000000000000A /* Info-Release.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-Release.plist"; sourceTree = "<group>"; };
 		A2000000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2000000000000000000000C /* NearcastAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastAppDelegate.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D /* NativeNotificationRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeNotificationRegistry.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* Nearcast-Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Nearcast-Debug.entitlements"; sourceTree = "<group>"; };
+		A2000000000000000000000F /* Nearcast-Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Nearcast-Release.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,6 +65,7 @@
 				A40000000000000000000007 /* Support */,
 				A2000000000000000000000B /* Assets.xcassets */,
 				A20000000000000000000001 /* NearcastApp.swift */,
+				A2000000000000000000000C /* NearcastAppDelegate.swift */,
 			);
 			path = NearcastApp;
 			sourceTree = "<group>";
@@ -93,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000006 /* NativeBridge.swift */,
+				A2000000000000000000000D /* NativeNotificationRegistry.swift */,
 				A20000000000000000000007 /* NativeRuntimeConfiguration.swift */,
 			);
 			path = Bridge;
@@ -103,6 +111,8 @@
 			children = (
 				A20000000000000000000008 /* Info-Debug.plist */,
 				A2000000000000000000000A /* Info-Release.plist */,
+				A2000000000000000000000E /* Nearcast-Debug.entitlements */,
+				A2000000000000000000000F /* Nearcast-Release.entitlements */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -183,6 +193,8 @@
 				A10000000000000000000005 /* NearcastWebModel.swift in Sources */,
 				A10000000000000000000006 /* NativeBridge.swift in Sources */,
 				A10000000000000000000007 /* NativeRuntimeConfiguration.swift in Sources */,
+				A10000000000000000000009 /* NearcastAppDelegate.swift in Sources */,
+				A1000000000000000000000A /* NativeNotificationRegistry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -311,8 +323,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -338,8 +351,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;

@@ -6,8 +6,8 @@
 .claude/
 .local-design/
 node_modules/
-native/ios/DerivedData/
-native/ios/.build/
+native/
+workers/
 docs/
 scripts/
 .DS_Store

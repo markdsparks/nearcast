@@ -41,6 +41,10 @@ const PLAN_WATCH_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_EVALUATOR_LIMIT";
 const PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV = "PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS";
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION";
 const PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION";
+const PLAN_WATCH_APNS_TEAM_ID_ENV = "PLAN_WATCH_APNS_TEAM_ID";
+const PLAN_WATCH_APNS_KEY_ID_ENV = "PLAN_WATCH_APNS_KEY_ID";
+const PLAN_WATCH_APNS_PRIVATE_KEY_ENV = "PLAN_WATCH_APNS_PRIVATE_KEY";
+const PLAN_WATCH_APNS_BUNDLE_ID_ENV = "PLAN_WATCH_APNS_BUNDLE_ID";
 const XWEATHER_CLIENT_ID_ENV = "XWEATHER_CLIENT_ID";
 const XWEATHER_CLIENT_SECRET_ENV = "XWEATHER_CLIENT_SECRET";
 const XWEATHER_LAYER_CODES_ENV = "XWEATHER_LAYER_CODES";
@@ -172,6 +176,10 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
       subject: configuredPlanWatchVapidSubject(env)
     },
+    nativePush: {
+      state: planWatchApnsConfigured(env) ? "ready" : "missing-apns-config",
+      bundleId: configuredPlanWatchApnsBundleId(env)
+    },
     storage: {
       state: store ? "ready" : "unavailable",
       kind: store?.kind || ""
@@ -234,8 +242,9 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   }
   const payload = await readJsonRequest(request);
   const subscription = normalizeWebPushSubscription(payload.subscription);
-  if (!subscription) {
-    return jsonResponse({ ok: false, error: "invalid-subscription" }, { status: 400 });
+  const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel);
+  if (!subscription && !nativeChannel) {
+    return jsonResponse({ ok: false, error: "invalid-delivery-channel" }, { status: 400 });
   }
   const store = planWatchStore(env);
   if (!store) {
@@ -247,11 +256,13 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     }, { status: 202 });
   }
 
-  const subscriptionId = await planWatchSubscriptionId(subscription);
+  const subscriptionId = subscription
+    ? await planWatchSubscriptionId(subscription)
+    : await planWatchNativeSubscriptionId(nativeChannel);
   const existingRecord = store.getJson
     ? await store.getJson(planWatchSubscriptionStorageName(subscriptionId))
     : null;
-  if (!existingRecord?.subscription) {
+  if (!planWatchRecordHasDeliveryChannel(existingRecord)) {
     const capMarker = await planWatchRegistrationCapMarker(store);
     if (capMarker.full) {
       return jsonResponse({
@@ -288,6 +299,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     platform: normalizePlatform(payload.platform),
     client: normalizePlanWatchClient(payload.client),
     subscription,
+    nativeChannel,
     plans: normalizePlanWatchPlans(payload.plans, env),
     places: mergePlanWatchPlacesWithExisting(
       normalizePlanWatchPlaces(payload.places, env),
@@ -298,13 +310,15 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     expiresAt
   };
   await store.putJson(planWatchSubscriptionStorageName(subscriptionId), record);
-  if (store.deleteJson && existingRecord?.subscription) {
+  if (store.deleteJson && planWatchRecordHasDeliveryChannel(existingRecord)) {
     await store.deleteJson(planWatchRegistrationCapStorageName());
   }
+  const nativeDeliveryReady = !nativeChannel || planWatchApnsConfigured(env);
   return jsonResponse({
-    ok: true,
+    ok: nativeDeliveryReady,
     provider: PLAN_WATCH_PROVIDER,
-    state: "stored",
+    state: nativeDeliveryReady ? "stored" : "stored-native-delivery-not-configured",
+    reason: nativeDeliveryReady ? "" : "native-push-not-configured",
     subscriptionId,
     planCount: record.plans.length,
     placeCount: record.places.length,
@@ -319,7 +333,12 @@ export async function handlePlanWatchNotificationUnregisterRequest(request, env 
   }
   const payload = await readJsonRequest(request);
   const subscription = normalizeWebPushSubscription(payload.subscription);
-  const subscriptionId = String(payload.subscriptionId || (subscription ? await planWatchSubscriptionId(subscription) : "")).trim();
+  const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel);
+  const subscriptionId = String(
+    payload.subscriptionId ||
+    (subscription ? await planWatchSubscriptionId(subscription) : "") ||
+    (nativeChannel ? await planWatchNativeSubscriptionId(nativeChannel) : "")
+  ).trim();
   if (!subscriptionId) {
     return jsonResponse({ ok: false, error: "missing-subscription" }, { status: 400 });
   }
@@ -361,11 +380,12 @@ export async function handlePlanWatchNotificationTestRequest(request, env = {}) 
     return jsonResponse({ ok: false, error: "plan-watch-store-unavailable" }, { status: 503 });
   }
   const record = await resolvePlanWatchSubscriptionRecord(store, payload);
-  if (!record?.subscription) {
+  if (!planWatchRecordHasDeliveryChannel(record)) {
     return jsonResponse({ ok: false, error: "subscription-not-found" }, { status: 404 });
   }
 
-  const push = await sendPlanWatchPush(record.subscription, env);
+  const notification = normalizePendingPlanWatchNotification(payload.notification || {});
+  const push = await sendPlanWatchDelivery(record, notification, store, env);
   if ((push.status === 404 || push.status === 410) && store.deleteJson) {
     await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
   }
@@ -374,7 +394,7 @@ export async function handlePlanWatchNotificationTestRequest(request, env = {}) 
     provider: PLAN_WATCH_PROVIDER,
     state: push.ok ? "sent" : "send-failed",
     subscriptionId: record.subscriptionId,
-    endpointHost: safeUrlHost(record.subscription.endpoint),
+    endpointHost: safeUrlHost(record.subscription?.endpoint) || record.nativeChannel?.environment || "",
     status: push.status,
     expired: push.status === 404 || push.status === 410,
     body: push.body
@@ -1443,6 +1463,31 @@ function configuredPlanWatchVapidSubject(env = {}) {
   return value || DEFAULT_PLAN_WATCH_VAPID_SUBJECT;
 }
 
+function configuredPlanWatchApnsTeamId(env = {}) {
+  return cleanToken(env?.[PLAN_WATCH_APNS_TEAM_ID_ENV], 24);
+}
+
+function configuredPlanWatchApnsKeyId(env = {}) {
+  return cleanToken(env?.[PLAN_WATCH_APNS_KEY_ID_ENV], 24);
+}
+
+function configuredPlanWatchApnsPrivateKey(env = {}) {
+  return String(env?.[PLAN_WATCH_APNS_PRIVATE_KEY_ENV] || "").trim();
+}
+
+function configuredPlanWatchApnsBundleId(env = {}) {
+  return cleanText(env?.[PLAN_WATCH_APNS_BUNDLE_ID_ENV] || "app.nearcast.ios", 120);
+}
+
+function planWatchApnsConfigured(env = {}) {
+  return Boolean(
+    configuredPlanWatchApnsTeamId(env) &&
+    configuredPlanWatchApnsKeyId(env) &&
+    configuredPlanWatchApnsPrivateKey(env) &&
+    configuredPlanWatchApnsBundleId(env)
+  );
+}
+
 function configuredPlanWatchTestToken(env = {}) {
   return String(env?.[PLAN_WATCH_TEST_TOKEN_ENV] || "").trim();
 }
@@ -1516,7 +1561,7 @@ async function planWatchRegistrationCapacity(store, subscriptionId, env = {}) {
   let activeSubscriptions = 0;
   for (const name of names) {
     const record = await store.getJson(name);
-    if (!record?.subscription) continue;
+    if (!planWatchRecordHasDeliveryChannel(record)) continue;
     if (planWatchSubscriptionExpired(record)) {
       if (store.deleteJson && record.subscriptionId) {
         await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
@@ -1614,19 +1659,25 @@ async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
   const subscriptionId = cleanText(payload?.subscriptionId, 120);
   if (subscriptionId && store.getJson) {
     const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
-    if (record?.subscription) return record;
+    if (planWatchRecordHasDeliveryChannel(record)) return record;
   }
   const subscription = normalizeWebPushSubscription(payload?.subscription);
   if (subscription && store.getJson) {
     const id = await planWatchSubscriptionId(subscription);
     const record = await store.getJson(planWatchSubscriptionStorageName(id));
-    if (record?.subscription) return record;
+    if (planWatchRecordHasDeliveryChannel(record)) return record;
+  }
+  const nativeChannel = normalizeNativeApnsChannel(payload?.nativeChannel || payload?.channel);
+  if (nativeChannel && store.getJson) {
+    const id = await planWatchNativeSubscriptionId(nativeChannel);
+    const record = await store.getJson(planWatchSubscriptionStorageName(id));
+    if (planWatchRecordHasDeliveryChannel(record)) return record;
   }
   if (!store.listNames || !store.getJson) return null;
   const names = await store.listNames("subscriptions/", 20);
   for (const name of names) {
     const record = await store.getJson(name);
-    if (record?.subscription && !planWatchSubscriptionExpired(record)) return record;
+    if (planWatchRecordHasDeliveryChannel(record) && !planWatchSubscriptionExpired(record)) return record;
   }
   return null;
 }
@@ -1636,7 +1687,7 @@ async function planWatchSubscriptionRecords(store, options = {}) {
   const subscriptionId = cleanText(options.subscriptionId, 120);
   if (subscriptionId) {
     const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
-    return record?.subscription ? [record] : [];
+    return planWatchRecordHasDeliveryChannel(record) ? [record] : [];
   }
   const evaluationLimit = configuredPlanWatchEvaluatorLimit(options.env, options.limit);
   const scanLimit = Math.min(
@@ -1647,7 +1698,7 @@ async function planWatchSubscriptionRecords(store, options = {}) {
   const records = [];
   for (const name of names) {
     const record = await store.getJson(name);
-    if (record?.subscription && !planWatchSubscriptionExpired(record)) records.push(record);
+    if (planWatchRecordHasDeliveryChannel(record) && !planWatchSubscriptionExpired(record)) records.push(record);
   }
   return records
     .sort((a, b) => planWatchLastEvaluatedAt(a) - planWatchLastEvaluatedAt(b))
@@ -1718,7 +1769,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   const places = Array.isArray(record?.places) ? record.places : [];
   const result = {
     subscriptionId: record?.subscriptionId || "",
-    endpointHost: safeUrlHost(record?.subscription?.endpoint),
+    endpointHost: safeUrlHost(record?.subscription?.endpoint) || record?.nativeChannel?.environment || "",
     plans: plans.length,
     places: places.length,
     candidates: 0,
@@ -1779,8 +1830,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
       result.reasons.push(`dry-run:${top.type}`);
     } else {
       const pending = buildPendingPlanWatchNotification(record, top);
-      await store.putJson(planWatchPendingStorageName(record.subscriptionId), pending);
-      const push = await sendPlanWatchPush(record.subscription, env);
+      const push = await sendPlanWatchDelivery(record, pending.notification, store, env);
       if (push.ok) result.sent = 1;
       else {
         result.failed = 1;
@@ -2428,6 +2478,82 @@ async function sendPlanWatchPush(subscription, env = {}) {
   };
 }
 
+async function sendPlanWatchDelivery(record, notification, store, env = {}) {
+  if (record?.subscription) {
+    if (store?.putJson) {
+      await store.putJson(planWatchPendingStorageName(record.subscriptionId), {
+        provider: PLAN_WATCH_PROVIDER,
+        version: 1,
+        subscriptionId: record.subscriptionId,
+        notification: normalizePendingPlanWatchNotification(notification),
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + PLAN_WATCH_PENDING_TTL_SECONDS * 1000).toISOString()
+      });
+    }
+    return sendPlanWatchPush(record.subscription, env);
+  }
+  if (record?.nativeChannel) {
+    return sendPlanWatchApns(record.nativeChannel, notification, env);
+  }
+  return { ok: false, status: 0, body: "missing-delivery-channel" };
+}
+
+async function sendPlanWatchApns(nativeChannel, notification, env = {}) {
+  if (!planWatchApnsConfigured(env)) {
+    return { ok: false, status: 0, body: "missing-apns-config" };
+  }
+  const channel = normalizeNativeApnsChannel(nativeChannel);
+  if (!channel?.token) {
+    return { ok: false, status: 0, body: "missing-apns-token" };
+  }
+  const bundleId = configuredPlanWatchApnsBundleId(env) || channel.bundleId;
+  if (!bundleId) {
+    return { ok: false, status: 0, body: "missing-apns-topic" };
+  }
+  const payload = normalizePendingPlanWatchNotification(notification);
+  const jwt = await planWatchApnsJwt(env);
+  const host = channel.environment === "development"
+    ? "https://api.sandbox.push.apple.com"
+    : "https://api.push.apple.com";
+  const response = await fetch(`${host}/3/device/${channel.token}`, {
+    method: "POST",
+    headers: {
+      authorization: `bearer ${jwt}`,
+      "apns-topic": bundleId,
+      "apns-push-type": "alert",
+      "apns-priority": "10",
+      "apns-expiration": String(Math.floor(Date.now() / 1000) + PLAN_WATCH_PUSH_TTL_SECONDS),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      aps: {
+        alert: {
+          title: payload.title,
+          body: payload.body
+        },
+        sound: "default"
+      },
+      nearcast: {
+        url: payload.url,
+        memoryId: payload.memoryId,
+        placeId: payload.placeId,
+        target: payload.target,
+        detail: payload.detail,
+        signal: payload.signal,
+        timeScope: payload.timeScope,
+        mode: payload.mode,
+        source: payload.source
+      }
+    })
+  });
+  const body = response.ok ? "" : cleanText(await response.text().catch(() => ""), 240);
+  return {
+    ok: response.ok,
+    status: response.status,
+    body
+  };
+}
+
 async function planWatchVapidHeaders(endpoint, env, publicKey, privateJwk) {
   const endpointUrl = new URL(endpoint);
   const jwt = await planWatchVapidJwt({
@@ -2463,6 +2589,44 @@ async function planWatchVapidJwt({ audience, subject, privateJwk }) {
   return `${input}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
 }
 
+async function planWatchApnsJwt(env = {}) {
+  const teamId = configuredPlanWatchApnsTeamId(env);
+  const keyId = configuredPlanWatchApnsKeyId(env);
+  const privateKey = configuredPlanWatchApnsPrivateKey(env);
+  const header = base64UrlEncodeJson({ alg: "ES256", kid: keyId });
+  const body = base64UrlEncodeJson({
+    iss: teamId,
+    iat: Math.floor(Date.now() / 1000)
+  });
+  const input = `${header}.${body}`;
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToArrayBuffer(privateKey),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    new TextEncoder().encode(input)
+  );
+  return `${input}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
+}
+
+function pemToArrayBuffer(pem) {
+  const base64 = String(pem || "")
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+  const raw = atob(base64);
+  const bytes = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    bytes[index] = raw.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
 function normalizeWebPushSubscription(value) {
   if (!value || typeof value !== "object") return null;
   const endpoint = String(value.endpoint || "").trim();
@@ -2476,6 +2640,28 @@ function normalizeWebPushSubscription(value) {
     expirationTime: value.expirationTime || null,
     keys: { p256dh, auth }
   };
+}
+
+function normalizeNativeApnsChannel(value) {
+  if (!value || typeof value !== "object") return null;
+  const token = cleanToken(value.token, 220).toLowerCase();
+  if (!/^[a-f0-9]{32,220}$/.test(token)) return null;
+  const environment = cleanToken(value.environment || "production", 24).toLowerCase() === "development"
+    ? "development"
+    : "production";
+  const bundleId = cleanText(value.bundleId, 120);
+  return {
+    kind: "ios-apns",
+    token,
+    environment,
+    bundleId,
+    deviceModel: cleanText(value.deviceModel, 80),
+    systemVersion: cleanText(value.systemVersion, 40)
+  };
+}
+
+function planWatchRecordHasDeliveryChannel(record) {
+  return Boolean(record?.subscription || record?.nativeChannel);
 }
 
 function normalizePlatform(value = {}) {
@@ -2656,6 +2842,10 @@ function normalizePlanWatchSnapshotDays(value) {
 
 async function planWatchSubscriptionId(subscription) {
   return `web-${await sha256Hex(subscription.endpoint)}`;
+}
+
+async function planWatchNativeSubscriptionId(channel) {
+  return `ios-${await sha256Hex(`${channel?.environment || "production"}:${channel?.bundleId || ""}:${channel?.token || ""}`)}`;
 }
 
 async function sha256Hex(value) {
