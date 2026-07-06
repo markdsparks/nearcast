@@ -1,4 +1,4 @@
-const VERSION = "3.0.198";
+const VERSION = "3.0.199";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4889,6 +4889,8 @@ function hideSearchResults() {
 // "browse" (a place is loaded — weather is the hero, search collapses to an icon).
 function updateMode() {
   const hasContext = !state.welcomeOverride && Boolean(state.activePlace);
+  els.shell.classList.remove("mode-boot");
+  document.documentElement.removeAttribute("data-boot");
   els.shell.classList.toggle("mode-welcome", !hasContext);
   document.documentElement.toggleAttribute("data-welcome", !hasContext);
   if (!hasContext) {
