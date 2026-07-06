@@ -6,6 +6,7 @@
 .claude/
 .local-design/
 node_modules/
+APNAuthKey/
 native/
 workers/
 docs/

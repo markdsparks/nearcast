@@ -3,6 +3,7 @@ node_modules/
 .wrangler/
 .claude/
 .local-design/
+APNAuthKey/
 radar/mrms/live/
 radar/mrms/packs/
 native/ios/DerivedData/
