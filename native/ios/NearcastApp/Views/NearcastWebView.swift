@@ -25,23 +25,34 @@ struct NearcastWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = webView.backgroundColor
 
         model.attach(webView)
-        webView.load(URLRequest(url: model.currentURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
+        context.coordinator.load(model.currentURL, in: webView)
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard webView.url?.absoluteString != model.currentURL.absoluteString else { return }
+        guard !context.coordinator.hasRequested(model.currentURL) else { return }
         guard !model.isLoading else { return }
-        webView.load(URLRequest(url: model.currentURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
+        context.coordinator.load(model.currentURL, in: webView)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         let bridge: NativeBridge
         private weak var model: NearcastWebModel?
+        private var requestedURL: URL?
 
         init(model: NearcastWebModel) {
             self.model = model
             bridge = NativeBridge(model: model)
+        }
+
+        func load(_ url: URL, in webView: WKWebView) {
+            requestedURL = url
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
+        }
+
+        func hasRequested(_ url: URL) -> Bool {
+            guard let requestedURL else { return false }
+            return Self.normalizedURLString(requestedURL) == Self.normalizedURLString(url)
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -71,6 +82,21 @@ struct NearcastWebView: UIViewRepresentable {
         private static func isCancelledNavigation(_ error: Error) -> Bool {
             let nsError = error as NSError
             return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        }
+
+        private static func normalizedURLString(_ url: URL) -> String {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                return url.absoluteString
+            }
+
+            components.scheme = components.scheme?.lowercased()
+            components.host = components.host?.lowercased()
+
+            if components.path == "/" {
+                components.path = ""
+            }
+
+            return components.string ?? url.absoluteString
         }
     }
 }
