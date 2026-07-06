@@ -150,37 +150,20 @@ struct NearcastSmallWidget: View {
 
             Spacer(minLength: 0)
 
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text("\(snapshot.temperature)°")
-                    .font(.system(size: 48, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                Spacer(minLength: 2)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("FEELS")
-                        .font(.system(size: 8, weight: .black, design: .rounded))
-                        .tracking(0.8)
-                        .foregroundStyle(.black.opacity(0.48))
-                    Text("\(snapshot.feelsLike)°")
-                        .font(.system(size: 19, weight: .black, design: .rounded))
-                        .lineLimit(1)
-                    if let high = snapshot.high, let low = snapshot.low {
-                        Text("H\(high) L\(low)")
-                            .font(.system(size: 10, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.black.opacity(0.56))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                    }
-                }
-            }
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 54, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
 
-            Text(compactSignalValue(snapshot.nextValue))
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+            Text(snapshot.condition)
+                .font(.system(size: 18, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(.white.opacity(0.30), in: Capsule())
+
+            HStack(spacing: 6) {
+                MiniPill(text: "Feels \(snapshot.feelsLike)°")
+                MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .padding(16)
@@ -191,8 +174,8 @@ struct NearcastMediumWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(shortPlaceName(snapshot.placeName))
                     .font(.system(size: 14, weight: .black, design: .rounded))
                     .lineLimit(1)
@@ -209,15 +192,11 @@ struct NearcastMediumWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
 
-                Text("Feels \(snapshot.feelsLike)°")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.58))
-
-                Text(windSummary(snapshot, includeDirection: true))
+                Text(mediumMetaText(snapshot))
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.52))
+                    .foregroundStyle(.black.opacity(0.58))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.68)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -236,16 +215,16 @@ struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
                         .font(.system(size: 16, weight: .black, design: .rounded))
                         .foregroundStyle(.black.opacity(0.62))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(primarySignal(snapshot))
-                        .font(.system(size: 31, weight: .black, design: .rounded))
+                        .font(.system(size: 29, weight: .black, design: .rounded))
                         .lineLimit(2)
                         .minimumScaleFactor(0.72)
                 }
@@ -280,12 +259,28 @@ struct NearcastLargeWidget: View {
                 MetricTile(label: "UV", value: "\(snapshot.uv)")
             }
 
-            Text(freshnessText(snapshot))
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .foregroundStyle(.black.opacity(0.42))
+            Text(footerText(snapshot))
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .foregroundStyle(.black.opacity(0.34))
                 .lineLimit(1)
         }
         .padding(18)
+    }
+}
+
+struct MiniPill: View {
+    let text: String
+    var tone: Color = .primary
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .foregroundStyle(tone.opacity(0.88))
+            .lineLimit(1)
+            .minimumScaleFactor(0.66)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.white.opacity(0.30), in: Capsule())
     }
 }
 
@@ -456,6 +451,12 @@ private func highLowText(_ snapshot: NearcastWidgetSnapshot) -> String? {
     return "H\(high) L\(low)"
 }
 
+private func mediumMetaText(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let feels = "Feels \(snapshot.feelsLike)°"
+    let wind = windSummary(snapshot, includeDirection: true).replacingOccurrences(of: "Wind ", with: "")
+    return "\(feels) · \(wind)"
+}
+
 private func windSummary(_ snapshot: NearcastWidgetSnapshot, includeDirection: Bool) -> String {
     let base = "\(snapshot.wind) \(snapshot.windUnit)"
     guard includeDirection, let label = cleanOptional(snapshot.windLabel) else { return "Wind \(base)" }
@@ -504,6 +505,11 @@ private func freshnessText(_ snapshot: NearcastWidgetSnapshot) -> String {
     return "Updated \(hours)h ago"
 }
 
+private func footerText(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let wind = windSummary(snapshot, includeDirection: true)
+    return "\(wind) · \(freshnessText(snapshot))"
+}
+
 private func compactSignalLabel(_ value: String) -> String {
     let upper = value.uppercased()
     if upper.contains("LATER") { return "LATER" }
@@ -522,6 +528,12 @@ private func compactSignalValue(_ value: String) -> String {
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
     let lower = text.lowercased()
+    if let feelsRange = text.range(of: "feels ", options: .caseInsensitive) {
+        let suffix = text[feelsRange.lowerBound...]
+        if lower.contains("comfortable") || lower.contains("hot") || lower.contains("cold") || lower.contains("cool") || lower.contains("warm") {
+            return String(suffix).capitalized
+        }
+    }
     if lower.hasPrefix("hot - feels") {
         text = text.replacingOccurrences(of: "Hot - feels", with: "Feels", options: .caseInsensitive)
     }
@@ -530,6 +542,9 @@ private func compactSignalValue(_ value: String) -> String {
     }
     if lower.hasPrefix("dry ") {
         text = text.replacingOccurrences(of: "Dry next", with: "Dry", options: .caseInsensitive)
+    }
+    if lower.hasPrefix("low ") && lower.contains(" overnight") {
+        return text.replacingOccurrences(of: " overnight", with: "", options: .caseInsensitive)
     }
     if lower.contains("thunderstorm") {
         return "Storms possible"
