@@ -17,33 +17,7 @@
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* Assets.xcassets */; };
 		A10000000000000000000009 /* NearcastAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* NearcastAppDelegate.swift */; };
 		A1000000000000000000000A /* NativeNotificationRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* NativeNotificationRegistry.swift */; };
-		B10000000000000000000001 /* NearcastWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* NearcastWidget.swift */; };
-		B10000000000000000000002 /* NearcastWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* NearcastWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
-
-/* Begin PBXContainerItemProxy section */
-		B80000000000000000000002 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = A80000000000000000000001 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = B50000000000000000000001;
-			remoteInfo = NearcastWidgetExtension;
-		};
-/* End PBXContainerItemProxy section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		B71000000000000000000001 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				B10000000000000000000002 /* NearcastWidgetExtension.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A20000000000000000000001 /* NearcastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastApp.swift; sourceTree = "<group>"; };
@@ -61,21 +35,10 @@
 		A2000000000000000000000D /* NativeNotificationRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeNotificationRegistry.swift; sourceTree = "<group>"; };
 		A2000000000000000000000E /* Nearcast-Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Nearcast-Debug.entitlements"; sourceTree = "<group>"; };
 		A2000000000000000000000F /* Nearcast-Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Nearcast-Release.entitlements"; sourceTree = "<group>"; };
-		B20000000000000000000001 /* NearcastWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWidget.swift; sourceTree = "<group>"; };
-		B20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B20000000000000000000003 /* NearcastWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NearcastWidget.entitlements; sourceTree = "<group>"; };
-		B20000000000000000000004 /* NearcastWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NearcastWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A30000000000000000000001 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B30000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -89,7 +52,6 @@
 			isa = PBXGroup;
 			children = (
 				A40000000000000000000002 /* NearcastApp */,
-				B40000000000000000000001 /* NearcastWidget */,
 				A40000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,7 +74,6 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000009 /* Nearcast.app */,
-				B20000000000000000000004 /* NearcastWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -156,16 +117,6 @@
 			path = Support;
 			sourceTree = "<group>";
 		};
-		B40000000000000000000001 /* NearcastWidget */ = {
-			isa = PBXGroup;
-			children = (
-				B20000000000000000000001 /* NearcastWidget.swift */,
-				B20000000000000000000002 /* Info.plist */,
-				B20000000000000000000003 /* NearcastWidget.entitlements */,
-			);
-			path = NearcastWidget;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -176,34 +127,15 @@
 				A60000000000000000000001 /* Sources */,
 				A30000000000000000000001 /* Frameworks */,
 				A70000000000000000000001 /* Resources */,
-				B71000000000000000000001 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				B80000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = Nearcast;
 			productName = Nearcast;
 			productReference = A20000000000000000000009 /* Nearcast.app */;
 			productType = "com.apple.product-type.application";
-		};
-		B50000000000000000000001 /* NearcastWidgetExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B90000000000000000000001 /* Build configuration list for PBXNativeTarget "NearcastWidgetExtension" */;
-			buildPhases = (
-				B60000000000000000000001 /* Sources */,
-				B30000000000000000000001 /* Frameworks */,
-				B70000000000000000000001 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = NearcastWidgetExtension;
-			productName = NearcastWidgetExtension;
-			productReference = B20000000000000000000004 /* NearcastWidgetExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -216,9 +148,6 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					A50000000000000000000001 = {
-						CreatedOnToolsVersion = 26.6;
-					};
-					B50000000000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -237,7 +166,6 @@
 			projectRoot = "";
 			targets = (
 				A50000000000000000000001 /* Nearcast */,
-				B50000000000000000000001 /* NearcastWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -248,13 +176,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000008 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B70000000000000000000001 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,23 +198,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		B60000000000000000000001 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				B10000000000000000000001 /* NearcastWidget.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		B80000000000000000000001 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = B50000000000000000000001 /* NearcastWidgetExtension */;
-			targetProxy = B80000000000000000000002 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AA0000000000000000000001 /* Debug */ = {
@@ -420,7 +325,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -448,7 +353,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -460,64 +365,6 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
-		BB0000000000000000000001 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 9;
-				DEVELOPMENT_TEAM = 22PRZ6YK2P;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NearcastWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		BB0000000000000000000002 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 9;
-				DEVELOPMENT_TEAM = 22PRZ6YK2P;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NearcastWidget/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -544,15 +391,6 @@
 			buildConfigurations = (
 				AA0000000000000000000003 /* Debug */,
 				AA0000000000000000000004 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		B90000000000000000000001 /* Build configuration list for PBXNativeTarget "NearcastWidgetExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				BB0000000000000000000001 /* Debug */,
-				BB0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
