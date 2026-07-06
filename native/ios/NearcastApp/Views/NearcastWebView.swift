@@ -20,11 +20,12 @@ struct NearcastWebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
+        webView.isOpaque = true
+        webView.backgroundColor = UIColor(red: 0.94, green: 0.98, blue: 1.0, alpha: 1.0)
+        webView.scrollView.backgroundColor = webView.backgroundColor
 
         model.attach(webView)
-        webView.load(URLRequest(url: model.currentURL))
+        webView.load(URLRequest(url: model.currentURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
         return webView
     }
 
@@ -43,21 +44,18 @@ struct NearcastWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            model?.setLoading(true)
-            model?.setError(nil)
+            model?.startLoading()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            model?.setLoading(false)
+            model?.finishLoading()
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            model?.setLoading(false)
             model?.setError(error)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            model?.setLoading(false)
             model?.setError(error)
         }
     }

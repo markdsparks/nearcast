@@ -7,11 +7,13 @@ final class NearcastWebModel: ObservableObject {
     @Published private(set) var currentURL: URL
     @Published var localURLText: String
     @Published var isLoading = false
+    @Published var hasLoadedPage = false
     @Published var lastError: String?
     @Published var lastBridgeMessage = "No bridge messages yet"
 
     private weak var webView: WKWebView?
     private var localURL: URL
+    private var loadTimeoutTask: Task<Void, Never>?
 
     init() {
         let storedMode = NativeRuntimeConfiguration.storedMode()
@@ -30,6 +32,7 @@ final class NearcastWebModel: ObservableObject {
         mode = nextMode
         NativeRuntimeConfiguration.storeMode(nextMode)
         currentURL = nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL
+        hasLoadedPage = false
         lastError = nil
     }
 
@@ -49,6 +52,8 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func reload() {
+        hasLoadedPage = false
+        lastError = nil
         webView?.reloadFromOrigin()
     }
 
@@ -57,11 +62,31 @@ final class NearcastWebModel: ObservableObject {
         webView.goBack()
     }
 
-    func setLoading(_ value: Bool) {
-        isLoading = value
+    func startLoading() {
+        isLoading = true
+        lastError = nil
+        loadTimeoutTask?.cancel()
+        loadTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.isLoading, !self.hasLoadedPage else { return }
+                self.lastError = "Nearcast is taking longer than expected to load."
+            }
+        }
+    }
+
+    func finishLoading() {
+        loadTimeoutTask?.cancel()
+        loadTimeoutTask = nil
+        isLoading = false
+        hasLoadedPage = true
     }
 
     func setError(_ error: Error?) {
+        loadTimeoutTask?.cancel()
+        loadTimeoutTask = nil
+        isLoading = false
         lastError = error?.localizedDescription
     }
 
