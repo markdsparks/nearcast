@@ -426,8 +426,7 @@ struct MetricTile: View {
                     .minimumScaleFactor(0.65)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 54)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
         .padding(9)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -443,32 +442,33 @@ struct WindMetricTile: View {
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
                 .foregroundStyle(palette.muted)
-            HStack(spacing: 5) {
-                Text("\(snapshot.wind) \(snapshot.windUnit)")
-                    .font(.system(size: 14, weight: .black, design: .rounded))
-                    .foregroundStyle(palette.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.58)
-                    .layoutPriority(2)
-                Spacer(minLength: 0)
-                if let direction = snapshot.windDirection {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 12, weight: .black))
+            HStack(alignment: .center, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("\(snapshot.wind)")
+                        .font(.system(size: 16, weight: .black, design: .rounded))
                         .foregroundStyle(palette.primary)
-                        .rotationEffect(.degrees(Double((direction + 180) % 360)))
-                        .frame(width: 22, height: 22)
-                        .background(palette.surfaceStrong, in: Circle())
-                    Text(windShortLabel(snapshot))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(snapshot.windUnit)
                         .font(.system(size: 8, weight: .black, design: .rounded))
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .minimumScaleFactor(0.7)
+                }
+                .layoutPriority(3)
+                Spacer(minLength: 0)
+                if let direction = snapshot.windDirection {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(palette.primary)
+                        .rotationEffect(.degrees(Double((direction + 180) % 360)))
+                        .frame(width: 24, height: 24)
+                        .background(palette.surfaceStrong, in: Circle())
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 54)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
         .padding(9)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -497,8 +497,7 @@ struct UvMetricTile: View {
                     .minimumScaleFactor(0.7)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 54)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
         .padding(9)
         .background(uvSurfaceColor(value), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -601,13 +600,6 @@ private func windSummary(_ snapshot: NearcastWidgetSnapshot, includeDirection: B
 
 private func hasPlanSummary(_ snapshot: NearcastWidgetSnapshot) -> Bool {
     cleanOptional(snapshot.planTitle) != nil || cleanOptional(snapshot.planDetail) != nil
-}
-
-private func windShortLabel(_ snapshot: NearcastWidgetSnapshot) -> String {
-    let label = cleanOptional(snapshot.windLabel) ?? ""
-    return label
-        .replacingOccurrences(of: "from ", with: "", options: .caseInsensitive)
-        .uppercased()
 }
 
 private func uvRiskLabel(_ value: Int) -> String {
