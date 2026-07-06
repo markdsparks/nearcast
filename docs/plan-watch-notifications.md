@@ -32,10 +32,9 @@ weather changes without caring whether the client is a PWA or a native app.
   watched-place selection.
 - VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
   token are GitHub secrets that the deploy workflow installs as Worker secrets.
-- Native iOS delivery also needs APNs credentials installed as Worker secrets:
-  `PLAN_WATCH_APNS_TEAM_ID`, `PLAN_WATCH_APNS_KEY_ID`, and
-  `PLAN_WATCH_APNS_PRIVATE_KEY`. `PLAN_WATCH_APNS_BUNDLE_ID` is optional when the
-  bundle remains `app.nearcast.ios`.
+- Native iOS delivery uses committed Worker vars for
+  `PLAN_WATCH_APNS_TEAM_ID` and `PLAN_WATCH_APNS_BUNDLE_ID`, plus Worker secrets
+  for `PLAN_WATCH_APNS_KEY_ID` and `PLAN_WATCH_APNS_PRIVATE_KEY`.
 - A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
   `PLAN_WATCH_EVALUATOR_MODE=beta`.
 
