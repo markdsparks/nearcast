@@ -1,4 +1,4 @@
-const VERSION = "3.0.207";
+const VERSION = "3.0.208";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6385,6 +6385,7 @@ function renderForecast(data, place, options = {}) {
   if (lanes.metricTips) bindMetricTips(ctx.data, ctx.tempUnit, ctx.windUnit);
   if (lanes.sky) updateSkyCanvas(ctx.sceneCode, ctx.truth.isDay, ctx.data, ctx.displayCondition);
   if (lanes.continuity) saveContinuitySnapshot(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
+  syncNativeWidgetSnapshot(ctx.data, ctx.place, ctx.truth);
   perfEnd("renderForecast", perf, PERF_RENDER_WARN_MS, {
     reason: options.reason || "full",
     lanes: activeForecastRenderLanes(lanes)
@@ -7655,6 +7656,45 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   renderForYouToday(data, place, tempUnit, windUnit, truth);
   renderLaunchShortcuts(data, place);
   updateInstallPromptUI();
+}
+
+function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
+  if (!window.NearcastNative?.postMessage || !data || !place) return;
+  try {
+    const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+    const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+    const todayIndex = forecastDailyIndex(data);
+    const current = data.current || {};
+    const items = launchSummaryItems(data, tempUnit, windUnit, truth);
+    const item = (index, fallbackLabel, fallbackValue) => items[index] || { label: fallbackLabel, value: fallbackValue };
+    const high = data.daily?.temperature_2m_max?.[todayIndex];
+    const low = data.daily?.temperature_2m_min?.[todayIndex];
+    const snapshot = {
+      version: 1,
+      savedAt: Date.now() / 1000,
+      placeName: placeLabel(place),
+      temperature: Math.round(current.temperature_2m),
+      feelsLike: Math.round(current.apparent_temperature),
+      high: Number.isFinite(high) ? Math.round(high) : null,
+      low: Number.isFinite(low) ? Math.round(low) : null,
+      condition: truth?.label || weatherCodes[truth?.nowCode] || "Weather",
+      conditionCode: Number(truth?.nowCode ?? current.weather_code ?? 0),
+      isDay: Boolean(truth?.isDay),
+      rainChance: Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0),
+      wind: Math.round(current.wind_speed_10m || 0),
+      windUnit,
+      uv: Math.round(data.daily?.uv_index_max?.[todayIndex] || 0),
+      nowLabel: item(0, "Now", "Open Nearcast").label,
+      nowValue: item(0, "Now", "Open Nearcast").value,
+      nextLabel: item(1, "Next", "Check forecast").label,
+      nextValue: item(1, "Next", "Check forecast").value,
+      laterLabel: item(2, "Later", "Plan ahead").label,
+      laterValue: item(2, "Later", "Plan ahead").value
+    };
+    window.NearcastNative.postMessage({ type: "widget.snapshot", snapshot });
+  } catch (error) {
+    console.debug("[Nearcast native] Widget snapshot skipped", error);
+  }
 }
 
 function renderForYouToday(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {

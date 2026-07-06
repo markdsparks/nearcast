@@ -203,6 +203,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             requestNativeNotifications(payload)
         } else if type == "notifications.status" {
             sendNativeNotificationStatus(payload)
+        } else if type == "widget.snapshot" {
+            saveWidgetSnapshot(payload)
         }
     }
 
@@ -329,6 +331,18 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         }
     }
 
+    private func saveWidgetSnapshot(_ payload: [String: Any]) {
+        guard let snapshot = payload["snapshot"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(snapshot),
+              let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
+            return
+        }
+        guard let defaults = UserDefaults(suiteName: NativeWidgetSnapshotStore.suiteName) else {
+            return
+        }
+        defaults.set(data, forKey: NativeWidgetSnapshotStore.snapshotKey)
+    }
+
     private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
@@ -339,4 +353,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         let script = "window.NearcastNative&&window.NearcastNative.\(resolver)&&window.NearcastNative.\(resolver)(\(json));"
         webView?.evaluateJavaScript(script)
     }
+}
+
+enum NativeWidgetSnapshotStore {
+    static let suiteName = "group.app.nearcast.ios"
+    static let snapshotKey = "nearcast.widget.snapshot.v1"
 }
