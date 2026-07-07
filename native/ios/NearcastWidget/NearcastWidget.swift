@@ -473,10 +473,14 @@ struct NearcastSmallWidget: View {
 
             Spacer(minLength: 0)
 
-            Text("\(snapshot.temperature)°")
-                .font(.system(size: 54, weight: .black, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.62)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text("\(snapshot.temperature)°")
+                    .font(.system(size: 54, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+                Spacer(minLength: 4)
+                SmallHighLow(snapshot: snapshot, palette: palette)
+            }
 
             Text(snapshot.condition)
                 .font(.system(size: 18, weight: .black, design: .rounded))
@@ -490,6 +494,26 @@ struct NearcastSmallWidget: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .padding(16)
+    }
+}
+
+struct SmallHighLow: View {
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        if let high = snapshot.high, let low = snapshot.low {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("H \(high)°")
+                    .foregroundStyle(palette.primary.opacity(0.88))
+                Text("L \(low)°")
+                    .foregroundStyle(palette.secondary)
+            }
+            .font(.system(size: 14, weight: .black, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.bottom, 6)
+        }
     }
 }
 
