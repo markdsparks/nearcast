@@ -1,4 +1,4 @@
-const VERSION = "3.0.210";
+const VERSION = "3.0.211";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3748,6 +3748,14 @@ function forecastDailyIndex(data = state.forecast, offsetDays = 0) {
   return clamp(offsetDays, 0, times.length - 1);
 }
 
+function currentUvIndex(data = state.forecast, fallbackDailyIndex = forecastDailyIndex(data)) {
+  const now = forecastNowMs(data);
+  const hourlyIndex = nearestHourlyIndexAt(data, now, 90 * 60 * 1000);
+  const hourlyUv = hourlyIndex >= 0 ? Number(data?.hourly?.uv_index?.[hourlyIndex]) : NaN;
+  if (Number.isFinite(hourlyUv)) return Math.max(0, Math.round(hourlyUv));
+  return Math.max(0, Math.round(data?.daily?.uv_index_max?.[fallbackDailyIndex] || 0));
+}
+
 function datePart(value) {
   if (typeof value === "string") {
     const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -6336,7 +6344,7 @@ function renderForecastCurrentReadouts(ctx) {
     : ctx.truth.precip?.phase === "nearby" ? "Nearby"
       : ctx.truth.precip?.phase === "imminent" ? "Soon" : `${ctx.firstRainChance || 0}%`;
   els.wind.textContent = `${Math.round(ctx.current.wind_speed_10m)} ${ctx.windUnit}`;
-  els.uv.textContent = Math.round(ctx.data.daily.uv_index_max[ctx.todayIndex] || 0);
+  els.uv.textContent = currentUvIndex(ctx.data, ctx.todayIndex);
   els.humidity.textContent = `${ctx.current.relative_humidity_2m ?? "--"}%`;
   els.sunrise.textContent = ctx.data.daily.sunrise[ctx.todayIndex] ? formatTime(ctx.data.daily.sunrise[ctx.todayIndex]) : "--";
   els.sunset.textContent = ctx.data.daily.sunset[ctx.todayIndex] ? formatTime(ctx.data.daily.sunset[ctx.todayIndex]) : "--";
@@ -7688,7 +7696,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       windUnit,
       windDirection,
       windLabel: windCue?.label || null,
-      uv: Math.round(data.daily?.uv_index_max?.[todayIndex] || 0),
+      uv: currentUvIndex(data, todayIndex),
       nowLabel: item(0, "Now", "Open Nearcast").label,
       nowValue: item(0, "Now", "Open Nearcast").value,
       nextLabel: item(1, "Next", "Check forecast").label,
