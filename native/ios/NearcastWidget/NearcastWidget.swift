@@ -1,8 +1,11 @@
+import Foundation
 import SwiftUI
 import WidgetKit
 
 private let nearcastWidgetSuiteName = "group.app.nearcast.ios"
 private let nearcastWidgetSnapshotKey = "nearcast.widget.snapshot.v1"
+private let nearcastWidgetPlaceKey = "nearcast.widget.place.v1"
+private let nearcastWidgetStaleInterval: TimeInterval = 25 * 60
 
 struct NearcastWidgetSnapshot: Codable {
     var version: Int
@@ -32,6 +35,12 @@ struct NearcastWidgetSnapshot: Codable {
     var planDetail: String?
     var planPlace: String?
     var planTone: String?
+}
+
+struct NearcastWidgetPlace: Codable {
+    var name: String
+    var latitude: Double
+    var longitude: Double
 }
 
 extension NearcastWidgetSnapshot {
@@ -66,14 +75,35 @@ extension NearcastWidgetSnapshot {
     )
 
     static func current() -> NearcastWidgetSnapshot {
+        stored() ?? fallback
+    }
+
+    static func stored() -> NearcastWidgetSnapshot? {
         guard
             let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
             let data = defaults.data(forKey: nearcastWidgetSnapshotKey),
             let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data)
         else {
-            return fallback
+            return nil
         }
         return snapshot
+    }
+
+    var age: TimeInterval {
+        Date().timeIntervalSince1970 - savedAt
+    }
+}
+
+extension NearcastWidgetPlace {
+    static func stored() -> NearcastWidgetPlace? {
+        guard
+            let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
+            let data = defaults.data(forKey: nearcastWidgetPlaceKey),
+            let place = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: data)
+        else {
+            return nil
+        }
+        return place
     }
 }
 
@@ -92,9 +122,263 @@ struct NearcastWidgetProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastWidgetEntry>) -> Void) {
-        let entry = NearcastWidgetEntry(date: Date(), snapshot: NearcastWidgetSnapshot.current())
-        let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(15 * 60)
-        completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
+        Task {
+            let snapshot = await refreshedWidgetSnapshot()
+            let entry = NearcastWidgetEntry(date: Date(), snapshot: snapshot)
+            let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(15 * 60)
+            completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
+        }
+    }
+}
+
+private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
+    let cached = NearcastWidgetSnapshot.current()
+    guard cached.age > nearcastWidgetStaleInterval, let place = NearcastWidgetPlace.stored() else {
+        return cached
+    }
+    do {
+        let snapshot = try await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
+        NearcastWidgetSnapshotStore.save(snapshot)
+        return snapshot
+    } catch {
+        return cached
+    }
+}
+
+enum NearcastWidgetSnapshotStore {
+    static func save(_ snapshot: NearcastWidgetSnapshot) {
+        guard let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
+              let data = try? JSONEncoder().encode(snapshot) else {
+            return
+        }
+        defaults.set(data, forKey: nearcastWidgetSnapshotKey)
+    }
+}
+
+enum NearcastWidgetForecastClient {
+    static func fetchSnapshot(for place: NearcastWidgetPlace, fallback: NearcastWidgetSnapshot) async throws -> NearcastWidgetSnapshot {
+        var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")
+        components?.queryItems = [
+            URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)),
+            URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
+            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
+            URLQueryItem(name: "hourly", value: "precipitation_probability,uv_index"),
+            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,sunrise,sunset"),
+            URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
+            URLQueryItem(name: "wind_speed_unit", value: "mph"),
+            URLQueryItem(name: "timezone", value: "auto"),
+            URLQueryItem(name: "forecast_days", value: "2")
+        ]
+        guard let url = components?.url else { throw URLError(.badURL) }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        request.cachePolicy = .reloadRevalidatingCacheData
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let forecast = try JSONDecoder().decode(WidgetForecastResponse.self, from: data)
+        return buildSnapshot(from: forecast, place: place, fallback: fallback)
+    }
+
+    private static func buildSnapshot(from forecast: WidgetForecastResponse, place: NearcastWidgetPlace, fallback: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
+        let current = forecast.current
+        let currentIndex = hourlyIndex(hourlyTimes: forecast.hourly?.time, currentTime: current.time)
+        let rainChance = roundedValue(flatValue(forecast.hourly?.precipitationProbability?[safe: currentIndex])) ?? fallback.rainChance
+        let uv = roundedValue(flatValue(forecast.hourly?.uvIndex?[safe: currentIndex])) ?? fallback.uv
+        let high = roundedValue(flatValue(forecast.daily?.temperatureMax?.first)) ?? fallback.high
+        let low = roundedValue(flatValue(forecast.daily?.temperatureMin?.first)) ?? fallback.low
+        let windDirection = roundedValue(current.windDirection)
+        let wind = roundedValue(current.windSpeed) ?? fallback.wind
+        let feels = roundedValue(current.apparentTemperature) ?? fallback.feelsLike
+        let temp = roundedValue(current.temperature) ?? fallback.temperature
+        let isDay = current.isDay.map { $0 == 1 } ?? fallback.isDay
+        let conditionCode = current.weatherCode ?? fallback.conditionCode
+        let nextRainChance = nextTwoHourRainChance(hourly: forecast.hourly, currentIndex: currentIndex)
+
+        return NearcastWidgetSnapshot(
+            version: max(fallback.version, 2),
+            savedAt: Date().timeIntervalSince1970,
+            placeName: place.name,
+            temperature: temp,
+            feelsLike: feels,
+            high: high,
+            low: low,
+            condition: conditionLabel(code: conditionCode, isDay: isDay),
+            conditionCode: conditionCode,
+            isDay: isDay,
+            rainChance: rainChance,
+            wind: wind,
+            windUnit: "mph",
+            windDirection: windDirection,
+            windLabel: windDirection.map(windDirectionLabel),
+            uv: uv,
+            nowLabel: "Now",
+            nowValue: nowValue(feelsLike: feels, code: conditionCode),
+            nextLabel: "Next",
+            nextValue: nextValue(rainChance: nextRainChance),
+            laterLabel: "Later",
+            laterValue: laterValue(forecast: forecast, wind: wind),
+            planTitle: fallback.planTitle,
+            planLabel: fallback.planLabel,
+            planDetail: fallback.planDetail,
+            planPlace: fallback.planPlace,
+            planTone: fallback.planTone
+        )
+    }
+
+    private static func hourlyIndex(hourlyTimes: [String]?, currentTime: String?) -> Int {
+        guard let hourlyTimes, !hourlyTimes.isEmpty else { return 0 }
+        if let currentTime, let exact = hourlyTimes.firstIndex(of: currentTime) {
+            return exact
+        }
+        let hourPrefix = currentTime.map { String($0.prefix(13)) }
+        if let hourPrefix, let match = hourlyTimes.firstIndex(where: { $0.hasPrefix(hourPrefix) }) {
+            return match
+        }
+        return 0
+    }
+
+    private static func nextTwoHourRainChance(hourly: WidgetForecastResponse.Hourly?, currentIndex: Int) -> Int {
+        guard let probabilities = hourly?.precipitationProbability, !probabilities.isEmpty else { return 0 }
+        let end = min(probabilities.count - 1, currentIndex + 2)
+        guard currentIndex <= end else { return 0 }
+        return (currentIndex...end)
+            .compactMap { roundedValue(flatValue(probabilities[safe: $0])) }
+            .max() ?? 0
+    }
+
+    private static func nowValue(feelsLike: Int, code: Int) -> String {
+        if code >= 95 { return "Storms nearby" }
+        if (51...82).contains(code) { return "Rain nearby" }
+        if feelsLike >= 95 { return "Feels \(feelsLike)°" }
+        if feelsLike <= 32 { return "Feels \(feelsLike)°" }
+        return "Feels \(feelsLike)°"
+    }
+
+    private static func nextValue(rainChance: Int) -> String {
+        rainChance >= 20 ? "Rain \(rainChance)%" : "Dry 2h"
+    }
+
+    private static func laterValue(forecast: WidgetForecastResponse, wind: Int) -> String {
+        if let sunset = forecast.daily?.sunset?.first, let short = shortClockTime(sunset) {
+            return "Sunset \(short)"
+        }
+        return "Wind \(wind) mph"
+    }
+
+    private static func shortClockTime(_ value: String) -> String? {
+        let rawTime = value.split(separator: "T").last.map(String.init) ?? value
+        let pieces = rawTime.split(separator: ":").compactMap { Int($0) }
+        guard pieces.count >= 2 else { return nil }
+        let hour24 = pieces[0]
+        let minute = pieces[1]
+        let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
+        return minute == 0 ? "\(hour12)" : "\(hour12):\(String(format: "%02d", minute))"
+    }
+
+    private static func conditionLabel(code: Int, isDay: Bool) -> String {
+        switch code {
+        case 0:
+            return isDay ? "Clear" : "Clear night"
+        case 1:
+            return "Mostly clear"
+        case 2:
+            return "Partly cloudy"
+        case 3:
+            return "Cloudy"
+        case 45, 48:
+            return "Fog"
+        case 51...67:
+            return "Drizzle"
+        case 71...77:
+            return "Snow"
+        case 80...82:
+            return "Showers"
+        case 85...86:
+            return "Snow showers"
+        case 95...99:
+            return "Thunderstorms"
+        default:
+            return "Weather"
+        }
+    }
+
+    private static func windDirectionLabel(_ degrees: Int) -> String {
+        let normalized = ((degrees % 360) + 360) % 360
+        let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        let index = Int((Double(normalized) / 45.0).rounded()) % labels.count
+        return labels[index]
+    }
+
+    private static func roundedValue(_ value: Double?) -> Int? {
+        guard let value, value.isFinite else { return nil }
+        return Int(value.rounded())
+    }
+
+    private static func flatValue(_ value: Double??) -> Double? {
+        value.flatMap { $0 }
+    }
+}
+
+struct WidgetForecastResponse: Decodable {
+    struct Current: Decodable {
+        let time: String?
+        let temperature: Double?
+        let apparentTemperature: Double?
+        let weatherCode: Int?
+        let windSpeed: Double?
+        let windDirection: Double?
+        let isDay: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case time
+            case temperature = "temperature_2m"
+            case apparentTemperature = "apparent_temperature"
+            case weatherCode = "weather_code"
+            case windSpeed = "wind_speed_10m"
+            case windDirection = "wind_direction_10m"
+            case isDay = "is_day"
+        }
+    }
+
+    struct Hourly: Decodable {
+        let time: [String]?
+        let precipitationProbability: [Double?]?
+        let uvIndex: [Double?]?
+
+        enum CodingKeys: String, CodingKey {
+            case time
+            case precipitationProbability = "precipitation_probability"
+            case uvIndex = "uv_index"
+        }
+    }
+
+    struct Daily: Decodable {
+        let temperatureMax: [Double?]?
+        let temperatureMin: [Double?]?
+        let sunrise: [String]?
+        let sunset: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case temperatureMax = "temperature_2m_max"
+            case temperatureMin = "temperature_2m_min"
+            case sunrise
+            case sunset
+        }
+    }
+
+    let current: Current
+    let hourly: Hourly?
+    let daily: Daily?
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }
 

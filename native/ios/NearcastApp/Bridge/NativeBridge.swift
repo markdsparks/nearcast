@@ -342,6 +342,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             return
         }
         defaults.set(data, forKey: NativeWidgetSnapshotStore.snapshotKey)
+        if let place = payload["place"] as? [String: Any],
+           JSONSerialization.isValidJSONObject(place),
+           let placeData = try? JSONSerialization.data(withJSONObject: place, options: []) {
+            defaults.set(placeData, forKey: NativeWidgetSnapshotStore.placeKey)
+        }
         WidgetCenter.shared.reloadTimelines(ofKind: NativeWidgetSnapshotStore.widgetKind)
     }
 
@@ -360,5 +365,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
 enum NativeWidgetSnapshotStore {
     static let suiteName = "group.app.nearcast.ios"
     static let snapshotKey = "nearcast.widget.snapshot.v1"
+    static let placeKey = "nearcast.widget.place.v1"
     static let widgetKind = "NearcastWidget"
 }

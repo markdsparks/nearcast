@@ -7720,7 +7720,15 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       planPlace: widgetPlan?.place || null,
       planTone: widgetPlan?.tone || null
     };
-    window.NearcastNative.postMessage({ type: "widget.snapshot", snapshot });
+    window.NearcastNative.postMessage({
+      type: "widget.snapshot",
+      snapshot,
+      place: {
+        name: placeLabel(place),
+        latitude: Number(place.latitude),
+        longitude: Number(place.longitude)
+      }
+    });
   } catch (error) {
     console.debug("[Nearcast native] Widget snapshot skipped", error);
   }
