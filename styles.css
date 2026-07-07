@@ -7407,6 +7407,53 @@ body.map-immersive-active #mapLegend {
   box-shadow: 0 0 0 5px rgba(141, 255, 168, 0.14);
 }
 
+.imm-btn.imm-lightning-toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 999px;
+  color: #c9d5df;
+  background: rgba(16, 24, 35, 0.64);
+}
+
+.imm-btn.imm-lightning-toggle[hidden] {
+  display: none;
+}
+
+.imm-lightning-toggle svg {
+  width: 21px;
+  height: 21px;
+  filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.22));
+}
+
+.imm-lightning-toggle[data-state="ready"] {
+  color: #ffe66d;
+  border-color: rgba(255, 230, 109, 0.30);
+}
+
+.imm-lightning-toggle[data-state="active"] {
+  color: #ffe66d;
+  border-color: rgba(255, 230, 109, 0.48);
+  background:
+    radial-gradient(circle at 50% 25%, rgba(255, 230, 109, 0.30), transparent 42%),
+    rgba(45, 37, 13, 0.78);
+}
+
+.imm-lightning-toggle[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffe66d;
+  box-shadow: 0 0 0 5px rgba(255, 230, 109, 0.14);
+}
+
 @keyframes storm-entry-pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 230, 109, 0.30), 0 12px 26px rgba(2, 7, 13, 0.18); }
   72% { box-shadow: 0 0 0 14px rgba(255, 230, 109, 0), 0 12px 26px rgba(2, 7, 13, 0.18); }

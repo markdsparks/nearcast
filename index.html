@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.211">
-    <link rel="manifest" href="manifest.json?v=3.0.211">
+    <link rel="stylesheet" href="styles.css?v=3.0.212">
+    <link rel="manifest" href="manifest.json?v=3.0.212">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.211">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.211">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.212">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.212">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -419,6 +419,11 @@
                 <path d="m13.2 3.8-3 6h3.1l-2.4 6.3 6-8h-3.2l2.1-4.3h-2.6Z" fill="currentColor"/>
               </svg>
             </button>
+            <button class="imm-btn imm-lightning-toggle" id="immLightningToggle" type="button" hidden aria-label="Show recent lightning" title="Show recent lightning">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M13.3 3.8 6.9 13h4.4l-1.6 7.2 7.6-10h-4.5l2.2-6.4h-1.7Z" fill="currentColor"/>
+              </svg>
+            </button>
           </div>
           <section class="storm-impact-card" id="stormImpactCard" hidden aria-live="polite">
             <div class="storm-impact-head">
@@ -683,8 +688,8 @@
           <span id="stormViewFeatureOneBody">Crisper active radar rendering that is easier to read while panning and zooming.</span>
         </section>
         <section>
-          <strong id="stormViewFeatureTwoTitle">Lightning context</strong>
-          <span id="stormViewFeatureTwoBody">Recent strikes appear with the radar when lightning data is available.</span>
+          <strong id="stormViewFeatureTwoTitle">Lightning on request</strong>
+          <span id="stormViewFeatureTwoBody">Recent strikes stay off by default and load briefly only when you ask for them.</span>
         </section>
         <section>
           <strong id="stormViewFeatureThreeTitle">Motion timeline</strong>
@@ -692,7 +697,7 @@
         </section>
       </div>
       <p class="storm-view-cost" id="stormViewCost">
-        StormScope uses paid map data. Nearcast asks before starting so we can keep this feature intentional and protect the budget.
+        StormScope uses paid radar data. Lightning is a separate short-lived overlay so it does not run accidentally.
       </p>
       <div class="storm-view-actions">
         <button class="storm-view-primary" id="stormViewStart" type="button">Activate StormScope</button>
@@ -723,28 +728,28 @@
       </div>
       <div class="storm-view-features storm-receipt-facts">
         <section>
-          <strong id="stormReceiptSessionTitle">Used 1 premium storm-map session</strong>
-          <span id="stormReceiptSessionBody">StormScope runs in a short protected window so panning, zooming, and scrubbing stay intentional.</span>
+          <strong id="stormReceiptSessionTitle">Used 1 premium radar session</strong>
+          <span id="stormReceiptSessionBody">StormScope radar runs in a short protected window so panning, zooming, and scrubbing stay intentional.</span>
         </section>
         <section>
           <strong>Budget guard stayed on</strong>
-          <span>Nearcast tracks an estimated session cost so premium storm maps do not run accidentally.</span>
+          <span>Nearcast tracks an estimated session cost so premium radar and lightning overlays do not run accidentally.</span>
         </section>
       </div>
       <p class="storm-view-cost" id="stormReceiptDetail">
-        Estimate based on 150 MapsGL access units at $0.0006 per access.
+        Estimate based on 150 MapsGL access units at $0.0006 per access. Lightning is separate and on request.
       </p>
       <div class="storm-view-actions">
         <button class="storm-view-primary" id="stormReceiptDone" type="button">Done</button>
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.211"></script>
-    <script src="planner.js?v=3.0.211"></script>
-    <script src="app.js?v=3.0.211"></script>
-    <script src="map.js?v=3.0.211"></script>
-    <script src="sky.js?v=3.0.211"></script>
-    <script src="daygraph.js?v=3.0.211"></script>
-    <script src="boot.js?v=3.0.211"></script>
+    <script src="weather-truth.js?v=3.0.212"></script>
+    <script src="planner.js?v=3.0.212"></script>
+    <script src="app.js?v=3.0.212"></script>
+    <script src="map.js?v=3.0.212"></script>
+    <script src="sky.js?v=3.0.212"></script>
+    <script src="daygraph.js?v=3.0.212"></script>
+    <script src="boot.js?v=3.0.212"></script>
   </body>
 </html>

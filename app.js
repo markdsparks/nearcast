@@ -1,4 +1,4 @@
-const VERSION = "3.0.211";
+const VERSION = "3.0.212";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -24,7 +24,8 @@ const XWEATHER_MAPSGL_SCRIPT_ID = "xweatherMapsglScript";
 const XWEATHER_MAPSGL_CSS_ID = "xweatherMapsglCss";
 const XWEATHER_MAPSGL_SCRIPT_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.js";
 const XWEATHER_MAPSGL_CSS_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.css";
-const XWEATHER_STORM_DEFAULT_LAYERS = "radar,lightning-strikes-icons";
+const XWEATHER_STORM_DEFAULT_LAYERS = "radar";
+const XWEATHER_STORM_LIGHTNING_LAYERS = "lightning-strikes-icons";
 const XWEATHER_MAPSGL_SESSION_ACCESS_COST = 150;
 const XWEATHER_MONTHLY_ACCESS_LIMIT = 1500;
 const XWEATHER_STORM_SESSION_MS = 5 * 60 * 1000;
@@ -4153,6 +4154,16 @@ function storedXweatherLayerCodes(options = {}) {
   return sanitizeXweatherLayerCodes(localStorage.getItem(XWEATHER_LAYER_CODES_KEY) || XWEATHER_STORM_DEFAULT_LAYERS);
 }
 
+function xweatherLayerCodeIsLightning(code) {
+  const value = String(code || "").toLowerCase();
+  return value.startsWith("lightning-strikes") || value === "lightning-icons";
+}
+
+function xweatherStormRadarLayerCodes() {
+  const layers = storedXweatherLayerCodes().filter((code) => !xweatherLayerCodeIsLightning(code));
+  return layers.length ? layers : sanitizeXweatherLayerCodes(XWEATHER_STORM_DEFAULT_LAYERS);
+}
+
 function xweatherStormEnabled() {
   return state.xweatherStormMode === "xweather";
 }
@@ -4278,7 +4289,7 @@ function radarProviderMetaText() {
 
 function xweatherStormMetaText() {
   const usage = readXweatherUsageRecord();
-  const layers = storedXweatherLayerCodes();
+  const layers = xweatherStormRadarLayerCodes();
   const usageText = `${usage.accesses}/${XWEATHER_MONTHLY_ACCESS_LIMIT} est. accesses`;
   const config = xweatherStormConfigSnapshot();
   if (state.xweatherStormMode !== "xweather") {

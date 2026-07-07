@@ -19,6 +19,8 @@ const XWEATHER_STORM_TIMELINE_FUTURE_MS = 90 * 60 * 1000;
 const XWEATHER_STORM_TIMELINE_STEPS = 1000;
 const XWEATHER_STORM_TIMELINE_LOOP_SECONDS = 14;
 const XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS = 45 * 1000;
+const XWEATHER_STORM_LIGHTNING_MIN_ZOOM = 8.5;
+const XWEATHER_STORM_LIGHTNING_SESSION_MS = 90 * 1000;
 const XWEATHER_STORM_LIGHTNING_SETTLE_MS = 650;
 const XWEATHER_STORM_SPATIAL_SMOOTHING = 0;
 const XWEATHER_STORM_TEMPORAL_MELD = true;
@@ -209,7 +211,18 @@ function xweatherStormPreferenceEnabled() {
 
 function xweatherStormLayerCodes() {
   const codes = typeof storedXweatherLayerCodes === "function" ? storedXweatherLayerCodes() : [];
-  return codes.length ? codes : ["radar", "lightning-strikes-icons"];
+  const baseCodes = (codes.length ? codes : ["radar"]).filter((code) => !xweatherStormLayerIsObservedLightning(code));
+  return baseCodes.length ? baseCodes : ["radar"];
+}
+
+function xweatherStormLightningLayerCodes() {
+  const configured = typeof XWEATHER_STORM_LIGHTNING_LAYERS !== "undefined"
+    ? XWEATHER_STORM_LIGHTNING_LAYERS
+    : "lightning-strikes-icons";
+  const codes = typeof sanitizeXweatherLayerCodes === "function"
+    ? sanitizeXweatherLayerCodes(configured)
+    : String(configured).split(/[,\s]+/).filter(Boolean);
+  return codes.filter(xweatherStormLayerIsObservedLightning);
 }
 
 function xweatherStormCredentials() {
@@ -607,12 +620,12 @@ function renderXweatherStormReceiptSheet(receipt = mapState.xweatherStormCloseou
   if (elements.sessionTitle) {
     elements.sessionTitle.textContent = receipt.budgetRecorded === false
       ? "Reused an active premium session"
-      : "Used 1 premium storm-map session";
+      : "Used 1 premium radar session";
   }
   if (elements.sessionBody) {
     elements.sessionBody.textContent = receipt.budgetRecorded === false
       ? "You were still inside the same protected StormScope window, so this did not add another estimated budget hit."
-      : "StormScope runs in a short protected window so panning, zooming, and scrubbing stay intentional.";
+      : "StormScope radar runs in a short protected window so panning, zooming, and scrubbing stay intentional.";
   }
   if (elements.detail) {
     elements.detail.textContent = receipt.detail || "Estimate based on 150 MapsGL access units at $0.0006 per access.";
@@ -678,7 +691,7 @@ function showXweatherStormCostCloseout(storm = {}, reason = "off") {
     accessCost,
     budgetRecorded,
     reason,
-    detail: `Estimate based on ${Math.round(accessCost)} MapsGL access units at $${XWEATHER_STORM_ACCESS_PRICE_USD.toFixed(4)} per access · ${xweatherStormCloseoutReason(reason)}.`,
+    detail: `Estimate based on ${Math.round(accessCost)} MapsGL access units at $${XWEATHER_STORM_ACCESS_PRICE_USD.toFixed(4)} per access · lightning is separate and on request · ${xweatherStormCloseoutReason(reason)}.`,
     visibleUntil: Date.now() + XWEATHER_STORM_COST_CLOSEOUT_MS
   };
   const presentCloseout = () => {
@@ -854,7 +867,10 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
 
 function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   const entry = document.getElementById("immStormEntry");
-  if (!entry) return;
+  if (!entry) {
+    syncXweatherLightningToggleControl(record);
+    return;
+  }
   const state = xweatherStormActivationControlState(record);
   const entryVisible = Boolean(
     state.visible &&
@@ -868,6 +884,7 @@ function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   entry.setAttribute("aria-pressed", String(state.tone === "active"));
   entry.setAttribute("aria-label", state.detail ? `${state.label}. ${state.detail}` : state.label || XWEATHER_STORM_DISPLAY_NAME);
   entry.setAttribute("title", state.label || XWEATHER_STORM_DISPLAY_NAME);
+  syncXweatherLightningToggleControl(record);
 }
 
 function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
@@ -956,7 +973,7 @@ function xweatherStormSheetCopy(state = xweatherStormActivationControlState(mapL
       kicker: budgetPaused ? "Budget protected" : "Storm map paused",
       title: budgetPaused ? "StormScope is paused for now" : "StormScope is not available right now",
       summary: budgetPaused
-        ? "StormScope uses paid map data. Nearcast keeps it behind a budget guard, so standard radar stays on when the test budget is used up."
+        ? "StormScope uses paid radar data. Nearcast keeps it behind a budget guard, so standard radar stays on when the test budget is used up."
         : xweatherStormBlockedMessage(config),
       features: [
         ["Standard radar remains on", "You can still pan, zoom, and use the normal Nearcast radar without starting a paid StormScope session."],
@@ -979,10 +996,10 @@ function xweatherStormSheetCopy(state = xweatherStormActivationControlState(mapL
     summary: `Use ${XWEATHER_STORM_SHORT_NAME} when you want a sharper read on active weather nearby.`,
     features: [
       ["Cleaner storm shape", "Crisper active radar rendering that is easier to read while panning and zooming."],
-      ["Lightning context", "Recent strikes appear with the radar when lightning data is available."],
+      ["Lightning on request", "Recent strikes stay off by default and load briefly only when you ask for them."],
       ["Motion timeline", "Scrub backward and forward to understand where the storm has been and where it may go."]
     ],
-    cost: `${XWEATHER_STORM_SHORT_NAME} uses paid map data. Nearcast asks before starting so we can keep this feature intentional and protect the budget.`,
+    cost: `${XWEATHER_STORM_SHORT_NAME} uses paid radar data. Lightning is a separate short-lived overlay so it does not run accidentally.`,
     primaryLabel: `Activate ${XWEATHER_STORM_SHORT_NAME}`,
     primaryAction: "activate",
     secondaryLabel: "Not now"
@@ -1209,6 +1226,119 @@ function xweatherStormObservedLightningLayerCodes(record = mapLibreCurrentRecord
   return (Array.isArray(codes) ? codes : []).filter(xweatherStormLayerIsObservedLightning);
 }
 
+function xweatherStormLightningAvailable(record = mapLibreCurrentRecord()) {
+  if (!xweatherStormActive(record)) return false;
+  const zoom = Number(mapState.zoom);
+  if (Number.isFinite(zoom) && zoom + 0.001 < XWEATHER_STORM_LIGHTNING_MIN_ZOOM) return false;
+  const context = xweatherStormViewportContext(record);
+  return Boolean(context.storm?.activeWeather);
+}
+
+function clearXweatherLightningSessionTimer(record = mapLibreCurrentRecord()) {
+  const storm = record?.xweatherStorm;
+  if (!storm?.lightningSessionTimer) return;
+  clearTimeout(storm.lightningSessionTimer);
+  storm.lightningSessionTimer = 0;
+}
+
+function stopXweatherLightningOverlay(record = mapLibreCurrentRecord(), reason = "off") {
+  const storm = record?.xweatherStorm;
+  const controller = storm?.controller;
+  if (!storm || !controller) return false;
+  clearXweatherLightningSessionTimer(record);
+  const codes = xweatherStormObservedLightningLayerCodes(record);
+  codes.forEach((code) => {
+    try { controller.removeWeatherLayer?.(code); } catch {}
+  });
+  storm.addedLayers = (storm.addedLayers || []).filter((code) => !xweatherStormLayerIsObservedLightning(code));
+  storm.lightningLayerCodes = [];
+  storm.lightningActive = false;
+  storm.lightningStartedAt = 0;
+  storm.lightningExpiresAt = 0;
+  storm.lightningHiddenReason = reason;
+  storm.observedLightningVisible = null;
+  storm.observedLightningHiddenReason = "";
+  clearXweatherObservedLightningSettle(record);
+  syncXweatherLightningToggleControl(record);
+  renderMapLegend();
+  syncMapLibreDiagnosticReadout(record);
+  return true;
+}
+
+function startXweatherLightningOverlay(record = mapLibreCurrentRecord()) {
+  const storm = record?.xweatherStorm;
+  const controller = storm?.controller;
+  if (!storm || !controller || !xweatherStormLightningAvailable(record)) return false;
+  const sdk = xweatherStormMapsglNamespace();
+  const layerCodes = xweatherStormLightningLayerCodes();
+  if (!layerCodes.length) return false;
+  const added = [];
+  layerCodes.forEach((code) => {
+    if ((storm.addedLayers || []).includes(code)) {
+      added.push(code);
+      return;
+    }
+    try {
+      addXweatherStormWeatherLayer(controller, code, sdk);
+      added.push(code);
+    } catch (error) {
+      console.warn(`[Nearcast] Xweather lightning layer failed: ${code}`, error);
+    }
+  });
+  if (!added.length) return false;
+  const now = Date.now();
+  storm.addedLayers = [...new Set([...(storm.addedLayers || []), ...added])];
+  storm.lightningLayerCodes = added;
+  storm.lightningActive = true;
+  storm.lightningStartedAt = now;
+  storm.lightningExpiresAt = now + XWEATHER_STORM_LIGHTNING_SESSION_MS;
+  storm.lightningHiddenReason = "";
+  storm.observedLightningVisible = null;
+  syncXweatherStormLightningVisibility(record);
+  clearXweatherLightningSessionTimer(record);
+  storm.lightningSessionTimer = setTimeout(() => {
+    if (record.xweatherStorm === storm) stopXweatherLightningOverlay(record, "expired");
+  }, XWEATHER_STORM_LIGHTNING_SESSION_MS);
+  syncXweatherLightningToggleControl(record);
+  renderMapLegend();
+  syncMapLibreDiagnosticReadout(record);
+  return true;
+}
+
+function toggleXweatherLightningOverlay() {
+  const record = mapLibreCurrentRecord();
+  if (!xweatherStormActive(record)) return false;
+  const storm = record.xweatherStorm;
+  if (storm.lightningActive || xweatherStormObservedLightningLayerCodes(record).length) {
+    return stopXweatherLightningOverlay(record, "user");
+  }
+  return startXweatherLightningOverlay(record);
+}
+
+function syncXweatherLightningToggleControl(record = mapLibreCurrentRecord()) {
+  const button = document.getElementById("immLightningToggle");
+  if (!button) return;
+  const active = Boolean(record?.xweatherStorm?.lightningActive && xweatherStormObservedLightningLayerCodes(record).length);
+  const available = xweatherStormLightningAvailable(record);
+  if (active && !available) {
+    stopXweatherLightningOverlay(record, "zoom-or-context");
+    return;
+  }
+  if (!xweatherStormActive(record) || (!available && !active)) {
+    button.hidden = true;
+    button.disabled = true;
+    button.dataset.state = "off";
+    button.setAttribute("aria-pressed", "false");
+    return;
+  }
+  button.hidden = false;
+  button.disabled = !available && !active;
+  button.dataset.state = active ? "active" : "ready";
+  button.setAttribute("aria-pressed", String(active));
+  button.setAttribute("aria-label", active ? "Hide recent lightning" : "Show recent lightning");
+  button.setAttribute("title", active ? "Hide lightning" : "Show recent lightning");
+}
+
 function setXweatherObservedLightningVisible(record = mapLibreCurrentRecord(), visible = true, reason = "") {
   const storm = record?.xweatherStorm;
   const controller = storm?.controller;
@@ -1251,6 +1381,10 @@ function scheduleXweatherObservedLightningRestore(record = mapLibreCurrentRecord
 function syncXweatherStormLightningVisibility(record = mapLibreCurrentRecord(), snapshot = xweatherStormTimelineSnapshot(record), options = {}) {
   const storm = record?.xweatherStorm;
   if (!storm || !xweatherStormObservedLightningLayerCodes(record).length) return;
+  if (!xweatherStormLightningAvailable(record)) {
+    stopXweatherLightningOverlay(record, "zoom-or-context");
+    return;
+  }
   const effectiveCurrentMs = Number.isFinite(Number(options.targetMs)) ? Number(options.targetMs) : snapshot.currentMs;
   const isFuture = effectiveCurrentMs > snapshot.nowMs + XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS;
   if (isFuture) {
@@ -1669,6 +1803,11 @@ async function startXweatherStormLayer(record) {
       timelineSyncRaf: 0,
       timelineLoopRaf: 0,
       timelinePlaybackClock: 0,
+      lightningActive: false,
+      lightningLayerCodes: [],
+      lightningSessionTimer: 0,
+      lightningStartedAt: 0,
+      lightningExpiresAt: 0,
       observedLightningVisible: null,
       observedLightningSettleTimer: 0,
       lease: config.lease || null,
@@ -1687,6 +1826,7 @@ async function startXweatherStormLayer(record) {
     removeMapLibreRadarChunkLayer(record);
     syncGeneratedRadarStatusChip();
     renderMapLegend();
+    syncXweatherLightningToggleControl(record);
     syncMapLibreDiagnosticReadout(record);
     record.map.triggerRepaint?.();
   })().catch((error) => {
@@ -1737,6 +1877,7 @@ function stopXweatherStormLayer(record, reason = "off") {
   if (!record || !storm) return;
   if (reason !== "error") showXweatherStormCostCloseout(storm, reason);
   clearXweatherStormTimelineBindings(record);
+  clearXweatherLightningSessionTimer(record);
   if (mapState.timer) {
     cancelAnimationFrame(mapState.timer);
     mapState.timer = null;
@@ -1751,6 +1892,7 @@ function stopXweatherStormLayer(record, reason = "off") {
     });
   }
   hideXweatherStormTimelineJumpControls();
+  syncXweatherLightningToggleControl(record);
   setMapLibreStormLabelEmphasis(record, false);
   try { storm.controller?.removeLegendControl?.(); } catch {}
   try { storm.controller?.removeDataInspectorControl?.(); } catch {}
@@ -1766,6 +1908,7 @@ function stopXweatherStormLayer(record, reason = "off") {
   }
   syncGeneratedRadarStatusChip();
   renderMapLegend();
+  syncXweatherLightningToggleControl(record);
   renderMapCredit();
   syncMapLibreDiagnosticReadout(record);
 }
@@ -1781,6 +1924,7 @@ function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
     recordXweatherStormSession(record);
     clearMapLibreWeatherRecord(record);
     removeMapLibreRadarChunkLayer(record);
+    syncXweatherLightningToggleControl(record);
     return true;
   }
   const guard = xweatherStormGuard(record);
@@ -1812,6 +1956,7 @@ function applyXweatherStormPreference() {
   });
   renderMapLibreOverlays({ forceRadar: true });
   syncGeneratedRadarStatusChip();
+  syncXweatherLightningToggleControl(mapLibreCurrentRecord());
 }
 
 function xweatherStormDiagnosticsSnapshot(record = mapLibreCurrentRecord()) {
@@ -1824,6 +1969,8 @@ function xweatherStormDiagnosticsSnapshot(record = mapLibreCurrentRecord()) {
     message: storm?.message || "",
     layers: storm?.addedLayers || xweatherStormLayerCodes(),
     active: xweatherStormActive(record),
+    lightningActive: Boolean(storm?.lightningActive),
+    lightningExpiresAt: storm?.lightningExpiresAt ? new Date(storm.lightningExpiresAt).toISOString() : "",
     timeline: timeline ? {
       position: Number(timeline.position.toFixed(3)),
       nowPosition: Number(timeline.nowPosition.toFixed(3)),
@@ -8065,7 +8212,8 @@ function renderMapLegend() {
   if (!els.mapLegend) return;
   if (xweatherStormActive(mapLibreCurrentRecord())) {
     const storm = mapLibreCurrentRecord()?.xweatherStorm || {};
-    const hasLightning = (storm.layerCodes || storm.addedLayers || []).some((code) => String(code).includes("lightning"));
+    const stormLayers = [...(storm.layerCodes || []), ...(storm.addedLayers || [])];
+    const hasLightning = stormLayers.some((code) => String(code).includes("lightning"));
     const note = [
       hasLightning ? "Lightning icons show recent strikes" : "Drag the timeline to see past and future motion",
       xweatherStormStreetContextActive() ? "Street detail preserved at this zoom" : ""
@@ -8855,6 +9003,7 @@ function bindImmersiveModeButtons() {
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immStormEntry"), handleXweatherStormEntry);
+  bindTapAction(document.getElementById("immLightningToggle"), toggleXweatherLightningOverlay);
   bindTapAction(document.getElementById("stormViewSheetClose"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewBackdrop"), closeXweatherStormSheet);
   bindTapAction(document.getElementById("stormViewCancel"), closeXweatherStormSheet);
