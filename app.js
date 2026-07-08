@@ -7972,8 +7972,18 @@ function openLiveActivityLab() {
   els.liveActivitySheet.hidden = false;
   showSheet(els.liveActivityBackdrop, els.liveActivitySheet);
   document.body.style.overflow = "hidden";
-  updateLiveActivityLabStatus("Checking native bridge...", "Requesting ActivityKit status from the native wrapper.");
-  runNativeStormActivityLabAction("status", { quiet: true });
+  const bridgeReady = Boolean(nativeStormActivityBridge()?.supported);
+  updateLiveActivityLabStatus(
+    bridgeReady ? "Ready to test" : "Native bridge not ready",
+    bridgeReady
+      ? "Tap Start sample, then lock the phone or swipe home to look for the Live Activity."
+      : "This test only works inside the native iPhone app after the native bridge loads.",
+    {
+      ok: bridgeReady,
+      bridge: bridgeReady ? "ready" : "missing",
+      native: isNativeNearcastApp()
+    }
+  );
 }
 
 function closeLiveActivityLab() {
@@ -8037,20 +8047,20 @@ async function runNativeStormActivityLabAction(action, options = {}) {
     if (action === "start") {
       const payload = nativeStormActivityDebugPayload({ etaMinutes: 18, chance: 72 });
       state.nativeStormActivityKey = payload.key;
-      result = await bridge.start(payload);
+      result = await liveActivityRequestWithTimeout(bridge.start(payload), action);
     } else if (action === "update") {
       const payload = nativeStormActivityDebugPayload({ etaMinutes: 9, chance: 81, updated: true });
       state.nativeStormActivityKey = payload.key;
-      result = await bridge.update(payload);
+      result = await liveActivityRequestWithTimeout(bridge.update(payload), action);
     } else if (action === "end") {
-      result = await bridge.end({
+      result = await liveActivityRequestWithTimeout(bridge.end({
         status: "Sample ended",
         detail: "Nearcast ended the sample storm activity.",
         confidence: "Ended"
-      });
+      }), action);
       state.nativeStormActivityKey = "";
     } else {
-      result = await bridge.status();
+      result = await liveActivityRequestWithTimeout(bridge.status(), action);
     }
 
     const ok = result?.ok !== false && result?.state !== "timeout";
@@ -8082,6 +8092,22 @@ async function runNativeStormActivityLabAction(action, options = {}) {
     setLiveActivityLabBusy(false);
     updateNativeStormActivityDebugControl();
   }
+}
+
+function liveActivityRequestWithTimeout(promise, action, timeoutMs = 6000) {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          ok: false,
+          state: "timeout",
+          action,
+          reason: `No native ActivityKit callback after ${Math.round(timeoutMs / 1000)} seconds.`
+        });
+      }, timeoutMs);
+    })
+  ]);
 }
 
 function liveActivityLabResultText(action, result = {}) {
