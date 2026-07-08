@@ -8016,7 +8016,32 @@ function bindLiveActivityLabActions() {
     event.preventDefault();
     const action = button.dataset.liveActivityAction || "status";
     updateLiveActivityLabStatus("Tap received", `Starting ${action} test...`, { action, tapped: true });
-    runNativeStormActivityLabAction(action);
+    setTimeout(() => {
+      try {
+        Promise.resolve(runNativeStormActivityLabAction(action)).catch((error) => {
+          showLiveActivityLabCrash(action, error, "async-action");
+        });
+      } catch (error) {
+        showLiveActivityLabCrash(action, error, "sync-action");
+      }
+    }, 40);
+  });
+}
+
+function showLiveActivityLabCrash(action, error, phase = "unknown") {
+  const message = error?.message || String(error || "Unknown JavaScript error");
+  state.nativeStormActivityDebug.pending = false;
+  state.nativeStormActivityDebug.active = false;
+  state.nativeStormActivityDebug.state = "crashed";
+  state.nativeStormActivityDebug.reason = message;
+  setLiveActivityLabBusy(false);
+  updateNativeStormActivityDebugControl();
+  updateLiveActivityLabStatus("Live Activity test crashed", message, {
+    ok: false,
+    action,
+    phase,
+    message,
+    stack: error?.stack || ""
   });
 }
 
@@ -8037,6 +8062,14 @@ function updateLiveActivityLabStatus(title, body, result = null) {
 }
 
 async function runNativeStormActivityLabAction(action, options = {}) {
+  const trace = {
+    action,
+    phase: "bridge-check",
+    native: isNativeNearcastApp(),
+    hasNative: Boolean(window.NearcastNative),
+    hasStormActivity: Boolean(window.NearcastNative?.stormActivity)
+  };
+  if (!options.quiet) updateLiveActivityLabStatus("Checking bridge", `Preparing ${action}.`, trace);
   const bridge = nativeStormActivityBridge();
   if (!bridge?.supported) {
     const reason = isNativeNearcastApp() ? "Native bridge not ready yet." : "Open this in the native iPhone app.";
@@ -8050,19 +8083,29 @@ async function runNativeStormActivityLabAction(action, options = {}) {
   state.nativeStormActivityDebug.pending = true;
   setLiveActivityLabBusy(true);
   updateNativeStormActivityDebugControl();
-  if (!options.quiet) updateLiveActivityLabStatus("Working...", `Running ${action}.`, { action, bridge: "ready" });
+  trace.phase = "working";
+  trace.bridge = "ready";
+  if (!options.quiet) updateLiveActivityLabStatus("Working...", `Running ${action}.`, trace);
 
   let result = null;
   try {
     if (action === "start") {
+      trace.phase = "payload";
       const payload = nativeStormActivityDebugPayload({ etaMinutes: 18, chance: 72 });
       state.nativeStormActivityKey = payload.key;
+      trace.phase = "native-start";
+      if (!options.quiet) updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit start.", { ...trace, payload });
       result = await liveActivityRequestWithTimeout(bridge.start(payload), action);
     } else if (action === "update") {
+      trace.phase = "payload";
       const payload = nativeStormActivityDebugPayload({ etaMinutes: 9, chance: 81, updated: true });
       state.nativeStormActivityKey = payload.key;
+      trace.phase = "native-update";
+      if (!options.quiet) updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit update.", { ...trace, payload });
       result = await liveActivityRequestWithTimeout(bridge.update(payload), action);
     } else if (action === "end") {
+      trace.phase = "native-end";
+      if (!options.quiet) updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit end.", trace);
       result = await liveActivityRequestWithTimeout(bridge.end({
         status: "Sample ended",
         detail: "Nearcast ended the sample storm activity.",
@@ -8070,6 +8113,8 @@ async function runNativeStormActivityLabAction(action, options = {}) {
       }), action);
       state.nativeStormActivityKey = "";
     } else {
+      trace.phase = "native-status";
+      if (!options.quiet) updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit status.", trace);
       result = await liveActivityRequestWithTimeout(bridge.status(), action);
     }
 
