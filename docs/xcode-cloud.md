@@ -75,3 +75,41 @@ xcodebuild \
 
 If local export fails with `No Accounts` or `No signing certificate "iOS Distribution" found`, use Xcode Cloud rather than debugging local signing unless local export itself is required.
 
+## Local API trigger
+
+The App Store Connect API can trigger the Xcode Cloud workflow without relying on a local distribution certificate.
+
+Keep the private key outside git. The repo ignores `AppStoreConnect/`, so this local path is safe for development:
+
+```sh
+AppStoreConnect/AuthKey_8LM389Z6NR.p8
+```
+
+List configured products and workflows:
+
+```sh
+node scripts/xcode-cloud.mjs list \
+  --key-id=8LM389Z6NR \
+  --issuer-id=00459337-a0be-4634-9c5c-96ea253447e9 \
+  --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
+```
+
+Trigger the default workflow:
+
+```sh
+node scripts/xcode-cloud.mjs trigger \
+  --workflow-name=Default \
+  --key-id=8LM389Z6NR \
+  --issuer-id=00459337-a0be-4634-9c5c-96ea253447e9 \
+  --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
+```
+
+Poll a build run:
+
+```sh
+node scripts/xcode-cloud.mjs status \
+  --build-id=<build-run-id> \
+  --key-id=8LM389Z6NR \
+  --issuer-id=00459337-a0be-4634-9c5c-96ea253447e9 \
+  --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
+```

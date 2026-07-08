@@ -4,6 +4,7 @@ node_modules/
 .claude/
 .local-design/
 APNAuthKey/
+AppStoreConnect/
 radar/mrms/live/
 radar/mrms/packs/
 native/ios/DerivedData/
