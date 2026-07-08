@@ -625,11 +625,12 @@ struct MiniPill: View {
     var body: some View {
         Text(text)
             .font(.system(size: 11, weight: .heavy, design: .rounded))
-            .foregroundStyle((tone ?? palette.primary).opacity(0.90))
+            .foregroundStyle(palette.primary.opacity(0.92))
             .lineLimit(1)
             .minimumScaleFactor(0.66)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
+            .background((tone ?? palette.primary).opacity(tone == nil ? 0.0 : 0.12), in: Capsule())
             .background(palette.surfaceStrong, in: Capsule())
     }
 }
@@ -1002,6 +1003,9 @@ private func compactSignalValue(_ value: String) -> String {
     }
     if lower.hasPrefix("dry ") {
         text = text.replacingOccurrences(of: "Dry next", with: "Dry", options: .caseInsensitive)
+    }
+    if lower.contains("rain near") || lower.contains("rain nearby") {
+        return "Rain nearby"
     }
     if lower.hasPrefix("low ") && lower.contains(" overnight") {
         return text.replacingOccurrences(of: " overnight", with: "", options: .caseInsensitive)
