@@ -68,7 +68,7 @@ node scripts/xcode-cloud.mjs builds \
   --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
 ```
 
-Nearcast avoids this by stamping a CI-only timestamp build number in `ci_scripts/ci_pre_xcodebuild.sh` when `CI_XCODE_CLOUD=TRUE`.
+Nearcast avoids this by stamping a CI-only timestamp build number from `ci_scripts/ci_post_clone.sh`, before Xcode Cloud prepares App Store Connect archive metadata.
 
 The local project can keep a human-sized build number, but Xcode Cloud archives get a UTC timestamp such as:
 
@@ -83,7 +83,7 @@ To test the stamping locally without Xcode Cloud:
 ```sh
 NEARCAST_FORCE_CI_BUILD_NUMBER=1 \
 NEARCAST_CI_BUILD_NUMBER=202607080507 \
-ci_scripts/ci_pre_xcodebuild.sh
+ci_scripts/nearcast_stamp_build_number.sh
 ```
 
 That command mutates `native/ios/Nearcast.xcodeproj/project.pbxproj`, so only run it locally when you intend to inspect or discard the generated build-number change.
@@ -92,8 +92,9 @@ That command mutates `native/ios/Nearcast.xcodeproj/project.pbxproj`, so only ru
 
 Xcode Cloud reads scripts from the repository-level `ci_scripts` directory.
 
-- `ci_post_clone.sh` prints build environment details.
+- `ci_post_clone.sh` prints build environment details and stamps a CI-only build number before archive preparation.
 - `ci_pre_xcodebuild.sh` validates the app and widget plist files before the archive step.
+- `nearcast_stamp_build_number.sh` owns the timestamp build-number workaround.
 
 Keep these scripts intentionally boring. They should catch native packaging mistakes without depending on optional tools like Node or npm in Apple's build environment.
 
