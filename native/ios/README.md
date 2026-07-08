@@ -78,7 +78,9 @@ So the intended workflow is:
 2. Open the TestFlight app and pull-to-refresh/relaunch.
 3. Create a new TestFlight build only when the Swift shell or native capabilities change.
 
-When making a TestFlight build from Xcode:
+Preferred path: use Xcode Cloud for signed TestFlight builds. It avoids local distribution certificate and App Store Connect account drift. See `docs/xcode-cloud.md`.
+
+Manual local fallback from Xcode:
 
 1. Open `native/ios/Nearcast.xcodeproj`.
 2. Select the `Nearcast` scheme and a generic iOS device destination.
