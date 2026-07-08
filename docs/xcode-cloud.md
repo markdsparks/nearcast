@@ -49,6 +49,27 @@ Run Xcode Cloud when a commit changes any of:
 
 Do not run Xcode Cloud for ordinary CSS/layout/web-only iterations unless they need a fresh native shell.
 
+## Build numbers
+
+App Store Connect requires each uploaded build number to be higher than any previously uploaded build for the same app version.
+
+Xcode Cloud can use its own next-build-number counter. If a cloud archive fails with:
+
+```text
+The bundle version must be higher than the previously uploaded version.
+```
+
+open the workflow in Xcode Cloud and set the next build number above the latest uploaded TestFlight build. For Nearcast, the API helper can show recent uploads:
+
+```sh
+node scripts/xcode-cloud.mjs builds \
+  --key-id=8LM389Z6NR \
+  --issuer-id=00459337-a0be-4634-9c5c-96ea253447e9 \
+  --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
+```
+
+As of the first Xcode Cloud setup, the latest uploaded build was `26`, so the workflow next build number should be at least `31` to give us room above the local app setting and failed cloud attempts.
+
 ## Pre-build scripts
 
 Xcode Cloud reads scripts from the repository-level `ci_scripts` directory.

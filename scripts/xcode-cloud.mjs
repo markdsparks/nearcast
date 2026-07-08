@@ -22,6 +22,8 @@ function usage() {
   node scripts/xcode-cloud.mjs status --build-id=ID --key-id=KEY --issuer-id=ISSUER --key-file=PATH
   node scripts/xcode-cloud.mjs actions --build-id=ID --key-id=KEY --issuer-id=ISSUER --key-file=PATH
   node scripts/xcode-cloud.mjs issues --action-id=ID --key-id=KEY --issuer-id=ISSUER --key-file=PATH
+  node scripts/xcode-cloud.mjs builds --key-id=KEY --issuer-id=ISSUER --key-file=PATH
+  node scripts/xcode-cloud.mjs workflow --workflow-name=Default --key-id=KEY --issuer-id=ISSUER --key-file=PATH
 
 Environment fallbacks:
   ASC_KEY_ID
@@ -208,12 +210,33 @@ async function main() {
   }
 
   const app = await findNearcastApp(client, bundleId);
+
+  if (command === "builds") {
+    const builds = await apiRequest(client, `/builds?filter[app]=${encodeURIComponent(app.id)}&sort=-uploadedDate&limit=10`);
+    for (const build of builds.data || []) {
+      const attrs = build.attributes || {};
+      console.log(`- version=${attrs.version || ""} uploaded=${attrs.uploadedDate || ""} processing=${attrs.processingState || ""} id=${build.id}`);
+    }
+    return;
+  }
+
   const products = await listProducts(client, app.id);
   const product = products[0];
   const workflows = await listWorkflows(client, product?.id);
 
   if (command === "list") {
     printWorkflowSummary(app, products, workflows);
+    return;
+  }
+
+  if (command === "workflow") {
+    const requestedName = args["workflow-name"] || process.env.ASC_WORKFLOW_NAME || "Default";
+    const workflow = workflows.find((item) => workflowName(item) === requestedName)
+      || workflows.find((item) => workflowName(item)?.toLowerCase().includes(requestedName.toLowerCase()))
+      || workflows[0];
+    if (!workflow) throw new Error("No Xcode Cloud workflow found");
+    const full = await apiRequest(client, `/ciWorkflows/${encodeURIComponent(workflow.id)}`);
+    console.log(JSON.stringify(full.data, null, 2));
     return;
   }
 
