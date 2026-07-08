@@ -7690,6 +7690,12 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const item = (index, fallbackLabel, fallbackValue) => items[index] || { label: fallbackLabel, value: fallbackValue };
     const high = data.daily?.temperature_2m_max?.[todayIndex];
     const low = data.daily?.temperature_2m_min?.[todayIndex];
+    const sunriseAt = data.daily?.sunrise?.[todayIndex]
+      ? parseForecastTimestamp(data.daily.sunrise[todayIndex], data)
+      : null;
+    const sunsetAt = data.daily?.sunset?.[todayIndex]
+      ? parseForecastTimestamp(data.daily.sunset[todayIndex], data)
+      : null;
     const windDirection = normalizeWindDegrees(current.wind_direction_10m);
     const windCue = windDirectionCue(current.wind_direction_10m);
     const widgetPlan = nativeWidgetPlanSummary(data, place);
@@ -7720,7 +7726,9 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       planLabel: widgetPlan?.label || null,
       planDetail: widgetPlan?.detail || null,
       planPlace: widgetPlan?.place || null,
-      planTone: widgetPlan?.tone || null
+      planTone: widgetPlan?.tone || null,
+      sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
+      sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null
     };
     window.NearcastNative.postMessage({
       type: "widget.snapshot",

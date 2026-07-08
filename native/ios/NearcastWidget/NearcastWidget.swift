@@ -36,6 +36,8 @@ struct NearcastWidgetSnapshot: Codable {
     var planDetail: String?
     var planPlace: String?
     var planTone: String?
+    var sunriseAt: TimeInterval?
+    var sunsetAt: TimeInterval?
 }
 
 struct NearcastWidgetPlace: Codable {
@@ -72,7 +74,9 @@ extension NearcastWidgetSnapshot {
         planLabel: nil,
         planDetail: nil,
         planPlace: nil,
-        planTone: nil
+        planTone: nil,
+        sunriseAt: nil,
+        sunsetAt: nil
     )
 
     static func current() -> NearcastWidgetSnapshot {
@@ -198,6 +202,8 @@ enum NearcastWidgetForecastClient {
         let isDay = current.isDay.map { $0 == 1 } ?? fallback.isDay
         let conditionCode = current.weatherCode ?? fallback.conditionCode
         let nextRainChance = nextTwoHourRainChance(hourly: forecast.hourly, currentIndex: currentIndex)
+        let sunriseAt = forecast.daily?.sunrise?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunriseAt
+        let sunsetAt = forecast.daily?.sunset?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunsetAt
 
         return NearcastWidgetSnapshot(
             version: max(fallback.version, 2),
@@ -226,7 +232,9 @@ enum NearcastWidgetForecastClient {
             planLabel: fallback.planLabel,
             planDetail: fallback.planDetail,
             planPlace: fallback.planPlace,
-            planTone: fallback.planTone
+            planTone: fallback.planTone,
+            sunriseAt: sunriseAt,
+            sunsetAt: sunsetAt
         )
     }
 
@@ -278,6 +286,16 @@ enum NearcastWidgetForecastClient {
         let minute = pieces[1]
         let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
         return minute == 0 ? "\(hour12)" : "\(hour12):\(String(format: "%02d", minute))"
+    }
+
+    private static func forecastDate(_ value: String, timezone: String?) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        if let timezone, let zone = TimeZone(identifier: timezone) {
+            formatter.timeZone = zone
+        }
+        return formatter.date(from: value)
     }
 
     private static func conditionLabel(code: Int, isDay: Bool) -> String {
@@ -374,6 +392,7 @@ struct WidgetForecastResponse: Decodable {
     let current: Current
     let hourly: Hourly?
     let daily: Daily?
+    let timezone: String?
 }
 
 private extension Array {
@@ -931,8 +950,9 @@ struct NearcastWidgetBackdrop: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
+        let solarMoment = widgetSolarMoment(snapshot)
         LinearGradient(
-            colors: backdropColors(snapshot),
+            colors: backdropColors(snapshot, solarMoment: solarMoment),
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -945,13 +965,18 @@ struct NearcastWidgetBackdrop: View {
                 endRadius: 190
             )
         }
+        .overlay {
+            if solarMoment != .none {
+                SolarGlow(moment: solarMoment, isDay: snapshot.isDay)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if snapshot.isDay {
                 Circle()
-                    .fill(.white.opacity(0.28))
-                    .blur(radius: 16)
-                    .frame(width: 96, height: 96)
-                    .offset(x: 24, y: -28)
+                    .fill(solarMoment == .none ? .white.opacity(0.28) : Color(red: 1.0, green: 0.76, blue: 0.34).opacity(0.30))
+                    .blur(radius: solarMoment == .none ? 16 : 18)
+                    .frame(width: solarMoment == .none ? 96 : 116, height: solarMoment == .none ? 96 : 116)
+                    .offset(x: solarMoment == .none ? 24 : 18, y: solarMoment == .none ? -28 : -34)
             } else {
                 ZStack {
                     Circle().fill(.white.opacity(0.62)).frame(width: 54, height: 54)
@@ -968,6 +993,42 @@ struct NearcastWidgetBackdrop: View {
                 endPoint: .bottom
             )
         }
+    }
+}
+
+enum WidgetSolarMoment {
+    case none
+    case sunrise
+    case sunset
+}
+
+struct SolarGlow: View {
+    let moment: WidgetSolarMoment
+    let isDay: Bool
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 1.0, green: 0.58, blue: 0.28).opacity(isDay ? 0.34 : 0.22),
+                    Color(red: 1.0, green: 0.82, blue: 0.54).opacity(isDay ? 0.22 : 0.14),
+                    .clear
+                ],
+                startPoint: moment == .sunrise ? .bottomLeading : .topLeading,
+                endPoint: .topTrailing
+            )
+            RadialGradient(
+                colors: [
+                    Color(red: 1.0, green: 0.72, blue: 0.30).opacity(isDay ? 0.44 : 0.30),
+                    Color(red: 1.0, green: 0.47, blue: 0.28).opacity(isDay ? 0.20 : 0.14),
+                    .clear
+                ],
+                center: moment == .sunrise ? .topLeading : .bottomTrailing,
+                startRadius: 8,
+                endRadius: 220
+            )
+        }
+        .blendMode(isDay ? .softLight : .screen)
     }
 }
 
@@ -1156,15 +1217,39 @@ private func signalColor(_ value: String) -> Color {
     return .primary
 }
 
-private func backdropColors(_ snapshot: NearcastWidgetSnapshot) -> [Color] {
+private func widgetSolarMoment(_ snapshot: NearcastWidgetSnapshot, now: Date = Date()) -> WidgetSolarMoment {
+    let nowTime = now.timeIntervalSince1970
+    let window: TimeInterval = 90 * 60
+    if let sunriseAt = snapshot.sunriseAt, abs(nowTime - sunriseAt) <= window {
+        return .sunrise
+    }
+    if let sunsetAt = snapshot.sunsetAt, abs(nowTime - sunsetAt) <= window {
+        return .sunset
+    }
+    return .none
+}
+
+private func backdropColors(_ snapshot: NearcastWidgetSnapshot, solarMoment: WidgetSolarMoment = .none) -> [Color] {
     let code = snapshot.conditionCode
     let stormy = code >= 95
     let wet = (51...82).contains(code)
     let snowy = (71...86).contains(code)
     let hot = snapshot.feelsLike >= 95
     if !snapshot.isDay {
+        if solarMoment == .sunrise {
+            return [Color(red: 0.13, green: 0.12, blue: 0.22), Color(red: 0.55, green: 0.36, blue: 0.35), Color(red: 0.04, green: 0.07, blue: 0.13)]
+        }
+        if solarMoment == .sunset {
+            return [Color(red: 0.08, green: 0.08, blue: 0.16), Color(red: 0.42, green: 0.24, blue: 0.29), Color(red: 0.02, green: 0.04, blue: 0.09)]
+        }
         if wet || stormy { return [Color(red: 0.06, green: 0.10, blue: 0.18), Color(red: 0.15, green: 0.22, blue: 0.36), Color(red: 0.03, green: 0.05, blue: 0.10)] }
         return [Color(red: 0.03, green: 0.06, blue: 0.13), Color(red: 0.10, green: 0.15, blue: 0.27), Color(red: 0.02, green: 0.03, blue: 0.08)]
+    }
+    if solarMoment == .sunrise {
+        return [Color(red: 1.0, green: 0.78, blue: 0.54), Color(red: 0.74, green: 0.88, blue: 0.98), Color(red: 1.0, green: 0.91, blue: 0.58)]
+    }
+    if solarMoment == .sunset {
+        return [Color(red: 1.0, green: 0.67, blue: 0.45), Color(red: 0.76, green: 0.80, blue: 0.92), Color(red: 1.0, green: 0.84, blue: 0.52)]
     }
     if stormy { return [Color(red: 0.74, green: 0.80, blue: 0.90), Color(red: 0.42, green: 0.53, blue: 0.68), Color(red: 0.95, green: 0.78, blue: 0.38)] }
     if wet { return [Color(red: 0.75, green: 0.88, blue: 0.96), Color(red: 0.54, green: 0.71, blue: 0.86), Color(red: 0.28, green: 0.48, blue: 0.68)] }
