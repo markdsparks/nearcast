@@ -106,6 +106,19 @@ xcodebuild \
 
 If this fails with local account or signing errors, fix signing in Xcode first. The Organizer upload path should use the same local Apple account and managed signing setup.
 
+To upload a successful archive directly to App Store Connect/TestFlight:
+
+```sh
+xcodebuild \
+  -exportArchive \
+  -archivePath native/ios/build/Nearcast.xcarchive \
+  -exportPath native/ios/build/upload-testflight \
+  -exportOptionsPlist native/ios/ExportOptions-TestFlightUpload.plist \
+  -allowProvisioningUpdates
+```
+
+This uses the local Xcode account for signing and upload. The command finishes when App Store Connect accepts the package and starts processing it.
+
 ## Build verification
 
 ```sh
