@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.216">
+    <link rel="stylesheet" href="styles.css?v=3.0.217">
     <link rel="manifest" href="manifest.json?v=3.0.213">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -160,7 +160,7 @@
               <strong id="nativeLiveActivityLabel">Live Activity test</strong>
               <span id="nativeLiveActivityMeta">Native app only</span>
             </div>
-            <button class="menu-action" id="nativeLiveActivityToggle" type="button" aria-pressed="false">Start sample</button>
+            <button class="menu-action" id="nativeLiveActivityOpen" type="button">Open lab</button>
           </div>
         </div>
       </section>
@@ -751,9 +751,50 @@
       </div>
     </aside>
 
+    <div class="sheet-backdrop live-activity-backdrop" id="liveActivityBackdrop" hidden></div>
+    <aside class="day-sheet storm-view-sheet live-activity-sheet" id="liveActivitySheet" hidden aria-label="Live Activity Lab" role="dialog" aria-modal="true">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="sheet-close" id="liveActivityClose" type="button" aria-label="Close Live Activity Lab">✕</button>
+      <header class="storm-view-head">
+        <span class="storm-view-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M6 15.8c1.4-3.5 4.3-5.4 7.9-5.4 2.4 0 4.2.7 5.4 1.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="m12.6 4.2-2.7 5.3h2.8l-2.1 5.6 5.6-7.2h-2.9l1.9-3.7h-2.6Z" fill="currentColor"/>
+            <path d="M5.5 19h13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".62"/>
+          </svg>
+        </span>
+        <div>
+          <p class="storm-view-kicker">Native test surface</p>
+          <h2>Live Activity Lab</h2>
+          <p id="liveActivitySummary">Start a sample storm card, update it, then end it from one place.</p>
+        </div>
+      </header>
+      <div class="storm-view-features live-activity-facts">
+        <section>
+          <strong>What this tests</strong>
+          <span>ActivityKit request, Dynamic Island / Lock Screen rendering, update, end, and deep link wiring.</span>
+        </section>
+        <section>
+          <strong>Expected result</strong>
+          <span>After Start, lock the phone or swipe home. You should see a Storm Watch card for the active place.</span>
+        </section>
+      </div>
+      <div class="live-activity-status" id="liveActivityStatus" role="status" aria-live="polite">
+        <strong>Not checked yet</strong>
+        <span>Open this in the native iPhone app.</span>
+      </div>
+      <pre class="live-activity-result" id="liveActivityResult" hidden></pre>
+      <div class="storm-view-actions live-activity-actions">
+        <button class="storm-view-primary" id="liveActivityStart" type="button">Start sample</button>
+        <button class="storm-view-secondary" id="liveActivityUpdate" type="button">Update</button>
+        <button class="storm-view-secondary" id="liveActivityStatusButton" type="button">Status</button>
+        <button class="storm-view-secondary" id="liveActivityEnd" type="button">End</button>
+      </div>
+    </aside>
+
     <script src="weather-truth.js?v=3.0.213"></script>
     <script src="planner.js?v=3.0.213"></script>
-    <script src="app.js?v=3.0.216"></script>
+    <script src="app.js?v=3.0.217"></script>
     <script src="map.js?v=3.0.213"></script>
     <script src="sky.js?v=3.0.213"></script>
     <script src="daygraph.js?v=3.0.213"></script>

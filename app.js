@@ -121,6 +121,10 @@ function debugSettingsEnabled() {
   ));
 }
 
+function isNativeIOSApp() {
+  return isNativeNearcastApp();
+}
+
 const DEBUG_SETTINGS_ENABLED = debugSettingsEnabled();
 
 const perfQueryFlag = queryValue("perf");
@@ -240,6 +244,8 @@ const xweatherStormQueryFlag = queryValue("xweatherStorm", "xweatherstorm", "sto
 if (DEBUG_SETTINGS_ENABLED && xweatherStormQueryFlag !== null) {
   localStorage.setItem(XWEATHER_STORM_MODE_KEY, sanitizeXweatherStormMode(xweatherStormQueryFlag));
 }
+
+const nativeLiveActivityTestQueryFlag = queryValue("liveActivityTest", "liveactivitytest", "activityTest", "activitytest");
 
 const xweatherClientIdQueryFlag = queryValue("xweatherClientId", "xweatherclientid", "xweatherId", "xweatherid");
 if (DEBUG_SETTINGS_ENABLED && xweatherClientIdQueryFlag !== null) {
@@ -807,8 +813,17 @@ const els = {
   xweatherStormMode: document.querySelector("#xweatherStormMode"),
   xweatherStormMeta: document.querySelector("#xweatherStormMeta"),
   nativeLiveActivitySetting: document.querySelector("#nativeLiveActivitySetting"),
-  nativeLiveActivityToggle: document.querySelector("#nativeLiveActivityToggle"),
+  nativeLiveActivityOpen: document.querySelector("#nativeLiveActivityOpen"),
   nativeLiveActivityMeta: document.querySelector("#nativeLiveActivityMeta"),
+  liveActivityBackdrop: document.querySelector("#liveActivityBackdrop"),
+  liveActivitySheet: document.querySelector("#liveActivitySheet"),
+  liveActivityClose: document.querySelector("#liveActivityClose"),
+  liveActivityStatus: document.querySelector("#liveActivityStatus"),
+  liveActivityResult: document.querySelector("#liveActivityResult"),
+  liveActivityStart: document.querySelector("#liveActivityStart"),
+  liveActivityUpdate: document.querySelector("#liveActivityUpdate"),
+  liveActivityStatusButton: document.querySelector("#liveActivityStatusButton"),
+  liveActivityEnd: document.querySelector("#liveActivityEnd"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2746,6 +2761,7 @@ function init() {
   initInstallPrompt();
   initMetricTipListeners();
   initDaylightScrubListeners();
+  scheduleNativeLiveActivityQueryTest();
   detectAI();
 
   // Returning users open straight to their weather (last viewed → first saved).
@@ -3219,7 +3235,13 @@ function bindEvents() {
   if (els.xweatherStormMode) {
     els.xweatherStormMode.addEventListener("change", () => setXweatherStormMode(els.xweatherStormMode.value));
   }
-  bindTapAction(els.nativeLiveActivityToggle, toggleNativeStormActivitySample);
+  bindTapAction(els.nativeLiveActivityOpen, openLiveActivityLab);
+  bindTapAction(els.liveActivityBackdrop, closeLiveActivityLab);
+  bindTapAction(els.liveActivityClose, closeLiveActivityLab);
+  bindTapAction(els.liveActivityStart, () => runNativeStormActivityLabAction("start"));
+  bindTapAction(els.liveActivityUpdate, () => runNativeStormActivityLabAction("update"));
+  bindTapAction(els.liveActivityStatusButton, () => runNativeStormActivityLabAction("status"));
+  bindTapAction(els.liveActivityEnd, () => runNativeStormActivityLabAction("end"));
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
@@ -7900,16 +7922,19 @@ function nativeStormActivityDebugPlaceName() {
   return placeCityLabel(state.activePlace) || cityNameFromLabel(placeLabel(state.activePlace)) || "Maryville";
 }
 
-function nativeStormActivityDebugPayload() {
+function nativeStormActivityDebugPayload(options = {}) {
   const city = nativeStormActivityDebugPlaceName();
   const now = Date.now();
+  const etaMinutes = Number.isFinite(Number(options.etaMinutes)) ? Math.max(0, Math.round(Number(options.etaMinutes))) : 18;
+  const chance = Number.isFinite(Number(options.chance)) ? Math.max(0, Math.min(100, Math.round(Number(options.chance)))) : 72;
+  const detailVerb = options.updated ? "Updated sample:" : "Thunder possible";
   return {
     key: `debug-live-activity:${city}:${Math.floor(now / 60000)}`,
     placeName: placeLabel(state.activePlace) || city,
     stormName: "Storm Watch",
-    etaMinutes: 18,
+    etaMinutes,
     status: `Storm Watch near ${city}`,
-    detail: "Thunder possible in about 18 min. Rain chance 72%.",
+    detail: `${detailVerb} in about ${etaMinutes} min. Rain chance ${chance}%.`,
     confidence: "Sample",
     url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
   };
@@ -7919,7 +7944,7 @@ function updateNativeStormActivityDebugControl() {
   if (els.nativeLiveActivitySetting) {
     els.nativeLiveActivitySetting.hidden = !isNativeNearcastApp();
   }
-  const button = els.nativeLiveActivityToggle;
+  const button = els.nativeLiveActivityOpen;
   const meta = els.nativeLiveActivityMeta;
   if (!button && !meta) return;
 
@@ -7928,12 +7953,7 @@ function updateNativeStormActivityDebugControl() {
   const debug = state.nativeStormActivityDebug || {};
   if (button) {
     button.disabled = debug.pending || !supported;
-    button.setAttribute("aria-pressed", String(Boolean(debug.active)));
-    button.textContent = debug.pending
-      ? "Working..."
-      : debug.active
-        ? "End sample"
-        : "Start sample";
+    button.textContent = debug.pending ? "Working..." : "Open lab";
   }
   if (meta) {
     if (!isNativeNearcastApp()) meta.textContent = "Native app only";
@@ -7943,6 +7963,154 @@ function updateNativeStormActivityDebugControl() {
     else if (debug.reason) meta.textContent = debug.reason;
     else meta.textContent = "Starts a sample storm card";
   }
+}
+
+function openLiveActivityLab() {
+  closeAppMenu();
+  if (!els.liveActivitySheet || !els.liveActivityBackdrop) return;
+  els.liveActivityBackdrop.hidden = false;
+  els.liveActivitySheet.hidden = false;
+  showSheet(els.liveActivityBackdrop, els.liveActivitySheet);
+  document.body.style.overflow = "hidden";
+  updateLiveActivityLabStatus("Checking native bridge...", "Requesting ActivityKit status from the native wrapper.");
+  runNativeStormActivityLabAction("status", { quiet: true });
+}
+
+function closeLiveActivityLab() {
+  if (!els.liveActivitySheet || !els.liveActivityBackdrop || els.liveActivitySheet.hidden) return;
+  els.liveActivityBackdrop.classList.remove("show");
+  els.liveActivitySheet.classList.remove("show");
+  document.body.style.overflow = mapState.immersive ? "hidden" : "";
+  setTimeout(() => {
+    els.liveActivityBackdrop.hidden = true;
+    els.liveActivitySheet.hidden = true;
+  }, 260);
+}
+
+function setLiveActivityLabBusy(isBusy) {
+  [
+    els.liveActivityStart,
+    els.liveActivityUpdate,
+    els.liveActivityStatusButton,
+    els.liveActivityEnd
+  ].forEach((button) => {
+    if (!button) return;
+    button.disabled = Boolean(isBusy);
+  });
+  if (els.nativeLiveActivityOpen) els.nativeLiveActivityOpen.disabled = Boolean(isBusy) || !nativeStormActivityBridge()?.supported;
+}
+
+function updateLiveActivityLabStatus(title, body, result = null) {
+  if (els.liveActivityStatus) {
+    els.liveActivityStatus.innerHTML = `
+      <strong>${escapeHtml(title || "Live Activity Lab")}</strong>
+      <span>${escapeHtml(body || "")}</span>
+    `;
+  }
+  if (els.liveActivityResult) {
+    const hasResult = result !== null && result !== undefined;
+    els.liveActivityResult.hidden = !hasResult;
+    els.liveActivityResult.textContent = hasResult
+      ? JSON.stringify(result, null, 2)
+      : "";
+  }
+}
+
+async function runNativeStormActivityLabAction(action, options = {}) {
+  const bridge = nativeStormActivityBridge();
+  if (!bridge?.supported) {
+    const reason = isNativeNearcastApp() ? "Native bridge not ready yet." : "Open this in the native iPhone app.";
+    state.nativeStormActivityDebug.reason = reason;
+    updateNativeStormActivityDebugControl();
+    updateLiveActivityLabStatus("Live Activities unavailable", reason, { ok: false, action, reason });
+    if (!options.quiet) setStatus(`Live Activity: ${reason}`, true);
+    return null;
+  }
+
+  state.nativeStormActivityDebug.pending = true;
+  setLiveActivityLabBusy(true);
+  updateNativeStormActivityDebugControl();
+  if (!options.quiet) updateLiveActivityLabStatus("Working...", `Running ${action}.`);
+
+  let result = null;
+  try {
+    if (action === "start") {
+      const payload = nativeStormActivityDebugPayload({ etaMinutes: 18, chance: 72 });
+      state.nativeStormActivityKey = payload.key;
+      result = await bridge.start(payload);
+    } else if (action === "update") {
+      const payload = nativeStormActivityDebugPayload({ etaMinutes: 9, chance: 81, updated: true });
+      state.nativeStormActivityKey = payload.key;
+      result = await bridge.update(payload);
+    } else if (action === "end") {
+      result = await bridge.end({
+        status: "Sample ended",
+        detail: "Nearcast ended the sample storm activity.",
+        confidence: "Ended"
+      });
+      state.nativeStormActivityKey = "";
+    } else {
+      result = await bridge.status();
+    }
+
+    const ok = result?.ok !== false && result?.state !== "timeout";
+    const stateText = String(result?.state || (ok ? "ok" : "failed"));
+    state.nativeStormActivityDebug.active = ["started", "updated", "active"].includes(stateText);
+    if (action === "end") state.nativeStormActivityDebug.active = false;
+    state.nativeStormActivityDebug.state = stateText;
+    state.nativeStormActivityDebug.reason = ok ? "" : String(result?.reason || stateText);
+    updateLiveActivityLabStatus(
+      ok ? `Live Activity ${stateText}` : "Live Activity failed",
+      liveActivityLabResultText(action, result),
+      result
+    );
+    if (!options.quiet) setStatus(ok ? `Live Activity ${stateText}.` : `Live Activity: ${state.nativeStormActivityDebug.reason}`, !ok);
+    return result;
+  } catch (error) {
+    state.nativeStormActivityDebug.active = false;
+    state.nativeStormActivityDebug.state = "failed";
+    state.nativeStormActivityDebug.reason = error?.message || "Unknown error";
+    updateLiveActivityLabStatus("Live Activity failed", state.nativeStormActivityDebug.reason, {
+      ok: false,
+      action,
+      reason: state.nativeStormActivityDebug.reason
+    });
+    if (!options.quiet) setStatus(`Live Activity: ${state.nativeStormActivityDebug.reason}`, true);
+    return null;
+  } finally {
+    state.nativeStormActivityDebug.pending = false;
+    setLiveActivityLabBusy(false);
+    updateNativeStormActivityDebugControl();
+  }
+}
+
+function liveActivityLabResultText(action, result = {}) {
+  if (result?.ok === false || result?.state === "timeout") {
+    return result?.reason || result?.state || `${action} failed.`;
+  }
+  if (action === "start") return "Now lock the phone or swipe home. The sample should appear on the Lock Screen or Dynamic Island.";
+  if (action === "update") return "The existing sample should tighten its ETA and refresh the detail text.";
+  if (action === "end") return "The sample should dismiss shortly.";
+  if (result?.state === "active") return "A Live Activity is active.";
+  if (result?.state === "none") return "No Live Activity is currently active.";
+  return `Native bridge returned ${result?.state || "ok"}.`;
+}
+
+function scheduleNativeLiveActivityQueryTest() {
+  const action = String(nativeLiveActivityTestQueryFlag || "").trim().toLowerCase();
+  if (!action || ["0", "false", "off", "none"].includes(action)) return;
+  const resolvedAction = ["update", "end", "status"].includes(action) ? action : "start";
+  let attempts = 0;
+  const run = () => {
+    attempts += 1;
+    if (!nativeStormActivityBridge()?.supported && attempts < 8) {
+      setTimeout(run, 350);
+      return;
+    }
+    openLiveActivityLab();
+    runNativeStormActivityLabAction(resolvedAction);
+  };
+  setTimeout(run, 650);
 }
 
 async function toggleNativeStormActivitySample() {

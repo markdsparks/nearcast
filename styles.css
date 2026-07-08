@@ -9776,6 +9776,55 @@ body.map-immersive-active .day-sheet.show {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.live-activity-status {
+  display: grid;
+  gap: 4px;
+  margin-top: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--border-glass-md);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+:root[data-theme="dark"] .live-activity-status {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.live-activity-status strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.live-activity-status span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.live-activity-result {
+  overflow: auto;
+  max-height: 150px;
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(8, 14, 22, 0.88);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.live-activity-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.live-activity-actions button {
+  min-width: 0;
+}
+
 .install-card {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto 30px;
