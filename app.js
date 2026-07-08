@@ -3238,10 +3238,7 @@ function bindEvents() {
   bindTapAction(els.nativeLiveActivityOpen, openLiveActivityLab);
   bindTapAction(els.liveActivityBackdrop, closeLiveActivityLab);
   bindTapAction(els.liveActivityClose, closeLiveActivityLab);
-  bindTapAction(els.liveActivityStart, () => runNativeStormActivityLabAction("start"));
-  bindTapAction(els.liveActivityUpdate, () => runNativeStormActivityLabAction("update"));
-  bindTapAction(els.liveActivityStatusButton, () => runNativeStormActivityLabAction("status"));
-  bindTapAction(els.liveActivityEnd, () => runNativeStormActivityLabAction("end"));
+  bindLiveActivityLabActions();
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
@@ -8010,6 +8007,19 @@ function setLiveActivityLabBusy(isBusy) {
   if (els.nativeLiveActivityOpen) els.nativeLiveActivityOpen.disabled = Boolean(isBusy) || !nativeStormActivityBridge()?.supported;
 }
 
+function bindLiveActivityLabActions() {
+  if (!els.liveActivitySheet || els.liveActivitySheet._liveActivityActionsBound) return;
+  els.liveActivitySheet._liveActivityActionsBound = true;
+  els.liveActivitySheet.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-live-activity-action]");
+    if (!button || !els.liveActivitySheet.contains(button) || button.disabled) return;
+    event.preventDefault();
+    const action = button.dataset.liveActivityAction || "status";
+    updateLiveActivityLabStatus("Tap received", `Starting ${action} test...`, { action, tapped: true });
+    runNativeStormActivityLabAction(action);
+  });
+}
+
 function updateLiveActivityLabStatus(title, body, result = null) {
   if (els.liveActivityStatus) {
     els.liveActivityStatus.innerHTML = `
@@ -8040,7 +8050,7 @@ async function runNativeStormActivityLabAction(action, options = {}) {
   state.nativeStormActivityDebug.pending = true;
   setLiveActivityLabBusy(true);
   updateNativeStormActivityDebugControl();
-  if (!options.quiet) updateLiveActivityLabStatus("Working...", `Running ${action}.`);
+  if (!options.quiet) updateLiveActivityLabStatus("Working...", `Running ${action}.`, { action, bridge: "ready" });
 
   let result = null;
   try {
