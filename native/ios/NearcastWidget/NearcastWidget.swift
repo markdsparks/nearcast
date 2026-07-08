@@ -481,48 +481,262 @@ struct NearcastStormActivityLockView: View {
     let context: ActivityViewContext<NearcastStormActivityAttributes>
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "cloud.bolt.rain.fill")
-                .font(.system(size: 22, weight: .black))
-                .foregroundStyle(.yellow)
-                .frame(width: 38, height: 38)
-                .background(.white.opacity(0.12), in: Circle())
+        ZStack {
+            StormActivityBackdrop()
+            StormActivityPathVisual()
+                .padding(.horizontal, 10)
+                .padding(.top, 40)
+                .padding(.bottom, 36)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(context.state.status)
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(context.state.detail)
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.76))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                Text(context.attributes.placeName)
-                    .font(.system(size: 10, weight: .black, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.58))
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("StormScope")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .tracking(1.5)
+                            .textCase(.uppercase)
+                            .foregroundStyle(.cyan.opacity(0.82))
+                            .lineLimit(1)
+                        Text(lockTitle)
+                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.72)
+                        Text(lockDetail)
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.72)
+                    }
+
+                    Spacer(minLength: 10)
+
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(context.state.etaMinutes)")
+                            .font(.system(size: 44, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.70)
+                        Text("min")
+                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+                        Text(context.state.confidence)
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(confidenceColor)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                }
+
+                Spacer(minLength: 22)
+
+                HStack(spacing: 7) {
+                    StormFactPill(label: "Confidence", value: context.state.confidence, tone: confidenceColor)
+                    StormFactPill(label: middleFactLabel, value: middleFactValue, tone: .white.opacity(0.92))
+                    StormFactPill(label: "Updated", value: updatedText, tone: .white.opacity(0.92))
+                }
             }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 0) {
-                Text("\(context.state.etaMinutes)")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                Text("min")
-                    .font(.system(size: 11, weight: .black, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
-                Text(context.state.confidence)
-                    .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(.yellow.opacity(0.86))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .frame(minHeight: 164)
+    }
+
+    private var lockTitle: String {
+        let status = context.state.status.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !status.isEmpty { return status }
+        return "Storm tracking toward \(cityName(context.attributes.placeName))"
+    }
+
+    private var lockDetail: String {
+        let detail = context.state.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty { return detail }
+        return "Nearcast is watching this storm path."
+    }
+
+    private var confidenceColor: Color {
+        let confidence = context.state.confidence.lowercased()
+        if confidence.contains("likely") || confidence.contains("sample") { return .yellow }
+        if confidence.contains("possible") || confidence.contains("watch") { return .cyan.opacity(0.88) }
+        return .white.opacity(0.86)
+    }
+
+    private var updatedText: String {
+        let age = max(0, Date().timeIntervalSince(context.state.updatedAt))
+        if age < 90 { return "Just now" }
+        return "\(Int(age / 60))m ago"
+    }
+
+    private var middleFactLabel: String {
+        rainChanceText == nil ? "Place" : "Rain"
+    }
+
+    private var middleFactValue: String {
+        rainChanceText ?? cityName(context.attributes.placeName)
+    }
+
+    private var rainChanceText: String? {
+        let tokens = lockDetail
+            .replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: ".", with: " ")
+            .split(separator: " ")
+        for token in tokens.reversed() where token.contains("%") {
+            let digits = token.filter(\.isNumber)
+            if !digits.isEmpty { return "\(digits)%" }
+        }
+        return nil
+    }
+}
+
+struct StormActivityBackdrop: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.02, green: 0.05, blue: 0.10),
+                Color(red: 0.04, green: 0.10, blue: 0.17),
+                Color(red: 0.02, green: 0.07, blue: 0.10)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(alignment: .topLeading) {
+            Circle()
+                .fill(.cyan.opacity(0.16))
+                .frame(width: 180, height: 180)
+                .blur(radius: 42)
+                .offset(x: -46, y: -68)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(.yellow.opacity(0.10))
+                .frame(width: 150, height: 150)
+                .blur(radius: 46)
+                .offset(x: 50, y: 34)
+        }
+    }
+}
+
+struct StormActivityPathVisual: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+
+            ZStack {
+                StormBlob()
+                    .frame(width: width * 0.54, height: height * 0.64)
+                    .rotationEffect(.degrees(-16))
+                    .offset(x: -width * 0.26, y: height * 0.08)
+
+                StormBlob()
+                    .frame(width: width * 0.34, height: height * 0.42)
+                    .rotationEffect(.degrees(20))
+                    .opacity(0.72)
+                    .offset(x: width * 0.34, y: -height * 0.06)
+
+                StormPathCone()
+                    .fill(.cyan.opacity(0.13))
+                    .overlay {
+                        StormPathCone()
+                            .stroke(.white.opacity(0.55), lineWidth: 2)
+                    }
+                    .frame(width: width * 0.44, height: height * 0.58)
+                    .rotationEffect(.degrees(-9))
+                    .offset(x: -width * 0.02, y: height * 0.10)
+
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 30, weight: .black))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .rotationEffect(.degrees(-13))
+                    .offset(x: -width * 0.09, y: height * 0.14)
+
+                Circle()
+                    .fill(.white)
+                    .frame(width: 15, height: 15)
+                    .shadow(color: .white.opacity(0.5), radius: 8)
+                    .overlay {
+                        Circle()
+                            .stroke(.white.opacity(0.26), lineWidth: 13)
+                    }
+                    .offset(x: width * 0.17, y: height * 0.13)
+            }
+            .frame(width: width, height: height)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+struct StormBlob: View {
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(.green.opacity(0.90))
+                .blur(radius: 5)
+            Capsule()
+                .fill(.green.opacity(0.70))
+                .scaleEffect(x: 0.82, y: 0.74)
+                .offset(x: 8, y: -4)
+                .blur(radius: 7)
+            Capsule()
+                .fill(.yellow.opacity(0.90))
+                .scaleEffect(x: 0.52, y: 0.48)
+                .offset(x: 6, y: -2)
+                .blur(radius: 6)
+            Capsule()
+                .fill(.red.opacity(0.88))
+                .scaleEffect(x: 0.32, y: 0.30)
+                .offset(x: -6, y: 2)
+                .blur(radius: 5)
+        }
+        .shadow(color: .green.opacity(0.22), radius: 18)
+    }
+}
+
+struct StormPathCone: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.06, y: rect.midY))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX * 0.95, y: rect.minY + rect.height * 0.14),
+            control1: CGPoint(x: rect.minX + rect.width * 0.36, y: rect.minY + rect.height * 0.08),
+            control2: CGPoint(x: rect.minX + rect.width * 0.70, y: rect.minY - rect.height * 0.03)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.maxX * 0.92, y: rect.maxY * 0.85),
+            control1: CGPoint(x: rect.maxX + rect.width * 0.10, y: rect.minY + rect.height * 0.40),
+            control2: CGPoint(x: rect.maxX + rect.width * 0.04, y: rect.minY + rect.height * 0.70)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.minX + rect.width * 0.06, y: rect.midY),
+            control1: CGPoint(x: rect.minX + rect.width * 0.66, y: rect.maxY + rect.height * 0.02),
+            control2: CGPoint(x: rect.minX + rect.width * 0.32, y: rect.maxY * 0.88)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+struct StormFactPill: View {
+    let label: String
+    let value: String
+    let tone: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(0.54))
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 11, weight: .black, design: .rounded))
+                .foregroundStyle(tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.66)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 }
 
