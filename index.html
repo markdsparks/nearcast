@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.213">
+    <link rel="stylesheet" href="styles.css?v=3.0.215">
     <link rel="manifest" href="manifest.json?v=3.0.213">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
@@ -154,6 +154,13 @@
               <option value="10">Force z10</option>
               <option value="12">Force z12</option>
             </select>
+          </div>
+          <div class="menu-setting native-live-activity-setting" id="nativeLiveActivitySetting" aria-labelledby="nativeLiveActivityLabel" hidden>
+            <div class="menu-setting-copy">
+              <strong id="nativeLiveActivityLabel">Live Activity test</strong>
+              <span id="nativeLiveActivityMeta">Native app only</span>
+            </div>
+            <button class="menu-action" id="nativeLiveActivityToggle" type="button" aria-pressed="false">Start sample</button>
           </div>
         </div>
       </section>
@@ -746,7 +753,7 @@
 
     <script src="weather-truth.js?v=3.0.213"></script>
     <script src="planner.js?v=3.0.213"></script>
-    <script src="app.js?v=3.0.214"></script>
+    <script src="app.js?v=3.0.215"></script>
     <script src="map.js?v=3.0.213"></script>
     <script src="sky.js?v=3.0.213"></script>
     <script src="daygraph.js?v=3.0.213"></script>

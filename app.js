@@ -476,7 +476,13 @@ const mapState = {
     analysis: null,
     seq: 0
   },
-  nativeStormActivityKey: ""
+  nativeStormActivityKey: "",
+  nativeStormActivityDebug: {
+    active: false,
+    pending: false,
+    state: "idle",
+    reason: ""
+  }
 };
 
 const perfState = {
@@ -800,6 +806,9 @@ const els = {
   radarSourceMeta: document.querySelector("#radarSourceMeta"),
   xweatherStormMode: document.querySelector("#xweatherStormMode"),
   xweatherStormMeta: document.querySelector("#xweatherStormMeta"),
+  nativeLiveActivitySetting: document.querySelector("#nativeLiveActivitySetting"),
+  nativeLiveActivityToggle: document.querySelector("#nativeLiveActivityToggle"),
+  nativeLiveActivityMeta: document.querySelector("#nativeLiveActivityMeta"),
   forecastView: document.querySelector("#forecastView"),
   mapView: document.querySelector("#mapView"),
   searchForm: document.querySelector("#searchForm"),
@@ -2965,6 +2974,7 @@ function initInstallPrompt() {
     installPromptState.deferredPrompt = null;
     installPromptState.nativePromptAvailable = false;
     updateInstallPromptUI();
+    updateNativeStormActivityDebugControl();
     refreshPlanAwareLaunchSurfaces();
   });
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -3209,6 +3219,7 @@ function bindEvents() {
   if (els.xweatherStormMode) {
     els.xweatherStormMode.addEventListener("change", () => setXweatherStormMode(els.xweatherStormMode.value));
   }
+  bindTapAction(els.nativeLiveActivityToggle, toggleNativeStormActivitySample);
   els.briefing.addEventListener("click", (event) => {
     const planShow = event.target.closest("[data-plan-brief-show]");
     if (planShow) {
@@ -4257,6 +4268,7 @@ function updateDebugSettingsVisibility() {
     setting.hidden = !DEBUG_SETTINGS_ENABLED;
   });
   document.documentElement.classList.toggle("debug-settings-enabled", DEBUG_SETTINGS_ENABLED);
+  updateNativeStormActivityDebugControl();
 }
 
 function mapRendererMetaText() {
@@ -7747,6 +7759,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
 function syncNativeStormActivity(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
   const bridge = window.NearcastNative?.stormActivity;
   if (!bridge?.supported || !data || !place) return;
+  if (state.nativeStormActivityDebug?.active) return;
   if (!nativeStormActivitySavedPlace(place)) {
     if (state.nativeStormActivityKey) {
       state.nativeStormActivityKey = "";
@@ -7877,6 +7890,110 @@ function nativeStormActivityUrl(place) {
   if (Number.isFinite(Number(place?.latitude))) params.set("lat", String(Number(place.latitude)));
   if (Number.isFinite(Number(place?.longitude))) params.set("lon", String(Number(place.longitude)));
   return `nearcast://weather?${params.toString()}`;
+}
+
+function nativeStormActivityBridge() {
+  return window.NearcastNative?.stormActivity || null;
+}
+
+function nativeStormActivityDebugPlaceName() {
+  return placeCityLabel(state.activePlace) || cityNameFromLabel(placeLabel(state.activePlace)) || "Maryville";
+}
+
+function nativeStormActivityDebugPayload() {
+  const city = nativeStormActivityDebugPlaceName();
+  const now = Date.now();
+  return {
+    key: `debug-live-activity:${city}:${Math.floor(now / 60000)}`,
+    placeName: placeLabel(state.activePlace) || city,
+    stormName: "Storm Watch",
+    etaMinutes: 18,
+    status: `Storm Watch near ${city}`,
+    detail: "Thunder possible in about 18 min. Rain chance 72%.",
+    confidence: "Sample",
+    url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
+  };
+}
+
+function updateNativeStormActivityDebugControl() {
+  if (els.nativeLiveActivitySetting) {
+    els.nativeLiveActivitySetting.hidden = !isNativeIOSApp();
+  }
+  const button = els.nativeLiveActivityToggle;
+  const meta = els.nativeLiveActivityMeta;
+  if (!button && !meta) return;
+
+  const bridge = nativeStormActivityBridge();
+  const supported = Boolean(bridge?.supported);
+  const debug = state.nativeStormActivityDebug || {};
+  if (button) {
+    button.disabled = debug.pending || !supported;
+    button.setAttribute("aria-pressed", String(Boolean(debug.active)));
+    button.textContent = debug.pending
+      ? "Working..."
+      : debug.active
+        ? "End sample"
+        : "Start sample";
+  }
+  if (meta) {
+    if (!isNativeIOSApp()) meta.textContent = "Native app only";
+    else if (!supported) meta.textContent = "Bridge not ready";
+    else if (debug.pending) meta.textContent = "Talking to ActivityKit";
+    else if (debug.active) meta.textContent = "Sample is active";
+    else if (debug.reason) meta.textContent = debug.reason;
+    else meta.textContent = "Starts a sample storm card";
+  }
+}
+
+async function toggleNativeStormActivitySample() {
+  const bridge = nativeStormActivityBridge();
+  if (!bridge?.supported) {
+    state.nativeStormActivityDebug.reason = isNativeIOSApp() ? "Bridge not ready" : "Native app only";
+    updateNativeStormActivityDebugControl();
+    setStatus("Live Activities are only available in the native iPhone app.", true);
+    return;
+  }
+
+  const debug = state.nativeStormActivityDebug;
+  if (debug.pending) return;
+  debug.pending = true;
+  debug.reason = "";
+  updateNativeStormActivityDebugControl();
+
+  try {
+    if (debug.active) {
+      const result = await bridge.end({
+        status: "Sample ended",
+        detail: "Nearcast ended the sample storm activity.",
+        confidence: "Ended"
+      });
+      debug.active = false;
+      debug.state = String(result?.state || "ended");
+      debug.reason = result?.ok === false ? String(result.reason || result.state || "Could not end sample") : "Sample ended";
+      state.nativeStormActivityKey = "";
+      setStatus(result?.ok === false ? `Live Activity: ${debug.reason}` : "Sample Live Activity ended.", result?.ok === false);
+      return;
+    }
+
+    const payload = nativeStormActivityDebugPayload();
+    state.nativeStormActivityKey = payload.key;
+    const result = await bridge.start(payload);
+    const ok = result?.ok !== false && result?.state !== "timeout";
+    debug.active = ok;
+    debug.state = String(result?.state || (ok ? "started" : "failed"));
+    debug.reason = ok ? "Sample is active" : String(result?.reason || result?.state || "Could not start sample");
+    if (!ok) state.nativeStormActivityKey = "";
+    setStatus(ok ? "Sample Live Activity started." : `Live Activity: ${debug.reason}`, !ok);
+  } catch (error) {
+    debug.active = false;
+    debug.state = "failed";
+    debug.reason = error?.message || "Could not start sample";
+    state.nativeStormActivityKey = "";
+    setStatus(`Live Activity: ${debug.reason}`, true);
+  } finally {
+    debug.pending = false;
+    updateNativeStormActivityDebugControl();
+  }
 }
 
 function cityNameFromLabel(label) {
