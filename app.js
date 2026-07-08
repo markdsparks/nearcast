@@ -7917,7 +7917,7 @@ function nativeStormActivityDebugPayload() {
 
 function updateNativeStormActivityDebugControl() {
   if (els.nativeLiveActivitySetting) {
-    els.nativeLiveActivitySetting.hidden = !isNativeIOSApp();
+    els.nativeLiveActivitySetting.hidden = !isNativeNearcastApp();
   }
   const button = els.nativeLiveActivityToggle;
   const meta = els.nativeLiveActivityMeta;
@@ -7936,7 +7936,7 @@ function updateNativeStormActivityDebugControl() {
         : "Start sample";
   }
   if (meta) {
-    if (!isNativeIOSApp()) meta.textContent = "Native app only";
+    if (!isNativeNearcastApp()) meta.textContent = "Native app only";
     else if (!supported) meta.textContent = "Bridge not ready";
     else if (debug.pending) meta.textContent = "Talking to ActivityKit";
     else if (debug.active) meta.textContent = "Sample is active";
@@ -7948,7 +7948,7 @@ function updateNativeStormActivityDebugControl() {
 async function toggleNativeStormActivitySample() {
   const bridge = nativeStormActivityBridge();
   if (!bridge?.supported) {
-    state.nativeStormActivityDebug.reason = isNativeIOSApp() ? "Bridge not ready" : "Native app only";
+    state.nativeStormActivityDebug.reason = isNativeNearcastApp() ? "Bridge not ready" : "Native app only";
     updateNativeStormActivityDebugControl();
     setStatus("Live Activities are only available in the native iPhone app.", true);
     return;
