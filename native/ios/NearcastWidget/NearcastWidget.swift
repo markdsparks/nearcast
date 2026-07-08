@@ -1,4 +1,5 @@
 import Foundation
+import ActivityKit
 import SwiftUI
 import WidgetKit
 
@@ -383,6 +384,13 @@ private extension Array {
 }
 
 @main
+struct NearcastWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        NearcastWidget()
+        NearcastStormActivityWidget()
+    }
+}
+
 struct NearcastWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "NearcastWidget", provider: NearcastWidgetProvider()) { entry in
@@ -396,6 +404,106 @@ struct NearcastWidget: Widget {
         .description("A glance at the weather that matters next.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
+    }
+}
+
+struct NearcastStormActivityWidget: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: NearcastStormActivityAttributes.self) { context in
+            NearcastStormActivityLockView(context: context)
+                .activityBackgroundTint(Color(red: 0.05, green: 0.08, blue: 0.13))
+                .activitySystemActionForegroundColor(.white)
+                .widgetURL(context.attributes.deepLink)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(context.attributes.placeName)
+                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                        Text(context.state.confidence)
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.70))
+                            .lineLimit(1)
+                    }
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(context.state.etaMinutes)m")
+                            .font(.system(size: 22, weight: .black, design: .rounded))
+                        Text("ETA")
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.66))
+                    }
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    Text(context.state.detail)
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .lineLimit(1)
+                }
+            } compactLeading: {
+                Image(systemName: "cloud.bolt.rain.fill")
+                    .foregroundStyle(.yellow)
+            } compactTrailing: {
+                Text("\(context.state.etaMinutes)m")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+            } minimal: {
+                Image(systemName: "cloud.bolt.fill")
+                    .foregroundStyle(.yellow)
+            }
+            .widgetURL(context.attributes.deepLink)
+            .keylineTint(.yellow)
+        }
+    }
+}
+
+struct NearcastStormActivityLockView: View {
+    let context: ActivityViewContext<NearcastStormActivityAttributes>
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "cloud.bolt.rain.fill")
+                .font(.system(size: 22, weight: .black))
+                .foregroundStyle(.yellow)
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(context.state.status)
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(context.state.detail)
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.76))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.72)
+                Text(context.attributes.placeName)
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(context.state.etaMinutes)")
+                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                Text("min")
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+                Text(context.state.confidence)
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .foregroundStyle(.yellow.opacity(0.86))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 

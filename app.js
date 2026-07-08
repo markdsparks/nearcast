@@ -1,4 +1,4 @@
-const VERSION = "3.0.212";
+const VERSION = "3.0.213";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -475,7 +475,8 @@ const mapState = {
     status: "idle",
     analysis: null,
     seq: 0
-  }
+  },
+  nativeStormActivityKey: ""
 };
 
 const perfState = {
@@ -7674,6 +7675,7 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
   renderLaunchShortcuts(data, place);
+  syncNativeStormActivity(data, place, truth);
   updateInstallPromptUI();
 }
 
@@ -7732,6 +7734,145 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
   } catch (error) {
     console.debug("[Nearcast native] Widget snapshot skipped", error);
   }
+}
+
+function syncNativeStormActivity(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
+  const bridge = window.NearcastNative?.stormActivity;
+  if (!bridge?.supported || !data || !place) return;
+  if (!nativeStormActivitySavedPlace(place)) {
+    if (state.nativeStormActivityKey) {
+      state.nativeStormActivityKey = "";
+      bridge.end({
+        status: "Storm watch ended",
+        detail: "Nearcast only tracks storm activities for saved places.",
+        confidence: "Ended"
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  const candidate = nativeStormActivityCandidate(data, place, truth);
+  if (!candidate) {
+    if (state.nativeStormActivityKey) {
+      state.nativeStormActivityKey = "";
+      bridge.end({
+        status: "Storm watch ended",
+        detail: "Nearcast no longer sees incoming rain or storms for this place.",
+        confidence: "Ended"
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  if (candidate.key === state.nativeStormActivityKey) return;
+  state.nativeStormActivityKey = candidate.key;
+  bridge.start(candidate).catch(() => {
+    if (state.nativeStormActivityKey === candidate.key) state.nativeStormActivityKey = "";
+  });
+}
+
+function nativeStormActivitySavedPlace(place) {
+  if (!place || !Array.isArray(state.savedPlaces) || !state.savedPlaces.length) return false;
+  const id = String(place.id || "").trim();
+  if (id && state.savedPlaces.some((saved) => String(saved?.id || "").trim() === id)) return true;
+  const lat = Number(place.latitude);
+  const lon = Number(place.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  return state.savedPlaces.some((saved) => (
+    Math.abs(Number(saved?.latitude) - lat) < 0.02 &&
+    Math.abs(Number(saved?.longitude) - lon) < 0.02
+  ));
+}
+
+function nativeStormActivityCandidate(data, place, truth = state.weatherTruth || weatherTruth(data)) {
+  const hourly = data?.hourly || {};
+  const times = hourly.time || [];
+  if (!times.length) return null;
+
+  const now = forecastNowMs(data);
+  const end = now + 90 * 60 * 1000;
+  let best = null;
+
+  for (let index = 0; index < times.length; index += 1) {
+    const ms = parseForecastTimestamp(times[index], data);
+    if (!Number.isFinite(ms) || ms < now - 10 * 60 * 1000 || ms > end) continue;
+    const pop = Number(hourly.precipitation_probability?.[index] || 0);
+    const rawCode = Number(hourly.weather_code?.[index] ?? 0);
+    const precip = Number(hourly.precipitation?.[index] || 0);
+    const storm = isThunderCode(rawCode) || hasThunderPotential(rawCode, pop, rawCode, precip, data);
+    const meaningfulRain = pop >= 65 || precip >= 0.8;
+    if (!storm && !meaningfulRain) continue;
+    const etaMinutes = Math.max(0, Math.round((ms - now) / 60000));
+    const score = (storm ? 1000 : 0) + pop * 10 + precip * 100 - etaMinutes;
+    if (!best || score > best.score) {
+      best = { index, ms, pop, rawCode, precip, storm, etaMinutes, score };
+    }
+  }
+
+  const activeStorm = truth?.display?.stormPotential || isThunderCode(Number(truth?.nowCode ?? truth?.code ?? 0));
+  if (!best && activeStorm) {
+    best = {
+      index: currentHourlyIndex(data),
+      ms: now,
+      pop: Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0),
+      rawCode: Number(truth?.nowCode ?? truth?.code ?? 95),
+      precip: Number(data?.current?.precipitation || 0),
+      storm: true,
+      etaMinutes: 0,
+      score: 1000
+    };
+  }
+  if (!best) return null;
+
+  const placeName = placeLabel(place);
+  const city = placeCityLabel(place) || cityNameFromLabel(placeName);
+  const stormName = best.storm ? "Storm Watch" : "Rain Watch";
+  const status = best.etaMinutes <= 5
+    ? `${stormName} at ${city}`
+    : `${stormName} near ${city}`;
+  const detail = best.storm
+    ? best.etaMinutes <= 5
+      ? `Thunder is possible now. Rain chance ${best.pop}%.`
+      : `Thunder possible in about ${best.etaMinutes} min. Rain chance ${best.pop}%.`
+    : best.etaMinutes <= 5
+      ? `Rain is likely now. Chance ${best.pop}%.`
+      : `Rain possible in about ${best.etaMinutes} min. Chance ${best.pop}%.`;
+  const confidence = best.storm
+    ? best.pop >= 50 || best.etaMinutes <= 15 ? "Likely" : "Watching"
+    : best.pop >= 75 ? "Likely" : "Possible";
+  const route = nativeStormActivityUrl(place);
+
+  return {
+    key: [
+      place.id || placeName,
+      best.index,
+      Math.round(best.pop / 5) * 5,
+      best.storm ? "storm" : "rain"
+    ].join(":"),
+    placeName,
+    stormName,
+    etaMinutes: best.etaMinutes,
+    status,
+    detail,
+    confidence,
+    url: route || "nearcast://watching?source=live-activity"
+  };
+}
+
+function nativeStormActivityUrl(place) {
+  const params = new URLSearchParams();
+  params.set("nearcast", "live-activity");
+  params.set("target", "place");
+  params.set("source", "live-activity");
+  params.set("mode", "stormscope-available");
+  if (place?.id) params.set("placeId", String(place.id));
+  if (Number.isFinite(Number(place?.latitude))) params.set("lat", String(Number(place.latitude)));
+  if (Number.isFinite(Number(place?.longitude))) params.set("lon", String(Number(place.longitude)));
+  return `nearcast://weather?${params.toString()}`;
+}
+
+function cityNameFromLabel(label) {
+  return String(label || "").split(",")[0]?.trim() || "your place";
 }
 
 function nativeWidgetPlanSummary(data, place) {

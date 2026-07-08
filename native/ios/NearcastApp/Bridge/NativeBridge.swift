@@ -183,6 +183,50 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
 
           window.NearcastNative.notifications.status().catch(() => {});
 
+          const pendingStormActivityRequests = new Map();
+          let nativeStormActivityRequestId = 0;
+          window.NearcastNative.__resolveStormActivityRequest = function(result) {
+            const requestId = result && result.requestId ? String(result.requestId) : "";
+            const pending = pendingStormActivityRequests.get(requestId);
+            if (!pending) return;
+            pendingStormActivityRequests.delete(requestId);
+            if (pending.timer) window.clearTimeout(pending.timer);
+            pending.resolve(result || { ok: false, state: "failed", reason: "native-storm-activity-empty-result" });
+          };
+
+          function nativeStormActivityRequest(type, options) {
+            const requestId = String(++nativeStormActivityRequestId);
+            return new Promise((resolve) => {
+              const timer = window.setTimeout(() => {
+                if (!pendingStormActivityRequests.has(requestId)) return;
+                pendingStormActivityRequests.delete(requestId);
+                resolve({ ok: false, state: "timeout", reason: "native-storm-activity-timeout" });
+              }, 8000);
+              pendingStormActivityRequests.set(requestId, { resolve, timer });
+              window.NearcastNative.postMessage({
+                type,
+                requestId,
+                options: options || {}
+              });
+            });
+          }
+
+          window.NearcastNative.stormActivity = {
+            supported: true,
+            start(options) {
+              return nativeStormActivityRequest("stormActivity.start", options);
+            },
+            update(options) {
+              return nativeStormActivityRequest("stormActivity.update", options);
+            },
+            end(options) {
+              return nativeStormActivityRequest("stormActivity.end", options || {});
+            },
+            status() {
+              return nativeStormActivityRequest("stormActivity.status", {});
+            }
+          };
+
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
             detail: { platform: "ios", version: "0.1.0" }
           }));
@@ -206,6 +250,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             sendNativeNotificationStatus(payload)
         } else if type == "widget.snapshot" {
             saveWidgetSnapshot(payload)
+        } else if type == "stormActivity.start" || type == "stormActivity.update" {
+            startOrUpdateStormActivity(payload)
+        } else if type == "stormActivity.end" {
+            endStormActivity(payload)
+        } else if type == "stormActivity.status" {
+            sendStormActivityStatus(payload)
         }
     }
 
@@ -348,6 +398,33 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             defaults.set(placeData, forKey: NativeWidgetSnapshotStore.placeKey)
         }
         WidgetCenter.shared.reloadTimelines(ofKind: NativeWidgetSnapshotStore.widgetKind)
+    }
+
+    private func startOrUpdateStormActivity(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        Task { @MainActor in
+            var result = await NativeStormActivityController.shared.startOrUpdate(from: options)
+            result["requestId"] = requestId
+            sendJavaScriptCallback(result, resolver: "__resolveStormActivityRequest")
+        }
+    }
+
+    private func endStormActivity(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        Task { @MainActor in
+            var result = await NativeStormActivityController.shared.end(options)
+            result["requestId"] = requestId
+            sendJavaScriptCallback(result, resolver: "__resolveStormActivityRequest")
+        }
+    }
+
+    private func sendStormActivityStatus(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        var result = NativeStormActivityController.shared.status()
+        result["requestId"] = requestId
+        sendJavaScriptCallback(result, resolver: "__resolveStormActivityRequest")
     }
 
     private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {
