@@ -8017,15 +8017,138 @@ function bindLiveActivityLabActions() {
     const action = button.dataset.liveActivityAction || "status";
     updateLiveActivityLabStatus("Tap received", `Starting ${action} test...`, { action, tapped: true });
     setTimeout(() => {
-      try {
-        Promise.resolve(runNativeStormActivityLabAction(action)).catch((error) => {
-          showLiveActivityLabCrash(action, error, "async-action");
-        });
-      } catch (error) {
+      runLiveActivityLabDirectAction(action).catch((error) => {
         showLiveActivityLabCrash(action, error, "sync-action");
-      }
+      });
     }, 40);
   });
+}
+
+function waitForLiveActivityLabPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
+}
+
+async function runLiveActivityLabDirectAction(action) {
+  const bridge = window.NearcastNative?.stormActivity;
+  const initial = {
+    action,
+    phase: "direct-bridge-check",
+    native: isNativeNearcastApp(),
+    hasNative: Boolean(window.NearcastNative),
+    hasStormActivity: Boolean(bridge),
+    supported: Boolean(bridge?.supported)
+  };
+  updateLiveActivityLabStatus("Checking bridge", `Preparing ${action}.`, initial);
+  await waitForLiveActivityLabPaint();
+
+  if (!bridge?.supported) {
+    updateLiveActivityLabStatus("Live Activities unavailable", "The native Storm Activity bridge is not ready.", {
+      ...initial,
+      ok: false,
+      reason: "bridge-not-ready"
+    });
+    return;
+  }
+
+  try {
+    state.nativeStormActivityDebug.pending = true;
+    setLiveActivityLabBusy(true);
+    updateNativeStormActivityDebugControl();
+  } catch (error) {
+    updateLiveActivityLabStatus("Lab state warning", "The bridge is ready, but the debug UI state update failed. Continuing anyway.", {
+      ...initial,
+      phase: "direct-debug-state-warning",
+      message: error?.message || String(error || "Unknown debug state error")
+    });
+    await waitForLiveActivityLabPaint();
+  }
+  updateLiveActivityLabStatus("Calling native", `Sending ${action} request to ActivityKit.`, {
+    ...initial,
+    phase: `direct-native-${action}`
+  });
+  await waitForLiveActivityLabPaint();
+
+  let request;
+  try {
+    if (action === "start" || action === "update") {
+      const city = nativeStormActivityDebugPlaceName();
+      const etaMinutes = action === "update" ? 9 : 18;
+      const chance = action === "update" ? 81 : 72;
+      const payload = {
+        key: `direct-live-activity:${city}:${Math.floor(Date.now() / 60000)}:${action}`,
+        placeName: placeLabel(state.activePlace) || city,
+        stormName: "Storm Watch",
+        etaMinutes,
+        status: `Storm Watch near ${city}`,
+        detail: `${action === "update" ? "Updated sample:" : "Thunder possible"} in about ${etaMinutes} min. Rain chance ${chance}%.`,
+        confidence: "Sample",
+        url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
+      };
+      state.nativeStormActivityKey = payload.key;
+      updateLiveActivityLabStatus("Calling native", `Payload ready. Requesting ${action}.`, {
+        ...initial,
+        phase: "direct-payload-ready",
+        payload
+      });
+      await waitForLiveActivityLabPaint();
+      request = action === "update" ? bridge.update(payload) : bridge.start(payload);
+    } else if (action === "end") {
+      state.nativeStormActivityKey = "";
+      updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit end.", {
+        ...initial,
+        phase: "direct-end-ready"
+      });
+      await waitForLiveActivityLabPaint();
+      request = bridge.end({
+        status: "Sample ended",
+        detail: "Nearcast ended the sample storm activity.",
+        confidence: "Ended"
+      });
+    } else {
+      updateLiveActivityLabStatus("Calling native", "Requesting ActivityKit status.", {
+        ...initial,
+        phase: "direct-status-ready"
+      });
+      await waitForLiveActivityLabPaint();
+      request = bridge.status();
+    }
+  } catch (error) {
+    showLiveActivityLabCrash(action, error, "native-call-sync");
+    return;
+  }
+
+  updateLiveActivityLabStatus("Waiting for native", "Nearcast sent the request. Waiting for the native callback.", {
+    ...initial,
+    phase: "direct-waiting"
+  });
+  await waitForLiveActivityLabPaint();
+
+  try {
+    const result = await liveActivityRequestWithTimeout(request, action);
+    applyLiveActivityLabResult(action, result);
+  } catch (error) {
+    showLiveActivityLabCrash(action, error, "native-call-async");
+  }
+}
+
+function applyLiveActivityLabResult(action, result = {}) {
+  const ok = result?.ok !== false && result?.state !== "timeout";
+  const stateText = String(result?.state || (ok ? "ok" : "failed"));
+  state.nativeStormActivityDebug.active = ["started", "updated", "active"].includes(stateText);
+  if (action === "end") state.nativeStormActivityDebug.active = false;
+  state.nativeStormActivityDebug.state = stateText;
+  state.nativeStormActivityDebug.reason = ok ? "" : String(result?.reason || stateText);
+  state.nativeStormActivityDebug.pending = false;
+  setLiveActivityLabBusy(false);
+  updateNativeStormActivityDebugControl();
+  updateLiveActivityLabStatus(
+    ok ? `Live Activity ${stateText}` : "Live Activity failed",
+    liveActivityLabResultText(action, result),
+    result
+  );
+  setStatus(ok ? `Live Activity ${stateText}.` : `Live Activity: ${state.nativeStormActivityDebug.reason}`, !ok);
 }
 
 function showLiveActivityLabCrash(action, error, phase = "unknown") {
@@ -8189,7 +8312,9 @@ function scheduleNativeLiveActivityQueryTest() {
       return;
     }
     openLiveActivityLab();
-    runNativeStormActivityLabAction(resolvedAction);
+    runLiveActivityLabDirectAction(resolvedAction).catch((error) => {
+      showLiveActivityLabCrash(resolvedAction, error, "query-test-direct");
+    });
   };
   setTimeout(run, 650);
 }
