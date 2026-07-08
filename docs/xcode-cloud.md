@@ -68,7 +68,25 @@ node scripts/xcode-cloud.mjs builds \
   --key-file=AppStoreConnect/AuthKey_8LM389Z6NR.p8
 ```
 
-As of the first Xcode Cloud setup, the latest uploaded build was `26`, so the workflow next build number should be at least `31` to give us room above the local app setting and failed cloud attempts.
+Nearcast avoids this by stamping a CI-only timestamp build number in `ci_scripts/ci_pre_xcodebuild.sh` when `CI_XCODE_CLOUD=TRUE`.
+
+The local project can keep a human-sized build number, but Xcode Cloud archives get a UTC timestamp such as:
+
+```text
+202607080507
+```
+
+This is intentionally larger than any normal local/TestFlight build number and should keep cloud uploads monotonic without hunting for Apple's hidden next-build-number field.
+
+To test the stamping locally without Xcode Cloud:
+
+```sh
+NEARCAST_FORCE_CI_BUILD_NUMBER=1 \
+NEARCAST_CI_BUILD_NUMBER=202607080507 \
+ci_scripts/ci_pre_xcodebuild.sh
+```
+
+That command mutates `native/ios/Nearcast.xcodeproj/project.pbxproj`, so only run it locally when you intend to inspect or discard the generated build-number change.
 
 ## Pre-build scripts
 
