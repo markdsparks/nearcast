@@ -78,16 +78,33 @@ So the intended workflow is:
 2. Open the TestFlight app and pull-to-refresh/relaunch.
 3. Create a new TestFlight build only when the Swift shell or native capabilities change.
 
-Preferred path: use Xcode Cloud for signed TestFlight builds. It avoids local distribution certificate and App Store Connect account drift. See `docs/xcode-cloud.md`.
-
-Manual local fallback from Xcode:
+Use local Xcode archives for signed TestFlight builds:
 
 1. Open `native/ios/Nearcast.xcodeproj`.
-2. Select the `Nearcast` scheme and a generic iOS device destination.
-3. Use `Product > Archive`.
-4. Distribute through App Store Connect/TestFlight.
+2. Select the `Nearcast` scheme.
+3. Select `Any iOS Device (arm64)` or a plugged-in iPhone as the destination.
+4. Confirm the build number is higher than the latest uploaded TestFlight build.
+5. Use `Product > Archive`.
+6. In Organizer, choose `Distribute App`, then App Store Connect/TestFlight.
 
-Before archiving, make sure the app target uses the correct Apple developer team and bundle identifier for the App Store Connect app record.
+Before archiving, make sure the app and widget targets use the correct Apple developer team and bundle identifiers for the App Store Connect app record.
+
+The current native build number is managed in `native/ios/Nearcast.xcodeproj/project.pbxproj` as `CURRENT_PROJECT_VERSION`. Keep the app target and widget target on the same value. If App Store Connect rejects an upload with a duplicate build number, increment all `CURRENT_PROJECT_VERSION` entries and archive again.
+
+From the command line, a local archive sanity check is:
+
+```sh
+xcodebuild \
+  -project native/ios/Nearcast.xcodeproj \
+  -scheme Nearcast \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath native/ios/build/Nearcast.xcarchive \
+  archive \
+  -allowProvisioningUpdates
+```
+
+If this fails with local account or signing errors, fix signing in Xcode first. The Organizer upload path should use the same local Apple account and managed signing setup.
 
 ## Build verification
 
