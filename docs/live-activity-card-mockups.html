@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nearcast Live Activity Card Mockups</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07101d;
+        --ink: #f8fbff;
+        --muted: rgba(248, 251, 255, 0.68);
+        --soft: rgba(248, 251, 255, 0.12);
+        --line: rgba(248, 251, 255, 0.18);
+        --yellow: #ffd42a;
+        --green: #61e19b;
+        --orange: #ff9f35;
+        --red: #ff584f;
+        --blue: #69b7ff;
+        font-family: ui-rounded, "SF Pro Rounded", "Avenir Next Rounded", system-ui, sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(90, 145, 255, 0.20), transparent 32rem),
+          radial-gradient(circle at 78% 8%, rgba(255, 212, 42, 0.12), transparent 26rem),
+          linear-gradient(135deg, #030813 0%, #0a1728 42%, #151a24 100%);
+        color: var(--ink);
+        padding: 40px;
+      }
+
+      header {
+        max-width: 1120px;
+        margin: 0 auto 28px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(32px, 4vw, 56px);
+        letter-spacing: 0;
+        line-height: 0.96;
+      }
+
+      header p {
+        margin: 0;
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.4;
+        font-weight: 750;
+      }
+
+      .board {
+        display: grid;
+        gap: 24px;
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+
+      .section-title {
+        margin: 18px 0 -8px;
+        color: rgba(248, 251, 255, 0.72);
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: 13px;
+        font-weight: 950;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .mock {
+        min-width: 0;
+      }
+
+      .label {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 0 10px;
+      }
+
+      .label strong {
+        font-size: 15px;
+        font-weight: 950;
+      }
+
+      .label span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .activity {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        min-height: 128px;
+        padding: 18px 20px;
+        background:
+          linear-gradient(120deg, rgba(6, 13, 26, 0.98), rgba(11, 23, 38, 0.98)),
+          var(--bg);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.34);
+      }
+
+      .activity::before {
+        content: "";
+        position: absolute;
+        inset: -50% -20%;
+        background: radial-gradient(circle at 18% 50%, rgba(105, 183, 255, 0.20), transparent 24rem);
+        pointer-events: none;
+      }
+
+      .activity > * {
+        position: relative;
+      }
+
+      .activity.arrival {
+        display: grid;
+        grid-template-columns: 56px minmax(0, 1fr) 82px;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .icon-disc {
+        width: 56px;
+        height: 56px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.11);
+        color: var(--yellow);
+      }
+
+      .cloud-icon {
+        position: relative;
+        width: 34px;
+        height: 24px;
+      }
+
+      .cloud-icon::before,
+      .cloud-icon::after {
+        content: "";
+        position: absolute;
+        background: currentColor;
+      }
+
+      .cloud-icon::before {
+        left: 0;
+        right: 0;
+        bottom: 4px;
+        height: 16px;
+        border-radius: 999px;
+      }
+
+      .cloud-icon::after {
+        left: 8px;
+        bottom: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        box-shadow: 11px 5px 0 -3px currentColor;
+      }
+
+      .bolts {
+        position: absolute;
+        left: 7px;
+        right: 6px;
+        bottom: -7px;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .bolts i {
+        display: block;
+        width: 4px;
+        height: 11px;
+        border-radius: 999px;
+        background: currentColor;
+        transform: rotate(24deg);
+      }
+
+      .title {
+        margin: 0;
+        font-size: 27px;
+        line-height: 1.02;
+        font-weight: 1000;
+        letter-spacing: 0;
+      }
+
+      .detail {
+        margin: 7px 0 0;
+        color: rgba(248, 251, 255, 0.78);
+        font-size: 17px;
+        line-height: 1.25;
+        font-weight: 900;
+      }
+
+      .place {
+        margin: 7px 0 0;
+        color: rgba(248, 251, 255, 0.52);
+        font-size: 13px;
+        font-weight: 950;
+      }
+
+      .eta {
+        text-align: right;
+      }
+
+      .eta strong {
+        display: block;
+        font-size: 52px;
+        line-height: 0.86;
+        font-weight: 1000;
+      }
+
+      .eta span {
+        display: block;
+        margin-top: 8px;
+        color: rgba(248, 251, 255, 0.72);
+        font-size: 15px;
+        font-weight: 950;
+      }
+
+      .eta em {
+        display: block;
+        margin-top: 4px;
+        color: var(--yellow);
+        font-style: normal;
+        font-size: 13px;
+        font-weight: 1000;
+      }
+
+      .activity.timeline {
+        min-height: 150px;
+      }
+
+      .timeline-head,
+      .impact-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .kicker {
+        margin: 0 0 4px;
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 1000;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .timeline-track {
+        margin-top: 16px;
+        height: 28px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(105, 183, 255, 0.18), rgba(255, 212, 42, 0.18), rgba(255, 88, 79, 0.26));
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        position: relative;
+      }
+
+      .timeline-track::before {
+        content: "";
+        position: absolute;
+        left: 54%;
+        top: -8px;
+        width: 4px;
+        height: 42px;
+        border-radius: 999px;
+        background: var(--yellow);
+        box-shadow: 0 0 0 7px rgba(255, 212, 42, 0.12);
+      }
+
+      .timeline-labels {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        color: rgba(248, 251, 255, 0.55);
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .activity.impact {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 92px;
+        gap: 16px;
+        min-height: 150px;
+      }
+
+      .action-card {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 18px;
+        background: rgba(255, 212, 42, 0.12);
+        border: 1px solid rgba(255, 212, 42, 0.22);
+        color: #ffe583;
+        font-size: 14px;
+        font-weight: 950;
+      }
+
+      .risk-stack {
+        display: grid;
+        align-content: end;
+        justify-items: end;
+        gap: 6px;
+      }
+
+      .pill {
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.11);
+        color: rgba(248, 251, 255, 0.78);
+        font-size: 12px;
+        font-weight: 1000;
+        white-space: nowrap;
+      }
+
+      .pill.hot {
+        color: #ffd9a4;
+        background: rgba(255, 159, 53, 0.18);
+      }
+
+      .di-row {
+        display: grid;
+        grid-template-columns: 1fr 1.5fr 0.7fr;
+        gap: 18px;
+      }
+
+      .island {
+        border-radius: 999px;
+        background: #05070c;
+        color: var(--ink);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        box-shadow: 0 18px 34px rgba(0, 0, 0, 0.40);
+      }
+
+      .compact {
+        height: 42px;
+        padding: 0 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .compact b {
+        color: var(--yellow);
+        font-size: 18px;
+      }
+
+      .expanded {
+        border-radius: 34px;
+        min-height: 118px;
+        padding: 18px 20px;
+      }
+
+      .expanded .topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 12px;
+      }
+
+      .expanded .bottom {
+        color: rgba(248, 251, 255, 0.76);
+        font-size: 14px;
+        line-height: 1.3;
+        font-weight: 850;
+      }
+
+      .minimal {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+      }
+
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .note {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.07);
+      }
+
+      .note h2 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .note p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.38;
+        font-weight: 750;
+      }
+
+      @media (max-width: 980px) {
+        body { padding: 24px; }
+        .row,
+        .notes,
+        .di-row { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Nearcast Live Activity directions</h1>
+      <p>
+        The lock-screen job is not to reproduce the map. It should answer:
+        how soon, how serious, which place, and what should I do before I unlock?
+      </p>
+    </header>
+
+    <main class="board">
+      <p class="section-title">Lock screen card concepts</p>
+
+      <section class="row" aria-label="Lock screen mockups">
+        <article class="mock">
+          <div class="label">
+            <strong>A. Arrival first</strong>
+            <span>Recommended base</span>
+          </div>
+          <div class="activity arrival">
+            <div class="icon-disc" aria-hidden="true">
+              <div class="cloud-icon"><span class="bolts"><i></i><i></i><i></i></span></div>
+            </div>
+            <div>
+              <h2 class="title">Storm near Shelbyville</h2>
+              <p class="detail">Thunder possible in 18 min. Rain chance 72%.</p>
+              <p class="place">Shelbyville, Kentucky</p>
+            </div>
+            <div class="eta">
+              <strong>18</strong>
+              <span>min</span>
+              <em>Likely</em>
+            </div>
+          </div>
+        </article>
+
+        <article class="mock">
+          <div class="label">
+            <strong>B. Timeline first</strong>
+            <span>Best for storm motion</span>
+          </div>
+          <div class="activity timeline">
+            <div class="timeline-head">
+              <div>
+                <p class="kicker">StormScope</p>
+                <h2 class="title">Rain arriving soon</h2>
+                <p class="detail">Moving ESE toward Shelbyville.</p>
+              </div>
+              <div class="eta">
+                <strong>18</strong>
+                <span>min</span>
+              </div>
+            </div>
+            <div class="timeline-track" aria-hidden="true"></div>
+            <div class="timeline-labels">
+              <span>Now</span>
+              <span>10m</span>
+              <span>20m</span>
+              <span>30m</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="mock">
+          <div class="label">
+            <strong>C. Plan impact</strong>
+            <span>When tied to a plan</span>
+          </div>
+          <div class="activity impact">
+            <div>
+              <p class="kicker">Ballgame watch</p>
+              <h2 class="title">Rain may interrupt</h2>
+              <p class="detail">Storm cell tracking near Fenton in 22 min.</p>
+              <div class="action-card">Start moving gear or check the radar.</div>
+            </div>
+            <div class="risk-stack">
+              <span class="pill hot">50% rain</span>
+              <span class="pill">Gusts 24</span>
+              <span class="pill">Fenton</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <p class="section-title">Dynamic Island states</p>
+
+      <section class="di-row" aria-label="Dynamic Island mockups">
+        <article class="mock">
+          <div class="label">
+            <strong>Compact</strong>
+            <span>Always readable</span>
+          </div>
+          <div class="island compact">
+            <b>Storm</b>
+            <strong>18m</strong>
+          </div>
+        </article>
+
+        <article class="mock">
+          <div class="label">
+            <strong>Expanded</strong>
+            <span>Place + ETA + detail</span>
+          </div>
+          <div class="island expanded">
+            <div class="topline">
+              <div>
+                <p class="kicker">StormScope</p>
+                <h2 class="title">Shelbyville</h2>
+              </div>
+              <div class="eta">
+                <strong>18</strong>
+                <span>min</span>
+              </div>
+            </div>
+            <div class="bottom">Thunder possible soon. Tap to open the storm map and timeline.</div>
+          </div>
+        </article>
+
+        <article class="mock">
+          <div class="label">
+            <strong>Minimal</strong>
+            <span>Small signal</span>
+          </div>
+          <div class="island minimal">
+            <span style="color: var(--yellow); font-weight: 1000;">18</span>
+          </div>
+        </article>
+      </section>
+
+      <p class="section-title">Product read</p>
+
+      <section class="notes">
+        <article class="note">
+          <h2>Recommended default</h2>
+          <p>Use A as the base. It is the fastest to parse and matches the actual lock-screen context: incoming weather, ETA, place, confidence.</p>
+        </article>
+        <article class="note">
+          <h2>Progressive layer</h2>
+          <p>Add B-style timeline only when motion confidence is solid. It is beautiful, but it can imply precision we may not always have.</p>
+        </article>
+        <article class="note">
+          <h2>Plan-aware upgrade</h2>
+          <p>Use C only when the storm is connected to a watched plan. Otherwise it adds cognitive load and makes the card feel too busy.</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
