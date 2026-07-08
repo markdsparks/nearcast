@@ -466,9 +466,12 @@ struct NearcastSmallWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Spacer(minLength: 4)
-                Image(systemName: conditionSymbol(snapshot))
-                    .font(.system(size: 18, weight: .bold))
-                    .accessibilityHidden(true)
+                if let symbol = smallConditionSymbol(snapshot) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(palette.primary.opacity(0.84))
+                        .accessibilityHidden(true)
+                }
             }
 
             Spacer(minLength: 0)
@@ -1027,6 +1030,14 @@ private func conditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
     if !snapshot.isDay { return "moon.stars.fill" }
     if (1...3).contains(code) { return "cloud.sun.fill" }
     return "sun.max.fill"
+}
+
+private func smallConditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String? {
+    let code = snapshot.conditionCode
+    if (95...99).contains(code) { return "cloud.bolt.rain.fill" }
+    if (71...86).contains(code) { return "snowflake" }
+    if (51...67).contains(code) || (80...82).contains(code) { return "cloud.rain.fill" }
+    return nil
 }
 
 private func signalColor(_ value: String) -> Color {
