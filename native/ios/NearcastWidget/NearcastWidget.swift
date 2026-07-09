@@ -487,6 +487,7 @@ struct NearcastStormActivityLockView: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 40)
                 .padding(.bottom, 36)
+            StormActivityTextScrim()
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 14) {
@@ -645,6 +646,27 @@ struct StormActivityBackdrop: View {
     }
 }
 
+struct StormActivityTextScrim: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                .black.opacity(0.62),
+                .black.opacity(0.34),
+                .black.opacity(0.48)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .overlay(alignment: .topTrailing) {
+            Circle()
+                .fill(.white.opacity(0.06))
+                .frame(width: 170, height: 170)
+                .blur(radius: 54)
+                .offset(x: 34, y: -82)
+        }
+    }
+}
+
 struct StormActivityPathVisual: View {
     let state: NearcastStormActivityAttributes.ContentState
 
@@ -656,15 +678,15 @@ struct StormActivityPathVisual: View {
             ZStack {
                 ZStack {
                     StormBlob(severity: state.severityLevel)
-                        .frame(width: width * 0.54, height: height * 0.64)
+                        .frame(width: width * 0.58, height: height * 0.68)
                         .rotationEffect(.degrees(-16))
-                        .offset(x: -width * 0.28, y: height * 0.04)
+                        .offset(x: -width * 0.30, y: height * 0.07)
 
                     StormBlob(severity: max(1, state.severityLevel - 1))
-                        .frame(width: width * 0.30, height: height * 0.38)
+                        .frame(width: width * 0.34, height: height * 0.42)
                         .rotationEffect(.degrees(20))
-                        .opacity(0.72)
-                        .offset(x: -width * 0.04, y: -height * 0.20)
+                        .opacity(0.46)
+                        .offset(x: -width * 0.02, y: -height * 0.19)
 
                     StormPathCone()
                         .fill(pathFill)
@@ -677,13 +699,13 @@ struct StormActivityPathVisual: View {
 
                     Image(systemName: "arrow.right")
                         .font(.system(size: 30, weight: .black))
-                        .foregroundStyle(.white.opacity(state.motionDegrees == nil ? 0.48 : 0.78))
+                        .foregroundStyle(.white.opacity(state.motionDegrees == nil ? 0.24 : state.isApproximateGeometry ? 0.38 : 0.56))
                         .offset(x: -width * 0.04, y: height * 0.08)
 
                     Circle()
-                        .fill(.white)
-                        .frame(width: 15, height: 15)
-                        .shadow(color: .white.opacity(0.5), radius: 8)
+                        .fill(.white.opacity(0.92))
+                        .frame(width: 12, height: 12)
+                        .shadow(color: .white.opacity(0.34), radius: 7)
                         .overlay {
                             Circle()
                                 .stroke(placeRingColor, lineWidth: state.placeRingWidth)
@@ -692,6 +714,8 @@ struct StormActivityPathVisual: View {
                 }
                 .rotationEffect(.degrees(state.motionRotationDegrees))
                 .offset(x: state.motionDegrees == nil ? 0 : width * 0.02, y: 0)
+                .opacity(state.visualOpacity)
+                .blur(radius: state.isApproximateGeometry ? 1.2 : 0.4)
 
                 if state.motionDegrees == nil {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -707,19 +731,21 @@ struct StormActivityPathVisual: View {
     }
 
     private var pathFill: Color {
-        if state.motionDegrees == nil { return .white.opacity(0.08) }
-        return .cyan.opacity(0.10 + min(0.10, state.confidenceScore * 0.10))
+        if state.motionDegrees == nil { return .white.opacity(0.045) }
+        let base = state.isApproximateGeometry ? 0.045 : 0.070
+        return .cyan.opacity(base + min(0.045, state.confidenceScore * 0.045))
     }
 
     private var pathStroke: Color {
-        if state.motionDegrees == nil { return .white.opacity(0.28) }
-        return .white.opacity(0.36 + min(0.30, state.confidenceScore * 0.30))
+        if state.motionDegrees == nil { return .white.opacity(0.16) }
+        let base = state.isApproximateGeometry ? 0.18 : 0.26
+        return .white.opacity(base + min(0.14, state.confidenceScore * 0.14))
     }
 
     private var placeRingColor: Color {
-        if state.etaMinutes <= 5 { return .red.opacity(0.32) }
-        if state.etaMinutes <= 20 { return .yellow.opacity(0.30) }
-        return .white.opacity(0.22)
+        if state.etaMinutes <= 5 { return .red.opacity(state.isApproximateGeometry ? 0.18 : 0.26) }
+        if state.etaMinutes <= 20 { return .yellow.opacity(state.isApproximateGeometry ? 0.18 : 0.25) }
+        return .white.opacity(state.isApproximateGeometry ? 0.13 : 0.20)
     }
 }
 
@@ -729,37 +755,37 @@ struct StormBlob: View {
     var body: some View {
         ZStack {
             Capsule()
-                .fill(baseColor.opacity(0.88))
-                .blur(radius: 5)
+                .fill(baseColor.opacity(0.48))
+                .blur(radius: 9)
             Capsule()
-                .fill(baseColor.opacity(0.70))
+                .fill(baseColor.opacity(0.34))
                 .scaleEffect(x: 0.82, y: 0.74)
                 .offset(x: 8, y: -4)
-                .blur(radius: 7)
+                .blur(radius: 12)
             Capsule()
-                .fill(coreColor.opacity(0.90))
+                .fill(coreColor.opacity(0.38))
                 .scaleEffect(x: 0.52, y: 0.48)
                 .offset(x: 6, y: -2)
-                .blur(radius: 6)
+                .blur(radius: 11)
             Capsule()
-                .fill(hotColor.opacity(severity >= 2 ? 0.88 : 0.40))
+                .fill(hotColor.opacity(severity >= 2 ? 0.34 : 0.16))
                 .scaleEffect(x: 0.32, y: 0.30)
                 .offset(x: -6, y: 2)
-                .blur(radius: 5)
+                .blur(radius: 10)
         }
-        .shadow(color: baseColor.opacity(0.22), radius: 18)
+        .shadow(color: baseColor.opacity(0.12), radius: 22)
     }
 
     private var baseColor: Color {
-        severity >= 3 ? .green : .cyan
+        severity >= 3 ? Color(red: 0.18, green: 0.72, blue: 0.50) : Color(red: 0.22, green: 0.70, blue: 0.86)
     }
 
     private var coreColor: Color {
-        severity >= 2 ? .yellow : .green
+        severity >= 2 ? Color(red: 0.98, green: 0.75, blue: 0.28) : Color(red: 0.30, green: 0.78, blue: 0.58)
     }
 
     private var hotColor: Color {
-        severity >= 4 ? .purple : .red
+        severity >= 4 ? Color(red: 0.78, green: 0.34, blue: 0.92) : Color(red: 0.95, green: 0.36, blue: 0.28)
     }
 }
 
@@ -815,7 +841,27 @@ extension NearcastStormActivityAttributes.ContentState {
     }
 
     var placeRingWidth: Double {
-        etaMinutes <= 5 ? 16 : 11 + confidenceScore * 5
+        etaMinutes <= 5 ? 12 : 8 + confidenceScore * 4
+    }
+
+    var isApproximateGeometry: Bool {
+        guard let geometryQuality else { return true }
+        let quality = geometryQuality.lowercased()
+        return quality == "approx" || quality == "estimated" || quality == "sample" || quality == "forecast"
+    }
+
+    var visualOpacity: Double {
+        guard let geometryQuality else { return 0.42 }
+        switch geometryQuality.lowercased() {
+        case "tracked", "radar":
+            return 0.70
+        case "forecast":
+            return 0.52
+        case "approx", "estimated", "sample":
+            return 0.44
+        default:
+            return 0.42
+        }
     }
 
     private var inferredSeverity: Int {
