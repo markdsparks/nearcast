@@ -484,13 +484,13 @@ struct NearcastStormActivityLockView: View {
         ZStack {
             StormActivityBackdrop(severity: context.state.severityLevel)
             StormActivityPathVisual(state: context.state)
-                .padding(.horizontal, 10)
-                .padding(.top, 40)
-                .padding(.bottom, 36)
+                .padding(.horizontal, 18)
+                .padding(.top, 46)
+                .padding(.bottom, 46)
             StormActivityTextScrim()
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("StormScope")
                             .font(.system(size: 10, weight: .black, design: .rounded))
@@ -509,11 +509,11 @@ struct NearcastStormActivityLockView: View {
                             .minimumScaleFactor(0.72)
                     }
 
-                    Spacer(minLength: 10)
+                    Spacer(minLength: 14)
 
                     VStack(alignment: .trailing, spacing: 0) {
                         Text("\(context.state.etaMinutes)")
-                            .font(.system(size: 44, weight: .black, design: .rounded))
+                            .font(.system(size: 41, weight: .black, design: .rounded))
                             .lineLimit(1)
                             .minimumScaleFactor(0.70)
                         Text("min")
@@ -534,19 +534,20 @@ struct NearcastStormActivityLockView: View {
                     }
                 }
 
-                Spacer(minLength: 22)
+                Spacer(minLength: 18)
 
-                HStack(spacing: 7) {
+                HStack(spacing: 8) {
                     StormFactPill(label: "Confidence", value: context.state.confidence, tone: confidenceColor)
                     StormFactPill(label: middleFactLabel, value: middleFactValue, tone: .white.opacity(0.92))
                     StormFactPill(label: "Updated", value: updatedText, tone: .white.opacity(0.92))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 22)
+            .padding(.top, 18)
+            .padding(.bottom, 20)
         }
         .foregroundStyle(.white)
-        .frame(minHeight: 164)
+        .frame(minHeight: 170)
     }
 
     private var lockTitle: String {
@@ -881,19 +882,19 @@ struct StormFactPill: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 8, weight: .black, design: .rounded))
+                .font(.system(size: 7.5, weight: .black, design: .rounded))
                 .foregroundStyle(.white.opacity(0.54))
                 .lineLimit(1)
             Text(value)
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .font(.system(size: 10.5, weight: .black, design: .rounded))
                 .foregroundStyle(tone)
                 .lineLimit(1)
                 .minimumScaleFactor(0.66)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
