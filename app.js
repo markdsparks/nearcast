@@ -1,4 +1,4 @@
-const VERSION = "3.0.224";
+const VERSION = "3.0.225";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2758,6 +2758,9 @@ function init() {
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
+  if ("serviceWorker" in navigator && typeof handleNearcastNotificationMessage === "function") {
+    navigator.serviceWorker.addEventListener("message", handleNearcastNotificationMessage);
+  }
   initTactileFeedback();
   initInstallPrompt();
   initMetricTipListeners();
@@ -7985,7 +7988,8 @@ function nativeStormActivityMotionDegrees(data, index) {
 function nativeStormActivityUrl(place) {
   const params = new URLSearchParams();
   params.set("nearcast", "live-activity");
-  params.set("target", "place");
+  params.set("target", "map");
+  params.set("detail", "rain");
   params.set("source", "live-activity");
   params.set("mode", "stormscope-available");
   if (place?.id) params.set("placeId", String(place.id));

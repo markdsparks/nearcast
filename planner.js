@@ -615,6 +615,19 @@ function clearNearcastNotificationRouteUrl() {
   }
 }
 
+function handleNearcastNotificationMessage(event) {
+  const data = event?.data;
+  if (!data || data.type !== "nearcast.notification.open") return;
+
+  try {
+    const url = new URL(data.url || "", window.location.href);
+    if (url.origin !== window.location.origin) return;
+    window.location.assign(url.href);
+  } catch {
+    /* Notification click fallback is best-effort. */
+  }
+}
+
 function nearcastNotificationDetailKind(route = {}) {
   const value = String(route.detail || route.signal || route.target || "").toLowerCase();
   if (["feels", "rain", "wind", "air"].includes(value)) return value;

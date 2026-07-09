@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30224";
-const ASSET_VERSION = "3.0.224";
+const CACHE = "nearcast-v30225";
+const ASSET_VERSION = "3.0.225";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -255,6 +255,13 @@ self.addEventListener("notificationclick", event => {
           } catch {
             /* Focus the existing app if navigation is unavailable. */
           }
+        }
+        if (existing.postMessage) {
+          existing.postMessage({
+            type: "nearcast.notification.open",
+            url: targetUrl,
+            data: event.notification.data || {}
+          });
         }
         return existing.focus();
       }

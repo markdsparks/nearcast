@@ -5,6 +5,16 @@ import worker, {
 } from "../workers/radar-capability.mjs";
 
 const futureExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+const notificationToday = formatDate(new Date());
+const notificationTomorrow = formatDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function notificationTime(date, hour) {
+  return `${date}T${String(hour).padStart(2, "0")}:00`;
+}
 
 const index = {
   provider: "nearcast-generated-radar-index",
@@ -479,11 +489,11 @@ try {
         utc_offset_seconds: -18000,
         hourly: {
           time: [
-            "2026-07-07T15:00",
-            "2026-07-07T16:00",
-            "2026-07-07T17:00",
-            "2026-07-07T18:00",
-            "2026-07-07T19:00"
+            notificationTime(notificationTomorrow, 15),
+            notificationTime(notificationTomorrow, 16),
+            notificationTime(notificationTomorrow, 17),
+            notificationTime(notificationTomorrow, 18),
+            notificationTime(notificationTomorrow, 19)
           ],
           temperature_2m: [91, 93, 94, 92, 90],
           apparent_temperature: [97, 100, 102, 99, 96],
@@ -495,7 +505,7 @@ try {
           weather_code: [1, 1, 95, 1, 1]
         },
         daily: {
-          time: ["2026-07-06", "2026-07-07"],
+          time: [notificationToday, notificationTomorrow],
           weather_code: [1, 95],
           temperature_2m_max: [90, 88],
           temperature_2m_min: [74, 73],
@@ -516,8 +526,8 @@ try {
             properties: {
               event: "Extreme Heat Warning",
               severity: "Severe",
-              onset: "2026-07-07T12:00:00-05:00",
-              ends: "2026-07-07T22:00:00-05:00",
+              onset: `${notificationTomorrow}T12:00:00-05:00`,
+              ends: `${notificationTomorrow}T22:00:00-05:00`,
               headline: "Extreme Heat Warning issued for the plan area"
             }
           }]
@@ -547,7 +557,7 @@ try {
       plans: [{
         id: "party-1",
         title: "4th Party",
-        targetDate: "2026-07-07",
+        targetDate: notificationTomorrow,
         startHour: 15,
         endHour: 20,
         place: {
@@ -561,7 +571,7 @@ try {
         lastKnown: {
           snapshot: {
             title: "4th Party",
-            targetDate: "2026-07-07",
+            targetDate: notificationTomorrow,
             startHour: 15,
             endHour: 20,
             rainChance: 9,
@@ -632,7 +642,7 @@ try {
             unit: "fahrenheit",
             days: [
               {
-                date: "2026-07-06",
+                date: notificationToday,
                 label: "today",
                 rainChance: 20,
                 feelsMax: 92,
@@ -640,7 +650,7 @@ try {
                 stormPotential: false
               },
               {
-                date: "2026-07-07",
+                date: notificationTomorrow,
                 label: "tomorrow",
                 rainChance: 10,
                 feelsMax: 91,

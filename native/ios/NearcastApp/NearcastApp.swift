@@ -8,6 +8,9 @@ struct NearcastApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: webModel)
+                .onOpenURL { url in
+                    webModel.openDeepLink(url)
+                }
         }
     }
 }

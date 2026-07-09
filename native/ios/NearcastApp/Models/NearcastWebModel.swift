@@ -110,8 +110,38 @@ final class NearcastWebModel: ObservableObject {
         lastError = nil
     }
 
+    func openDeepLink(_ url: URL) {
+        currentURL = deepLinkTargetURL(url, baseURL: currentBaseURL)
+        hasLoadedPage = false
+        lastError = nil
+    }
+
     private var currentBaseURL: URL {
         mode == .local ? localURL : NativeRuntimeConfiguration.productionURL
+    }
+
+    private func deepLinkTargetURL(_ url: URL, baseURL: URL) -> URL {
+        guard url.scheme == "nearcast" else {
+            return Self.notificationURL(url.absoluteString, baseURL: baseURL)
+        }
+
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) ?? URLComponents()
+        var items = components.queryItems ?? []
+        let sourceItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+
+        sourceItems.forEach { item in
+            Self.upsertQueryItem(item.name, value: Self.cleanText(item.value, limit: 160), in: &items)
+        }
+
+        if Self.queryValue("nearcast", in: items) == nil {
+            Self.upsertQueryItem("nearcast", value: "live-activity", in: &items)
+        }
+        if Self.queryValue("source", in: items) == nil {
+            Self.upsertQueryItem("source", value: "ios-deeplink", in: &items)
+        }
+
+        components.queryItems = items
+        return components.url ?? baseURL
     }
 
     private func notificationTargetURL(userInfo: [AnyHashable: Any], baseURL: URL) -> URL {
