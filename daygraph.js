@@ -165,6 +165,122 @@ function openHourlyStripDetail(hourIndex) {
   });
 }
 
+function openNotificationHourlyRoute(route = {}, detailKind = "") {
+  const data = state.forecast;
+  if (!data?.hourly?.time?.length) return false;
+  const kind = detailKind || nearcastNotificationDetailKind?.(route) || "";
+  const targetIndex = notificationHourlyTargetIndex(data, kind, route.timeScope);
+  if (targetIndex < 0 || !data.hourly.time[targetIndex]) return false;
+
+  const startMs = parseForecastTimestamp(data.hourly.time[targetIndex], data);
+  if (startMs === null) return false;
+  const endMs = data.hourly.time[targetIndex + 1]
+    ? parseForecastTimestamp(data.hourly.time[targetIndex + 1], data)
+    : startMs + 60 * 60 * 1000;
+  const label = notificationHourlyFocusLabel(data, kind, targetIndex);
+  const rows = rollingHourlyRows(data);
+  const rowPosition = rows.findIndex((row) => row.index === targetIndex);
+  const block = rowPosition >= 0 ? Math.floor(rowPosition / ROLLING_HOURLY_PAGE_SIZE) : 0;
+  const scopeLabel = notificationHourlyScopeLabel(route.timeScope);
+
+  openNext24Detail({
+    block,
+    eventWindow: {
+      startMs,
+      endMs: endMs && endMs > startMs ? endMs : startMs + 60 * 60 * 1000,
+      badgeLabel: notificationHourlyBadgeLabel(kind),
+      label
+    },
+    contextLabel: [scopeLabel, label].filter(Boolean).join(" · ")
+  });
+  return true;
+}
+
+function notificationHourlyTargetIndex(data, detailKind = "", timeScope = "") {
+  const rows = notificationHourlyRowsForScope(data, timeScope);
+  if (!rows.length) return -1;
+  const kind = String(detailKind || "").toLowerCase();
+  if (kind === "wind") return notificationBestHourlyIndex(rows, data, (index) => {
+    const gust = Number(data.hourly.wind_gusts_10m?.[index]);
+    const speed = Number(data.hourly.wind_speed_10m?.[index]);
+    return Math.max(Number.isFinite(gust) ? gust : -Infinity, Number.isFinite(speed) ? speed : -Infinity);
+  });
+  if (kind === "feels") return notificationBestHourlyIndex(rows, data, (index) => {
+    const feels = Number(data.hourly.apparent_temperature?.[index]);
+    const uv = Number(data.hourly.uv_index?.[index] || 0);
+    return (Number.isFinite(feels) ? feels : -Infinity) + Math.max(0, uv - 5) * 1.5;
+  });
+  if (kind === "rain" || kind === "storm") return notificationBestHourlyIndex(rows, data, (index) => {
+    const profile = hourlyPrecipProfile(data, index);
+    const rawCode = Number(data.hourly.weather_code?.[index] ?? profile.code ?? 0);
+    const precip = Number(data.hourly.precipitation?.[index] || 0);
+    const storm = isThunderCode(rawCode) || hasThunderPotential(rawCode, profile.pop, profile.code, precip, data);
+    return (profile.pop || 0) + precip * 60 + (storm ? 100 : 0);
+  });
+  return rows[0]?.index ?? -1;
+}
+
+function notificationHourlyRowsForScope(data, timeScope = "") {
+  const scope = String(timeScope || "").toLowerCase();
+  const now = forecastNowMs(data);
+  const dayOffset = scope.includes("tomorrow") ? 1 : 0;
+  const targetDate = forecastLocalDate(data, dayOffset);
+  const rows = (data.hourly?.time || [])
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.time.startsWith(targetDate));
+  if (!rows.length) return rollingHourlyRows(data).slice(0, ROLLING_HOURLY_PAGE_SIZE);
+  if (dayOffset === 0) return rows.filter((row) => row.ms >= now - 60 * 60 * 1000);
+  return rows;
+}
+
+function notificationBestHourlyIndex(rows, data, scoreForIndex) {
+  let bestIndex = -1;
+  let bestScore = -Infinity;
+  rows.forEach((row) => {
+    const score = Number(scoreForIndex(row.index));
+    if (Number.isFinite(score) && score > bestScore) {
+      bestScore = score;
+      bestIndex = row.index;
+    }
+  });
+  return bestIndex;
+}
+
+function notificationHourlyFocusLabel(data, detailKind, index) {
+  const time = formatTime(data.hourly.time[index]);
+  const kind = String(detailKind || "").toLowerCase();
+  if (kind === "wind") {
+    const unit = state.unit === "fahrenheit" ? "mph" : "km/h";
+    const gust = Math.round(data.hourly.wind_gusts_10m?.[index] || data.hourly.wind_speed_10m?.[index] || 0);
+    return `Gusts ${gust} ${unit} near ${time}`;
+  }
+  if (kind === "feels") {
+    const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+    const feels = Math.round(data.hourly.apparent_temperature?.[index] || data.hourly.temperature_2m?.[index] || 0);
+    return `Feels ${feels}${degree(tempUnit)} near ${time}`;
+  }
+  if (kind === "rain" || kind === "storm") {
+    const pop = Math.round(hourlyPrecipProfile(data, index).pop || 0);
+    return `${pop}% rain near ${time}`;
+  }
+  return `Forecast near ${time}`;
+}
+
+function notificationHourlyBadgeLabel(detailKind) {
+  const kind = String(detailKind || "").toLowerCase();
+  if (kind === "wind") return "Wind";
+  if (kind === "feels") return "Feels";
+  if (kind === "rain" || kind === "storm") return "Rain";
+  return "Focus";
+}
+
+function notificationHourlyScopeLabel(timeScope = "") {
+  const scope = String(timeScope || "").toLowerCase();
+  if (scope.includes("tomorrow")) return "Tomorrow";
+  if (scope.includes("today")) return "Today";
+  return "";
+}
+
 function getDayDetailMode() {
   return localStorage.getItem(DAY_DETAIL_MODE_KEY) === "hourly" ? "hourly" : "graph";
 }

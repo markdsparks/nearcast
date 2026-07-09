@@ -234,14 +234,14 @@ assert.equal(sharedCandidateUrl.searchParams.get("signal"), "plan-alert");
 assert.equal(sharedCandidateUrl.searchParams.get("timeScope"), "plan-window");
 
 const placeDetailUrl = new URL(truth.planWatchNotificationTargetUrl({
-  target: "place-detail",
+  target: "place-hourly",
   placeId: "maryville-home",
   detail: "feels",
   signal: "place-heat",
   timeScope: "tomorrow",
   source: "place-watch-evaluator"
 }), "https://getnearcast.app/");
-assert.equal(placeDetailUrl.searchParams.get("target"), "place-detail");
+assert.equal(placeDetailUrl.searchParams.get("target"), "place-hourly");
 assert.equal(placeDetailUrl.searchParams.get("placeId"), "maryville-home");
 assert.equal(placeDetailUrl.searchParams.get("detail"), "feels");
 assert.equal(placeDetailUrl.searchParams.get("signal"), "place-heat");

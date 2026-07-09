@@ -2190,13 +2190,13 @@ function savedPlaceWatchNotificationRoute(change = {}, current = {}) {
     return { target: "alerts", detail: "alerts", timeScope: dayLabel || "today" };
   }
   if (type.includes("heat")) {
-    return { target: "place-detail", detail: "feels", timeScope: dayLabel || "today" };
+    return { target: "place-hourly", detail: "feels", timeScope: dayLabel || "today" };
   }
   if (type.includes("wind")) {
-    return { target: "place-detail", detail: "wind", timeScope: dayLabel || "today" };
+    return { target: "place-hourly", detail: "wind", timeScope: dayLabel || "today" };
   }
   if (type.includes("storm") || type.includes("rain") || type.includes("clear") || type.includes("precip")) {
-    return { target: "place-detail", detail: "rain", timeScope: dayLabel || "today" };
+    return { target: "place-hourly", detail: "rain", timeScope: dayLabel || "today" };
   }
   return { target: "watching", detail: "", timeScope: dayLabel || "" };
 }

@@ -672,6 +672,15 @@ function consumeNearcastNotificationRoute(options = {}) {
   }
 
   const detailKind = nearcastNotificationDetailKind(route);
+  if (
+    (route.target === "place-hourly" || route.target === "hourly") &&
+    detailKind &&
+    typeof openNotificationHourlyRoute === "function" &&
+    openNotificationHourlyRoute(route, detailKind)
+  ) {
+    return true;
+  }
+
   if ((route.target === "place-detail" || route.target === "place" || detailKind) && detailKind && typeof openGlanceDetail === "function") {
     openGlanceDetail(detailKind);
     return true;
