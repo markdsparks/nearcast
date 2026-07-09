@@ -7881,6 +7881,12 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     ? best.pop >= 50 || best.etaMinutes <= 15 ? "Likely" : "Watching"
     : best.pop >= 75 ? "Likely" : "Possible";
   const route = nativeStormActivityUrl(place);
+  const severity = best.storm
+    ? best.pop >= 80 || best.precip >= 1.6 ? 4 : 3
+    : best.pop >= 75 || best.precip >= 0.8 ? 2 : 1;
+  const confidenceValue = best.storm
+    ? Math.max(0.52, Math.min(0.92, (best.pop / 100) * 0.72 + (best.etaMinutes <= 15 ? 0.18 : 0.06)))
+    : Math.max(0.42, Math.min(0.82, best.pop / 100));
 
   return {
     key: [
@@ -7895,8 +7901,20 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     status,
     detail,
     confidence,
+    confidenceValue,
+    severity,
+    rainChance: best.pop,
+    motionDegrees: nativeStormActivityMotionDegrees(data, best.index),
+    geometryQuality: "forecast",
     url: route || "nearcast://watching?source=live-activity"
   };
+}
+
+function nativeStormActivityMotionDegrees(data, index) {
+  const hourly = data?.hourly || {};
+  const windDirection = Number(hourly.wind_direction_10m?.[index] ?? data?.current?.wind_direction_10m);
+  if (Number.isFinite(windDirection)) return Math.round(windDirection);
+  return null;
 }
 
 function nativeStormActivityUrl(place) {
@@ -7933,6 +7951,11 @@ function nativeStormActivityDebugPayload(options = {}) {
     status: `Storm Watch near ${city}`,
     detail: `${detailVerb} in about ${etaMinutes} min. Rain chance ${chance}%.`,
     confidence: "Sample",
+    confidenceValue: options.updated ? 0.84 : 0.72,
+    severity: options.updated ? 4 : 3,
+    rainChance: chance,
+    motionDegrees: options.updated ? 78 : 112,
+    geometryQuality: "sample",
     url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
   };
 }
@@ -8084,6 +8107,11 @@ async function runLiveActivityLabDirectAction(action) {
         status: `Storm Watch near ${city}`,
         detail: `${action === "update" ? "Updated sample:" : "Thunder possible"} in about ${etaMinutes} min. Rain chance ${chance}%.`,
         confidence: "Sample",
+        confidenceValue: action === "update" ? 0.84 : 0.72,
+        severity: action === "update" ? 4 : 3,
+        rainChance: chance,
+        motionDegrees: action === "update" ? 78 : 112,
+        geometryQuality: "sample",
         url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
       };
       state.nativeStormActivityKey = payload.key;

@@ -482,8 +482,8 @@ struct NearcastStormActivityLockView: View {
 
     var body: some View {
         ZStack {
-            StormActivityBackdrop()
-            StormActivityPathVisual()
+            StormActivityBackdrop(severity: context.state.severityLevel)
+            StormActivityPathVisual(state: context.state)
                 .padding(.horizontal, 10)
                 .padding(.top, 40)
                 .padding(.bottom, 36)
@@ -523,6 +523,13 @@ struct NearcastStormActivityLockView: View {
                             .foregroundStyle(confidenceColor)
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
+                        if !geometryLabel.isEmpty {
+                            Text(geometryLabel)
+                                .font(.system(size: 8, weight: .black, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.48))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+                        }
                     }
                 }
 
@@ -554,6 +561,11 @@ struct NearcastStormActivityLockView: View {
     }
 
     private var confidenceColor: Color {
+        if let value = context.state.confidenceValue {
+            if value >= 0.72 { return .yellow }
+            if value >= 0.45 { return .cyan.opacity(0.88) }
+            return .white.opacity(0.76)
+        }
         let confidence = context.state.confidence.lowercased()
         if confidence.contains("likely") || confidence.contains("sample") { return .yellow }
         if confidence.contains("possible") || confidence.contains("watch") { return .cyan.opacity(0.88) }
@@ -575,6 +587,9 @@ struct NearcastStormActivityLockView: View {
     }
 
     private var rainChanceText: String? {
+        if let rainChance = context.state.rainChance {
+            return "\(rainChance)%"
+        }
         let tokens = lockDetail
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: ".", with: " ")
@@ -585,14 +600,29 @@ struct NearcastStormActivityLockView: View {
         }
         return nil
     }
+
+    private var geometryLabel: String {
+        switch context.state.geometryQuality?.lowercased() {
+        case "tracked", "radar":
+            return "Tracked path"
+        case "forecast":
+            return "Forecast path"
+        case "approx", "estimated", "sample":
+            return "Approx path"
+        default:
+            return ""
+        }
+    }
 }
 
 struct StormActivityBackdrop: View {
+    let severity: Int
+
     var body: some View {
         LinearGradient(
             colors: [
                 Color(red: 0.02, green: 0.05, blue: 0.10),
-                Color(red: 0.04, green: 0.10, blue: 0.17),
+                severity >= 3 ? Color(red: 0.13, green: 0.07, blue: 0.08) : Color(red: 0.04, green: 0.10, blue: 0.17),
                 Color(red: 0.02, green: 0.07, blue: 0.10)
             ],
             startPoint: .topLeading,
@@ -607,7 +637,7 @@ struct StormActivityBackdrop: View {
         }
         .overlay(alignment: .bottomTrailing) {
             Circle()
-                .fill(.yellow.opacity(0.10))
+                .fill((severity >= 2 ? Color.orange : Color.yellow).opacity(0.10))
                 .frame(width: 150, height: 150)
                 .blur(radius: 46)
                 .offset(x: 50, y: 34)
@@ -616,79 +646,120 @@ struct StormActivityBackdrop: View {
 }
 
 struct StormActivityPathVisual: View {
+    let state: NearcastStormActivityAttributes.ContentState
+
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let height = proxy.size.height
 
             ZStack {
-                StormBlob()
-                    .frame(width: width * 0.54, height: height * 0.64)
-                    .rotationEffect(.degrees(-16))
-                    .offset(x: -width * 0.26, y: height * 0.08)
+                ZStack {
+                    StormBlob(severity: state.severityLevel)
+                        .frame(width: width * 0.54, height: height * 0.64)
+                        .rotationEffect(.degrees(-16))
+                        .offset(x: -width * 0.28, y: height * 0.04)
 
-                StormBlob()
-                    .frame(width: width * 0.34, height: height * 0.42)
-                    .rotationEffect(.degrees(20))
-                    .opacity(0.72)
-                    .offset(x: width * 0.34, y: -height * 0.06)
+                    StormBlob(severity: max(1, state.severityLevel - 1))
+                        .frame(width: width * 0.30, height: height * 0.38)
+                        .rotationEffect(.degrees(20))
+                        .opacity(0.72)
+                        .offset(x: -width * 0.04, y: -height * 0.20)
 
-                StormPathCone()
-                    .fill(.cyan.opacity(0.13))
-                    .overlay {
-                        StormPathCone()
-                            .stroke(.white.opacity(0.55), lineWidth: 2)
-                    }
-                    .frame(width: width * 0.44, height: height * 0.58)
-                    .rotationEffect(.degrees(-9))
-                    .offset(x: -width * 0.02, y: height * 0.10)
+                    StormPathCone()
+                        .fill(pathFill)
+                        .overlay {
+                            StormPathCone()
+                                .stroke(pathStroke, lineWidth: state.pathStrokeWidth)
+                        }
+                        .frame(width: width * state.coneWidthScale, height: height * 0.58)
+                        .offset(x: width * 0.09, y: height * 0.06)
 
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 30, weight: .black))
-                    .foregroundStyle(.white.opacity(0.74))
-                    .rotationEffect(.degrees(-13))
-                    .offset(x: -width * 0.09, y: height * 0.14)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 30, weight: .black))
+                        .foregroundStyle(.white.opacity(state.motionDegrees == nil ? 0.48 : 0.78))
+                        .offset(x: -width * 0.04, y: height * 0.08)
 
-                Circle()
-                    .fill(.white)
-                    .frame(width: 15, height: 15)
-                    .shadow(color: .white.opacity(0.5), radius: 8)
-                    .overlay {
-                        Circle()
-                            .stroke(.white.opacity(0.26), lineWidth: 13)
-                    }
-                    .offset(x: width * 0.17, y: height * 0.13)
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 15, height: 15)
+                        .shadow(color: .white.opacity(0.5), radius: 8)
+                        .overlay {
+                            Circle()
+                                .stroke(placeRingColor, lineWidth: state.placeRingWidth)
+                        }
+                        .offset(x: width * 0.28, y: height * 0.08)
+                }
+                .rotationEffect(.degrees(state.motionRotationDegrees))
+                .offset(x: state.motionDegrees == nil ? 0 : width * 0.02, y: 0)
+
+                if state.motionDegrees == nil {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(.white.opacity(0.18), lineWidth: 1)
+                        .frame(width: width * 0.52, height: height * 0.46)
+                        .offset(x: width * 0.10, y: height * 0.08)
+                }
             }
             .frame(width: width, height: height)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    private var pathFill: Color {
+        if state.motionDegrees == nil { return .white.opacity(0.08) }
+        return .cyan.opacity(0.10 + min(0.10, state.confidenceScore * 0.10))
+    }
+
+    private var pathStroke: Color {
+        if state.motionDegrees == nil { return .white.opacity(0.28) }
+        return .white.opacity(0.36 + min(0.30, state.confidenceScore * 0.30))
+    }
+
+    private var placeRingColor: Color {
+        if state.etaMinutes <= 5 { return .red.opacity(0.32) }
+        if state.etaMinutes <= 20 { return .yellow.opacity(0.30) }
+        return .white.opacity(0.22)
+    }
 }
 
 struct StormBlob: View {
+    let severity: Int
+
     var body: some View {
         ZStack {
             Capsule()
-                .fill(.green.opacity(0.90))
+                .fill(baseColor.opacity(0.88))
                 .blur(radius: 5)
             Capsule()
-                .fill(.green.opacity(0.70))
+                .fill(baseColor.opacity(0.70))
                 .scaleEffect(x: 0.82, y: 0.74)
                 .offset(x: 8, y: -4)
                 .blur(radius: 7)
             Capsule()
-                .fill(.yellow.opacity(0.90))
+                .fill(coreColor.opacity(0.90))
                 .scaleEffect(x: 0.52, y: 0.48)
                 .offset(x: 6, y: -2)
                 .blur(radius: 6)
             Capsule()
-                .fill(.red.opacity(0.88))
+                .fill(hotColor.opacity(severity >= 2 ? 0.88 : 0.40))
                 .scaleEffect(x: 0.32, y: 0.30)
                 .offset(x: -6, y: 2)
                 .blur(radius: 5)
         }
-        .shadow(color: .green.opacity(0.22), radius: 18)
+        .shadow(color: baseColor.opacity(0.22), radius: 18)
+    }
+
+    private var baseColor: Color {
+        severity >= 3 ? .green : .cyan
+    }
+
+    private var coreColor: Color {
+        severity >= 2 ? .yellow : .green
+    }
+
+    private var hotColor: Color {
+        severity >= 4 ? .purple : .red
     }
 }
 
@@ -713,6 +784,46 @@ struct StormPathCone: Shape {
         )
         path.closeSubpath()
         return path
+    }
+}
+
+extension NearcastStormActivityAttributes.ContentState {
+    var severityLevel: Int {
+        max(0, min(4, severity ?? inferredSeverity))
+    }
+
+    var confidenceScore: Double {
+        if let confidenceValue { return max(0, min(1, confidenceValue)) }
+        let lower = confidence.lowercased()
+        if lower.contains("likely") || lower.contains("sample") { return 0.78 }
+        if lower.contains("possible") || lower.contains("watch") { return 0.52 }
+        return 0.38
+    }
+
+    var motionRotationDegrees: Double {
+        guard let motionDegrees else { return -10 }
+        return motionDegrees - 90
+    }
+
+    var coneWidthScale: Double {
+        let spread = 0.54 - confidenceScore * 0.18
+        return max(0.36, min(0.56, spread))
+    }
+
+    var pathStrokeWidth: Double {
+        motionDegrees == nil ? 1.5 : 1.8 + confidenceScore * 1.2
+    }
+
+    var placeRingWidth: Double {
+        etaMinutes <= 5 ? 16 : 11 + confidenceScore * 5
+    }
+
+    private var inferredSeverity: Int {
+        let lower = "\(status) \(detail)".lowercased()
+        if lower.contains("severe") { return 4 }
+        if lower.contains("thunder") || lower.contains("storm") { return 3 }
+        if (rainChance ?? 0) >= 75 { return 2 }
+        return 1
     }
 }
 

@@ -8,10 +8,14 @@ struct NearcastStormActivityAttributes: ActivityAttributes {
         var detail: String
         var confidence: String
         var updatedAt: Date
+        var motionDegrees: Double?
+        var confidenceValue: Double?
+        var severity: Int?
+        var rainChance: Int?
+        var geometryQuality: String?
     }
 
     var placeName: String
     var stormName: String
     var deepLink: URL?
 }
-
