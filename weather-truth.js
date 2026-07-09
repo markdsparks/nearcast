@@ -292,6 +292,14 @@ function weatherTruthDelta(current, previous) {
   return current - previous;
 }
 
+function weatherTruthIsPlausibleHeatValue(value, unit = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return false;
+  const normalizedUnit = String(unit || "").toLowerCase();
+  if (normalizedUnit.includes("c")) return number >= 10 && number <= 65;
+  return number >= 50 && number <= 150;
+}
+
 function weatherTruthScoreBand(score) {
   if (score >= 65) return "good";
   if (score >= 45) return "iffy";
@@ -555,11 +563,15 @@ function planWeatherChange(previousItem, currentItem) {
     };
   }
 
-  const heatDelta = weatherTruthDelta(current.feelsMax, previous.feelsMax);
-  const crossedSeriousHeat = previous.feelsMax !== null && current.feelsMax !== null && previous.feelsMax < 100 && current.feelsMax >= 100;
+  const heatComparisonReady = weatherTruthIsPlausibleHeatValue(current.feelsMax, current.tempUnit) &&
+    weatherTruthIsPlausibleHeatValue(previous.feelsMax, previous.tempUnit || current.tempUnit);
+  const heatDelta = heatComparisonReady ? weatherTruthDelta(current.feelsMax, previous.feelsMax) : null;
+  const seriousHeat = String(current.tempUnit || "").toLowerCase().includes("c") ? 38 : 100;
+  const notableHeat = String(current.tempUnit || "").toLowerCase().includes("c") ? 33 : 92;
+  const crossedSeriousHeat = heatComparisonReady && previous.feelsMax < seriousHeat && current.feelsMax >= seriousHeat;
   if (
     heatDelta !== null &&
-    (crossedSeriousHeat || (Math.abs(heatDelta) >= 5 && Math.max(current.feelsMax, previous.feelsMax) >= 92))
+    (crossedSeriousHeat || (Math.abs(heatDelta) >= 5 && Math.max(current.feelsMax, previous.feelsMax) >= notableHeat))
   ) {
     const hotter = heatDelta > 0;
     return {

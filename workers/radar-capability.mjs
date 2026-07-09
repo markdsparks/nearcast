@@ -2108,10 +2108,12 @@ function savedPlaceWatchDayChange(snapshot = {}, previous = {}, current = {}) {
     };
   }
 
-  const heatDelta = numberDelta(current.feelsMax, previous.feelsMax);
   const seriousHeat = snapshot.unit === "celsius" ? 38 : 100;
   const notableHeat = snapshot.unit === "celsius" ? 35 : 95;
   const heatJump = snapshot.unit === "celsius" ? 4 : 8;
+  const heatComparisonReady = plausibleHeatValue(current.feelsMax, snapshot.unit) &&
+    plausibleHeatValue(previous.feelsMax, snapshot.unit);
+  const heatDelta = heatComparisonReady ? numberDelta(current.feelsMax, previous.feelsMax) : null;
   if (
     heatDelta !== null &&
     heatDelta > 0 &&
@@ -2873,6 +2875,12 @@ function roundNumber(value, digits = 0) {
 function numberDelta(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
   return current - previous;
+}
+
+function plausibleHeatValue(value, unit = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return false;
+  return unit === "celsius" ? number >= 10 && number <= 65 : number >= 50 && number <= 150;
 }
 
 function base64UrlEncodeJson(value) {

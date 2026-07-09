@@ -162,6 +162,9 @@ assert.equal(heatChange.tone, "watch");
 assert.equal(heatChange.notify, true);
 assert.match(heatChange.body, /101°F/);
 
+const missingHeatBaseline = truth.planWeatherChange({ ...baselinePlan, feelsMax: 0 }, { ...baselinePlan, feelsMax: 96 });
+assert.equal(missingHeatBaseline, null);
+
 const windChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, gustMax: 31, score: 61 });
 assert.equal(windChange.type, "plan-wind");
 assert.equal(windChange.notify, true);
