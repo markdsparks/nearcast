@@ -865,6 +865,139 @@ button {
   cursor: pointer;
 }
 
+:where(
+  button,
+  a[href],
+  [role="button"],
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal.has-detail,
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .sheet-hour-row,
+  .graph-memory-window,
+  .daylight-arc
+) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(
+  button,
+  a[href],
+  [role="button"],
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal.has-detail,
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .sheet-hour-row,
+  .daylight-arc
+):not(:disabled):not([aria-disabled="true"]) {
+  transition:
+    transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 140ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+:where(
+  button,
+  a[href],
+  [role="button"],
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal.has-detail,
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .sheet-hour-row,
+  .daylight-arc
+).is-touch-pressed:not(:disabled):not([aria-disabled="true"]),
+:where(
+  button,
+  a[href],
+  [role="button"],
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal.has-detail,
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .sheet-hour-row,
+  .daylight-arc
+):active:not(:disabled):not([aria-disabled="true"]) {
+  transform: translateY(1px) scale(0.982);
+  filter: brightness(0.97) saturate(1.04);
+}
+
+:where(
+  button,
+  a[href],
+  [role="button"],
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal.has-detail,
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .sheet-hour-row
+):focus-visible {
+  outline: 2px solid rgba(116, 199, 255, 0.82);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(
+    button,
+    a[href],
+    [role="button"],
+    .hour-card,
+    .day-row,
+    .summary-strip-item,
+    .for-you-card,
+    .glance-signal.has-detail,
+    .place-item-main,
+    .result-button,
+    .memory-main,
+    .sheet-hour-row
+  ):not(:disabled):not([aria-disabled="true"]):not(:active):not(.is-touch-pressed):hover {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(
+    button,
+    a[href],
+    [role="button"],
+    .hour-card,
+    .day-row,
+    .summary-strip-item,
+    .for-you-card,
+    .glance-signal.has-detail,
+    .place-item-main,
+    .result-button,
+    .memory-main,
+    .sheet-hour-row,
+    .daylight-arc
+  ) {
+    transition: none !important;
+  }
+}
+
 .shell {
   position: relative;
   z-index: 1;

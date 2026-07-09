@@ -1,4 +1,4 @@
-const VERSION = "3.0.213";
+const VERSION = "3.0.224";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -2758,6 +2758,7 @@ function init() {
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
+  initTactileFeedback();
   initInstallPrompt();
   initMetricTipListeners();
   initDaylightScrubListeners();
@@ -3025,6 +3026,70 @@ function blockGuardedClickThrough(event) {
   event.preventDefault();
   event.stopPropagation();
   if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+}
+
+const TACTILE_TARGET_SELECTOR = [
+  "button",
+  "a[href]",
+  "[role='button']",
+  ".hour-card",
+  ".day-row",
+  ".summary-strip-item",
+  ".for-you-card",
+  ".glance-signal.has-detail",
+  ".place-item-main",
+  ".result-button",
+  ".memory-main",
+  ".sheet-hour-row",
+  ".daylight-arc"
+].join(", ");
+
+let tactilePressTarget = null;
+let tactilePressPointerId = null;
+let tactilePressTimer = 0;
+
+function tactileTargetFromEvent(event) {
+  const target = event.target?.closest?.(TACTILE_TARGET_SELECTOR);
+  if (!target || !document.body.contains(target)) return null;
+  if (target.matches?.(":disabled, [disabled], [aria-disabled='true']")) return null;
+  if (target.closest?.("input[type='range'], .tile-map, #weatherMap, .maplibregl-canvas-container")) return null;
+  return target;
+}
+
+function clearTactilePress(target = tactilePressTarget) {
+  if (tactilePressTimer) {
+    clearTimeout(tactilePressTimer);
+    tactilePressTimer = 0;
+  }
+  if (target) target.classList.remove("is-touch-pressed");
+  if (target === tactilePressTarget) {
+    tactilePressTarget = null;
+    tactilePressPointerId = null;
+  }
+}
+
+function initTactileFeedback() {
+  document.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = tactileTargetFromEvent(event);
+    if (!target) return;
+    clearTactilePress();
+    tactilePressTarget = target;
+    tactilePressPointerId = event.pointerId;
+    target.classList.add("is-touch-pressed");
+  }, { capture: true, passive: true });
+
+  document.addEventListener("pointerup", (event) => {
+    if (tactilePressPointerId !== event.pointerId) return;
+    const target = tactilePressTarget;
+    tactilePressTimer = setTimeout(() => clearTactilePress(target), 90);
+  }, { capture: true, passive: true });
+
+  document.addEventListener("pointercancel", (event) => {
+    if (tactilePressPointerId === event.pointerId) clearTactilePress();
+  }, { capture: true, passive: true });
+
+  document.addEventListener("scroll", () => clearTactilePress(), { capture: true, passive: true });
 }
 
 function bindTapAction(element, action, options = {}) {
