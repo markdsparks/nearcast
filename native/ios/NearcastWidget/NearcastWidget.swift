@@ -436,29 +436,35 @@ struct NearcastStormActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("StormScope")
-                            .font(.system(size: 9, weight: .black, design: .rounded))
-                            .tracking(1.1)
-                            .textCase(.uppercase)
-                            .foregroundStyle(.cyan.opacity(0.86))
-                            .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "location.north.line.fill")
+                                .font(.system(size: 8, weight: .black))
+                                .foregroundStyle(.cyan.opacity(0.82))
+                            Text("StormScope")
+                                .font(.system(size: 8, weight: .black, design: .rounded))
+                                .tracking(0.7)
+                                .textCase(.uppercase)
+                                .foregroundStyle(.cyan.opacity(0.82))
+                                .lineLimit(1)
+                        }
                         Text(cityName(context.attributes.placeName))
-                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .font(.system(size: 14, weight: .black, design: .rounded))
                             .lineLimit(1)
                         Text(context.state.geometryQualityLabel)
-                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                            .font(.system(size: 9, weight: .heavy, design: .rounded))
                             .foregroundStyle(.white.opacity(0.58))
                             .lineLimit(1)
                     }
+                    .padding(.leading, 7)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: -1) {
+                    VStack(alignment: .trailing, spacing: 0) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
                             Text("\(context.state.etaMinutes)")
-                                .font(.system(size: 25, weight: .black, design: .rounded))
+                                .font(.system(size: 23, weight: .black, design: .rounded))
                             Text("min")
-                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .font(.system(size: 9, weight: .black, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.78))
                         }
                         .lineLimit(1)
@@ -467,27 +473,28 @@ struct NearcastStormActivityWidget: Widget {
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.54))
                         Text(context.state.confidence)
-                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .font(.system(size: 8.5, weight: .black, design: .rounded))
                             .foregroundStyle(context.state.confidenceAccent)
                             .lineLimit(1)
                     }
+                    .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 9) {
                         Image(systemName: context.state.severityLevel >= 3 ? "cloud.bolt.rain.fill" : "cloud.rain.fill")
-                            .font(.system(size: 16, weight: .black))
+                            .font(.system(size: 15, weight: .black))
                             .foregroundStyle(context.state.confidenceAccent)
                             .frame(width: 24, height: 24)
                             .background(.white.opacity(0.10), in: Circle())
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(context.state.status)
-                                .font(.system(size: 12, weight: .black, design: .rounded))
+                                .font(.system(size: 11.5, weight: .black, design: .rounded))
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.78)
                             Text(context.state.detail)
-                                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                .font(.system(size: 9.5, weight: .heavy, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.66))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.78)
@@ -495,7 +502,8 @@ struct NearcastStormActivityWidget: Widget {
 
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, 2)
+                    .padding(.top, 1)
+                    .padding(.horizontal, 6)
                 }
             } compactLeading: {
                 Image(systemName: "cloud.bolt.rain.fill")
