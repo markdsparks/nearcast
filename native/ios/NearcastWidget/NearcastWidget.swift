@@ -436,30 +436,66 @@ struct NearcastStormActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(context.attributes.placeName)
-                            .font(.system(size: 12, weight: .black, design: .rounded))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("StormScope")
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .tracking(1.1)
+                            .textCase(.uppercase)
+                            .foregroundStyle(.cyan.opacity(0.86))
                             .lineLimit(1)
-                        Text(context.state.confidence)
+                        Text(cityName(context.attributes.placeName))
+                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                        Text(context.state.geometryQualityLabel)
                             .font(.system(size: 10, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.70))
+                            .foregroundStyle(.white.opacity(0.58))
                             .lineLimit(1)
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text("\(context.state.etaMinutes)m")
-                            .font(.system(size: 22, weight: .black, design: .rounded))
+                    VStack(alignment: .trailing, spacing: -1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 1) {
+                            Text("\(context.state.etaMinutes)")
+                                .font(.system(size: 25, weight: .black, design: .rounded))
+                            Text("min")
+                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.78))
+                        }
+                        .lineLimit(1)
                         Text("ETA")
+                            .font(.system(size: 8, weight: .black, design: .rounded))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.54))
+                        Text(context.state.confidence)
                             .font(.system(size: 9, weight: .black, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.66))
+                            .foregroundStyle(context.state.confidenceAccent)
+                            .lineLimit(1)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.state.detail)
-                        .font(.system(size: 12, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        Image(systemName: context.state.severityLevel >= 3 ? "cloud.bolt.rain.fill" : "cloud.rain.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(context.state.confidenceAccent)
+                            .frame(width: 24, height: 24)
+                            .background(.white.opacity(0.10), in: Circle())
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(context.state.status)
+                                .font(.system(size: 12, weight: .black, design: .rounded))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                            Text(context.state.detail)
+                                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.66))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, 2)
                 }
             } compactLeading: {
                 Image(systemName: "cloud.bolt.rain.fill")
@@ -849,6 +885,31 @@ extension NearcastStormActivityAttributes.ContentState {
         guard let geometryQuality else { return true }
         let quality = geometryQuality.lowercased()
         return quality == "approx" || quality == "estimated" || quality == "sample" || quality == "forecast"
+    }
+
+    var geometryQualityLabel: String {
+        switch geometryQuality?.lowercased() {
+        case "tracked", "radar":
+            return "Tracked path"
+        case "forecast":
+            return "Forecast path"
+        case "approx", "estimated", "sample":
+            return "Approx path"
+        default:
+            return "Storm watch"
+        }
+    }
+
+    var confidenceAccent: Color {
+        if let confidenceValue {
+            if confidenceValue >= 0.72 { return .yellow }
+            if confidenceValue >= 0.45 { return .cyan.opacity(0.88) }
+            return .white.opacity(0.78)
+        }
+        let lower = confidence.lowercased()
+        if lower.contains("likely") || lower.contains("sample") { return .yellow }
+        if lower.contains("possible") || lower.contains("watch") { return .cyan.opacity(0.88) }
+        return .white.opacity(0.82)
     }
 
     var visualOpacity: Double {
