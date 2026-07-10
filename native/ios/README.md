@@ -78,7 +78,104 @@ So the intended workflow is:
 2. Open the TestFlight app and pull-to-refresh/relaunch.
 3. Create a new TestFlight build only when the Swift shell or native capabilities change.
 
-Use local Xcode archives for signed TestFlight builds:
+### When to make a TestFlight build
+
+Do not use TestFlight as the normal product iteration loop. Release builds load
+the production web app, so most UI/copy/map changes should ship through the web
+deployment path and then be tested by relaunching the installed app.
+
+Create a TestFlight build only when the change touches the native shell:
+
+- Swift app wrapper behavior
+- widgets or widget timeline data
+- Live Activities
+- APNs/native notification plumbing
+- App Groups/shared native state
+- app icons, entitlements, bundle IDs, signing, or Info.plist changes
+
+### Golden path: local archive, manual signed upload
+
+This is the preferred command-line path. It avoids the Xcode Cloud detour and
+avoids the automatic export profile mismatch we hit during build `46`.
+
+Prerequisites:
+
+- `AppStoreConnect/AuthKey_8LM389Z6NR.p8` exists locally. This directory is
+  ignored by git.
+- The App Store Connect API key is still active:
+  - Key ID: `8LM389Z6NR`
+  - Issuer ID: `00459337-a0be-4634-9c5c-96ea253447e9`
+- The local Mac has the Apple Distribution certificate installed.
+- The app and widget distribution profiles are installed:
+  - `Nearcast App Distribution`
+  - `Nearcast Widget Distribution`
+
+Before archiving, choose the next build number and increment every
+`CURRENT_PROJECT_VERSION` value in:
+
+```text
+native/ios/Nearcast.xcodeproj/project.pbxproj
+```
+
+Keep the app, widget, and watch targets on the same build number. App Store
+Connect requires every upload for the same marketing version to have a higher
+build number than the previous upload.
+
+Verify the project is on one build number before archiving:
+
+```sh
+rg -n "CURRENT_PROJECT_VERSION = " native/ios/Nearcast.xcodeproj/project.pbxproj
+```
+
+Archive from the repo root:
+
+```sh
+BUILD=47
+
+xcodebuild \
+  -project native/ios/Nearcast.xcodeproj \
+  -scheme Nearcast \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath "native/ios/build/Nearcast-${BUILD}.xcarchive" \
+  archive \
+  -allowProvisioningUpdates
+```
+
+Upload the archive using the manual TestFlight export options and the API key:
+
+```sh
+BUILD=47
+
+xcodebuild \
+  -exportArchive \
+  -archivePath "native/ios/build/Nearcast-${BUILD}.xcarchive" \
+  -exportPath "native/ios/build/upload-testflight-${BUILD}" \
+  -exportOptionsPlist native/ios/ExportOptions-TestFlightManual.plist \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath /Users/markdsparks/Projects/weather-app/AppStoreConnect/AuthKey_8LM389Z6NR.p8 \
+  -authenticationKeyID 8LM389Z6NR \
+  -authenticationKeyIssuerID 00459337-a0be-4634-9c5c-96ea253447e9
+```
+
+The upload is done when the command prints:
+
+```text
+Uploaded Nearcast
+** EXPORT SUCCEEDED **
+```
+
+After a successful upload:
+
+1. Commit the build-number bump.
+2. Push `main`.
+3. Wait a few minutes for App Store Connect processing.
+4. Open TestFlight and pull to refresh.
+
+### Xcode Organizer fallback
+
+Use local Xcode archives for signed TestFlight builds if the command-line upload
+is unavailable:
 
 1. Open `native/ios/Nearcast.xcodeproj`.
 2. Select the `Nearcast` scheme.
@@ -91,7 +188,44 @@ Before archiving, make sure the app and widget targets use the correct Apple dev
 
 The current native build number is managed in `native/ios/Nearcast.xcodeproj/project.pbxproj` as `CURRENT_PROJECT_VERSION`. Keep the app target and widget target on the same value. If App Store Connect rejects an upload with a duplicate build number, increment all `CURRENT_PROJECT_VERSION` entries and archive again.
 
-From the command line, a local archive sanity check is:
+### Avoid these slow paths
+
+- Do not use Xcode Cloud for normal Nearcast builds. It adds queue time, consumes
+  monthly build minutes, and duplicates what local archive upload already does.
+- Do not use `native/ios/ExportOptions-TestFlightUpload.plist` for the normal
+  CLI path. It uses automatic signing and can fail when Apple's generated
+  profiles do not match the installed distribution certificate.
+- Do not debug `altool` first. If `xcodebuild -exportArchive` with
+  `ExportOptions-TestFlightManual.plist` works, that is the cleaner upload path.
+
+### Troubleshooting
+
+If the archive succeeds but upload fails with:
+
+```text
+Provisioning profile ... doesn't include signing certificate ...
+```
+
+then the upload is using the automatic signing export plist. Retry with:
+
+```text
+native/ios/ExportOptions-TestFlightManual.plist
+```
+
+If App Store Connect rejects a duplicate build number, increment all
+`CURRENT_PROJECT_VERSION` entries and archive again.
+
+If the upload command says the API key path is invalid, use the absolute path to
+the `.p8` file. Relative paths can fail depending on how Xcode invokes the
+transporter.
+
+If the command succeeds but the build is not visible in TestFlight yet, wait for
+App Store Connect processing. The upload is accepted before TestFlight finishes
+processing the build.
+
+### Local archive sanity check
+
+To verify signing/buildability without uploading:
 
 ```sh
 xcodebuild \
@@ -104,20 +238,8 @@ xcodebuild \
   -allowProvisioningUpdates
 ```
 
-If this fails with local account or signing errors, fix signing in Xcode first. The Organizer upload path should use the same local Apple account and managed signing setup.
-
-To upload a successful archive directly to App Store Connect/TestFlight:
-
-```sh
-xcodebuild \
-  -exportArchive \
-  -archivePath native/ios/build/Nearcast.xcarchive \
-  -exportPath native/ios/build/upload-testflight \
-  -exportOptionsPlist native/ios/ExportOptions-TestFlightUpload.plist \
-  -allowProvisioningUpdates
-```
-
-This uses the local Xcode account for signing and upload. The command finishes when App Store Connect accepts the package and starts processing it.
+If this fails with local account or signing errors, fix signing in Xcode before
+trying to upload.
 
 ## Build verification
 
