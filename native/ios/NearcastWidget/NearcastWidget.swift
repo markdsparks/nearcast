@@ -1348,7 +1348,7 @@ struct WidgetTimelineStrip: View {
 
     var body: some View {
         if focus == .rain {
-            RainTimelineStrip(rows: Array(rows.prefix(5)), snapshot: snapshot, palette: palette)
+            RainTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
         } else if focus == .sun {
             UvTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
         } else {
@@ -1363,7 +1363,8 @@ struct RainTimelineStrip: View {
     let palette: WidgetPalette
 
     var body: some View {
-        let peak = peakTimelinePoint(rows: rows, focus: .rain, snapshot: snapshot)
+        let displayRows = normalizedRainTimelineRows(rows)
+        let peak = peakTimelinePoint(rows: displayRows, focus: .rain, snapshot: snapshot)
         ZStack(alignment: .bottom) {
             Capsule()
                 .fill(palette.stroke.opacity(snapshot.isDay ? 0.72 : 0.55))
@@ -1372,12 +1373,13 @@ struct RainTimelineStrip: View {
                 .offset(y: -19)
 
             HStack(alignment: .bottom, spacing: 0) {
-                ForEach(rows) { row in
+                ForEach(Array(displayRows.enumerated()), id: \.offset) { index, row in
                     RainTimelinePoint(
                         row: row,
+                        label: rainTimelineDisplayLabel(index),
                         snapshot: snapshot,
                         palette: palette,
-                        isPeak: row.id == peak.row?.id && rows.count > 1
+                        isPeak: row.id == peak.row?.id && displayRows.count > 1
                     )
                     .frame(maxWidth: .infinity, alignment: .bottom)
                 }
@@ -1389,6 +1391,7 @@ struct RainTimelineStrip: View {
 
 struct RainTimelinePoint: View {
     let row: NearcastWidgetHour
+    let label: String
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
     let isPeak: Bool
@@ -1421,7 +1424,7 @@ struct RainTimelinePoint: View {
                     }
                 }
 
-            Text(relativeTimelineLabel(row))
+            Text(label)
                 .font(WidgetText.eyebrow)
                 .foregroundStyle(isPeak ? palette.primary.opacity(0.88) : palette.secondary)
                 .lineLimit(1)
@@ -2463,6 +2466,14 @@ private func summaryTimelineWidth(_ focus: WidgetNextFocus) -> CGFloat {
 
 private func relativeTimelineLabel(_ row: NearcastWidgetHour) -> String {
     row.offsetHours == 0 ? "Now" : "+\(row.offsetHours)h"
+}
+
+private func rainTimelineDisplayLabel(_ index: Int) -> String {
+    index == 0 ? "Now" : "+\(index)h"
+}
+
+private func normalizedRainTimelineRows(_ rows: [NearcastWidgetHour]) -> [NearcastWidgetHour] {
+    Array(rows.prefix(5))
 }
 
 private func rainTimelineHeight(_ value: Int) -> CGFloat {

@@ -1,4 +1,4 @@
-const VERSION = "3.0.230";
+const VERSION = "3.0.231";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7878,13 +7878,9 @@ function nativeWidgetTimeline(data = state.forecast) {
   const times = hourly.time || [];
   const startIndex = currentHourlyIndex(data);
   if (startIndex < 0 || !times[startIndex]) return [];
-  const now = forecastNowMs(data);
   const rows = [];
   for (let index = startIndex; index < times.length && rows.length < 6; index += 1) {
-    const ms = parseForecastTimestamp(times[index], data);
-    const offsetHours = Number.isFinite(ms)
-      ? Math.max(0, Math.round((ms - now) / (60 * 60 * 1000)))
-      : rows.length;
+    const offsetHours = rows.length;
     const roundOrNull = (value) => {
       const number = Number(value);
       return Number.isFinite(number) ? Math.round(number) : null;
