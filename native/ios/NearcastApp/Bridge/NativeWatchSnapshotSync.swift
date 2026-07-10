@@ -14,6 +14,7 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
     @Published private(set) var lastError: String?
 
     private var didActivate = false
+    private var pendingPayload: [String: Any]?
 
     private override init() {
         super.init()
@@ -52,21 +53,13 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
 
         let session = WCSession.default
         refreshSessionState(session)
-
-        do {
-            try session.updateApplicationContext(payload)
-            lastSnapshotSentAt = Date()
+        guard session.activationState == .activated else {
+            pendingPayload = payload
             lastError = nil
-        } catch {
-            lastError = "Application context failed: \(error.localizedDescription)"
+            return
         }
 
-        if session.isPaired && session.isWatchAppInstalled {
-            session.transferUserInfo(payload)
-            if session.isComplicationEnabled {
-                session.transferCurrentComplicationUserInfo(payload)
-            }
-        }
+        sendPayload(payload, session: session)
     }
 
     var statusRows: [(String, String)] {
@@ -108,6 +101,30 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         formatter.dateStyle = .none
         return formatter.string(from: date)
     }
+
+    private func flushPendingPayload(_ session: WCSession = .default) {
+        guard session.activationState == .activated, let payload = pendingPayload else { return }
+        pendingPayload = nil
+        sendPayload(payload, session: session)
+    }
+
+    private func sendPayload(_ payload: [String: Any], session: WCSession) {
+        do {
+            try session.updateApplicationContext(payload)
+            lastSnapshotSentAt = Date()
+            lastError = nil
+        } catch {
+            pendingPayload = payload
+            lastError = "Application context failed: \(error.localizedDescription)"
+        }
+
+        if session.isPaired && session.isWatchAppInstalled {
+            session.transferUserInfo(payload)
+            if session.isComplicationEnabled {
+                session.transferCurrentComplicationUserInfo(payload)
+            }
+        }
+    }
 }
 
 extension NativeWatchSnapshotSync: WCSessionDelegate {
@@ -116,6 +133,8 @@ extension NativeWatchSnapshotSync: WCSessionDelegate {
             self.refreshSessionState(session)
             if let error {
                 self.lastError = "Activation failed: \(error.localizedDescription)"
+            } else {
+                self.flushPendingPayload(session)
             }
         }
     }
@@ -142,6 +161,7 @@ extension NativeWatchSnapshotSync: WCSessionDelegate {
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
         Task { @MainActor in
             self.refreshSessionState(session)
+            self.flushPendingPayload(session)
         }
     }
 }
