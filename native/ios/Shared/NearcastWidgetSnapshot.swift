@@ -36,8 +36,24 @@ struct NearcastWidgetSnapshot: Codable {
     var watchStatus: String?
     var watchDetail: String?
     var watchTone: String?
+    var timeline: [NearcastWidgetHour]?
     var sunriseAt: TimeInterval?
     var sunsetAt: TimeInterval?
+}
+
+struct NearcastWidgetHour: Codable, Identifiable {
+    var id: String { "\(offsetHours)-\(timeLabel)" }
+    var offsetHours: Int
+    var timeLabel: String
+    var temperature: Int?
+    var feelsLike: Int?
+    var rainChance: Int?
+    var wind: Int?
+    var windGust: Int?
+    var windDirection: Int?
+    var uv: Int?
+    var conditionCode: Int?
+    var isDay: Bool?
 }
 
 struct NearcastWidgetPlace: Codable {
@@ -78,6 +94,7 @@ extension NearcastWidgetSnapshot {
         watchStatus: "Open Nearcast",
         watchDetail: "Weather that matters",
         watchTone: "neutral",
+        timeline: nil,
         sunriseAt: nil,
         sunsetAt: nil
     )

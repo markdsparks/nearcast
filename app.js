@@ -1,4 +1,4 @@
-const VERSION = "3.0.229";
+const VERSION = "3.0.230";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7825,7 +7825,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const widgetPlan = nativeWidgetPlanSummary(data, place);
     const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
     const snapshot = {
-      version: 3,
+      version: 4,
       savedAt: Date.now() / 1000,
       placeName: placeLabel(place),
       temperature: Math.round(current.temperature_2m),
@@ -7855,6 +7855,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       watchStatus: watchSummary.status,
       watchDetail: watchSummary.detail,
       watchTone: watchSummary.tone,
+      timeline: nativeWidgetTimeline(data),
       sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
       sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null
     };
@@ -7870,6 +7871,39 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
   } catch (error) {
     console.debug("[Nearcast native] Widget snapshot skipped", error);
   }
+}
+
+function nativeWidgetTimeline(data = state.forecast) {
+  const hourly = data?.hourly || {};
+  const times = hourly.time || [];
+  const startIndex = currentHourlyIndex(data);
+  if (startIndex < 0 || !times[startIndex]) return [];
+  const now = forecastNowMs(data);
+  const rows = [];
+  for (let index = startIndex; index < times.length && rows.length < 6; index += 1) {
+    const ms = parseForecastTimestamp(times[index], data);
+    const offsetHours = Number.isFinite(ms)
+      ? Math.max(0, Math.round((ms - now) / (60 * 60 * 1000)))
+      : rows.length;
+    const roundOrNull = (value) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.round(number) : null;
+    };
+    rows.push({
+      offsetHours,
+      timeLabel: shortClock(times[index]),
+      temperature: roundOrNull(hourly.temperature_2m?.[index]),
+      feelsLike: roundOrNull(hourly.apparent_temperature?.[index]),
+      rainChance: roundOrNull(hourly.precipitation_probability?.[index]),
+      wind: roundOrNull(hourly.wind_speed_10m?.[index]),
+      windGust: roundOrNull(hourly.wind_gusts_10m?.[index]),
+      windDirection: normalizeWindDegrees(hourly.wind_direction_10m?.[index]),
+      uv: roundOrNull(hourly.uv_index?.[index]),
+      conditionCode: roundOrNull(hourly.weather_code?.[index]),
+      isDay: hourly.is_day ? Boolean(hourly.is_day[index]) : null
+    });
+  }
+  return rows;
 }
 
 function syncNativeStormActivity(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {

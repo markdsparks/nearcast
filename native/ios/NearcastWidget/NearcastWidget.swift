@@ -50,7 +50,7 @@ enum NearcastWidgetForecastClient {
             URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)),
             URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
             URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
-            URLQueryItem(name: "hourly", value: "precipitation_probability,uv_index"),
+            URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
             URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,sunrise,sunset"),
             URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: "mph"),
@@ -89,7 +89,7 @@ enum NearcastWidgetForecastClient {
         let sunsetAt = forecast.daily?.sunset?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunsetAt
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 3),
+            version: max(fallback.version, 4),
             savedAt: Date().timeIntervalSince1970,
             placeName: place.name,
             temperature: temp,
@@ -119,9 +119,32 @@ enum NearcastWidgetForecastClient {
             watchStatus: fallback.watchStatus,
             watchDetail: fallback.watchDetail,
             watchTone: fallback.watchTone,
+            timeline: buildTimeline(from: forecast, currentIndex: currentIndex),
             sunriseAt: sunriseAt,
             sunsetAt: sunsetAt
         )
+    }
+
+    private static func buildTimeline(from forecast: WidgetForecastResponse, currentIndex: Int) -> [NearcastWidgetHour] {
+        guard let hourly = forecast.hourly, let times = hourly.time, !times.isEmpty else { return [] }
+        let start = max(0, min(currentIndex, times.count - 1))
+        let end = min(times.count - 1, start + 5)
+        guard start <= end else { return [] }
+        return (start...end).map { index in
+            NearcastWidgetHour(
+                offsetHours: max(0, index - start),
+                timeLabel: shortClockTime(times[index]) ?? "\(max(0, index - start))h",
+                temperature: roundedValue(flatValue(hourly.temperature?[safe: index])),
+                feelsLike: roundedValue(flatValue(hourly.apparentTemperature?[safe: index])),
+                rainChance: roundedValue(flatValue(hourly.precipitationProbability?[safe: index])),
+                wind: roundedValue(flatValue(hourly.windSpeed?[safe: index])),
+                windGust: roundedValue(flatValue(hourly.windGusts?[safe: index])),
+                windDirection: roundedValue(flatValue(hourly.windDirection?[safe: index])),
+                uv: roundedValue(flatValue(hourly.uvIndex?[safe: index])),
+                conditionCode: hourly.weatherCode?[safe: index].flatMap { $0 },
+                isDay: hourly.isDay?[safe: index].flatMap { $0 }.map { $0 == 1 }
+            )
+        }
     }
 
     private static func hourlyIndex(hourlyTimes: [String]?, currentTime: String?) -> Int {
@@ -251,13 +274,27 @@ struct WidgetForecastResponse: Decodable {
 
     struct Hourly: Decodable {
         let time: [String]?
+        let temperature: [Double?]?
+        let apparentTemperature: [Double?]?
         let precipitationProbability: [Double?]?
+        let weatherCode: [Int?]?
+        let windSpeed: [Double?]?
+        let windGusts: [Double?]?
+        let windDirection: [Double?]?
         let uvIndex: [Double?]?
+        let isDay: [Int?]?
 
         enum CodingKeys: String, CodingKey {
             case time
+            case temperature = "temperature_2m"
+            case apparentTemperature = "apparent_temperature"
             case precipitationProbability = "precipitation_probability"
+            case weatherCode = "weather_code"
+            case windSpeed = "wind_speed_10m"
+            case windGusts = "wind_gusts_10m"
+            case windDirection = "wind_direction_10m"
             case uvIndex = "uv_index"
+            case isDay = "is_day"
         }
     }
 
@@ -1091,7 +1128,7 @@ struct NearcastLargeWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
@@ -1100,29 +1137,25 @@ struct NearcastLargeWidget: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(primarySignal(snapshot))
-                        .font(.system(size: 29, weight: .black, design: .rounded))
+                        .font(.system(size: 33, weight: .black, design: .rounded))
                         .lineLimit(2)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.64)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(snapshot.temperature)°")
-                        .font(.system(size: 43, weight: .black, design: .rounded))
+                        .font(.system(size: 48, weight: .black, design: .rounded))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(0.68)
                     if let high = snapshot.high, let low = snapshot.low {
                         Text("H \(high)°  L \(low)°")
-                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                            .font(.system(size: 15, weight: .heavy, design: .rounded))
                             .foregroundStyle(palette.secondary)
                     }
                 }
             }
 
-            VStack(spacing: 8) {
-                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: palette.primary, palette: palette)
-                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue), palette: palette)
-                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: palette.secondary, palette: palette)
-            }
+            NextWeatherPanel(snapshot: snapshot, palette: palette)
 
             if hasPlanSummary(snapshot) {
                 PlanSummaryStrip(snapshot: snapshot, palette: palette)
@@ -1135,12 +1168,14 @@ struct NearcastLargeWidget: View {
                 UvMetricTile(value: snapshot.uv, palette: palette)
             }
 
-            Text(freshnessText(snapshot))
-                .font(.system(size: 9, weight: .heavy, design: .rounded))
-                .foregroundStyle(palette.subtle)
-                .lineLimit(1)
+            if isWidgetSnapshotStale(snapshot) {
+                Text(freshnessText(snapshot))
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundStyle(palette.subtle)
+                    .lineLimit(1)
+            }
         }
-        .padding(18)
+        .padding(17)
     }
 }
 
@@ -1206,6 +1241,122 @@ struct PlanSummaryStrip: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(planStrokeColor(snapshot), lineWidth: 1)
         )
+    }
+}
+
+enum WidgetNextFocus {
+    case rain
+    case wind
+    case sun
+    case quiet
+}
+
+struct NextWeatherPanel: View {
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        let focus = nextFocus(snapshot)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 9) {
+                Image(systemName: nextFocusSymbol(focus, snapshot: snapshot))
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(nextFocusColor(focus, snapshot: snapshot))
+                    .frame(width: 28, height: 28)
+                    .background(nextFocusColor(focus, snapshot: snapshot).opacity(snapshot.isDay ? 0.14 : 0.22), in: Circle())
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(nextFocusTitle(focus, snapshot: snapshot))
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundStyle(palette.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                    Text(nextFocusDetail(focus, snapshot: snapshot))
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundStyle(palette.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if let rows = snapshot.timeline, !rows.isEmpty {
+                WidgetTimelineStrip(rows: Array(rows.prefix(6)), focus: focus, snapshot: snapshot, palette: palette)
+            } else {
+                HStack(spacing: 6) {
+                    MiniPill(text: compactSignalValue(snapshot.nowValue), palette: palette)
+                    MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue), palette: palette)
+                    MiniPill(text: compactSignalValue(snapshot.laterValue), palette: palette)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(palette.stroke, lineWidth: 1)
+        )
+    }
+}
+
+struct WidgetTimelineStrip: View {
+    let rows: [NearcastWidgetHour]
+    let focus: WidgetNextFocus
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 5) {
+            ForEach(rows) { row in
+                VStack(spacing: 4) {
+                    TimelineValueMark(row: row, focus: focus, snapshot: snapshot, palette: palette)
+                    Text(row.timeLabel)
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .foregroundStyle(row.offsetHours == 0 ? palette.primary : palette.subtle)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+struct TimelineValueMark: View {
+    let row: NearcastWidgetHour
+    let focus: WidgetNextFocus
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        let color = timelineColor(row: row, focus: focus, snapshot: snapshot)
+        let height = timelineHeight(row: row, focus: focus, snapshot: snapshot)
+        VStack(spacing: 3) {
+            if focus == .quiet, let code = row.conditionCode {
+                Image(systemName: conditionSymbol(code: code, isDay: row.isDay ?? snapshot.isDay))
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(color)
+                    .frame(height: 18)
+            } else {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.48), color],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 9, height: height)
+            }
+            Text(timelineValue(row: row, focus: focus, snapshot: snapshot))
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .foregroundStyle(palette.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+        }
+        .frame(height: 42, alignment: .bottom)
     }
 }
 
@@ -1622,12 +1773,171 @@ private func compactSignalValue(_ value: String) -> String {
     return text
 }
 
+private func nextFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus {
+    let rows = snapshot.timeline ?? []
+    let maxRain = rows.compactMap(\.rainChance).max() ?? snapshot.rainChance
+    let maxWind = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
+    let hasStorm = rows.contains { row in
+        guard let code = row.conditionCode else { return false }
+        return (95...99).contains(code)
+    }
+    let nextText = "\(snapshot.nextValue) \(snapshot.nowValue)".lowercased()
+    if hasStorm || maxRain >= 35 || nextText.contains("rain") || nextText.contains("storm") {
+        return .rain
+    }
+    if maxWind >= max(24, snapshot.wind + 8) || snapshot.laterValue.lowercased().contains("gust") {
+        return .wind
+    }
+    if snapshot.isDay && snapshot.uv >= 6 {
+        return .sun
+    }
+    return .quiet
+}
+
+private func nextFocusTitle(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    switch focus {
+    case .rain:
+        let peak = peakRainHour(snapshot)
+        if peak.isStorm { return "Storm chance near \(peak.timeLabel)" }
+        if peak.value >= 35 { return "Rain near \(peak.timeLabel)" }
+        return compactSignalValue(snapshot.nextValue)
+    case .wind:
+        let peak = peakWindHour(snapshot)
+        return "Gusts near \(peak.value) \(snapshot.windUnit)"
+    case .sun:
+        return "UV \(uvRiskLabel(snapshot.uv))"
+    case .quiet:
+        return compactSignalValue(snapshot.nextValue)
+    }
+}
+
+private func nextFocusDetail(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    switch focus {
+    case .rain:
+        let peak = peakRainHour(snapshot)
+        return peak.value >= 35 ? "Peak \(peak.value)% in the next few hours" : compactSignalValue(snapshot.nowValue)
+    case .wind:
+        let peak = peakWindHour(snapshot)
+        return peak.timeLabel == "Now" ? "Strongest wind right now" : "Strongest around \(peak.timeLabel)"
+    case .sun:
+        return "Peak UV \(snapshot.uv) for this place"
+    case .quiet:
+        if let highLow = highLowText(snapshot) { return "\(highLow) · \(windSummary(snapshot, includeDirection: false))" }
+        return windSummary(snapshot, includeDirection: false)
+    }
+}
+
+private func nextFocusSymbol(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    switch focus {
+    case .rain:
+        return peakRainHour(snapshot).isStorm ? "cloud.bolt.rain.fill" : "cloud.rain.fill"
+    case .wind:
+        return "wind"
+    case .sun:
+        return "sun.max.fill"
+    case .quiet:
+        return conditionSymbol(snapshot)
+    }
+}
+
+private func nextFocusColor(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> Color {
+    switch focus {
+    case .rain:
+        return Color(red: 0.16, green: 0.45, blue: 0.86)
+    case .wind:
+        return Color(red: 0.45, green: 0.44, blue: 0.82)
+    case .sun:
+        return uvToneColor(snapshot.uv)
+    case .quiet:
+        return snapshot.isDay ? Color(red: 0.92, green: 0.56, blue: 0.10) : Color(red: 0.58, green: 0.72, blue: 0.94)
+    }
+}
+
+private func peakRainHour(_ snapshot: NearcastWidgetSnapshot) -> (value: Int, timeLabel: String, isStorm: Bool) {
+    let rows = snapshot.timeline ?? []
+    let best = rows.max { lhs, rhs in
+        (lhs.rainChance ?? -1) < (rhs.rainChance ?? -1)
+    }
+    let value = best?.rainChance ?? snapshot.rainChance
+    let label = best?.offsetHours == 0 ? "Now" : best?.timeLabel ?? "soon"
+    let storm = best?.conditionCode.map { (95...99).contains($0) } ?? (snapshot.conditionCode >= 95)
+    return (value, label, storm)
+}
+
+private func peakWindHour(_ snapshot: NearcastWidgetSnapshot) -> (value: Int, timeLabel: String) {
+    let rows = snapshot.timeline ?? []
+    let best = rows.max { lhs, rhs in
+        (lhs.windGust ?? lhs.wind ?? -1) < (rhs.windGust ?? rhs.wind ?? -1)
+    }
+    let value = best?.windGust ?? best?.wind ?? snapshot.wind
+    let label = best?.offsetHours == 0 ? "Now" : best?.timeLabel ?? "soon"
+    return (value, label)
+}
+
+private func timelineValue(row: NearcastWidgetHour, focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    switch focus {
+    case .rain:
+        return "\(row.rainChance ?? snapshot.rainChance)%"
+    case .wind:
+        return "\(row.windGust ?? row.wind ?? snapshot.wind)"
+    case .sun:
+        return "\(row.uv ?? snapshot.uv)"
+    case .quiet:
+        return "\(row.temperature ?? snapshot.temperature)°"
+    }
+}
+
+private func timelineHeight(row: NearcastWidgetHour, focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> CGFloat {
+    switch focus {
+    case .rain:
+        let value = CGFloat(row.rainChance ?? snapshot.rainChance)
+        return max(6, min(30, 6 + value * 0.24))
+    case .wind:
+        let value = CGFloat(row.windGust ?? row.wind ?? snapshot.wind)
+        return max(7, min(30, 6 + value * 0.75))
+    case .sun:
+        let value = CGFloat(row.uv ?? snapshot.uv)
+        return max(7, min(30, 7 + value * 2.0))
+    case .quiet:
+        return 18
+    }
+}
+
+private func timelineColor(row: NearcastWidgetHour, focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> Color {
+    switch focus {
+    case .rain:
+        if let code = row.conditionCode, (95...99).contains(code) {
+            return Color(red: 0.93, green: 0.68, blue: 0.10)
+        }
+        let chance = row.rainChance ?? snapshot.rainChance
+        if chance >= 70 { return Color(red: 0.08, green: 0.31, blue: 0.78) }
+        if chance >= 40 { return Color(red: 0.12, green: 0.52, blue: 0.86) }
+        return Color(red: 0.40, green: 0.68, blue: 0.90)
+    case .wind:
+        return Color(red: 0.45, green: 0.44, blue: 0.82)
+    case .sun:
+        return uvToneColor(row.uv ?? snapshot.uv)
+    case .quiet:
+        if let code = row.conditionCode, (51...82).contains(code) { return Color(red: 0.18, green: 0.48, blue: 0.82) }
+        return (row.isDay ?? snapshot.isDay)
+            ? Color(red: 0.92, green: 0.56, blue: 0.10)
+            : Color(red: 0.58, green: 0.72, blue: 0.94)
+    }
+}
+
+private func isWidgetSnapshotStale(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    snapshot.age > 90 * 60
+}
+
 private func conditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
-    let code = snapshot.conditionCode
+    conditionSymbol(code: snapshot.conditionCode, isDay: snapshot.isDay)
+}
+
+private func conditionSymbol(code: Int, isDay: Bool) -> String {
     if (95...99).contains(code) { return "cloud.bolt.rain.fill" }
     if (71...86).contains(code) { return "snowflake" }
     if (51...67).contains(code) || (80...82).contains(code) { return "cloud.rain.fill" }
-    if !snapshot.isDay { return "moon.stars.fill" }
+    if !isDay { return "moon.stars.fill" }
     if (1...3).contains(code) { return "cloud.sun.fill" }
     return "sun.max.fill"
 }
