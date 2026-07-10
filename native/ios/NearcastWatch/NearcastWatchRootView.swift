@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NearcastWatchRootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var snapshotReceiver = NearcastWatchSnapshotReceiver.shared
     @State private var snapshot = NearcastWidgetSnapshot.current()
 
     var body: some View {
@@ -30,10 +31,15 @@ struct NearcastWatchRootView: View {
             }
         }
         .onAppear {
+            snapshotReceiver.activate()
+            snapshot = NearcastWidgetSnapshot.current()
+        }
+        .onChange(of: snapshotReceiver.revision) { _, _ in
             snapshot = NearcastWidgetSnapshot.current()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                snapshotReceiver.activate()
                 snapshot = NearcastWidgetSnapshot.current()
             }
         }

@@ -15,6 +15,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         self.model = model
         super.init()
         locationManager.delegate = self
+        NativeWatchSnapshotSync.shared.activate()
     }
 
     nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -388,16 +389,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
               let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
             return
         }
-        guard let defaults = UserDefaults(suiteName: NearcastWidgetSnapshotStore.suiteName) else {
-            return
-        }
-        defaults.set(data, forKey: NearcastWidgetSnapshotStore.snapshotKey)
+        NearcastWidgetSnapshotStore.saveSnapshotData(data)
+        var placeData: Data?
         if let place = payload["place"] as? [String: Any],
            JSONSerialization.isValidJSONObject(place),
-           let placeData = try? JSONSerialization.data(withJSONObject: place, options: []) {
-            defaults.set(placeData, forKey: NearcastWidgetSnapshotStore.placeKey)
+           let encodedPlace = try? JSONSerialization.data(withJSONObject: place, options: []) {
+            placeData = encodedPlace
+            NearcastWidgetSnapshotStore.savePlaceData(encodedPlace)
         }
         WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
+        NativeWatchSnapshotSync.shared.sendSnapshotData(data, placeData: placeData)
     }
 
     private func startOrUpdateStormActivity(_ payload: [String: Any]) {

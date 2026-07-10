@@ -128,4 +128,18 @@ enum NearcastWidgetSnapshotStore {
         }
         defaults.set(data, forKey: snapshotKey)
     }
+
+    static func saveSnapshotData(_ data: Data) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return
+        }
+        defaults.set(data, forKey: snapshotKey)
+    }
+
+    static func savePlaceData(_ data: Data) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return
+        }
+        defaults.set(data, forKey: placeKey)
+    }
 }

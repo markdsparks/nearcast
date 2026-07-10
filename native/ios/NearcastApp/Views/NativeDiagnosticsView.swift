@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NativeDiagnosticsView: View {
     @ObservedObject var model: NearcastWebModel
+    @ObservedObject private var watchSync = NativeWatchSnapshotSync.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -56,6 +57,16 @@ struct NativeDiagnosticsView: View {
                     Text(model.lastBridgeMessage)
                         .font(.footnote.monospaced())
                         .textSelection(.enabled)
+                }
+
+                Section("Apple Watch sync") {
+                    ForEach(watchSync.statusRows, id: \.0) { row in
+                        LabeledContent(row.0, value: row.1)
+                    }
+
+                    Button("Refresh Watch sync") {
+                        watchSync.activate()
+                    }
                 }
 
                 if let lastError = model.lastError {
