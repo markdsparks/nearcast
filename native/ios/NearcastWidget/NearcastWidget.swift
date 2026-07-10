@@ -1056,23 +1056,21 @@ struct NearcastSmallWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                Text(cityName(snapshot.placeName))
-                    .font(.system(size: 18, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
-                Spacer(minLength: 4)
-                SmallHighLow(snapshot: snapshot, palette: palette)
-            }
+        VStack(alignment: .leading, spacing: 5) {
+            Text(cityName(snapshot.placeName))
+                .font(.system(size: 18, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.84)
 
             Spacer(minLength: 0)
 
             Text("\(snapshot.temperature)°")
-                .font(.system(size: 55, weight: .black, design: .rounded))
+                .font(.system(size: 54, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            SmallHighLowLine(snapshot: snapshot, palette: palette)
 
             Text(widgetConditionTitle(snapshot))
                 .font(.system(size: 22, weight: .black, design: .rounded))
@@ -1088,21 +1086,24 @@ struct NearcastSmallWidget: View {
     }
 }
 
-struct SmallHighLow: View {
+struct SmallHighLowLine: View {
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
 
     var body: some View {
         if let high = snapshot.high, let low = snapshot.low {
-            VStack(alignment: .trailing, spacing: 2) {
+            HStack(spacing: 9) {
                 Text("H \(high)°")
                     .foregroundStyle(palette.primary.opacity(0.88))
                 Text("L \(low)°")
                     .foregroundStyle(palette.secondary)
             }
-            .font(.system(size: 13, weight: .black, design: .rounded))
+            .font(.system(size: 14, weight: .black, design: .rounded))
             .lineLimit(1)
             .minimumScaleFactor(WidgetText.minScale)
+            .padding(.top, -5)
+        } else {
+            EmptyView()
         }
     }
 }
@@ -1113,44 +1114,49 @@ struct NearcastMediumWidget: View {
     var body: some View {
         let palette = widgetPalette(snapshot)
         let rows = mediumSignalRows(snapshot, palette: palette)
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(shortPlaceName(snapshot.placeName))
-                    .font(WidgetText.bodyLarge)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .foregroundStyle(palette.secondary)
+        GeometryReader { proxy in
+            let contentWidth = max(0, proxy.size.width - 40)
+            let leftWidth = min(170, max(138, contentWidth * 0.45))
+            let rightWidth = max(128, contentWidth - leftWidth - 10)
 
-                Text("\(snapshot.temperature)°")
-                    .font(.system(size: 56, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(shortPlaceName(snapshot.placeName))
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                        .foregroundStyle(palette.secondary)
 
-                Text(widgetConditionTitle(snapshot))
-                    .font(.system(size: 22, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    Text("\(snapshot.temperature)°")
+                        .font(.system(size: 52, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
-                Text(mediumMetaText(snapshot))
-                    .font(WidgetText.body)
-                    .foregroundStyle(palette.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(0)
+                    Text(widgetConditionTitle(snapshot))
+                        .font(.system(size: 21, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
-            VStack(spacing: 10) {
-                ForEach(rows) { row in
-                    SignalRow(label: row.label, value: row.value, tone: row.tone, palette: palette)
+                    Text(mediumMetaText(snapshot))
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .foregroundStyle(palette.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                 }
+                .frame(width: leftWidth, alignment: .leading)
+
+                VStack(spacing: 10) {
+                    ForEach(rows) { row in
+                        SignalRow(label: row.label, value: row.value, tone: row.tone, palette: palette)
+                    }
+                }
+                .frame(width: rightWidth)
             }
-            .frame(maxWidth: .infinity)
-            .layoutPriority(2)
+            .padding(.top, 20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
         }
-        .padding(.top, 20)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
     }
 }
 
