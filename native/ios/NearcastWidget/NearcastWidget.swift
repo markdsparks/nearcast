@@ -926,6 +926,19 @@ struct WidgetPalette {
     let stroke: Color
 }
 
+private enum WidgetText {
+    // Home Screen widgets should summarize before they drop into micro text.
+    static let minScale: CGFloat = 0.88
+    static let tinyScale: CGFloat = 0.92
+
+    static let eyebrow = Font.system(size: 13, weight: .black, design: .rounded)
+    static let caption = Font.system(size: 14, weight: .heavy, design: .rounded)
+    static let body = Font.system(size: 16, weight: .black, design: .rounded)
+    static let bodyLarge = Font.system(size: 19, weight: .black, design: .rounded)
+    static let metricLabel = Font.system(size: 13, weight: .black, design: .rounded)
+    static let metricValue = Font.system(size: 31, weight: .black, design: .rounded)
+}
+
 private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette {
     if snapshot.isDay {
         return WidgetPalette(
@@ -1023,13 +1036,13 @@ struct NearcastSmallWidget: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Text(cityName(snapshot.placeName))
-                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .font(WidgetText.body)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(WidgetText.minScale)
                 Spacer(minLength: 4)
                 if let symbol = smallConditionSymbol(snapshot) {
                     Image(systemName: symbol)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(palette.primary.opacity(0.84))
                         .accessibilityHidden(true)
                 }
@@ -1039,17 +1052,17 @@ struct NearcastSmallWidget: View {
 
             HStack(alignment: .lastTextBaseline, spacing: 8) {
                 Text("\(snapshot.temperature)°")
-                    .font(.system(size: 54, weight: .black, design: .rounded))
+                    .font(.system(size: 52, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.62)
+                    .minimumScaleFactor(WidgetText.minScale)
                 Spacer(minLength: 4)
                 SmallHighLow(snapshot: snapshot, palette: palette)
             }
 
             Text(snapshot.condition)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .font(.system(size: 21, weight: .black, design: .rounded))
                 .lineLimit(1)
-                .minimumScaleFactor(0.68)
+                .minimumScaleFactor(WidgetText.minScale)
 
             HStack(spacing: 6) {
                 MiniPill(text: "Feels \(snapshot.feelsLike)°", palette: palette)
@@ -1075,7 +1088,7 @@ struct SmallHighLow: View {
             }
             .font(.system(size: 14, weight: .black, design: .rounded))
             .lineLimit(1)
-            .minimumScaleFactor(0.72)
+            .minimumScaleFactor(WidgetText.minScale)
             .padding(.bottom, 6)
         }
     }
@@ -1089,26 +1102,26 @@ struct NearcastMediumWidget: View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(shortPlaceName(snapshot.placeName))
-                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .font(WidgetText.body)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(WidgetText.minScale)
                     .foregroundStyle(palette.secondary)
 
                 Text("\(snapshot.temperature)°")
                     .font(.system(size: 52, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(WidgetText.minScale)
 
                 Text(snapshot.condition)
-                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .font(.system(size: 20, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(WidgetText.minScale)
 
                 Text(mediumMetaText(snapshot))
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .font(WidgetText.caption)
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(WidgetText.minScale)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1132,24 +1145,24 @@ struct NearcastLargeWidget: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(WidgetText.bodyLarge)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                        .minimumScaleFactor(WidgetText.minScale)
                     Text(primarySignal(snapshot))
                         .font(.system(size: 33, weight: .black, design: .rounded))
                         .lineLimit(2)
-                        .minimumScaleFactor(0.64)
+                        .minimumScaleFactor(0.82)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(snapshot.temperature)°")
                         .font(.system(size: 48, weight: .black, design: .rounded))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.68)
+                        .minimumScaleFactor(WidgetText.minScale)
                     if let high = snapshot.high, let low = snapshot.low {
                         Text("H \(high)°  L \(low)°")
-                            .font(.system(size: 15, weight: .heavy, design: .rounded))
+                            .font(WidgetText.body)
                             .foregroundStyle(palette.secondary)
                     }
                 }
@@ -1170,7 +1183,7 @@ struct NearcastLargeWidget: View {
 
             if isWidgetSnapshotStale(snapshot) {
                 Text(freshnessText(snapshot))
-                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .font(WidgetText.eyebrow)
                     .foregroundStyle(palette.subtle)
                     .lineLimit(1)
             }
@@ -1186,10 +1199,10 @@ struct MiniPill: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .font(WidgetText.eyebrow)
             .foregroundStyle(palette.primary.opacity(0.92))
             .lineLimit(1)
-            .minimumScaleFactor(0.66)
+            .minimumScaleFactor(WidgetText.tinyScale)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background((tone ?? palette.primary).opacity(tone == nil ? 0.0 : 0.12), in: Capsule())
@@ -1211,15 +1224,15 @@ struct PlanSummaryStrip: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text([snapshot.planLabel, snapshot.planTitle].compactMap(cleanOptional).joined(separator: " · "))
-                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .font(WidgetText.body)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .minimumScaleFactor(WidgetText.minScale)
                     if let place = cleanOptional(snapshot.planPlace) {
                         Text(cityName(place))
-                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .font(WidgetText.eyebrow)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.72)
+                            .minimumScaleFactor(WidgetText.tinyScale)
                             .foregroundStyle(planToneColor(snapshot).opacity(0.88))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
@@ -1227,10 +1240,10 @@ struct PlanSummaryStrip: View {
                     }
                 }
                 Text(cleanOptional(snapshot.planDetail) ?? "Plan checked against the forecast.")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(WidgetText.caption)
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(WidgetText.minScale)
             }
             Spacer(minLength: 0)
         }
@@ -1260,22 +1273,22 @@ struct NextWeatherPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: nextFocusSymbol(focus, snapshot: snapshot))
-                    .font(.system(size: 20, weight: .black))
+                    .font(.system(size: 22, weight: .black))
                     .foregroundStyle(nextFocusColor(focus, snapshot: snapshot))
                     .frame(width: 36, height: 36)
                     .background(nextFocusColor(focus, snapshot: snapshot).opacity(snapshot.isDay ? 0.14 : 0.22), in: Circle())
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(nextFocusTitle(focus, snapshot: snapshot))
-                        .font(.system(size: 19, weight: .black, design: .rounded))
+                        .font(WidgetText.bodyLarge)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.68)
+                        .minimumScaleFactor(WidgetText.minScale)
                     Text(nextFocusDetail(focus, snapshot: snapshot))
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .font(WidgetText.caption)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.68)
+                        .minimumScaleFactor(WidgetText.minScale)
                 }
                 Spacer(minLength: 0)
             }
@@ -1351,10 +1364,10 @@ struct SummaryTimelineStrip: View {
                     Text(timelineAnchorText(label: last.timeLabel, row: last, focus: focus, snapshot: snapshot))
                 }
             }
-            .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+            .font(WidgetText.eyebrow)
             .foregroundStyle(palette.secondary)
             .lineLimit(1)
-            .minimumScaleFactor(0.76)
+            .minimumScaleFactor(WidgetText.tinyScale)
         }
     }
 }
@@ -1439,16 +1452,16 @@ struct UvTimelineStrip: View {
             HStack {
                 Text("Now \(first?.uv ?? snapshot.uv)")
                 Spacer(minLength: 8)
-                Text("Peak \(peak.value) near \(peak.timeLabel)")
+                Text("Peak \(peak.value) \(peak.timeLabel)")
                 Spacer(minLength: 8)
                 if let last = rows.last {
                     Text("\(last.timeLabel) \(last.uv ?? snapshot.uv)")
                 }
             }
-            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .font(WidgetText.eyebrow)
             .foregroundStyle(palette.secondary)
             .lineLimit(1)
-            .minimumScaleFactor(0.72)
+            .minimumScaleFactor(WidgetText.tinyScale)
         }
     }
 
@@ -1466,21 +1479,21 @@ struct SignalRow: View {
     var body: some View {
         HStack(spacing: 9) {
             Text(compactSignalLabel(label))
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .tracking(0.8)
+                .font(WidgetText.eyebrow)
+                .tracking(0.4)
                 .foregroundStyle(tone.opacity(0.75))
                 .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .frame(width: 44, alignment: .leading)
+                .minimumScaleFactor(WidgetText.tinyScale)
+                .frame(width: 48, alignment: .leading)
             Text(compactSignalValue(value))
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .font(WidgetText.body)
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.62)
+                .minimumScaleFactor(WidgetText.minScale)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
@@ -1494,27 +1507,27 @@ struct MetricTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .tracking(0.8)
+                .font(WidgetText.metricLabel)
+                .tracking(0.5)
                 .foregroundStyle(palette.muted)
                 .lineLimit(1)
-            Spacer(minLength: 5)
+            Spacer(minLength: 7)
             Text(value)
-                .font(.system(size: 27, weight: .black, design: .rounded))
+                .font(WidgetText.metricValue)
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.58)
+                .minimumScaleFactor(WidgetText.minScale)
             if let detail = cleanOptional(detail) {
                 Text(detail)
-                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .font(WidgetText.caption)
                     .foregroundStyle(palette.muted)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(WidgetText.minScale)
             }
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: 70, alignment: .topLeading)
-        .padding(9)
+        .frame(maxWidth: .infinity, minHeight: 78, maxHeight: 78, alignment: .topLeading)
+        .padding(10)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
@@ -1526,17 +1539,17 @@ struct WindMetricTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("WIND")
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .tracking(0.8)
+                .font(WidgetText.metricLabel)
+                .tracking(0.5)
                 .foregroundStyle(palette.muted)
                 .lineLimit(1)
-            Spacer(minLength: 5)
-            HStack(alignment: .center, spacing: 5) {
+            Spacer(minLength: 7)
+            HStack(alignment: .center, spacing: 6) {
                 Text("\(snapshot.wind)")
-                    .font(.system(size: 27, weight: .black, design: .rounded))
+                    .font(WidgetText.metricValue)
                     .foregroundStyle(palette.primary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                    .minimumScaleFactor(WidgetText.minScale)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(3)
                 Spacer(minLength: 0)
@@ -1551,8 +1564,8 @@ struct WindMetricTile: View {
             }
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: 70, alignment: .topLeading)
-        .padding(9)
+        .frame(maxWidth: .infinity, minHeight: 78, maxHeight: 78, alignment: .topLeading)
+        .padding(10)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
@@ -1565,26 +1578,26 @@ struct UvMetricTile: View {
         let color = uvToneColor(value)
         VStack(alignment: .leading, spacing: 0) {
             Text("UV")
-                .font(.system(size: 10, weight: .black, design: .rounded))
-                .tracking(0.8)
+                .font(WidgetText.metricLabel)
+                .tracking(0.5)
                 .foregroundStyle(palette.muted)
                 .lineLimit(1)
-            Spacer(minLength: 5)
+            Spacer(minLength: 7)
             HStack(spacing: 5) {
                 Text("\(value)")
-                    .font(.system(size: 27, weight: .black, design: .rounded))
+                    .font(WidgetText.metricValue)
                     .foregroundStyle(palette.primary)
                     .lineLimit(1)
                 Text(uvRiskLabel(value))
-                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .font(WidgetText.caption)
                     .foregroundStyle(color.opacity(0.95))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.62)
+                    .minimumScaleFactor(WidgetText.minScale)
             }
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 70, maxHeight: 70, alignment: .topLeading)
-        .padding(9)
+        .frame(maxWidth: .infinity, minHeight: 78, maxHeight: 78, alignment: .topLeading)
+        .padding(10)
         .background(uvSurfaceColor(value), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -2018,13 +2031,13 @@ private func timelineAnchorText(label: String, row: NearcastWidgetHour, focus: W
 private func timelinePeakText(peak: (value: Int, timeLabel: String, row: NearcastWidgetHour?), focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
     switch focus {
     case .rain:
-        return "Peak \(peak.value)% near \(peak.timeLabel)"
+        return "Peak \(peak.value)% \(peak.timeLabel)"
     case .wind:
-        return "Peak \(peak.value) near \(peak.timeLabel)"
+        return "Peak \(peak.value) \(peak.timeLabel)"
     case .sun:
-        return "Peak \(peak.value) near \(peak.timeLabel)"
+        return "Peak \(peak.value) \(peak.timeLabel)"
     case .quiet:
-        return "Warmest \(peak.value)° near \(peak.timeLabel)"
+        return "High \(peak.value)° \(peak.timeLabel)"
     }
 }
 
