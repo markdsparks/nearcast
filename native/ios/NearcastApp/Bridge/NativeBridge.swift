@@ -388,16 +388,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
               let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
             return
         }
-        guard let defaults = UserDefaults(suiteName: NativeWidgetSnapshotStore.suiteName) else {
+        guard let defaults = UserDefaults(suiteName: NearcastWidgetSnapshotStore.suiteName) else {
             return
         }
-        defaults.set(data, forKey: NativeWidgetSnapshotStore.snapshotKey)
+        defaults.set(data, forKey: NearcastWidgetSnapshotStore.snapshotKey)
         if let place = payload["place"] as? [String: Any],
            JSONSerialization.isValidJSONObject(place),
            let placeData = try? JSONSerialization.data(withJSONObject: place, options: []) {
-            defaults.set(placeData, forKey: NativeWidgetSnapshotStore.placeKey)
+            defaults.set(placeData, forKey: NearcastWidgetSnapshotStore.placeKey)
         }
-        WidgetCenter.shared.reloadTimelines(ofKind: NativeWidgetSnapshotStore.widgetKind)
+        WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
     }
 
     private func startOrUpdateStormActivity(_ payload: [String: Any]) {
@@ -437,11 +437,4 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         let script = "window.NearcastNative&&window.NearcastNative.\(resolver)&&window.NearcastNative.\(resolver)(\(json));"
         webView?.evaluateJavaScript(script)
     }
-}
-
-enum NativeWidgetSnapshotStore {
-    static let suiteName = "group.app.nearcast.ios"
-    static let snapshotKey = "nearcast.widget.snapshot.v1"
-    static let placeKey = "nearcast.widget.place.v1"
-    static let widgetKind = "NearcastWidget"
 }
