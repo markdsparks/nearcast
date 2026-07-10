@@ -36,6 +36,9 @@ struct NearcastWidgetSnapshot: Codable {
     var planDetail: String?
     var planPlace: String?
     var planTone: String?
+    var watchStatus: String?
+    var watchDetail: String?
+    var watchTone: String?
     var sunriseAt: TimeInterval?
     var sunsetAt: TimeInterval?
 }
@@ -48,7 +51,7 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 2,
+        version: 3,
         savedAt: Date().timeIntervalSince1970,
         placeName: "Nearcast",
         temperature: 82,
@@ -75,6 +78,9 @@ extension NearcastWidgetSnapshot {
         planDetail: nil,
         planPlace: nil,
         planTone: nil,
+        watchStatus: "Open Nearcast",
+        watchDetail: "Weather that matters",
+        watchTone: "neutral",
         sunriseAt: nil,
         sunsetAt: nil
     )
@@ -206,7 +212,7 @@ enum NearcastWidgetForecastClient {
         let sunsetAt = forecast.daily?.sunset?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunsetAt
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 2),
+            version: max(fallback.version, 3),
             savedAt: Date().timeIntervalSince1970,
             placeName: place.name,
             temperature: temp,
@@ -233,6 +239,9 @@ enum NearcastWidgetForecastClient {
             planDetail: fallback.planDetail,
             planPlace: fallback.planPlace,
             planTone: fallback.planTone,
+            watchStatus: fallback.watchStatus,
+            watchDetail: fallback.watchDetail,
+            watchTone: fallback.watchTone,
             sunriseAt: sunriseAt,
             sunsetAt: sunsetAt
         )
@@ -421,7 +430,7 @@ struct NearcastWidget: Widget {
         }
         .configurationDisplayName("Nearcast")
         .description("A glance at the weather that matters next.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
         .contentMarginsDisabled()
     }
 }
@@ -978,6 +987,12 @@ struct NearcastWidgetView: View {
                 NearcastSmallWidget(snapshot: entry.snapshot)
             case .systemLarge:
                 NearcastLargeWidget(snapshot: entry.snapshot)
+            case .accessoryCircular:
+                NearcastCircularAccessory(snapshot: entry.snapshot)
+            case .accessoryRectangular:
+                NearcastRectangularAccessory(snapshot: entry.snapshot)
+            case .accessoryInline:
+                NearcastInlineAccessory(snapshot: entry.snapshot)
             default:
                 NearcastMediumWidget(snapshot: entry.snapshot)
             }
@@ -1020,6 +1035,70 @@ private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette 
         surfaceSoft: .white.opacity(0.10),
         stroke: .white.opacity(0.16)
     )
+}
+
+struct NearcastCircularAccessory: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: watchSymbol(snapshot))
+                .font(.system(size: 15, weight: .black))
+                .widgetAccentable()
+                .accessibilityHidden(true)
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 20, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Text(watchStatus(snapshot))
+                .font(.system(size: 8, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+        }
+        .containerBackground(.clear, for: .widget)
+        .accessibilityLabel("\(watchStatus(snapshot)), \(snapshot.temperature) degrees")
+    }
+}
+
+struct NearcastRectangularAccessory: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            Image(systemName: watchSymbol(snapshot))
+                .font(.system(size: 16, weight: .black))
+                .widgetAccentable()
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(watchStatus(snapshot))
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+                Text(watchDetail(snapshot))
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            Spacer(minLength: 0)
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 20, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .containerBackground(.clear, for: .widget)
+        .accessibilityLabel("\(watchStatus(snapshot)), \(watchDetail(snapshot)), \(snapshot.temperature) degrees")
+    }
+}
+
+struct NearcastInlineAccessory: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        Text("\(watchStatus(snapshot)) · \(snapshot.temperature)°")
+            .widgetAccentable()
+    }
 }
 
 struct NearcastSmallWidget: View {
@@ -1481,6 +1560,40 @@ private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
     if snapshot.feelsLike >= 95 { return "Serious heat" }
     if snapshot.feelsLike <= 32 { return "Freezing" }
     return snapshot.condition
+}
+
+private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let status = cleanOptional(snapshot.watchStatus) { return status }
+    if let label = cleanOptional(snapshot.planLabel), label != "Watching" { return label }
+    if snapshot.nextValue.lowercased().contains("rain") { return compactSignalValue(snapshot.nextValue) }
+    if snapshot.nowValue.lowercased().contains("rain") { return compactSignalValue(snapshot.nowValue) }
+    if snapshot.feelsLike >= 95 { return "Plan around heat" }
+    if snapshot.feelsLike <= 32 { return "Freezing" }
+    return "Looks good"
+}
+
+private func watchDetail(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let detail = cleanOptional(snapshot.watchDetail) { return detail }
+    if let detail = cleanOptional(snapshot.planDetail) { return detail }
+    return "\(cityName(snapshot.placeName)) · \(compactSignalValue(snapshot.nextValue))"
+}
+
+private func watchSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let tone = cleanOptional(snapshot.watchTone)?.lowercased() ?? cleanOptional(snapshot.planTone)?.lowercased() ?? ""
+    switch tone {
+    case "watch", "caution":
+        return "exclamationmark.triangle.fill"
+    case "changed":
+        return "bell.badge.fill"
+    case "good":
+        return "checkmark.circle.fill"
+    default:
+        let lower = "\(snapshot.nowValue) \(snapshot.nextValue) \(snapshot.condition)".lowercased()
+        if lower.contains("storm") { return "cloud.bolt.rain.fill" }
+        if lower.contains("rain") { return "cloud.rain.fill" }
+        if snapshot.feelsLike >= 95 { return "thermometer.sun.fill" }
+        return conditionSymbol(snapshot)
+    }
 }
 
 private func cityName(_ value: String) -> String {

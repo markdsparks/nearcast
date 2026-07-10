@@ -1,4 +1,4 @@
-const VERSION = "3.0.227";
+const VERSION = "3.0.228";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7798,8 +7798,9 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const windDirection = normalizeWindDegrees(current.wind_direction_10m);
     const windCue = windDirectionCue(current.wind_direction_10m);
     const widgetPlan = nativeWidgetPlanSummary(data, place);
+    const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
     const snapshot = {
-      version: 2,
+      version: 3,
       savedAt: Date.now() / 1000,
       placeName: placeLabel(place),
       temperature: Math.round(current.temperature_2m),
@@ -7826,6 +7827,9 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       planDetail: widgetPlan?.detail || null,
       planPlace: widgetPlan?.place || null,
       planTone: widgetPlan?.tone || null,
+      watchStatus: watchSummary.status,
+      watchDetail: watchSummary.detail,
+      watchTone: watchSummary.tone,
       sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
       sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null
     };
@@ -8500,6 +8504,65 @@ function nativeWidgetPlanSummary(data, place) {
     detail: compactForYouText(detail || "Plan checked against the forecast.", 72),
     place: !samePlace && planPlace ? placeCityLabel(planPlace) : null,
     tone: top.tone || (top.change ? "changed" : "neutral")
+  };
+}
+
+function nativeWidgetWatchSummary(data, place, truth, widgetPlan = null) {
+  if (widgetPlan?.label && widgetPlan.label !== "Watching") {
+    return {
+      status: compactForYouText(widgetPlan.label, 32),
+      detail: compactForYouText(widgetPlan.detail || widgetPlan.title || "Watched plan changed.", 54),
+      tone: widgetPlan.tone || "watch"
+    };
+  }
+
+  if (widgetPlan?.title) {
+    return {
+      status: "Watching",
+      detail: compactForYouText(widgetPlan.detail || widgetPlan.title, 54),
+      tone: widgetPlan.tone || "neutral"
+    };
+  }
+
+  const current = data?.current || {};
+  const nextValue = launchSummaryItems(data, state.unit === "fahrenheit" ? "F" : "C", state.unit === "fahrenheit" ? "mph" : "km/h", truth)?.[1]?.value || "";
+  const rainChance = Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0);
+  const feelsLike = Math.round(current.apparent_temperature ?? current.temperature_2m ?? 0);
+  const code = Number(truth?.nowCode ?? current.weather_code ?? 0);
+  const city = cityNameFromLabel(placeLabel(place));
+
+  if (code >= 95 || /storm|thunder/i.test(nextValue)) {
+    return {
+      status: "Storms possible",
+      detail: compactForYouText(`${city} · ${nextValue || "Stay weather aware"}`, 54),
+      tone: "watch"
+    };
+  }
+  if (rainChance >= 45 || /rain|shower|drizzle/i.test(nextValue)) {
+    return {
+      status: "Expect rain",
+      detail: compactForYouText(`${city} · ${nextValue || `${rainChance}% rain chance`}`, 54),
+      tone: rainChance >= 60 ? "watch" : "caution"
+    };
+  }
+  if (feelsLike >= 95) {
+    return {
+      status: "Plan around heat",
+      detail: compactForYouText(`${city} · Feels ${feelsLike}°`, 54),
+      tone: feelsLike >= 100 ? "watch" : "caution"
+    };
+  }
+  if (feelsLike <= 32) {
+    return {
+      status: "Freezing",
+      detail: compactForYouText(`${city} · Feels ${feelsLike}°`, 54),
+      tone: "caution"
+    };
+  }
+  return {
+    status: "Looks good",
+    detail: compactForYouText(`${city} · ${truth?.label || "Weather checked"}`, 54),
+    tone: "good"
   };
 }
 
