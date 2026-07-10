@@ -1307,20 +1307,82 @@ struct WidgetTimelineStrip: View {
     let palette: WidgetPalette
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 5) {
-            ForEach(rows) { row in
-                VStack(spacing: 4) {
-                    TimelineValueMark(row: row, focus: focus, snapshot: snapshot, palette: palette)
-                    Text(row.timeLabel)
-                        .font(.system(size: 8, weight: .black, design: .rounded))
-                        .foregroundStyle(row.offsetHours == 0 ? palette.primary : palette.subtle)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.68)
+        if focus == .sun {
+            UvTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
+        } else {
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(rows) { row in
+                    VStack(spacing: 4) {
+                        TimelineValueMark(row: row, focus: focus, snapshot: snapshot, palette: palette)
+                        Text(row.timeLabel)
+                            .font(.system(size: 8, weight: .black, design: .rounded))
+                            .foregroundStyle(row.offsetHours == 0 ? palette.primary : palette.subtle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.68)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
+    }
+}
+
+struct UvTimelineStrip: View {
+    let rows: [NearcastWidgetHour]
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        let peak = peakUvHour(snapshot)
+        let first = rows.first
+        VStack(spacing: 4) {
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(rows) { row in
+                    let value = row.uv ?? snapshot.uv
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    uvToneColor(value).opacity(snapshot.isDay ? 0.56 : 0.46),
+                                    uvToneColor(value)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: value == peak.value ? 16 : 13, height: uvPillarHeight(value))
+                        .overlay(alignment: .top) {
+                            if value == peak.value {
+                                Capsule()
+                                    .fill(uvToneColor(value).opacity(0.94))
+                                    .frame(width: 18, height: 5)
+                                    .offset(y: -4)
+                            }
+                        }
+                    .frame(maxWidth: .infinity, alignment: .bottom)
+                }
+            }
+            .frame(height: 48, alignment: .bottom)
+
+            HStack {
+                Text("Now \(first?.uv ?? snapshot.uv)")
+                Spacer(minLength: 8)
+                Text("Peak \(peak.value) near \(peak.timeLabel)")
+                Spacer(minLength: 8)
+                if let last = rows.last {
+                    Text("\(last.timeLabel) \(last.uv ?? snapshot.uv)")
+                }
+            }
+            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .foregroundStyle(palette.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+        }
+    }
+
+    private func uvPillarHeight(_ value: Int) -> CGFloat {
+        max(14, min(36, 12 + CGFloat(value) * 2.8))
     }
 }
 
@@ -1395,16 +1457,18 @@ struct MetricTile: View {
     let palette: WidgetPalette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased())
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
                 .foregroundStyle(palette.muted)
+                .lineLimit(1)
+            Spacer(minLength: 4)
             Text(value)
-                .font(.system(size: 15, weight: .black, design: .rounded))
+                .font(.system(size: 22, weight: .black, design: .rounded))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.62)
+                .minimumScaleFactor(0.58)
             if let detail = cleanOptional(detail) {
                 Text(detail)
                     .font(.system(size: 9, weight: .heavy, design: .rounded))
@@ -1413,7 +1477,7 @@ struct MetricTile: View {
                     .minimumScaleFactor(0.65)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
         .padding(9)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -1424,18 +1488,20 @@ struct WindMetricTile: View {
     let palette: WidgetPalette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("WIND")
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
                 .foregroundStyle(palette.muted)
+                .lineLimit(1)
+            Spacer(minLength: 4)
             HStack(alignment: .center, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text("\(snapshot.wind)")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .font(.system(size: 21, weight: .black, design: .rounded))
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.58)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(snapshot.windUnit)
                         .font(.system(size: 8, weight: .black, design: .rounded))
@@ -1447,15 +1513,15 @@ struct WindMetricTile: View {
                 Spacer(minLength: 0)
                 if let direction = snapshot.windDirection {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .black))
+                        .font(.system(size: 14, weight: .black))
                         .foregroundStyle(palette.primary)
                         .rotationEffect(.degrees(Double((direction + 180) % 360)))
-                        .frame(width: 24, height: 24)
+                        .frame(width: 27, height: 27)
                         .background(palette.surfaceStrong, in: Circle())
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
         .padding(9)
         .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -1467,24 +1533,26 @@ struct UvMetricTile: View {
 
     var body: some View {
         let color = uvToneColor(value)
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("UV")
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .tracking(0.8)
                 .foregroundStyle(palette.muted)
+                .lineLimit(1)
+            Spacer(minLength: 4)
             HStack(spacing: 5) {
                 Text("\(value)")
-                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .font(.system(size: 21, weight: .black, design: .rounded))
                     .foregroundStyle(palette.primary)
                     .lineLimit(1)
                 Text(uvRiskLabel(value))
-                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .font(.system(size: 10, weight: .black, design: .rounded))
                     .foregroundStyle(color.opacity(0.95))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.62)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
         .padding(9)
         .background(uvSurfaceColor(value), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -1805,7 +1873,8 @@ private func nextFocusTitle(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSn
         let peak = peakWindHour(snapshot)
         return "Gusts near \(peak.value) \(snapshot.windUnit)"
     case .sun:
-        return "UV \(uvRiskLabel(snapshot.uv))"
+        let peak = peakUvHour(snapshot)
+        return "UV \(uvRiskLabel(peak.value))"
     case .quiet:
         return compactSignalValue(snapshot.nextValue)
     }
@@ -1820,7 +1889,8 @@ private func nextFocusDetail(_ focus: WidgetNextFocus, snapshot: NearcastWidgetS
         let peak = peakWindHour(snapshot)
         return peak.timeLabel == "Now" ? "Strongest wind right now" : "Strongest around \(peak.timeLabel)"
     case .sun:
-        return "Peak UV \(snapshot.uv) for this place"
+        let peak = peakUvHour(snapshot)
+        return peak.timeLabel == "Now" ? "Peak UV \(peak.value) now" : "Peak UV \(peak.value) near \(peak.timeLabel)"
     case .quiet:
         if let highLow = highLowText(snapshot) { return "\(highLow) · \(windSummary(snapshot, includeDirection: false))" }
         return windSummary(snapshot, includeDirection: false)
@@ -1870,6 +1940,16 @@ private func peakWindHour(_ snapshot: NearcastWidgetSnapshot) -> (value: Int, ti
         (lhs.windGust ?? lhs.wind ?? -1) < (rhs.windGust ?? rhs.wind ?? -1)
     }
     let value = best?.windGust ?? best?.wind ?? snapshot.wind
+    let label = best?.offsetHours == 0 ? "Now" : best?.timeLabel ?? "soon"
+    return (value, label)
+}
+
+private func peakUvHour(_ snapshot: NearcastWidgetSnapshot) -> (value: Int, timeLabel: String) {
+    let rows = snapshot.timeline ?? []
+    let best = rows.max { lhs, rhs in
+        (lhs.uv ?? -1) < (rhs.uv ?? -1)
+    }
+    let value = best?.uv ?? snapshot.uv
     let label = best?.offsetHours == 0 ? "Now" : best?.timeLabel ?? "soon"
     return (value, label)
 }
