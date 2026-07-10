@@ -250,13 +250,11 @@
 				A30000000000000000000001 /* Frameworks */,
 				A70000000000000000000001 /* Resources */,
 				B71000000000000000000001 /* Embed App Extensions */,
-				D71000000000000000000001 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				B80000000000000000000001 /* PBXTargetDependency */,
-				D80000000000000000000002 /* PBXTargetDependency */,
 			);
 			name = Nearcast;
 			productName = Nearcast;
@@ -564,7 +562,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -592,7 +590,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -619,7 +617,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -648,7 +646,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -676,7 +674,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -706,7 +704,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
