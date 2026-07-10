@@ -1113,7 +1113,7 @@ struct NearcastMediumWidget: View {
     var body: some View {
         let palette = widgetPalette(snapshot)
         let rows = mediumSignalRows(snapshot, palette: palette)
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(shortPlaceName(snapshot.placeName))
                     .font(WidgetText.bodyLarge)
@@ -1138,6 +1138,7 @@ struct NearcastMediumWidget: View {
                     .minimumScaleFactor(0.82)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(0)
 
             VStack(spacing: 10) {
                 ForEach(rows) { row in
@@ -1145,6 +1146,7 @@ struct NearcastMediumWidget: View {
                 }
             }
             .frame(maxWidth: .infinity)
+            .layoutPriority(2)
         }
         .padding(.top, 20)
         .padding(.horizontal, 20)
@@ -1339,10 +1341,85 @@ struct WidgetTimelineStrip: View {
     let palette: WidgetPalette
 
     var body: some View {
-        if focus == .sun {
+        if focus == .rain {
+            RainTimelineStrip(rows: Array(rows.prefix(5)), snapshot: snapshot, palette: palette)
+        } else if focus == .sun {
             UvTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
         } else {
             SummaryTimelineStrip(rows: rows, focus: focus, snapshot: snapshot, palette: palette)
+        }
+    }
+}
+
+struct RainTimelineStrip: View {
+    let rows: [NearcastWidgetHour]
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        let peak = peakTimelinePoint(rows: rows, focus: .rain, snapshot: snapshot)
+        ZStack(alignment: .bottom) {
+            Capsule()
+                .fill(palette.stroke.opacity(snapshot.isDay ? 0.72 : 0.55))
+                .frame(height: 2)
+                .padding(.horizontal, 12)
+                .offset(y: -19)
+
+            HStack(alignment: .bottom, spacing: 0) {
+                ForEach(rows) { row in
+                    RainTimelinePoint(
+                        row: row,
+                        snapshot: snapshot,
+                        palette: palette,
+                        isPeak: row.id == peak.row?.id && rows.count > 1
+                    )
+                    .frame(maxWidth: .infinity, alignment: .bottom)
+                }
+            }
+        }
+        .frame(height: 58, alignment: .bottom)
+    }
+}
+
+struct RainTimelinePoint: View {
+    let row: NearcastWidgetHour
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let isPeak: Bool
+
+    var body: some View {
+        let value = timelineMetricValue(row: row, focus: .rain, snapshot: snapshot)
+        let color = timelineColor(row: row, focus: .rain, snapshot: snapshot)
+        VStack(spacing: 3) {
+            Text("\(value)%")
+                .font(WidgetText.eyebrow)
+                .foregroundStyle(isPeak ? color : palette.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(WidgetText.tinyScale)
+
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [color.opacity(0.48), color],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: isPeak ? 13 : 11, height: rainTimelineHeight(value))
+                .overlay(alignment: .top) {
+                    if isPeak {
+                        Capsule()
+                            .fill(color.opacity(0.96))
+                            .frame(width: 18, height: 5)
+                            .offset(y: -4)
+                    }
+                }
+
+            Text(relativeTimelineLabel(row))
+                .font(WidgetText.eyebrow)
+                .foregroundStyle(isPeak ? palette.primary.opacity(0.88) : palette.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(WidgetText.tinyScale)
         }
     }
 }
@@ -1496,22 +1573,23 @@ struct SignalRow: View {
     let palette: WidgetPalette
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 7) {
             Text(compactSignalLabel(label))
                 .font(WidgetText.eyebrow)
                 .tracking(0.4)
                 .foregroundStyle(tone.opacity(0.75))
                 .lineLimit(1)
                 .minimumScaleFactor(WidgetText.tinyScale)
-                .frame(width: 48, alignment: .leading)
+                .frame(width: 42, alignment: .leading)
             Text(value)
-                .font(WidgetText.rowValue)
+                .font(.system(size: 17, weight: .black, design: .rounded))
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.82)
+                .minimumScaleFactor(0.80)
+                .layoutPriority(2)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 11)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
@@ -2375,6 +2453,14 @@ private func summaryTimelineWidth(_ focus: WidgetNextFocus) -> CGFloat {
     case .quiet:
         return 14
     }
+}
+
+private func relativeTimelineLabel(_ row: NearcastWidgetHour) -> String {
+    row.offsetHours == 0 ? "Now" : "+\(row.offsetHours)h"
+}
+
+private func rainTimelineHeight(_ value: Int) -> CGFloat {
+    max(11, min(32, 9 + CGFloat(value) * 0.32))
 }
 
 private func summaryTimelineHeight(row: NearcastWidgetHour, focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> CGFloat {
