@@ -935,8 +935,31 @@ private enum WidgetText {
     static let caption = Font.system(size: 14, weight: .heavy, design: .rounded)
     static let body = Font.system(size: 16, weight: .black, design: .rounded)
     static let bodyLarge = Font.system(size: 19, weight: .black, design: .rounded)
+    static let rowValue = Font.system(size: 18, weight: .black, design: .rounded)
     static let metricLabel = Font.system(size: 13, weight: .black, design: .rounded)
-    static let metricValue = Font.system(size: 31, weight: .black, design: .rounded)
+    static let metricValue = Font.system(size: 34, weight: .black, design: .rounded)
+}
+
+private struct MediumSignalSpec: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+    let tone: Color
+}
+
+private enum LargeMetricKind {
+    case feels
+    case rain
+    case wind
+    case uv
+}
+
+private struct LargeMetricSpec: Identifiable {
+    let id: String
+    let kind: LargeMetricKind
+    let label: String
+    let value: String
+    let tone: Color?
 }
 
 private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette {
@@ -1033,44 +1056,33 @@ struct NearcastSmallWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 8) {
                 Text(cityName(snapshot.placeName))
-                    .font(WidgetText.body)
+                    .font(.system(size: 18, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
-                Spacer(minLength: 4)
-                if let symbol = smallConditionSymbol(snapshot) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(palette.primary.opacity(0.84))
-                        .accessibilityHidden(true)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text("\(snapshot.temperature)°")
-                    .font(.system(size: 52, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
+                    .minimumScaleFactor(0.84)
                 Spacer(minLength: 4)
                 SmallHighLow(snapshot: snapshot, palette: palette)
             }
 
-            Text(snapshot.condition)
-                .font(.system(size: 21, weight: .black, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(WidgetText.minScale)
+            Spacer(minLength: 0)
 
-            HStack(spacing: 6) {
-                MiniPill(text: "Feels \(snapshot.feelsLike)°", palette: palette)
-                MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue), palette: palette)
-            }
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 58, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(widgetConditionTitle(snapshot))
+                .font(.system(size: 23, weight: .black, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+
+            MiniPill(text: smallWidgetChip(snapshot), tone: smallWidgetChipTone(snapshot), palette: palette)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(17)
     }
 }
 
@@ -1099,36 +1111,37 @@ struct NearcastMediumWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
+        let rows = mediumSignalRows(snapshot, palette: palette)
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(shortPlaceName(snapshot.placeName))
-                    .font(WidgetText.body)
+                    .font(WidgetText.bodyLarge)
                     .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
+                    .minimumScaleFactor(0.82)
                     .foregroundStyle(palette.secondary)
 
                 Text("\(snapshot.temperature)°")
-                    .font(.system(size: 52, weight: .black, design: .rounded))
+                    .font(.system(size: 56, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
+                    .minimumScaleFactor(0.82)
 
-                Text(snapshot.condition)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                Text(widgetConditionTitle(snapshot))
+                    .font(.system(size: 22, weight: .black, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
+                    .minimumScaleFactor(0.82)
 
                 Text(mediumMetaText(snapshot))
-                    .font(WidgetText.caption)
+                    .font(WidgetText.body)
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(WidgetText.minScale)
+                    .minimumScaleFactor(0.82)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(spacing: 8) {
-                SignalRow(label: snapshot.nowLabel, value: snapshot.nowValue, tone: palette.primary, palette: palette)
-                SignalRow(label: snapshot.nextLabel, value: snapshot.nextValue, tone: signalColor(snapshot.nextValue), palette: palette)
-                SignalRow(label: snapshot.laterLabel, value: snapshot.laterValue, tone: palette.secondary, palette: palette)
+            VStack(spacing: 10) {
+                ForEach(rows) { row in
+                    SignalRow(label: row.label, value: row.value, tone: row.tone, palette: palette)
+                }
             }
             .frame(maxWidth: .infinity)
         }
@@ -1141,18 +1154,20 @@ struct NearcastLargeWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        VStack(alignment: .leading, spacing: 10) {
+        let focus = nextFocus(snapshot)
+        let metrics = largeMetricSpecs(snapshot, focus: focus)
+        VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
                         .font(WidgetText.bodyLarge)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(WidgetText.minScale)
-                    Text(primarySignal(snapshot))
-                        .font(.system(size: 33, weight: .black, design: .rounded))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .minimumScaleFactor(0.84)
+                    Text(largeWidgetHeadline(snapshot, focus: focus))
+                        .font(.system(size: 30, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
@@ -1168,17 +1183,16 @@ struct NearcastLargeWidget: View {
                 }
             }
 
-            NextWeatherPanel(snapshot: snapshot, palette: palette)
+            NextWeatherPanel(snapshot: snapshot, focus: focus, palette: palette)
 
             if hasPlanSummary(snapshot) {
                 PlanSummaryStrip(snapshot: snapshot, palette: palette)
             }
 
-            HStack(spacing: 8) {
-                MetricTile(label: "Feels", value: "\(snapshot.feelsLike)°", palette: palette)
-                MetricTile(label: "Rain", value: "\(snapshot.rainChance)%", palette: palette)
-                WindMetricTile(snapshot: snapshot, palette: palette)
-                UvMetricTile(value: snapshot.uv, palette: palette)
+            HStack(spacing: 9) {
+                ForEach(metrics) { metric in
+                    LargeMetricTile(metric: metric, snapshot: snapshot, palette: palette)
+                }
             }
 
             if isWidgetSnapshotStale(snapshot) {
@@ -1266,11 +1280,11 @@ enum WidgetNextFocus {
 
 struct NextWeatherPanel: View {
     let snapshot: NearcastWidgetSnapshot
+    let focus: WidgetNextFocus
     let palette: WidgetPalette
 
     var body: some View {
-        let focus = nextFocus(snapshot)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: nextFocusSymbol(focus, snapshot: snapshot))
                     .font(.system(size: 22, weight: .black))
@@ -1283,12 +1297,12 @@ struct NextWeatherPanel: View {
                         .font(WidgetText.bodyLarge)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
-                        .minimumScaleFactor(WidgetText.minScale)
+                        .minimumScaleFactor(0.84)
                     Text(nextFocusDetail(focus, snapshot: snapshot))
-                        .font(WidgetText.caption)
+                        .font(WidgetText.body)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(WidgetText.minScale)
+                        .minimumScaleFactor(0.82)
                 }
                 Spacer(minLength: 0)
             }
@@ -1485,16 +1499,80 @@ struct SignalRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(WidgetText.tinyScale)
                 .frame(width: 48, alignment: .leading)
-            Text(compactSignalValue(value))
-                .font(WidgetText.body)
+            Text(value)
+                .font(WidgetText.rowValue)
                 .foregroundStyle(palette.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(WidgetText.minScale)
+                .minimumScaleFactor(0.82)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 11)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct LargeMetricTile: View {
+    let metric: LargeMetricSpec
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        let accent = metric.tone
+        VStack(alignment: .leading, spacing: 0) {
+            Text(metric.label.uppercased())
+                .font(WidgetText.metricLabel)
+                .tracking(0.5)
+                .foregroundStyle(palette.muted)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            switch metric.kind {
+            case .wind:
+                HStack(alignment: .center, spacing: 8) {
+                    Text(metric.value)
+                        .font(WidgetText.metricValue)
+                        .foregroundStyle(palette.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.86)
+                    Spacer(minLength: 0)
+                    if let direction = snapshot.windDirection {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(palette.primary)
+                            .rotationEffect(.degrees(Double((direction + 180) % 360)))
+                            .frame(width: 32, height: 32)
+                            .background(palette.surfaceStrong, in: Circle())
+                    }
+                }
+            case .uv:
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(metric.value)
+                        .font(WidgetText.metricValue)
+                        .foregroundStyle(palette.primary)
+                        .lineLimit(1)
+                    Text(uvRiskLabel(snapshot.uv))
+                        .font(WidgetText.body)
+                        .foregroundStyle((accent ?? uvToneColor(snapshot.uv)).opacity(0.95))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+            default:
+                Text(metric.value)
+                    .font(WidgetText.metricValue)
+                    .foregroundStyle(palette.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.86)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 82, alignment: .topLeading)
+        .padding(12)
+        .background(metricSurface(metric, palette: palette), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(metricStroke(metric, palette: palette), lineWidth: 1)
+        )
+        .accessibilityLabel(metricAccessibility(metric, snapshot: snapshot))
     }
 }
 
@@ -1692,14 +1770,183 @@ struct SolarGlow: View {
     }
 }
 
+private func widgetConditionTitle(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let condition = snapshot.condition.trimmingCharacters(in: .whitespacesAndNewlines)
+    if condition.count <= 18 { return condition }
+    if condition.lowercased().contains("thunder") { return "Storms" }
+    if condition.lowercased().contains("partly") { return "Partly cloudy" }
+    return citySafePhrase(condition, maxCharacters: 18)
+}
+
+private func smallWidgetChip(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let focus = nextFocus(snapshot)
+    switch focus {
+    case .rain:
+        let peak = peakRainHour(snapshot)
+        if peak.isStorm {
+            return compactTimeSuffix(peak.timeLabel).map { "Storm \($0)" } ?? "Storms"
+        }
+        if peak.value >= 20 {
+            return compactTimeSuffix(peak.timeLabel).map { "Rain \($0)" } ?? "Rain \(peak.value)%"
+        }
+        return "Rain nearby"
+    case .wind:
+        let peak = peakWindHour(snapshot)
+        return "Gust \(peak.value)"
+    case .sun:
+        return "UV \(peakUvHour(snapshot).value)"
+    case .quiet:
+        if snapshot.feelsLike != snapshot.temperature {
+            return "Feels \(snapshot.feelsLike)°"
+        }
+        return compactSignalValue(snapshot.nextValue)
+    }
+}
+
+private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
+    switch nextFocus(snapshot) {
+    case .rain:
+        return signalColor("rain")
+    case .wind:
+        return signalColor("gust")
+    case .sun:
+        return uvToneColor(snapshot.uv)
+    case .quiet:
+        return signalColor(snapshot.nextValue)
+    }
+}
+
+private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: WidgetPalette) -> [MediumSignalSpec] {
+    let focus = nextFocus(snapshot)
+    let first = MediumSignalSpec(
+        id: "now",
+        label: "Now",
+        value: mediumNowValue(snapshot),
+        tone: palette.primary
+    )
+    let second = MediumSignalSpec(
+        id: "next",
+        label: focus == .quiet ? "Next" : focusLabel(focus),
+        value: mediumFocusValue(snapshot, focus: focus),
+        tone: nextFocusColor(focus, snapshot: snapshot)
+    )
+    return [first, second]
+}
+
+private func mediumNowValue(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if snapshot.feelsLike != snapshot.temperature {
+        return "Feels \(snapshot.feelsLike)°"
+    }
+    if snapshot.rainChance >= 20 { return "Rain \(snapshot.rainChance)%" }
+    return widgetConditionTitle(snapshot)
+}
+
+private func focusLabel(_ focus: WidgetNextFocus) -> String {
+    switch focus {
+    case .rain:
+        return "Rain"
+    case .wind:
+        return "Wind"
+    case .sun:
+        return "UV"
+    case .quiet:
+        return "Next"
+    }
+}
+
+private func mediumFocusValue(_ snapshot: NearcastWidgetSnapshot, focus: WidgetNextFocus) -> String {
+    switch focus {
+    case .rain:
+        let peak = peakRainHour(snapshot)
+        if peak.isStorm {
+            return compactTimeSuffix(peak.timeLabel).map { "Storm \($0)" } ?? "Storms"
+        }
+        return compactTimeSuffix(peak.timeLabel).map { "Rain \($0)" } ?? "Rain \(peak.value)%"
+    case .wind:
+        return "Gust \(peakWindHour(snapshot).value)"
+    case .sun:
+        let peak = peakUvHour(snapshot)
+        return "UV \(peak.value)"
+    case .quiet:
+        return compactSignalValue(snapshot.nextValue)
+    }
+}
+
+private func largeWidgetHeadline(_ snapshot: NearcastWidgetSnapshot, focus: WidgetNextFocus) -> String {
+    switch focus {
+    case .rain:
+        let peak = peakRainHour(snapshot)
+        if peak.isStorm {
+            return compactTimeSuffix(peak.timeLabel).map { "Storms \($0)" } ?? "Storms nearby"
+        }
+        if peak.value >= 20 {
+            return compactTimeSuffix(peak.timeLabel).map { "Rain \($0)" } ?? "Rain nearby"
+        }
+        return "Rain nearby"
+    case .wind:
+        return "Gusts \(peakWindHour(snapshot).value)"
+    case .sun:
+        return "UV \(uvRiskLabel(peakUvHour(snapshot).value))"
+    case .quiet:
+        return primarySignal(snapshot)
+    }
+}
+
+private func largeMetricSpecs(_ snapshot: NearcastWidgetSnapshot, focus: WidgetNextFocus) -> [LargeMetricSpec] {
+    var specs: [LargeMetricSpec] = [
+        LargeMetricSpec(id: "feels", kind: .feels, label: "Feels", value: "\(snapshot.feelsLike)°", tone: nil)
+    ]
+
+    if focus != .rain {
+        specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: signalColor("rain")))
+    }
+    if focus != .wind {
+        specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
+    }
+    if focus != .sun {
+        specs.append(LargeMetricSpec(id: "uv", kind: .uv, label: "UV", value: "\(snapshot.uv)", tone: uvToneColor(snapshot.uv)))
+    }
+    if specs.count < 3 {
+        if !specs.contains(where: { $0.id == "rain" }) {
+            specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: signalColor("rain")))
+        } else if !specs.contains(where: { $0.id == "wind" }) {
+            specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
+        } else if !specs.contains(where: { $0.id == "uv" }) {
+            specs.append(LargeMetricSpec(id: "uv", kind: .uv, label: "UV", value: "\(snapshot.uv)", tone: uvToneColor(snapshot.uv)))
+        }
+    }
+    return Array(specs.prefix(3))
+}
+
+private func metricSurface(_ metric: LargeMetricSpec, palette: WidgetPalette) -> Color {
+    guard let tone = metric.tone else { return palette.surfaceSoft }
+    return tone.opacity(metric.kind == .uv ? 0.24 : 0.11)
+}
+
+private func metricStroke(_ metric: LargeMetricSpec, palette: WidgetPalette) -> Color {
+    guard let tone = metric.tone else { return .clear }
+    return tone.opacity(metric.kind == .uv ? 0.28 : 0.12)
+}
+
+private func metricAccessibility(_ metric: LargeMetricSpec, snapshot: NearcastWidgetSnapshot) -> String {
+    switch metric.kind {
+    case .wind:
+        return "Wind \(snapshot.wind) \(snapshot.windUnit)"
+    case .uv:
+        return "UV \(snapshot.uv), \(uvRiskLabel(snapshot.uv))"
+    default:
+        return "\(metric.label) \(metric.value)"
+    }
+}
+
 private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
     let next = snapshot.nextValue.lowercased()
     let now = snapshot.nowValue.lowercased()
-    if next.contains("rain") || next.contains("storm") { return snapshot.nextValue }
-    if now.contains("rain") || now.contains("snow") || now.contains("storm") { return snapshot.nowValue }
+    if next.contains("rain") || next.contains("storm") { return compactSignalValue(snapshot.nextValue) }
+    if now.contains("rain") || now.contains("snow") || now.contains("storm") { return compactSignalValue(snapshot.nowValue) }
     if snapshot.feelsLike >= 95 { return "Serious heat" }
     if snapshot.feelsLike <= 32 { return "Freezing" }
-    return snapshot.condition
+    return widgetConditionTitle(snapshot)
 }
 
 private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
@@ -1751,6 +1998,23 @@ private func shortPlaceName(_ value: String) -> String {
     return cityName(trimmed)
 }
 
+private func citySafePhrase(_ value: String, maxCharacters: Int) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count > maxCharacters else { return trimmed }
+    if let beforeDash = trimmed.split(separator: "-", maxSplits: 1).first {
+        let candidate = beforeDash.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !candidate.isEmpty, candidate.count <= maxCharacters { return candidate }
+    }
+    let words = trimmed.split(separator: " ")
+    var result = ""
+    for word in words {
+        let next = result.isEmpty ? String(word) : "\(result) \(word)"
+        if next.count > maxCharacters { break }
+        result = next
+    }
+    return result.isEmpty ? String(trimmed.prefix(maxCharacters)) : result
+}
+
 private func cleanOptional(_ value: String?) -> String? {
     let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
@@ -1763,7 +2027,7 @@ private func highLowText(_ snapshot: NearcastWidgetSnapshot) -> String? {
 
 private func mediumMetaText(_ snapshot: NearcastWidgetSnapshot) -> String {
     let feels = "Feels \(snapshot.feelsLike)°"
-    let wind = windSummary(snapshot, includeDirection: true).replacingOccurrences(of: "Wind ", with: "")
+    let wind = windSummary(snapshot, includeDirection: false).replacingOccurrences(of: "Wind ", with: "")
     return "\(feels) · \(wind)"
 }
 
@@ -1848,10 +2112,12 @@ private func compactSignalLabel(_ value: String) -> String {
 private func compactSignalValue(_ value: String) -> String {
     var text = value
         .replacingOccurrences(of: "°F", with: "°")
+        .replacingOccurrences(of: ":00 PM", with: "p", options: .caseInsensitive)
+        .replacingOccurrences(of: ":00 AM", with: "a", options: .caseInsensitive)
+        .replacingOccurrences(of: " PM", with: "p", options: .caseInsensitive)
+        .replacingOccurrences(of: " AM", with: "a", options: .caseInsensitive)
         .replacingOccurrences(of: "next 2 hours", with: "2h", options: .caseInsensitive)
         .replacingOccurrences(of: "next two hours", with: "2h", options: .caseInsensitive)
-        .replacingOccurrences(of: " PM", with: "", options: .caseInsensitive)
-        .replacingOccurrences(of: " AM", with: "", options: .caseInsensitive)
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
     let lower = text.lowercased()
@@ -1870,7 +2136,10 @@ private func compactSignalValue(_ value: String) -> String {
     if lower.hasPrefix("dry ") {
         text = text.replacingOccurrences(of: "Dry next", with: "Dry", options: .caseInsensitive)
     }
-    if lower.contains("rain near") || lower.contains("rain nearby") {
+    if lower.contains("rain near") {
+        return compactTimeSuffix(text).map { "Rain \($0)" } ?? "Rain nearby"
+    }
+    if lower.contains("rain nearby") {
         return "Rain nearby"
     }
     if lower.hasPrefix("low ") && lower.contains(" overnight") {
@@ -1883,6 +2152,28 @@ private func compactSignalValue(_ value: String) -> String {
         return text.replacingOccurrences(of: "Sunset ", with: "Sunset ", options: .caseInsensitive)
     }
     return text
+}
+
+private func compactTimeSuffix(_ value: String) -> String? {
+    let separators = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters.subtracting(CharacterSet(charactersIn: ":")))
+    let tokens = value
+        .lowercased()
+        .components(separatedBy: separators)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    for token in tokens.reversed() {
+        if token == "now" { return "now" }
+        guard let suffix = token.last, suffix == "p" || suffix == "a" else { continue }
+        let core = String(token.dropLast())
+        if let hour = Int(core), (1...12).contains(hour) {
+            return "\(hour)\(suffix)"
+        }
+        let pieces = core.split(separator: ":")
+        if let first = pieces.first, let hour = Int(first), (1...12).contains(hour) {
+            return "\(hour)\(suffix)"
+        }
+    }
+    return nil
 }
 
 private func nextFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus {
@@ -1910,12 +2201,16 @@ private func nextFocusTitle(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSn
     switch focus {
     case .rain:
         let peak = peakRainHour(snapshot)
-        if peak.isStorm { return "Storm chance near \(peak.timeLabel)" }
-        if peak.value >= 35 { return "Rain near \(peak.timeLabel)" }
-        return compactSignalValue(snapshot.nextValue)
+        if peak.isStorm {
+            return compactTimeSuffix(peak.timeLabel).map { "Storms near \($0)" } ?? "Storms nearby"
+        }
+        if peak.value >= 35 {
+            return compactTimeSuffix(peak.timeLabel).map { "Rain near \($0)" } ?? "Rain nearby"
+        }
+        return "Rain nearby"
     case .wind:
         let peak = peakWindHour(snapshot)
-        return "Gusts near \(peak.value) \(snapshot.windUnit)"
+        return "Gusts \(peak.value)"
     case .sun:
         let peak = peakUvHour(snapshot)
         return "UV \(uvRiskLabel(peak.value))"
@@ -1928,13 +2223,16 @@ private func nextFocusDetail(_ focus: WidgetNextFocus, snapshot: NearcastWidgetS
     switch focus {
     case .rain:
         let peak = peakRainHour(snapshot)
-        return peak.value >= 35 ? "Peak \(peak.value)% in the next few hours" : compactSignalValue(snapshot.nowValue)
+        if let time = compactTimeSuffix(peak.timeLabel), peak.value >= 35 {
+            return "Peak \(peak.value)% around \(time)"
+        }
+        return "Peak \(peak.value)% in the next few hours"
     case .wind:
         let peak = peakWindHour(snapshot)
-        return peak.timeLabel == "Now" ? "Strongest wind right now" : "Strongest around \(peak.timeLabel)"
+        return compactTimeSuffix(peak.timeLabel).map { "Strongest around \($0)" } ?? "Strongest wind nearby"
     case .sun:
         let peak = peakUvHour(snapshot)
-        return peak.timeLabel == "Now" ? "Peak UV \(peak.value) now" : "Peak UV \(peak.value) near \(peak.timeLabel)"
+        return compactTimeSuffix(peak.timeLabel).map { "Peak UV \(peak.value) near \($0)" } ?? "Peak UV \(peak.value) today"
     case .quiet:
         if let highLow = highLowText(snapshot) { return "\(highLow) · \(windSummary(snapshot, includeDirection: false))" }
         return windSummary(snapshot, includeDirection: false)
