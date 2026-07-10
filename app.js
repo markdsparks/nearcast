@@ -1,4 +1,4 @@
-const VERSION = "3.0.228";
+const VERSION = "3.0.229";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -110,6 +110,28 @@ function queryValue(...names) {
     return null;
   }
   return null;
+}
+
+function queryRoutePlace() {
+  const rawLatitude = queryValue("latitude", "lat");
+  const rawLongitude = queryValue("longitude", "lon", "lng");
+  if (rawLatitude === null || rawLongitude === null) return null;
+
+  const latitude = Number(rawLatitude);
+  const longitude = Number(rawLongitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+
+  const rawName = queryValue("placeName", "name", "place") || "";
+  const name = rawName.trim().slice(0, 80) || "Selected place";
+  return normalizePlace({
+    id: `route-${latitude.toFixed(3)}-${longitude.toFixed(3)}`,
+    name,
+    country: queryValue("country") || "",
+    countryCode: queryValue("countryCode", "countrycode") || "",
+    latitude,
+    longitude
+  });
 }
 
 function debugSettingsEnabled() {
@@ -2771,10 +2793,13 @@ function init() {
   // Returning users open straight to their weather (last viewed → first saved).
   // First-timers get the welcome state to find a place — no arbitrary default.
   const lastPlace = readStorageJson("weather-last-place");
+  const deepLinkRoutePlace = queryRoutePlace();
   const notificationRoutePlace = typeof nearcastNotificationRoutePlace === "function"
     ? nearcastNotificationRoutePlace()
     : null;
-  const startingPlace = notificationRoutePlace && notificationRoutePlace.latitude != null
+  const startingPlace = deepLinkRoutePlace && deepLinkRoutePlace.latitude != null
+    ? deepLinkRoutePlace
+    : notificationRoutePlace && notificationRoutePlace.latitude != null
     ? notificationRoutePlace
     : lastPlace && lastPlace.latitude != null
     ? lastPlace
