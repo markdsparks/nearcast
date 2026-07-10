@@ -30,34 +30,39 @@ struct NearcastWebView: UIViewRepresentable {
 
         context.coordinator.bridge.webView = webView
         model.attach(webView)
-        context.coordinator.load(model.currentURL, in: webView)
+        context.coordinator.load(model.currentURL, revision: model.navigationRevision, in: webView)
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard !context.coordinator.hasRequested(model.currentURL) else { return }
-        guard !model.isLoading else { return }
-        context.coordinator.load(model.currentURL, in: webView)
+        guard !context.coordinator.hasRequested(model.currentURL, revision: model.navigationRevision) else { return }
+        context.coordinator.load(model.currentURL, revision: model.navigationRevision, in: webView)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         let bridge: NativeBridge
         private weak var model: NearcastWebModel?
         private var requestedURL: URL?
+        private var requestedRevision: Int?
 
         init(model: NearcastWebModel) {
             self.model = model
             bridge = NativeBridge(model: model)
         }
 
-        func load(_ url: URL, in webView: WKWebView) {
+        func load(_ url: URL, revision: Int, in webView: WKWebView) {
             requestedURL = url
+            requestedRevision = revision
+            DispatchQueue.main.async { [weak self] in
+                self?.model?.startLoading()
+            }
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
         }
 
-        func hasRequested(_ url: URL) -> Bool {
+        func hasRequested(_ url: URL, revision: Int) -> Bool {
             guard let requestedURL else { return false }
-            return Self.normalizedURLString(requestedURL) == Self.normalizedURLString(url)
+            return requestedRevision == revision &&
+                Self.normalizedURLString(requestedURL) == Self.normalizedURLString(url)
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -82,6 +87,10 @@ struct NearcastWebView: UIViewRepresentable {
                 return
             }
             model?.setError(error)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            model?.recoverFromWebContentTermination()
         }
 
         private static func isCancelledNavigation(_ error: Error) -> Bool {

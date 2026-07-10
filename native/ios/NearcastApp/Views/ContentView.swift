@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var model: NearcastWebModel
 
     #if DEBUG
@@ -31,6 +32,10 @@ struct ContentView: View {
             NativeDiagnosticsView(model: model)
         }
         #endif
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            model.recoverIfNeededOnActivation()
+        }
     }
 
     private var shouldShowStartupOverlay: Bool {

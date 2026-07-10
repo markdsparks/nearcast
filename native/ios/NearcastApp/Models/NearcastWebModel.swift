@@ -10,6 +10,7 @@ final class NearcastWebModel: ObservableObject {
     @Published var hasLoadedPage = false
     @Published var lastError: String?
     @Published var lastBridgeMessage = "No bridge messages yet"
+    @Published private(set) var navigationRevision = 0
 
     private weak var webView: WKWebView?
     private var localURL: URL
@@ -32,9 +33,7 @@ final class NearcastWebModel: ObservableObject {
     func load(_ nextMode: NearcastWebMode) {
         mode = nextMode
         NativeRuntimeConfiguration.storeMode(nextMode)
-        currentURL = nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL
-        hasLoadedPage = false
-        lastError = nil
+        requestNavigation(to: nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL, force: true)
     }
 
     func saveLocalURL() {
@@ -47,15 +46,13 @@ final class NearcastWebModel: ObservableObject {
         localURLText = url.absoluteString
         NativeRuntimeConfiguration.storeLocalURL(url)
         if mode == .local {
-            currentURL = url
+            requestNavigation(to: url, force: true)
         }
         lastError = nil
     }
 
     func reload() {
-        hasLoadedPage = false
-        lastError = nil
-        webView?.reloadFromOrigin()
+        requestNavigation(to: currentURL, force: true)
     }
 
     func goBackIfPossible() {
@@ -95,6 +92,15 @@ final class NearcastWebModel: ObservableObject {
         lastError = nil
     }
 
+    func recoverIfNeededOnActivation() {
+        guard !hasLoadedPage, !isLoading, lastError == nil else { return }
+        requestNavigation(to: currentURL, force: true)
+    }
+
+    func recoverFromWebContentTermination() {
+        requestNavigation(to: currentURL, force: true)
+    }
+
     func recordBridgeMessage(_ body: Any) {
         if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted]),
            let value = String(data: data, encoding: .utf8) {
@@ -105,19 +111,41 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func openNotification(userInfo: [AnyHashable: Any]) {
-        currentURL = notificationTargetURL(userInfo: userInfo, baseURL: currentBaseURL)
-        hasLoadedPage = false
-        lastError = nil
+        requestNavigation(to: notificationTargetURL(userInfo: userInfo, baseURL: currentBaseURL), force: true)
     }
 
     func openDeepLink(_ url: URL) {
-        currentURL = deepLinkTargetURL(url, baseURL: currentBaseURL)
-        hasLoadedPage = false
-        lastError = nil
+        requestNavigation(to: deepLinkTargetURL(url, baseURL: currentBaseURL), force: shouldForceDeepLinkNavigation(url))
     }
 
     private var currentBaseURL: URL {
         mode == .local ? localURL : NativeRuntimeConfiguration.productionURL
+    }
+
+    private func requestNavigation(to targetURL: URL, force: Bool) {
+        let sameTarget = Self.normalizedURLString(targetURL) == Self.normalizedURLString(currentURL)
+        currentURL = targetURL
+        lastError = nil
+
+        if sameTarget, hasLoadedPage, !force {
+            loadTimeoutTask?.cancel()
+            loadTimeoutTask = nil
+            isLoading = false
+            return
+        }
+
+        hasLoadedPage = false
+        navigationRevision &+= 1
+    }
+
+    private func shouldForceDeepLinkNavigation(_ url: URL) -> Bool {
+        guard url.scheme == "nearcast" else { return true }
+        let route = (url.host ?? "").lowercased()
+        if route == "weather" || route.isEmpty {
+            let sourceItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return !sourceItems.isEmpty
+        }
+        return true
     }
 
     private func deepLinkTargetURL(_ url: URL, baseURL: URL) -> URL {
@@ -131,6 +159,12 @@ final class NearcastWebModel: ObservableObject {
 
         sourceItems.forEach { item in
             Self.upsertQueryItem(item.name, value: Self.cleanText(item.value, limit: 160), in: &items)
+        }
+
+        let route = (url.host ?? "").lowercased()
+        if route == "weather" || route.isEmpty {
+            components.queryItems = items.isEmpty ? nil : items
+            return components.url ?? baseURL
         }
 
         if Self.queryValue("nearcast", in: items) == nil {
@@ -227,6 +261,21 @@ final class NearcastWebModel: ObservableObject {
 
     private static func queryValue(_ name: String, in items: [URLQueryItem]) -> String? {
         items.first { $0.name == name }?.value
+    }
+
+    private static func normalizedURLString(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.absoluteString
+        }
+
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+
+        if components.path == "/" {
+            components.path = ""
+        }
+
+        return components.string ?? url.absoluteString
     }
 
     private static func cleanText(_ value: Any?, limit: Int) -> String {
