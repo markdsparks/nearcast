@@ -1,5 +1,6 @@
 import Foundation
 import WatchConnectivity
+import WidgetKit
 
 @MainActor
 final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
@@ -47,6 +48,7 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
         lastReceivedAt = Date()
         lastError = nil
         revision += 1
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private static func activationLabel(_ state: WCSessionActivationState) -> String {

@@ -57,6 +57,19 @@ The complete one-time Mac, iPhone, and Watch prerequisites are in
 Developer Mode, and the first provisioning confirmation remain interactive
 Apple security steps; the repeatable development loop is automated.
 
+### Watch complications
+
+The Watch app includes three WidgetKit complication choices:
+
+- `Nearcast Next`: adapts to the most important upcoming weather signal.
+- `Plan Check`: keeps the currently watched plan and verdict visible.
+- `Rain Next`: shows rain timing, peak chance, and a compact four-hour trend.
+
+They support the Ultra-friendly circular, corner, rectangular, and inline
+families where appropriate. The complication extension refreshes directly from
+Open-Meteo when the Watch has network access, falls back to the latest snapshot
+sent by the paired iPhone, and explicitly marks data older than two hours.
+
 ## Fast local loop
 
 From the repo root:
@@ -131,6 +144,7 @@ Prerequisites:
   - `Nearcast App Distribution`
   - `Nearcast Widget Distribution`
   - `Nearcast Watch Distribution`
+  - `Nearcast Watch Complications Distribution V2`
 
 For the normal release, use the automated archive, validation, and upload
 command from the repository root after setting the next build number across all
