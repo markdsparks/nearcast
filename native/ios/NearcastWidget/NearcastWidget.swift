@@ -962,6 +962,25 @@ private struct LargeMetricSpec: Identifiable {
     let tone: Color?
 }
 
+private enum LargeWidgetDensity {
+    case compact
+    case regular
+
+    init(size: CGSize) {
+        self = size.height < 410 || size.width < 360 ? .compact : .regular
+    }
+
+    var isCompact: Bool { self == .compact }
+    var outerHorizontalPadding: CGFloat { isCompact ? 16 : 20 }
+    var outerTopPadding: CGFloat { isCompact ? 14 : 22 }
+    var outerBottomPadding: CGFloat { isCompact ? 14 : 24 }
+    var sectionSpacing: CGFloat { isCompact ? 6 : 8 }
+    var placeFont: Font { .system(size: isCompact ? 17 : 19, weight: .black, design: .rounded) }
+    var headlineFont: Font { .system(size: isCompact ? 24 : 28, weight: .black, design: .rounded) }
+    var temperatureFont: Font { .system(size: isCompact ? 40 : 45, weight: .black, design: .rounded) }
+    var timelineLimit: Int { isCompact ? 4 : 5 }
+}
+
 private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette {
     if snapshot.isDay {
         return WidgetPalette(
@@ -1164,58 +1183,73 @@ struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
+        GeometryReader { proxy in
+            let density = LargeWidgetDensity(size: proxy.size)
+            NearcastLargeWidgetContent(snapshot: snapshot, density: density)
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+    }
+}
+
+private struct NearcastLargeWidgetContent: View {
+    let snapshot: NearcastWidgetSnapshot
+    let density: LargeWidgetDensity
+
+    var body: some View {
         let palette = widgetPalette(snapshot)
         let focus = nextFocus(snapshot)
         let metrics = largeMetricSpecs(snapshot, focus: focus)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: density.sectionSpacing) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shortPlaceName(snapshot.placeName))
-                        .font(WidgetText.bodyLarge)
+                        .font(density.placeFont)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.84)
                     Text(largeWidgetHeadline(snapshot, focus: focus))
-                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .font(density.headlineFont)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("\(snapshot.temperature)°")
-                        .font(.system(size: 45, weight: .black, design: .rounded))
+                        .font(density.temperatureFont)
                         .lineLimit(1)
                         .minimumScaleFactor(WidgetText.minScale)
                     if let high = snapshot.high, let low = snapshot.low {
                         Text("H \(high)°  L \(low)°")
-                            .font(WidgetText.body)
+                            .font(density.isCompact ? WidgetText.caption : WidgetText.body)
                             .foregroundStyle(palette.secondary)
+                            .lineLimit(1)
                     }
                 }
             }
 
-            NextWeatherPanel(snapshot: snapshot, focus: focus, palette: palette)
+            NextWeatherPanel(snapshot: snapshot, focus: focus, palette: palette, density: density)
 
             if hasPlanSummary(snapshot) {
-                PlanSummaryStrip(snapshot: snapshot, palette: palette)
+                PlanSummaryStrip(snapshot: snapshot, palette: palette, compact: density.isCompact)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: density.sectionSpacing) {
                 ForEach(metrics) { metric in
-                    LargeMetricTile(metric: metric, snapshot: snapshot, palette: palette)
+                    LargeMetricTile(metric: metric, snapshot: snapshot, palette: palette, compact: density.isCompact)
                 }
             }
 
-            if isWidgetSnapshotStale(snapshot) {
+            if !density.isCompact, isWidgetSnapshotStale(snapshot) {
                 Text(freshnessText(snapshot))
                     .font(WidgetText.eyebrow)
                     .foregroundStyle(palette.subtle)
                     .lineLimit(1)
             }
         }
-        .padding(.top, 22)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 24)
+        .padding(.top, density.outerTopPadding)
+        .padding(.horizontal, density.outerHorizontalPadding)
+        .padding(.bottom, density.outerBottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1240,6 +1274,7 @@ struct MiniPill: View {
 struct PlanSummaryStrip: View {
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
+    var compact = false
 
     var body: some View {
         HStack(spacing: 9) {
@@ -1274,8 +1309,8 @@ struct PlanSummaryStrip: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, compact ? 8 : 10)
+        .padding(.vertical, compact ? 5 : 7)
         .background(planSurfaceColor(snapshot), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -1291,28 +1326,29 @@ enum WidgetNextFocus {
     case quiet
 }
 
-struct NextWeatherPanel: View {
+private struct NextWeatherPanel: View {
     let snapshot: NearcastWidgetSnapshot
     let focus: WidgetNextFocus
     let palette: WidgetPalette
+    let density: LargeWidgetDensity
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .center, spacing: 10) {
+        VStack(alignment: .leading, spacing: density.isCompact ? 4 : 7) {
+            HStack(alignment: .center, spacing: density.isCompact ? 8 : 10) {
                 Image(systemName: nextFocusSymbol(focus, snapshot: snapshot))
-                    .font(.system(size: 20, weight: .black))
+                    .font(.system(size: density.isCompact ? 18 : 20, weight: .black))
                     .foregroundStyle(nextFocusColor(focus, snapshot: snapshot))
-                    .frame(width: 33, height: 33)
+                    .frame(width: density.isCompact ? 29 : 33, height: density.isCompact ? 29 : 33)
                     .background(nextFocusColor(focus, snapshot: snapshot).opacity(snapshot.isDay ? 0.14 : 0.22), in: Circle())
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(nextFocusTitle(focus, snapshot: snapshot))
-                        .font(WidgetText.bodyLarge)
+                        .font(density.isCompact ? WidgetText.body : WidgetText.bodyLarge)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.84)
                     Text(nextFocusDetail(focus, snapshot: snapshot))
-                        .font(WidgetText.body)
+                        .font(density.isCompact ? WidgetText.caption : WidgetText.body)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
@@ -1321,7 +1357,13 @@ struct NextWeatherPanel: View {
             }
 
             if let rows = snapshot.timeline, !rows.isEmpty {
-                WidgetTimelineStrip(rows: Array(rows.prefix(6)), focus: focus, snapshot: snapshot, palette: palette)
+                WidgetTimelineStrip(
+                    rows: Array(rows.prefix(density.timelineLimit)),
+                    focus: focus,
+                    snapshot: snapshot,
+                    palette: palette,
+                    compact: density.isCompact
+                )
             } else {
                 HStack(spacing: 6) {
                     MiniPill(text: compactSignalValue(snapshot.nowValue), palette: palette)
@@ -1330,8 +1372,8 @@ struct NextWeatherPanel: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, density.isCompact ? 8 : 10)
+        .padding(.vertical, density.isCompact ? 5 : 8)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1345,10 +1387,11 @@ struct WidgetTimelineStrip: View {
     let focus: WidgetNextFocus
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
+    let compact: Bool
 
     var body: some View {
         if focus == .rain {
-            RainTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
+            RainTimelineStrip(rows: rows, snapshot: snapshot, palette: palette, compact: compact)
         } else if focus == .sun {
             UvTimelineStrip(rows: rows, snapshot: snapshot, palette: palette)
         } else {
@@ -1361,6 +1404,7 @@ struct RainTimelineStrip: View {
     let rows: [NearcastWidgetHour]
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
+    let compact: Bool
 
     var body: some View {
         let displayRows = normalizedRainTimelineRows(rows)
@@ -1385,7 +1429,7 @@ struct RainTimelineStrip: View {
                 }
             }
         }
-        .frame(height: 58, alignment: .bottom)
+        .frame(height: compact ? 52 : 58, alignment: .bottom)
     }
 }
 
@@ -1608,6 +1652,7 @@ private struct LargeMetricTile: View {
     let metric: LargeMetricSpec
     let snapshot: NearcastWidgetSnapshot
     let palette: WidgetPalette
+    let compact: Bool
 
     var body: some View {
         let accent = metric.tone
@@ -1620,26 +1665,28 @@ private struct LargeMetricTile: View {
             Spacer(minLength: 8)
             switch metric.kind {
             case .wind:
-                HStack(alignment: .center, spacing: 8) {
+                HStack(alignment: .center, spacing: compact ? 6 : 8) {
                     Text(metric.value)
-                        .font(WidgetText.metricValue)
+                        .font(.system(size: compact ? 30 : 34, weight: .black, design: .rounded))
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.86)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(3)
                     Spacer(minLength: 0)
                     if let direction = snapshot.windDirection {
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .black))
+                            .font(.system(size: compact ? 14 : 16, weight: .black))
                             .foregroundStyle(palette.primary)
                             .rotationEffect(.degrees(Double((direction + 180) % 360)))
-                            .frame(width: 32, height: 32)
+                            .frame(width: compact ? 28 : 32, height: compact ? 28 : 32)
                             .background(palette.surfaceStrong, in: Circle())
                     }
                 }
             case .uv:
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(metric.value)
-                        .font(WidgetText.metricValue)
+                        .font(.system(size: compact ? 30 : 34, weight: .black, design: .rounded))
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
                     Text(uvRiskLabel(snapshot.uv))
@@ -1650,15 +1697,15 @@ private struct LargeMetricTile: View {
                 }
             default:
                 Text(metric.value)
-                    .font(WidgetText.metricValue)
+                    .font(.system(size: compact ? 30 : 34, weight: .black, design: .rounded))
                     .foregroundStyle(palette.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.86)
             }
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 72, maxHeight: 72, alignment: .topLeading)
-        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: compact ? 58 : 72, maxHeight: compact ? 58 : 72, alignment: .topLeading)
+        .padding(compact ? 8 : 10)
         .background(metricSurface(metric, palette: palette), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
