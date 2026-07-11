@@ -63,7 +63,12 @@ struct NearcastWidgetHour: Codable, Identifiable {
 }
 
 struct NearcastWidgetPlace: Codable {
+    var id: String?
     var name: String
+    var displayName: String?
+    var admin1: String?
+    var country: String?
+    var countryCode: String?
     var latitude: Double
     var longitude: Double
 }
@@ -161,6 +166,11 @@ extension NearcastWidgetSnapshot {
 }
 
 extension NearcastWidgetPlace {
+    var displayLabel: String {
+        let trimmed = (displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? name : trimmed
+    }
+
     static func stored() -> NearcastWidgetPlace? {
         guard
             let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),

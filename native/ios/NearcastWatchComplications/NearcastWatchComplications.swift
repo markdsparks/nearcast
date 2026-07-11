@@ -1105,7 +1105,7 @@ private enum NearcastWatchWeatherRefresh {
             weather.savedAt = refreshedAt
             weather.weatherSavedAt = refreshedAt
             weather.isAvailable = true
-            weather.placeName = requestedPlace.name
+            weather.placeName = requestedPlace.displayLabel
             weather.temperature = Int(current.temperature.rounded())
             weather.feelsLike = Int(current.feelsLike.rounded())
             weather.conditionCode = current.weatherCode
@@ -1164,7 +1164,7 @@ private enum NearcastWatchWeatherRefresh {
         updated.savedAt = weather.savedAt
         updated.weatherSavedAt = weather.weatherSavedAt
         updated.isAvailable = true
-        updated.placeName = requestedPlace.name
+        updated.placeName = requestedPlace.displayLabel
         updated.temperature = weather.temperature
         updated.feelsLike = weather.feelsLike
         updated.condition = weather.condition

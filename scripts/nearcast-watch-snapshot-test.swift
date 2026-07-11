@@ -51,4 +51,13 @@ require(!unavailable.hasWeatherData, "runtime fallback is explicitly unavailable
 require(unavailable.temperature == 0 && unavailable.rainChance == 0, "runtime fallback contains no believable fake weather")
 require(!unavailable.hasPlan && unavailable.planSavedTime == 0, "runtime fallback contains no fake plan")
 
+let legacyPlaceData = Data(#"{"name":"Maryville","latitude":38.7237,"longitude":-89.9559}"#.utf8)
+let legacyPlace = try decoder.decode(NearcastWidgetPlace.self, from: legacyPlaceData)
+require(legacyPlace.displayLabel == "Maryville", "legacy widget places remain decodable")
+
+let structuredPlaceData = Data(#"{"id":"maryville","name":"Maryville","displayName":"Maryville, Illinois","admin1":"Illinois","country":"United States","countryCode":"US","latitude":38.7237,"longitude":-89.9559}"#.utf8)
+let structuredPlace = try decoder.decode(NearcastWidgetPlace.self, from: structuredPlaceData)
+require(structuredPlace.name == "Maryville", "widget place keeps a canonical locality name")
+require(structuredPlace.displayLabel == "Maryville, Illinois", "widget place keeps a separate display label")
+
 print("PASS  Nearcast Watch snapshot trust contract")

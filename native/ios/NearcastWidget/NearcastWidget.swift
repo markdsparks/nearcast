@@ -92,7 +92,7 @@ enum NearcastWidgetForecastClient {
         return NearcastWidgetSnapshot(
             version: max(fallback.version, 5),
             savedAt: refreshedAt,
-            placeName: place.name,
+            placeName: place.displayLabel,
             temperature: temp,
             feelsLike: feels,
             high: high,
@@ -360,16 +360,33 @@ private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot) -> URL? {
     var components = URLComponents()
     components.scheme = "nearcast"
     components.host = "weather"
-    var items = [
-        URLQueryItem(name: "source", value: "widget"),
-        URLQueryItem(name: "placeName", value: snapshot.placeName)
-    ]
+    var items = [URLQueryItem(name: "source", value: "widget")]
     if let place = NearcastWidgetPlace.stored() {
+        items.append(URLQueryItem(name: "placeName", value: place.name))
+        if let id = cleanWidgetRouteValue(place.id) {
+            items.append(URLQueryItem(name: "placeId", value: id))
+        }
+        if let admin1 = cleanWidgetRouteValue(place.admin1) {
+            items.append(URLQueryItem(name: "admin1", value: admin1))
+        }
+        if let country = cleanWidgetRouteValue(place.country) {
+            items.append(URLQueryItem(name: "country", value: country))
+        }
+        if let countryCode = cleanWidgetRouteValue(place.countryCode) {
+            items.append(URLQueryItem(name: "countryCode", value: countryCode))
+        }
         items.append(URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)))
         items.append(URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)))
+    } else {
+        items.append(URLQueryItem(name: "placeName", value: snapshot.placeName))
     }
     components.queryItems = items
     return components.url
+}
+
+private func cleanWidgetRouteValue(_ value: String?) -> String? {
+    let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
 
 struct NearcastStormActivityWidget: Widget {

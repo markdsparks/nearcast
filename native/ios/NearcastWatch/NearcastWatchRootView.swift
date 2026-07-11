@@ -884,7 +884,7 @@ private enum NearcastWatchWeatherClient {
             // weather into the newest stored snapshot so its plan is not replaced.
             var updated = NearcastWidgetSnapshot.stored() ?? fallback
             updated.version = max(5, fallback.version)
-            updated.placeName = place.name
+            updated.placeName = place.displayLabel
             updated.temperature = Int(current.temperature.rounded())
             updated.feelsLike = Int(current.feelsLike.rounded())
             updated.conditionCode = current.weatherCode

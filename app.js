@@ -1,4 +1,4 @@
-const VERSION = "3.0.235";
+const VERSION = "3.0.236";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -135,14 +135,32 @@ function queryRoutePlace() {
     ? lastPlace
     : null;
   const matchedPlace = savedMatch || lastMatch;
-  const name = suppliedName && suppliedName.toLowerCase() !== "selected place"
-    ? suppliedName
-    : String(matchedPlace?.name || "Selected place").trim().slice(0, 80);
+  const admin1 = queryValue("admin1") || matchedPlace?.admin1 || "";
+  const country = queryValue("country") || matchedPlace?.country || "";
+  const countryCode = queryValue("countryCode", "countrycode") || matchedPlace?.countryCode || "";
+  const matchedName = canonicalPlaceName({
+    name: matchedPlace?.name || "",
+    admin1: matchedPlace?.admin1 || admin1,
+    country: matchedPlace?.country || country
+  });
+  const suppliedCanonicalName = canonicalPlaceName({
+    name: suppliedName,
+    admin1,
+    country
+  });
+  // Coordinates are the route identity. When they match a saved place, its
+  // structured locality wins over the widget's presentation label.
+  const name = matchedPlace && matchedName.toLowerCase() !== "selected place"
+    ? matchedName
+    : suppliedCanonicalName && suppliedCanonicalName.toLowerCase() !== "selected place"
+    ? suppliedCanonicalName
+    : "Selected place";
   return normalizePlace({
-    id: matchedPlace?.id || `route-${latitude.toFixed(3)}-${longitude.toFixed(3)}`,
+    id: queryValue("placeId", "placeid") || matchedPlace?.id || `route-${latitude.toFixed(3)}-${longitude.toFixed(3)}`,
     name,
-    country: queryValue("country") || matchedPlace?.country || "",
-    countryCode: queryValue("countryCode", "countrycode") || matchedPlace?.countryCode || "",
+    admin1,
+    country,
+    countryCode,
     latitude,
     longitude
   });
@@ -383,7 +401,7 @@ const state = {
   sunsetMs: null,
   activePlace: null,
   welcomeOverride: false,
-  savedPlaces: JSON.parse(localStorage.getItem("weather-places") || "[]"),
+  savedPlaces: JSON.parse(localStorage.getItem("weather-places") || "[]").map(normalizePlace),
   searchResults: [],
   skyCode: null,
   skyIsDay: null,
@@ -7867,6 +7885,8 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
 function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
   if (!window.NearcastNative?.postMessage || !data || !place) return;
   try {
+    const normalizedWidgetPlace = normalizePlace(place);
+    const widgetPlaceDisplayName = placeLabel(normalizedWidgetPlace);
     const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
     const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
     const todayIndex = forecastDailyIndex(data);
@@ -7890,7 +7910,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const snapshot = {
       version: 5,
       savedAt: snapshotSavedAt,
-      placeName: placeLabel(place),
+      placeName: widgetPlaceDisplayName,
       temperature: Math.round(current.temperature_2m),
       feelsLike: Math.round(current.apparent_temperature),
       high: Number.isFinite(high) ? Math.round(high) : null,
@@ -7931,9 +7951,14 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       type: "widget.snapshot",
       snapshot,
       place: {
-        name: placeLabel(place),
-        latitude: Number(place.latitude),
-        longitude: Number(place.longitude)
+        id: normalizedWidgetPlace.id,
+        name: normalizedWidgetPlace.name,
+        displayName: widgetPlaceDisplayName,
+        admin1: normalizedWidgetPlace.admin1,
+        country: normalizedWidgetPlace.country,
+        countryCode: normalizedWidgetPlace.countryCode,
+        latitude: Number(normalizedWidgetPlace.latitude),
+        longitude: Number(normalizedWidgetPlace.longitude)
       }
     });
   } catch (error) {
@@ -11032,9 +11057,10 @@ function setLoadingStatus(message) {
 }
 
 function normalizePlace(place) {
+  const name = canonicalPlaceName(place);
   return {
-    id: place.id || `${slug(place.name)}-${Number(place.latitude).toFixed(3)}-${Number(place.longitude).toFixed(3)}`,
-    name: place.name || "Selected Place",
+    id: place.id || `${slug(name)}-${Number(place.latitude).toFixed(3)}-${Number(place.longitude).toFixed(3)}`,
+    name,
     admin1: place.admin1 || "",
     country: place.country || "",
     countryCode: placeCountryCode(place),
@@ -11043,12 +11069,51 @@ function normalizePlace(place) {
   };
 }
 
+function canonicalPlaceName(place) {
+  const rawName = String(place?.name || "Selected Place").trim() || "Selected Place";
+  const qualifiers = new Set(
+    [place?.admin1, place?.country]
+      .map((value) => normalizeQualifierKey(value))
+      .filter(Boolean)
+  );
+  const parts = rawName.split(",").map((part) => part.trim()).filter(Boolean);
+
+  // Repair the exact legacy failure safely: collapse repeated trailing pieces,
+  // then remove only suffixes that match known structured qualifiers.
+  while (
+    parts.length > 1 &&
+    normalizeQualifierKey(parts[parts.length - 1]) === normalizeQualifierKey(parts[parts.length - 2])
+  ) {
+    parts.pop();
+  }
+  while (parts.length > 1 && qualifiers.has(normalizeQualifierKey(parts[parts.length - 1]))) {
+    parts.pop();
+  }
+
+  return parts.join(", ") || "Selected Place";
+}
+
 function placeLabel(place) {
+  const name = canonicalPlaceName(place);
   const countryCode = placeCountryCode(place);
   if (place.admin1 && place.country && countryCode && countryCode !== "US") {
-    return [place.name, place.admin1, place.country].filter(Boolean).join(", ");
+    return joinUniquePlaceParts([name, place.admin1, place.country]);
   }
-  return [place.name, place.admin1 || place.country].filter(Boolean).join(", ");
+  return joinUniquePlaceParts([name, place.admin1 || place.country]);
+}
+
+function joinUniquePlaceParts(parts) {
+  const seen = new Set();
+  return parts
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const key = normalizeQualifierKey(part);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(", ");
 }
 
 function formatPlaceResultMeta(place) {
