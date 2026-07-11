@@ -23,6 +23,8 @@ const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister
 const PLAN_WATCH_TEST_ENDPOINT_PATH = "/api/watch/notifications/test";
 const PLAN_WATCH_PENDING_ENDPOINT_PATH = "/api/watch/notifications/pending";
 const PLAN_WATCH_EVALUATE_ENDPOINT_PATH = "/api/watch/notifications/evaluate";
+const LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH = "/api/live-activities/register";
+const LIVE_ACTIVITY_END_ENDPOINT_PATH = "/api/live-activities/end";
 const XWEATHER_CONFIG_ENDPOINT_PATH = "/api/xweather/config";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
@@ -94,6 +96,8 @@ const DEFAULT_PLAN_WATCH_EVALUATOR_LIMIT = 5;
 const PLAN_WATCH_EVALUATOR_HARD_LIMIT = 25;
 const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
 const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
+const LIVE_ACTIVITY_TTL_SECONDS = 3 * 60 * 60;
+const LIVE_ACTIVITY_SCAN_LIMIT = 40;
 
 export default {
   async fetch(request, env = {}, ctx = {}) {
@@ -119,6 +123,12 @@ export default {
     if (url.pathname === PLAN_WATCH_EVALUATE_ENDPOINT_PATH) {
       return handlePlanWatchNotificationEvaluateRequest(request, env);
     }
+    if (url.pathname === LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH) {
+      return handleLiveActivityRegisterRequest(request, env);
+    }
+    if (url.pathname === LIVE_ACTIVITY_END_ENDPOINT_PATH) {
+      return handleLiveActivityEndRequest(request, env);
+    }
     if (url.pathname === XWEATHER_CONFIG_ENDPOINT_PATH) {
       return handleXweatherConfigRequest(request, env);
     }
@@ -129,13 +139,38 @@ export default {
     return handleRadarGenerationQueue(batch, env, ctx);
   },
   async scheduled(event, env = {}, ctx = {}) {
-    if (!planWatchScheduledEvaluatorEnabled(env)) return;
-    ctx.waitUntil(evaluatePlanWatchNotifications(env, {
-      reason: "scheduled",
-      limit: configuredPlanWatchEvaluatorLimit(env)
-    }));
+    ctx.waitUntil(evaluateLiveActivities(env, { reason: "scheduled" }));
+    const scheduledMinute = new Date(Number(event?.scheduledTime) || Date.now()).getUTCMinutes();
+    if (planWatchScheduledEvaluatorEnabled(env) && scheduledMinute % 30 === 0) {
+      ctx.waitUntil(evaluatePlanWatchNotifications(env, {
+        reason: "scheduled",
+        limit: configuredPlanWatchEvaluatorLimit(env)
+      }));
+    }
   }
 };
+
+export async function handleLiveActivityRegisterRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  const store = planWatchStore(env);
+  if (!store?.putJson) return jsonResponse({ error: "store-unavailable" }, { status: 503 });
+  const payload = await readJsonRequest(request);
+  const record = normalizeLiveActivityRecord(payload);
+  if (!record) return jsonResponse({ error: "invalid-live-activity" }, { status: 400 });
+  await store.putJson(liveActivityStorageName(record.activityId), record);
+  return jsonResponse({ ok: true, state: "registered", activityId: record.activityId, expiresAt: record.expiresAt });
+}
+
+export async function handleLiveActivityEndRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  const store = planWatchStore(env);
+  const payload = await readJsonRequest(request);
+  const activityId = cleanToken(payload?.activityId, 160);
+  if (activityId && store?.deleteJson) await store.deleteJson(liveActivityStorageName(activityId));
+  return jsonResponse({ ok: true, state: "ended" });
+}
 
 export async function handleRadarCapabilityRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
@@ -1653,6 +1688,221 @@ function planWatchStore(env = {}) {
         .map((key) => key.startsWith(stripPrefix) ? key.slice(stripPrefix.length) : key);
     }
   };
+}
+
+function liveActivityStorageName(activityId) {
+  return `live-activities/${cleanStorageName(activityId)}.json`;
+}
+
+function normalizeLiveActivityRecord(payload = {}) {
+  const activityId = cleanToken(payload.activityId, 160);
+  const token = cleanToken(payload.token, 260).toLowerCase();
+  const latitude = Number(payload.latitude);
+  const longitude = Number(payload.longitude);
+  if (!activityId || !/^[a-f0-9]{32,260}$/.test(token)) return null;
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
+  const now = Date.now();
+  const requestedExpiry = Number(payload.expiresAtEpoch) * 1000;
+  const expiresAtMs = Math.min(
+    now + LIVE_ACTIVITY_TTL_SECONDS * 1000,
+    Number.isFinite(requestedExpiry) && requestedExpiry > now ? requestedExpiry : now + 90 * 60 * 1000
+  );
+  return {
+    provider: "nearcast-live-activity",
+    version: 1,
+    activityId,
+    token,
+    environment: cleanToken(payload.environment, 24) === "development" ? "development" : "production",
+    bundleId: cleanText(payload.bundleId || "app.nearcast.ios", 120),
+    place: {
+      name: cleanText(payload.placeName || "Saved place", 80),
+      latitude,
+      longitude
+    },
+    stormName: cleanText(payload.stormName || "Storm Watch", 42),
+    status: cleanText(payload.status || "Storm nearby", 48),
+    detail: cleanText(payload.detail || "Nearcast is tracking incoming weather.", 86),
+    confidence: cleanText(payload.confidence || "Watching", 24),
+    confidenceValue: finiteNumber(payload.confidenceValue, null),
+    severity: finiteNumber(payload.severity, null),
+    rainChance: finiteNumber(payload.rainChance, null),
+    motionDegrees: finiteNumber(payload.motionDegrees, null),
+    geometryQuality: cleanToken(payload.geometryQuality || "forecast", 18),
+    url: cleanText(payload.url || "nearcast://weather?source=live-activity", 400),
+    arrivalAtEpoch: finiteNumber(payload.arrivalAtEpoch, null),
+    missedChecks: 0,
+    registeredAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    expiresAt: new Date(expiresAtMs).toISOString()
+  };
+}
+
+export async function evaluateLiveActivities(env = {}, options = {}) {
+  const store = planWatchStore(env);
+  if (!store?.listNames || !store?.getJson || !store?.putJson) return { ok: false, state: "store-unavailable" };
+  const names = await store.listNames("live-activities/", LIVE_ACTIVITY_SCAN_LIMIT);
+  const summary = { ok: true, state: "evaluated", reason: options.reason || "", records: names.length, updated: 0, ended: 0, failed: 0 };
+  const forecastCache = new Map();
+  for (const name of names) {
+    const record = await store.getJson(name);
+    if (!record?.activityId || !record?.token) continue;
+    try {
+      const result = await evaluateLiveActivity(record, env, forecastCache);
+      if (result.event === "end" || result.delete) {
+        await store.deleteJson(name);
+        summary.ended += 1;
+      } else {
+        await store.putJson(name, result.record);
+        summary.updated += 1;
+      }
+      if (!result.delivery?.ok) summary.failed += 1;
+    } catch {
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+async function evaluateLiveActivity(record, env, forecastCache) {
+  const now = Date.now();
+  if ((timestamp(record.expiresAt) || 0) <= now) {
+    const state = liveActivityEndedState(record, "Weather window passed", "Nearcast no longer sees incoming rain or storms.");
+    return { event: "end", delivery: await sendLiveActivityApns(record, "end", state, env) };
+  }
+  const key = planWatchPlaceCacheKey(record.place, "live");
+  if (!forecastCache.has(key)) forecastCache.set(key, fetchLiveActivityForecast(record.place));
+  const forecast = await forecastCache.get(key);
+  const candidate = liveActivityForecastCandidate(forecast, now);
+  if (!candidate) {
+    const missedChecks = Number(record.missedChecks || 0) + 1;
+    if (missedChecks >= 2) {
+      const state = liveActivityEndedState(record, "Weather moved on", "Incoming rain is no longer expected soon.");
+      return { event: "end", delivery: await sendLiveActivityApns(record, "end", state, env) };
+    }
+    return { event: "update", delivery: { ok: true, status: 204 }, record: { ...record, missedChecks, updatedAt: new Date(now).toISOString() } };
+  }
+  const state = liveActivityContentState(record, candidate, now);
+  const delivery = await sendLiveActivityApns(record, "update", state, env);
+  return {
+    event: "update",
+    delivery,
+    delete: [400, 404, 410].includes(delivery.status),
+    record: {
+      ...record,
+      status: state.status,
+      detail: state.detail,
+      confidence: state.confidence,
+      rainChance: state.rainChance,
+      arrivalAtEpoch: state.arrivalAtEpoch,
+      missedChecks: 0,
+      updatedAt: new Date(now).toISOString()
+    }
+  };
+}
+
+async function fetchLiveActivityForecast(place = {}) {
+  const params = new URLSearchParams({
+    latitude: String(place.latitude),
+    longitude: String(place.longitude),
+    current: "precipitation,weather_code",
+    minutely_15: "precipitation,precipitation_probability,weather_code",
+    forecast_minutely_15: "12",
+    hourly: "precipitation,precipitation_probability,weather_code",
+    forecast_hours: "3",
+    precipitation_unit: "inch",
+    timezone: "UTC"
+  });
+  return fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, PLAN_WATCH_FORECAST_TIMEOUT_MS);
+}
+
+export function liveActivityForecastCandidate(forecast = {}, now = Date.now()) {
+  const currentWet = Number(forecast?.current?.precipitation || 0) > 0;
+  const sections = [
+    { data: forecast.minutely_15, precision: "minutely" },
+    { data: forecast.hourly, precision: "hourly" }
+  ];
+  for (const section of sections) {
+    const times = section.data?.time || [];
+    for (let index = 0; index < times.length; index += 1) {
+      const ms = Date.parse(times[index]);
+      if (!Number.isFinite(ms) || ms < now - 10 * 60 * 1000 || ms > now + 90 * 60 * 1000) continue;
+      const pop = Math.max(0, Math.min(100, Number(section.data?.precipitation_probability?.[index] || 0)));
+      const precip = Math.max(0, Number(section.data?.precipitation?.[index] || 0));
+      const code = Number(section.data?.weather_code?.[index] || 0);
+      const storm = code >= 95 && code <= 99;
+      if (!currentWet && !storm && pop < 40 && precip < 0.01) continue;
+      return { ms: currentWet ? now : ms, pop, precip, storm, precision: section.precision };
+    }
+  }
+  return null;
+}
+
+function liveActivityContentState(record, candidate, now) {
+  const etaMinutes = Math.max(0, Math.round((candidate.ms - now) / 60000));
+  const city = cleanText(record?.place?.name || "your place", 48);
+  const kind = candidate.storm ? "Storm" : "Rain";
+  const status = etaMinutes <= 5 ? `${kind} at ${city}` : `${kind} near ${city}`;
+  const timing = etaMinutes <= 5 ? "now" : candidate.precision === "minutely" ? `in about ${etaMinutes} min` : "within the next hour";
+  return {
+    etaMinutes,
+    status,
+    detail: `${candidate.storm ? "Thunder" : "Rain"} possible ${timing}. Chance ${Math.round(candidate.pop)}%.`,
+    confidence: candidate.pop >= 70 || candidate.precip >= 0.03 ? "Likely" : "Watching",
+    updatedAtEpoch: Math.round(now / 1000),
+    arrivalAtEpoch: Math.round(candidate.ms / 1000),
+    expiresAtEpoch: Math.round((timestamp(record.expiresAt) || now + 45 * 60 * 1000) / 1000),
+    motionDegrees: record.motionDegrees ?? null,
+    confidenceValue: Math.max(0.4, Math.min(0.92, candidate.pop / 100)),
+    severity: candidate.storm ? 3 : candidate.pop >= 70 ? 2 : 1,
+    rainChance: Math.round(candidate.pop),
+    geometryQuality: candidate.precision === "minutely" ? "forecast" : "estimated"
+  };
+}
+
+function liveActivityEndedState(record, status, detail) {
+  const now = Date.now();
+  return {
+    etaMinutes: 0,
+    status,
+    detail,
+    confidence: "Ended",
+    updatedAtEpoch: Math.round(now / 1000),
+    arrivalAtEpoch: Math.round(now / 1000),
+    expiresAtEpoch: Math.round(now / 1000),
+    motionDegrees: null,
+    confidenceValue: null,
+    severity: 0,
+    rainChance: null,
+    geometryQuality: "ended"
+  };
+}
+
+async function sendLiveActivityApns(record, event, state, env = {}) {
+  if (!planWatchApnsConfigured(env)) return { ok: false, status: 0, body: "missing-apns-config" };
+  const jwt = await planWatchApnsJwt(env);
+  const host = record.environment === "development" ? "https://api.sandbox.push.apple.com" : "https://api.push.apple.com";
+  const bundleId = record.bundleId || configuredPlanWatchApnsBundleId(env);
+  const response = await fetch(`${host}/3/device/${record.token}`, {
+    method: "POST",
+    headers: {
+      authorization: `bearer ${jwt}`,
+      "apns-topic": `${bundleId}.push-type.liveactivity`,
+      "apns-push-type": "liveactivity",
+      "apns-priority": event === "end" ? "10" : "5",
+      "apns-expiration": String(Math.floor(Date.now() / 1000) + 15 * 60),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      aps: {
+        timestamp: Math.floor(Date.now() / 1000),
+        event,
+        "content-state": state,
+        ...(event === "end" ? { "dismissal-date": Math.floor(Date.now() / 1000) + 10 * 60 } : {})
+      }
+    })
+  });
+  return { ok: response.ok, status: response.status, body: response.ok ? "" : cleanText(await response.text().catch(() => ""), 240) };
 }
 
 async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {

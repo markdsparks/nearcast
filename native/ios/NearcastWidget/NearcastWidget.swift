@@ -384,8 +384,7 @@ struct NearcastStormActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing, spacing: 0) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
-                            Text("\(context.state.etaMinutes)")
-                                .font(.system(size: 23, weight: .black, design: .rounded))
+                            StormArrivalCountdown(state: context.state, compact: true)
                             Text("min")
                                 .font(.system(size: 9, weight: .black, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.78))
@@ -432,8 +431,7 @@ struct NearcastStormActivityWidget: Widget {
                 Image(systemName: "cloud.bolt.rain.fill")
                     .foregroundStyle(.yellow)
             } compactTrailing: {
-                Text("\(context.state.etaMinutes)m")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                StormArrivalCountdown(state: context.state, compact: true, suffix: "m")
             } minimal: {
                 Image(systemName: "cloud.bolt.fill")
                     .foregroundStyle(.yellow)
@@ -479,14 +477,13 @@ struct NearcastStormActivityLockView: View {
                     Spacer(minLength: 14)
 
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text("\(context.state.etaMinutes)")
-                            .font(.system(size: 41, weight: .black, design: .rounded))
+                        StormArrivalCountdown(state: context.state)
                             .lineLimit(1)
                             .minimumScaleFactor(0.70)
-                        Text("min")
+                        Text(context.state.arrivalDate == nil ? "min" : "until arrival")
                             .font(.system(size: 12, weight: .black, design: .rounded))
                             .foregroundStyle(.white.opacity(0.72))
-                        Text(context.state.confidence)
+                        Text(context.isStale ? "Update delayed" : context.state.confidence)
                             .font(.system(size: 10, weight: .black, design: .rounded))
                             .foregroundStyle(confidenceColor)
                             .lineLimit(1)
@@ -542,7 +539,7 @@ struct NearcastStormActivityLockView: View {
     }
 
     private var updatedText: String {
-        let age = max(0, Date().timeIntervalSince(context.state.updatedAt))
+        let age = max(0, Date().timeIntervalSince(context.state.updatedDate))
         if age < 90 { return "Just now" }
         return "\(Int(age / 60))m ago"
     }
@@ -581,6 +578,28 @@ struct NearcastStormActivityLockView: View {
         default:
             return ""
         }
+    }
+}
+
+struct StormArrivalCountdown: View {
+    let state: NearcastStormActivityAttributes.ContentState
+    var compact = false
+    var suffix = ""
+
+    var body: some View {
+        Group {
+            if let arrival = state.arrivalDate, arrival > Date() {
+                Text(timerInterval: Date()...arrival, countsDown: true, showsHours: false)
+            } else if state.etaMinutes <= 0 {
+                Text("Now")
+            } else {
+                Text("\(state.etaMinutes)\(suffix)")
+            }
+        }
+        .font(.system(size: compact ? 23 : 41, weight: .black, design: .rounded))
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
     }
 }
 
@@ -782,6 +801,16 @@ struct StormPathCone: Shape {
 }
 
 extension NearcastStormActivityAttributes.ContentState {
+    var arrivalDate: Date? {
+        guard let arrivalAtEpoch, arrivalAtEpoch > 0 else { return nil }
+        return Date(timeIntervalSince1970: arrivalAtEpoch)
+    }
+
+    var updatedDate: Date {
+        if let updatedAtEpoch, updatedAtEpoch > 0 { return Date(timeIntervalSince1970: updatedAtEpoch) }
+        return updatedAt ?? Date.distantPast
+    }
+
     var severityLevel: Int {
         max(0, min(4, severity ?? inferredSeverity))
     }

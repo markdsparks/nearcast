@@ -1,4 +1,4 @@
-const VERSION = "3.0.232";
+const VERSION = "3.0.233";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -505,6 +505,7 @@ const mapState = {
     seq: 0
   },
   nativeStormActivityKey: "",
+  nativeStormActivitySyncedAt: 0,
   nativeStormActivityDebug: {
     active: false,
     pending: false,
@@ -7909,6 +7910,7 @@ function syncNativeStormActivity(data = state.forecast, place = state.activePlac
   if (!nativeStormActivitySavedPlace(place)) {
     if (state.nativeStormActivityKey) {
       state.nativeStormActivityKey = "";
+      state.nativeStormActivitySyncedAt = 0;
       bridge.end({
         status: "Storm watch ended",
         detail: "Nearcast only tracks storm activities for saved places.",
@@ -7922,6 +7924,7 @@ function syncNativeStormActivity(data = state.forecast, place = state.activePlac
   if (!candidate) {
     if (state.nativeStormActivityKey) {
       state.nativeStormActivityKey = "";
+      state.nativeStormActivitySyncedAt = 0;
       bridge.end({
         status: "Storm watch ended",
         detail: "Nearcast no longer sees incoming rain or storms for this place.",
@@ -7931,10 +7934,14 @@ function syncNativeStormActivity(data = state.forecast, place = state.activePlac
     return;
   }
 
-  if (candidate.key === state.nativeStormActivityKey) return;
+  if (candidate.key === state.nativeStormActivityKey && Date.now() - Number(state.nativeStormActivitySyncedAt || 0) < 4 * 60 * 1000) return;
   state.nativeStormActivityKey = candidate.key;
+  state.nativeStormActivitySyncedAt = Date.now();
   bridge.start(candidate).catch(() => {
-    if (state.nativeStormActivityKey === candidate.key) state.nativeStormActivityKey = "";
+    if (state.nativeStormActivityKey === candidate.key) {
+      state.nativeStormActivityKey = "";
+      state.nativeStormActivitySyncedAt = 0;
+    }
   });
 }
 
@@ -7960,6 +7967,23 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
   const end = now + 90 * 60 * 1000;
   let best = null;
 
+  const minutely = data?.minutely_15 || {};
+  const minutelyTimes = minutely.time || [];
+  for (let index = 0; index < minutelyTimes.length; index += 1) {
+    const ms = parseForecastTimestamp(minutelyTimes[index], data);
+    if (!Number.isFinite(ms) || ms < now - 5 * 60 * 1000 || ms > end) continue;
+    const pop = Number(minutely.precipitation_probability?.[index] || 0);
+    const precip = Number(minutely.precipitation?.[index] || 0);
+    const storm = Boolean(truth?.display?.stormPotential) && (pop >= 35 || precip > 0);
+    const meaningfulRain = pop >= 55 || precip >= 0.03;
+    if (!storm && !meaningfulRain) continue;
+    const etaMinutes = Math.max(0, Math.round((ms - now) / 60000));
+    const score = (storm ? 1000 : 0) + pop * 10 + precip * 500 - etaMinutes * 3;
+    if (!best || score > best.score) {
+      best = { index, ms, pop, rawCode: Number(truth?.nowCode ?? truth?.code ?? 61), precip, storm, etaMinutes, score, source: "minutely_15" };
+    }
+  }
+
   for (let index = 0; index < times.length; index += 1) {
     const ms = parseForecastTimestamp(times[index], data);
     if (!Number.isFinite(ms) || ms < now - 10 * 60 * 1000 || ms > end) continue;
@@ -7972,7 +7996,7 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     const etaMinutes = Math.max(0, Math.round((ms - now) / 60000));
     const score = (storm ? 1000 : 0) + pop * 10 + precip * 100 - etaMinutes;
     if (!best || score > best.score) {
-      best = { index, ms, pop, rawCode, precip, storm, etaMinutes, score };
+      best = { index, ms, pop, rawCode, precip, storm, etaMinutes, score, source: "hourly" };
     }
   }
 
@@ -8015,6 +8039,9 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     ? Math.max(0.52, Math.min(0.92, (best.pop / 100) * 0.72 + (best.etaMinutes <= 15 ? 0.18 : 0.06)))
     : Math.max(0.42, Math.min(0.82, best.pop / 100));
 
+  const arrivalAtEpoch = Math.round(best.ms / 1000);
+  const expiresAtEpoch = Math.round(Math.max(best.ms + 45 * 60 * 1000, now + 30 * 60 * 1000) / 1000);
+
   return {
     key: [
       place.id || placeName,
@@ -8025,13 +8052,17 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     placeName,
     stormName,
     etaMinutes: best.etaMinutes,
+    arrivalAtEpoch,
+    expiresAtEpoch,
+    latitude: Number(place.latitude),
+    longitude: Number(place.longitude),
     status,
     detail,
     confidence,
     confidenceValue,
     severity,
     rainChance: best.pop,
-    motionDegrees: nativeStormActivityMotionDegrees(data, best.index),
+    motionDegrees: nativeStormActivityMotionDegrees(data, best.source === "hourly" ? best.index : currentHourlyIndex(data)),
     geometryQuality: "forecast",
     url: route || "nearcast://watching?source=live-activity"
   };

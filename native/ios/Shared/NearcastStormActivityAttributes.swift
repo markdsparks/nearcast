@@ -7,7 +7,10 @@ struct NearcastStormActivityAttributes: ActivityAttributes {
         var status: String
         var detail: String
         var confidence: String
-        var updatedAt: Date
+        var updatedAt: Date?
+        var updatedAtEpoch: Double?
+        var arrivalAtEpoch: Double?
+        var expiresAtEpoch: Double?
         var motionDegrees: Double?
         var confidenceValue: Double?
         var severity: Int?

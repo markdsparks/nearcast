@@ -6,7 +6,7 @@ compatibility_date = "2026-06-22"
 directory = "."
 
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/5 * * * *"]
 
 [[r2_buckets]]
 binding = "RADAR_GENERATION_REQUESTS_R2"

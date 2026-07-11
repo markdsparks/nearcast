@@ -7,6 +7,7 @@
 .local-design/
 node_modules/
 APNAuthKey/
+AppStoreConnect/
 native/
 workers/
 docs/

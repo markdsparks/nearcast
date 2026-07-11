@@ -6,6 +6,9 @@ final class NativeStormActivityController {
     static let shared = NativeStormActivityController()
 
     private var activity: Activity<NearcastStormActivityAttributes>?
+    private var pushTokenTask: Task<Void, Never>?
+    private let registrationURL = URL(string: "https://getnearcast.app/api/live-activities/register")!
+    private let endURL = URL(string: "https://getnearcast.app/api/live-activities/end")!
 
     private init() {}
 
@@ -25,6 +28,9 @@ final class NativeStormActivityController {
         let severity = clampedInt(payload["severity"], min: 0, max: 4)
         let rainChance = clampedInt(payload["rainChance"], min: 0, max: 100)
         let geometryQuality = cleanOptionalText(payload["geometryQuality"], limit: 18)
+        let now = Date()
+        let arrivalAtEpoch = epochValue(payload["arrivalAtEpoch"]) ?? now.addingTimeInterval(Double(etaMinutes) * 60).timeIntervalSince1970
+        let expiresAtEpoch = epochValue(payload["expiresAtEpoch"]) ?? max(arrivalAtEpoch + 45 * 60, now.addingTimeInterval(30 * 60).timeIntervalSince1970)
         let deepLink = URL(string: cleanText(payload["url"], fallback: "nearcast://watching?source=live-activity", limit: 400))
 
         let attributes = NearcastStormActivityAttributes(
@@ -37,7 +43,10 @@ final class NativeStormActivityController {
             status: status,
             detail: detail,
             confidence: confidence,
-            updatedAt: Date(),
+            updatedAt: now,
+            updatedAtEpoch: now.timeIntervalSince1970,
+            arrivalAtEpoch: arrivalAtEpoch,
+            expiresAtEpoch: expiresAtEpoch,
             motionDegrees: motionDegrees,
             confidenceValue: confidenceValue,
             severity: severity,
@@ -46,18 +55,20 @@ final class NativeStormActivityController {
         )
         let content = ActivityContent(
             state: state,
-            staleDate: Date().addingTimeInterval(12 * 60),
+            staleDate: now.addingTimeInterval(8 * 60),
             relevanceScore: etaMinutes <= 30 ? 95 : 75
         )
 
         if let existing = activity ?? Activity<NearcastStormActivityAttributes>.activities.first {
             activity = existing
             await existing.update(content)
+            observePushToken(for: existing, payload: payload)
             return response(state: "updated", activityId: existing.id)
         }
 
         do {
-            activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
+            activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
+            if let activity { observePushToken(for: activity, payload: payload) }
             return response(state: "started", activityId: activity?.id)
         } catch {
             return ["ok": false, "state": "failed", "reason": error.localizedDescription]
@@ -81,6 +92,9 @@ final class NativeStormActivityController {
             detail: finalDetail,
             confidence: finalConfidence,
             updatedAt: Date(),
+            updatedAtEpoch: Date().timeIntervalSince1970,
+            arrivalAtEpoch: Date().timeIntervalSince1970,
+            expiresAtEpoch: Date().timeIntervalSince1970,
             motionDegrees: nil,
             confidenceValue: nil,
             severity: nil,
@@ -91,6 +105,9 @@ final class NativeStormActivityController {
             ActivityContent(state: state, staleDate: Date()),
             dismissalPolicy: .after(Date().addingTimeInterval(10 * 60))
         )
+        pushTokenTask?.cancel()
+        pushTokenTask = nil
+        Task { await notifyServerEnded(activityId: activityToEnd.id) }
         activity = nil
         return ["ok": true, "state": "ended", "activityId": activityToEnd.id]
     }
@@ -147,5 +164,64 @@ final class NativeStormActivityController {
         let int = intValue(value, fallback: Int.min)
         guard int != Int.min else { return nil }
         return Swift.max(minValue, Swift.min(maxValue, int))
+    }
+
+    private func epochValue(_ value: Any?) -> Double? {
+        guard let value = doubleValue(value), value.isFinite, value > 0 else { return nil }
+        return value > 10_000_000_000 ? value / 1000 : value
+    }
+
+    private func observePushToken(for activity: Activity<NearcastStormActivityAttributes>, payload: [String: Any]) {
+        pushTokenTask?.cancel()
+        pushTokenTask = Task { [weak self] in
+            for await tokenData in activity.pushTokenUpdates {
+                guard !Task.isCancelled else { return }
+                let token = tokenData.map { String(format: "%02x", $0) }.joined()
+                await self?.register(activity: activity, token: token, payload: payload)
+            }
+        }
+    }
+
+    private func register(activity: Activity<NearcastStormActivityAttributes>, token: String, payload: [String: Any]) async {
+        var body: [String: Any] = [
+            "activityId": activity.id,
+            "token": token,
+            "environment": apnsEnvironment(),
+            "bundleId": Bundle.main.bundleIdentifier ?? "app.nearcast.ios",
+            "placeName": cleanText(payload["placeName"], fallback: "Saved place", limit: 48),
+            "stormName": cleanText(payload["stormName"], fallback: "Storm Watch", limit: 42),
+            "status": cleanText(payload["status"], fallback: "Storm nearby", limit: 48),
+            "detail": cleanText(payload["detail"], fallback: "Nearcast is tracking this storm.", limit: 86),
+            "confidence": cleanText(payload["confidence"], fallback: "Watching", limit: 24),
+            "etaMinutes": max(0, min(240, intValue(payload["etaMinutes"], fallback: 0))),
+            "url": cleanText(payload["url"], fallback: "nearcast://weather?source=live-activity", limit: 400)
+        ]
+        ["latitude", "longitude", "arrivalAtEpoch", "expiresAtEpoch", "confidenceValue", "severity", "rainChance", "motionDegrees", "geometryQuality"].forEach {
+            if let value = payload[$0] { body[$0] = value }
+        }
+        await postJSON(body, to: registrationURL)
+    }
+
+    private func notifyServerEnded(activityId: String) async {
+        await postJSON(["activityId": activityId], to: endURL)
+    }
+
+    private func postJSON(_ body: [String: Any], to url: URL) async {
+        guard JSONSerialization.isValidJSONObject(body),
+              let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = data
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
+    private func apnsEnvironment() -> String {
+        #if DEBUG
+        return "development"
+        #else
+        return "production"
+        #endif
     }
 }
