@@ -1,4 +1,4 @@
-const VERSION = "3.0.234";
+const VERSION = "3.0.235";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -5739,7 +5739,12 @@ function warmStartForecast(place) {
     renderSavedPlaces();
     updateMapPlace();
     setAlertsLoading();
-    renderForecast(cached.data, normalized, { refreshMap: false });
+    renderForecast(markForecastProvenance(cached.data, {
+      source: "warm-start",
+      savedAt: cached.savedAt,
+      cacheFallback: false,
+      reason: ""
+    }), normalized, { refreshMap: false });
     setLoadingStatus("");
     return true;
   } catch {
@@ -6136,15 +6141,39 @@ function readForecastCache(place, options = {}) {
   if (!cached?.data || !Number.isFinite(Number(cached.savedAt))) return null;
   const maxAge = options.maxAge ?? Infinity;
   if (Date.now() - Number(cached.savedAt) > maxAge) return null;
+  cached.data = markForecastProvenance(cached.data, {
+    source: options.source || "cache",
+    savedAt: Number(cached.savedAt),
+    cacheFallback: false,
+    reason: ""
+  });
   return cached;
 }
 
-function markForecastCacheFallback(data, cached, reason = "network-timeout") {
+function forecastProvenance(data) {
+  const meta = data?._nearcastMeta;
+  const savedAt = Number(meta?.savedAt);
+  return {
+    source: String(meta?.source || "unknown"),
+    savedAt: Number.isFinite(savedAt) && savedAt > 0 ? savedAt : null,
+    cacheFallback: Boolean(meta?.cacheFallback),
+    reason: String(meta?.reason || "")
+  };
+}
+
+function markForecastProvenance(data, options = {}) {
   if (!data || typeof data !== "object") return data;
+  const previous = forecastProvenance(data);
+  const requestedSavedAt = Number(options.savedAt);
   const meta = {
-    cacheFallback: true,
-    savedAt: Number(cached?.savedAt) || 0,
-    reason
+    source: String(options.source || previous.source || "unknown"),
+    savedAt: Number.isFinite(requestedSavedAt) && requestedSavedAt > 0
+      ? requestedSavedAt
+      : previous.savedAt,
+    cacheFallback: options.cacheFallback === undefined
+      ? previous.cacheFallback
+      : Boolean(options.cacheFallback),
+    reason: options.reason === undefined ? previous.reason : String(options.reason || "")
   };
   try {
     Object.defineProperty(data, "_nearcastMeta", {
@@ -6155,6 +6184,15 @@ function markForecastCacheFallback(data, cached, reason = "network-timeout") {
     data._nearcastMeta = meta;
   }
   return data;
+}
+
+function markForecastCacheFallback(data, cached, reason = "network-timeout") {
+  return markForecastProvenance(data, {
+    source: "cache-fallback",
+    savedAt: Number(cached?.savedAt) || 0,
+    cacheFallback: true,
+    reason
+  });
 }
 
 function forecastUsedCacheFallback(data) {
@@ -6242,8 +6280,15 @@ async function fetchForecast(place, force = false) {
     const forecastPromise = fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, FORECAST_FETCH_TIMEOUT_MS);
     const airQualityPromise = fetchAirQuality(place, force).catch(() => null);
     const data = await forecastPromise;
+    const savedAt = Date.now();
     data.airQuality = await airQualityPromise;
-    localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
+    markForecastProvenance(data, {
+      source: "network",
+      savedAt,
+      cacheFallback: false,
+      reason: ""
+    });
+    localStorage.setItem(cacheKey, JSON.stringify({ savedAt, data }));
     return data;
   } catch (error) {
     if (fallbackCached?.data) {
@@ -6275,6 +6320,7 @@ async function fetchAirQuality(place, force = false) {
 function convertForecastUnits(data, fromUnit, toUnit) {
   if (!data || fromUnit === toUnit) return data;
 
+  const provenance = forecastProvenance(data);
   const converted = JSON.parse(JSON.stringify(data));
   const temp = converterForUnit(fromUnit, toUnit, "temp");
   const wind = converterForUnit(fromUnit, toUnit, "wind");
@@ -6297,7 +6343,7 @@ function convertForecastUnits(data, fromUnit, toUnit) {
   convertFields(converted.minutely_15, ["precipitation", "snowfall"], precip);
   updateForecastUnitLabels(converted, toUnit);
 
-  return converted;
+  return markForecastProvenance(converted, provenance);
 }
 
 function convertFields(source, keys, convert) {
@@ -7839,9 +7885,11 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const windCue = windDirectionCue(current.wind_direction_10m);
     const widgetPlan = nativeWidgetPlanSummary(data, place);
     const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
+    const forecastSavedAt = forecastProvenance(data).savedAt;
+    const snapshotSavedAt = (forecastSavedAt || Date.now()) / 1000;
     const snapshot = {
-      version: 4,
-      savedAt: Date.now() / 1000,
+      version: 5,
+      savedAt: snapshotSavedAt,
       placeName: placeLabel(place),
       temperature: Math.round(current.temperature_2m),
       feelsLike: Math.round(current.apparent_temperature),
@@ -7872,7 +7920,12 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       watchTone: watchSummary.tone,
       timeline: nativeWidgetTimeline(data),
       sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
-      sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null
+      sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null,
+      isAvailable: true,
+      weatherSavedAt: snapshotSavedAt,
+      planSavedAt: widgetPlan ? snapshotSavedAt : null,
+      planId: widgetPlan?.id || null,
+      planAvailable: Boolean(widgetPlan)
     };
     window.NearcastNative.postMessage({
       type: "widget.snapshot",
@@ -7900,6 +7953,7 @@ function nativeWidgetTimeline(data = state.forecast) {
       const number = Number(value);
       return Number.isFinite(number) ? Math.round(number) : null;
     };
+    const startsAt = parseForecastTimestamp(times[index], data);
     rows.push({
       offsetHours,
       timeLabel: shortClock(times[index]),
@@ -7911,7 +7965,10 @@ function nativeWidgetTimeline(data = state.forecast) {
       windDirection: normalizeWindDegrees(hourly.wind_direction_10m?.[index]),
       uv: roundOrNull(hourly.uv_index?.[index]),
       conditionCode: roundOrNull(hourly.weather_code?.[index]),
-      isDay: hourly.is_day ? Boolean(hourly.is_day[index]) : null
+      isDay: hourly.is_day ? Boolean(hourly.is_day[index]) : null,
+      startsAt: Number.isFinite(startsAt)
+        ? startsAt / 1000
+        : null
     });
   }
   return rows;
@@ -8599,11 +8656,14 @@ function nativeWidgetPlanSummary(data, place) {
   const planPlace = top.place || top.memory.place || null;
   const samePlace = planPlace && typeof samePlanPlace === "function" ? samePlanPlace(planPlace, place) : false;
   return {
+    id: top.memory.id || top.memory.memoryId || null,
     title,
     label,
     detail: compactForYouText(detail || "Plan checked against the forecast.", 72),
     place: !samePlace && planPlace ? placeCityLabel(planPlace) : null,
-    tone: top.tone || (top.change ? "changed" : "neutral")
+    // A changed plan is an action state. Do not let an older caution/watch
+    // tone downgrade the Watch verdict back to WATCH.
+    tone: top.change ? "changed" : (top.tone || "neutral")
   };
 }
 

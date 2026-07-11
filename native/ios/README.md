@@ -59,16 +59,27 @@ Apple security steps; the repeatable development loop is automated.
 
 ### Watch complications
 
-The Watch app includes three WidgetKit complication choices:
+The Watch app includes four WidgetKit choices with distinct jobs:
 
-- `Nearcast Next`: adapts to the most important upcoming weather signal.
-- `Plan Check`: keeps the currently watched plan and verdict visible.
-- `Rain Next`: shows rain timing, peak chance, and a compact four-hour trend.
+- `Nearcast Next`: the most meaningful ambient weather change coming next.
+- `Plan Check`: the selected watched plan and its decision verdict.
+- `Rain Next`: rain timing, peak chance, and a labeled four-hour trend.
+- `Nearcast Brief`: an adaptive rectangular briefing for the Smart Stack.
 
-They support the Ultra-friendly circular, corner, rectangular, and inline
-families where appropriate. The complication extension refreshes directly from
-Open-Meteo when the Watch has network access, falls back to the latest snapshot
-sent by the paired iPhone, and explicitly marks data older than two hours.
+The three watch-face complications support circular, corner, rectangular, and
+inline families. Ultra corners use curved labels and gauges, Plan Check supports
+the circular family, and every surface deep-links to its matching `Brief`,
+`Hours`, or `Plan` page in the Watch app. The app and complication extension
+refresh weather directly from Open-Meteo when the Watch has network access.
+Weather and plan freshness are tracked independently, forecast timelines advance
+against absolute hourly timestamps, and stale or unavailable data is shown
+explicitly instead of using believable fallback weather.
+
+Run the backward-compatibility and freshness contract before Watch releases:
+
+```sh
+scripts/test-nearcast-watch-snapshot.sh
+```
 
 ## Fast local loop
 

@@ -87,10 +87,11 @@ enum NearcastWidgetForecastClient {
         let nextRainChance = nextTwoHourRainChance(hourly: forecast.hourly, currentIndex: currentIndex)
         let sunriseAt = forecast.daily?.sunrise?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunriseAt
         let sunsetAt = forecast.daily?.sunset?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunsetAt
+        let refreshedAt = Date().timeIntervalSince1970
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 4),
-            savedAt: Date().timeIntervalSince1970,
+            version: max(fallback.version, 5),
+            savedAt: refreshedAt,
             placeName: place.name,
             temperature: temp,
             feelsLike: feels,
@@ -121,7 +122,12 @@ enum NearcastWidgetForecastClient {
             watchTone: fallback.watchTone,
             timeline: buildTimeline(from: forecast, currentIndex: currentIndex),
             sunriseAt: sunriseAt,
-            sunsetAt: sunsetAt
+            sunsetAt: sunsetAt,
+            isAvailable: true,
+            weatherSavedAt: refreshedAt,
+            planSavedAt: fallback.planSavedAt ?? (fallback.hasPlan && fallback.savedAt > 0 ? fallback.savedAt : nil),
+            planId: fallback.planId,
+            planAvailable: fallback.planAvailable ?? fallback.hasPlan
         )
     }
 
@@ -142,7 +148,8 @@ enum NearcastWidgetForecastClient {
                 windDirection: roundedValue(flatValue(hourly.windDirection?[safe: index])),
                 uv: roundedValue(flatValue(hourly.uvIndex?[safe: index])),
                 conditionCode: hourly.weatherCode?[safe: index].flatMap { $0 },
-                isDay: hourly.isDay?[safe: index].flatMap { $0 }.map { $0 == 1 }
+                isDay: hourly.isDay?[safe: index].flatMap { $0 }.map { $0 == 1 },
+                startsAt: forecastDate(times[index], timezone: forecast.timezone)?.timeIntervalSince1970
             )
         }
     }

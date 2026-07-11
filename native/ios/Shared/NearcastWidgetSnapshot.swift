@@ -39,6 +39,11 @@ struct NearcastWidgetSnapshot: Codable {
     var timeline: [NearcastWidgetHour]?
     var sunriseAt: TimeInterval?
     var sunsetAt: TimeInterval?
+    var isAvailable: Bool?
+    var weatherSavedAt: TimeInterval?
+    var planSavedAt: TimeInterval?
+    var planId: String?
+    var planAvailable: Bool?
 }
 
 struct NearcastWidgetHour: Codable, Identifiable {
@@ -54,6 +59,7 @@ struct NearcastWidgetHour: Codable, Identifiable {
     var uv: Int?
     var conditionCode: Int?
     var isDay: Bool?
+    var startsAt: TimeInterval?
 }
 
 struct NearcastWidgetPlace: Codable {
@@ -64,39 +70,44 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 3,
-        savedAt: Date().timeIntervalSince1970,
+        version: 5,
+        savedAt: 0,
         placeName: "Nearcast",
-        temperature: 82,
-        feelsLike: 84,
+        temperature: 0,
+        feelsLike: 0,
         high: nil,
         low: nil,
-        condition: "Weather that matters",
-        conditionCode: 1,
+        condition: "Open Nearcast on iPhone",
+        conditionCode: 0,
         isDay: true,
         rainChance: 0,
-        wind: 5,
+        wind: 0,
         windUnit: "mph",
         windDirection: nil,
         windLabel: nil,
-        uv: 4,
+        uv: 0,
         nowLabel: "Now",
-        nowValue: "Open Nearcast",
+        nowValue: "No weather loaded",
         nextLabel: "Next",
-        nextValue: "Load a place",
+        nextValue: "Open the iPhone app",
         laterLabel: "Later",
-        laterValue: "Plans stay visible",
+        laterValue: "Your weather will appear here",
         planTitle: nil,
         planLabel: nil,
         planDetail: nil,
         planPlace: nil,
         planTone: nil,
-        watchStatus: "Open Nearcast",
-        watchDetail: "Weather that matters",
+        watchStatus: nil,
+        watchDetail: nil,
         watchTone: "neutral",
         timeline: nil,
         sunriseAt: nil,
-        sunsetAt: nil
+        sunsetAt: nil,
+        isAvailable: false,
+        weatherSavedAt: nil,
+        planSavedAt: nil,
+        planId: nil,
+        planAvailable: false
     )
 
     static func current() -> NearcastWidgetSnapshot {
@@ -114,8 +125,38 @@ extension NearcastWidgetSnapshot {
         return snapshot
     }
 
+    var hasWeatherData: Bool {
+        isAvailable ?? (savedAt > 0 && placeName != "Nearcast")
+    }
+
+    var hasPlan: Bool {
+        if let planAvailable { return planAvailable }
+        return [planTitle, planLabel, planDetail].contains { value in
+            guard let value else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    var weatherSavedTime: TimeInterval {
+        weatherSavedAt ?? savedAt
+    }
+
+    var planSavedTime: TimeInterval {
+        planSavedAt ?? (hasPlan ? savedAt : 0)
+    }
+
+    var weatherAge: TimeInterval {
+        guard weatherSavedTime > 0 else { return .infinity }
+        return max(0, Date().timeIntervalSince1970 - weatherSavedTime)
+    }
+
+    var planAge: TimeInterval {
+        guard planSavedTime > 0 else { return .infinity }
+        return max(0, Date().timeIntervalSince1970 - planSavedTime)
+    }
+
     var age: TimeInterval {
-        Date().timeIntervalSince1970 - savedAt
+        weatherAge
     }
 }
 

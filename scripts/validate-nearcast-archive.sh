@@ -39,6 +39,7 @@ watch_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$watch/Inf
 watch_complications_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$watch_complications/Info.plist")"
 watch_companion="$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$watch/Info.plist")"
 watch_icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$watch/Info.plist")"
+watch_url_scheme="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$watch/Info.plist")"
 
 if [[ "$app_version" != "$widget_version" || "$app_version" != "$watch_version" || "$app_version" != "$watch_complications_version" ]]; then
   printf 'FAIL  Build numbers differ: app=%s widget=%s watch=%s complications=%s\n' \
@@ -56,7 +57,13 @@ if [[ "$watch_icon_name" != "AppIcon" || ! -f "$watch/Assets.car" ]]; then
   exit 1
 fi
 
+if [[ "$watch_url_scheme" != "nearcast" ]]; then
+  printf 'FAIL  Watch deep-link URL scheme is %s\n' "$watch_url_scheme" >&2
+  exit 1
+fi
+
 printf 'PASS  Build number %s matches across app, widget, Watch, and complications\n' "$app_version"
 printf 'PASS  Watch companion bundle identifier is app.nearcast.ios\n'
 printf 'PASS  Watch app icon catalog is compiled\n'
+printf 'PASS  Watch deep links use the nearcast URL scheme\n'
 printf 'PASS  Archive is ready for export validation\n'
