@@ -36,6 +36,27 @@ Use three loops, from fastest to slowest.
 
    Use this for native shell milestones: app identity/signing changes, notification/APNs work, widgets, Live Activities, App Intents, or anything that needs real installed-app behavior. TestFlight should validate the shell, not gate every web UI tweak.
 
+## Apple Watch development
+
+The repository includes a standalone `NearcastWatch` target plus an automated
+doctor/build/install/launch workflow. Start with:
+
+```sh
+scripts/nearcast-watch.sh doctor
+```
+
+Then run either:
+
+```sh
+scripts/nearcast-watch.sh simulator
+scripts/nearcast-watch.sh device
+```
+
+The complete one-time Mac, iPhone, and Watch prerequisites are in
+[`WATCH_SETUP.md`](WATCH_SETUP.md). Apple Account sign-in, device trust,
+Developer Mode, and the first provisioning confirmation remain interactive
+Apple security steps; the repeatable development loop is automated.
+
 ## Fast local loop
 
 From the repo root:
