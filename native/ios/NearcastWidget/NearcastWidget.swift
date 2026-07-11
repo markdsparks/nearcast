@@ -340,13 +340,29 @@ struct NearcastWidget: Widget {
                 .containerBackground(for: .widget) {
                     NearcastWidgetBackdrop(snapshot: entry.snapshot)
                 }
-                .widgetURL(URL(string: "nearcast://weather"))
+                .widgetURL(nearcastWidgetURL(snapshot: entry.snapshot))
         }
         .configurationDisplayName("Nearcast")
         .description("A glance at the weather that matters next.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
         .contentMarginsDisabled()
     }
+}
+
+private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot) -> URL? {
+    var components = URLComponents()
+    components.scheme = "nearcast"
+    components.host = "weather"
+    var items = [
+        URLQueryItem(name: "source", value: "widget"),
+        URLQueryItem(name: "placeName", value: snapshot.placeName)
+    ]
+    if let place = NearcastWidgetPlace.stored() {
+        items.append(URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)))
+        items.append(URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)))
+    }
+    components.queryItems = items
+    return components.url
 }
 
 struct NearcastStormActivityWidget: Widget {

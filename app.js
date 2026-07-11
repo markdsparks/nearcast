@@ -1,4 +1,4 @@
-const VERSION = "3.0.233";
+const VERSION = "3.0.234";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -123,12 +123,26 @@ function queryRoutePlace() {
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
 
   const rawName = queryValue("placeName", "name", "place") || "";
-  const name = rawName.trim().slice(0, 80) || "Selected place";
+  const suppliedName = rawName.trim().slice(0, 80);
+  const savedMatch = (Array.isArray(state?.savedPlaces) ? state.savedPlaces : []).find((place) => (
+    Math.abs(Number(place?.latitude) - latitude) < 0.02 &&
+    Math.abs(Number(place?.longitude) - longitude) < 0.02
+  ));
+  const lastPlace = readStorageJson("weather-last-place");
+  const lastMatch = lastPlace &&
+    Math.abs(Number(lastPlace.latitude) - latitude) < 0.02 &&
+    Math.abs(Number(lastPlace.longitude) - longitude) < 0.02
+    ? lastPlace
+    : null;
+  const matchedPlace = savedMatch || lastMatch;
+  const name = suppliedName && suppliedName.toLowerCase() !== "selected place"
+    ? suppliedName
+    : String(matchedPlace?.name || "Selected place").trim().slice(0, 80);
   return normalizePlace({
-    id: `route-${latitude.toFixed(3)}-${longitude.toFixed(3)}`,
+    id: matchedPlace?.id || `route-${latitude.toFixed(3)}-${longitude.toFixed(3)}`,
     name,
-    country: queryValue("country") || "",
-    countryCode: queryValue("countryCode", "countrycode") || "",
+    country: queryValue("country") || matchedPlace?.country || "",
+    countryCode: queryValue("countryCode", "countrycode") || matchedPlace?.countryCode || "",
     latitude,
     longitude
   });
