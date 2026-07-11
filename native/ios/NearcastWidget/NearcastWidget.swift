@@ -1700,7 +1700,6 @@ private struct LargeMetricTile: View {
     let compact: Bool
 
     var body: some View {
-        let accent = metric.tone
         VStack(alignment: .leading, spacing: 0) {
             Text(metric.label.uppercased())
                 .font(WidgetText.metricLabel)
@@ -1736,7 +1735,7 @@ private struct LargeMetricTile: View {
                         .lineLimit(1)
                     Text(uvRiskLabel(snapshot.uv))
                         .font(WidgetText.body)
-                        .foregroundStyle((accent ?? uvToneColor(snapshot.uv)).opacity(0.95))
+                        .foregroundStyle(uvRiskForeground(snapshot.uv, palette: palette))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
                 }
@@ -1852,7 +1851,7 @@ struct UvMetricTile: View {
                     .lineLimit(1)
                 Text(uvRiskLabel(value))
                     .font(WidgetText.caption)
-                    .foregroundStyle(color.opacity(0.95))
+                    .foregroundStyle(uvRiskForeground(value, palette: palette))
                     .lineLimit(1)
                     .minimumScaleFactor(WidgetText.minScale)
             }
@@ -2242,6 +2241,13 @@ private func uvToneColor(_ value: Int) -> Color {
 
 private func uvSurfaceColor(_ value: Int) -> Color {
     uvToneColor(value).opacity(value >= 6 ? 0.24 : 0.16)
+}
+
+private func uvRiskForeground(_ value: Int, palette: WidgetPalette) -> Color {
+    if value >= 6 {
+        return palette.primary.opacity(0.82)
+    }
+    return uvToneColor(value).opacity(0.95)
 }
 
 private func planToneColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
