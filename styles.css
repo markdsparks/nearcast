@@ -85,6 +85,7 @@
   --daily-rain-detail: var(--muted);
   --daily-low-color: var(--ink);
   --daily-condition-opacity: 0.78;
+  --daily-precip-note-opacity: 0.92;
   --daily-low-opacity: 0.55;
   --daily-row-border: var(--border-glass);
   --daily-track-bg: var(--border-glass);
@@ -489,6 +490,17 @@
 :root[data-sky="rain-night"],
 :root[data-sky="snow-night"],
 :root[data-sky="thunder-night"] {
+  --daily-secondary: rgba(237, 248, 254, 0.88);
+  --daily-secondary-strong: rgba(252, 255, 255, 0.96);
+  --daily-section-meta: rgba(224, 239, 247, 0.88);
+  --daily-rain-detail: rgba(214, 239, 250, 0.92);
+  --daily-low-color: rgba(248, 253, 255, 0.95);
+  --daily-condition-opacity: 1;
+  --daily-precip-note-opacity: 1;
+  --daily-low-opacity: 0.84;
+  --daily-row-border: rgba(242, 249, 255, 0.16);
+  --daily-track-bg: rgba(242, 249, 255, 0.18);
+  --daily-text-shadow: 0 1px 10px rgba(0, 0, 0, 0.42);
   --welcome-ambient-bg: linear-gradient(135deg, rgba(14, 24, 34, 0.78), rgba(23, 36, 48, 0.64));
   --welcome-ambient-fg: rgba(245, 250, 253, 0.95);
   --welcome-ambient-border: rgba(234, 246, 255, 0.24);
@@ -7198,6 +7210,7 @@ h2 {
 
 .day-condition {
   color: var(--daily-secondary-strong);
+  font-weight: 820;
   opacity: var(--daily-condition-opacity);
 }
 
@@ -7212,7 +7225,7 @@ h2 {
   color: var(--daily-secondary);
   font-size: 0.68rem;
   font-weight: 850;
-  opacity: 0.92;
+  opacity: var(--daily-precip-note-opacity);
 }
 
 .day-temps {
