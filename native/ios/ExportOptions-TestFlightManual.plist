@@ -14,6 +14,8 @@
 		<string>Nearcast App Distribution</string>
 		<key>app.nearcast.ios.widget</key>
 		<string>Nearcast Widget Distribution</string>
+		<key>app.nearcast.ios.watch</key>
+		<string>Nearcast Watch Distribution</string>
 	</dict>
 	<key>signingCertificate</key>
 	<string>Apple Distribution</string>

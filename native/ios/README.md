@@ -130,6 +130,19 @@ Prerequisites:
 - The app and widget distribution profiles are installed:
   - `Nearcast App Distribution`
   - `Nearcast Widget Distribution`
+  - `Nearcast Watch Distribution`
+
+For the normal release, use the automated archive, validation, and upload
+command from the repository root after setting the next build number across all
+targets:
+
+```sh
+scripts/nearcast-testflight.sh
+```
+
+The script refuses to continue if app, widget, and Watch build numbers differ,
+if the API key is missing, or if the archive omits the Watch app or its icon
+catalog. The explicit commands below remain useful for troubleshooting.
 
 Before archiving, choose the next build number and increment every
 `CURRENT_PROJECT_VERSION` value in:
@@ -138,7 +151,7 @@ Before archiving, choose the next build number and increment every
 native/ios/Nearcast.xcodeproj/project.pbxproj
 ```
 
-Keep the app, widget, and watch targets on the same build number. App Store
+Keep the app, widget, and Watch targets on the same build number. App Store
 Connect requires every upload for the same marketing version to have a higher
 build number than the previous upload.
 
@@ -162,6 +175,16 @@ xcodebuild \
   archive \
   -allowProvisioningUpdates
 ```
+
+Before exporting or uploading, verify that the archive contains all three
+products and that their build numbers match:
+
+```sh
+scripts/validate-nearcast-archive.sh "native/ios/build/Nearcast-${BUILD}.xcarchive"
+```
+
+This check is required for TestFlight builds. In particular, it prevents an
+iPhone-only upload from silently omitting the Apple Watch app.
 
 Upload the archive using the manual TestFlight export options and the API key:
 
