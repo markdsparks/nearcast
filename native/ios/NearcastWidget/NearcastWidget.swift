@@ -1402,7 +1402,7 @@ struct RainTimelinePoint: View {
         VStack(spacing: 3) {
             Text("\(value)%")
                 .font(WidgetText.eyebrow)
-                .foregroundStyle(isPeak ? color : palette.secondary)
+                .foregroundStyle(isPeak ? palette.primary.opacity(0.96) : palette.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(WidgetText.tinyScale)
 
@@ -1898,7 +1898,7 @@ private func smallWidgetChip(_ snapshot: NearcastWidgetSnapshot) -> String {
 private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
     switch nextFocus(snapshot) {
     case .rain:
-        return signalColor("rain")
+        return rainAccentColor(snapshot)
     case .wind:
         return signalColor("gust")
     case .sun:
@@ -1990,7 +1990,7 @@ private func largeMetricSpecs(_ snapshot: NearcastWidgetSnapshot, focus: WidgetN
     ]
 
     if focus != .rain {
-        specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: signalColor("rain")))
+        specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: rainAccentColor(snapshot)))
     }
     if focus != .wind {
         specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
@@ -2000,7 +2000,7 @@ private func largeMetricSpecs(_ snapshot: NearcastWidgetSnapshot, focus: WidgetN
     }
     if specs.count < 3 {
         if !specs.contains(where: { $0.id == "rain" }) {
-            specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: signalColor("rain")))
+            specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: rainAccentColor(snapshot)))
         } else if !specs.contains(where: { $0.id == "wind" }) {
             specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
         } else if !specs.contains(where: { $0.id == "uv" }) {
@@ -2347,7 +2347,7 @@ private func nextFocusSymbol(_ focus: WidgetNextFocus, snapshot: NearcastWidgetS
 private func nextFocusColor(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> Color {
     switch focus {
     case .rain:
-        return Color(red: 0.16, green: 0.45, blue: 0.86)
+        return rainAccentColor(snapshot)
     case .wind:
         return Color(red: 0.45, green: 0.44, blue: 0.82)
     case .sun:
@@ -2355,6 +2355,23 @@ private func nextFocusColor(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSn
     case .quiet:
         return snapshot.isDay ? Color(red: 0.92, green: 0.56, blue: 0.10) : Color(red: 0.58, green: 0.72, blue: 0.94)
     }
+}
+
+private func rainAccentColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    snapshot.isDay
+        ? Color(red: 0.16, green: 0.45, blue: 0.86)
+        : Color(red: 0.48, green: 0.76, blue: 1.00)
+}
+
+private func rainTimelineColor(chance: Int, snapshot: NearcastWidgetSnapshot) -> Color {
+    if snapshot.isDay {
+        if chance >= 70 { return Color(red: 0.08, green: 0.31, blue: 0.78) }
+        if chance >= 40 { return Color(red: 0.12, green: 0.52, blue: 0.86) }
+        return Color(red: 0.40, green: 0.68, blue: 0.90)
+    }
+    if chance >= 70 { return Color(red: 0.42, green: 0.72, blue: 1.00) }
+    if chance >= 40 { return Color(red: 0.34, green: 0.68, blue: 0.98) }
+    return Color(red: 0.62, green: 0.84, blue: 1.00)
 }
 
 private func peakRainHour(_ snapshot: NearcastWidgetSnapshot) -> (value: Int, timeLabel: String, isStorm: Bool) {
@@ -2503,9 +2520,7 @@ private func timelineColor(row: NearcastWidgetHour, focus: WidgetNextFocus, snap
             return Color(red: 0.93, green: 0.68, blue: 0.10)
         }
         let chance = row.rainChance ?? snapshot.rainChance
-        if chance >= 70 { return Color(red: 0.08, green: 0.31, blue: 0.78) }
-        if chance >= 40 { return Color(red: 0.12, green: 0.52, blue: 0.86) }
-        return Color(red: 0.40, green: 0.68, blue: 0.90)
+        return rainTimelineColor(chance: chance, snapshot: snapshot)
     case .wind:
         return Color(red: 0.45, green: 0.44, blue: 0.82)
     case .sun:
