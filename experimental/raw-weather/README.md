@@ -47,7 +47,10 @@ const history = await client.loadHistory({
   width: 512,
   height: 384,
   minutes: 90,
-  maxFrames: 10,
+  // Canonical scrub targets select the nearest unique MRMS objects. The
+  // returned frame times remain the actual MRMS observation times.
+  targetTimes: observedScrubTimes,
+  maxFrames: observedScrubTimes.length,
   onFrame(frame, progress) {
     // frame.data is a transferable Uint8Array numeric dBZ texture.
   }
@@ -56,9 +59,27 @@ client.destroy();
 ```
 
 The default history budget is 8 MB of retained texture data, with hard caps of
-16 frames, 1024 pixels per side, and 1,048,576 pixels per texture. Frames are
-decoded serially. Set `retainTextures: false` and consume `onFrame` to keep only
-the frame currently being uploaded to the GPU.
+24 frames, 1024 pixels per side, and 1,048,576 pixels per texture. A conservative
+two-worker pool decodes at most two source objects concurrently; pass
+`workerCount: 1` to `createClient()` for constrained devices. Values above two
+are capped. Newest/current-neighbor frames are scheduled first, while the final
+`history.frames` array remains chronological. Set `retainTextures: false` and
+consume `onFrame` to keep only the frame currently being uploaded to the GPU.
+Callers resuming around an older scrub point may pass `priorityTime` to schedule
+that observation and its nearest neighbors before the rest of the history.
+
+`targetTimes` accepts dates, timestamps, ISO strings, or objects containing
+`validTime`, `timestamp`, `time`, or `observedAt`. The adapter resolves every
+target to the nearest source object within `targetToleranceMinutes` (six minutes
+by default), then deduplicates object keys before download and decode. Without
+targets, the original evenly sampled `maxFrames` behavior remains unchanged.
+
+The raw-map runtime exposes the same selection as
+`session.prepare({ observedTimes })`. It can also generate a canonical sequence,
+for example `historyMinutes: 90, historyStepMinutes: 5`, which produces 19
+targets from `-90m` through `Now`. Array-valued `historyFrames` remains available
+as a compatibility alias for explicit target times; numeric `historyFrames`
+retains its existing meaning.
 
 Encoding `0` means no data/no visible echo. Values `1…255` use:
 
@@ -68,6 +89,39 @@ dbz = dbzMin + (value - 1) * (dbzMax - dbzMin) / 254
 
 The texture rows are sampled in Web Mercator between the returned geographic
 bounds, so a MapLibre bounds quad can use them without latitude stretching.
+
+## HRRR quarter-hour forecast
+
+`hrrr-subhourly-adapter.js` installs `window.NearcastHrrrSubhourly`. It maps
+requested forecast targets to real HRRR quarter-hour valid times, reads the
+official `.idx` files, and range-fetches only the `REFC` messages from NOAA's
+public HRRR archive:
+
+```js
+const client = NearcastHrrrSubhourly.createClient();
+const forecast = await client.loadForecast({
+  validTimes: forecastScrubTimes, // for example +15m through +3h
+  bounds: { minLat: 38.35, minLon: -90.65, maxLat: 39.25, maxLon: -89.25 },
+  width: 512,
+  height: 384,
+  onFrame(frame, progress) {
+    // frame.validTime is the actual HRRR valid time, not a synthetic target.
+  }
+});
+client.destroy();
+```
+
+The dedicated worker supports the operational HRRR Lambert grid (`3.30`) and
+complex packing with second-order spatial differencing (`5.3`). It unpacks one
+national integer field at a time, resamples it directly into the viewport
+texture, then releases the national field. A live twelve-frame `+15m…+3h`
+smoke used roughly 230–343 KB per range request and completed in about four
+seconds on the development Mac.
+
+When explicit forecast valid times are supplied, `raw-map-runtime.js` prefers
+this provider and returns `noaa-hrrr-subhourly` descriptors. The existing
+hourly HRRR Zarr adapter remains the fallback if discovery, range fetching, or
+decoding fails.
 
 ## Smoke test
 
@@ -85,6 +139,13 @@ runtime that provides the browser Streams APIs:
 
 ```bash
 node experimental/raw-weather/mrms-browser-worker-smoke.mjs
+node experimental/raw-weather/mrms-target-times-smoke.mjs
+node experimental/raw-weather/mrms-worker-pool-smoke.mjs
+# Optional live, two-frame sequential-versus-pooled comparison:
+node experimental/raw-weather/mrms-worker-pool-live-smoke.mjs
+node experimental/raw-weather/hrrr-subhourly-fixtures.mjs
+node experimental/raw-weather/hrrr-subhourly-runtime-smoke.mjs
+node experimental/raw-weather/hrrr-subhourly-smoke.mjs --frames=12
 ```
 
 ## Deliberate limits

@@ -65,8 +65,14 @@ const MAPLIBRE_RADAR_CHUNK_INDEX_URLS = {
 };
 const MAPLIBRE_RADAR_CHUNK_FETCH_LIMIT = 96;
 const MAPLIBRE_RADAR_CHUNK_LOADED_LIMIT = 384;
+const MAPLIBRE_RAW_FRAME_CACHE_LIMIT = 7;
 const MAPLIBRE_WEATHER_PRELOAD_OPACITY = 0.001;
 const MAPLIBRE_WEATHER_LAYER_CACHE_LIMIT = 8;
+const RAW_MAP_OBSERVED_WINDOW_MINUTES = 90;
+const RAW_MAP_OBSERVED_STEP_MINUTES = 5;
+const RAW_MAP_FORECAST_WINDOW_MINUTES = 180;
+const RAW_MAP_FORECAST_STEP_MINUTES = 15;
+const STANDARD_TIMELINE_SLIDER_STEPS = 1000;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
@@ -106,6 +112,7 @@ let xweatherMapsglAssetPromise = null;
 let xweatherMapsglCssPromise = null;
 let generatedRadarFallbackReloadTimer = 0;
 const mapLibreEncodedRadarTileCache = new Map();
+const mapLibreRawFrameCache = new Map();
 const generatedRadarTilePreflightCache = new Map();
 const mapLibreInteraction = {
   active: false,
@@ -1858,11 +1865,8 @@ function restoreStandardRadarTimelineAfterStorm(record, options = {}) {
   const nextIndex = clamp(mapState.frameIndex || 0, 0, max);
   mapState.frameIndex = nextIndex;
   if (slider) {
-    slider.min = "0";
-    slider.max = String(max);
-    slider.value = String(nextIndex);
     slider.style.removeProperty("--timeline-now");
-    updateRangeProgress(slider);
+    syncStandardTimelineSlider(nextIndex);
   }
   const marker = document.getElementById("immNowMarker");
   if (marker) marker.hidden = true;
@@ -3060,7 +3064,7 @@ function mapLibreWeatherBeforeLayer(map) {
   return map?.getLayer?.(MAPLIBRE_LABEL_LAYER_ID) ? MAPLIBRE_LABEL_LAYER_ID : undefined;
 }
 
-function radarChunkIndexUrl() {
+function radarChunkIndexUrl(frame = mapState.frames[mapState.frameIndex]) {
   const value = radarChunkIndexFlag();
   if (value) {
     const normalized = value.trim();
@@ -3073,7 +3077,6 @@ function radarChunkIndexUrl() {
     return normalized;
   }
 
-  const frame = mapState.frames[mapState.frameIndex];
   return String(
     frame?.rawMapIndexUrl ||
     frame?.rawRadarChunkIndexUrl ||
@@ -3091,11 +3094,16 @@ function radarChunkIndexFlag() {
   }
 }
 
-function syncMapLibreRadarChunkLayer(record = mapLibreCurrentRecord()) {
+function syncMapLibreRadarChunkLayer(
+  record = mapLibreCurrentRecord(),
+  frame = mapState.frames[mapState.frameIndex],
+  requestedIndexUrl = null
+) {
   const map = record?.map;
   if (!map || !map.isStyleLoaded?.()) return;
-  const indexUrl = radarChunkIndexUrl();
+  const indexUrl = requestedIndexUrl === null ? radarChunkIndexUrl(frame) : String(requestedIndexUrl || "").trim();
   if (!indexUrl) {
+    if (rawMapExperimentEnabled()) document.documentElement.dataset.rawMapLayerSync = "none";
     removeMapLibreRadarChunkLayer(record);
     syncMapLibreRadarChunkFallbackVisibility(record);
     return;
@@ -3103,10 +3111,24 @@ function syncMapLibreRadarChunkLayer(record = mapLibreCurrentRecord()) {
 
   const existing = record.radarChunkLayerState;
   if (existing?.indexUrl === indexUrl && map.getLayer(MAPLIBRE_RADAR_CHUNK_LAYER_ID)) {
+    if (rawMapExperimentEnabled()) document.documentElement.dataset.rawMapLayerSync = "same";
     ensureMapLibreRadarChunkLayerOrder(map);
     syncMapLibreRadarChunkFallbackVisibility(record);
     return;
   }
+  if (
+    existing
+    && map.getLayer(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
+    && String(existing.indexUrl || "").startsWith("blob:")
+    && String(indexUrl).startsWith("blob:")
+  ) {
+    if (rawMapExperimentEnabled()) document.documentElement.dataset.rawMapLayerSync = "persistent";
+    requestMapLibreRawChunkFrame(existing, indexUrl);
+    ensureMapLibreRadarChunkLayerOrder(map);
+    syncMapLibreRadarChunkFallbackVisibility(record);
+    return;
+  }
+  if (rawMapExperimentEnabled()) document.documentElement.dataset.rawMapLayerSync = "recreate";
   removeMapLibreRadarChunkLayer(record);
   const layer = createMapLibreRadarChunkLayer(indexUrl);
   map.addLayer(layer, mapLibreWeatherBeforeLayer(map));
@@ -3139,6 +3161,7 @@ function mapLibreRadarChunkReady(record = mapLibreCurrentRecord()) {
   const activeZoom = state?.activeZoom ?? radarChunkActiveZoom(state);
   return Boolean(
     state?.status === "ready"
+    && (!String(state.indexUrl || "").startsWith("blob:") || state.indexUrl === radarChunkIndexUrl())
     && radarChunkCoverageContainsViewport(state)
     && (state.index?.provider !== "nearcast-raw-map" || state.hasSuccessfulDraw)
     && (state.chunks || []).some((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds))
@@ -3179,6 +3202,7 @@ function rawMapFrameLayerVisible(frame = mapState.frames[mapState.frameIndex], r
 }
 
 function rawMapEffectiveVisualMetric(frame = mapState.frames[mapState.frameIndex]) {
+  if (frame?.rawMapNoRasterFallback) return frame.rawMapVisualMetric || frame.visualMetric || "";
   if (!frame?.rawMapProvider || rawMapFrameLayerVisible(frame)) return frame?.visualMetric || "";
   return frame.rawMapFallbackHadVisualMetric ? frame.rawMapFallbackVisualMetric || "" : "";
 }
@@ -3198,6 +3222,9 @@ function syncRawMapPresentation(record = mapLibreCurrentRecord()) {
 function createMapLibreRadarChunkLayer(indexUrl) {
   const state = {
     indexUrl,
+    requestedIndexUrl: indexUrl,
+    pendingFrameLoadUrl: "",
+    pendingFrameBundle: null,
     map: null,
     record: null,
     status: "idle",
@@ -3246,6 +3273,67 @@ function createMapLibreRadarChunkLayer(indexUrl) {
       state.record = null;
     }
   };
+}
+
+function requestMapLibreRawChunkFrame(state, indexUrl) {
+  const nextIndexUrl = String(indexUrl || "").trim();
+  if (!state || !nextIndexUrl) return;
+  if (
+    state.requestedIndexUrl === nextIndexUrl
+    && (
+      state.indexUrl === nextIndexUrl
+      || state.pendingFrameLoadUrl === nextIndexUrl
+      || state.pendingFrameBundle?.indexUrl === nextIndexUrl
+    )
+  ) return;
+  state.requestedIndexUrl = nextIndexUrl;
+  state.pendingFrameLoadUrl = nextIndexUrl;
+  state.pendingFrameBundle = null;
+  syncRawMapDebugAttributes();
+  loadMapLibreRawFrameBundle(nextIndexUrl)
+    .then((bundle) => {
+      if (state.removed || state.requestedIndexUrl !== nextIndexUrl) return;
+      state.pendingFrameLoadUrl = "";
+      state.pendingFrameBundle = { indexUrl: nextIndexUrl, bundle };
+      syncRawMapDebugAttributes();
+      state.map?.triggerRepaint?.();
+    })
+    .catch((error) => {
+      if (state.removed || state.requestedIndexUrl !== nextIndexUrl) return;
+      state.pendingFrameLoadUrl = "";
+      state.error = error?.message || "Raw frame preload failed";
+      syncRawMapDebugAttributes();
+      syncMapLibreRadarChunkFallbackVisibility(state.record);
+    });
+}
+
+function activatePendingMapLibreRawChunkFrame(state, gl) {
+  if (!state || !gl) return;
+  const pending = state?.pendingFrameBundle;
+  if (!pending || pending.indexUrl !== state.requestedIndexUrl) return;
+  (state.chunks || []).forEach((chunk) => {
+    if (chunk.texture) gl.deleteTexture(chunk.texture);
+    chunk.texture = null;
+  });
+  state.indexUrl = pending.indexUrl;
+  state.index = pending.bundle.index;
+  state.chunkMetas = radarChunkMetasFromIndex(pending.bundle.index);
+  state.chunks = pending.bundle.chunks.map((chunk) => ({
+    ...chunk,
+    payload: chunk.payload,
+    vertices: chunk.vertices,
+    texture: null,
+    rgbaPayload: null,
+    _nearcastChunkKey: radarChunkKey(chunk.levelZoom, chunk.x, chunk.y),
+    loadedAtSeq: ++state.chunkLoadSeq
+  }));
+  state.loadedChunkKeys = new Set(state.chunks.map((chunk) => chunk._nearcastChunkKey));
+  state.loadingChunkKeys = new Set();
+  state.pendingFrameBundle = null;
+  state.pendingFrameLoadUrl = "";
+  state.status = state.chunks.length ? "ready" : "empty";
+  state.hasSuccessfulDraw = false;
+  state.error = "";
 }
 
 function radarChunkRenderMatrix(glOrArgs, matrixMaybe) {
@@ -3403,10 +3491,114 @@ function compileRadarChunkShader(gl, type, source) {
   return shader;
 }
 
+function clearMapLibreRawFrameCache() {
+  mapLibreRawFrameCache.clear();
+}
+
+function pruneMapLibreRawFrameCache() {
+  if (mapLibreRawFrameCache.size <= MAPLIBRE_RAW_FRAME_CACHE_LIMIT) return;
+  const removable = [...mapLibreRawFrameCache.entries()]
+    .filter(([, entry]) => entry.status !== "loading")
+    .sort(([, left], [, right]) => (left.lastUsedAt || 0) - (right.lastUsedAt || 0));
+  while (mapLibreRawFrameCache.size > MAPLIBRE_RAW_FRAME_CACHE_LIMIT && removable.length) {
+    const [key] = removable.shift();
+    mapLibreRawFrameCache.delete(key);
+  }
+}
+
+function loadMapLibreRawFrameBundle(indexUrl) {
+  const key = String(indexUrl || "").trim();
+  if (!key) return Promise.reject(new Error("Raw frame index URL is missing."));
+  const existing = mapLibreRawFrameCache.get(key);
+  if (existing) {
+    existing.lastUsedAt = Date.now();
+    return existing.promise;
+  }
+
+  const entry = {
+    status: "loading",
+    error: "",
+    bundle: null,
+    lastUsedAt: Date.now(),
+    promise: null
+  };
+  entry.promise = (async () => {
+    const response = await fetch(key, { cache: "no-store" });
+    if (!response.ok) throw new Error(`raw frame index failed: ${response.status}`);
+    const index = await response.json();
+    if (index?.provider !== "nearcast-raw-map") {
+      throw new Error("Raw frame cache received an unsupported index.");
+    }
+    const chunks = await loadRadarChunkPayloads(index, key);
+    if (!chunks.length) throw new Error("Raw frame contains no readable chunks.");
+    const bundle = { index, chunks };
+    entry.status = "ready";
+    entry.bundle = bundle;
+    entry.lastUsedAt = Date.now();
+    syncRawMapDebugAttributes();
+    pruneMapLibreRawFrameCache();
+    return bundle;
+  })().catch((error) => {
+    entry.status = "error";
+    entry.error = error?.message || "Raw frame preload failed";
+    entry.lastUsedAt = Date.now();
+    syncRawMapDebugAttributes();
+    pruneMapLibreRawFrameCache();
+    throw error;
+  });
+  mapLibreRawFrameCache.set(key, entry);
+  pruneMapLibreRawFrameCache();
+  return entry.promise;
+}
+
+function prefetchRawMapFramesAround(frameIndex = mapState.frameIndex) {
+  if (!rawMapExperimentEnabled() || !mapState.frames.length) return;
+  const indexes = [frameIndex, frameIndex + 1, frameIndex - 1, frameIndex + 2, frameIndex - 2]
+    .filter((value, index, values) => value >= 0 && value < mapState.frames.length && values.indexOf(value) === index);
+  indexes.forEach((index) => {
+    const indexUrl = String(mapState.frames[index]?.rawMapIndexUrl || "").trim();
+    if (!indexUrl) return;
+    loadMapLibreRawFrameBundle(indexUrl).catch(() => {});
+  });
+}
+
+function mapLibreRawFrameCacheStatus(frameIndex) {
+  const indexUrl = String(mapState.frames[frameIndex]?.rawMapIndexUrl || "").trim();
+  if (!indexUrl) return "none";
+  const entry = mapLibreRawFrameCache.get(indexUrl);
+  if (!entry) {
+    loadMapLibreRawFrameBundle(indexUrl).catch(() => {});
+    return "loading";
+  }
+  entry.lastUsedAt = Date.now();
+  return entry.status;
+}
+
 async function loadRadarChunkIndex(state) {
   state.status = "loading";
   state.error = "";
   try {
+    if (String(state.indexUrl || "").startsWith("blob:")) {
+      const bundle = await loadMapLibreRawFrameBundle(state.indexUrl);
+      if (state.removed) return;
+      state.index = bundle.index;
+      state.chunkMetas = radarChunkMetasFromIndex(bundle.index);
+      state.chunks = bundle.chunks.map((chunk) => ({
+        ...chunk,
+        payload: chunk.payload,
+        vertices: chunk.vertices,
+        texture: null,
+        rgbaPayload: null,
+        _nearcastChunkKey: radarChunkKey(chunk.levelZoom, chunk.x, chunk.y),
+        loadedAtSeq: ++state.chunkLoadSeq
+      }));
+      state.loadedChunkKeys = new Set(state.chunks.map((chunk) => chunk._nearcastChunkKey));
+      state.loadingChunkKeys = new Set();
+      state.status = state.chunks.length ? "ready" : "empty";
+      state.map?.triggerRepaint?.();
+      syncMapLibreRadarChunkFallbackVisibility(state.record);
+      return;
+    }
     const response = await fetch(state.indexUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`chunk index failed: ${response.status}`);
     const index = await response.json();
@@ -3551,7 +3743,9 @@ function radarChunkOpacityForZoom(zoom) {
 }
 
 function renderRadarChunkLayer(state, gl, matrix) {
+  activatePendingMapLibreRawChunkFrame(state, gl);
   if (!gl || !matrix || !state?.program || !["loading", "ready"].includes(state.status)) return;
+  if (String(state.indexUrl || "").startsWith("blob:") && state.indexUrl !== state.requestedIndexUrl) return;
   if (!radarChunkCoverageContainsViewport(state)) return;
   const activeZoom = radarChunkActiveZoom(state);
   const renderZoom = radarChunkRenderZoom(state);
@@ -3870,15 +4064,25 @@ function mapLibreWeatherSpecForLayer(frame, layer, options = {}) {
 function renderMapLibreWeather(index = mapState.frameIndex) {
   const record = mapLibreCurrentRecord();
   if (!mapLibreRecordReady(record)) return;
+  const renderFrame = mapState.frames[index];
+  const renderIndexUrl = radarChunkIndexUrl(renderFrame);
+  prefetchRawMapFramesAround(index);
   if (xweatherStormSuppressesNearcastRadar(record)) {
     clearMapLibreWeatherRecord(record);
     removeMapLibreRadarChunkLayer(record);
     return;
   }
-  if (maybeSwitchGeneratedRadarToFallback(index, "generated-viewport-out-of-scope")) return;
+  if (maybeSwitchGeneratedRadarToFallback(index, "generated-viewport-out-of-scope")) {
+    return;
+  }
   const specs = mapLibreWeatherLayerSpecs(index);
+  // Switch the cached raw field while the style is settled. Adding/removing
+  // raster fallback sources can temporarily make MapLibre report the style as
+  // loading, which previously caused historical scrubs to leave the old raw
+  // layer in place.
+  syncMapLibreRadarChunkLayer(record, renderFrame, renderIndexUrl);
   syncMapLibreWeatherSlots(record, specs);
-  syncMapLibreRadarChunkLayer(record);
+  ensureMapLibreRadarChunkLayerOrder(record.map);
 }
 
 function syncMapLibreWeatherSlots(record, specs = []) {
@@ -4022,6 +4226,9 @@ function clearMapLibreWeatherRecord(record) {
 function mapLibreBufferedRadarFrameReady(frameIndex) {
   const record = mapLibreCurrentRecord();
   if (!mapLibreRecordReady(record)) return false;
+  const rawStatus = mapLibreRawFrameCacheStatus(frameIndex);
+  if (rawStatus === "loading") return false;
+  if (rawStatus === "ready") return true;
   const entry = [...(record.weatherEntries?.values() || [])].find((item) => item?.frameIndex === frameIndex);
   if (!entry) return false;
   return record.map.isSourceLoaded?.(entry.sourceId) || false;
@@ -4652,10 +4859,21 @@ function scheduleGeneratedRadarViewportRefresh(reason = "viewport", delayMs = GE
 
 function shouldRefreshGeneratedRadarForViewport() {
   if (!mapState.initialized || !state.activePlace) return false;
+  // The raw-map experiment owns both its canonical timeline and viewport
+  // refresh lifecycle. Letting the generated-radar background refresh run at
+  // the same time can replace that timeline and restart the raw session.
+  if (rawMapOwnsActiveTimeline()) return false;
   if (!generatedRadarRefreshTimelineKind()) return false;
   if (!radarProviderAllowsGenerated()) return false;
   if (generatedMrmsManifestUrlOverride()) return false;
   return true;
+}
+
+function rawMapOwnsActiveTimeline() {
+  return Boolean(
+    mapState.rawMap?.session
+    || (mapState.frames || []).some((frame) => frame?.rawMapCanonical === true)
+  );
 }
 
 function generatedRadarViewportAllowsGenerationRequest() {
@@ -4676,7 +4894,8 @@ function generatedRadarRefreshOptions(timelineKind) {
     focusNow: timelineKind === "precip",
     focusLatest: timelineKind === "radar",
     resumePlayback: mapState.playing,
-    preserveExisting: true
+    preserveExisting: true,
+    protectRawMapTimeline: true
   };
 }
 
@@ -4688,6 +4907,10 @@ function currentRadarFramesAreGenerated() {
 
 function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason = "generated-viewport-out-of-scope") {
   const frame = mapState.frames[index];
+  // Canonical raw-map frames own their viewport texture and fallback behavior.
+  // Their cloned raster frame may still carry generated-radar metadata, which
+  // must not route the scrub back through the generated-tile fallback loader.
+  if (frame?.rawMapIndexUrl && frame?.rawMapProvider) return false;
   const eligibility = generatedRadarFrameViewportEligibility(frame);
   if (!eligibility || eligibility.usable) return false;
 
@@ -4739,12 +4962,20 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
       reason
     });
     if (seq !== mapState.generatedRadarRefreshSeq) return;
+    if (!shouldRefreshGeneratedRadarForViewport()) {
+      clearGeneratedRadarWarmup();
+      return;
+    }
     const capability = selection?.capability || mapState.radarCapability || null;
     if (!selection?.key) {
       if (generatedRadarGenerationIsPending(capability)) {
         if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey && viewportKey !== mapState.generatedRadarViewportKey) {
           clearGeneratedRadarSelection();
           await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+          if (seq !== mapState.generatedRadarRefreshSeq || !shouldRefreshGeneratedRadarForViewport()) {
+            if (seq === mapState.generatedRadarRefreshSeq) clearGeneratedRadarWarmup();
+            return;
+          }
         }
         scheduleGeneratedRadarWarmupPoll(capability, warmup, viewportKey, reason);
         return;
@@ -4760,6 +4991,10 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
       if (radarProviderPreference() === "auto" && mapState.generatedRadarSelectionKey) {
         clearGeneratedRadarSelection();
         await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+        if (seq !== mapState.generatedRadarRefreshSeq || !shouldRefreshGeneratedRadarForViewport()) {
+          if (seq === mapState.generatedRadarRefreshSeq) clearGeneratedRadarWarmup();
+          return;
+        }
       }
       clearGeneratedRadarWarmup();
       return;
@@ -4771,6 +5006,10 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
     }
     rememberGeneratedRadarSelectionHint(selection, viewportKey);
     await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
+    if (seq !== mapState.generatedRadarRefreshSeq || !shouldRefreshGeneratedRadarForViewport()) {
+      if (seq === mapState.generatedRadarRefreshSeq) clearGeneratedRadarWarmup();
+      return;
+    }
     if (selection.key === mapState.generatedRadarSelectionKey) {
       finishGeneratedRadarWarmup(viewportKey, "selection-loaded");
     } else {
@@ -4782,6 +5021,11 @@ async function refreshGeneratedRadarForViewport(reason = "viewport") {
       clearGeneratedRadarWarmup();
     }
   } catch {
+    if (seq !== mapState.generatedRadarRefreshSeq) return;
+    if (!shouldRefreshGeneratedRadarForViewport()) {
+      clearGeneratedRadarWarmup();
+      return;
+    }
     if (radarProviderPreference() === "auto") {
       clearGeneratedRadarSelection();
       await loadMapFrames(true, generatedRadarRefreshOptions(timelineKind));
@@ -5466,6 +5710,7 @@ function mapFrameLoadPlaceKey(place = state.activePlace) {
 
 async function loadMapFrames(force = false, options = {}) {
   if (!mapState.initialized || !state.activePlace) return;
+  if (options.protectRawMapTimeline && rawMapOwnsActiveTimeline()) return;
   const timelineKind = options.timelineKind || (mapState.immersive ? "precip" : mapState.timelineKind || "radar");
   if (!force && mapState.frames.length && mapState.timelineKind === timelineKind) {
     showFrame(mapState.frameIndex);
@@ -5484,7 +5729,11 @@ async function loadMapFrames(force = false, options = {}) {
 
   try {
     const timeline = await fetchMapTimeline(timelineKind);
-    if (loadSeq !== mapState.frameLoadSeq || placeKey !== mapFrameLoadPlaceKey()) return;
+    if (
+      loadSeq !== mapState.frameLoadSeq
+      || placeKey !== mapFrameLoadPlaceKey()
+      || (options.protectRawMapTimeline && rawMapOwnsActiveTimeline())
+    ) return;
 
     if (!timeline.frames.length) {
       if (!preserveExisting) {
@@ -5499,7 +5748,7 @@ async function loadMapFrames(force = false, options = {}) {
     mapState.nowIndex = timeline.nowIndex;
     mapState.forecastUnavailable = timeline.forecastUnavailable;
     mapState.frameIndex = initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayback);
-    els.frameSlider.max = String(mapState.frames.length - 1);
+    syncStandardTimelineSlider(mapState.frameIndex);
     updateTimelineEraVisuals();
     showFrame(mapState.frameIndex);
     if (shouldResumePlayback) startRadarPlayback();
@@ -5543,6 +5792,47 @@ function initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayb
   if (shouldResumePlayback || timelineKind === "forecast") return 0;
   if (timelineKind === "precip" && Number.isFinite(timeline.nowIndex)) return clamp(timeline.nowIndex, 0, last);
   return last;
+}
+
+function standardTimelineTimeRange(frames = mapState.frames) {
+  // Keep the legacy frame-index slider for mixed/fallback timelines. A real
+  // time axis is only honest when every displayed point belongs to the
+  // canonical raw-data timeline; otherwise the long NDFD outlook would crush
+  // the observed hour into a nearly unusable sliver.
+  if (!frames.length || !frames.every((frame) => frame?.rawMapCanonical === true)) return null;
+  const timestamps = frames
+    .map((frame) => rawMapTimelineTimestamp(frame))
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp > 0);
+  if (timestamps.length < 2) return null;
+  const start = Math.min(...timestamps);
+  const end = Math.max(...timestamps);
+  return end > start ? { start, end } : null;
+}
+
+function standardTimelineSliderValueForFrame(frameIndex = mapState.frameIndex) {
+  const range = standardTimelineTimeRange();
+  if (!range) return Math.max(0, Math.min(Number(frameIndex) || 0, mapState.frames.length - 1));
+  const timestamp = rawMapTimelineTimestamp(mapState.frames[frameIndex]);
+  const progress = (timestamp - range.start) / (range.end - range.start);
+  return Math.round(Math.max(0, Math.min(progress, 1)) * STANDARD_TIMELINE_SLIDER_STEPS);
+}
+
+function standardTimelineFrameIndexForSliderValue(value) {
+  const range = standardTimelineTimeRange();
+  if (!range) return Math.max(0, Math.min(Math.round(Number(value) || 0), mapState.frames.length - 1));
+  const progress = Math.max(0, Math.min((Number(value) || 0) / STANDARD_TIMELINE_SLIDER_STEPS, 1));
+  return rawMapClosestFrameIndex(mapState.frames, range.start + progress * (range.end - range.start));
+}
+
+function syncStandardTimelineSlider(frameIndex = mapState.frameIndex) {
+  const slider = els.frameSlider;
+  if (!slider || xweatherStormActive(mapLibreCurrentRecord())) return;
+  const range = standardTimelineTimeRange();
+  slider.min = "0";
+  slider.step = "1";
+  slider.max = String(range ? STANDARD_TIMELINE_SLIDER_STEPS : Math.max(0, mapState.frames.length - 1));
+  slider.value = String(standardTimelineSliderValueForFrame(frameIndex));
+  updateRangeProgress(slider);
 }
 
 function rawMapTimelineMode(timelineKind = mapState.timelineKind) {
@@ -5630,6 +5920,39 @@ function rawMapWorkerUrl() {
   }
 }
 
+function rawMapHrrrWorkerUrl() {
+  try {
+    return new URL(
+      `experimental/raw-weather/hrrr-subhourly-worker.js?v=${encodeURIComponent(VERSION)}`,
+      window.location.href
+    ).href;
+  } catch {
+    return `experimental/raw-weather/hrrr-subhourly-worker.js?v=${encodeURIComponent(VERSION)}`;
+  }
+}
+
+function rawMapObservedTargetTimes(now = Date.now()) {
+  const stepMs = RAW_MAP_OBSERVED_STEP_MINUTES * 60 * 1000;
+  const end = Math.floor(Number(now) / stepMs) * stepMs;
+  const start = end - RAW_MAP_OBSERVED_WINDOW_MINUTES * 60 * 1000;
+  const targets = [];
+  for (let timestamp = start; timestamp <= end; timestamp += stepMs) {
+    targets.push(new Date(timestamp).toISOString());
+  }
+  return targets;
+}
+
+function rawMapForecastTargetTimes(now = Date.now()) {
+  const stepMs = RAW_MAP_FORECAST_STEP_MINUTES * 60 * 1000;
+  const first = Math.ceil((Number(now) + 1) / stepMs) * stepMs;
+  const end = Number(now) + RAW_MAP_FORECAST_WINDOW_MINUTES * 60 * 1000;
+  const targets = [];
+  for (let timestamp = first; timestamp <= end; timestamp += stepMs) {
+    targets.push(new Date(timestamp).toISOString());
+  }
+  return targets;
+}
+
 function rawMapBoundsKey(bounds) {
   if (!bounds) return "";
   return [bounds.minLon, bounds.minLat, bounds.maxLon, bounds.maxLat]
@@ -5691,12 +6014,15 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
   ) return;
 
   disposeRawMapEnhancement("replaced");
+  rawMap.fallbackFrames = mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
+  rawMap.fallbackNowIndex = mapState.nowIndex;
   const controller = new AbortController();
   const session = runtime.createSession({
     mode,
     width: 512,
     height: 384,
-    mrmsClientOptions: { workerUrl: rawMapWorkerUrl() }
+    mrmsClientOptions: { workerUrl: rawMapWorkerUrl() },
+    hrrrSubhourlyClientOptions: { workerUrl: rawMapHrrrWorkerUrl() }
   });
   const seq = ++rawMap.seq;
   rawMap.status = "loading";
@@ -5713,15 +6039,20 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
   rawMap.stage = "start";
   syncRawMapDebugAttributes();
 
+  const requestedAt = Date.now();
+  const observedTimes = mode === "forecast" ? [] : rawMapObservedTargetTimes(requestedAt);
+  const forecastTimes = mode === "observed" ? [] : rawMapForecastTargetTimes(requestedAt);
+
   session.prepare({
     mode,
     place: state.activePlace,
     bounds,
     width: 512,
     height: 384,
-    historyFrames: 6,
-    historyMinutes: 90,
-    forecastFrames: 6,
+    observedTimes,
+    historyMinutes: RAW_MAP_OBSERVED_WINDOW_MINUTES,
+    historyStepMinutes: RAW_MAP_OBSERVED_STEP_MINUTES,
+    forecastFrames: forecastTimes,
     signal: controller.signal,
     onUpdate(update) {
       if (seq !== rawMap.seq) return;
@@ -5771,53 +6102,150 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
 function applyRawMapEnhancement(result) {
   const descriptors = Array.isArray(result?.frames) ? result.frames : [];
   if (!descriptors.length || !mapState.frames.length) return 0;
-  const frames = mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
-  const usedFrameIndexes = new Set();
-  let matchedFrames = 0;
+  const fallbackFrames = Array.isArray(mapState.rawMap.fallbackFrames)
+    ? mapState.rawMap.fallbackFrames.map((frame) => ({ ...frame }))
+    : mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
+  const selectedFrame = fallbackFrames[mapState.frameIndex] || null;
+  const selectedTimestamp = rawMapTimelineTimestamp(selectedFrame);
+  const selectedWasNow = Boolean(selectedFrame?.isNow || mapState.frameIndex === mapState.nowIndex);
+  const timelineKind = mapState.timelineKind;
+  const rawObserved = rawMapCanonicalFrames(result.observed, "radar", fallbackFrames);
+  const rawForecast = rawMapCanonicalFrames(result.forecast, "forecast", fallbackFrames);
+  const fallbackObserved = fallbackFrames.filter((frame) => activeMapSource(frame) === "radar");
+  const fallbackForecast = fallbackFrames.filter((frame) => activeMapSource(frame) === "forecast");
 
-  descriptors.forEach((descriptor) => {
-    const targetTimestamp = Date.parse(descriptor?.validTime || descriptor?.timestamp);
-    const source = descriptor?.kind === "forecast" ? "forecast" : "radar";
-    const tolerance = source === "forecast" ? 40 * 60 * 1000 : 6 * 60 * 1000;
-    if (!Number.isFinite(targetTimestamp)) return;
+  let observed = rawObserved.length ? rawObserved : fallbackObserved;
+  let forecast = rawForecast.length ? rawForecast : fallbackForecast;
+  if (timelineKind === "radar") forecast = [];
+  if (timelineKind === "forecast") observed = [];
 
-    let matchIndex = -1;
-    let matchDelta = Infinity;
-    frames.forEach((frame, index) => {
-      if (usedFrameIndexes.has(index) || activeMapSource(frame) !== source) return;
-      const frameTimestamp = source === "radar"
-        ? Number(frame.observedTimestamp) || Number(frame.timestamp)
-        : Number(frame.timestamp);
-      if (!Number.isFinite(frameTimestamp)) return;
-      const delta = Math.abs(frameTimestamp - targetTimestamp);
-      if (delta < matchDelta) {
-        matchDelta = delta;
-        matchIndex = index;
-      }
+  let frames = [...observed, ...forecast].sort((left, right) => rawMapTimelineTimestamp(left) - rawMapTimelineTimestamp(right));
+  const observedIndexes = frames
+    .map((frame, index) => activeMapSource(frame) === "radar" ? index : -1)
+    .filter((index) => index >= 0);
+  let nowIndex = observedIndexes.length ? observedIndexes[observedIndexes.length - 1] : 0;
+  if (observedIndexes.length) {
+    frames = frames.map((frame, index) => {
+      if (activeMapSource(frame) !== "radar") return frame;
+      const isNow = index === nowIndex;
+      return {
+        ...frame,
+        timestamp: isNow ? Date.now() : rawMapTimelineTimestamp(frame),
+        label: isNow ? "Now" : radarTimelineLabel(rawMapTimelineTimestamp(frame)),
+        isNow
+      };
     });
-    if (matchIndex < 0 || matchDelta > tolerance) return;
+  }
 
-    const attribution = String(descriptor.attribution || "NOAA/NWS").trim();
-    frames[matchIndex] = {
-      ...frames[matchIndex],
-      rawMapIndexUrl: descriptor.indexUrl,
-      rawMapProvider: descriptor.provider,
-      rawMapAttribution: attribution.includes("Nearcast") ? attribution : `${attribution} · Nearcast`,
-      rawMapValidTime: descriptor.validTime,
-      rawMapVisualMetric: descriptor.visualMetric,
-      rawMapStats: descriptor.stats || null,
-      rawMapBounds: descriptor.bounds || null,
-      rawMapFallbackHadVisualMetric: Object.prototype.hasOwnProperty.call(frames[matchIndex], "visualMetric"),
-      rawMapFallbackVisualMetric: frames[matchIndex].visualMetric,
-      visualMetric: "reflectivity"
-    };
-    usedFrameIndexes.add(matchIndex);
-    matchedFrames += 1;
-  });
+  const enhancedFrames = frames.filter((frame) => frame?.rawMapIndexUrl).length;
+  if (!enhancedFrames) return 0;
 
   mapState.frames = frames;
-  if (matchedFrames) showFrame(mapState.frameIndex);
-  return matchedFrames;
+  mapState.nowIndex = nowIndex;
+  mapState.xfadeFrames = [null, null];
+  mapState.frameWaitIndex = null;
+  mapState.frameWaitStart = 0;
+  if (selectedWasNow && observedIndexes.length) {
+    mapState.frameIndex = nowIndex;
+  } else {
+    mapState.frameIndex = rawMapClosestFrameIndex(frames, selectedTimestamp);
+  }
+  syncStandardTimelineSlider(mapState.frameIndex);
+  prefetchRawMapFramesAround(mapState.frameIndex);
+  showFrame(mapState.frameIndex);
+  return enhancedFrames;
+}
+
+function rawMapCanonicalFrames(descriptors, source, fallbackFrames) {
+  const seen = new Set();
+  return [...(Array.isArray(descriptors) ? descriptors : [])]
+    .sort((left, right) => Date.parse(left?.validTime || "") - Date.parse(right?.validTime || ""))
+    .map((descriptor) => {
+      const timestamp = Date.parse(descriptor?.validTime || descriptor?.timestamp || "");
+      if (!Number.isFinite(timestamp) || seen.has(timestamp)) return null;
+      seen.add(timestamp);
+      const base = rawMapNearestFallbackFrame(fallbackFrames, source, timestamp);
+      return rawMapCanonicalFrame(descriptor, source, timestamp, base);
+    })
+    .filter(Boolean);
+}
+
+function rawMapNearestFallbackFrame(frames, source, timestamp) {
+  let best = null;
+  let bestDelta = Infinity;
+  frames.forEach((frame) => {
+    if (activeMapSource(frame) !== source) return;
+    const delta = Math.abs(rawMapTimelineTimestamp(frame) - timestamp);
+    if (delta < bestDelta) {
+      best = frame;
+      bestDelta = delta;
+    }
+  });
+  // A raster fallback is useful while a raw observed frame is warming, but a
+  // distant tile is actively misleading when the raw timeline extends farther
+  // into history than the fallback provider. Six minutes covers the normal
+  // five-minute cadence plus small timestamp skew without relabeling stale data.
+  const maxDeltaMs = source === "radar" ? 6 * 60 * 1000 : Infinity;
+  return best && bestDelta <= maxDeltaMs ? { ...best } : {};
+}
+
+function rawMapCanonicalFrame(descriptor, source, timestamp, fallbackFrame) {
+  const frame = { ...(fallbackFrame || {}) };
+  const noRasterFallback = source === "forecast";
+  if (noRasterFallback) {
+    delete frame.url;
+    delete frame.dataUrl;
+    delete frame.dataEncoding;
+    delete frame.layers;
+  }
+  const attribution = String(descriptor?.attribution || "NOAA/NWS").trim();
+  const fallbackHadVisualMetric = Object.prototype.hasOwnProperty.call(frame, "visualMetric");
+  const fallbackVisualMetric = frame.visualMetric;
+  return {
+    ...frame,
+    timestamp,
+    ...(source === "radar" ? { observedTimestamp: timestamp } : {}),
+    source,
+    sourceLabel: source === "forecast" ? "Forecast guidance" : "Radar",
+    label: source === "forecast" ? forecastTimelineLabel(timestamp) : radarTimelineLabel(timestamp),
+    isNow: false,
+    rawMapCanonical: true,
+    rawMapNoRasterFallback: noRasterFallback,
+    rawMapIndexUrl: descriptor.indexUrl,
+    rawMapProvider: descriptor.provider,
+    rawMapAttribution: attribution.includes("Nearcast") ? attribution : `${attribution} · Nearcast`,
+    rawMapValidTime: descriptor.validTime,
+    rawMapVisualMetric: "reflectivity",
+    rawMapSourceVisualMetric: descriptor.visualMetric || "reflectivity",
+    rawMapStats: descriptor.stats || null,
+    rawMapBounds: descriptor.bounds || null,
+    rawMapFallbackHadVisualMetric: noRasterFallback ? false : fallbackHadVisualMetric,
+    rawMapFallbackVisualMetric: noRasterFallback ? "" : fallbackVisualMetric,
+    visualMetric: "reflectivity",
+    coverageBounds: descriptor.bounds || frame.coverageBounds
+  };
+}
+
+function rawMapTimelineTimestamp(frame) {
+  const timestamp = Number(frame?.timestamp);
+  if (Number.isFinite(timestamp)) return timestamp;
+  const observedTimestamp = Number(frame?.observedTimestamp);
+  return Number.isFinite(observedTimestamp) ? observedTimestamp : 0;
+}
+
+function rawMapClosestFrameIndex(frames, timestamp) {
+  if (!frames.length) return 0;
+  if (!Number.isFinite(timestamp)) return 0;
+  let bestIndex = 0;
+  let bestDelta = Infinity;
+  frames.forEach((frame, index) => {
+    const delta = Math.abs(rawMapTimelineTimestamp(frame) - timestamp);
+    if (delta < bestDelta) {
+      bestIndex = index;
+      bestDelta = delta;
+    }
+  });
+  return bestIndex;
 }
 
 function rawMapErrorText(errors) {
@@ -5837,7 +6265,13 @@ function syncRawMapDebugAttributes(frame = mapState.frames[mapState.frameIndex])
       "rawMapStage",
       "rawMapTimeline",
       "rawMapMatchedFrames",
-      "rawMapActiveProvider"
+      "rawMapActiveProvider",
+      "rawMapFrameCache",
+      "rawMapLayerStatus",
+      "rawMapLayerMatches",
+      "rawMapLayerRequested",
+      "rawMapLayerDrawn",
+      "rawMapLayerSync"
     ].forEach((key) => delete root.dataset[key]);
     return;
   }
@@ -5847,6 +6281,13 @@ function syncRawMapDebugAttributes(frame = mapState.frames[mapState.frameIndex])
   root.dataset.rawMapTimeline = mapState.rawMap.timelineKind || mapState.timelineKind;
   root.dataset.rawMapMatchedFrames = String(mapState.rawMap.matchedFrames || 0);
   root.dataset.rawMapActiveProvider = rawMapFrameLayerVisible(frame) ? frame.rawMapProvider : "fallback";
+  const layer = mapLibreCurrentRecord()?.radarChunkLayerState;
+  const cache = frame?.rawMapIndexUrl ? mapLibreRawFrameCache.get(frame.rawMapIndexUrl) : null;
+  root.dataset.rawMapFrameCache = cache?.status || (frame?.rawMapIndexUrl ? "missing" : "none");
+  root.dataset.rawMapLayerStatus = layer?.status || "none";
+  root.dataset.rawMapLayerMatches = String(Boolean(layer && frame?.rawMapIndexUrl && layer.indexUrl === frame.rawMapIndexUrl));
+  root.dataset.rawMapLayerRequested = String(Boolean(layer && frame?.rawMapIndexUrl && layer.requestedIndexUrl === frame.rawMapIndexUrl));
+  root.dataset.rawMapLayerDrawn = String(Boolean(layer?.hasSuccessfulDraw));
 }
 
 function clearRawMapFrameDecoration(frame) {
@@ -5857,8 +6298,11 @@ function clearRawMapFrameDecoration(frame) {
   delete next.rawMapAttribution;
   delete next.rawMapValidTime;
   delete next.rawMapVisualMetric;
+  delete next.rawMapSourceVisualMetric;
   delete next.rawMapStats;
   delete next.rawMapBounds;
+  delete next.rawMapCanonical;
+  delete next.rawMapNoRasterFallback;
   if (frame.rawMapFallbackHadVisualMetric) next.visualMetric = frame.rawMapFallbackVisualMetric;
   else if (frame.rawMapProvider) delete next.visualMetric;
   delete next.rawMapFallbackHadVisualMetric;
@@ -5868,10 +6312,16 @@ function clearRawMapFrameDecoration(frame) {
 
 function disposeRawMapEnhancement(reason = "disposed") {
   const rawMap = mapState.rawMap;
+  const selectedTimestamp = rawMapTimelineTimestamp(mapState.frames[mapState.frameIndex]);
+  const fallbackFrames = Array.isArray(rawMap.fallbackFrames)
+    ? rawMap.fallbackFrames.map((frame) => ({ ...frame }))
+    : null;
+  const fallbackNowIndex = rawMap.fallbackNowIndex;
   rawMap.seq += 1;
   if (rawMap.viewportRefreshTimer) clearTimeout(rawMap.viewportRefreshTimer);
   rawMap.viewportRefreshTimer = 0;
   rawMap.abortController?.abort?.();
+  clearMapLibreRawFrameCache();
   const record = mapLibreCurrentRecord();
   if (
     record?.radarChunkLayerState?.index?.provider === "nearcast-raw-map"
@@ -5881,7 +6331,11 @@ function disposeRawMapEnhancement(reason = "disposed") {
     syncMapLibreRadarChunkFallbackVisibility(record);
   }
   rawMap.session?.dispose?.();
-  if (mapState.frames.some((frame) => frame?.rawMapProvider)) {
+  if (fallbackFrames?.length && mapState.frames.some((frame) => frame?.rawMapProvider)) {
+    mapState.frames = fallbackFrames;
+    mapState.nowIndex = Math.max(0, Math.min(Number(fallbackNowIndex) || 0, fallbackFrames.length - 1));
+    mapState.frameIndex = rawMapClosestFrameIndex(fallbackFrames, selectedTimestamp);
+  } else if (mapState.frames.some((frame) => frame?.rawMapProvider)) {
     mapState.frames = mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
   }
   rawMap.status = "idle";
@@ -5892,10 +6346,16 @@ function disposeRawMapEnhancement(reason = "disposed") {
   rawMap.boundsKey = "";
   rawMap.session = null;
   rawMap.abortController = null;
+  rawMap.fallbackFrames = null;
+  rawMap.fallbackNowIndex = 0;
   rawMap.error = "";
   rawMap.preparedAt = 0;
   rawMap.matchedFrames = 0;
   rawMap.stage = reason;
+  if (["replaced", "renderer-changed", "not-eligible"].includes(reason) && mapState.frames.length) {
+    syncStandardTimelineSlider(mapState.frameIndex);
+    showFrame(mapState.frameIndex);
+  }
   syncRawMapDebugAttributes();
 }
 
@@ -8119,8 +8579,7 @@ function showFrame(index) {
   const perf = perfStart();
   const nextIndex = Math.min(Math.max(index, 0), mapState.frames.length - 1);
   mapState.frameIndex = nextIndex;
-  els.frameSlider.value = String(nextIndex);
-  updateRangeProgress(els.frameSlider);
+  syncStandardTimelineSlider(nextIndex);
   const frame = mapState.frames[nextIndex];
 
   syncMapSourceFromFrame(frame);
@@ -8162,7 +8621,7 @@ function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
 
 function mapCreditText(frame) {
   const rawMapVisible = rawMapFrameLayerVisible(frame);
-  if (rawMapVisible && frame?.rawMapProvider === "noaa-hrrr-zarr") {
+  if ((rawMapVisible || frame?.rawMapNoRasterFallback) && String(frame?.rawMapProvider || "").startsWith("noaa-hrrr")) {
     return `Forecast guidance ${frame.rawMapAttribution || "NOAA HRRR · Nearcast"}`;
   }
   if (rawMapVisible && frame?.rawMapProvider === "noaa-mrms-direct") {
@@ -8187,7 +8646,11 @@ function updateTimelineEraVisuals() {
   if (!slider) return;
   const max = Math.max(0, mapState.frames.length - 1);
   const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, max) : max;
-  const nowProgress = max > 0 ? (nowIndex / max) * 100 : 100;
+  const timeRange = standardTimelineTimeRange();
+  const nowTimestamp = rawMapTimelineTimestamp(mapState.frames[nowIndex]);
+  const nowProgress = timeRange
+    ? ((nowTimestamp - timeRange.start) / (timeRange.end - timeRange.start)) * 100
+    : max > 0 ? (nowIndex / max) * 100 : 100;
   slider.style.setProperty("--timeline-now", `${nowProgress}%`);
   slider.dataset.timelineKind = mapState.timelineKind;
   slider.dataset.source = activeMapSource();
@@ -8311,7 +8774,7 @@ function scrubToFrame(index) {
     mapState.userPausedRadar = true;
     stopRadarPlayback();
   }
-  showFrame(index);
+  showFrame(standardTimelineFrameIndexForSliderValue(index));
   showTimelineTimeBubble();
 }
 
@@ -8506,8 +8969,7 @@ function playbackTick(now) {
       mapState.frameIndex = idx;
       if (mapRendererIsGl()) renderMapLibreWeather(idx);
       else renderXfade(idx); // hard swap to idx, preload idx+1
-      els.frameSlider.value = String(idx);
-      updateRangeProgress(els.frameSlider);
+      syncStandardTimelineSlider(idx);
       syncMapSourceFromFrame(mapState.frames[idx]);
       setFrameLabel(mapState.frames[idx].label);
       updateTimelineEraVisuals();
@@ -9338,9 +9800,7 @@ function enterImmersiveMap() {
   document.body.style.overflow = "hidden";
 
   // Sync slider range before rendering so scrubbing works immediately
-  els.frameSlider.max   = String(Math.max(0, mapState.frames.length - 1));
-  els.frameSlider.value = String(mapState.frameIndex);
-  updateRangeProgress(els.frameSlider);
+  syncStandardTimelineSlider(mapState.frameIndex);
   setPlaybackButtonState(els.playRadar, mapState.playing);
 
   // Wait two frames so the browser has painted the full-screen canvas
@@ -9390,9 +9850,7 @@ function exitImmersiveMap() {
   mapState._normalEls = null;
   mapState.immersive = false;
   syncSkyMotionForMap();
-  els.frameSlider.max = String(Math.max(0, mapState.frames.length - 1));
-  els.frameSlider.value = String(mapState.frameIndex);
-  updateRangeProgress(els.frameSlider);
+  syncStandardTimelineSlider(mapState.frameIndex);
   setPlaybackButtonState(els.playRadar, mapState.playing);
   syncGeneratedRadarStatusChip();
 

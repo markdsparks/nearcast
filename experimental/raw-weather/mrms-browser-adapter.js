@@ -1,16 +1,19 @@
 (function installNearcastMrms(global) {
   "use strict";
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.3.0";
   const BUCKET_URL = "https://noaa-mrms-pds.s3.amazonaws.com/";
   const DEFAULT_REGION = "CONUS";
   const DEFAULT_PRODUCT = "MergedReflectivityQCComposite_00.50";
   const DEFAULT_HISTORY_MINUTES = 90;
   const DEFAULT_MAX_FRAMES = 10;
+  const DEFAULT_TARGET_TOLERANCE_MINUTES = 6;
   const MAX_HISTORY_MINUTES = 180;
-  const MAX_FRAMES = 16;
+  const MAX_FRAMES = 24;
   const MAX_LIST_PAGES = 3;
   const DEFAULT_TEXTURE_BUDGET = 8 * 1024 * 1024;
+  const DEFAULT_WORKER_COUNT = 2;
+  const MAX_WORKER_COUNT = 2;
 
   const scriptUrl = typeof document !== "undefined" && document.currentScript?.src
     ? document.currentScript.src
@@ -61,7 +64,11 @@
       .filter((item) => item.size > 0 && item.size <= config.maxCompressedBytes)
       .sort((a, b) => a.observedAtMs - b.observedAtMs);
 
-    return evenlySample(recent, config.maxFrames).map((item) => ({
+    const selected = config.targetTimes.length
+      ? selectNearestTargetFrames(recent, config.targetTimes, config.maxFrames, config.targetToleranceMs)
+      : evenlySample(recent, config.maxFrames);
+
+    return selected.map((item) => ({
       key: item.key,
       url: objectUrl(item.key),
       observedAt: new Date(item.observedAtMs).toISOString(),
@@ -84,54 +91,111 @@
       throw new Error(`MRMS browser adapter is unavailable; missing ${missing || "required browser APIs"}.`);
     }
 
-    const worker = new Worker(config.workerUrl || defaultWorkerUrl);
+    const workerUrl = config.workerUrl || defaultWorkerUrl;
+    const requestedWorkerCount = clampInteger(config.workerCount, DEFAULT_WORKER_COUNT, 1, MAX_WORKER_COUNT);
     const pending = new Map();
+    const queued = [];
     let nextRequestId = 1;
     let destroyed = false;
-    let queue = Promise.resolve();
 
-    worker.addEventListener("message", (event) => {
+    const workers = [];
+    for (let index = 0; index < requestedWorkerCount; index += 1) {
+      try {
+        workers.push(createWorkerState(index));
+      } catch (error) {
+        if (!workers.length) throw error;
+        break;
+      }
+    }
+    const workerCount = workers.length;
+
+    function createWorkerState(index) {
+      const state = {
+        index,
+        worker: null,
+        activeRequestId: null
+      };
+      installWorker(state);
+      return state;
+    }
+
+    function installWorker(state) {
+      const worker = new Worker(workerUrl);
+      state.worker = worker;
+      state.activeRequestId = null;
+      worker.addEventListener("message", (event) => handleWorkerMessage(state, event));
+      worker.addEventListener("error", (event) => handleWorkerError(state, event));
+    }
+
+    function handleWorkerMessage(state, event) {
       const message = event.data || {};
       const request = pending.get(message.id);
-      if (!request) return;
+      if (!request || request.workerState !== state) return;
       pending.delete(message.id);
+      state.activeRequestId = null;
       if (message.type === "error") {
         const error = new Error(message.error?.message || "MRMS worker failed.");
         error.name = message.error?.name || "Error";
         error.code = message.error?.code || "MRMS_WORKER_ERROR";
         error.details = message.error?.details || null;
         request.reject(error);
-        return;
+      } else {
+        request.resolve(message.result);
       }
-      request.resolve(message.result);
-    });
+      pumpQueue();
+    }
 
-    worker.addEventListener("error", (event) => {
+    function handleWorkerError(state, event) {
       const error = new Error(event.message || "MRMS worker crashed.");
       error.code = "MRMS_WORKER_CRASH";
-      for (const request of pending.values()) request.reject(error);
-      pending.clear();
-    });
+      const request = pending.get(state.activeRequestId);
+      if (request) {
+        pending.delete(request.id);
+        request.reject(error);
+      }
+      state.activeRequestId = null;
+      try { state.worker?.terminate?.(); } catch {}
+      if (!destroyed) installWorker(state);
+      pumpQueue();
+    }
 
     function request(type, payload) {
       if (destroyed) return Promise.reject(new Error("MRMS client has been destroyed."));
       const id = nextRequestId++;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        worker.postMessage({ id, type, payload });
+      const promise = new Promise((resolve, reject) => {
+        const job = { id, type, payload, resolve, reject, workerState: null };
+        pending.set(id, job);
+        queued.push(job);
+        pumpQueue();
       });
+      promise.requestId = id;
+      return promise;
     }
 
-    function enqueue(operation) {
-      const result = queue.then(operation, operation);
-      queue = result.catch(() => {});
-      return result;
+    function pumpQueue() {
+      if (destroyed || !queued.length) return;
+      for (const state of workers) {
+        if (!queued.length) break;
+        if (state.activeRequestId !== null) continue;
+        let job = queued.shift();
+        while (job && !pending.has(job.id)) job = queued.shift();
+        if (!job) break;
+        job.workerState = state;
+        state.activeRequestId = job.id;
+        try {
+          state.worker.postMessage({ id: job.id, type: job.type, payload: job.payload });
+        } catch (error) {
+          pending.delete(job.id);
+          state.activeRequestId = null;
+          job.reject(error);
+        }
+      }
     }
 
-    async function decodeFrame(frame, decodeOptions) {
-      if (!frame?.url) throw new Error("decodeFrame requires a frame returned by listRecentFrames().");
+    function decodeFrame(frame, decodeOptions) {
+      if (!frame?.url) return Promise.reject(new Error("decodeFrame requires a frame returned by listRecentFrames()."));
       const normalized = normalizeDecodeOptions(decodeOptions || {});
-      return enqueue(() => request("decode", {
+      return request("decode", {
         frame,
         bounds: normalized.bounds,
         width: normalized.width,
@@ -141,12 +205,18 @@
         dbzMax: normalized.dbzMax,
         timeoutMs: normalized.timeoutMs,
         maxCompressedBytes: normalized.maxCompressedBytes
-      }));
+      });
     }
 
     async function loadHistory(historyOptions) {
       const normalized = normalizeDecodeOptions(historyOptions || {});
-      const requestedFrames = clampInteger(historyOptions?.maxFrames, DEFAULT_MAX_FRAMES, 1, MAX_FRAMES);
+      const targetCount = normalizeTargetTimes(historyOptions?.targetTimes).length;
+      const requestedFrames = clampInteger(
+        historyOptions?.maxFrames,
+        targetCount || DEFAULT_MAX_FRAMES,
+        1,
+        MAX_FRAMES
+      );
       const textureBudget = clampInteger(
         historyOptions?.maxTextureBytes,
         DEFAULT_TEXTURE_BUDGET,
@@ -161,23 +231,45 @@
         maxCompressedBytes: normalized.maxCompressedBytes
       });
       const retainTextures = historyOptions?.retainTextures !== false;
-      const decoded = [];
-
-      for (let index = 0; index < frames.length; index += 1) {
-        const texture = await decodeFrame(frames[index], normalized);
-        const decodedFrame = {
-          ...frames[index],
-          ...texture,
-          data: texture.data instanceof Uint8Array ? texture.data : new Uint8Array(texture.data)
-        };
-        if (typeof historyOptions?.onFrame === "function") {
-          await historyOptions.onFrame(decodedFrame, {
-            index,
-            count: frames.length,
-            progress: frames.length ? (index + 1) / frames.length : 1
-          });
-        }
-        if (retainTextures) decoded.push(decodedFrame);
+      const decoded = new Array(frames.length);
+      const prioritized = prioritizedHistoryFrames(frames, historyOptions?.priorityTime);
+      const requestIds = [];
+      let completed = 0;
+      let onFrameQueue = Promise.resolve();
+      const tasks = prioritized.map(({ frame, sourceIndex }) => {
+        const decode = decodeFrame(frame, normalized);
+        if (decode.requestId) requestIds.push(decode.requestId);
+        return decode.then(async (texture) => {
+          const decodedFrame = {
+            ...frame,
+            ...texture,
+            data: texture.data instanceof Uint8Array ? texture.data : new Uint8Array(texture.data)
+          };
+          if (retainTextures) decoded[sourceIndex] = decodedFrame;
+          const completionIndex = completed++;
+          if (typeof historyOptions?.onFrame === "function") {
+            const progress = {
+              index: completionIndex,
+              sourceIndex,
+              count: frames.length,
+              progress: frames.length ? completed / frames.length : 1
+            };
+            const callback = onFrameQueue.then(() => historyOptions.onFrame(decodedFrame, progress));
+            onFrameQueue = callback.catch(() => {});
+            await callback;
+          }
+        });
+      });
+      const cancelBatch = () => requestIds.forEach((requestId) => cancel(requestId));
+      if (historyOptions?.signal?.aborted) cancelBatch();
+      else historyOptions?.signal?.addEventListener?.("abort", cancelBatch, { once: true });
+      try {
+        await Promise.all(tasks);
+      } catch (error) {
+        cancelBatch();
+        throw error;
+      } finally {
+        historyOptions?.signal?.removeEventListener?.("abort", cancelBatch);
       }
 
       return {
@@ -187,7 +279,7 @@
         bounds: normalized.bounds,
         width: normalized.width,
         height: normalized.height,
-        frames: retainTextures ? decoded : frames,
+        frames: retainTextures ? decoded.filter(Boolean) : frames,
         retainedTextures: retainTextures,
         textureBytes: retainTextures ? decoded.length * normalized.width * normalized.height : 0,
         attribution: "NOAA/NWS MRMS"
@@ -196,17 +288,34 @@
 
     function cancel(requestId) {
       if (destroyed) return;
-      worker.postMessage({ type: "cancel", payload: { requestId: requestId || null } });
+      const ids = requestId ? [Number(requestId)] : [...pending.keys()];
+      const error = cancelledError();
+      ids.forEach((id) => {
+        const request = pending.get(id);
+        if (!request) return;
+        if (request.workerState) {
+          request.workerState.worker.postMessage({ type: "cancel", payload: { requestId: id } });
+          return;
+        }
+        const queueIndex = queued.findIndex((job) => job.id === id);
+        if (queueIndex >= 0) queued.splice(queueIndex, 1);
+        pending.delete(id);
+        request.reject(error);
+      });
     }
 
     function destroy() {
       if (destroyed) return;
       destroyed = true;
-      worker.terminate();
       const error = new Error("MRMS client was destroyed.");
       error.code = "MRMS_CLIENT_DESTROYED";
       for (const request of pending.values()) request.reject(error);
       pending.clear();
+      queued.length = 0;
+      workers.forEach((state) => {
+        try { state.worker?.terminate?.(); } catch {}
+        state.activeRequestId = null;
+      });
     }
 
     return Object.freeze({
@@ -214,7 +323,8 @@
       loadHistory,
       cancel,
       destroy,
-      workerUrl: config.workerUrl || defaultWorkerUrl
+      workerUrl,
+      workerCount
     });
   }
 
@@ -225,6 +335,13 @@
       now,
       minutes: clampNumber(options.minutes, DEFAULT_HISTORY_MINUTES, 1, MAX_HISTORY_MINUTES),
       maxFrames: clampInteger(options.maxFrames, DEFAULT_MAX_FRAMES, 1, MAX_FRAMES),
+      targetTimes: normalizeTargetTimes(options.targetTimes),
+      targetToleranceMs: clampNumber(
+        options.targetToleranceMinutes,
+        DEFAULT_TARGET_TOLERANCE_MINUTES,
+        1,
+        15
+      ) * 60_000,
       maxListPages: clampInteger(options.maxListPages, MAX_LIST_PAGES, 1, 6),
       maxCompressedBytes: clampInteger(options.maxCompressedBytes, 8 * 1024 * 1024, 64 * 1024, 16 * 1024 * 1024),
       region: cleanSegment(options.region || DEFAULT_REGION, "region"),
@@ -338,6 +455,66 @@
     return [...indexes].sort((a, b) => a - b).map((index) => values[index]);
   }
 
+  function prioritizedHistoryFrames(frames, priorityTime) {
+    const values = (frames || []).map((frame, sourceIndex) => ({
+      frame,
+      sourceIndex,
+      timestamp: new Date(frame?.observedAt).getTime()
+    }));
+    const explicitPriority = new Date(priorityTime).getTime();
+    const newestTimestamp = values.reduce((latest, item) =>
+      Number.isFinite(item.timestamp) ? Math.max(latest, item.timestamp) : latest
+    , -Infinity);
+    const target = Number.isFinite(explicitPriority) ? explicitPriority : newestTimestamp;
+    return values.sort((left, right) => {
+      const leftDelta = Number.isFinite(left.timestamp) ? Math.abs(left.timestamp - target) : Infinity;
+      const rightDelta = Number.isFinite(right.timestamp) ? Math.abs(right.timestamp - target) : Infinity;
+      if (leftDelta !== rightDelta) return leftDelta - rightDelta;
+      return right.timestamp - left.timestamp;
+    });
+  }
+
+  function selectNearestTargetFrames(values, targetTimes, limit, toleranceMs) {
+    if (!values.length || !targetTimes.length || limit <= 0) return [];
+    const selectedByKey = new Map();
+    for (const targetTimestamp of targetTimes) {
+      let nearest = null;
+      let nearestDelta = Infinity;
+      for (const value of values) {
+        const delta = Math.abs(value.observedAtMs - targetTimestamp);
+        if (delta < nearestDelta) {
+          nearest = value;
+          nearestDelta = delta;
+        }
+      }
+      if (nearest && nearestDelta <= toleranceMs) selectedByKey.set(nearest.key, nearest);
+    }
+    const selected = [...selectedByKey.values()]
+      .sort((left, right) => left.observedAtMs - right.observedAtMs);
+    return selected.length > limit ? evenlySample(selected, limit) : selected;
+  }
+
+  function normalizeTargetTimes(values) {
+    if (!Array.isArray(values)) return [];
+    const timestamps = values
+      .map((value) => {
+        const source = value && typeof value === "object" && !(value instanceof Date)
+          ? value.validTime ?? value.timestamp ?? value.time ?? value.observedAt
+          : value;
+        const timestamp = source instanceof Date ? source.getTime() : new Date(source).getTime();
+        return Number.isFinite(timestamp) ? timestamp : NaN;
+      })
+      .filter(Number.isFinite);
+    return [...new Set(timestamps)].sort((left, right) => left - right).slice(-MAX_FRAMES);
+  }
+
+  function cancelledError() {
+    const error = new Error("MRMS operation was cancelled.");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    return error;
+  }
+
   function uniqueByKey(values) {
     return [...new Map(values.map((value) => [value.key, value])).values()];
   }
@@ -390,6 +567,8 @@
       product: DEFAULT_PRODUCT,
       historyMinutes: DEFAULT_HISTORY_MINUTES,
       maxFrames: DEFAULT_MAX_FRAMES,
+      workerCount: DEFAULT_WORKER_COUNT,
+      maxWorkerCount: MAX_WORKER_COUNT,
       workerUrl: defaultWorkerUrl
     })
   });

@@ -6,7 +6,8 @@
  * chunk layer. This is deliberately a classic script so it can be loaded by
  * the PWA and the native WKWebView without a bundler.
  *
- * Load after hrrr-zarr-adapter.js and
+ * Load after hrrr-zarr-adapter.js,
+ * experimental/raw-weather/hrrr-subhourly-adapter.js, and
  * experimental/raw-weather/mrms-browser-adapter.js:
  *
  *   const session = NearcastRawMap.createSession({ mode: "both" });
@@ -28,12 +29,13 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createNearcastRawMapApi(root) {
   "use strict";
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.3.0";
   const DEFAULT_WIDTH = 512;
   const DEFAULT_HEIGHT = 384;
   const DEFAULT_FORECAST_FRAMES = 6;
   const DEFAULT_HISTORY_FRAMES = 6;
   const DEFAULT_HISTORY_MINUTES = 90;
+  const DEFAULT_OBSERVED_TARGET_TOLERANCE_MINUTES = 6;
   const DEFAULT_ENCODING = Object.freeze({
     type: "uint8-dbz",
     dbzMin: 0,
@@ -46,17 +48,21 @@
   });
   const MAX_TEXTURE_PIXELS = 1_048_576;
   const MAX_FORECAST_FRAMES = 12;
+  const MAX_OBSERVED_FRAMES = 24;
   const MAX_MERCATOR_LATITUDE = 85.05112878;
 
   function support(dependencies = {}) {
     const hrrr = dependencies.hrrr || root.NearcastHrrrZarr;
+    const hrrrSubhourly = dependencies.hrrrSubhourly || root.NearcastHrrrSubhourly;
     const mrms = dependencies.mrms || root.NearcastMrms;
     const urlApi = dependencies.urlApi || root.URL;
     const BlobCtor = dependencies.Blob || root.Blob;
     return Object.freeze({
       supported: Boolean(urlApi?.createObjectURL && urlApi?.revokeObjectURL && BlobCtor),
       blobs: Boolean(urlApi?.createObjectURL && urlApi?.revokeObjectURL && BlobCtor),
-      hrrr: Boolean(hrrr?.createClient && hrrr?.projectLonLat),
+      hrrr: Boolean(hrrrSubhourly?.createClient || (hrrr?.createClient && hrrr?.projectLonLat)),
+      hrrrSubhourly: Boolean(hrrrSubhourly?.createClient),
+      hrrrHourly: Boolean(hrrr?.createClient && hrrr?.projectLonLat),
       mrms: Boolean(mrms?.createClient),
       abortController: typeof root.AbortController === "function"
     });
@@ -65,6 +71,7 @@
   function createSession(options = {}) {
     const dependencies = {
       hrrr: options.hrrr || root.NearcastHrrrZarr,
+      hrrrSubhourly: options.hrrrSubhourly || root.NearcastHrrrSubhourly,
       mrms: options.mrms || root.NearcastMrms,
       urlApi: options.urlApi || root.URL,
       Blob: options.Blob || root.Blob
@@ -75,6 +82,7 @@
     assertTextureBudget(defaultWidth, defaultHeight);
 
     let hrrrClient = null;
+    let hrrrSubhourlyClient = null;
     let mrmsClient = null;
     let activeController = null;
     let activeResult = null;
@@ -105,6 +113,29 @@
       const forecastSelection = normalizeForecastSelection(
         input.forecastFrames ?? options.forecastFrames ?? DEFAULT_FORECAST_FRAMES
       );
+      const historyMinutes = clampNumber(
+        input.historyMinutes ?? options.historyMinutes,
+        DEFAULT_HISTORY_MINUTES,
+        15,
+        180
+      );
+      const observedSelection = normalizeObservedSelection({
+        targetTimes: input.observedTimes
+          ?? options.observedTimes
+          ?? (Array.isArray(input.historyFrames) ? input.historyFrames : null)
+          ?? (Array.isArray(options.historyFrames) ? options.historyFrames : null),
+        frameCount: Array.isArray(input.historyFrames)
+          ? undefined
+          : input.historyFrames ?? (Array.isArray(options.historyFrames) ? undefined : options.historyFrames),
+        historyMinutes,
+        stepMinutes: input.historyStepMinutes
+          ?? input.observedCadenceMinutes
+          ?? options.historyStepMinutes
+          ?? options.observedCadenceMinutes,
+        now: input.observedNow ?? options.observedNow,
+        targetToleranceMinutes: input.observedTargetToleranceMinutes
+          ?? options.observedTargetToleranceMinutes
+      });
       const localUrls = new Set();
       const startedAt = nowMs();
 
@@ -118,18 +149,9 @@
         encoding,
         place: cleanPlace(input.place),
         forecastSelection,
-        historyFrames: clampInteger(
-          input.historyFrames ?? options.historyFrames,
-          DEFAULT_HISTORY_FRAMES,
-          1,
-          6
-        ),
-        historyMinutes: clampNumber(
-          input.historyMinutes ?? options.historyMinutes,
-          DEFAULT_HISTORY_MINUTES,
-          15,
-          180
-        ),
+        observedSelection,
+        historyFrames: observedSelection.count,
+        historyMinutes: observedSelection.historyMinutes,
         onUpdate,
         localUrls,
         options
@@ -141,6 +163,8 @@
         bounds,
         width,
         height,
+        observedFrames: observedSelection.count,
+        observedTargetTimes: observedSelection.targetTimes.length,
         forecastFrames: forecastSelection.count
       });
 
@@ -232,6 +256,9 @@
           height: context.height,
           maxFrames: context.historyFrames,
           minutes: context.historyMinutes,
+          now: context.observedSelection.now,
+          targetTimes: context.observedSelection.targetTimes,
+          targetToleranceMinutes: context.observedSelection.targetToleranceMinutes,
           maxTextureBytes: context.width * context.height * context.historyFrames,
           threshold: context.encoding.threshold,
           dbzMin: context.encoding.dbzMin,
@@ -271,6 +298,92 @@
     }
 
     async function loadForecast(context) {
+      const validTimes = context.forecastSelection.adapterOptions?.validTimes;
+      if (dependencies.hrrrSubhourly?.createClient && Array.isArray(validTimes) && validTimes.length) {
+        try {
+          return await loadSubhourlyForecast(context, validTimes);
+        } catch (error) {
+          if (isAbortError(error) || context.signal.aborted) throw error;
+          emit(context, {
+            stage: "forecast-subhourly-fallback",
+            provider: "noaa-hrrr-subhourly",
+            fallbackProvider: "noaa-hrrr-zarr",
+            error: serializeProviderError("forecast", error)
+          });
+          hrrrSubhourlyClient?.destroy?.();
+          hrrrSubhourlyClient = null;
+        }
+      }
+      return loadHourlyForecast(context);
+    }
+
+    async function loadSubhourlyForecast(context, validTimes) {
+      const api = dependencies.hrrrSubhourly;
+      if (!hrrrSubhourlyClient) {
+        hrrrSubhourlyClient = api.createClient(context.options.hrrrSubhourlyClientOptions || {});
+      }
+      emit(context, {
+        stage: "forecast-discovering",
+        provider: "noaa-hrrr-subhourly",
+        targetFrames: validTimes.length
+      });
+      const forecast = await hrrrSubhourlyClient.loadForecast({
+        validTimes,
+        now: context.forecastSelection.now,
+        bounds: context.bounds,
+        width: context.width,
+        height: context.height,
+        threshold: context.encoding.threshold,
+        dbzMin: context.encoding.dbzMin,
+        dbzMax: context.encoding.dbzMax,
+        signal: context.signal,
+        retainTextures: true,
+        onFrame(frame, progress) {
+          emit(context, {
+            stage: "forecast-subhourly-progress",
+            provider: frame.provider || "noaa-hrrr-subhourly",
+            completed: progress.index + 1,
+            total: progress.count,
+            progress: progress.progress,
+            validTime: frame.validTime
+          });
+        }
+      });
+      throwIfAborted(context.signal);
+      emit(context, {
+        stage: "forecast-loading",
+        provider: forecast.provider || "noaa-hrrr-subhourly",
+        cycleTime: forecast.cycleTime,
+        frames: forecast.frames.length
+      });
+      return forecast.frames.map((frame) => packageTexture(context, {
+        kind: "forecast",
+        provider: frame.provider || forecast.provider || "noaa-hrrr-subhourly",
+        attribution: forecast.attribution || "NOAA/NWS HRRR",
+        visualMetric: "simulated-reflectivity",
+        validTime: frame.validTime,
+        texture: frame.data,
+        encoding: frame.encoding || context.encoding,
+        stats: {
+          precipPixels: frame.metrics?.precipPixels,
+          minDbz: frame.metrics?.minDbz,
+          maxDbz: frame.metrics?.maxDbz,
+          outputPixels: frame.metrics?.outputPixels || frame.data?.length
+        },
+        source: {
+          product: "wrfsubhf/REFC",
+          cycleTime: frame.cycleTime || forecast.cycleTime,
+          forecastHour: Number(frame.forecastMinutes) / 60,
+          forecastMinutes: frame.forecastMinutes,
+          url: frame.sourceUrl || frame.url || null,
+          rangeStart: frame.rangeStart,
+          rangeEnd: frame.rangeEnd,
+          metrics: frame.metrics || null
+        }
+      }));
+    }
+
+    async function loadHourlyForecast(context) {
       const api = dependencies.hrrr;
       if (!api?.createClient || !api?.projectLonLat) {
         throw codedError("HRRR_ADAPTER_UNAVAILABLE", "NearcastHrrrZarr must be loaded before raw-map-runtime.js.");
@@ -364,6 +477,7 @@
     function cancelActivePrepare() {
       if (activeController && !activeController.signal.aborted) activeController.abort();
       mrmsClient?.cancel?.();
+      hrrrSubhourlyClient?.cancel?.();
       activeController = null;
     }
 
@@ -374,8 +488,10 @@
 
     function releaseClients() {
       mrmsClient?.destroy?.();
+      hrrrSubhourlyClient?.destroy?.();
       hrrrClient?.clearCache?.();
       mrmsClient = null;
+      hrrrSubhourlyClient = null;
       hrrrClient = null;
     }
 
@@ -659,6 +775,88 @@
     bytes.set(header, 12);
     bytes.set(payload, 12 + header.byteLength);
     return bytes;
+  }
+
+  function normalizeObservedSelection(input = {}) {
+    const now = validDateOrNow(input.now);
+    const requestedHistoryMinutes = clampNumber(
+      input.historyMinutes,
+      DEFAULT_HISTORY_MINUTES,
+      15,
+      180
+    );
+    const explicitTimes = normalizeObservedTargetTimes(input.targetTimes)
+      .slice(-MAX_OBSERVED_FRAMES);
+    const stepMinutes = clampNumber(input.stepMinutes, 0, 0, 30);
+    const generatedTimes = !explicitTimes.length && stepMinutes > 0
+      ? canonicalObservedTargetTimes(now, requestedHistoryMinutes, stepMinutes)
+      : [];
+    const targetTimes = explicitTimes.length ? explicitTimes : generatedTimes;
+    const oldestTargetMs = targetTimes.length ? Date.parse(targetTimes[0]) : NaN;
+    const targetSpanMinutes = Number.isFinite(oldestTargetMs)
+      ? Math.ceil((now.getTime() - oldestTargetMs) / 60_000) + 2
+      : 0;
+    const historyMinutes = clampNumber(
+      Math.max(requestedHistoryMinutes, targetSpanMinutes),
+      requestedHistoryMinutes,
+      15,
+      180
+    );
+    const count = targetTimes.length || clampInteger(
+      input.frameCount,
+      DEFAULT_HISTORY_FRAMES,
+      1,
+      MAX_OBSERVED_FRAMES
+    );
+    return Object.freeze({
+      count,
+      historyMinutes,
+      now: now.toISOString(),
+      targetTimes: Object.freeze(targetTimes),
+      targetToleranceMinutes: clampNumber(
+        input.targetToleranceMinutes,
+        DEFAULT_OBSERVED_TARGET_TOLERANCE_MINUTES,
+        1,
+        15
+      )
+    });
+  }
+
+  function normalizeObservedTargetTimes(values) {
+    if (!Array.isArray(values)) return [];
+    const timestamps = values
+      .map(observedTimeFromValue)
+      .filter(Number.isFinite);
+    return uniqueNumbers(timestamps)
+      .slice(-MAX_OBSERVED_FRAMES)
+      .map((timestamp) => new Date(timestamp).toISOString());
+  }
+
+  function observedTimeFromValue(value) {
+    const source = value && typeof value === "object" && !(value instanceof Date)
+      ? value.validTime ?? value.timestamp ?? value.time ?? value.observedAt
+      : value;
+    const timestamp = source instanceof Date ? source.getTime() : new Date(source).getTime();
+    return Number.isFinite(timestamp) ? timestamp : NaN;
+  }
+
+  function canonicalObservedTargetTimes(now, historyMinutes, stepMinutes) {
+    const stepMs = Math.max(1, Number(stepMinutes)) * 60_000;
+    const endMs = now.getTime();
+    const startMs = endMs - historyMinutes * 60_000;
+    const timestamps = [];
+    for (let timestamp = startMs; timestamp < endMs; timestamp += stepMs) {
+      timestamps.push(timestamp);
+    }
+    timestamps.push(endMs);
+    return uniqueNumbers(timestamps)
+      .slice(-MAX_OBSERVED_FRAMES)
+      .map((timestamp) => new Date(timestamp).toISOString());
+  }
+
+  function validDateOrNow(value) {
+    const date = value === undefined || value === null ? new Date() : new Date(value);
+    return Number.isFinite(date.getTime()) ? date : new Date();
   }
 
   function normalizeForecastSelection(value) {

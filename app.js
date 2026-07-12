@@ -1,4 +1,4 @@
-const VERSION = "3.0.239";
+const VERSION = "3.0.243";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -588,6 +588,8 @@ const mapState = {
     session: null,
     abortController: null,
     viewportRefreshTimer: 0,
+    fallbackFrames: null,
+    fallbackNowIndex: 0,
     error: "",
     preparedAt: 0,
     matchedFrames: 0,

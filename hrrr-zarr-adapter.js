@@ -858,6 +858,15 @@
         .filter(Boolean), (step) => step.sourceIndex)
         .sort((left, right) => left.sourceIndex - right.sourceIndex);
     }
+    if (Array.isArray(options.validTimes)) {
+      return uniqueBy(options.validTimes
+        .map((value) => {
+          const target = validDate(value).getTime();
+          return nearestStep(steps, (step) => Math.abs(step.validTime.getTime() - target));
+        })
+        .filter(Boolean), (step) => step.sourceIndex)
+        .sort((left, right) => left.sourceIndex - right.sourceIndex);
+    }
     if (Array.isArray(options.hoursAhead)) {
       const now = validDate(options.now || new Date());
       return uniqueBy(options.hoursAhead
