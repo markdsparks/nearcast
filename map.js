@@ -9267,7 +9267,7 @@ function frameUrl(frame) {
 function playbackBounds() {
   const last = Math.max(0, mapState.frames.length - 1);
   if (canonicalRawTimelineActive()) {
-    return { start: 0, end: last, loop: false };
+    return { start: 0, end: last, loop: true };
   }
   if (mapState.timelineKind === "precip") {
     const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, last) : last;

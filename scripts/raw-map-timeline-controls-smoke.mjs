@@ -69,8 +69,8 @@ for (const frameIndex of [0, nowIndex, nowIndex + 1, lastIndex - 1]) {
   harness.mapState.frameIndex = frameIndex;
   assert.deepEqual(
     { ...harness.playbackBounds() },
-    { start: 0, end: lastIndex, loop: false },
-    `canonical playback remains one continuous non-looping range at frame ${frameIndex}`
+    { start: 0, end: lastIndex, loop: true },
+    `canonical playback remains one continuous looping range at frame ${frameIndex}`
   );
 }
 assert.equal(
@@ -78,7 +78,7 @@ assert.equal(
   nowIndex + 1,
   "canonical playback crosses directly from observed Now into forecast guidance"
 );
-assert.equal(harness.nextPlaybackIndexFrom(lastIndex), lastIndex, "canonical playback stops at the end");
+assert.equal(harness.nextPlaybackIndexFrom(lastIndex), 0, "canonical playback cycles back to the first observation");
 
 const observedStepMs = harness.canonicalTimelineStepMs(0);
 const forecastStepMs = harness.canonicalTimelineStepMs(nowIndex);
