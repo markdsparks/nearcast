@@ -377,7 +377,8 @@ assert.equal(
 );
 
 const observedFrame = canonicalObserved[0];
-mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrame);
+const observedFrameIndex = mapHarness.mapState.frames.indexOf(observedFrame);
+mapHarness.mapState.frameIndex = observedFrameIndex;
 observedFrame.provider = "mrms-generated";
 assert.equal(
   mapHarness.maybeSwitchGeneratedRadarToFallback(mapHarness.mapState.frameIndex),
@@ -385,8 +386,8 @@ assert.equal(
   "canonical raw frames bypass the legacy generated-radar fallback router"
 );
 const fallbackEntries = new Map([
-  ["radar-a", fallbackEntry("radar-a", "radar-layer-a", 0.62)],
-  ["radar-b", fallbackEntry("radar-b", "radar-layer-b", 0.16)]
+  ["radar-a", fallbackEntry("radar-a", "radar-layer-a", 0.62, observedFrameIndex)],
+  ["radar-b", fallbackEntry("radar-b", "radar-layer-b", 0.16, observedFrameIndex)]
 ]);
 const paint = new Map();
 const record = rawRendererRecord({
@@ -405,6 +406,286 @@ assert.deepEqual(
   "a fully ready raw frame hides every raster fallback layer as one atomic surface"
 );
 assert.equal(mapHarness.rawMapFrameLayerVisible(observedFrame, record), true);
+
+const transitionPaint = new Map();
+const transitionPaintHistory = [];
+const transitionRecord = rawRendererRecord({
+  indexUrl: observedFrame.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  weatherEntries: new Map([
+    ["radar-a", fallbackEntry("radar-a", "radar-layer-a", 0.62, observedFrameIndex)],
+    ["radar-b", fallbackEntry("radar-b", "radar-layer-b", 0.16, observedFrameIndex)]
+  ]),
+  paint: transitionPaint,
+  paintHistory: transitionPaintHistory
+});
+mapHarness.record = transitionRecord;
+const transitionState = transitionRecord.radarChunkLayerState;
+const observedFrameB = canonicalObserved[1];
+const observedFrameC = canonicalObserved[2];
+const bundleB = rawRendererBundle({
+  indexUrl: observedFrameB.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  frame: "B"
+});
+const bundleC = rawRendererBundle({
+  indexUrl: observedFrameC.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  frame: "C"
+});
+mapHarness.seedRawFrameBundle(observedFrameB.rawMapIndexUrl, bundleB);
+mapHarness.seedRawFrameBundle(observedFrameC.rawMapIndexUrl, bundleC);
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrameB);
+transitionPaintHistory.length = 0;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameB.rawMapIndexUrl);
+assert.equal(
+  transitionState.pendingFrameBundle?.indexUrl,
+  observedFrameB.rawMapIndexUrl,
+  "a decoded cache hit is staged synchronously"
+);
+assert.equal(transitionState.rawFrameHandoff?.phase, "staged");
+assert.equal(mapHarness.mapLibreRawFrameHandoffSuppressesFallback(transitionRecord), true);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "a staged cached raw frame never restores raster fallback opacity"
+);
+
+mapHarness.activatePendingMapLibreRawChunkFrame(transitionState, {
+  deleteTexture() {}
+});
+assert.equal(transitionState.indexUrl, observedFrameB.rawMapIndexUrl);
+assert.equal(transitionState.rawFrameHandoff?.phase, "drawing");
+assert.equal(transitionState.hasSuccessfulDraw, false);
+mapHarness.syncMapLibreRadarChunkFallbackVisibility(transitionRecord);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "fallback stays hidden between GPU activation and the target frame's first draw"
+);
+mapHarness.completeMapLibreRawFrameHandoff(transitionState);
+mapHarness.syncMapLibreRadarChunkFallbackVisibility(transitionRecord);
+assert.equal(transitionState.rawFrameHandoff, null);
+assert.equal(mapHarness.mapLibreRadarChunkReady(transitionRecord), true);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "a successful atomic raw handoff contains no positive fallback-opacity write"
+);
+
+const observedFrameBIndex = mapHarness.mapState.frames.indexOf(observedFrameB);
+transitionRecord.weatherEntries.forEach((entry) => { entry.frameIndex = observedFrameBIndex; });
+transitionPaintHistory.length = 0;
+transitionRecord.weatherEntries.forEach((entry) => {
+  mapHarness.setMapLibreWeatherEntryVisual(transitionRecord, entry, entry.lastSpec);
+});
+assert.equal(transitionPaintHistory.length, transitionRecord.weatherEntries.size);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "updating raster slots for an already committed raw frame never writes positive opacity"
+);
+
+const readyLayerRecord = rawRendererRecord({
+  indexUrl: observedFrameB.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  weatherEntries: new Map(),
+  paint: new Map()
+});
+const readyLayers = new Map([["nearcast-radar-chunks", {}]]);
+const readySources = new Map();
+const initialLayerOpacityHistory = [];
+readyLayerRecord.map.getLayer = (id) => readyLayers.get(id);
+readyLayerRecord.map.getSource = (id) => readySources.get(id);
+readyLayerRecord.map.addSource = (id, source) => { readySources.set(id, source); };
+readyLayerRecord.map.addLayer = (layer) => {
+  readyLayers.set(layer.id, layer);
+  initialLayerOpacityHistory.push(layer.paint["raster-opacity"]);
+};
+mapHarness.record = readyLayerRecord;
+mapHarness.ensureMapLibreWeatherEntry(readyLayerRecord, {
+  key: "ready-fallback",
+  template: "https://example.test/ready/{z}/{x}/{y}.png",
+  renderer: "raster",
+  minZoom: 0,
+  maxZoom: 10,
+  attribution: "Test",
+  opacity: 0.62,
+  frameIndex: observedFrameBIndex
+});
+assert.deepEqual(
+  initialLayerOpacityHistory,
+  [0],
+  "creating a raster slot beneath an already committed raw frame starts fully transparent"
+);
+mapHarness.record = transitionRecord;
+const observedFrameD = canonicalObserved[3];
+const bundleD = rawRendererBundle({
+  indexUrl: observedFrameD.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  frame: "D"
+});
+let resolveBundleD;
+const deferredBundleD = new Promise((resolve) => { resolveBundleD = resolve; });
+mapHarness.seedRawFramePromise(observedFrameD.rawMapIndexUrl, deferredBundleD);
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrameD);
+transitionPaintHistory.length = 0;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameD.rawMapIndexUrl);
+mapHarness.syncMapLibreRadarChunkFallbackVisibility(transitionRecord);
+assert.equal(transitionPaintHistory.length, transitionRecord.weatherEntries.size);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "requesting an uncached raw target never revives the previous frame's raster layer"
+);
+resolveBundleD(bundleD);
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(transitionState.rawFrameHandoff?.phase, "staged");
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "the async load-to-stage handoff contains no stale fallback-opacity write"
+);
+
+mapHarness.mapState.frameIndex = observedFrameBIndex;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameB.rawMapIndexUrl);
+assert.equal(transitionState.indexUrl, observedFrameB.rawMapIndexUrl);
+assert.equal(transitionState.pendingFrameBundle, null);
+const noFallbackForecast = canonicalForecast[0];
+let resolveForecastBundle;
+const deferredForecastBundle = new Promise((resolve) => { resolveForecastBundle = resolve; });
+mapHarness.seedRawFramePromise(noFallbackForecast.rawMapIndexUrl, deferredForecastBundle);
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(noFallbackForecast);
+transitionPaintHistory.length = 0;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, noFallbackForecast.rawMapIndexUrl);
+mapHarness.syncMapLibreRadarChunkFallbackVisibility(transitionRecord);
+assert.equal(transitionPaintHistory.length, transitionRecord.weatherEntries.size);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "an HRRR no-fallback request cannot expose a prior MRMS or NDFD raster surface"
+);
+mapHarness.mapState.frameIndex = observedFrameBIndex;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameB.rawMapIndexUrl);
+resolveForecastBundle(rawRendererBundle({
+  indexUrl: noFallbackForecast.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  frame: "forecast"
+}));
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(
+  transitionState.indexUrl,
+  observedFrameB.rawMapIndexUrl,
+  "a late HRRR load cannot replace the frame selected after it"
+);
+
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrameC);
+transitionPaintHistory.length = 0;
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameC.rawMapIndexUrl);
+assert.equal(transitionState.pendingFrameBundle?.indexUrl, observedFrameC.rawMapIndexUrl);
+assert.equal(
+  mapHarness.stageMapLibreRawChunkFrame(transitionState, observedFrameB.rawMapIndexUrl, bundleB),
+  false,
+  "a stale decoded frame cannot replace a newer scrub target"
+);
+assert.equal(transitionState.pendingFrameBundle?.indexUrl, observedFrameC.rawMapIndexUrl);
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrameB);
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameB.rawMapIndexUrl);
+assert.equal(transitionState.indexUrl, observedFrameB.rawMapIndexUrl);
+assert.equal(transitionState.pendingFrameBundle, null);
+assert.equal(transitionState.rawFrameHandoff, null);
+assert.equal(transitionState.hasSuccessfulDraw, true);
+assert.ok(
+  transitionPaintHistory.every(({ value }) => value === 0),
+  "scrubbing back to the committed raw frame cancels the pending target without a fallback flash"
+);
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrameC);
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameC.rawMapIndexUrl);
+mapHarness.activatePendingMapLibreRawChunkFrame(transitionState, {
+  deleteTexture() {}
+});
+const observedFrameCIndex = mapHarness.mapState.frames.indexOf(observedFrameC);
+transitionRecord.weatherEntries.forEach((entry) => { entry.frameIndex = observedFrameCIndex; });
+const repaintBeforeFailure = transitionRecord.repaintCount;
+mapHarness.failMapLibreRawFrameHandoff(transitionState, "forced draw failure");
+assert.equal(transitionState.hasSuccessfulDraw, false);
+assert.equal(transitionState.status, "error");
+assert.equal(transitionState.rawFrameDrawFailure?.indexUrl, observedFrameC.rawMapIndexUrl);
+assert.equal(transitionRecord.repaintCount, repaintBeforeFailure + 1);
+assert.deepEqual(
+  [...transitionRecord.weatherEntries.values()].map((entry) => transitionPaint.get(entry.layerId)),
+  [0.62, 0.16],
+  "a genuine target draw failure restores the exact raster fallbacks"
+);
+mapHarness.failMapLibreRawFrameHandoff(transitionState, "forced draw failure again");
+assert.equal(
+  transitionRecord.repaintCount,
+  repaintBeforeFailure + 1,
+  "a latched terminal draw failure cannot schedule an unbounded repaint loop"
+);
+mapHarness.requestMapLibreRawChunkFrame(transitionState, observedFrameC.rawMapIndexUrl);
+assert.equal(
+  transitionState.pendingFrameLoadUrl,
+  "",
+  "the same failed target remains latched until the selected frame changes"
+);
+
+const uploadChunk = {
+  width: 1,
+  height: 1,
+  payload: new Uint8Array([32]),
+  texture: null
+};
+const allocatedTexture = { id: "failed-upload" };
+let deletedUploadTexture = null;
+assert.throws(() => mapHarness.ensureRadarChunkTexture({ texturesCreated: 0 }, {
+  TEXTURE_2D: 1,
+  UNPACK_ALIGNMENT: 1,
+  TEXTURE_WRAP_S: 1,
+  TEXTURE_WRAP_T: 1,
+  CLAMP_TO_EDGE: 1,
+  TEXTURE_MIN_FILTER: 1,
+  TEXTURE_MAG_FILTER: 1,
+  LINEAR: 1,
+  RGBA: 1,
+  UNSIGNED_BYTE: 1,
+  createTexture: () => allocatedTexture,
+  bindTexture() {},
+  pixelStorei() {},
+  texParameteri() {},
+  texImage2D() { throw new Error("forced upload failure"); },
+  deleteTexture(texture) { deletedUploadTexture = texture; }
+}, uploadChunk), /forced upload failure/);
+assert.equal(uploadChunk.texture, null);
+assert.equal(deletedUploadTexture, allocatedTexture, "a failed GPU upload releases its uncommitted texture");
+
+const terminalRenderRecord = rawRendererRecord({
+  indexUrl: observedFrameC.rawMapIndexUrl,
+  coverageBounds: { minLon: -91, minLat: 38, maxLon: -89, maxLat: 40 },
+  weatherEntries: new Map([
+    ["radar-c", fallbackEntry("radar-c", "radar-layer-c", 0.62, observedFrameCIndex)]
+  ]),
+  paint: new Map()
+});
+mapHarness.record = terminalRenderRecord;
+let failedUseProgramCalls = 0;
+const terminalFailureGl = {
+  useProgram() {
+    failedUseProgramCalls += 1;
+    throw new Error("forced render failure");
+  },
+  deleteTexture() {}
+};
+mapHarness.renderRadarChunkLayer(
+  terminalRenderRecord.radarChunkLayerState,
+  terminalFailureGl,
+  new Float32Array(16)
+);
+mapHarness.renderRadarChunkLayer(
+  terminalRenderRecord.radarChunkLayerState,
+  terminalFailureGl,
+  new Float32Array(16)
+);
+assert.equal(failedUseProgramCalls, 1, "a terminal GPU failure is not retried by the next paint");
+assert.equal(terminalRenderRecord.repaintCount, 1, "the render failure schedules only its fallback paint");
+
+mapHarness.mapState.frameIndex = mapHarness.mapState.frames.indexOf(observedFrame);
+mapHarness.record = record;
 
 record.radarChunkLayerState.index.coverageBounds = {
   minLon: -90.1,
@@ -433,10 +714,11 @@ console.log(JSON.stringify({
   atomicRawFallbackSwitch: true
 }, null, 2));
 
-function fallbackEntry(key, layerId, opacity) {
+function fallbackEntry(key, layerId, opacity, frameIndex) {
   return {
     key,
     layerId,
+    frameIndex,
     visible: true,
     lastSpec: { opacity }
   };
@@ -449,32 +731,75 @@ function assertCadence(values, minutes, label) {
   }
 }
 
-function rawRendererRecord({ indexUrl, coverageBounds, weatherEntries, paint }) {
+function rawRendererRecord({ indexUrl, coverageBounds, weatherEntries, paint, paintHistory = [] }) {
   const viewport = {
     getWest: () => -90.8,
     getSouth: () => 38.2,
     getEast: () => -89.2,
     getNorth: () => 39.8
   };
-  return {
+  const record = {
+    repaintCount: 0,
     weatherEntries,
     liveWeatherKeys: new Set(weatherEntries.keys()),
     radarChunkLayerState: {
       indexUrl,
+      requestedIndexUrl: indexUrl,
+      pendingFrameLoadUrl: "",
+      pendingFrameBundle: null,
+      rawFrameHandoff: null,
+      rawFrameDrawFailure: null,
       status: "ready",
       hasSuccessfulDraw: true,
       activeZoom: 0,
       index: { provider: "nearcast-raw-map", coverageBounds },
-      chunks: [{ levelZoom: 0, bounds: coverageBounds }],
+      chunks: [{
+        levelZoom: 0,
+        x: 0,
+        y: 0,
+        bounds: coverageBounds,
+        vertices: [0, 0, 1, 0, 0, 1, 1, 1],
+        payload: new Uint8Array([32]),
+        texture: { frame: indexUrl }
+      }],
+      chunkLoadSeq: 0,
+      program: {},
+      glError: "",
       map: null
     },
     map: {
       getBounds: () => viewport,
+      getZoom: () => 0,
       getLayer: () => ({}),
+      triggerRepaint() { record.repaintCount += 1; },
       setPaintProperty(layerId, property, value) {
-        if (property === "raster-opacity") paint.set(layerId, value);
+        if (property === "raster-opacity") {
+          paint.set(layerId, value);
+          paintHistory.push({ layerId, value });
+        }
       }
     }
+  };
+  return record;
+}
+
+function rawRendererBundle({ indexUrl, coverageBounds, frame }) {
+  return {
+    index: {
+      provider: "nearcast-raw-map",
+      coverageBounds,
+      indexUrl
+    },
+    chunks: [{
+      levelZoom: 0,
+      x: 0,
+      y: 0,
+      bounds: coverageBounds,
+      vertices: [0, 0, 1, 0, 0, 1, 1, 1],
+      payload: new Uint8Array([48]),
+      texture: null,
+      frame
+    }]
   };
 }
 
@@ -496,11 +821,14 @@ function createMapHarness() {
   }
   const sandbox = {
     mapState,
+    mapLibreRawFrameCache: new Map(),
     state: { activePlace: { latitude: 38.7, longitude: -89.9 } },
     record: null,
     Date: FixedDate,
     MAPLIBRE_RADAR_CHUNK_LAYER_ID: "nearcast-radar-chunks",
+    MAPLIBRE_WEATHER_PREFIX: "nearcast-weather",
     MAPLIBRE_WEATHER_PRELOAD_OPACITY: 0.001,
+    MAP_MAX_ZOOM: 18,
     RAW_MAP_OBSERVED_WINDOW_MINUTES: 90,
     RAW_MAP_OBSERVED_STEP_MINUTES: 5,
     RAW_MAP_FORECAST_WINDOW_MINUTES: 180,
@@ -527,9 +855,21 @@ function createMapHarness() {
       record.map.setPaintProperty(entry.layerId, "raster-opacity", opacity);
       entry.visible = opacity > MAPLIBRE_WEATHER_PRELOAD_OPACITY;
     }
-    function setMapLibreWeatherEntryVisual(record, entry, spec) {
-      setMapLibreWeatherEntryOpacity(record, entry, Number(spec?.opacity) || 0);
+    function mapLibreWeatherOpacity(spec) { return Number(spec?.opacity) || 0; }
+    function weatherVisualTone() { return { mapLibreSaturation: 0, mapLibreContrast: 0 }; }
+    function mapLibreWeatherLayerPaint(opacity) { return { "raster-opacity": opacity }; }
+    function mapLibreWeatherBeforeLayer() { return undefined; }
+    function syncRawMapDebugAttributes() {}
+    function radarChunkMetasFromIndex() { return []; }
+    function radarChunkKey(levelZoom, x, y) { return levelZoom + "/" + x + "/" + y; }
+    function loadMapLibreRawFrameBundle(indexUrl) {
+      const entry = mapLibreRawFrameCache.get(indexUrl);
+      return entry?.promise || Promise.reject(new Error("missing test raw frame"));
     }
+    function radarChunkRenderZoom() { return 0; }
+    function scheduleRadarChunkViewportLoads() {}
+    function pruneRadarChunkCache() {}
+    function radarChunkOpacityForZoom() { return 0.94; }
     function syncRawMapPresentation() {}
     function syncMapLibreDiagnosticReadout() {}
     function generatedRadarRefreshTimelineKind() { return "precip"; }
@@ -550,7 +890,22 @@ function createMapHarness() {
     ${extractFunction(source, "mapLibreSourceBounds")}
     ${extractFunction(source, "radarChunkCoverageContainsViewport")}
     ${extractFunction(source, "mapLibreRadarChunkReady")}
+    ${extractFunction(source, "mapLibreRawCommittedSurfaceReady")}
+    ${extractFunction(source, "mapLibreRawFrameBundleUsable")}
+    ${extractFunction(source, "mapLibreRawFrameHandoffSuppressesFallback")}
+    ${extractFunction(source, "setMapLibreWeatherEntryVisual")}
     ${extractFunction(source, "syncMapLibreRadarChunkFallbackVisibility")}
+    ${extractFunction(source, "requestMapLibreRawChunkFrame")}
+    ${extractFunction(source, "stageMapLibreRawChunkFrame")}
+    ${extractFunction(source, "completeMapLibreRawFrameHandoff")}
+    ${extractFunction(source, "failMapLibreRawFrameHandoff")}
+    ${extractFunction(source, "discardRadarChunkTextures")}
+    ${extractFunction(source, "activatePendingMapLibreRawChunkFrame")}
+    ${extractFunction(source, "radarChunkRgbaPayload")}
+    ${extractFunction(source, "ensureRadarChunkTexture")}
+    ${extractFunction(source, "renderRadarChunkLayer")}
+    ${extractFunction(source, "mapLibreWeatherSourceSignature")}
+    ${extractFunction(source, "ensureMapLibreWeatherEntry")}
     ${extractFunction(source, "rawMapFrameLayerVisible")}
     ${extractFunction(source, "rawMapEffectiveVisualMetric")}
     ${extractFunction(source, "maybeSwitchGeneratedRadarToFallback")}
@@ -563,11 +918,37 @@ function createMapHarness() {
       rawMapObservedTargetTimes,
       rawMapForecastTargetTimes,
       mapLibreRadarChunkReady,
+      mapLibreRawFrameHandoffSuppressesFallback,
+      setMapLibreWeatherEntryVisual,
       syncMapLibreRadarChunkFallbackVisibility,
+      requestMapLibreRawChunkFrame,
+      stageMapLibreRawChunkFrame,
+      completeMapLibreRawFrameHandoff,
+      failMapLibreRawFrameHandoff,
+      activatePendingMapLibreRawChunkFrame,
+      ensureRadarChunkTexture,
+      renderRadarChunkLayer,
+      ensureMapLibreWeatherEntry,
       rawMapFrameLayerVisible,
       rawMapEffectiveVisualMetric,
       maybeSwitchGeneratedRadarToFallback,
-      shouldRefreshGeneratedRadarForViewport
+      shouldRefreshGeneratedRadarForViewport,
+      seedRawFrameBundle(indexUrl, bundle) {
+        mapLibreRawFrameCache.set(indexUrl, {
+          status: "ready",
+          bundle,
+          lastUsedAt: Date.now(),
+          promise: Promise.resolve(bundle)
+        });
+      },
+      seedRawFramePromise(indexUrl, promise) {
+        mapLibreRawFrameCache.set(indexUrl, {
+          status: "loading",
+          bundle: null,
+          lastUsedAt: Date.now(),
+          promise
+        });
+      }
     };
   `, sandbox);
   return {
@@ -575,7 +956,10 @@ function createMapHarness() {
     get record() { return sandbox.record; },
     set record(value) {
       sandbox.record = value;
-      if (value?.radarChunkLayerState) value.radarChunkLayerState.map = value.map;
+      if (value?.radarChunkLayerState) {
+        value.radarChunkLayerState.map = value.map;
+        value.radarChunkLayerState.record = value;
+      }
     },
     ...sandbox.api
   };

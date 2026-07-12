@@ -3169,6 +3169,63 @@ function mapLibreRadarChunkReady(record = mapLibreCurrentRecord()) {
   );
 }
 
+function mapLibreRawCommittedSurfaceReady(record = mapLibreCurrentRecord()) {
+  const state = record?.radarChunkLayerState;
+  if (!state || !String(state.indexUrl || "").startsWith("blob:")) return false;
+  const activeZoom = state.activeZoom ?? radarChunkActiveZoom(state);
+  return Boolean(
+    state.status === "ready"
+    && state.program
+    && state.hasSuccessfulDraw
+    && !state.glError
+    && radarChunkCoverageContainsViewport(state)
+    && (state.chunks || []).some((chunk) => (
+      chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds)
+    ))
+    && record?.map?.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
+  );
+}
+
+function mapLibreRawFrameBundleUsable(state, bundle) {
+  if (!state?.map || bundle?.index?.provider !== "nearcast-raw-map" || !bundle?.chunks?.length) return false;
+  const candidate = {
+    map: state.map,
+    index: bundle.index,
+    chunks: bundle.chunks,
+    chunkMetas: []
+  };
+  if (!radarChunkCoverageContainsViewport(candidate)) return false;
+  const activeZoom = radarChunkActiveZoom(candidate);
+  return bundle.chunks.some((chunk) => (
+    chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds)
+  ));
+}
+
+function mapLibreRawFrameHandoffSuppressesFallback(record = mapLibreCurrentRecord()) {
+  const state = record?.radarChunkLayerState;
+  const handoff = state?.rawFrameHandoff;
+  if (
+    !handoff?.previousDrawable
+    || handoff.targetIndexUrl !== state.requestedIndexUrl
+    || handoff.targetIndexUrl !== radarChunkIndexUrl()
+    || !record?.map?.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
+  ) return false;
+  if (handoff.phase === "staged") {
+    return state.pendingFrameBundle?.indexUrl === handoff.targetIndexUrl
+      && mapLibreRawFrameBundleUsable(state, state.pendingFrameBundle.bundle);
+  }
+  if (handoff.phase === "drawing") {
+    const activeZoom = state.activeZoom ?? radarChunkActiveZoom(state);
+    return state.indexUrl === handoff.targetIndexUrl
+      && state.status === "ready"
+      && radarChunkCoverageContainsViewport(state)
+      && (state.chunks || []).some((chunk) => (
+        chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds)
+      ));
+  }
+  return false;
+}
+
 function radarChunkCoverageContainsViewport(state) {
   if (state?.index?.provider !== "nearcast-raw-map") return true;
   const source = mapLibreSourceBounds(state.index.coverageBounds || state.index.bounds);
@@ -3182,13 +3239,21 @@ function radarChunkCoverageContainsViewport(state) {
 
 function syncMapLibreRadarChunkFallbackVisibility(record = mapLibreCurrentRecord()) {
   if (!record?.weatherEntries) return;
-  const useChunkRadar = mapLibreRadarChunkReady(record);
+  const useChunkRadar = mapLibreRadarChunkReady(record)
+    || mapLibreRawFrameHandoffSuppressesFallback(record);
+  const activeFrameIndex = mapState.frameIndex;
   record.weatherEntries.forEach((entry) => {
     if (!entry || !record.map?.getLayer?.(entry.layerId)) return;
     if (useChunkRadar) {
       setMapLibreWeatherEntryOpacity(record, entry, 0);
-    } else if (record.liveWeatherKeys?.has(entry.key) && entry.lastSpec) {
+    } else if (
+      entry.frameIndex === activeFrameIndex
+      && record.liveWeatherKeys?.has(entry.key)
+      && entry.lastSpec
+    ) {
       setMapLibreWeatherEntryVisual(record, entry, entry.lastSpec);
+    } else {
+      setMapLibreWeatherEntryOpacity(record, entry, 0);
     }
   });
   syncRawMapPresentation(record);
@@ -3225,6 +3290,8 @@ function createMapLibreRadarChunkLayer(indexUrl) {
     requestedIndexUrl: indexUrl,
     pendingFrameLoadUrl: "",
     pendingFrameBundle: null,
+    rawFrameHandoff: null,
+    rawFrameDrawFailure: null,
     map: null,
     record: null,
     status: "idle",
@@ -3280,41 +3347,141 @@ function requestMapLibreRawChunkFrame(state, indexUrl) {
   if (!state || !nextIndexUrl) return;
   if (
     state.requestedIndexUrl === nextIndexUrl
+    && state.rawFrameDrawFailure?.indexUrl === nextIndexUrl
+  ) return;
+  if (
+    state.requestedIndexUrl === nextIndexUrl
     && (
       state.indexUrl === nextIndexUrl
       || state.pendingFrameLoadUrl === nextIndexUrl
       || state.pendingFrameBundle?.indexUrl === nextIndexUrl
     )
   ) return;
+  if (state.indexUrl === nextIndexUrl && mapLibreRawCommittedSurfaceReady(state.record)) {
+    state.requestedIndexUrl = nextIndexUrl;
+    state.pendingFrameLoadUrl = "";
+    state.pendingFrameBundle = null;
+    state.rawFrameHandoff = null;
+    state.rawFrameDrawFailure = null;
+    state.error = "";
+    syncRawMapDebugAttributes();
+    syncMapLibreRadarChunkFallbackVisibility(state.record);
+    state.map?.triggerRepaint?.();
+    return;
+  }
+  if (state.requestedIndexUrl !== nextIndexUrl) state.rawFrameDrawFailure = null;
   state.requestedIndexUrl = nextIndexUrl;
   state.pendingFrameLoadUrl = nextIndexUrl;
   state.pendingFrameBundle = null;
+  state.rawFrameHandoff = null;
+  state.error = "";
   syncRawMapDebugAttributes();
+  const cached = mapLibreRawFrameCache.get(nextIndexUrl);
+  if (cached?.status === "ready" && cached.bundle) {
+    cached.lastUsedAt = Date.now();
+    stageMapLibreRawChunkFrame(state, nextIndexUrl, cached.bundle);
+    return;
+  }
   loadMapLibreRawFrameBundle(nextIndexUrl)
     .then((bundle) => {
       if (state.removed || state.requestedIndexUrl !== nextIndexUrl) return;
-      state.pendingFrameLoadUrl = "";
-      state.pendingFrameBundle = { indexUrl: nextIndexUrl, bundle };
-      syncRawMapDebugAttributes();
-      state.map?.triggerRepaint?.();
+      stageMapLibreRawChunkFrame(state, nextIndexUrl, bundle);
     })
     .catch((error) => {
       if (state.removed || state.requestedIndexUrl !== nextIndexUrl) return;
-      state.pendingFrameLoadUrl = "";
-      state.error = error?.message || "Raw frame preload failed";
-      syncRawMapDebugAttributes();
-      syncMapLibreRadarChunkFallbackVisibility(state.record);
+      failMapLibreRawFrameHandoff(state, error?.message || "Raw frame preload failed", {
+        targetIndexUrl: nextIndexUrl,
+        terminal: true
+      });
     });
+}
+
+function stageMapLibreRawChunkFrame(state, indexUrl, bundle) {
+  const nextIndexUrl = String(indexUrl || "").trim();
+  if (!state || state.removed || !nextIndexUrl || state.requestedIndexUrl !== nextIndexUrl) return false;
+  state.pendingFrameLoadUrl = "";
+  if (!mapLibreRawFrameBundleUsable(state, bundle)) {
+    failMapLibreRawFrameHandoff(state, "Raw frame does not cover the active viewport.", {
+      targetIndexUrl: nextIndexUrl,
+      terminal: false,
+      repaint: false
+    });
+    return false;
+  }
+  const previousDrawable = mapLibreRawCommittedSurfaceReady(state.record);
+  state.pendingFrameBundle = { indexUrl: nextIndexUrl, bundle };
+  state.rawFrameHandoff = previousDrawable && state.indexUrl !== nextIndexUrl
+    ? {
+        targetIndexUrl: nextIndexUrl,
+        phase: "staged",
+        previousDrawable: true
+      }
+    : null;
+  state.rawFrameDrawFailure = null;
+  state.error = "";
+  syncRawMapDebugAttributes();
+  syncMapLibreRadarChunkFallbackVisibility(state.record);
+  state.map?.triggerRepaint?.();
+  return true;
+}
+
+function completeMapLibreRawFrameHandoff(state) {
+  if (!state) return;
+  state.hasSuccessfulDraw = true;
+  state.rawFrameDrawFailure = null;
+  state.error = "";
+  if (
+    state.rawFrameHandoff?.targetIndexUrl === state.indexUrl
+    && state.indexUrl === state.requestedIndexUrl
+  ) state.rawFrameHandoff = null;
+}
+
+function failMapLibreRawFrameHandoff(state, message = "Raw frame unavailable", options = {}) {
+  if (!state) return;
+  const targetIndexUrl = String(
+    options.targetIndexUrl
+    || state.rawFrameHandoff?.targetIndexUrl
+    || state.pendingFrameLoadUrl
+    || state.requestedIndexUrl
+    || ""
+  );
+  const terminal = options.terminal !== false;
+  const duplicateTerminalFailure = terminal
+    && state.rawFrameDrawFailure?.indexUrl === targetIndexUrl;
+  state.pendingFrameLoadUrl = "";
+  state.pendingFrameBundle = null;
+  state.rawFrameHandoff = null;
+  state.error = String(message || "Raw frame unavailable");
+  if (state.indexUrl === targetIndexUrl) {
+    state.hasSuccessfulDraw = false;
+    if (terminal) state.status = "error";
+  }
+  state.rawFrameDrawFailure = terminal
+    ? { indexUrl: targetIndexUrl, error: state.error }
+    : null;
+  syncRawMapDebugAttributes();
+  syncMapLibreRadarChunkFallbackVisibility(state.record);
+  if (options.repaint !== false && !duplicateTerminalFailure) state.map?.triggerRepaint?.();
 }
 
 function activatePendingMapLibreRawChunkFrame(state, gl) {
   if (!state || !gl) return;
   const pending = state?.pendingFrameBundle;
   if (!pending || pending.indexUrl !== state.requestedIndexUrl) return;
-  (state.chunks || []).forEach((chunk) => {
-    if (chunk.texture) gl.deleteTexture(chunk.texture);
-    chunk.texture = null;
-  });
+  if (!mapLibreRawFrameBundleUsable(state, pending.bundle)) {
+    failMapLibreRawFrameHandoff(state, "Raw frame does not cover the active viewport.", {
+      targetIndexUrl: pending.indexUrl,
+      terminal: false,
+      repaint: false
+    });
+    return;
+  }
+  if (state.rawFrameHandoff?.targetIndexUrl === pending.indexUrl) {
+    state.rawFrameHandoff.phase = "drawing";
+  } else {
+    state.rawFrameHandoff = null;
+  }
+  discardRadarChunkTextures(state, gl);
   state.indexUrl = pending.indexUrl;
   state.index = pending.bundle.index;
   state.chunkMetas = radarChunkMetasFromIndex(pending.bundle.index);
@@ -3333,6 +3500,7 @@ function activatePendingMapLibreRawChunkFrame(state, gl) {
   state.pendingFrameLoadUrl = "";
   state.status = state.chunks.length ? "ready" : "empty";
   state.hasSuccessfulDraw = false;
+  state.rawFrameDrawFailure = null;
   state.error = "";
 }
 
@@ -3743,10 +3911,20 @@ function radarChunkOpacityForZoom(zoom) {
 }
 
 function renderRadarChunkLayer(state, gl, matrix) {
+  if (!gl || !matrix || !state?.program) return;
+  if (state.rawFrameDrawFailure?.indexUrl === state.requestedIndexUrl) return;
   activatePendingMapLibreRawChunkFrame(state, gl);
-  if (!gl || !matrix || !state?.program || !["loading", "ready"].includes(state.status)) return;
+  if (!["loading", "ready"].includes(state.status)) return;
   if (String(state.indexUrl || "").startsWith("blob:") && state.indexUrl !== state.requestedIndexUrl) return;
-  if (!radarChunkCoverageContainsViewport(state)) return;
+  if (!radarChunkCoverageContainsViewport(state)) {
+    if (state.index?.provider === "nearcast-raw-map" && state.indexUrl === state.requestedIndexUrl) {
+      failMapLibreRawFrameHandoff(state, "Raw frame does not cover the active viewport.", {
+        terminal: false,
+        repaint: false
+      });
+    }
+    return;
+  }
   const activeZoom = radarChunkActiveZoom(state);
   const renderZoom = radarChunkRenderZoom(state);
   scheduleRadarChunkViewportLoads(state, activeZoom);
@@ -3756,56 +3934,76 @@ function renderRadarChunkLayer(state, gl, matrix) {
   state.drawnChunks = 0;
   state.renderCalls += 1;
   syncMapLibreRadarChunkFallbackVisibility(state.record);
-  if (!chunks.length) return;
+  if (!chunks.length) {
+    if (state.index?.provider === "nearcast-raw-map" && state.indexUrl === state.requestedIndexUrl) {
+      failMapLibreRawFrameHandoff(state, "Raw frame has no drawable viewport chunks.", {
+        terminal: false,
+        repaint: false
+      });
+    }
+    return;
+  }
   pruneRadarChunkCache(state, gl, new Set(chunks.map((chunk) => chunk._nearcastChunkKey).filter(Boolean)));
 
   state.glError = "";
-  gl.useProgram(state.program);
-  if (typeof gl.bindVertexArray === "function") gl.bindVertexArray(null);
-  else gl.getExtension?.("OES_vertex_array_object")?.bindVertexArrayOES?.(null);
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.colorMask(true, true, true, true);
-  gl.disable(gl.CULL_FACE);
-  gl.disable(gl.DEPTH_TEST);
-  gl.disable(gl.SCISSOR_TEST);
-  gl.disable(gl.STENCIL_TEST);
-  gl.depthMask(false);
-  gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.vertices);
-  gl.enableVertexAttribArray(state.attributes.pos);
-  gl.enableVertexAttribArray(state.attributes.tex);
-  gl.vertexAttribPointer(state.attributes.pos, 2, gl.FLOAT, false, 16, 0);
-  gl.vertexAttribPointer(state.attributes.tex, 2, gl.FLOAT, false, 16, 8);
-  gl.uniformMatrix4fv(state.uniforms.matrix, false, matrix);
-  gl.uniform1i(state.uniforms.texture, 0);
-  gl.uniform1f(state.uniforms.opacity, radarChunkOpacityForZoom(renderZoom));
-  gl.uniform1f(state.uniforms.zoom, renderZoom);
-
-  for (const chunk of chunks) {
-    if (!chunk.vertices) continue;
-    const texture = ensureRadarChunkTexture(state, gl, chunk);
-    if (!texture) continue;
-    const encoding = chunk.valueEncoding || {};
-    const dbzMin = Number.isFinite(Number(encoding.dbzMin)) ? Number(encoding.dbzMin) : 0;
-    const dbzMax = Number.isFinite(Number(encoding.dbzMax)) && Number(encoding.dbzMax) > dbzMin ? Number(encoding.dbzMax) : 80;
-    const threshold = Number.isFinite(Number(encoding.threshold)) ? Number(encoding.threshold) : 5;
-    gl.uniform1f(state.uniforms.dbzMin, dbzMin);
-    gl.uniform1f(state.uniforms.dbzMax, dbzMax);
-    gl.uniform1f(state.uniforms.threshold, threshold);
-    gl.uniform2f(state.uniforms.texelSize, 1 / Math.max(1, chunk.width || 256), 1 / Math.max(1, chunk.height || 256));
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.bufferData(gl.ARRAY_BUFFER, chunk.vertices, gl.STREAM_DRAW);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    state.drawnChunks += 1;
-    chunk.lastDrawSeq = state.renderCalls;
-    const error = gl.getError?.();
-    if (error) {
-      state.glError = `gl ${error}`;
-      break;
+  try {
+    gl.useProgram(state.program);
+    if (typeof gl.bindVertexArray === "function") gl.bindVertexArray(null);
+    else gl.getExtension?.("OES_vertex_array_object")?.bindVertexArrayOES?.(null);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.colorMask(true, true, true, true);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.depthMask(false);
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffers.vertices);
+    gl.enableVertexAttribArray(state.attributes.pos);
+    gl.enableVertexAttribArray(state.attributes.tex);
+    gl.vertexAttribPointer(state.attributes.pos, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(state.attributes.tex, 2, gl.FLOAT, false, 16, 8);
+    gl.uniformMatrix4fv(state.uniforms.matrix, false, matrix);
+    gl.uniform1i(state.uniforms.texture, 0);
+    gl.uniform1f(state.uniforms.opacity, radarChunkOpacityForZoom(renderZoom));
+    gl.uniform1f(state.uniforms.zoom, renderZoom);
+    for (const chunk of chunks) {
+      if (!chunk.vertices) continue;
+      const texture = ensureRadarChunkTexture(state, gl, chunk);
+      if (!texture) continue;
+      const encoding = chunk.valueEncoding || {};
+      const dbzMin = Number.isFinite(Number(encoding.dbzMin)) ? Number(encoding.dbzMin) : 0;
+      const dbzMax = Number.isFinite(Number(encoding.dbzMax)) && Number(encoding.dbzMax) > dbzMin ? Number(encoding.dbzMax) : 80;
+      const threshold = Number.isFinite(Number(encoding.threshold)) ? Number(encoding.threshold) : 5;
+      gl.uniform1f(state.uniforms.dbzMin, dbzMin);
+      gl.uniform1f(state.uniforms.dbzMax, dbzMax);
+      gl.uniform1f(state.uniforms.threshold, threshold);
+      gl.uniform2f(state.uniforms.texelSize, 1 / Math.max(1, chunk.width || 256), 1 / Math.max(1, chunk.height || 256));
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.bufferData(gl.ARRAY_BUFFER, chunk.vertices, gl.STREAM_DRAW);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      state.drawnChunks += 1;
+      chunk.lastDrawSeq = state.renderCalls;
+      const error = gl.getError?.();
+      if (error) {
+        state.glError = `gl ${error}`;
+        break;
+      }
     }
+  } catch (error) {
+    state.glError = error?.message || "Raw frame draw failed";
   }
-  if (state.drawnChunks > 0 && !state.glError) state.hasSuccessfulDraw = true;
+  const successfulDraw = state.drawnChunks > 0 && !state.glError;
+  if (successfulDraw) {
+    completeMapLibreRawFrameHandoff(state);
+  } else if (state.index?.provider === "nearcast-raw-map" && state.indexUrl === state.requestedIndexUrl) {
+    discardRadarChunkTextures(state, gl);
+    failMapLibreRawFrameHandoff(state, state.glError || "Raw frame draw failed.", {
+      terminal: true
+    });
+    return;
+  }
   syncMapLibreRadarChunkFallbackVisibility(state.record);
 }
 
@@ -3874,6 +4072,13 @@ function pruneRadarChunkCache(state, gl, protectedKeys = new Set()) {
   }
 }
 
+function discardRadarChunkTextures(state, gl) {
+  (state?.chunks || []).forEach((chunk) => {
+    if (chunk.texture && gl) gl.deleteTexture(chunk.texture);
+    chunk.texture = null;
+  });
+}
+
 function radarChunkIntersectsViewport(map, bounds) {
   if (!map?.getBounds || !bounds) return true;
   const source = mapLibreSourceBounds(bounds);
@@ -3889,16 +4094,25 @@ function radarChunkIntersectsViewport(map, bounds) {
 function ensureRadarChunkTexture(state, gl, chunk) {
   if (chunk.texture) return chunk.texture;
   const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, chunk.width, chunk.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, radarChunkRgbaPayload(chunk));
-  chunk.texture = texture;
-  state.texturesCreated += 1;
-  return texture;
+  if (!texture) throw new Error("Raw frame texture allocation failed");
+  try {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, chunk.width, chunk.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, radarChunkRgbaPayload(chunk));
+    const error = gl.getError?.();
+    if (error) throw new Error(`Raw frame texture upload failed: gl ${error}`);
+    chunk.texture = texture;
+    state.texturesCreated += 1;
+    return texture;
+  } catch (error) {
+    gl.deleteTexture?.(texture);
+    chunk.texture = null;
+    throw error;
+  }
 }
 
 function radarChunkRgbaPayload(chunk) {
@@ -4146,11 +4360,14 @@ function ensureMapLibreWeatherEntry(record, spec) {
   };
   if (Array.isArray(spec.bounds)) sourceOptions.bounds = spec.bounds;
   map.addSource(sourceId, sourceOptions);
+  const suppressFallback = mapLibreRadarChunkReady(record)
+    || mapLibreRawFrameHandoffSuppressesFallback(record);
+  const initialOpacity = suppressFallback ? 0 : mapLibreWeatherOpacity(spec);
   map.addLayer({
     id: layerId,
     type: "raster",
     source: sourceId,
-    paint: mapLibreWeatherLayerPaint(mapLibreWeatherOpacity(spec), spec.maxZoom, spec)
+    paint: mapLibreWeatherLayerPaint(initialOpacity, spec.maxZoom, spec)
   }, mapLibreWeatherBeforeLayer(map));
 
   entry = {
@@ -4160,7 +4377,7 @@ function ensureMapLibreWeatherEntry(record, spec) {
     sourceSignature,
     frameIndex: spec.frameIndex,
     lastSpec: spec,
-    visible: mapLibreWeatherOpacity(spec) > MAPLIBRE_WEATHER_PRELOAD_OPACITY,
+    visible: initialOpacity > MAPLIBRE_WEATHER_PRELOAD_OPACITY,
     lastUsedAt: record.weatherRenderSeq || 0,
     hideSeq: 0
   };
@@ -4178,7 +4395,10 @@ function setMapLibreWeatherEntryVisual(record, entry, spec) {
   if (!record?.map?.getLayer(entry.layerId)) return;
   const sourceZoom = spec?.maxZoom || MAP_MAX_ZOOM;
   const tone = weatherVisualTone(sourceZoom, spec);
-  setMapLibreWeatherEntryOpacity(record, entry, mapLibreWeatherOpacity(spec));
+  const suppressFallback = mapLibreRadarChunkReady(record)
+    || mapLibreRawFrameHandoffSuppressesFallback(record);
+  const opacity = suppressFallback ? 0 : mapLibreWeatherOpacity(spec);
+  setMapLibreWeatherEntryOpacity(record, entry, opacity);
   record.map.setPaintProperty(entry.layerId, "raster-saturation", tone.mapLibreSaturation);
   record.map.setPaintProperty(entry.layerId, "raster-contrast", tone.mapLibreContrast);
 }
