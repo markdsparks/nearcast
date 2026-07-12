@@ -11606,7 +11606,7 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 42px 28px 52px 50px minmax(58px, 1fr) minmax(72px, auto);
+    grid-template-columns: 42px 28px 52px 50px minmax(58px, 1fr) minmax(72px, auto) 16px;
     align-items: center;
     gap: 6px;
     min-height: 58px;
@@ -11656,6 +11656,52 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+}
+
+@media (max-width: 430px) {
+  .sheet-hour-row {
+    grid-template-columns: 38px 26px 42px 52px minmax(52px, 1fr) minmax(44px, 58px) 14px;
+    gap: 4px;
+    padding: 10px 6px 10px 10px;
+  }
+  .sheet-hour-time {
+    font-size: 0.78rem;
+  }
+  .sheet-hour-icon {
+    width: 26px;
+    height: 26px;
+  }
+  .sheet-hour-main strong,
+  .sheet-hour-temp strong {
+    font-size: 1.08rem;
+  }
+  .sheet-hour-rain,
+  .sheet-hour-wind {
+    gap: 3px;
+    font-size: 0.72rem;
+  }
+  .sheet-hour-rain span,
+  .sheet-hour-wind span {
+    width: 11px;
+    height: 11px;
+  }
+  .sheet-hour-chip {
+    max-width: 58px;
+    min-height: 22px;
+    padding: 3px 6px;
+    font-size: 0.62rem;
+  }
+  .sheet-hour-cue {
+    width: 14px;
+    height: 14px;
+  }
+  .sheet-hour-cue::before {
+    left: 4px;
+    top: 3px;
+  }
+  .sheet-hour-row.is-expanded .sheet-hour-cue::before {
+    top: 6px;
   }
 }
 

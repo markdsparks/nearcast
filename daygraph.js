@@ -720,6 +720,7 @@ function hourlyCompassDirection(degrees) {
 
 function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
   const deg = degree(tempUnit);
+  const compactDeg = deg.replace("F", "").replace("C", "");
   const feelsDelta = Math.round(hour.feels - hour.temp);
   const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
   const badges = [];
@@ -742,7 +743,11 @@ function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
   } else if (hour.uv >= 6) {
     badges.push({ label: `UV ${Math.round(hour.uv)}`, tone: " is-flag" });
   } else if (Math.abs(feelsDelta) >= 6) {
-    badges.push({ label: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`, tone: " is-flag" });
+    badges.push({
+      label: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`,
+      compactLabel: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${compactDeg}`,
+      tone: " is-flag"
+    });
   }
 
   return badges.slice(0, 2);
@@ -894,7 +899,11 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
         ? `<button class="sheet-plan-badge" type="button" data-memory-detail="${escapeHtml(hour.eventMemoryIds.join(","))}" aria-label="${escapeHtml(`Show memory details for ${hour.eventLabel || "plan"}`)}">${eventBadge}</button>`
         : showEventBadge ? `<span class="sheet-plan-badge">${eventBadge}</span>` : ""
       : "";
-    const badgeChips = badges.map((badge) => `<span class="sheet-hour-chip${badge.tone}">${escapeHtml(badge.label)}</span>`).join("");
+    const badgeChips = badges.map((badge) => {
+      const visibleLabel = badge.compactLabel || badge.label;
+      const ariaLabel = badge.compactLabel ? ` aria-label="${escapeHtml(badge.label)}"` : "";
+      return `<span class="sheet-hour-chip${badge.tone}"${ariaLabel}>${escapeHtml(visibleLabel)}</span>`;
+    }).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rainText = hourlyRowRainText(hour);
     const windText = hourlyRowWindText(hour, windUnit);
