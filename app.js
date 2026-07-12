@@ -1,4 +1,4 @@
-const VERSION = "3.0.246";
+const VERSION = "3.0.247";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7,6 +7,7 @@ const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
 const MAP_RENDERER_CHOICE_KEY = "nearcast-map-renderer-choice";
 const MAP_DIAGNOSTIC_MODE_KEY = "nearcast-map-diagnostic-mode";
+const RAW_MAP_EXPERIMENT_KEY = "nearcast-raw-map-experiment";
 const RADAR_PROVIDER_KEY = "nearcast-radar-provider";
 const GENERATED_RADAR_EXPERIMENT_KEY = "nearcast-generated-radar-experiment";
 const RADAR_MANIFEST_URL_KEY = "nearcast-radar-manifest-url";
@@ -189,9 +190,16 @@ const rawMapExperimentQueryFlag = queryValue(
   "numericWeather",
   "numericweather"
 );
-const RAW_MAP_EXPERIMENT_MODE = DEBUG_SETTINGS_ENABLED
-  ? sanitizeRawMapExperimentMode(rawMapExperimentQueryFlag)
-  : "off";
+const rawMapExperimentStoredFlag = localStorage.getItem(RAW_MAP_EXPERIMENT_KEY);
+let RAW_MAP_EXPERIMENT_MODE = sanitizeRawMapExperimentMode(
+  rawMapExperimentQueryFlag !== null ? rawMapExperimentQueryFlag : rawMapExperimentStoredFlag
+);
+if (rawMapExperimentQueryFlag !== null) {
+  try {
+    if (RAW_MAP_EXPERIMENT_MODE === "off") localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY);
+    else localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, RAW_MAP_EXPERIMENT_MODE);
+  } catch {}
+}
 
 function sanitizeRawMapExperimentMode(value) {
   const mode = String(value || "").trim().toLowerCase();
@@ -426,6 +434,7 @@ const state = {
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: storedMapRendererPreference(),
   mapDiagnosticMode: sanitizeMapDiagnosticMode(localStorage.getItem(MAP_DIAGNOSTIC_MODE_KEY)),
+  rawMapExperimentMode: RAW_MAP_EXPERIMENT_MODE,
   radarProvider: sanitizeRadarProvider(localStorage.getItem(RADAR_PROVIDER_KEY)),
   radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
   xweatherStormMode: sanitizeXweatherStormMode(localStorage.getItem(XWEATHER_STORM_MODE_KEY)),
@@ -917,6 +926,8 @@ const els = {
   radarProviderMeta: document.querySelector("#radarProviderMeta"),
   radarSourceZoom: document.querySelector("#radarSourceZoom"),
   radarSourceMeta: document.querySelector("#radarSourceMeta"),
+  rawMapMode: document.querySelector("#rawMapMode"),
+  rawMapMeta: document.querySelector("#rawMapMeta"),
   xweatherStormMode: document.querySelector("#xweatherStormMode"),
   xweatherStormMeta: document.querySelector("#xweatherStormMeta"),
   nativeLiveActivitySetting: document.querySelector("#nativeLiveActivitySetting"),
@@ -2861,6 +2872,7 @@ function init() {
   updateMapRendererButtons();
   updateMapDiagnosticModeControl();
   updateRadarSourceZoomControl();
+  updateRawMapExperimentControl();
   updateXweatherStormControl();
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
@@ -3409,6 +3421,9 @@ function bindEvents() {
   }
   if (els.radarSourceZoom) {
     els.radarSourceZoom.addEventListener("change", () => setRadarSourceZoom(els.radarSourceZoom.value));
+  }
+  if (els.rawMapMode) {
+    els.rawMapMode.addEventListener("change", () => setRawMapExperimentMode(els.rawMapMode.value));
   }
   if (els.xweatherStormMode) {
     els.xweatherStormMode.addEventListener("change", () => setXweatherStormMode(els.xweatherStormMode.value));
@@ -4500,6 +4515,32 @@ function radarProviderMetaText() {
   if (state.radarProvider === "mrms-generated") return "Experimental MRMS spike, NOAA fallback";
   if (state.radarProvider === "noaa-wms") return "NOAA WMS with RainViewer fallback";
   return "Auto: free radar coverage";
+}
+
+function rawMapExperimentMetaText() {
+  const mode = sanitizeRawMapExperimentMode(state.rawMapExperimentMode);
+  if (mode === "both") return "Enhanced past + forecast";
+  if (mode === "observed") return "Enhanced past radar";
+  if (mode === "forecast") return "Enhanced forecast";
+  return "Standard radar";
+}
+
+function updateRawMapExperimentControl() {
+  if (els.rawMapMode) els.rawMapMode.value = sanitizeRawMapExperimentMode(state.rawMapExperimentMode);
+  if (els.rawMapMeta) els.rawMapMeta.textContent = rawMapExperimentMetaText();
+}
+
+function setRawMapExperimentMode(value) {
+  const next = sanitizeRawMapExperimentMode(value);
+  if (next === state.rawMapExperimentMode) return;
+  state.rawMapExperimentMode = next;
+  RAW_MAP_EXPERIMENT_MODE = next;
+  try {
+    if (next === "off") localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY);
+    else localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, next);
+  } catch {}
+  updateRawMapExperimentControl();
+  window.setTimeout(() => window.location.reload(), 120);
 }
 
 function xweatherStormMetaText() {
