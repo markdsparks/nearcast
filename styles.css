@@ -11185,9 +11185,9 @@ body.map-immersive-active .sheet-now-jump {
 .sheet-hour-row {
   position: relative;
   display: grid;
-  grid-template-columns: 48px 34px minmax(0, 1fr) minmax(150px, auto);
+  grid-template-columns: 48px 34px 68px 66px minmax(112px, 1fr) minmax(92px, auto);
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   min-height: 62px;
   padding: 11px 42px 11px 12px;
   border: 0;
@@ -11374,24 +11374,71 @@ button.sheet-plan-badge:focus-visible {
   right: -8px;
   bottom: -5px;
 }
-.sheet-hour-main {
+.sheet-hour-main,
+.sheet-hour-temp {
   display: flex;
   align-items: center;
   min-width: 0;
 }
-.sheet-hour-main strong {
+.sheet-hour-main strong,
+.sheet-hour-temp strong {
   color: var(--ink);
   font-size: 1.16rem;
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
+.sheet-hour-rain,
+.sheet-hour-wind,
+.sheet-hour-badges,
 .sheet-hour-signals {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 7px;
   min-width: 0;
+}
+.sheet-hour-rain,
+.sheet-hour-wind {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sheet-hour-rain span,
+.sheet-hour-wind span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  opacity: 0.72;
+}
+.sheet-hour-rain svg {
+  width: 13px;
+  height: 13px;
+}
+.sheet-hour-rain strong,
+.sheet-hour-wind strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-hour-rain.is-emphasized {
+  color: color-mix(in srgb, var(--blue) 82%, var(--ink));
+}
+.sheet-hour-rain.is-emphasized span {
+  color: var(--blue);
+  opacity: 0.95;
+}
+.sheet-hour-wind.is-emphasized {
+  color: color-mix(in srgb, rgba(132, 121, 255, 1) 78%, var(--ink));
+}
+.sheet-hour-badges {
+  justify-content: flex-end;
+  padding-right: 4px;
 }
 .sheet-hour-chip {
   display: inline-flex;
@@ -11445,9 +11492,8 @@ button.sheet-plan-badge:focus-visible {
   color: var(--muted);
 }
 .sheet-hour-cue {
-  position: absolute;
-  top: 25px;
-  right: 13px;
+  position: relative;
+  flex: 0 0 auto;
   width: 18px;
   height: 18px;
 }
@@ -11469,7 +11515,7 @@ button.sheet-plan-badge:focus-visible {
 }
 .sheet-hour-detail {
   grid-column: 1 / -1;
-  margin: 8px 0 0 93px;
+  margin: 8px 0 0 92px;
   padding: 14px 0 4px;
   border-top: 1px solid var(--line);
 }
@@ -11556,32 +11602,47 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 48px 30px 58px minmax(0, 1fr);
+    grid-template-columns: 42px 28px 54px 50px minmax(78px, 1fr) minmax(24px, auto);
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     min-height: 58px;
-    padding: 10px 34px 10px 12px;
+    padding: 10px 10px 10px 12px;
   }
   .sheet-hour-icon {
     width: 28px;
     height: 28px;
   }
-  .sheet-hour-main strong {
+  .sheet-hour-main strong,
+  .sheet-hour-temp strong {
     font-size: 1.12rem;
   }
+  .sheet-hour-rain,
+  .sheet-hour-wind {
+    gap: 4px;
+    font-size: 0.75rem;
+  }
+  .sheet-hour-rain span,
+  .sheet-hour-wind span {
+    width: 12px;
+    height: 12px;
+  }
+  .sheet-hour-badges,
   .sheet-hour-signals {
     justify-content: flex-end;
     flex-wrap: nowrap;
     gap: 5px;
   }
   .sheet-hour-chip {
+    max-width: 58px;
     min-height: 24px;
     padding: 4px 7px;
     font-size: 0.68rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .sheet-hour-cue {
-    top: 20px;
-    right: 9px;
+    width: 16px;
+    height: 16px;
   }
   .sheet-hour-detail {
     grid-column: 1 / -1;

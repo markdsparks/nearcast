@@ -415,6 +415,7 @@ function detailHoursForIndices(indices, {
       precip: activePrecip ? Math.max(precip, truthPrecip || 0) : precip,
       wind: data.hourly.wind_speed_10m[h],
       gust: data.hourly.wind_gusts_10m[h],
+      windDirection: data.hourly.wind_direction_10m?.[h],
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
       code: isNowHour ? truthCode : code,
@@ -669,43 +670,47 @@ function buildDaySummary(hrs, windUnit) {
   return parts.join(", ") + ".";
 }
 
-function hourlyRowSignals(hour, tempUnit, windUnit, precipUnit) {
+function hourlyRowRainText(hour) {
+  return `${Math.max(0, Math.min(100, Math.round(Number(hour.pop) || 0)))}%`;
+}
+
+function hourlyRowWindText(hour, windUnit) {
+  const speed = Math.max(0, Math.round(Number(hour.wind) || 0));
+  const degrees = Number(hour.windDirection);
+  const direction = Number.isFinite(degrees) && typeof compassDirection === "function"
+    ? compassDirection(degrees)?.short
+    : "";
+  return `${speed} ${windUnit}${direction ? ` ${direction}` : ""}`;
+}
+
+function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
   const deg = degree(tempUnit);
   const feelsDelta = Math.round(hour.feels - hour.temp);
   const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
-  const signals = [];
+  const badges = [];
 
   if (hour.alert) {
-    signals.push({ label: alertToneLabel(alertTone(hour.alert)), tone: ` is-alert is-alert-${alertTone(hour.alert)}` });
+    badges.push({ label: alertToneLabel(alertTone(hour.alert)), tone: ` is-alert is-alert-${alertTone(hour.alert)}` });
   }
 
   if (hour.stormPotential) {
-    signals.push({ label: "Thunder", tone: " is-storm" });
+    badges.push({ label: "Thunder", tone: " is-storm" });
   }
 
   if (hour.activePrecip) {
-    signals.push({ label: "Rain now", tone: " is-wet" });
-  } else if (hour.pop > 0) {
-    signals.push({ label: `${hour.pop}% rain`, tone: hour.precipPrimary ? " is-wet" : "" });
-  }
-
-  if (hour.activePrecip && hour.precipText) {
-    signals.push({ label: hour.precipText, tone: " is-flag" });
+    badges.push({ label: "Rain now", tone: " is-wet" });
+    if (hour.precipText) badges.push({ label: hour.precipText, tone: " is-flag" });
   } else if (hour.precipPrimary && hour.precip > 0) {
-    signals.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
+    badges.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
   } else if (windy) {
-    signals.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
+    badges.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
   } else if (hour.uv >= 6) {
-    signals.push({ label: `UV ${Math.round(hour.uv)}`, tone: " is-flag" });
+    badges.push({ label: `UV ${Math.round(hour.uv)}`, tone: " is-flag" });
   } else if (Math.abs(feelsDelta) >= 6) {
-    signals.push({ label: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`, tone: " is-flag" });
+    badges.push({ label: `Feels ${feelsDelta > 0 ? "+" : ""}${feelsDelta}${deg}`, tone: " is-flag" });
   }
 
-  if (signals.length < 2) {
-    signals.push({ label: `${Math.round(hour.wind)} ${windUnit}`, tone: "" });
-  }
-
-  return signals.slice(0, 2);
+  return badges.slice(0, 2);
 }
 
 function hourlyDetailNote(hour, tempUnit, windUnit) {
@@ -833,9 +838,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       : "";
     prevDay = dayKey;
     const condition = weatherCodes[hour.code] || "Weather";
-    const signals = hourlyRowSignals(hour, tempUnit, windUnit, precipUnit);
+    const badges = hourlyRowBadges(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
-    const windy = hour.gust >= 20 && hour.gust >= hour.wind + 5;
     const now = showNow && isCurrentHour(hour.time, data);
     const rainClass = hour.activePrecip || hour.precipPrimary ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
@@ -846,25 +850,38 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const eventClass = hour.inEvent ? " is-plan-window" : "";
     const expanded = rowIndex === defaultExpandedIndex;
     const eventBadge = hour.inEvent ? escapeHtml(hour.eventLabel || "Plan") : "";
+    const showEventBadge = hour.inEvent && (
+      hour.eventMemoryIds?.length ||
+      (hour.eventLabel && hour.eventLabel !== formatHour(hour.time) && hour.eventLabel !== "Now")
+    );
     const eventBadgeHtml = hour.inEvent
       ? hour.eventMemoryIds?.length
         ? `<button class="sheet-plan-badge" type="button" data-memory-detail="${escapeHtml(hour.eventMemoryIds.join(","))}" aria-label="${escapeHtml(`Show memory details for ${hour.eventLabel || "plan"}`)}">${eventBadge}</button>`
-        : `<span class="sheet-plan-badge">${eventBadge}</span>`
+        : showEventBadge ? `<span class="sheet-plan-badge">${eventBadge}</span>` : ""
       : "";
-    const signalChips = signals.map((signal) => `<span class="sheet-hour-chip${signal.tone}">${escapeHtml(signal.label)}</span>`).join("");
+    const badgeChips = badges.map((badge) => `<span class="sheet-hour-chip${badge.tone}">${escapeHtml(badge.label)}</span>`).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
-    const rowLabel = `${formatHour(hour.time)} ${condition}${hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${Math.round(hour.temp)}${deg}, ${signals.map((signal) => signal.label).join(", ")}`;
-    const rainText = hour.rainText || `${hour.pop}%`;
+    const rainText = hourlyRowRainText(hour);
+    const windText = hourlyRowWindText(hour, windUnit);
+    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain ${rainText}, ${Math.round(hour.temp)}${deg}, wind ${windText}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
     const precipText = hour.precipText || (hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
-        <div class="sheet-hour-main">
+        <div class="sheet-hour-rain${hour.activePrecip || hour.precipPrimary ? " is-emphasized" : ""}">
+          <span aria-hidden="true">${raindropGlyph()}</span>
+          <strong>${escapeHtml(rainText)}</strong>
+        </div>
+        <div class="sheet-hour-temp">
           <strong>${Math.round(hour.temp)}${deg}</strong>
         </div>
-        <div class="sheet-hour-signals">
-          ${signalChips}
+        <div class="sheet-hour-wind${hour.gust >= 25 ? " is-emphasized" : ""}">
+          <span aria-hidden="true">&#8601;</span>
+          <strong>${escapeHtml(windText)}</strong>
+        </div>
+        <div class="sheet-hour-badges">
+          ${badgeChips}
           <span class="sheet-hour-cue" aria-hidden="true"></span>
         </div>
         <div class="sheet-hour-detail" id="${detailId}"${expanded ? "" : " hidden"}>

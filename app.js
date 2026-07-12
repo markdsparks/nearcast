@@ -1,4 +1,4 @@
-const VERSION = "3.0.247";
+const VERSION = "3.0.249";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -10329,9 +10329,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const title = stormPotential ? `${code}; thunder possible` : code;
     const rainChance = Math.max(0, Math.min(100, Math.round(Number(rain) || 0)));
     const hasRainChance = rainChance > 0;
-    const rainLabel = measuredWet ? "Rain" : nowPrecipPhase === "imminent" ? "Soon" : hasRainChance ? `${rainChance}%` : "";
+    const rainLabel = `${rainChance}%`;
     const rainIsEmphasized = measuredWet || nowPrecipPhase === "imminent" || rainChance >= 20;
-    const rainClass = rainLabel ? ` has-rain${rainIsEmphasized ? " wet" : " is-low"}` : "";
+    const rainClass = ` has-rain${rainIsEmphasized ? " wet" : " is-low"}`;
     const rainBarWidth = measuredWet ? Math.max(70, Math.min(100, rainChance)) : rainChance;
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
     const memoryItems = planMemory.markers.get(index) || [];
