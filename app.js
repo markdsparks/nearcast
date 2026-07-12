@@ -1,4 +1,4 @@
-const VERSION = "3.0.237";
+const VERSION = "3.0.239";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -180,6 +180,38 @@ function isNativeIOSApp() {
 }
 
 const DEBUG_SETTINGS_ENABLED = debugSettingsEnabled();
+
+const rawMapExperimentQueryFlag = queryValue(
+  "rawMap",
+  "rawmap",
+  "rawWeather",
+  "rawweather",
+  "numericWeather",
+  "numericweather"
+);
+const RAW_MAP_EXPERIMENT_MODE = DEBUG_SETTINGS_ENABLED
+  ? sanitizeRawMapExperimentMode(rawMapExperimentQueryFlag)
+  : "off";
+
+function sanitizeRawMapExperimentMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (["1", "true", "on", "yes", "both", "all", "raw"].includes(mode)) return "both";
+  if (["observed", "past", "history", "mrms"].includes(mode)) return "observed";
+  if (["forecast", "future", "guidance", "hrrr"].includes(mode)) return "forecast";
+  return "off";
+}
+
+function rawMapExperimentMode() {
+  return RAW_MAP_EXPERIMENT_MODE;
+}
+
+function rawMapExperimentEnabled(kind = "") {
+  if (!kind) return RAW_MAP_EXPERIMENT_MODE !== "off";
+  const requested = sanitizeRawMapExperimentMode(kind);
+  return requested !== "off" && (
+    RAW_MAP_EXPERIMENT_MODE === "both" || RAW_MAP_EXPERIMENT_MODE === requested
+  );
+}
 
 const perfQueryFlag = queryValue("perf");
 if (perfQueryFlag === "1") localStorage.setItem(PERF_STORAGE_KEY, "1");
@@ -498,6 +530,7 @@ const mapState = {
   playClock: 0,
   frameWaitIndex: null,
   frameWaitStart: 0,
+  frameLoadSeq: 0,
   xfadeFrames: [null, null],
   _normalEls: null,
   timelineKind: "radar",
@@ -543,6 +576,22 @@ const mapState = {
     pending: false,
     state: "idle",
     reason: ""
+  },
+  rawMap: {
+    seq: 0,
+    status: "idle",
+    mode: "off",
+    timelineKind: "",
+    placeKey: "",
+    bounds: null,
+    boundsKey: "",
+    session: null,
+    abortController: null,
+    viewportRefreshTimer: 0,
+    error: "",
+    preparedAt: 0,
+    matchedFrames: 0,
+    stage: ""
   }
 };
 

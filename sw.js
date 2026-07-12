@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30237";
-const ASSET_VERSION = "3.0.237";
+const CACHE = "nearcast-v30239";
+const ASSET_VERSION = "3.0.239";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -11,6 +11,10 @@ const SHELL = [
   `${BASE}weather-truth.js?v=${ASSET_VERSION}`,
   `${BASE}planner.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
+  `${BASE}hrrr-zarr-adapter.js?v=${ASSET_VERSION}`,
+  `${BASE}experimental/raw-weather/mrms-browser-adapter.js?v=${ASSET_VERSION}`,
+  `${BASE}experimental/raw-weather/mrms-browser-worker.js?v=${ASSET_VERSION}`,
+  `${BASE}raw-map-runtime.js?v=${ASSET_VERSION}`,
   `${BASE}map.js?v=${ASSET_VERSION}`,
   `${BASE}sky.js?v=${ASSET_VERSION}`,
   `${BASE}daygraph.js?v=${ASSET_VERSION}`,
@@ -100,6 +104,8 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("nowcoast.noaa.gov") ||
     url.hostname.includes("opengeo.ncep.noaa.gov") ||
     url.hostname.includes("mrms.ncep.noaa.gov") ||
+    url.hostname.includes("noaa-mrms-pds.s3.amazonaws.com") ||
+    url.hostname.includes("hrrrzarr.s3.amazonaws.com") ||
     url.hostname.includes("nominatim.openstreetmap.org") ||
     url.hostname.includes("openstreetmap.org") ||
     url.hostname.includes("tile.openstreetmap") ||

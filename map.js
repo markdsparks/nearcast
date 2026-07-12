@@ -2410,6 +2410,7 @@ function applyMapRendererPreference() {
   updateMapRendererButtons();
   stopRadarPlayback({ renderStatic: false });
   if (!mapRendererIsGl()) {
+    disposeRawMapEnhancement("renderer-changed");
     destroyMapLibreMaps();
     if (mapState.immersive && !immersiveDragAbort) bindImmersiveDrag();
   } else if (mapState.immersive && immersiveDragAbort) {
@@ -2419,6 +2420,7 @@ function applyMapRendererPreference() {
   if (!mapState.initialized || !state.activePlace) return;
   renderTileMap();
   if (mapState.frames.length) showFrame(mapState.frameIndex);
+  if (mapRendererIsGl()) scheduleRawMapEnhancement(mapState.timelineKind);
 }
 
 function ensureMapLibreSurface(container) {
@@ -2567,6 +2569,7 @@ function finishMapLibreInteraction(map) {
   renderMapLegend();
   renderMapLibreOverlays({ forceRadar: true });
   scheduleGeneratedRadarViewportRefresh("gl-settle");
+  scheduleRawMapViewportRefresh("gl-settle");
   requestAnimationFrame(() => setMapLibreRadarSuspended(false));
   if (resumePlayback && mapState.frames.length && !mapState.playing) {
     requestAnimationFrame(() => {
@@ -3059,15 +3062,24 @@ function mapLibreWeatherBeforeLayer(map) {
 
 function radarChunkIndexUrl() {
   const value = radarChunkIndexFlag();
-  if (!value) return "";
-  const normalized = value.trim();
-  const key = normalized.toLowerCase();
-  if (!normalized || ["0", "false", "off", "none"].includes(key)) return "";
-  if (["1", "true"].includes(key)) {
-    return MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL;
+  if (value) {
+    const normalized = value.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || ["0", "false", "off", "none"].includes(key)) return "";
+    if (["1", "true"].includes(key)) {
+      return MAPLIBRE_RADAR_CHUNK_DEFAULT_INDEX_URL;
+    }
+    if (MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key]) return MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key];
+    return normalized;
   }
-  if (MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key]) return MAPLIBRE_RADAR_CHUNK_INDEX_URLS[key];
-  return normalized;
+
+  const frame = mapState.frames[mapState.frameIndex];
+  return String(
+    frame?.rawMapIndexUrl ||
+    frame?.rawRadarChunkIndexUrl ||
+    frame?.rawField?.indexUrl ||
+    ""
+  ).trim();
 }
 
 function radarChunkIndexFlag() {
@@ -3127,9 +3139,22 @@ function mapLibreRadarChunkReady(record = mapLibreCurrentRecord()) {
   const activeZoom = state?.activeZoom ?? radarChunkActiveZoom(state);
   return Boolean(
     state?.status === "ready"
+    && radarChunkCoverageContainsViewport(state)
+    && (state.index?.provider !== "nearcast-raw-map" || state.hasSuccessfulDraw)
     && (state.chunks || []).some((chunk) => chunk.levelZoom === activeZoom && radarChunkIntersectsViewport(state.map, chunk.bounds))
     && record?.map?.getLayer?.(MAPLIBRE_RADAR_CHUNK_LAYER_ID)
   );
+}
+
+function radarChunkCoverageContainsViewport(state) {
+  if (state?.index?.provider !== "nearcast-raw-map") return true;
+  const source = mapLibreSourceBounds(state.index.coverageBounds || state.index.bounds);
+  const viewport = state.map?.getBounds?.();
+  if (!source || !viewport) return false;
+  return viewport.getWest() >= source[0]
+    && viewport.getSouth() >= source[1]
+    && viewport.getEast() <= source[2]
+    && viewport.getNorth() <= source[3];
 }
 
 function syncMapLibreRadarChunkFallbackVisibility(record = mapLibreCurrentRecord()) {
@@ -3143,7 +3168,31 @@ function syncMapLibreRadarChunkFallbackVisibility(record = mapLibreCurrentRecord
       setMapLibreWeatherEntryVisual(record, entry, entry.lastSpec);
     }
   });
+  syncRawMapPresentation(record);
   syncMapLibreDiagnosticReadout(record);
+}
+
+function rawMapFrameLayerVisible(frame = mapState.frames[mapState.frameIndex], record = mapLibreCurrentRecord()) {
+  if (!frame?.rawMapProvider || !frame.rawMapIndexUrl) return false;
+  return record?.radarChunkLayerState?.indexUrl === frame.rawMapIndexUrl
+    && mapLibreRadarChunkReady(record);
+}
+
+function rawMapEffectiveVisualMetric(frame = mapState.frames[mapState.frameIndex]) {
+  if (!frame?.rawMapProvider || rawMapFrameLayerVisible(frame)) return frame?.visualMetric || "";
+  return frame.rawMapFallbackHadVisualMetric ? frame.rawMapFallbackVisualMetric || "" : "";
+}
+
+function syncRawMapPresentation(record = mapLibreCurrentRecord()) {
+  if (!record) return;
+  const frame = mapState.frames[mapState.frameIndex];
+  const visibleProvider = rawMapFrameLayerVisible(frame, record) ? frame.rawMapProvider : "fallback";
+  const key = `${mapState.frameIndex}:${frame?.rawMapIndexUrl || ""}:${visibleProvider}`;
+  if (record.rawMapPresentationKey === key) return;
+  record.rawMapPresentationKey = key;
+  renderMapLegend();
+  renderMapCredit(frame);
+  syncRawMapDebugAttributes(frame);
 }
 
 function createMapLibreRadarChunkLayer(indexUrl) {
@@ -3167,6 +3216,7 @@ function createMapLibreRadarChunkLayer(indexUrl) {
     activeZoom: null,
     renderedChunks: 0,
     drawnChunks: 0,
+    hasSuccessfulDraw: false,
     renderCalls: 0,
     glError: "",
     removed: false
@@ -3502,6 +3552,7 @@ function radarChunkOpacityForZoom(zoom) {
 
 function renderRadarChunkLayer(state, gl, matrix) {
   if (!gl || !matrix || !state?.program || !["loading", "ready"].includes(state.status)) return;
+  if (!radarChunkCoverageContainsViewport(state)) return;
   const activeZoom = radarChunkActiveZoom(state);
   const renderZoom = radarChunkRenderZoom(state);
   scheduleRadarChunkViewportLoads(state, activeZoom);
@@ -3560,6 +3611,8 @@ function renderRadarChunkLayer(state, gl, matrix) {
       break;
     }
   }
+  if (state.drawnChunks > 0 && !state.glError) state.hasSuccessfulDraw = true;
+  syncMapLibreRadarChunkFallbackVisibility(state.record);
 }
 
 function radarChunkActiveZoom(state) {
@@ -5400,27 +5453,40 @@ async function setMapMode(mode) {
   });
 }
 
+function mapFrameLoadPlaceKey(place = state.activePlace) {
+  if (!place) return "";
+  const latitude = Number(place.latitude);
+  const longitude = Number(place.longitude);
+  return [
+    String(place.id || place.name || "place"),
+    Number.isFinite(latitude) ? latitude.toFixed(4) : "",
+    Number.isFinite(longitude) ? longitude.toFixed(4) : ""
+  ].join(":");
+}
+
 async function loadMapFrames(force = false, options = {}) {
   if (!mapState.initialized || !state.activePlace) return;
   const timelineKind = options.timelineKind || (mapState.immersive ? "precip" : mapState.timelineKind || "radar");
   if (!force && mapState.frames.length && mapState.timelineKind === timelineKind) {
     showFrame(mapState.frameIndex);
+    scheduleRawMapEnhancement(timelineKind);
     return;
   }
 
+  const loadSeq = ++mapState.frameLoadSeq;
+  const placeKey = mapFrameLoadPlaceKey();
+  const loadingElement = els.mapLoading;
   const shouldResumePlayback = Boolean(options.resumePlayback || mapState.playing);
   const preserveExisting = Boolean(options.preserveExisting && mapState.frames.length);
-  setMapLoading(true);
+  if (loadingElement) loadingElement.hidden = false;
   if (!preserveExisting) clearMapLayers({ renderStatic: false });
   mapState.timelineKind = timelineKind;
 
   try {
     const timeline = await fetchMapTimeline(timelineKind);
-    mapState.frames = timeline.frames;
-    mapState.nowIndex = timeline.nowIndex;
-    mapState.forecastUnavailable = timeline.forecastUnavailable;
+    if (loadSeq !== mapState.frameLoadSeq || placeKey !== mapFrameLoadPlaceKey()) return;
 
-    if (!mapState.frames.length) {
+    if (!timeline.frames.length) {
       if (!preserveExisting) {
         setFrameLabel(timeline.emptyLabel || "No frames");
         updateTimelineEraVisuals();
@@ -5428,19 +5494,24 @@ async function loadMapFrames(force = false, options = {}) {
       return;
     }
 
+    disposeRawMapEnhancement("timeline-replaced");
+    mapState.frames = timeline.frames;
+    mapState.nowIndex = timeline.nowIndex;
+    mapState.forecastUnavailable = timeline.forecastUnavailable;
     mapState.frameIndex = initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayback);
     els.frameSlider.max = String(mapState.frames.length - 1);
     updateTimelineEraVisuals();
     showFrame(mapState.frameIndex);
     if (shouldResumePlayback) startRadarPlayback();
     else maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
+    scheduleRawMapEnhancement(timelineKind);
   } catch (error) {
-    if (!preserveExisting) {
+    if (loadSeq === mapState.frameLoadSeq && !preserveExisting) {
       setFrameLabel("Map data unavailable");
       updateTimelineEraVisuals();
     }
   } finally {
-    setMapLoading(false);
+    if (loadSeq === mapState.frameLoadSeq && loadingElement) loadingElement.hidden = true;
   }
 }
 
@@ -5474,6 +5545,360 @@ function initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayb
   return last;
 }
 
+function rawMapTimelineMode(timelineKind = mapState.timelineKind) {
+  const configured = rawMapExperimentMode();
+  if (configured === "off") return "off";
+  if (timelineKind === "radar") return configured === "forecast" ? "off" : "observed";
+  if (timelineKind === "forecast") return configured === "observed" ? "off" : "forecast";
+  return configured;
+}
+
+function rawMapViewportBounds(place = state.activePlace) {
+  const latitude = Number(place?.latitude);
+  const longitude = normalizeMapLongitude(place?.longitude);
+  if (![latitude, longitude].every(Number.isFinite)) return null;
+
+  const liveBounds = mapLibreCurrentRecord()?.map?.getBounds?.();
+  if (liveBounds) {
+    const west = Number(liveBounds.getWest?.());
+    const east = Number(liveBounds.getEast?.());
+    const south = Number(liveBounds.getSouth?.());
+    const north = Number(liveBounds.getNorth?.());
+    const longitudeSpan = east - west;
+    const latitudeSpan = north - south;
+    if (
+      [west, east, south, north, longitudeSpan, latitudeSpan].every(Number.isFinite)
+      && longitudeSpan > 0
+      && longitudeSpan <= 12
+      && latitudeSpan > 0
+      && latitudeSpan <= 10
+    ) {
+      const longitudePadding = Math.max(0.35, longitudeSpan * 0.22);
+      const latitudePadding = Math.max(0.25, latitudeSpan * 0.22);
+      return rawMapClampedBounds({
+        minLon: west - longitudePadding,
+        minLat: south - latitudePadding,
+        maxLon: east + longitudePadding,
+        maxLat: north + latitudePadding
+      });
+    }
+  }
+
+  // The default z7 view is roughly eight degrees wide. Preserve its Web
+  // Mercator aspect so the generated raw-data texture is not stretched.
+  const longitudeSpan = 8;
+  const aspect = 512 / 384;
+  const centerY = rawMapMercatorY(latitude);
+  const worldYSpan = (longitudeSpan / 360) / aspect;
+  return rawMapClampedBounds({
+    minLon: longitude - longitudeSpan / 2,
+    minLat: rawMapInverseMercatorY(centerY + worldYSpan / 2),
+    maxLon: longitude + longitudeSpan / 2,
+    maxLat: rawMapInverseMercatorY(centerY - worldYSpan / 2)
+  });
+}
+
+function rawMapClampedBounds(bounds) {
+  if (!bounds) return null;
+  const minLon = Math.max(-130, Number(bounds.minLon));
+  const minLat = Math.max(20, Number(bounds.minLat));
+  const maxLon = Math.min(-60, Number(bounds.maxLon));
+  const maxLat = Math.min(55, Number(bounds.maxLat));
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
+  if (minLon >= maxLon || minLat >= maxLat) return null;
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+function rawMapMercatorY(latitude) {
+  const clamped = Math.max(-85.051129, Math.min(85.051129, Number(latitude)));
+  const radians = clamped * Math.PI / 180;
+  return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2;
+}
+
+function rawMapInverseMercatorY(value) {
+  return Math.atan(Math.sinh(Math.PI * (1 - 2 * Number(value)))) * 180 / Math.PI;
+}
+
+function rawMapWorkerUrl() {
+  try {
+    return new URL(
+      `experimental/raw-weather/mrms-browser-worker.js?v=${encodeURIComponent(VERSION)}`,
+      window.location.href
+    ).href;
+  } catch {
+    return `experimental/raw-weather/mrms-browser-worker.js?v=${encodeURIComponent(VERSION)}`;
+  }
+}
+
+function rawMapBoundsKey(bounds) {
+  if (!bounds) return "";
+  return [bounds.minLon, bounds.minLat, bounds.maxLon, bounds.maxLat]
+    .map((value) => Number(value).toFixed(3))
+    .join(":");
+}
+
+function rawMapBoundsContainCurrentViewport(bounds = mapState.rawMap.bounds) {
+  const source = mapLibreSourceBounds(bounds);
+  const viewport = mapLibreCurrentRecord()?.map?.getBounds?.();
+  if (!source || !viewport) return false;
+  return viewport.getWest() >= source[0]
+    && viewport.getSouth() >= source[1]
+    && viewport.getEast() <= source[2]
+    && viewport.getNorth() <= source[3];
+}
+
+function scheduleRawMapViewportRefresh(reason = "viewport", delayMs = 650) {
+  const rawMap = mapState.rawMap;
+  if (!rawMapExperimentEnabled() || !mapRendererIsGl() || !mapState.initialized) return;
+  if (
+    rawMap.bounds
+    && rawMapBoundsContainCurrentViewport(rawMap.bounds)
+    && ["loading", "ready", "partial", "unmatched", "unavailable"].includes(rawMap.status)
+  ) return;
+  if (rawMap.viewportRefreshTimer) clearTimeout(rawMap.viewportRefreshTimer);
+  rawMap.stage = `waiting-${reason}`;
+  syncRawMapDebugAttributes();
+  rawMap.viewportRefreshTimer = setTimeout(() => {
+    rawMap.viewportRefreshTimer = 0;
+    scheduleRawMapEnhancement(mapState.timelineKind);
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
+  const rawMap = mapState.rawMap;
+  const mode = rawMapTimelineMode(timelineKind);
+  const placeKey = mapFrameLoadPlaceKey();
+  const bounds = rawMapViewportBounds();
+  const boundsKey = rawMapBoundsKey(bounds);
+  const runtime = window.NearcastRawMap;
+  const enabled = mode !== "off"
+    && mapRendererIsGl()
+    && getNwsRadarRegion() === "conus"
+    && Boolean(bounds)
+    && typeof runtime?.createSession === "function";
+
+  if (!enabled) {
+    if (rawMap.status !== "idle" || rawMap.session) disposeRawMapEnhancement("not-eligible");
+    return;
+  }
+
+  if (
+    rawMap.placeKey === placeKey
+    && rawMap.mode === mode
+    && rawMap.timelineKind === timelineKind
+    && (rawMap.boundsKey === boundsKey || rawMapBoundsContainCurrentViewport(rawMap.bounds))
+    && ["loading", "ready", "partial", "unmatched"].includes(rawMap.status)
+  ) return;
+
+  disposeRawMapEnhancement("replaced");
+  const controller = new AbortController();
+  const session = runtime.createSession({
+    mode,
+    width: 512,
+    height: 384,
+    mrmsClientOptions: { workerUrl: rawMapWorkerUrl() }
+  });
+  const seq = ++rawMap.seq;
+  rawMap.status = "loading";
+  rawMap.mode = mode;
+  rawMap.timelineKind = timelineKind;
+  rawMap.placeKey = placeKey;
+  rawMap.bounds = bounds;
+  rawMap.boundsKey = boundsKey;
+  rawMap.session = session;
+  rawMap.abortController = controller;
+  rawMap.error = "";
+  rawMap.preparedAt = 0;
+  rawMap.matchedFrames = 0;
+  rawMap.stage = "start";
+  syncRawMapDebugAttributes();
+
+  session.prepare({
+    mode,
+    place: state.activePlace,
+    bounds,
+    width: 512,
+    height: 384,
+    historyFrames: 6,
+    historyMinutes: 90,
+    forecastFrames: 6,
+    signal: controller.signal,
+    onUpdate(update) {
+      if (seq !== rawMap.seq) return;
+      rawMap.stage = String(update?.stage || "loading");
+      syncRawMapDebugAttributes();
+    }
+  }).then((result) => {
+    if (
+      seq !== rawMap.seq
+      || placeKey !== mapFrameLoadPlaceKey()
+      || timelineKind !== mapState.timelineKind
+    ) {
+      result?.dispose?.();
+      return;
+    }
+    const matchedFrames = applyRawMapEnhancement(result);
+    rawMap.status = matchedFrames
+      ? (result.status === "partial" ? "partial" : "ready")
+      : "unmatched";
+    rawMap.error = rawMapErrorText(result.errors);
+    rawMap.preparedAt = Date.now();
+    rawMap.matchedFrames = matchedFrames;
+    rawMap.stage = "complete";
+    syncRawMapDebugAttributes();
+    recordRadarSourceDecision("radar.raw-map-ready", {
+      mode,
+      status: rawMap.status,
+      matchedFrames,
+      observedFrames: result.observed?.length || 0,
+      forecastFrames: result.forecast?.length || 0,
+      errors: result.errors || []
+    });
+  }).catch((error) => {
+    if (seq !== rawMap.seq || error?.name === "AbortError") return;
+    rawMap.status = "unavailable";
+    rawMap.error = error?.message || "Raw weather data unavailable";
+    rawMap.preparedAt = Date.now();
+    rawMap.stage = "unavailable";
+    syncRawMapDebugAttributes();
+    recordRadarSourceDecision("radar.raw-map-unavailable", {
+      mode,
+      reason: rawMap.error
+    });
+  });
+}
+
+function applyRawMapEnhancement(result) {
+  const descriptors = Array.isArray(result?.frames) ? result.frames : [];
+  if (!descriptors.length || !mapState.frames.length) return 0;
+  const frames = mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
+  const usedFrameIndexes = new Set();
+  let matchedFrames = 0;
+
+  descriptors.forEach((descriptor) => {
+    const targetTimestamp = Date.parse(descriptor?.validTime || descriptor?.timestamp);
+    const source = descriptor?.kind === "forecast" ? "forecast" : "radar";
+    const tolerance = source === "forecast" ? 40 * 60 * 1000 : 6 * 60 * 1000;
+    if (!Number.isFinite(targetTimestamp)) return;
+
+    let matchIndex = -1;
+    let matchDelta = Infinity;
+    frames.forEach((frame, index) => {
+      if (usedFrameIndexes.has(index) || activeMapSource(frame) !== source) return;
+      const frameTimestamp = source === "radar"
+        ? Number(frame.observedTimestamp) || Number(frame.timestamp)
+        : Number(frame.timestamp);
+      if (!Number.isFinite(frameTimestamp)) return;
+      const delta = Math.abs(frameTimestamp - targetTimestamp);
+      if (delta < matchDelta) {
+        matchDelta = delta;
+        matchIndex = index;
+      }
+    });
+    if (matchIndex < 0 || matchDelta > tolerance) return;
+
+    const attribution = String(descriptor.attribution || "NOAA/NWS").trim();
+    frames[matchIndex] = {
+      ...frames[matchIndex],
+      rawMapIndexUrl: descriptor.indexUrl,
+      rawMapProvider: descriptor.provider,
+      rawMapAttribution: attribution.includes("Nearcast") ? attribution : `${attribution} · Nearcast`,
+      rawMapValidTime: descriptor.validTime,
+      rawMapVisualMetric: descriptor.visualMetric,
+      rawMapStats: descriptor.stats || null,
+      rawMapBounds: descriptor.bounds || null,
+      rawMapFallbackHadVisualMetric: Object.prototype.hasOwnProperty.call(frames[matchIndex], "visualMetric"),
+      rawMapFallbackVisualMetric: frames[matchIndex].visualMetric,
+      visualMetric: "reflectivity"
+    };
+    usedFrameIndexes.add(matchIndex);
+    matchedFrames += 1;
+  });
+
+  mapState.frames = frames;
+  if (matchedFrames) showFrame(mapState.frameIndex);
+  return matchedFrames;
+}
+
+function rawMapErrorText(errors) {
+  if (!Array.isArray(errors)) return "";
+  return errors
+    .map((error) => `${error?.provider || "source"}: ${error?.message || "unavailable"}`)
+    .join("; ");
+}
+
+function syncRawMapDebugAttributes(frame = mapState.frames[mapState.frameIndex]) {
+  const root = document.documentElement;
+  if (!root) return;
+  if (!rawMapExperimentEnabled()) {
+    [
+      "rawMapMode",
+      "rawMapStatus",
+      "rawMapStage",
+      "rawMapTimeline",
+      "rawMapMatchedFrames",
+      "rawMapActiveProvider"
+    ].forEach((key) => delete root.dataset[key]);
+    return;
+  }
+  root.dataset.rawMapMode = mapState.rawMap.mode;
+  root.dataset.rawMapStatus = mapState.rawMap.status;
+  root.dataset.rawMapStage = mapState.rawMap.stage;
+  root.dataset.rawMapTimeline = mapState.rawMap.timelineKind || mapState.timelineKind;
+  root.dataset.rawMapMatchedFrames = String(mapState.rawMap.matchedFrames || 0);
+  root.dataset.rawMapActiveProvider = rawMapFrameLayerVisible(frame) ? frame.rawMapProvider : "fallback";
+}
+
+function clearRawMapFrameDecoration(frame) {
+  if (!frame || typeof frame !== "object") return frame;
+  const next = { ...frame };
+  delete next.rawMapIndexUrl;
+  delete next.rawMapProvider;
+  delete next.rawMapAttribution;
+  delete next.rawMapValidTime;
+  delete next.rawMapVisualMetric;
+  delete next.rawMapStats;
+  delete next.rawMapBounds;
+  if (frame.rawMapFallbackHadVisualMetric) next.visualMetric = frame.rawMapFallbackVisualMetric;
+  else if (frame.rawMapProvider) delete next.visualMetric;
+  delete next.rawMapFallbackHadVisualMetric;
+  delete next.rawMapFallbackVisualMetric;
+  return next;
+}
+
+function disposeRawMapEnhancement(reason = "disposed") {
+  const rawMap = mapState.rawMap;
+  rawMap.seq += 1;
+  if (rawMap.viewportRefreshTimer) clearTimeout(rawMap.viewportRefreshTimer);
+  rawMap.viewportRefreshTimer = 0;
+  rawMap.abortController?.abort?.();
+  const record = mapLibreCurrentRecord();
+  if (
+    record?.radarChunkLayerState?.index?.provider === "nearcast-raw-map"
+    || String(record?.radarChunkLayerState?.indexUrl || "").startsWith("blob:")
+  ) {
+    removeMapLibreRadarChunkLayer(record);
+    syncMapLibreRadarChunkFallbackVisibility(record);
+  }
+  rawMap.session?.dispose?.();
+  if (mapState.frames.some((frame) => frame?.rawMapProvider)) {
+    mapState.frames = mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
+  }
+  rawMap.status = "idle";
+  rawMap.mode = "off";
+  rawMap.timelineKind = "";
+  rawMap.placeKey = "";
+  rawMap.bounds = null;
+  rawMap.boundsKey = "";
+  rawMap.session = null;
+  rawMap.abortController = null;
+  rawMap.error = "";
+  rawMap.preparedAt = 0;
+  rawMap.matchedFrames = 0;
+  rawMap.stage = reason;
+  syncRawMapDebugAttributes();
+}
+
 async function fetchPrecipTimelineFrames() {
   const [radarResult, forecastResult] = await Promise.allSettled([
     fetchRadarFrames(),
@@ -5500,6 +5925,7 @@ function buildPrecipTimelineFrames(radarFrames, forecastFrames) {
     .sort((a, b) => a.timestamp - b.timestamp)
     .map((frame) => ({
       ...frame,
+      observedTimestamp: Number(frame.observedTimestamp) || frame.timestamp,
       source: "radar",
       sourceLabel: "Radar",
       label: radarTimelineLabel(frame.timestamp)
@@ -7723,6 +8149,7 @@ function syncMapSourceFromFrame(frame) {
   renderMapLegend();
   renderMapCredit(frame);
   setPlaybackButtonState();
+  syncRawMapDebugAttributes(frame);
 }
 
 function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
@@ -7734,6 +8161,13 @@ function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
 }
 
 function mapCreditText(frame) {
+  const rawMapVisible = rawMapFrameLayerVisible(frame);
+  if (rawMapVisible && frame?.rawMapProvider === "noaa-hrrr-zarr") {
+    return `Forecast guidance ${frame.rawMapAttribution || "NOAA HRRR · Nearcast"}`;
+  }
+  if (rawMapVisible && frame?.rawMapProvider === "noaa-mrms-direct") {
+    return `Radar ${frame.rawMapAttribution || "NOAA/NWS MRMS · Nearcast"}`;
+  }
   if (activeMapSource(frame) === "forecast") return "Forecast NOAA/NWS nowCOAST/NDFD";
   if (frame?.provider === "mrms-generated") return `Radar ${frame.attribution || "NOAA MRMS · Nearcast"}`;
   if (frame?.attribution === "RainViewer") return "Radar RainViewer";
@@ -8184,6 +8618,7 @@ function stopRadarPlayback(options = {}) {
 function clearMapLayers(options = {}) {
   const stormRecord = mapLibreCurrentRecord();
   const stormActive = xweatherStormActive(stormRecord);
+  disposeRawMapEnhancement("layers-cleared");
   stopRadarPlayback(options);
   mapState.frames = [];
   mapState.frameIndex = 0;
@@ -8233,21 +8668,24 @@ function renderMapLegend() {
     return;
   }
   const isForecast = activeMapSource() === "forecast";
+  const activeFrame = mapState.frames[mapState.frameIndex];
+  const isReflectivity = !isForecast || rawMapEffectiveVisualMetric(activeFrame) === "reflectivity";
   const sourceNotes = [];
   if (mapState.forecastUnavailable && mapState.timelineKind === "precip") {
     sourceNotes.push("Forecast map unavailable here");
   }
   const resolutionNote = weatherResolutionLegendNote();
   if (resolutionNote) sourceNotes.push(resolutionNote);
+  if (isForecast && isReflectivity) sourceNotes.push("Model guidance, not observed radar");
   const sourceNote = sourceNotes.join(" · ");
-  const legend = isForecast
+  const legend = isForecast && !isReflectivity
     ? {
         title: "Forecast precipitation",
         colors: ["#d8f0ff", "#8fd07e", "#f2df5a", "#e99446", "#c74767"],
         labels: ["Trace", "0.10 in", "0.25 in", "0.50 in", "1.00+ in"]
       }
     : {
-        title: "Radar intensity",
+        title: isForecast ? "Forecast storm intensity" : "Radar intensity",
         colors: ["#42aed6", "#3ecc69", "#eebc2a", "#e66f24", "#d6372b"],
         labels: ["Very light", "Light", "Steady", "Heavy", "Severe"]
       };
@@ -8373,6 +8811,7 @@ function setMapZoom(nextZoom, anchorClientX = null, anchorClientY = null) {
       renderMapLegend();
       syncXweatherStormActivationControl(record);
       scheduleGeneratedRadarViewportRefresh("zoom");
+      scheduleRawMapViewportRefresh("zoom");
       return;
     }
   }
