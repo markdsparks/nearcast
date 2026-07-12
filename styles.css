@@ -11417,6 +11417,10 @@ button.sheet-plan-badge:focus-visible {
   color: var(--muted);
   opacity: 0.72;
 }
+.sheet-hour-wind-arrow {
+  transform: rotate(var(--wind-arrow, 0deg));
+  transform-origin: 50% 50%;
+}
 .sheet-hour-rain svg {
   width: 13px;
   height: 13px;
@@ -11602,11 +11606,11 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 42px 28px 54px 50px minmax(78px, 1fr) minmax(24px, auto);
+    grid-template-columns: 42px 28px 52px 50px minmax(58px, 1fr) minmax(72px, auto);
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     min-height: 58px;
-    padding: 10px 10px 10px 12px;
+    padding: 10px 8px 10px 12px;
   }
   .sheet-hour-icon {
     width: 28px;
@@ -11633,10 +11637,10 @@ button.sheet-plan-badge:focus-visible {
     gap: 5px;
   }
   .sheet-hour-chip {
-    max-width: 58px;
+    max-width: 78px;
     min-height: 24px;
-    padding: 4px 7px;
-    font-size: 0.68rem;
+    padding: 4px 8px;
+    font-size: 0.66rem;
     overflow: hidden;
     text-overflow: ellipsis;
   }

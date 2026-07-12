@@ -1,4 +1,4 @@
-const VERSION = "3.0.249";
+const VERSION = "3.0.252";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -6361,6 +6361,7 @@ async function fetchForecast(place, force = false) {
       "direct_radiation",
       "diffuse_radiation",
       "wind_speed_10m",
+      "wind_direction_10m",
       "wind_gusts_10m",
       "uv_index",
       "is_day"

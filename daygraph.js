@@ -415,7 +415,7 @@ function detailHoursForIndices(indices, {
       precip: activePrecip ? Math.max(precip, truthPrecip || 0) : precip,
       wind: data.hourly.wind_speed_10m[h],
       gust: data.hourly.wind_gusts_10m[h],
-      windDirection: data.hourly.wind_direction_10m?.[h],
+      windDirection: data.hourly.wind_direction_10m?.[h] ?? (isNowHour ? data.current?.wind_direction_10m : null),
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
       code: isNowHour ? truthCode : code,
@@ -676,11 +676,46 @@ function hourlyRowRainText(hour) {
 
 function hourlyRowWindText(hour, windUnit) {
   const speed = Math.max(0, Math.round(Number(hour.wind) || 0));
+  return `${speed} ${windUnit}`;
+}
+
+function hourlyRowWindDirection(hour) {
   const degrees = Number(hour.windDirection);
-  const direction = Number.isFinite(degrees) && typeof compassDirection === "function"
-    ? compassDirection(degrees)?.short
-    : "";
-  return `${speed} ${windUnit}${direction ? ` ${direction}` : ""}`;
+  if (!Number.isFinite(degrees)) {
+    return { style: "", label: "Wind direction unavailable." };
+  }
+  const fromDegrees = Math.round(((degrees % 360) + 360) % 360);
+  const towardDegrees = (fromDegrees + 180) % 360;
+  const from = hourlyCompassDirection(fromDegrees);
+  const toward = hourlyCompassDirection(towardDegrees);
+  return {
+    style: ` style="--wind-arrow:${towardDegrees}deg"`,
+    label: `Wind from ${from.long}, blowing toward ${toward.long}.`
+  };
+}
+
+function hourlyCompassDirection(degrees) {
+  const labels = [
+    ["N", "north"],
+    ["NNE", "north-northeast"],
+    ["NE", "northeast"],
+    ["ENE", "east-northeast"],
+    ["E", "east"],
+    ["ESE", "east-southeast"],
+    ["SE", "southeast"],
+    ["SSE", "south-southeast"],
+    ["S", "south"],
+    ["SSW", "south-southwest"],
+    ["SW", "southwest"],
+    ["WSW", "west-southwest"],
+    ["W", "west"],
+    ["WNW", "west-northwest"],
+    ["NW", "northwest"],
+    ["NNW", "north-northwest"]
+  ];
+  const index = Math.round((((Number(degrees) || 0) % 360) / 22.5)) % 16;
+  const [short, long] = labels[index];
+  return { short, long };
 }
 
 function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
@@ -863,7 +898,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rainText = hourlyRowRainText(hour);
     const windText = hourlyRowWindText(hour, windUnit);
-    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain ${rainText}, ${Math.round(hour.temp)}${deg}, wind ${windText}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
+    const windDirection = hourlyRowWindDirection(hour);
+    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain ${rainText}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
     const precipText = hour.precipText || (hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
@@ -876,8 +912,8 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
         <div class="sheet-hour-temp">
           <strong>${Math.round(hour.temp)}${deg}</strong>
         </div>
-        <div class="sheet-hour-wind${hour.gust >= 25 ? " is-emphasized" : ""}">
-          <span aria-hidden="true">&#8601;</span>
+        <div class="sheet-hour-wind${hour.gust >= 25 ? " is-emphasized" : ""}" aria-label="${escapeHtml(`${windText}. ${windDirection.label}`)}">
+          <span class="sheet-hour-wind-arrow" aria-hidden="true"${windDirection.style}>&#8593;</span>
           <strong>${escapeHtml(windText)}</strong>
         </div>
         <div class="sheet-hour-badges">
