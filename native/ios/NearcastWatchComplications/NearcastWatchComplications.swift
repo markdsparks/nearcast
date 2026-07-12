@@ -150,67 +150,28 @@ private struct NearcastNextComplicationView: View {
 
     @ViewBuilder
     private var freshBody: some View {
-        let signal = nextSignal(entry.snapshot)
-        let rain = rainSignal(entry.snapshot)
+        let signal = visualSignalSet(entry).primaryWeather
+        let instrument = instrumentSignal(signal)
         switch family {
         case .accessoryInline:
-            Label(signal.inline, systemImage: signal.symbol)
-                .accessibilityLabel("Nearcast Next, \(signal.accessibility)")
+            Label(inlineText(signal), systemImage: signal.symbolName)
+                .accessibilityLabel("Nearcast Next, \(signal.accessibilityDescription)")
         case .accessoryCircular:
-            VStack(spacing: 0) {
-                Image(systemName: signal.symbol)
-                    .font(.system(size: 13, weight: .bold))
-                    .widgetAccentable()
-                Text(signal.micro)
-                    .font(.system(size: signal.micro.count > 4 ? 10 : 14, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-                if signal.isSteady {
-                    Text("STEADY")
-                        .font(.system(size: 6, weight: .semibold, design: .rounded))
-                }
-            }
+            NearcastSignalDial(signal: instrument)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibility)
+            .accessibilityValue(signal.accessibilityDescription)
         case .accessoryCorner:
-            VStack(spacing: 0) {
-                Image(systemName: signal.symbol)
-                    .font(.system(size: 15, weight: .bold))
-                    .widgetAccentable()
-                if !showsWidgetLabel {
-                    Text(signal.micro)
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                }
-            }
-            .widgetLabel { Text(signal.cornerLabel) }
+            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
+                .widgetLabel { Text(cornerText(signal)) }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibility)
+            .accessibilityValue(signal.accessibilityDescription)
         default:
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Image(systemName: signal.symbol).widgetAccentable()
-                    Text(signal.headline)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text("\(entry.snapshot.temperature)°")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                if rain.peak >= 30 {
-                    NearcastHorizon(points: rain.points)
-                } else {
-                    Text(signal.detail)
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            NearcastWeatherInstrument(signal: instrument)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibility)
+            .accessibilityValue(signal.accessibilityDescription)
         }
     }
 }
@@ -246,63 +207,30 @@ private struct NearcastPlanComplicationView: View {
 
     @ViewBuilder
     private var freshBody: some View {
-        let plan = planSignal(entry.snapshot)
-        switch family {
-        case .accessoryInline:
-            Label(plan.inline, systemImage: plan.symbol)
-                .accessibilityLabel("Plan Check, \(plan.accessibility)")
-        case .accessoryCircular:
-            VStack(spacing: 0) {
-                Image(systemName: plan.symbol)
-                    .font(.system(size: 15, weight: .bold))
-                    .widgetAccentable()
-                Text(plan.verdict)
-                    .font(.system(size: plan.verdict.count > 4 ? 8 : 12, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.65)
-                    .lineLimit(1)
+        if let plan = visualSignalSet(entry).plan {
+            switch family {
+            case .accessoryInline:
+                Label(planInlineText(plan, risk: entry.snapshot.planRisk), systemImage: plan.symbolName)
+                    .accessibilityLabel("Plan Check, \(plan.accessibilityDescription)")
+            case .accessoryCircular:
+                NearcastPlanMark(plan: plan)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Plan Check")
+                .accessibilityValue(plan.accessibilityDescription)
+            case .accessoryCorner:
+                NearcastPlanMark(plan: plan, compact: true)
+                    .widgetLabel { Text(cornerText(plan)) }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Plan Check")
+                .accessibilityValue(plan.accessibilityDescription)
+            default:
+                NearcastPlanInstrument(plan: plan, risk: entry.snapshot.planRisk)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Plan Check")
+                .accessibilityValue(plan.accessibilityDescription)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Plan Check")
-            .accessibilityValue(plan.accessibility)
-        case .accessoryCorner:
-            VStack(spacing: 0) {
-                Image(systemName: plan.symbol)
-                    .font(.system(size: 15, weight: .bold))
-                    .widgetAccentable()
-                if !showsWidgetLabel {
-                    Text(plan.verdict)
-                        .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                }
-            }
-            .widgetLabel { Text(plan.cornerLabel) }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Plan Check")
-            .accessibilityValue(plan.accessibility)
-        default:
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Image(systemName: plan.symbol).widgetAccentable()
-                    Text(plan.title.uppercased())
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text(plan.verdict)
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                }
-                Text(plan.detail)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                if let place = clean(entry.snapshot.planPlace) {
-                    Text(place)
-                        .font(.system(size: 8, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Plan Check")
-            .accessibilityValue(plan.accessibility)
+        } else {
+            planEmptyState(family: family, showsWidgetLabel: showsWidgetLabel)
         }
     }
 }
@@ -335,61 +263,26 @@ private struct NearcastRainComplicationView: View {
 
     @ViewBuilder
     private var freshBody: some View {
-        let rain = rainSignal(entry.snapshot)
+        let rain = NearcastVisualSignalModel.rain(snapshot: entry.snapshot, now: entry.date, horizonHours: 4)
+        let instrument = instrumentSignal(rain)
         switch family {
         case .accessoryInline:
-            Label(rain.inline, systemImage: rain.symbol)
-                .accessibilityLabel("Rain Next, \(rain.accessibility)")
+            Label(inlineText(rain), systemImage: rain.symbolName)
+                .accessibilityLabel("Rain Next, \(rain.accessibilityDescription)")
         case .accessoryCircular:
-            Gauge(value: Double(rain.peak), in: 0...100) {
-                Text("Rain")
-            } currentValueLabel: {
-                VStack(spacing: -1) {
-                    Text("\(rain.peak)%")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                    Text(rain.micro)
-                        .font(.system(size: 7, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                }
-            }
-            .gaugeStyle(.accessoryCircular)
-            .widgetAccentable()
+            NearcastSignalDial(signal: instrument)
             .accessibilityLabel("Rain Next")
-            .accessibilityValue(rain.accessibility)
+            .accessibilityValue(rain.accessibilityDescription)
         case .accessoryCorner:
-            Gauge(value: Double(rain.peak), in: 0...100) {
-                Image(systemName: rain.symbol)
-            } currentValueLabel: {
-                if !showsWidgetLabel {
-                    Text("\(rain.peak)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                }
-            }
-            .gaugeStyle(.accessoryCircular)
-            .widgetAccentable()
-            .widgetLabel {
-                Gauge(value: Double(rain.peak), in: 0...100) {
-                    Text(rain.cornerLabel)
-                }
-            }
+            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
+                .widgetLabel { Text(cornerText(rain)) }
             .accessibilityLabel("Rain Next")
-            .accessibilityValue(rain.accessibility)
+            .accessibilityValue(rain.accessibilityDescription)
         default:
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Image(systemName: rain.symbol).widgetAccentable()
-                    Text(rain.headline)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text("\(rain.peak)%")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                NearcastHorizon(points: rain.points)
-            }
+            NearcastWeatherInstrument(signal: instrument)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Rain Next")
-            .accessibilityValue(rain.accessibility)
+            .accessibilityValue(rain.accessibilityDescription)
         }
     }
 }
@@ -420,23 +313,22 @@ private struct NearcastBriefView: View {
     }
 
     private var briefPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Label("NEARCAST BRIEF", systemImage: "cloud.sun.fill")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-            Text("What matters next")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+        HStack(spacing: 9) {
+            Image(systemName: "cloud.sun.fill")
+                .font(.system(size: 25, weight: .semibold))
+            Text("Weather next")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
         }
         .redacted(reason: .placeholder)
     }
 
     private var briefUnavailable: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Label("NEARCAST BRIEF", systemImage: "iphone.and.arrow.forward")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-            Text("Open Nearcast on iPhone")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-            Text("Choose a place to begin")
-                .font(.system(size: 9, weight: .medium, design: .rounded))
+        HStack(spacing: 9) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.system(size: 24, weight: .semibold))
+                .widgetAccentable()
+            Text("Open iPhone")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Nearcast Brief unavailable")
@@ -444,13 +336,17 @@ private struct NearcastBriefView: View {
     }
 
     private var briefStale: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Label("UPDATE NEEDED", systemImage: "arrow.clockwise")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-            Text("Weather may be out of date")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-            Text(weatherAgeText(entry))
-                .font(.system(size: 9, weight: .medium, design: .rounded))
+        HStack(spacing: 9) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 24, weight: .bold))
+                .widgetAccentable()
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Update needed")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text(weatherAgeText(entry))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Nearcast Brief needs an update")
@@ -459,32 +355,19 @@ private struct NearcastBriefView: View {
 
     @ViewBuilder
     private var briefFresh: some View {
-        let content = briefSignal(entry)
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 5) {
-                Image(systemName: content.symbol).widgetAccentable()
-                Text(content.eyebrow.uppercased())
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                Text("\(entry.snapshot.temperature)°")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-            }
-            Text(content.headline)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .lineLimit(1)
-            if content.showsHorizon {
-                NearcastHorizon(points: rainSignal(entry.snapshot).points)
+        let signals = visualSignalSet(entry)
+        let content = entry.planState == .fresh ? signals.primary : signals.primaryWeather
+        Group {
+            if content.kind == .plan {
+                NearcastPlanInstrument(plan: content, risk: entry.snapshot.planRisk)
             } else {
-                Text(content.detail)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .lineLimit(1)
+                NearcastWeatherInstrument(signal: instrumentSignal(content))
             }
         }
         .foregroundStyle(renderingMode == .fullColor ? Color.white : Color.primary)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Nearcast Brief, \(content.eyebrow)")
-        .accessibilityValue("\(content.headline). \(content.detail)")
+        .accessibilityLabel("Nearcast Brief")
+        .accessibilityValue(content.accessibilityDescription)
     }
 }
 
@@ -502,342 +385,383 @@ private struct ComplicationStateView: View {
         case .accessoryInline:
             Label(title, systemImage: symbol)
         case .accessoryCircular:
-            VStack(spacing: 1) {
-                Image(systemName: symbol).widgetAccentable()
-                Text(title)
-                    .font(.system(size: 8, weight: .semibold, design: .rounded))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .bold))
+                .widgetAccentable()
         case .accessoryCorner:
-            VStack(spacing: 0) {
-                Image(systemName: symbol).widgetAccentable()
-                if !showsWidgetLabel {
-                    Text(detail)
-                        .font(.system(size: 8, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                }
-            }
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .bold))
+                .widgetAccentable()
             .widgetLabel { Text(cornerLabel) }
         default:
-            HStack(spacing: 7) {
+            HStack(spacing: 9) {
                 Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 24, weight: .bold))
                     .widgetAccentable()
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .lineLimit(1)
                     Text(detail)
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
     }
 }
 
-private struct HorizonPoint {
-    let label: String
-    let chance: Int
+private enum NearcastInstrumentEncoding {
+    case rain(probability: Int)
+    case wind(speed: Int, ceiling: Int)
+    case symbol
 }
 
-private struct NearcastHorizon: View {
-    let points: [HorizonPoint]
+private struct NearcastInstrumentSignal {
+    let symbol: String
+    let primary: String
+    let secondary: String
+    let encoding: NearcastInstrumentEncoding
+    let trail: [Double]
+}
 
+private struct NearcastSignalDial: View {
+    let signal: NearcastInstrumentSignal
+    var compact = false
+    var showsPlainValue = true
+
+    @ViewBuilder
     var body: some View {
-        let visible = Array(points.prefix(4))
-        let peak = visible.map(\.chance).max() ?? 0
-        VStack(spacing: 1) {
-            HStack(alignment: .bottom, spacing: 4) {
-                ForEach(visible.indices, id: \.self) { index in
-                    Capsule()
-                        .fill(visible[index].chance == peak && peak > 0 ? Color.accentColor : Color.secondary.opacity(0.5))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: max(2, CGFloat(visible[index].chance) * 0.08))
-                }
+        switch signal.encoding {
+        case .rain(let probability):
+            Gauge(value: Double(probability), in: 0...100) {
+                Image(systemName: signal.symbol)
+            } currentValueLabel: {
+                Text("\(probability)%")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
             }
-            .frame(height: 8, alignment: .bottom)
-            HStack(spacing: 4) {
-                ForEach(visible.indices, id: \.self) { index in
-                    Text(visible[index].label)
-                        .font(.system(size: 7, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
+            .gaugeStyle(.accessoryCircular)
+            .widgetAccentable()
+        case .wind(let speed, let ceiling):
+            Gauge(value: Double(speed), in: 0...Double(max(1, ceiling))) {
+                Image(systemName: signal.symbol)
+            } currentValueLabel: {
+                Text("\(speed)")
+                    .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded))
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .widgetAccentable()
+        case .symbol:
+            ZStack {
+                Circle()
+                    .stroke(.secondary.opacity(0.35), lineWidth: compact ? 2 : 3)
+                VStack(spacing: 0) {
+                    Image(systemName: signal.symbol)
+                        .font(.system(size: showsPlainValue ? (compact ? 15 : 18) : 21, weight: .bold))
+                        .widgetAccentable()
+                    if showsPlainValue {
+                        Text(signal.primary)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                    }
                 }
             }
         }
+    }
+}
+
+private struct NearcastWeatherInstrument: View {
+    let signal: NearcastInstrumentSignal
+
+    var body: some View {
+        HStack(spacing: 8) {
+            NearcastSignalDial(signal: signal, compact: true, showsPlainValue: false)
+                .frame(width: 42, height: 42)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(signal.primary)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
+                if !signal.secondary.isEmpty {
+                    Text(signal.secondary)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+            if signal.trail.count > 1 {
+                NearcastTrail(
+                    values: signal.trail,
+                    style: signal.encoding.isRain ? .rainBars : .line
+                )
+                    .frame(width: 48, height: 30)
+            }
+        }
+    }
+}
+
+private enum NearcastTrailStyle {
+    case rainBars
+    case line
+}
+
+private struct NearcastTrail: View {
+    let values: [Double]
+    let style: NearcastTrailStyle
+
+    var body: some View {
+        let visible = Array(values.prefix(4)).map { min(1, max(0, $0)) }
+        let peakIndex = visible.indices.max(by: { visible[$0] < visible[$1] }) ?? 0
+        GeometryReader { proxy in
+            let width = max(1, proxy.size.width - 6)
+            let height = max(1, proxy.size.height - 6)
+            let step = visible.count > 1 ? width / CGFloat(visible.count - 1) : 0
+            let positions = visible.indices.map { index in
+                CGPoint(
+                    x: 3 + (CGFloat(index) * step),
+                    y: 3 + ((1 - CGFloat(visible[index])) * height)
+                )
+            }
+            switch style {
+            case .rainBars:
+                HStack(alignment: .bottom, spacing: 4) {
+                    ForEach(visible.indices, id: \.self) { index in
+                        Capsule()
+                            .fill(index == peakIndex ? Color.accentColor : Color.secondary.opacity(0.55))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: max(3, CGFloat(visible[index]) * proxy.size.height))
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            case .line:
+                ZStack {
+                    Path { path in
+                        guard let first = positions.first else { return }
+                        path.move(to: first)
+                        for point in positions.dropFirst() {
+                            path.addLine(to: point)
+                        }
+                    }
+                    .stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    ForEach(positions.indices, id: \.self) { index in
+                        Circle()
+                            .fill(index == peakIndex ? Color.accentColor : Color.secondary)
+                            .frame(width: index == peakIndex ? 7 : 5, height: index == peakIndex ? 7 : 5)
+                            .position(positions[index])
+                    }
+                }
+            }
+        }
+        .widgetAccentable()
         .accessibilityHidden(true)
     }
 }
 
-private struct NextSignal {
-    let symbol: String
-    let headline: String
-    let detail: String
-    let inline: String
-    let micro: String
-    let cornerLabel: String
-    let accessibility: String
-    let isSteady: Bool
-}
-
-private struct RainSignal {
-    let symbol: String
-    let headline: String
-    let inline: String
-    let micro: String
-    let cornerLabel: String
-    let peak: Int
-    let points: [HorizonPoint]
-    let accessibility: String
-}
-
-private struct PlanSignal {
-    let symbol: String
-    let title: String
-    let verdict: String
-    let detail: String
-    let inline: String
-    let cornerLabel: String
-    let accessibility: String
-}
-
-private struct BriefSignal {
-    let symbol: String
-    let eyebrow: String
-    let headline: String
-    let detail: String
-    let showsHorizon: Bool
-}
-
-private func nextSignal(_ snapshot: NearcastWidgetSnapshot) -> NextSignal {
-    let rows = Array((snapshot.timeline ?? []).prefix(6))
-    let currentGroup = conditionGroup(snapshot.conditionCode)
-    let peakRainChance = max(snapshot.rainChance, rows.compactMap(\.rainChance).max() ?? 0)
-
-    if supportsRain(snapshot.conditionCode) {
-        return NextSignal(
-            symbol: "cloud.rain.fill",
-            headline: "Rain now",
-            detail: "Peak chance \(peakRainChance)% in the next few hours",
-            inline: "Rain now · peak \(peakRainChance)%",
-            micro: "NOW",
-            cornerLabel: "RAIN NOW",
-            accessibility: "Rain now, peak chance \(peakRainChance) percent",
-            isSteady: false
-        )
+private extension NearcastInstrumentEncoding {
+    var isRain: Bool {
+        if case .rain = self { return true }
+        return false
     }
+}
 
-    if let wet = rows.first(where: { ($0.rainChance ?? 0) >= 30 || supportsRain($0.conditionCode) }) {
-        let peak = peakRainChance
-        // Only the current observation can justify definitive "Rain now"
-        // language. The hourly row is still a forecast, even at offset zero.
-        let supported = wet.offsetHours == 0
-            ? supportsRain(snapshot.conditionCode)
-            : supportsRain(wet.conditionCode)
-        let headline: String
-        let inline: String
-        let cornerLabel: String
-        let accessibility: String
-        if wet.offsetHours == 0 {
-            headline = supported ? "Rain now" : "Rain possible now"
-            inline = supported ? "Rain now · peak \(peak)%" : "Rain chance now · peak \(peak)%"
-            cornerLabel = supported ? "RAIN NOW" : "RAIN CHANCE NOW"
-            accessibility = supported
-                ? "Rain now, peak chance \(peak) percent"
-                : "Rain is possible now, peak chance \(peak) percent"
+private struct NearcastPlanMark: View {
+    let plan: NearcastVisualSignal
+    var compact = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.secondary.opacity(0.35), lineWidth: compact ? 2 : 3)
+            Image(systemName: plan.symbolName)
+                .font(.system(size: compact ? 19 : 25, weight: .bold))
+                .widgetAccentable()
+        }
+    }
+}
+
+private struct NearcastPlanInstrument: View {
+    let plan: NearcastVisualSignal
+    let risk: String?
+
+    var body: some View {
+        HStack(spacing: 9) {
+            NearcastPlanMark(plan: plan, compact: true)
+                .frame(width: 42, height: 42)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(plan.planVerdict?.rawValue ?? plan.headline)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                Text(planComplicationCue(plan, risk: risk))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private func visualSignalSet(_ entry: NearcastComplicationEntry) -> NearcastVisualSignalSet {
+    NearcastVisualSignalModel.make(snapshot: entry.snapshot, now: entry.date, horizonHours: 6)
+}
+
+private func instrumentSignal(_ signal: NearcastVisualSignal) -> NearcastInstrumentSignal {
+    let encoding: NearcastInstrumentEncoding
+    if signal.kind == .rain,
+       signal.headline != "Dry",
+       (signal.magnitude?.value ?? 0) > 0 {
+        encoding = .rain(probability: signal.magnitude?.value ?? 0)
+    } else if signal.kind == .wind, let magnitude = signal.magnitude {
+        let ceiling: Int
+        if magnitude.normalizedValue > 0 {
+            ceiling = max(magnitude.value, Int((Double(magnitude.value) / magnitude.normalizedValue).rounded()))
         } else {
-            headline = supported ? "Rain near \(wet.timeLabel)" : "Rain possible near \(wet.timeLabel)"
-            inline = supported ? "Rain \(wet.timeLabel) · peak \(peak)%" : "Rain chance \(wet.timeLabel) · peak \(peak)%"
-            cornerLabel = supported
-                ? "RAIN NEAR \(wet.timeLabel.uppercased())"
-                : "RAIN CHANCE \(wet.timeLabel.uppercased())"
-            accessibility = supported
-                ? "Rain near \(wet.timeLabel), peak chance \(peak) percent"
-                : "Rain is possible near \(wet.timeLabel), peak chance \(peak) percent"
+            ceiling = max(1, magnitude.value)
         }
-        return NextSignal(
-            symbol: "cloud.rain.fill",
-            headline: headline,
-            detail: "Peak chance \(peak)% in the next few hours",
-            inline: inline,
-            micro: wet.offsetHours == 0 ? "NOW" : wet.timeLabel,
-            cornerLabel: cornerLabel,
-            accessibility: accessibility,
-            isSteady: false
-        )
+        encoding = .wind(speed: magnitude.value, ceiling: ceiling)
+    } else {
+        encoding = .symbol
     }
 
-    if let changed = rows.dropFirst().first(where: { row in
-        guard let code = row.conditionCode else { return false }
-        return conditionGroup(code) != currentGroup
-    }), let code = changed.conditionCode {
-        let transition = transitionLabel(code)
-        return NextSignal(
-            symbol: conditionSymbol(code, isDay: changed.isDay ?? snapshot.isDay),
-            headline: "\(transition) near \(changed.timeLabel)",
-            detail: "Changing from \(snapshot.condition.lowercased())",
-            inline: "\(transition) near \(changed.timeLabel)",
-            micro: changed.timeLabel,
-            cornerLabel: "\(transition.uppercased()) \(changed.timeLabel.uppercased())",
-            accessibility: "\(transition) near \(changed.timeLabel)",
-            isSteady: false
-        )
-    }
-
-    let windThreshold = max(20, snapshot.wind + 10)
-    if let windy = rows.first(where: { ($0.windGust ?? 0) >= windThreshold }) {
-        let gust = windy.windGust ?? windThreshold
-        return NextSignal(
-            symbol: "wind",
-            headline: "Gusts pick up near \(windy.timeLabel)",
-            detail: "Up to \(gust) \(snapshot.windUnit)",
-            inline: "Gusts \(gust) \(snapshot.windUnit) near \(windy.timeLabel)",
-            micro: windy.timeLabel,
-            cornerLabel: "GUSTS \(gust) NEAR \(windy.timeLabel.uppercased())",
-            accessibility: "Wind gusts up to \(gust) \(snapshot.windUnit) near \(windy.timeLabel)",
-            isSteady: false
-        )
-    }
-
-    if let last = rows.last, let laterTemperature = last.temperature,
-       abs(laterTemperature - snapshot.temperature) >= 8 {
-        let direction = laterTemperature > snapshot.temperature ? "Warmer" : "Cooler"
-        return NextSignal(
-            symbol: laterTemperature > snapshot.temperature ? "thermometer.sun.fill" : "thermometer.snowflake",
-            headline: "\(direction) by \(last.timeLabel)",
-            detail: "\(laterTemperature)° later",
-            inline: "\(direction) by \(last.timeLabel) · \(laterTemperature)°",
-            micro: last.timeLabel,
-            cornerLabel: "\(direction.uppercased()) BY \(last.timeLabel.uppercased())",
-            accessibility: "\(direction) by \(last.timeLabel), \(laterTemperature) degrees",
-            isSteady: false
-        )
-    }
-
-    return NextSignal(
-        symbol: conditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay),
-        headline: "Steady next 4 hours",
-        detail: "\(snapshot.condition) · \(snapshot.temperature)°",
-        inline: "Steady · \(snapshot.temperature)° \(snapshot.condition)",
-        micro: "\(snapshot.temperature)°",
-        cornerLabel: "STEADY · \(snapshot.temperature)°",
-        accessibility: "Steady for the next 4 hours, \(snapshot.temperature) degrees and \(snapshot.condition)",
-        isSteady: true
-    )
-}
-
-private func rainSignal(_ snapshot: NearcastWidgetSnapshot) -> RainSignal {
-    let rows = Array((snapshot.timeline ?? []).prefix(4))
-    var points = rows.map {
-        HorizonPoint(label: $0.offsetHours == 0 ? "Now" : $0.timeLabel, chance: $0.rainChance ?? snapshot.rainChance)
-    }
-    if points.isEmpty {
-        points = [HorizonPoint(label: "Now", chance: snapshot.rainChance)]
-    }
-    let peak = max(snapshot.rainChance, points.map(\.chance).max() ?? 0)
-    let observedRain = supportsRain(snapshot.conditionCode)
-    let firstWet = rows.first { ($0.rainChance ?? 0) >= 30 || supportsRain($0.conditionCode) }
-    let headline: String
-    let inline: String
-    let micro: String
-    let cornerLabel: String
-    if observedRain {
-        headline = "Rain now"
-        inline = "Rain now · peak \(peak)%"
-        micro = "NOW"
-        cornerLabel = "RAIN NOW · \(peak)%"
-    } else if let firstWet {
-        // Keep current-hour forecast codes probabilistic unless the current
-        // observation also reports a wet condition.
-        let supported = firstWet.offsetHours == 0
-            ? supportsRain(snapshot.conditionCode)
-            : supportsRain(firstWet.conditionCode)
-        if firstWet.offsetHours == 0 {
-            headline = supported ? "Rain now" : "Rain possible now"
-            inline = supported ? "Rain now · peak \(peak)%" : "Rain chance now · peak \(peak)%"
-            micro = "NOW"
-            cornerLabel = supported ? "RAIN NOW · \(peak)%" : "RAIN CHANCE NOW · \(peak)%"
+    let primary: String
+    let secondary: String
+    switch signal.kind {
+    case .rain:
+        if signal.headline == "Dry" {
+            primary = "Dry"
+            secondary = signal.detail ?? signal.eventTimeLabel ?? ""
         } else {
-            headline = supported ? "Rain near \(firstWet.timeLabel)" : "Rain possible near \(firstWet.timeLabel)"
-            inline = supported
-                ? "Rain \(firstWet.timeLabel) · peak \(peak)%"
-                : "Rain chance \(firstWet.timeLabel) · peak \(peak)%"
-            micro = firstWet.timeLabel
-            cornerLabel = supported
-                ? "RAIN \(firstWet.timeLabel.uppercased()) · \(peak)%"
-                : "RAIN CHANCE \(firstWet.timeLabel.uppercased()) · \(peak)%"
+            primary = signal.eventTimeLabel ?? signal.headline
+            secondary = signal.headline
         }
-    } else if peak > 0 {
-        headline = "Low rain chance"
-        inline = "Low rain chance · peak \(peak)%"
-        micro = "\(peak)%"
-        cornerLabel = "LOW RAIN CHANCE · \(peak)%"
-    } else {
-        headline = "No rain showing"
-        inline = "No rain showing next 4h"
-        micro = "NONE"
-        cornerLabel = "NO RAIN SHOWING"
+    case .wind:
+        primary = signal.headline
+        secondary = signal.eventTimeLabel.map { "Near \($0)" }
+            ?? signal.magnitude?.displayValue
+            ?? ""
+    case .temperature:
+        primary = signal.magnitude?.displayValue ?? signal.headline
+        secondary = signal.eventTimeLabel ?? signal.headline
+    case .condition:
+        primary = signal.eventTimeLabel ?? signal.headline
+        secondary = signal.headline
+    case .steady:
+        primary = signal.magnitude?.displayValue ?? signal.headline
+        secondary = signal.headline
+    case .plan:
+        primary = signal.planVerdict?.rawValue ?? signal.headline
+        secondary = signal.context ?? "Watched plan"
     }
-    return RainSignal(
-        symbol: observedRain || firstWet != nil ? "cloud.rain.fill" : "drop.fill",
-        headline: headline,
-        inline: inline,
-        micro: micro,
-        cornerLabel: cornerLabel,
-        peak: peak,
-        points: points,
-        accessibility: "\(headline), peak chance \(peak) percent"
+
+    let trail = signal.timelinePoints.prefix(4).compactMap { $0.magnitude?.normalizedValue }
+    let shouldShowTrail = trail.count > 1
+        && !(signal.kind == .rain && (signal.magnitude?.value ?? 0) == 0)
+        && Set(trail.map { Int(($0 * 100).rounded()) }).count > 1
+
+    return NearcastInstrumentSignal(
+        symbol: signal.symbolName,
+        primary: primary,
+        secondary: secondary == primary ? "" : secondary,
+        encoding: encoding,
+        trail: shouldShowTrail ? trail : []
     )
 }
 
-private func planSignal(_ snapshot: NearcastWidgetSnapshot) -> PlanSignal {
-    let title = clean(snapshot.planTitle) ?? clean(snapshot.planLabel) ?? "Watched plan"
-    let tone = (clean(snapshot.watchTone) ?? clean(snapshot.planTone) ?? "").lowercased()
-    let verdict: String
-    let symbol: String
-    if planIsChanged(snapshot) {
-        verdict = "CHANGE"
-        symbol = "arrow.triangle.2.circlepath.circle.fill"
-    } else if tone.contains("danger") || tone.contains("bad") {
-        verdict = "CHANGE"
-        symbol = "exclamationmark.triangle.fill"
-    } else if tone.contains("watch") || tone.contains("caution") {
-        verdict = "WATCH"
-        symbol = "eye.fill"
-    } else if tone.contains("good") || tone.contains("safe") || tone.contains("clear") {
-        verdict = "GO"
-        symbol = "checkmark.circle.fill"
-    } else {
-        verdict = "CHECK"
-        symbol = "questionmark.circle.fill"
+private func inlineText(_ signal: NearcastVisualSignal) -> String {
+    let value = signal.magnitude?.displayValue
+    switch signal.kind {
+    case .rain:
+        if signal.headline == "Dry" {
+            return ["Dry", signal.detail].compactMap { $0 }.joined(separator: " · ")
+        }
+        return [signal.headline, signal.eventTimeLabel, value].compactMap { $0 }.uniqued().joined(separator: " · ")
+    case .wind:
+        return [signal.headline, value, signal.eventTimeLabel].compactMap { $0 }.uniqued().joined(separator: " · ")
+    case .temperature:
+        return [value ?? signal.headline, signal.eventTimeLabel].compactMap { $0 }.uniqued().joined(separator: " · ")
+    case .condition:
+        return [signal.headline, signal.eventTimeLabel].compactMap { $0 }.uniqued().joined(separator: " · ")
+    case .steady:
+        return [value, "Steady"].compactMap { $0 }.joined(separator: " · ")
+    case .plan:
+        return signal.planVerdict?.rawValue ?? signal.headline
     }
-    let detail = clean(snapshot.watchDetail) ?? clean(snapshot.planDetail) ?? "Open Nearcast for the latest check"
-    return PlanSignal(
-        symbol: symbol,
-        title: title,
-        verdict: verdict,
-        detail: detail,
-        inline: "\(title) · \(verdict): \(detail)",
-        cornerLabel: "\(title.uppercased()) · \(verdict)",
-        accessibility: "\(title), \(verdict), \(detail)"
-    )
 }
 
-private func briefSignal(_ entry: NearcastComplicationEntry) -> BriefSignal {
-    let rain = rainSignal(entry.snapshot)
-    if entry.planState == .fresh {
-        let plan = planSignal(entry.snapshot)
-        let tone = (clean(entry.snapshot.watchTone) ?? clean(entry.snapshot.planTone) ?? "").lowercased()
-        if planIsChanged(entry.snapshot) || tone.contains("danger") || tone.contains("watch") || tone.contains("caution") {
-            return BriefSignal(symbol: plan.symbol, eyebrow: plan.title, headline: plan.detail, detail: plan.verdict, showsHorizon: false)
+private func cornerText(_ signal: NearcastVisualSignal) -> String {
+    let value = signal.magnitude?.displayValue
+    switch signal.kind {
+    case .rain:
+        if signal.headline == "Dry" {
+            return ["DRY", signal.eventTimeLabel?.uppercased()].compactMap { $0 }.joined(separator: " · ")
         }
+        return (signal.eventTimeLabel ?? "RAIN").uppercased()
+    case .wind:
+        return [signal.headline.uppercased(), signal.eventTimeLabel?.uppercased()].compactMap { $0 }.joined(separator: " · ")
+    case .temperature, .condition:
+        return (signal.eventTimeLabel ?? value ?? signal.headline).uppercased()
+    case .steady:
+        return (value ?? "STEADY").uppercased()
+    case .plan:
+        return signal.planVerdict?.rawValue ?? signal.headline.uppercased()
     }
-    if rain.peak >= 30 {
-        return BriefSignal(symbol: rain.symbol, eyebrow: "Rain next", headline: rain.headline, detail: "Peak chance \(rain.peak)%", showsHorizon: true)
+}
+
+private func planComplicationCue(_ plan: NearcastVisualSignal, risk: String?) -> String {
+    let riskLabel: String?
+    switch (risk ?? "").lowercased() {
+    case "rain", "flood": riskLabel = "Rain"
+    case "storm": riskLabel = "Storm"
+    case "wind": riskLabel = "Wind"
+    case "heat": riskLabel = "Heat"
+    case "cold": riskLabel = "Cold"
+    case "air": riskLabel = "Air"
+    case "pollen": riskLabel = "Pollen"
+    case "good": riskLabel = "Clear"
+    default: riskLabel = nil
     }
-    let next = nextSignal(entry.snapshot)
-    return BriefSignal(symbol: next.symbol, eyebrow: "Nearcast next", headline: next.headline, detail: next.detail, showsHorizon: false)
+
+    if let riskLabel {
+        let title = conciseComplicationWords(plan.context, maximumCharacters: 12)
+        return [riskLabel, title].compactMap { $0 }.joined(separator: " · ")
+    }
+    return conciseComplicationWords(plan.detail ?? plan.context, maximumCharacters: 22)
+        ?? "Watched plan"
+}
+
+private func planInlineText(_ plan: NearcastVisualSignal, risk: String?) -> String {
+    let verdict = plan.planVerdict?.rawValue ?? plan.headline
+    let reason = planComplicationCue(plan, risk: risk)
+        .components(separatedBy: " · ")
+        .first
+    return [verdict, reason].compactMap { $0 }.uniqued().joined(separator: " · ")
+}
+
+private func conciseComplicationWords(_ value: String?, maximumCharacters: Int) -> String? {
+    let words = (value ?? "")
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+    guard !words.isEmpty else { return nil }
+
+    var result = ""
+    for word in words {
+        let candidate = result.isEmpty ? word : "\(result) \(word)"
+        if candidate.count > maximumCharacters { break }
+        result = candidate
+    }
+    if !result.isEmpty { return result }
+    return String(words[0].prefix(maximumCharacters))
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
 }
 
 private func makeEntry(date: Date, snapshot: NearcastWidgetSnapshot, isPlaceholder: Bool = false) -> NearcastComplicationEntry {
@@ -870,7 +794,12 @@ private func makeEntry(date: Date, snapshot: NearcastWidgetSnapshot, isPlacehold
         snapshot: snapshot,
         weatherState: weatherState,
         planState: planState,
-        relevance: isPlaceholder ? nil : briefRelevance(snapshot: snapshot, weatherState: weatherState, planState: planState)
+        relevance: isPlaceholder ? nil : briefRelevance(
+            snapshot: snapshot,
+            at: date,
+            weatherState: weatherState,
+            planState: planState
+        )
     )
 }
 
@@ -906,20 +835,25 @@ private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, re
     return projected
 }
 
-private func briefRelevance(snapshot: NearcastWidgetSnapshot, weatherState: WeatherDataState, planState: PlanDataState) -> TimelineEntryRelevance? {
+private func briefRelevance(
+    snapshot: NearcastWidgetSnapshot,
+    at date: Date,
+    weatherState: WeatherDataState,
+    planState: PlanDataState
+) -> TimelineEntryRelevance? {
     guard weatherState == .fresh else { return TimelineEntryRelevance(score: 5, duration: 30 * 60) }
-    let tone = (clean(snapshot.watchTone) ?? clean(snapshot.planTone) ?? "").lowercased()
-    if planState == .fresh && (tone.contains("danger") || planIsChanged(snapshot)) {
+    let signals = NearcastVisualSignalModel.make(snapshot: snapshot, now: date, horizonHours: 6)
+    if planState == .fresh && signals.plan?.planVerdict == .change {
         return TimelineEntryRelevance(score: 100, duration: 2 * 60 * 60)
     }
-    if planState == .fresh && (tone.contains("watch") || tone.contains("caution")) {
+    if planState == .fresh && signals.plan?.planVerdict == .watch {
         return TimelineEntryRelevance(score: 85, duration: 90 * 60)
     }
-    let rain = rainSignal(snapshot)
-    if rain.points.first?.chance ?? 0 >= 30 {
+    let currentRainChance = signals.rain.timelinePoints.first?.magnitude?.value ?? snapshot.rainChance
+    if currentRainChance >= 30 {
         return TimelineEntryRelevance(score: 90, duration: 60 * 60)
     }
-    if rain.peak >= 30 {
+    if signals.rain.magnitude?.value ?? 0 >= 30 {
         return TimelineEntryRelevance(score: 70, duration: 2 * 60 * 60)
     }
     if planState == .fresh {
@@ -932,17 +866,14 @@ private func briefBackground(_ entry: NearcastComplicationEntry) -> Color {
     if entry.weatherState == .unavailable || entry.weatherState == .stale {
         return Color(red: 0.12, green: 0.15, blue: 0.20)
     }
-    let tone = (clean(entry.snapshot.watchTone) ?? clean(entry.snapshot.planTone) ?? "").lowercased()
-    if entry.planState == .fresh && planIsChanged(entry.snapshot) {
+    let signals = visualSignalSet(entry)
+    if entry.planState == .fresh && signals.plan?.planVerdict == .change {
         return Color(red: 0.68, green: 0.18, blue: 0.12)
     }
-    if entry.planState == .fresh && (tone.contains("danger") || tone.contains("bad")) {
-        return Color(red: 0.53, green: 0.12, blue: 0.12)
-    }
-    if entry.planState == .fresh && (tone.contains("watch") || tone.contains("caution")) {
+    if entry.planState == .fresh && signals.plan?.planVerdict == .watch {
         return Color(red: 0.50, green: 0.28, blue: 0.05)
     }
-    if rainSignal(entry.snapshot).peak >= 30 {
+    if signals.rain.magnitude?.value ?? 0 >= 30 {
         return Color(red: 0.04, green: 0.26, blue: 0.48)
     }
     return Color(red: 0.05, green: 0.32, blue: 0.25)
@@ -1015,60 +946,6 @@ private func age(at date: Date, savedAt: TimeInterval) -> TimeInterval {
 
 private func nearcastComplicationURL(_ surface: String) -> URL? {
     URL(string: "nearcast://weather?source=watch-complication&surface=\(surface)")
-}
-
-private func clean(_ value: String?) -> String? {
-    guard let value else { return nil }
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-}
-
-private func planIsChanged(_ snapshot: NearcastWidgetSnapshot) -> Bool {
-    let tone = (clean(snapshot.watchTone) ?? clean(snapshot.planTone) ?? "").lowercased()
-    let label = (clean(snapshot.planLabel) ?? clean(snapshot.watchStatus) ?? "").lowercased()
-    return tone.contains("changed") || label == "changed"
-}
-
-private enum ConditionGroup: Equatable {
-    case clear, cloud, fog, rain, snow, storm
-}
-
-private func conditionGroup(_ code: Int) -> ConditionGroup {
-    if code <= 1 { return .clear }
-    if code <= 3 { return .cloud }
-    if code <= 48 { return .fog }
-    if code <= 67 { return .rain }
-    if code <= 77 { return .snow }
-    if code <= 82 { return .rain }
-    if code <= 86 { return .snow }
-    return .storm
-}
-
-private func supportsRain(_ code: Int?) -> Bool {
-    guard let code else { return false }
-    return (51...67).contains(code) || (80...82).contains(code) || (95...99).contains(code)
-}
-
-private func transitionLabel(_ code: Int) -> String {
-    switch conditionGroup(code) {
-    case .clear: return "Clearing"
-    case .cloud: return "Clouds move in"
-    case .fog: return "Fog develops"
-    case .rain: return "Rain arrives"
-    case .snow: return "Snow arrives"
-    case .storm: return "Storms develop"
-    }
-}
-
-private func conditionSymbol(_ code: Int, isDay: Bool) -> String {
-    switch conditionGroup(code) {
-    case .clear: return isDay ? "sun.max.fill" : "moon.stars.fill"
-    case .cloud: return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
-    case .fog: return "cloud.fog.fill"
-    case .rain: return "cloud.rain.fill"
-    case .snow: return "cloud.snow.fill"
-    case .storm: return "cloud.bolt.rain.fill"
-    }
 }
 
 private enum NearcastWatchWeatherRefresh {
@@ -1158,6 +1035,7 @@ private enum NearcastWatchWeatherRefresh {
         }
 
         var updated = latest
+        updated.version = max(6, max(updated.version, weather.version))
         if updated.hasPlan, updated.planSavedAt == nil, updated.savedAt > 0 {
             updated.planSavedAt = updated.savedAt
         }

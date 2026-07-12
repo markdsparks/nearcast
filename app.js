@@ -1,4 +1,4 @@
-const VERSION = "3.0.236";
+const VERSION = "3.0.237";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -7908,7 +7908,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const forecastSavedAt = forecastProvenance(data).savedAt;
     const snapshotSavedAt = (forecastSavedAt || Date.now()) / 1000;
     const snapshot = {
-      version: 5,
+      version: 6,
       savedAt: snapshotSavedAt,
       placeName: widgetPlaceDisplayName,
       temperature: Math.round(current.temperature_2m),
@@ -7945,7 +7945,10 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       weatherSavedAt: snapshotSavedAt,
       planSavedAt: widgetPlan ? snapshotSavedAt : null,
       planId: widgetPlan?.id || null,
-      planAvailable: Boolean(widgetPlan)
+      planAvailable: Boolean(widgetPlan),
+      planRisk: widgetPlan?.risk || null,
+      planStartAt: widgetPlan?.startAt || null,
+      planEndAt: widgetPlan?.endAt || null
     };
     window.NearcastNative.postMessage({
       type: "widget.snapshot",
@@ -8686,6 +8689,9 @@ function nativeWidgetPlanSummary(data, place) {
     label,
     detail: compactForYouText(detail || "Plan checked against the forecast.", 72),
     place: !samePlace && planPlace ? placeCityLabel(planPlace) : null,
+    risk: top.riskKind || (typeof planWatchRiskKind === "function" ? planWatchRiskKind(top) : null),
+    startAt: Number.isFinite(top.event?.startMs) ? top.event.startMs / 1000 : null,
+    endAt: Number.isFinite(top.event?.endMs) ? top.event.endMs / 1000 : null,
     // A changed plan is an action state. Do not let an older caution/watch
     // tone downgrade the Watch verdict back to WATCH.
     tone: top.change ? "changed" : (top.tone || "neutral")

@@ -35,12 +35,25 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
         return cached
     }
     do {
-        let snapshot = try await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
+        let weather = try await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
+        guard let latestPlace = NearcastWidgetPlace.stored(), sameWidgetPlace(place, latestPlace) else {
+            // The iPhone changed places while the request was in flight.
+            return NearcastWidgetSnapshot.current()
+        }
+
+        // The iPhone may also have delivered a newer watched-plan verdict while
+        // weather was loading. Merge only weather fields into that newest copy.
+        let latest = NearcastWidgetSnapshot.stored() ?? cached
+        let snapshot = latest.mergingWeather(from: weather)
         NearcastWidgetSnapshotStore.save(snapshot)
         return snapshot
     } catch {
         return cached
     }
+}
+
+private func sameWidgetPlace(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
+    abs(lhs.latitude - rhs.latitude) < 0.00001 && abs(lhs.longitude - rhs.longitude) < 0.00001
 }
 
 enum NearcastWidgetForecastClient {
@@ -90,7 +103,7 @@ enum NearcastWidgetForecastClient {
         let refreshedAt = Date().timeIntervalSince1970
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 5),
+            version: max(fallback.version, 6),
             savedAt: refreshedAt,
             placeName: place.displayLabel,
             temperature: temp,
@@ -127,7 +140,10 @@ enum NearcastWidgetForecastClient {
             weatherSavedAt: refreshedAt,
             planSavedAt: fallback.planSavedAt ?? (fallback.hasPlan && fallback.savedAt > 0 ? fallback.savedAt : nil),
             planId: fallback.planId,
-            planAvailable: fallback.planAvailable ?? fallback.hasPlan
+            planAvailable: fallback.planAvailable ?? fallback.hasPlan,
+            planRisk: fallback.planRisk,
+            planStartAt: fallback.planStartAt,
+            planEndAt: fallback.planEndAt
         )
     }
 

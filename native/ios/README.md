@@ -61,14 +61,17 @@ Apple security steps; the repeatable development loop is automated.
 
 The Watch app includes four WidgetKit choices with distinct jobs:
 
-- `Nearcast Next`: the most meaningful ambient weather change coming next.
-- `Plan Check`: the selected watched plan and its decision verdict.
-- `Rain Next`: rain timing, peak chance, and a labeled four-hour trend.
-- `Nearcast Brief`: an adaptive rectangular briefing for the Smart Stack.
+- `Nearcast Next`: the most meaningful ambient change as a gauge, symbol, or
+  short shape trail.
+- `Plan Check`: a large `GO`, `WATCH`, or `CHANGE` mark with a compact risk cue.
+- `Rain Next`: a closed probability gauge or segmented rain bars with timing.
+- `Nearcast Brief`: an adaptive visual instrument for the Smart Stack.
 
 The three watch-face complications support circular, corner, rectangular, and
-inline families. Ultra corners use curved labels and gauges, Plan Check supports
-the circular family, and every surface deep-links to its matching `Brief`,
+inline families. Ultra corners use curved labels and distinct rain/wind gauges;
+weather trails use bars for rain, lines for wind and temperature, and symbols
+for steady conditions. Plan Check supports the circular family, and every
+surface deep-links to its matching `Brief`,
 `Hours`, or `Plan` page in the Watch app. The app and complication extension
 refresh weather directly from Open-Meteo when the Watch has network access.
 Weather and plan freshness are tracked independently, forecast timelines advance

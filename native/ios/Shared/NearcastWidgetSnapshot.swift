@@ -44,6 +44,13 @@ struct NearcastWidgetSnapshot: Codable {
     var planSavedAt: TimeInterval?
     var planId: String?
     var planAvailable: Bool?
+    // Stable risk category (rain, wind, heat, etc.) used to pair a watched
+    // plan with the correct visual weather signal. Optional for V4/V5 data.
+    var planRisk: String? = nil
+    // Optional so snapshots written by older app builds continue to decode.
+    // Milliseconds from the web payload are converted to seconds before storage.
+    var planStartAt: TimeInterval? = nil
+    var planEndAt: TimeInterval? = nil
 }
 
 struct NearcastWidgetHour: Codable, Identifiable {
@@ -75,7 +82,7 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 5,
+        version: 6,
         savedAt: 0,
         placeName: "Nearcast",
         temperature: 0,
@@ -162,6 +169,42 @@ extension NearcastWidgetSnapshot {
 
     var age: TimeInterval {
         weatherAge
+    }
+
+    /// Replaces only forecast fields, preserving any plan delivered while a
+    /// network request was in flight.
+    func mergingWeather(
+        from weather: NearcastWidgetSnapshot,
+        minimumVersion: Int = 6
+    ) -> NearcastWidgetSnapshot {
+        var merged = self
+        merged.version = max(minimumVersion, max(version, weather.version))
+        merged.placeName = weather.placeName
+        merged.temperature = weather.temperature
+        merged.feelsLike = weather.feelsLike
+        merged.high = weather.high
+        merged.low = weather.low
+        merged.condition = weather.condition
+        merged.conditionCode = weather.conditionCode
+        merged.isDay = weather.isDay
+        merged.rainChance = weather.rainChance
+        merged.wind = weather.wind
+        merged.windUnit = weather.windUnit
+        merged.windDirection = weather.windDirection
+        merged.windLabel = weather.windLabel
+        merged.uv = weather.uv
+        merged.nowLabel = weather.nowLabel
+        merged.nowValue = weather.nowValue
+        merged.nextLabel = weather.nextLabel
+        merged.nextValue = weather.nextValue
+        merged.laterLabel = weather.laterLabel
+        merged.laterValue = weather.laterValue
+        merged.timeline = weather.timeline
+        merged.sunriseAt = weather.sunriseAt
+        merged.sunsetAt = weather.sunsetAt
+        merged.isAvailable = weather.isAvailable
+        merged.weatherSavedAt = weather.weatherSavedAt
+        return merged
     }
 }
 

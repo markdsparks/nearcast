@@ -201,44 +201,42 @@ private struct WatchBriefPage: View {
     }
 
     var body: some View {
-        let decision = weatherDecision(snapshot)
+        let visualSignal = NearcastVisualSignalModel.make(
+            snapshot: snapshot,
+            horizonHours: useUltraLayout ? 6 : 5
+        ).primaryWeather
+        let signal = WatchVisualSignal(visualSignal, isStale: isStale)
 
-        VStack(alignment: .leading, spacing: useUltraLayout ? 9 : 6) {
-            WatchPageHeader(
-                section: "Brief",
-                context: snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Nearcast",
-                trailing: snapshot.hasWeatherData ? (isStale ? "LAST \(snapshot.temperature)°" : "\(snapshot.temperature)°") : nil
-            )
+        VStack(alignment: .leading, spacing: useUltraLayout ? 10 : 7) {
+            WatchPlaceHeader(snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Nearcast")
 
             if snapshot.hasWeatherData {
-                WatchDecisionHero(
-                    eyebrow: "Next",
-                    headline: isStale ? "Weather update needed" : decision.headline,
-                    detail: isStale
-                        ? "Last report: \(snapshot.condition), \(snapshot.temperature)°."
-                        : decision.detail,
-                    symbol: isStale ? "arrow.triangle.2.circlepath" : decision.symbol,
-                    color: isStale ? nearcastAmber : decision.color,
-                    isLuminanceReduced: isLuminanceReduced
+                WatchVisualHero(
+                    signal: signal,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
                 )
 
-                NearcastHorizon(
-                    snapshot: snapshot,
-                    maximumHours: useUltraLayout ? 5 : 4,
-                    showsTemperature: false,
+                NearcastWeatherRibbon(
+                    signal: visualSignal,
                     isStale: isStale,
-                    isLuminanceReduced: isLuminanceReduced
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
                 )
             } else {
-                WatchNoWeatherMessage(isRefreshing: syncState == .refreshing)
+                WatchNoWeatherMessage(
+                    isRefreshing: syncState == .refreshing,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
             }
 
             Spacer(minLength: 0)
-            WatchWeatherFreshness(snapshot: snapshot, syncState: syncState)
+            WatchExceptionalWeatherStatus(snapshot: snapshot, syncState: syncState)
         }
         .watchPagePadding(useUltraLayout)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Nearcast Brief")
+        .accessibilityLabel("Nearcast weather brief for \(cityName(snapshot.placeName))")
     }
 }
 
@@ -253,39 +251,38 @@ private struct WatchHoursPage: View {
     }
 
     var body: some View {
-        let rain = rainDecision(snapshot, maximumHours: useUltraLayout ? 6 : 5)
+        let visualSignal = NearcastVisualSignalModel.make(
+            snapshot: snapshot,
+            horizonHours: useUltraLayout ? 6 : 5
+        ).rain
+        let signal = WatchVisualSignal(visualSignal, isStale: isStale)
 
-        VStack(alignment: .leading, spacing: useUltraLayout ? 9 : 6) {
-            WatchPageHeader(
-                section: "Hours",
-                context: snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Rain",
-                trailing: nil
-            )
+        VStack(alignment: .leading, spacing: useUltraLayout ? 10 : 7) {
+            WatchPlaceHeader(snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Rain")
 
             if snapshot.hasWeatherData {
-                WatchDecisionHero(
-                    eyebrow: "Rain next",
-                    headline: isStale ? "Rain timing unavailable" : rain.headline,
-                    detail: isStale ? "The saved hourly forecast is out of date." : rain.detail,
-                    symbol: isStale ? "clock.badge.exclamationmark" : rain.symbol,
-                    color: isStale ? nearcastAmber : nearcastCyan,
+                WatchVisualHero(
+                    signal: signal,
                     isLuminanceReduced: isLuminanceReduced,
-                    compact: true
+                    useUltraLayout: useUltraLayout
                 )
 
-                NearcastHorizon(
-                    snapshot: snapshot,
-                    maximumHours: useUltraLayout ? 6 : 5,
-                    showsTemperature: true,
+                NearcastWeatherRibbon(
+                    signal: visualSignal,
                     isStale: isStale,
-                    isLuminanceReduced: isLuminanceReduced
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
                 )
             } else {
-                WatchNoWeatherMessage(isRefreshing: syncState == .refreshing)
+                WatchNoWeatherMessage(
+                    isRefreshing: syncState == .refreshing,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
             }
 
             Spacer(minLength: 0)
-            WatchWeatherFreshness(snapshot: snapshot, syncState: syncState)
+            WatchExceptionalWeatherStatus(snapshot: snapshot, syncState: syncState)
         }
         .watchPagePadding(useUltraLayout)
         .accessibilityElement(children: .contain)
@@ -303,33 +300,28 @@ private struct WatchPlanPage: View {
     }
 
     var body: some View {
-        let plan = planDecision(snapshot)
+        let signals = NearcastVisualSignalModel.make(
+            snapshot: snapshot,
+            horizonHours: useUltraLayout ? 6 : 5
+        )
+        let plan = signals.plan
 
-        VStack(alignment: .leading, spacing: useUltraLayout ? 10 : 7) {
-            WatchPageHeader(
-                section: "Plan check",
-                context: cleanOptional(snapshot.planPlace) ?? "Watching",
-                trailing: nil
-            )
-
-            if snapshot.hasPlan {
-                WatchDecisionHero(
-                    eyebrow: cleanOptional(snapshot.planTitle) ?? "Your plan",
-                    headline: isStale ? "Update plan check" : plan.headline,
-                    detail: isStale
-                        ? "Open Nearcast on iPhone to recalculate this plan. Last result: \(plan.headline)."
-                        : plan.detail,
-                    symbol: isStale ? "calendar.badge.exclamationmark" : plan.symbol,
-                    color: isStale ? nearcastAmber : plan.color,
-                    isLuminanceReduced: isLuminanceReduced
+        VStack(spacing: useUltraLayout ? 10 : 7) {
+            if snapshot.hasPlan, let plan {
+                WatchPlanVerdict(
+                    snapshot: snapshot,
+                    signal: plan,
+                    weatherSignal: signals.planWeather,
+                    isStale: isStale,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
                 )
             } else {
-                WatchEmptyPlan(isLuminanceReduced: isLuminanceReduced)
+                WatchEmptyPlan(
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
             }
-
-            Spacer(minLength: 0)
-            Text(planFreshnessText(snapshot))
-                .watchFooterStyle()
         }
         .watchPagePadding(useUltraLayout)
         .accessibilityElement(children: .contain)
@@ -342,28 +334,35 @@ private struct WatchUnavailablePage: View {
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
+    private var title: String {
+        switch syncState {
+        case .refreshing: return "Loading"
+        case .failed: return "Couldn't load"
+        case .missingPlace, .idle: return "Add a place"
+        }
+    }
+
     var body: some View {
         VStack(spacing: useUltraLayout ? 12 : 9) {
             Spacer(minLength: 4)
             Image(systemName: syncState == .refreshing ? "arrow.triangle.2.circlepath" : "iphone.and.arrow.forward")
-                .font(.system(size: useUltraLayout ? 34 : 29, weight: .semibold))
+                .font(.system(size: useUltraLayout ? 48 : 40, weight: .semibold))
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
                 .symbolEffect(.pulse, isActive: syncState == .refreshing)
                 .accessibilityHidden(true)
-            Text(syncState == .refreshing ? "Loading weather" : "Weather unavailable")
+            Text(title)
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-                .minimumScaleFactor(0.78)
+                .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(unavailableGuidance(syncState))
-                .font(.system(.caption, design: .rounded, weight: .medium))
+            Text(unavailableVisualGuidance(syncState))
+                .font(.system(.body, design: .rounded, weight: .medium))
                 .foregroundStyle(watchSecondary)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            Text("Nearcast updates automatically")
-                .watchFooterStyle()
         }
         .padding(.horizontal, useUltraLayout ? 15 : 11)
         .padding(.vertical, useUltraLayout ? 10 : 7)
@@ -372,174 +371,684 @@ private struct WatchUnavailablePage: View {
     }
 }
 
-private struct WatchPageHeader: View {
-    let section: String
-    let context: String
-    let trailing: String?
+private struct WatchPlaceHeader: View {
+    let place: String
+
+    init(_ place: String) {
+        self.place = place
+    }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(section.uppercased())
-                .font(.system(.caption2, design: .rounded, weight: .bold))
-                .tracking(0.9)
-                .foregroundStyle(nearcastCyan)
-            Text(context)
-                .font(.system(.caption, design: .rounded, weight: .semibold))
+        HStack {
+            Text(place)
+                .font(.system(.headline, design: .rounded, weight: .semibold))
                 .foregroundStyle(watchSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Spacer(minLength: 4)
-            if let trailing {
-                Text(trailing)
-                    .font(.system(.caption2, design: .rounded, weight: .bold).monospacedDigit())
-                    .foregroundStyle(watchPrimary)
-                    .lineLimit(1)
-            }
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 56)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Weather for \(place)")
     }
 }
 
-private struct WatchDecisionHero: View {
-    let eyebrow: String
-    let headline: String
-    let detail: String
+private enum WatchRibbonMetric: Equatable {
+    case rain
+    case wind
+    case temperature
+}
+
+private struct WatchVisualSignal {
+    let metric: String
+    let unit: String?
+    let caption: String
+    let support: String?
     let symbol: String
     let color: Color
+
+    init(_ signal: NearcastVisualSignal, isStale: Bool) {
+        let display = watchMagnitudeDisplay(signal)
+        metric = display.metric
+        unit = display.unit
+
+        if isStale {
+            caption = "Update needed"
+            support = "Saved outlook"
+            symbol = "arrow.triangle.2.circlepath"
+            color = nearcastAmber
+        } else {
+            caption = watchSignalCaption(signal)
+            support = watchSignalSupport(signal)
+            symbol = signal.symbolName
+            color = watchSignalColor(signal.tone)
+        }
+
+    }
+}
+
+private struct WatchVisualHero: View {
+    let signal: WatchVisualSignal
     let isLuminanceReduced: Bool
-    var compact = false
+    let useUltraLayout: Bool
+    @ScaledMetric(relativeTo: .largeTitle) private var ultraMetricSize: CGFloat = 41
+    @ScaledMetric(relativeTo: .largeTitle) private var standardMetricSize: CGFloat = 35
+    @ScaledMetric(relativeTo: .title2) private var ultraWordMetricSize: CGFloat = 30
+    @ScaledMetric(relativeTo: .title2) private var standardWordMetricSize: CGFloat = 26
+    @ScaledMetric(relativeTo: .title) private var ultraSymbolSize: CGFloat = 34
+    @ScaledMetric(relativeTo: .title) private var standardSymbolSize: CGFloat = 29
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: symbol)
-                .font(.system(size: compact ? 20 : 24, weight: .semibold))
-                .foregroundStyle(isLuminanceReduced ? Color.white : color)
-                .frame(width: compact ? 35 : 42, height: compact ? 35 : 42)
+        HStack(alignment: .center, spacing: useUltraLayout ? 12 : 9) {
+            Image(systemName: signal.symbol)
+                .font(.system(size: useUltraLayout ? ultraSymbolSize : standardSymbolSize, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(isLuminanceReduced ? Color.white : signal.color)
+                .frame(
+                    width: useUltraLayout ? 58 : 50,
+                    height: useUltraLayout ? 58 : 50
+                )
                 .background(
                     Circle()
-                        .fill(isLuminanceReduced ? Color.clear : color.opacity(0.16))
-                        .overlay(Circle().stroke(color.opacity(isLuminanceReduced ? 0.7 : 0.22), lineWidth: 1))
+                        .fill(isLuminanceReduced ? Color.clear : signal.color.opacity(0.15))
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    isLuminanceReduced ? Color.white.opacity(0.65) : signal.color.opacity(0.28),
+                                    lineWidth: 1.5
+                                )
+                        )
                 )
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(eyebrow.uppercased())
-                    .font(.system(.caption2, design: .rounded, weight: .bold))
-                    .tracking(0.7)
-                    .foregroundStyle(watchMuted)
-                    .lineLimit(1)
-                Text(headline)
-                    .font(compact
-                        ? .system(.title3, design: .rounded, weight: .bold)
-                        : .system(.title2, design: .rounded, weight: .bold))
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .lastTextBaseline, spacing: 4) {
+                    Text(signal.metric)
+                        .font(.system(
+                            size: signal.metric.count > 5
+                                ? (useUltraLayout ? ultraWordMetricSize : standardWordMetricSize)
+                                : (useUltraLayout ? ultraMetricSize : standardMetricSize),
+                            weight: .bold,
+                            design: .rounded
+                        ).monospacedDigit())
+                        .foregroundStyle(watchPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    if let unit = signal.unit {
+                        Text(unit)
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .foregroundStyle(watchSecondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Text(signal.caption)
+                    .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(watchPrimary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                Text(detail)
-                    .font(.system(.caption, design: .rounded, weight: .medium))
-                    .foregroundStyle(watchSecondary)
-                    .lineLimit(compact ? 1 : 2)
-                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                if let support = signal.support, !isLuminanceReduced {
+                    Text(support)
+                        .font(.system(.body, design: .rounded, weight: .medium))
+                        .foregroundStyle(watchSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(eyebrow), \(headline)")
-        .accessibilityValue(detail)
+        .accessibilityLabel("\(signal.caption), \(signal.metric)\(signal.unit.map { " \($0)" } ?? "")")
+        .accessibilityValue(signal.support ?? "")
     }
 }
 
-private struct NearcastHorizon: View {
-    let snapshot: NearcastWidgetSnapshot
-    let maximumHours: Int
-    let showsTemperature: Bool
+private struct NearcastWeatherRibbon: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let signal: NearcastVisualSignal
     let isStale: Bool
     let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
 
-    private var rows: [NearcastWidgetHour] {
-        Array(activeTimeline(snapshot).prefix(maximumHours))
+    private var points: [NearcastVisualTimelinePoint] {
+        sampledSignalPoints(
+            signal.timelinePoints,
+            maximumPoints: useUltraLayout ? 4 : 3
+        )
+    }
+
+    private var metric: WatchRibbonMetric {
+        watchRibbonMetric(signal.kind)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(isStale ? "LAST NEARCAST HORIZON" : "NEARCAST HORIZON")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .tracking(0.75)
+        Group {
+            if points.isEmpty {
+                Image(systemName: "ellipsis")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
                     .foregroundStyle(watchMuted)
-                Spacer(minLength: 4)
-                if let peak = rows.compactMap(\.rainChance).max() {
-                    Text("PEAK \(peak)%")
-                        .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(watchSecondary)
-                }
-            }
-
-            if rows.isEmpty {
-                Text("Hourly forecast unavailable")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(watchSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if metric == .rain && signal.headline == "Dry" {
+                WatchDryRibbon(
+                    points: points,
+                    startSymbol: signal.symbolName,
+                    color: ribbonColor,
+                    useUltraLayout: useUltraLayout
+                )
+            } else if metric == .rain && !signal.isActionable {
+                WatchQuietRainRibbon(
+                    points: points,
+                    color: ribbonColor,
+                    useUltraLayout: useUltraLayout
+                )
+            } else if metric == .rain && points.allSatisfy({ ($0.magnitude?.value ?? 0) == 0 }) {
+                WatchConditionRibbon(
+                    points: points,
+                    color: ribbonColor,
+                    showsTemperature: false,
+                    useUltraLayout: useUltraLayout
+                )
+            } else if metric == .temperature {
+                WatchConditionRibbon(
+                    points: points,
+                    color: ribbonColor,
+                    showsTemperature: signal.kind == .temperature,
+                    useUltraLayout: useUltraLayout
+                )
             } else {
-                HStack(alignment: .bottom, spacing: 3) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { index, hour in
-                        let chance = max(0, min(100, hour.rainChance ?? 0))
-                        VStack(spacing: 2) {
-                            if showsTemperature {
-                                Text(hour.temperature.map { "\($0)°" } ?? "—")
-                                    .font(.system(size: 9, weight: .semibold, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(watchSecondary)
+                WatchMetricRibbon(
+                    points: points,
+                    metric: metric,
+                    color: ribbonColor,
+                    useUltraLayout: useUltraLayout
+                )
+            }
+        }
+        .padding(.horizontal, useUltraLayout ? 11 : 9)
+        .padding(.vertical, useUltraLayout ? 8 : 6)
+        .frame(minHeight: useUltraLayout ? 76 : 66)
+        .frame(height: dynamicTypeSize.isAccessibilitySize ? nil : (useUltraLayout ? 76 : 66))
+        .background(
+            isLuminanceReduced ? Color.clear : ribbonColor.opacity(0.09),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(
+                    isLuminanceReduced ? Color.white.opacity(0.38) : ribbonColor.opacity(0.25),
+                    lineWidth: 1.25
+                )
+        )
+        .opacity(isStale ? 0.62 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isStale ? "Saved weather ribbon, out of date" : ribbonAccessibilityLabel)
+        .accessibilityValue(signal.accessibilityDescription)
+    }
+
+    private var ribbonColor: Color {
+        if isLuminanceReduced { return .white }
+        switch metric {
+        case .rain, .wind: return nearcastCyan
+        case .temperature: return nearcastMint
+        }
+    }
+
+    private var ribbonAccessibilityLabel: String {
+        switch metric {
+        case .rain: return "Rain outlook"
+        case .wind: return "Wind outlook"
+        case .temperature: return "Weather outlook"
+        }
+    }
+
+}
+
+private struct WatchConditionRibbon: View {
+    let points: [NearcastVisualTimelinePoint]
+    let color: Color
+    let showsTemperature: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(spacing: 3) {
+            ZStack {
+                Capsule()
+                    .fill(color.opacity(0.32))
+                    .frame(height: 2)
+                    .padding(.horizontal, 10)
+                    .offset(y: -8)
+
+                HStack(spacing: 4) {
+                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                        VStack(spacing: 1) {
+                            Image(systemName: point.symbolName)
+                            .font(.system(size: useUltraLayout ? 19 : 17, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(color)
+                            .frame(width: useUltraLayout ? 26 : 22, height: 23)
+                            .background(Color.black, in: Circle())
+
+                            if showsTemperature,
+                               index == 0 || index == points.count - 1 || point.isEvent {
+                                Text(point.temperature.map { "\($0)°" } ?? "—")
+                                    .font(.system(.body, design: .rounded, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(watchPrimary)
+                                    .lineLimit(1)
                             }
-                            Text("\(chance)%")
-                                .font(.system(size: 8, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(watchPrimary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            Capsule()
-                                .fill(barColor(index: index, rows: rows))
-                                .frame(width: showsTemperature ? 8 : 9, height: max(4, CGFloat(chance) * (showsTemperature ? 0.34 : 0.38)))
-                                .frame(height: showsTemperature ? 35 : 39, alignment: .bottom)
-                            Text(hour.timeLabel)
-                                .font(.system(size: 9, weight: .semibold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(watchSecondary)
-                                .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity)
                     }
                 }
-                .opacity(isStale ? 0.55 : 1)
+            }
+
+            WatchRibbonEndpoints(
+                start: points.first?.timeLabel ?? "Now",
+                end: points.last?.timeLabel ?? "Later"
+            )
+        }
+    }
+}
+
+private struct WatchDryRibbon: View {
+    let points: [NearcastVisualTimelinePoint]
+    let startSymbol: String
+    let color: Color
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 7) {
+                Image(systemName: startSymbol)
+                .font(.system(size: useUltraLayout ? 19 : 17, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(color)
+                .frame(width: useUltraLayout ? 30 : 26, height: useUltraLayout ? 30 : 26)
+                .background(color.opacity(0.13), in: Circle())
+
+                Capsule()
+                    .fill(color.opacity(0.55))
+                    .frame(height: 4)
+                    .overlay(alignment: .trailing) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 9, height: 9)
+                    }
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold))
+                    .foregroundStyle(color)
+                    .frame(width: useUltraLayout ? 30 : 26, height: useUltraLayout ? 30 : 26)
+                    .overlay(Circle().stroke(color.opacity(0.7), lineWidth: 1.5))
+            }
+
+            WatchRibbonEndpoints(
+                start: points.first?.timeLabel ?? "Now",
+                end: points.last?.timeLabel ?? "Later"
+            )
+        }
+    }
+}
+
+private struct WatchQuietRainRibbon: View {
+    let points: [NearcastVisualTimelinePoint]
+    let color: Color
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 7) {
+                Image(systemName: "drop.fill")
+                    .font(.system(size: useUltraLayout ? 18 : 16, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: useUltraLayout ? 30 : 26, height: useUltraLayout ? 30 : 26)
+                    .background(color.opacity(0.13), in: Circle())
+
+                Capsule()
+                    .fill(color.opacity(0.42))
+                    .frame(height: 3)
+                    .overlay(alignment: .trailing) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 7, height: 7)
+                    }
+
+                Circle()
+                    .stroke(color.opacity(0.7), lineWidth: 1.5)
+                    .frame(width: useUltraLayout ? 12 : 10, height: useUltraLayout ? 12 : 10)
+                    .frame(width: useUltraLayout ? 30 : 26, height: useUltraLayout ? 30 : 26)
+            }
+
+            WatchRibbonEndpoints(
+                start: points.first?.timeLabel ?? "Now",
+                end: points.last?.timeLabel ?? "Later"
+            )
+        }
+    }
+}
+
+private struct WatchMetricRibbon: View {
+    let points: [NearcastVisualTimelinePoint]
+    let metric: WatchRibbonMetric
+    let color: Color
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(spacing: 3) {
+            if metric == .rain {
+                WatchRainBars(points: points, color: color)
+                    .frame(height: useUltraLayout ? 36 : 30)
+            } else {
+                WatchRibbonGraph(points: points, color: color)
+                    .frame(height: useUltraLayout ? 36 : 30)
+            }
+            WatchRibbonEndpoints(
+                start: points.first?.timeLabel ?? "Now",
+                end: points.last?.timeLabel ?? "Later"
+            )
+        }
+    }
+}
+
+private struct WatchRainBars: View {
+    let points: [NearcastVisualTimelinePoint]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let positions = watchTimelineXPositions(points, width: proxy.size.width, inset: 6)
+            ZStack(alignment: .bottomLeading) {
+                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                    let value = point.magnitude?.normalizedValue ?? 0
+                    let height = max(5, 5 + CGFloat(min(1, max(0, value))) * max(0, proxy.size.height - 9))
+                    Capsule()
+                        .fill(point.isEvent ? color : color.opacity(0.45))
+                        .frame(width: point.isEvent ? 12 : 9, height: height)
+                        .overlay {
+                            if point.isEvent {
+                                Capsule().stroke(Color.white.opacity(0.8), lineWidth: 1)
+                            }
+                        }
+                        .position(x: positions[index], y: proxy.size.height - height / 2)
+                }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(Color.white.opacity(isLuminanceReduced ? 0.04 : 0.08), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(Color.white.opacity(isLuminanceReduced ? 0.25 : 0.12), lineWidth: 1)
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isStale ? "Last Nearcast Horizon, out of date" : "Nearcast Horizon")
-        .accessibilityValue(horizonAccessibility(rows))
+    }
+}
+
+private struct WatchRibbonGraph: View {
+    let points: [NearcastVisualTimelinePoint]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let drawnPoints = graphPoints(in: proxy.size)
+            let emphasized = points.firstIndex(where: { $0.isEvent }) ?? peakGraphIndex
+
+            ZStack {
+                if drawnPoints.count > 1 {
+                    Path { path in
+                        guard let first = drawnPoints.first, let last = drawnPoints.last else { return }
+                        path.move(to: CGPoint(x: first.x, y: proxy.size.height))
+                        path.addLine(to: first)
+                        for point in drawnPoints.dropFirst() {
+                            path.addLine(to: point)
+                        }
+                        path.addLine(to: CGPoint(x: last.x, y: proxy.size.height))
+                        path.closeSubpath()
+                    }
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.34), color.opacity(0.03)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                    Path { path in
+                        guard let first = drawnPoints.first else { return }
+                        path.move(to: first)
+                        for point in drawnPoints.dropFirst() {
+                            path.addLine(to: point)
+                        }
+                    }
+                    .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                }
+
+                ForEach(Array(drawnPoints.enumerated()), id: \.offset) { index, point in
+                    Circle()
+                        .fill(index == emphasized ? color : Color.black)
+                        .frame(width: index == emphasized ? 10 : 7, height: index == emphasized ? 10 : 7)
+                        .overlay(Circle().stroke(color, lineWidth: 2))
+                        .position(point)
+                }
+            }
+        }
     }
 
-    private func barColor(index: Int, rows: [NearcastWidgetHour]) -> Color {
-        if isLuminanceReduced { return .white.opacity(index == peakIndex(rows) ? 1 : 0.55) }
-        if isStale { return .white.opacity(0.45) }
-        return nearcastCyan.opacity(index == peakIndex(rows) ? 1 : 0.48)
+    private var peakGraphIndex: Int {
+        let values = points.map { $0.magnitude?.normalizedValue ?? 0 }
+        guard let peak = values.max() else { return 0 }
+        return values.firstIndex(of: peak) ?? 0
     }
+
+    private func graphPoints(in size: CGSize) -> [CGPoint] {
+        guard !points.isEmpty else { return [] }
+
+        let drawableHeight = max(0, size.height - 10)
+        let xPositions = watchTimelineXPositions(points, width: size.width, inset: 6)
+        return points.enumerated().map { index, point in
+            let value = point.magnitude?.normalizedValue ?? 0
+            let normalized = min(1, max(0, value))
+            return CGPoint(
+                x: xPositions[index],
+                y: 5 + drawableHeight * (1 - normalized)
+            )
+        }
+    }
+}
+
+private struct WatchRibbonEndpoints: View {
+    let start: String
+    let end: String
+
+    var body: some View {
+        HStack {
+            Text(start)
+            Spacer()
+            Text(end)
+        }
+        .font(.system(.caption, design: .rounded, weight: .semibold).monospacedDigit())
+        .foregroundStyle(watchSecondary)
+        .lineLimit(1)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WatchPlanVerdict: View {
+    let snapshot: NearcastWidgetSnapshot
+    let signal: NearcastVisualSignal
+    let weatherSignal: NearcastVisualSignal?
+    let isStale: Bool
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    private var verdict: String {
+        isStale ? "UPDATE" : (signal.planVerdict?.rawValue ?? signal.headline.uppercased())
+    }
+
+    private var color: Color {
+        isLuminanceReduced ? .white : (isStale ? nearcastAmber : watchSignalColor(signal.tone))
+    }
+
+    private var symbol: String {
+        isStale ? "arrow.triangle.2.circlepath" : signal.symbolName
+    }
+
+    private var planContext: String {
+        let rawTitle = signal.context ?? cleanOptional(snapshot.planTitle) ?? "Your plan"
+        guard let place = cleanOptional(snapshot.planPlace) else {
+            return conciseWatchWords(rawTitle, maximumCharacters: 22)
+        }
+        let title = conciseWatchWords(rawTitle, maximumCharacters: 12)
+        return "\(title) · \(cityName(place))"
+    }
+
+    private var showsPlanOverlap: Bool {
+        guard !isStale,
+              cleanOptional(snapshot.planPlace) == nil,
+              let weatherSignal,
+              let planWindow = signal.timeWindow,
+              let forecastWindow = watchTimelineBounds(weatherSignal.timelinePoints)
+        else { return false }
+        return planWindow.endAt > forecastWindow.startAt && planWindow.startAt < forecastWindow.endAt
+    }
+
+    var body: some View {
+        VStack(spacing: useUltraLayout ? 8 : 6) {
+            Spacer(minLength: 0)
+
+            Image(systemName: symbol)
+                .font(.system(size: useUltraLayout ? 34 : 30, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(color)
+                .frame(width: useUltraLayout ? 64 : 56, height: useUltraLayout ? 64 : 56)
+                .background(isLuminanceReduced ? Color.clear : color.opacity(0.14), in: Circle())
+                .overlay(Circle().stroke(color.opacity(0.7), lineWidth: 2))
+                .accessibilityHidden(true)
+
+            Text(verdict)
+                .font(.system(size: useUltraLayout ? 32 : 27, weight: .heavy, design: .rounded))
+                .foregroundStyle(watchPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            Text(planContext)
+                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .foregroundStyle(watchSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            if showsPlanOverlap, let weatherSignal, let planWindow = signal.timeWindow {
+                WatchPlanOverlapRibbon(
+                    signal: weatherSignal,
+                    planWindow: planWindow,
+                    color: color,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
+            } else if !isLuminanceReduced {
+                Text(isStale ? "Open Nearcast on iPhone" : (signal.detail ?? "Open Nearcast for details"))
+                    .font(.system(.body, design: .rounded, weight: .medium))
+                    .foregroundStyle(isStale ? nearcastAmber : watchSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.9)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Plan check, \(verdict), \(planContext)")
+        .accessibilityValue(isStale ? "Update needed. Open Nearcast on iPhone." : signal.accessibilityDescription)
+    }
+}
+
+private struct WatchPlanOverlapRibbon: View {
+    let signal: NearcastVisualSignal
+    let planWindow: NearcastVisualTimeWindow
+    let color: Color
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    private var points: [NearcastVisualTimelinePoint] {
+        sampledSignalPoints(signal.timelinePoints, maximumPoints: useUltraLayout ? 5 : 4)
+    }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            GeometryReader { proxy in
+                let positions = watchTimelineXPositions(points, width: proxy.size.width, inset: 12)
+                let planStartX = watchTimelineXPosition(
+                    timestamp: planWindow.startAt,
+                    points: points,
+                    width: proxy.size.width,
+                    inset: 12
+                )
+                let planEndX = watchTimelineXPosition(
+                    timestamp: planWindow.endAt,
+                    points: points,
+                    width: proxy.size.width,
+                    inset: 12
+                )
+
+                ZStack {
+                    Capsule()
+                        .fill(Color.white.opacity(isLuminanceReduced ? 0.35 : 0.16))
+                        .frame(height: 3)
+
+                    if let planStartX, let planEndX {
+                        Capsule()
+                            .stroke(color, lineWidth: 2)
+                            .frame(width: max(24, planEndX - planStartX), height: useUltraLayout ? 36 : 32)
+                            .position(x: (planStartX + planEndX) / 2, y: proxy.size.height / 2)
+                    }
+
+                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                        let isInPlanWindow = planWindow.contains(point.startsAt)
+                        Image(systemName: point.symbolName)
+                            .font(.system(size: isInPlanWindow ? 17 : 14, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(isInPlanWindow ? color : watchMuted)
+                            .frame(width: 24, height: 24)
+                            .background(Color.black, in: Circle())
+                            .position(x: positions[index], y: proxy.size.height / 2)
+                    }
+                }
+            }
+            .frame(height: useUltraLayout ? 38 : 34)
+
+            WatchRibbonEndpoints(
+                start: points.first?.timeLabel ?? "Now",
+                end: points.last?.timeLabel ?? "Later"
+            )
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            isLuminanceReduced ? Color.clear : color.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(color.opacity(isLuminanceReduced ? 0.55 : 0.22), lineWidth: 1)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Weather during your plan")
+        .accessibilityValue(signal.accessibilityDescription)
+    }
+
 }
 
 private struct WatchNoWeatherMessage: View {
     let isRefreshing: Bool
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label(isRefreshing ? "Loading weather" : "Weather unavailable", systemImage: isRefreshing ? "arrow.triangle.2.circlepath" : "cloud.slash")
-                .font(.system(.headline, design: .rounded, weight: .bold))
+        VStack(spacing: 8) {
+            Image(systemName: isRefreshing ? "arrow.triangle.2.circlepath" : "iphone.and.arrow.forward")
+                .font(.system(size: useUltraLayout ? 42 : 36, weight: .semibold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                .symbolEffect(.pulse, isActive: isRefreshing)
+                .accessibilityHidden(true)
+            Text(isRefreshing ? "Loading" : "Open on iPhone")
+                .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(watchPrimary)
-            Text("Open Nearcast on iPhone once to share your place. The Watch will refresh directly after that.")
-                .font(.system(.caption, design: .rounded, weight: .medium))
+            Text(isRefreshing ? "Checking your place" : "Share your saved place")
+                .font(.system(.body, design: .rounded, weight: .medium))
                 .foregroundStyle(watchSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
     }
@@ -547,32 +1056,54 @@ private struct WatchNoWeatherMessage: View {
 
 private struct WatchEmptyPlan: View {
     let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: useUltraLayout ? 12 : 9) {
+            Spacer(minLength: 2)
             Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 30, weight: .semibold))
+                .font(.system(size: useUltraLayout ? 52 : 44, weight: .semibold))
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
                 .accessibilityHidden(true)
-            Text("No plan watched")
+            Text("No plan yet")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(watchPrimary)
-            Text("Create or watch a plan in Nearcast on iPhone. Its weather verdict will appear here.")
-                .font(.system(.caption, design: .rounded, weight: .medium))
+            Text("Add one on iPhone")
+                .font(.system(.body, design: .rounded, weight: .medium))
                 .foregroundStyle(watchSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 2)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
     }
 }
 
-private struct WatchWeatherFreshness: View {
+private struct WatchExceptionalWeatherStatus: View {
     let snapshot: NearcastWidgetSnapshot
     let syncState: WatchSyncState
 
+    private var status: (symbol: String, text: String, color: Color)? {
+        if snapshot.hasWeatherData && snapshot.weatherAge > watchWeatherStaleInterval {
+            return ("clock.badge.exclamationmark", durationText(snapshot.weatherAge), nearcastAmber)
+        }
+        if syncState == .failed {
+            return ("wifi.exclamationmark", "Couldn't update", nearcastAmber)
+        }
+        if syncState == .refreshing {
+            return ("arrow.triangle.2.circlepath", "Refreshing", nearcastCyan)
+        }
+        return nil
+    }
+
     var body: some View {
-        Text(weatherFreshnessText(snapshot, syncState: syncState))
-            .watchFooterStyle()
+        if let status {
+            Label(status.text, systemImage: status.symbol)
+                .font(.system(.body, design: .rounded, weight: .semibold))
+                .foregroundStyle(status.color)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .lineLimit(1)
+                .accessibilityLabel(status.text)
+        }
     }
 }
 
@@ -592,196 +1123,153 @@ private struct WatchAppBackground: View {
     }
 }
 
-private struct WatchDecision {
-    let headline: String
-    let detail: String
-    let symbol: String
-    let color: Color
+private func watchMagnitudeDisplay(_ signal: NearcastVisualSignal) -> (metric: String, unit: String?) {
+    if signal.kind == .rain, signal.headline == "Dry" {
+        return ("Dry", nil)
+    }
+
+    guard let magnitude = signal.magnitude else {
+        return (signal.headline, nil)
+    }
+
+    switch magnitude.kind {
+    case .probability:
+        return ("\(magnitude.value)%", nil)
+    case .temperature:
+        return ("\(magnitude.value)°", nil)
+    case .speed:
+        return ("\(magnitude.value)", magnitude.unit)
+    }
 }
 
-private struct WatchRainDecision {
-    let headline: String
-    let detail: String
-    let symbol: String
-    let peak: Int
+private func watchSignalCaption(_ signal: NearcastVisualSignal) -> String {
+    switch signal.kind {
+    case .rain:
+        if signal.headline == "Dry" { return signal.detail ?? "Next hours" }
+        if signal.eventTimeLabel == "Now" { return signal.headline }
+        return [signal.headline, signal.eventTimeLabel].compactMap { $0 }.joined(separator: " · ")
+    case .wind:
+        return [signal.headline, signal.eventTimeLabel].compactMap { $0 }.joined(separator: " · ")
+    case .temperature:
+        let label = signal.headline.hasPrefix("Feels ") ? "Feels" : signal.headline
+        return [label, signal.eventTimeLabel].compactMap { $0 }.joined(separator: " · ")
+    case .condition:
+        return signal.detail ?? signal.eventTimeLabel ?? "Next"
+    case .steady:
+        return "Steady"
+    case .plan:
+        return signal.headline
+    }
 }
 
-private func weatherDecision(_ snapshot: NearcastWidgetSnapshot) -> WatchDecision {
-    let rows = Array(activeTimeline(snapshot).prefix(6))
-    let rain = rainDecision(snapshot, maximumHours: 6)
-    let lowerCondition = snapshot.condition.lowercased()
+private func watchSignalSupport(_ signal: NearcastVisualSignal) -> String? {
+    nil
+}
 
-    if snapshot.conditionCode >= 95 || lowerCondition.contains("storm") {
-        return WatchDecision(
-            headline: "Storms possible",
-            detail: rain.peak > 0 ? "Rain chance peaks at \(rain.peak)%." : "Stay weather aware.",
-            symbol: "cloud.bolt.rain.fill",
-            color: nearcastCoral
+private func watchRibbonMetric(_ kind: NearcastVisualSignalKind) -> WatchRibbonMetric {
+    switch kind {
+    case .rain: return .rain
+    case .wind: return .wind
+    case .temperature, .condition, .steady, .plan: return .temperature
+    }
+}
+
+private func watchSignalColor(_ tone: NearcastVisualSignalTone) -> Color {
+    switch tone {
+    case .rain, .wind, .cool: return nearcastCyan
+    case .warm, .watch: return nearcastAmber
+    case .change: return nearcastCoral
+    case .go, .calm: return nearcastMint
+    case .neutral: return nearcastCyan
+    }
+}
+
+private func sampledSignalPoints(
+    _ points: [NearcastVisualTimelinePoint],
+    maximumPoints: Int
+) -> [NearcastVisualTimelinePoint] {
+    guard maximumPoints > 1, points.count > maximumPoints else { return points }
+
+    let last = points.count - 1
+    var indices = [0, last]
+
+    func appendIfNeeded(_ index: Int?) {
+        guard let index, !indices.contains(index), indices.count < maximumPoints else { return }
+        indices.append(index)
+    }
+
+    appendIfNeeded(points.firstIndex(where: { $0.isEvent }))
+
+    let evenlySpaced = (0..<maximumPoints).map { slot in
+        Int((Double(slot) * Double(last) / Double(maximumPoints - 1)).rounded())
+    }
+    for index in evenlySpaced {
+        appendIfNeeded(index)
+    }
+
+    return indices.sorted().map { points[$0] }
+}
+
+private func watchTimelineBounds(
+    _ points: [NearcastVisualTimelinePoint]
+) -> (startAt: TimeInterval, endAt: TimeInterval)? {
+    let timestamps = points.compactMap(\.startsAt)
+    guard timestamps.count == points.count,
+          let startAt = timestamps.first,
+          let endAt = timestamps.last,
+          endAt > startAt else { return nil }
+    return (startAt, endAt)
+}
+
+private func watchTimelineXPositions(
+    _ points: [NearcastVisualTimelinePoint],
+    width: CGFloat,
+    inset: CGFloat
+) -> [CGFloat] {
+    guard !points.isEmpty else { return [] }
+    guard let bounds = watchTimelineBounds(points) else {
+        if points.count == 1 { return [width / 2] }
+        let drawableWidth = max(0, width - inset * 2)
+        return points.indices.map { index in
+            inset + drawableWidth * CGFloat(index) / CGFloat(points.count - 1)
+        }
+    }
+
+    return points.map { point in
+        guard let startsAt = point.startsAt else { return width / 2 }
+        return watchTimelineXPosition(
+            timestamp: startsAt,
+            bounds: bounds,
+            width: width,
+            inset: inset
         )
     }
-    if rain.peak >= 30 {
-        return WatchDecision(headline: rain.headline, detail: rain.detail, symbol: rain.symbol, color: nearcastCyan)
-    }
-    if snapshot.feelsLike >= 95 {
-        return WatchDecision(
-            headline: "Plan around heat",
-            detail: "Feels like \(snapshot.feelsLike)° in \(cityName(snapshot.placeName)).",
-            symbol: "thermometer.sun.fill",
-            color: nearcastAmber
-        )
-    }
-    if snapshot.feelsLike <= 32 {
-        return WatchDecision(
-            headline: "Freezing now",
-            detail: "Feels like \(snapshot.feelsLike)°.",
-            symbol: "thermometer.snowflake",
-            color: nearcastCyan
-        )
-    }
-    if let gust = rows.compactMap(\.windGust).max(), gust >= 25,
-       let gustHour = rows.first(where: { ($0.windGust ?? 0) >= 25 }) {
-        return WatchDecision(
-            headline: "Gusty by \(gustHour.timeLabel)",
-            detail: "Gusts reach \(gust) \(snapshot.windUnit).",
-            symbol: "wind",
-            color: nearcastCyan
-        )
-    }
-    return WatchDecision(
-        headline: "Looks steady",
-        detail: "\(snapshot.condition) · Feels \(snapshot.feelsLike)°.",
-        symbol: conditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay),
-        color: nearcastMint
+}
+
+private func watchTimelineXPosition(
+    timestamp: TimeInterval,
+    points: [NearcastVisualTimelinePoint],
+    width: CGFloat,
+    inset: CGFloat
+) -> CGFloat? {
+    guard let bounds = watchTimelineBounds(points) else { return nil }
+    return watchTimelineXPosition(
+        timestamp: timestamp,
+        bounds: bounds,
+        width: width,
+        inset: inset
     )
 }
 
-private func rainDecision(_ snapshot: NearcastWidgetSnapshot, maximumHours: Int) -> WatchRainDecision {
-    let rows = Array(activeTimeline(snapshot).prefix(maximumHours))
-    let chances = rows.map { $0.rainChance ?? 0 }
-    let peak = chances.max() ?? snapshot.rainChance
-    let peakIndex = chances.firstIndex(of: peak) ?? 0
-    let firstWet = rows.first(where: { ($0.rainChance ?? 0) >= 30 })
-    let peakTime = rows.indices.contains(peakIndex) ? rows[peakIndex].timeLabel : nil
-
-    if isCurrentRainCondition(snapshot.conditionCode) {
-        return WatchRainDecision(
-            headline: "Rain now",
-            detail: peak > 0
-                ? (peakTime.map { "Chance peaks at \(peak)% around \($0)." } ?? "Chance peaks at \(peak)%.")
-                : "Rain is being reported now.",
-            symbol: snapshot.conditionCode >= 95 ? "cloud.bolt.rain.fill" : "cloud.rain.fill",
-            peak: peak
-        )
-    }
-
-    if let firstWet {
-        let isNow = firstWet.offsetHours == 0 || firstWet.timeLabel.lowercased() == "now"
-        let chance = firstWet.rainChance ?? peak
-        return WatchRainDecision(
-            headline: isNow ? "Rain possible now" : "Rain possible near \(firstWet.timeLabel)",
-            detail: isNow
-                ? "\(chance)% chance now · Peak \(peak)%."
-                : (peakTime.map { "Peak \(peak)% around \($0)." } ?? "Peak chance \(peak)%."),
-            symbol: "cloud.rain.fill",
-            peak: peak
-        )
-    }
-
-    if peak > 0 {
-        return WatchRainDecision(
-            headline: "Low rain chance",
-            detail: peakTime.map { "Peaks at \(peak)% around \($0)." } ?? "Peak chance is \(peak)%.",
-            symbol: "drop.fill",
-            peak: peak
-        )
-    }
-
-    let horizonHours = max(1, rows.count)
-    return WatchRainDecision(
-        headline: "Dry next \(horizonHours) \(horizonHours == 1 ? "hour" : "hours")",
-        detail: "No rain signal in the hourly forecast.",
-        symbol: snapshot.isDay ? "cloud.sun.fill" : "cloud.moon.fill",
-        peak: peak
-    )
-}
-
-private func isCurrentRainCondition(_ code: Int) -> Bool {
-    (51...67).contains(code) || (80...82).contains(code) || (95...99).contains(code)
-}
-
-private func planDecision(_ snapshot: NearcastWidgetSnapshot) -> WatchDecision {
-    let headline = cleanOptional(snapshot.planLabel) ?? cleanOptional(snapshot.watchStatus) ?? "Watching"
-    let detail = cleanOptional(snapshot.planDetail)
-        ?? cleanOptional(snapshot.watchDetail)
-        ?? "Nearcast is watching this plan against the forecast."
-    let tone = (cleanOptional(snapshot.planTone) ?? cleanOptional(snapshot.watchTone) ?? "").lowercased()
-    let changed = headline.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "changed"
-
-    if changed || tone.contains("changed") || tone.contains("danger") || tone.contains("bad") {
-        return WatchDecision(headline: headline, detail: detail, symbol: "exclamationmark.triangle.fill", color: nearcastCoral)
-    }
-    if tone.contains("watch") || tone.contains("caution") {
-        return WatchDecision(headline: headline, detail: detail, symbol: "eye.fill", color: nearcastAmber)
-    }
-    if tone.contains("good") {
-        return WatchDecision(headline: headline, detail: detail, symbol: "checkmark.circle.fill", color: nearcastMint)
-    }
-    return WatchDecision(headline: headline, detail: detail, symbol: "calendar.circle.fill", color: nearcastCyan)
-}
-
-private func activeTimeline(_ snapshot: NearcastWidgetSnapshot) -> [NearcastWidgetHour] {
-    let rows = snapshot.timeline ?? []
-    let currentThreshold = Date().timeIntervalSince1970 - 30 * 60
-    let currentRows = rows.filter { hour in
-        guard let startsAt = hour.startsAt else { return true }
-        return startsAt >= currentThreshold
-    }
-    return currentRows.isEmpty ? rows : currentRows
-}
-
-private func peakIndex(_ rows: [NearcastWidgetHour]) -> Int {
-    let values = rows.map { $0.rainChance ?? 0 }
-    guard let peak = values.max() else { return 0 }
-    return values.firstIndex(of: peak) ?? 0
-}
-
-private func horizonAccessibility(_ rows: [NearcastWidgetHour]) -> String {
-    guard !rows.isEmpty else { return "Hourly forecast unavailable" }
-    return rows.map { hour in
-        let chance = hour.rainChance ?? 0
-        let temperature = hour.temperature.map { ", \($0) degrees" } ?? ""
-        return "\(hour.timeLabel), \(chance) percent rain\(temperature)"
-    }.joined(separator: ". ")
-}
-
-private func conditionSymbol(_ code: Int, isDay: Bool) -> String {
-    if code == 0 { return isDay ? "sun.max.fill" : "moon.stars.fill" }
-    if code <= 3 { return isDay ? "cloud.sun.fill" : "cloud.moon.fill" }
-    if code <= 48 { return "cloud.fog.fill" }
-    if code <= 67 { return "cloud.rain.fill" }
-    if code <= 77 { return "cloud.snow.fill" }
-    if code <= 82 { return "cloud.heavyrain.fill" }
-    if code <= 86 { return "cloud.snow.fill" }
-    return "cloud.bolt.rain.fill"
-}
-
-private func weatherFreshnessText(_ snapshot: NearcastWidgetSnapshot, syncState: WatchSyncState) -> String {
-    if syncState == .refreshing { return "Updating weather…" }
-    if !snapshot.hasWeatherData {
-        return syncState == .missingPlace ? "Choose a place on iPhone" : "No weather saved"
-    }
-
-    let age = durationText(snapshot.weatherAge)
-    if snapshot.weatherAge > watchWeatherStaleInterval {
-        return syncState == .failed ? "Update failed · Last weather \(age)" : "Weather is \(age) old"
-    }
-    return syncState == .failed ? "Using saved weather · \(age)" : "Weather updated \(age)"
-}
-
-private func planFreshnessText(_ snapshot: NearcastWidgetSnapshot) -> String {
-    guard snapshot.hasPlan else { return "Plans sync from Nearcast on iPhone" }
-    if snapshot.planAge > watchPlanStaleInterval { return "Plan check is \(durationText(snapshot.planAge)) old" }
-    return "Plan checked \(durationText(snapshot.planAge))"
+private func watchTimelineXPosition(
+    timestamp: TimeInterval,
+    bounds: (startAt: TimeInterval, endAt: TimeInterval),
+    width: CGFloat,
+    inset: CGFloat
+) -> CGFloat {
+    let clamped = min(bounds.endAt, max(bounds.startAt, timestamp))
+    let fraction = (clamped - bounds.startAt) / (bounds.endAt - bounds.startAt)
+    return inset + max(0, width - inset * 2) * CGFloat(fraction)
 }
 
 private func durationText(_ interval: TimeInterval) -> String {
@@ -792,16 +1280,16 @@ private func durationText(_ interval: TimeInterval) -> String {
     return "\(max(1, minutes / 60))h ago"
 }
 
-private func unavailableGuidance(_ syncState: WatchSyncState) -> String {
+private func unavailableVisualGuidance(_ syncState: WatchSyncState) -> String {
     switch syncState {
     case .refreshing:
-        return "Nearcast is checking your saved place."
+        return "Checking your saved place"
     case .missingPlace:
-        return "Open Nearcast on iPhone once to choose and share a place."
+        return "Open Nearcast on iPhone"
     case .failed:
-        return "Nearcast could not reach the forecast. It will try again when the app opens."
+        return "Try again when connected"
     case .idle:
-        return "Open Nearcast on iPhone once. Your place and forecast will sync here."
+        return "Open Nearcast on iPhone"
     }
 }
 
@@ -814,6 +1302,18 @@ private func cityName(_ value: String) -> String {
 private func cleanOptional(_ value: String?) -> String? {
     let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+private func conciseWatchWords(_ value: String, maximumCharacters: Int) -> String {
+    let words = value.split(whereSeparator: \.isWhitespace).map(String.init)
+    guard !words.isEmpty else { return "Your plan" }
+    var result = ""
+    for word in words {
+        let candidate = result.isEmpty ? word : "\(result) \(word)"
+        if candidate.count > maximumCharacters { break }
+        result = candidate
+    }
+    return result.isEmpty ? String(words[0].prefix(maximumCharacters)) : result
 }
 
 private let watchPrimary = Color.white
@@ -831,13 +1331,6 @@ private extension View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    func watchFooterStyle() -> some View {
-        font(.system(.caption2, design: .rounded, weight: .semibold))
-            .foregroundStyle(watchMuted)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-    }
 }
 
 private enum NearcastWatchWeatherRefreshResult {
@@ -883,7 +1376,7 @@ private enum NearcastWatchWeatherClient {
             // A phone sync may have landed while the request was in flight. Merge
             // weather into the newest stored snapshot so its plan is not replaced.
             var updated = NearcastWidgetSnapshot.stored() ?? fallback
-            updated.version = max(5, fallback.version)
+            updated.version = max(6, max(updated.version, fallback.version))
             updated.placeName = place.displayLabel
             updated.temperature = Int(current.temperature.rounded())
             updated.feelsLike = Int(current.feelsLike.rounded())

@@ -11,6 +11,7 @@ cp "$ROOT/scripts/nearcast-watch-snapshot-test.swift" "$WORK/main.swift"
 xcrun swiftc \
   -module-cache-path "$WORK/ModuleCache" \
   "$ROOT/native/ios/Shared/NearcastWidgetSnapshot.swift" \
+  "$ROOT/native/ios/Shared/NearcastWatchVisualSignal.swift" \
   "$WORK/main.swift" \
   -o "$WORK/nearcast-watch-snapshot-test"
 
