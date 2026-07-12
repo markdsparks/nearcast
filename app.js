@@ -1,4 +1,4 @@
-const VERSION = "3.0.244";
+const VERSION = "3.0.246";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -591,6 +591,7 @@ const mapState = {
     fallbackFrames: null,
     fallbackNowIndex: 0,
     error: "",
+    requestedAt: 0,
     preparedAt: 0,
     matchedFrames: 0,
     stage: ""
@@ -3746,7 +3747,12 @@ function bindEvents() {
   bindTapAction(els.playRadar, toggleRadarPlayback);
   bindStormImpactCardGuards();
   bindTapAction(els.stormImpactClose, dismissStormImpactFromControl);
+  els.frameSlider.addEventListener("pointerdown", beginStandardTimelineScrub);
   els.frameSlider.addEventListener("input", () => scrubToFrame(Number(els.frameSlider.value)));
+  els.frameSlider.addEventListener("change", settleStandardTimelineScrub);
+  els.frameSlider.addEventListener("pointerup", settleStandardTimelineScrub);
+  els.frameSlider.addEventListener("pointercancel", settleStandardTimelineScrub);
+  els.frameSlider.addEventListener("blur", settleStandardTimelineScrub);
   bindTapAction(document.getElementById("expandMap"), enterImmersiveMap);
 
   // Day-detail drill-down: tap a 10-day row or the hourly strip

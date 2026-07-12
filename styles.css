@@ -4695,7 +4695,7 @@ h2 {
 .watch-notify-stats dt {
   margin: 0 0 2px;
   color: var(--muted);
-  font-size: 0.61rem;
+  font-size: 0.68rem;
   font-weight: 900;
   letter-spacing: 0.04em;
   line-height: 1.1;
@@ -7894,6 +7894,19 @@ body.map-immersive-active #mapLegend {
   height: 48px;
 }
 
+.timeline-slider-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.timeline-slider-wrap > input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .imm-time-jumps {
   position: absolute;
   left: 0;
@@ -8897,6 +8910,263 @@ body.map-immersive-active #mapLegend {
   align-items: center;
   margin-top: 10px;
   padding: 0 2px;
+}
+
+/* The canonical raw-data timeline is scrub-first. The compact map gets the
+   whole row for its time-proportional rail; playback stays available as the
+   circular control in immersive mode. */
+.timeline.is-canonical-raw {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  min-height: 92px;
+  padding-top: 20px;
+}
+
+.timeline.is-canonical-raw > .play-button {
+  display: none;
+}
+
+.timeline.is-canonical-raw > .map-timeline-slider-wrap {
+  height: 70px;
+  align-items: flex-start;
+}
+
+.timeline.is-canonical-raw > strong {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  max-width: min(76%, 360px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.timeline.is-canonical-raw input[type="range"] {
+  height: 44px;
+  --range-progress-color: rgba(24, 38, 49, 0.24);
+  --range-thumb-bg: var(--panel);
+  --timeline-radar-bg: rgba(58, 151, 218, 0.54);
+  --timeline-forecast-bg: rgba(223, 154, 35, 0.48);
+}
+
+.timeline.is-canonical-raw input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background:
+    linear-gradient(
+      90deg,
+      var(--range-progress-color) 0%,
+      var(--range-progress-color) var(--range-progress, 0%),
+      transparent var(--range-progress, 0%),
+      transparent 100%
+    ),
+    linear-gradient(
+      90deg,
+      var(--timeline-radar-bg) 0%,
+      var(--timeline-radar-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) 100%
+    );
+}
+
+.timeline.is-canonical-raw input[type="range"]::-webkit-slider-thumb {
+  margin-top: -9px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.timeline.is-canonical-raw input[type="range"]::-moz-range-track {
+  height: 4px;
+  background:
+    linear-gradient(
+      90deg,
+      var(--timeline-radar-bg) 0%,
+      var(--timeline-radar-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) var(--timeline-now, 100%),
+      var(--timeline-forecast-bg) 100%
+    );
+}
+
+.timeline.is-canonical-raw input[type="range"]::-moz-range-progress {
+  height: 4px;
+  background: var(--range-progress-color);
+}
+
+.timeline.is-canonical-raw input[type="range"]::-moz-range-thumb {
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+/* Shared milestone rail. Markers are deliberately inert so the native range
+   input owns the entire touch lane and a drag can begin anywhere. */
+.timeline-markers {
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  top: 22px;
+  z-index: 3;
+  height: 44px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.timeline-markers[hidden] {
+  display: none;
+}
+
+.timeline-marker {
+  position: absolute;
+  left: var(--timeline-marker-position, 0%);
+  top: 0;
+  display: grid;
+  place-items: start center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 15px 0 0;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 0.61rem;
+  font-weight: 860;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-align: center;
+  white-space: nowrap;
+  cursor: default;
+  pointer-events: none;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.timeline-marker::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.58;
+  transition: height 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+.timeline-marker.is-minor {
+  width: 12px;
+  min-width: 12px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 0;
+  cursor: default;
+  pointer-events: none;
+}
+
+.timeline-marker.is-minor::before {
+  width: 1px;
+  height: 6px;
+  opacity: 0.34;
+}
+
+.timeline-marker.is-now {
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.timeline-marker.is-now::before {
+  width: 3px;
+  height: 13px;
+  opacity: 0.92;
+}
+
+.timeline-marker.is-forecast,
+.timeline-marker[data-source="forecast"] {
+  color: #9a6410;
+}
+
+.timeline-marker.is-active {
+  color: var(--blue);
+}
+
+.timeline-marker.is-active::before {
+  height: 14px;
+  opacity: 1;
+  box-shadow: 0 0 0 4px rgba(58, 151, 218, 0.14);
+}
+
+.timeline-marker.is-loading::after,
+.timeline-markers.is-loading .timeline-marker.is-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%);
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: timeline-marker-spin 0.72s linear infinite;
+}
+
+@keyframes timeline-marker-spin {
+  to { transform: translateX(-50%) rotate(360deg); }
+}
+
+.imm-timeline.is-canonical-raw {
+  min-height: 76px;
+  align-items: start;
+}
+
+.imm-timeline.is-canonical-raw .imm-slider-wrap {
+  height: 70px;
+  align-items: flex-start;
+}
+
+.imm-timeline.is-canonical-raw .imm-time-jumps,
+.imm-timeline.is-canonical-raw .imm-now-marker {
+  display: none;
+}
+
+.imm-timeline-markers {
+  top: 24px;
+}
+
+.imm-timeline-markers .timeline-marker {
+  color: rgba(255, 255, 255, 0.74);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.64);
+}
+
+.imm-timeline-markers .timeline-marker.is-minor {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.imm-timeline-markers .timeline-marker.is-now,
+.imm-timeline-markers .timeline-marker.is-active {
+  color: #fff;
+}
+
+.imm-timeline-markers .timeline-marker.is-forecast,
+.imm-timeline-markers .timeline-marker[data-source="forecast"] {
+  color: rgba(255, 210, 123, 0.96);
+}
+
+.imm-timeline-markers .timeline-marker.is-active::before {
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-marker.is-loading::after,
+  .timeline-markers.is-loading .timeline-marker.is-active::after {
+    animation: none;
+  }
 }
 
 .play-button {

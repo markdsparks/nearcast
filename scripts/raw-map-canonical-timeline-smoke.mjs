@@ -277,12 +277,24 @@ assert.equal(
   "the long mixed NDFD fallback keeps its usable frame-index slider until a complete raw timeline is ready"
 );
 
+mapHarness.mapState.rawMap.requestedAt = nowMs;
+mapHarness.setNow(nowMs + 20 * 60_000);
 const matched = mapHarness.applyRawMapEnhancement(result);
+mapHarness.setNow(nowMs);
 const canonicalObserved = mapHarness.mapState.frames.filter((frame) => frame.source === "radar");
 const canonicalForecast = mapHarness.mapState.frames.filter((frame) => frame.source === "forecast");
 
 assert.equal(matched, observedSourceTimes.length + forecastSourceTimes.length);
 assert.equal(canonicalObserved.length, observedTargets.length);
+assert.equal(
+  canonicalObserved.at(-1).timestamp,
+  nowMs,
+  "the Now divider stays anchored to the request clock even when raw preparation crosses a forecast boundary"
+);
+assert.ok(
+  canonicalForecast[0].timestamp > canonicalObserved.at(-1).timestamp,
+  "the first forecast frame remains strictly after Now"
+);
 assert.ok(
   canonicalObserved.every((frame) => frame.rawMapProvider === "noaa-mrms-direct"),
   "every observed slider position has a raw MRMS render target"
@@ -816,8 +828,9 @@ function createMapHarness() {
     frameWaitStart: 0,
     rawMap: { fallbackFrames: null, session: null }
   };
+  let clockNowMs = nowMs;
   class FixedDate extends Date {
-    static now() { return nowMs; }
+    static now() { return clockNowMs; }
   }
   const sandbox = {
     mapState,
@@ -843,6 +856,7 @@ function createMapHarness() {
     function showFrame() {}
     function prefetchRawMapFramesAround() {}
     function syncStandardTimelineSlider() {}
+    function cancelStandardTimelineScrub() {}
     function radarTimelineLabel(timestamp) { return new Date(timestamp).toISOString(); }
     function forecastTimelineLabel(timestamp) { return new Date(timestamp).toISOString(); }
     function radarChunkIndexUrl() {
@@ -961,6 +975,7 @@ function createMapHarness() {
         value.radarChunkLayerState.record = value;
       }
     },
+    setNow(value) { clockNowMs = Number(value); },
     ...sandbox.api
   };
 }

@@ -73,6 +73,12 @@ const RAW_MAP_OBSERVED_STEP_MINUTES = 5;
 const RAW_MAP_FORECAST_WINDOW_MINUTES = 180;
 const RAW_MAP_FORECAST_STEP_MINUTES = 15;
 const STANDARD_TIMELINE_SLIDER_STEPS = 1000;
+const STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES = Object.freeze([-90, -30, 0, 60, 120, 180]);
+const STANDARD_TIMELINE_MINOR_STEP_MINUTES = 30;
+const CANONICAL_TIMELINE_PLAY_DURATION_MS = 12000;
+const CANONICAL_TIMELINE_NOW_HOLD_MS = 650;
+const CANONICAL_TIMELINE_END_HOLD_MS = 700;
+const CANONICAL_TIMELINE_FRAME_WAIT_MS = 2500;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
@@ -1443,6 +1449,7 @@ function hideXweatherStormTimelineJumpControls() {
 
 function syncXweatherStormTimelineHud(record = mapLibreCurrentRecord(), options = {}) {
   if (!xweatherStormActive(record)) return false;
+  syncStandardTimelineMilestones();
   const snapshot = xweatherStormTimelineSnapshot(record);
   const copy = xweatherStormTimelineCopy(snapshot);
   const slider = els.frameSlider;
@@ -3274,6 +3281,7 @@ function rawMapEffectiveVisualMetric(frame = mapState.frames[mapState.frameIndex
 
 function syncRawMapPresentation(record = mapLibreCurrentRecord()) {
   if (!record) return;
+  syncStandardTimelineMilestones();
   const frame = mapState.frames[mapState.frameIndex];
   const visibleProvider = rawMapFrameLayerVisible(frame, record) ? frame.rawMapProvider : "fallback";
   const key = `${mapState.frameIndex}:${frame?.rawMapIndexUrl || ""}:${visibleProvider}`;
@@ -5963,6 +5971,7 @@ async function loadMapFrames(force = false, options = {}) {
       return;
     }
 
+    cancelStandardTimelineScrub();
     disposeRawMapEnhancement("timeline-replaced");
     mapState.frames = timeline.frames;
     mapState.nowIndex = timeline.nowIndex;
@@ -6029,6 +6038,168 @@ function standardTimelineTimeRange(frames = mapState.frames) {
   return end > start ? { start, end } : null;
 }
 
+function canonicalRawTimelineActive(frames = mapState.frames) {
+  return Boolean(standardTimelineTimeRange(frames));
+}
+
+function standardTimelineNowTimestamp(frames = mapState.frames, nowIndex = mapState.nowIndex) {
+  if (!frames.length) return 0;
+  const index = Number.isFinite(Number(nowIndex))
+    ? clamp(Number(nowIndex), 0, frames.length - 1)
+    : 0;
+  return rawMapTimelineTimestamp(frames[index]);
+}
+
+function standardTimelineMilestoneLabel(offsetMinutes) {
+  if (offsetMinutes === 0) return "Now";
+  if (offsetMinutes < 0) return `−${Math.abs(offsetMinutes)}m`;
+  return `+${Math.round(offsetMinutes / 60)}h`;
+}
+
+function standardTimelineMilestoneAriaLabel(offsetMinutes) {
+  if (offsetMinutes === 0) return "Jump to Now";
+  if (offsetMinutes < 0) return `Jump to ${Math.abs(offsetMinutes)} minutes ago`;
+  const hours = offsetMinutes / 60;
+  return `Jump to ${hours} ${hours === 1 ? "hour" : "hours"} from now`;
+}
+
+function standardTimelineMilestones(frames = mapState.frames, nowIndex = mapState.nowIndex) {
+  const range = standardTimelineTimeRange(frames);
+  const nowTimestamp = standardTimelineNowTimestamp(frames, nowIndex);
+  if (!range || !nowTimestamp) return [];
+  const stepMs = STANDARD_TIMELINE_MINOR_STEP_MINUTES * 60 * 1000;
+  const toleranceMs = RAW_MAP_FORECAST_STEP_MINUTES * 60 * 1000;
+  const minOffset = Math.ceil((range.start - nowTimestamp) / stepMs) * STANDARD_TIMELINE_MINOR_STEP_MINUTES;
+  const maxOffset = Math.floor((range.end - nowTimestamp) / stepMs) * STANDARD_TIMELINE_MINOR_STEP_MINUTES;
+  const offsets = [];
+  for (let offset = minOffset; offset <= maxOffset; offset += STANDARD_TIMELINE_MINOR_STEP_MINUTES) {
+    offsets.push(offset);
+  }
+  STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES.forEach((offset) => {
+    const target = nowTimestamp + offset * 60 * 1000;
+    if (target < range.start - toleranceMs || target > range.end + toleranceMs) return;
+    if (!offsets.includes(offset)) offsets.push(offset);
+  });
+
+  return offsets
+    .sort((left, right) => left - right)
+    .map((offsetMinutes) => {
+      const nominalTimestamp = nowTimestamp + offsetMinutes * 60 * 1000;
+      const timestamp = clamp(nominalTimestamp, range.start, range.end);
+      const progress = (timestamp - range.start) / Math.max(1, range.end - range.start);
+      const major = STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES.includes(offsetMinutes);
+      return {
+        offsetMinutes,
+        timestamp,
+        progress,
+        value: Math.round(progress * STANDARD_TIMELINE_SLIDER_STEPS),
+        major,
+        now: offsetMinutes === 0,
+        source: offsetMinutes > 0 ? "forecast" : "radar",
+        label: major ? standardTimelineMilestoneLabel(offsetMinutes) : "",
+        ariaLabel: major ? standardTimelineMilestoneAriaLabel(offsetMinutes) : ""
+      };
+    });
+}
+
+function standardTimelineMarkerContainers() {
+  return [
+    document.getElementById("mapTimelineMarkers"),
+    document.getElementById("immTimelineMarkers")
+  ].filter(Boolean);
+}
+
+function standardTimelineFrameCacheStatus(frame = mapState.frames[mapState.frameIndex]) {
+  const indexUrl = String(frame?.rawMapIndexUrl || "").trim();
+  if (!indexUrl) return "none";
+  return mapLibreRawFrameCache.get(indexUrl)?.status || "none";
+}
+
+function syncStandardTimelineMilestones(sliderValue = null) {
+  const range = standardTimelineTimeRange();
+  const stormActive = xweatherStormActive(mapLibreCurrentRecord());
+  const canonical = Boolean(range && !stormActive);
+  const milestones = canonical ? standardTimelineMilestones() : [];
+  const currentValue = sliderValue !== null && Number.isFinite(Number(sliderValue))
+    ? Number(sliderValue)
+    : standardTimelineSliderValueForFrame(mapState.frameIndex);
+  const activeTimestamp = range
+    ? range.start + clamp(currentValue / STANDARD_TIMELINE_SLIDER_STEPS, 0, 1) * (range.end - range.start)
+    : 0;
+  const currentFrame = mapState.frames[standardTimelineFrameIndexForSliderValue(currentValue)];
+  const loading = canonical && standardTimelineFrameCacheStatus(currentFrame) === "loading";
+
+  standardTimelineMarkerContainers().forEach((container) => {
+    const immersive = container.id === "immTimelineMarkers";
+    const activeSurface = immersive ? mapState.immersive : !mapState.immersive;
+    const show = canonical && activeSurface;
+    const root = container.closest(".timeline, .imm-timeline");
+    root?.classList.toggle("is-canonical-raw", show);
+    container.hidden = !show;
+    container.classList.toggle("is-loading", show && loading);
+    if (!show) return;
+
+    const layoutKey = milestones
+      .map((marker) => `${marker.offsetMinutes}:${marker.value}:${marker.major ? 1 : 0}`)
+      .join("|");
+    if (container.dataset.layoutKey !== layoutKey) {
+      container.replaceChildren();
+      milestones.forEach((marker) => {
+        const node = document.createElement("span");
+        node.className = `timeline-marker ${marker.major ? "is-major" : "is-minor"}`;
+        node.style.setProperty("--timeline-marker-position", `${marker.progress * 100}%`);
+        node.dataset.timelineValue = String(marker.value);
+        node.dataset.source = marker.source;
+        node.classList.toggle("is-now", marker.now);
+        node.classList.toggle("is-forecast", marker.source === "forecast");
+        if (marker.major) {
+          node.textContent = marker.label;
+        }
+        node.setAttribute("aria-hidden", "true");
+        container.appendChild(node);
+      });
+      container.dataset.layoutKey = layoutKey;
+    }
+
+    const activeThresholdMs = (
+      activeMapSource(currentFrame) === "forecast"
+        ? RAW_MAP_FORECAST_STEP_MINUTES + 1
+        : RAW_MAP_OBSERVED_STEP_MINUTES + 1
+    ) * 60 * 1000;
+    container.querySelectorAll(".timeline-marker").forEach((node) => {
+      const markerValue = Number(node.dataset.timelineValue);
+      const markerTimestamp = range.start
+        + clamp(markerValue / STANDARD_TIMELINE_SLIDER_STEPS, 0, 1) * (range.end - range.start);
+      const active = Math.abs(markerTimestamp - activeTimestamp) <= activeThresholdMs;
+      node.classList.toggle("is-active", active);
+      node.classList.toggle("is-loading", active && loading);
+    });
+  });
+}
+
+function standardTimelineAriaValueText(frame = mapState.frames[mapState.frameIndex]) {
+  if (!frame) return "No precipitation frame";
+  const time = formatTimelineTime(rawMapTimelineTimestamp(frame), {
+    showMinutes: true,
+    dayStyle: "compact"
+  });
+  if (frame.isNow) return `Now, ${time}`;
+  const source = activeMapSource(frame) === "forecast" ? "Forecast guidance" : "Observed radar";
+  return `${source}, ${time}, ${formatTimelineRelative(rawMapTimelineTimestamp(frame))}`;
+}
+
+function setStandardTimelineSliderValue(slider, value, frameIndex = null) {
+  if (!slider) return;
+  slider.value = String(Math.round(Number(value) || 0));
+  updateRangeProgress(slider);
+  const index = frameIndex === null
+    ? standardTimelineFrameIndexForSliderValue(slider.value)
+    : frameIndex;
+  const frame = mapState.frames[index];
+  if (frame) slider.setAttribute("aria-valuetext", standardTimelineAriaValueText(frame));
+  syncStandardTimelineMilestones(Number(slider.value));
+}
+
 function standardTimelineSliderValueForFrame(frameIndex = mapState.frameIndex) {
   const range = standardTimelineTimeRange();
   if (!range) return Math.max(0, Math.min(Number(frameIndex) || 0, mapState.frames.length - 1));
@@ -6051,8 +6222,7 @@ function syncStandardTimelineSlider(frameIndex = mapState.frameIndex) {
   slider.min = "0";
   slider.step = "1";
   slider.max = String(range ? STANDARD_TIMELINE_SLIDER_STEPS : Math.max(0, mapState.frames.length - 1));
-  slider.value = String(standardTimelineSliderValueForFrame(frameIndex));
-  updateRangeProgress(slider);
+  setStandardTimelineSliderValue(slider, standardTimelineSliderValueForFrame(frameIndex), frameIndex);
 }
 
 function rawMapTimelineMode(timelineKind = mapState.timelineKind) {
@@ -6260,6 +6430,7 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
   syncRawMapDebugAttributes();
 
   const requestedAt = Date.now();
+  rawMap.requestedAt = requestedAt;
   const observedTimes = mode === "forecast" ? [] : rawMapObservedTargetTimes(requestedAt);
   const forecastTimes = mode === "observed" ? [] : rawMapForecastTargetTimes(requestedAt);
 
@@ -6269,6 +6440,7 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
     bounds,
     width: 512,
     height: 384,
+    observedNow: new Date(requestedAt).toISOString(),
     observedTimes,
     historyMinutes: RAW_MAP_OBSERVED_WINDOW_MINUTES,
     historyStepMinutes: RAW_MAP_OBSERVED_STEP_MINUTES,
@@ -6322,12 +6494,14 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
 function applyRawMapEnhancement(result) {
   const descriptors = Array.isArray(result?.frames) ? result.frames : [];
   if (!descriptors.length || !mapState.frames.length) return 0;
+  cancelStandardTimelineScrub();
   const fallbackFrames = Array.isArray(mapState.rawMap.fallbackFrames)
     ? mapState.rawMap.fallbackFrames.map((frame) => ({ ...frame }))
     : mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
   const selectedFrame = fallbackFrames[mapState.frameIndex] || null;
   const selectedTimestamp = rawMapTimelineTimestamp(selectedFrame);
   const selectedWasNow = Boolean(selectedFrame?.isNow || mapState.frameIndex === mapState.nowIndex);
+  const canonicalNowTimestamp = Number(mapState.rawMap.requestedAt) || Date.now();
   const timelineKind = mapState.timelineKind;
   const rawObserved = rawMapCanonicalFrames(result.observed, "radar", fallbackFrames);
   const rawForecast = rawMapCanonicalFrames(result.forecast, "forecast", fallbackFrames);
@@ -6350,7 +6524,7 @@ function applyRawMapEnhancement(result) {
       const isNow = index === nowIndex;
       return {
         ...frame,
-        timestamp: isNow ? Date.now() : rawMapTimelineTimestamp(frame),
+        timestamp: isNow ? canonicalNowTimestamp : rawMapTimelineTimestamp(frame),
         label: isNow ? "Now" : radarTimelineLabel(rawMapTimelineTimestamp(frame)),
         isNow
       };
@@ -6365,6 +6539,7 @@ function applyRawMapEnhancement(result) {
   mapState.xfadeFrames = [null, null];
   mapState.frameWaitIndex = null;
   mapState.frameWaitStart = 0;
+  if (mapState.playing && !mapState.immersive) stopRadarPlayback({ renderStatic: false });
   if (selectedWasNow && observedIndexes.length) {
     mapState.frameIndex = nowIndex;
   } else {
@@ -6531,6 +6706,7 @@ function clearRawMapFrameDecoration(frame) {
 }
 
 function disposeRawMapEnhancement(reason = "disposed") {
+  cancelStandardTimelineScrub();
   const rawMap = mapState.rawMap;
   const selectedTimestamp = rawMapTimelineTimestamp(mapState.frames[mapState.frameIndex]);
   const fallbackFrames = Array.isArray(rawMap.fallbackFrames)
@@ -6569,6 +6745,7 @@ function disposeRawMapEnhancement(reason = "disposed") {
   rawMap.fallbackFrames = null;
   rawMap.fallbackNowIndex = 0;
   rawMap.error = "";
+  rawMap.requestedAt = 0;
   rawMap.preparedAt = 0;
   rawMap.matchedFrames = 0;
   rawMap.stage = reason;
@@ -8792,14 +8969,21 @@ function getNoaaRegion() {
 }
 
 let timelineBubbleHideTimer = null;
+let standardTimelineScrubRaf = 0;
+let standardTimelinePendingScrubValue = null;
+let standardTimelineScrubActive = false;
 
-function showFrame(index) {
+function showFrame(index, options = {}) {
   if (syncXweatherStormTimelineHud(mapLibreCurrentRecord())) return;
   if (!mapState.frames.length) return;
   const perf = perfStart();
   const nextIndex = Math.min(Math.max(index, 0), mapState.frames.length - 1);
   mapState.frameIndex = nextIndex;
-  syncStandardTimelineSlider(nextIndex);
+  if (options.preserveSliderValue) {
+    setStandardTimelineSliderValue(els.frameSlider, els.frameSlider?.value, nextIndex);
+  } else {
+    syncStandardTimelineSlider(nextIndex);
+  }
   const frame = mapState.frames[nextIndex];
 
   syncMapSourceFromFrame(frame);
@@ -8888,7 +9072,10 @@ function renderTimelineTimeBubble(options = {}) {
   if (syncXweatherStormTimelineHud(mapLibreCurrentRecord(), options)) return;
   const bubble = document.getElementById("immTimeBubble");
   const slider = els.frameSlider;
-  const frame = mapState.frames[mapState.frameIndex];
+  const frameIndex = Number.isFinite(Number(options.frameIndex))
+    ? clamp(Number(options.frameIndex), 0, Math.max(0, mapState.frames.length - 1))
+    : mapState.frameIndex;
+  const frame = mapState.frames[frameIndex];
   if (!bubble || !slider || !mapState.immersive || !frame) {
     hideTimelineTimeBubble(true);
     return;
@@ -8899,7 +9086,9 @@ function renderTimelineTimeBubble(options = {}) {
   bubble.querySelector("span").textContent = copy.meta;
   const min = Number(slider.min || 0);
   const max = Number(slider.max || 0);
-  const value = Number(slider.value || 0);
+  const value = Number.isFinite(Number(options.sliderValue))
+    ? Number(options.sliderValue)
+    : Number(slider.value || 0);
   const progress = max > min ? ((value - min) / (max - min)) * 100 : 100;
   bubble.style.setProperty("--time-bubble-left", `${Math.min(Math.max(progress, 0), 100)}%`);
   bubble.dataset.source = activeMapSource(frame);
@@ -8986,16 +9175,76 @@ function setPlaybackButtonState(button = els.playRadar, playing = mapState.playi
   button.textContent = playing ? "Pause" : "Play";
 }
 
-// Dragging the timeline is a manual scrub — pause playback so the loop and the
-// finger don't fight, and hold the pause while the map stays in view.
-function scrubToFrame(index) {
-  if (scrubXweatherStormTimeline(index)) return;
+function cancelStandardTimelineScrub() {
+  if (standardTimelineScrubRaf) cancelAnimationFrame(standardTimelineScrubRaf);
+  standardTimelineScrubRaf = 0;
+  standardTimelinePendingScrubValue = null;
+  standardTimelineScrubActive = false;
+}
+
+function beginStandardTimelineScrub() {
+  if (!canonicalRawTimelineActive() || xweatherStormActive(mapLibreCurrentRecord())) return false;
+  standardTimelineScrubActive = true;
   if (mapState.playing) {
     mapState.userPausedRadar = true;
-    stopRadarPlayback();
+    stopRadarPlayback({ renderStatic: false });
   }
-  showFrame(standardTimelineFrameIndexForSliderValue(index));
+  showTimelineTimeBubble(2400);
+  return true;
+}
+
+function renderPendingStandardTimelineScrub() {
+  standardTimelineScrubRaf = 0;
+  if (
+    standardTimelinePendingScrubValue === null
+    || !Number.isFinite(Number(standardTimelinePendingScrubValue))
+  ) return;
+  const value = clamp(Number(standardTimelinePendingScrubValue), 0, STANDARD_TIMELINE_SLIDER_STEPS);
+  standardTimelinePendingScrubValue = null;
+  const frameIndex = standardTimelineFrameIndexForSliderValue(value);
+  if (frameIndex !== mapState.frameIndex) {
+    showFrame(frameIndex, { preserveSliderValue: true });
+  } else {
+    setStandardTimelineSliderValue(els.frameSlider, value, frameIndex);
+    renderTimelineTimeBubble({ show: true, frameIndex, sliderValue: value });
+  }
+}
+
+function settleStandardTimelineScrub() {
+  if (!standardTimelineScrubActive || !canonicalRawTimelineActive()) return false;
+  if (standardTimelineScrubRaf) cancelAnimationFrame(standardTimelineScrubRaf);
+  standardTimelineScrubRaf = 0;
+  renderPendingStandardTimelineScrub();
+  standardTimelineScrubActive = false;
+  syncStandardTimelineSlider(mapState.frameIndex);
   showTimelineTimeBubble();
+  return true;
+}
+
+// Dragging the canonical timeline is deliberately scrub-first. The native
+// thumb tracks the finger immediately while expensive map work is coalesced to
+// the latest target once per animation frame.
+function scrubToFrame(value) {
+  if (scrubXweatherStormTimeline(value)) return;
+  if (!canonicalRawTimelineActive()) {
+    if (mapState.playing) {
+      mapState.userPausedRadar = true;
+      stopRadarPlayback();
+    }
+    showFrame(standardTimelineFrameIndexForSliderValue(value));
+    showTimelineTimeBubble();
+    return;
+  }
+
+  beginStandardTimelineScrub();
+  const nextValue = clamp(Number(value) || 0, 0, STANDARD_TIMELINE_SLIDER_STEPS);
+  const frameIndex = standardTimelineFrameIndexForSliderValue(nextValue);
+  standardTimelinePendingScrubValue = nextValue;
+  setStandardTimelineSliderValue(els.frameSlider, nextValue, frameIndex);
+  renderTimelineTimeBubble({ show: true, frameIndex, sliderValue: nextValue });
+  if (!standardTimelineScrubRaf) {
+    standardTimelineScrubRaf = requestAnimationFrame(renderPendingStandardTimelineScrub);
+  }
 }
 
 // Playback timing. The NWS MRMS frames are dense (≈2-min cadence, up to 30 of
@@ -9017,6 +9266,9 @@ function frameUrl(frame) {
 
 function playbackBounds() {
   const last = Math.max(0, mapState.frames.length - 1);
+  if (canonicalRawTimelineActive()) {
+    return { start: 0, end: last, loop: false };
+  }
   if (mapState.timelineKind === "precip") {
     const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, last) : last;
     if (mapState.frameIndex > nowIndex) {
@@ -9041,7 +9293,20 @@ function shouldBufferRadarPlayback(index = mapState.frameIndex) {
   if (bounds.end <= bounds.start) return false;
   const current = mapState.frames[index];
   const next = mapState.frames[nextPlaybackIndexFrom(index, bounds)];
+  if (canonicalRawTimelineActive()) {
+    return mapRendererIsGl() && Boolean(current?.rawMapIndexUrl && next?.rawMapIndexUrl);
+  }
   return activeMapSource(current) === "radar" && activeMapSource(next) === "radar";
+}
+
+function canonicalTimelineStepMs(index = mapState.frameIndex, range = standardTimelineTimeRange()) {
+  if (!range || index >= mapState.frames.length - 1) return CANONICAL_TIMELINE_END_HOLD_MS;
+  const currentTimestamp = rawMapTimelineTimestamp(mapState.frames[index]);
+  const nextTimestamp = rawMapTimelineTimestamp(mapState.frames[index + 1]);
+  const delta = Math.max(1, nextTimestamp - currentTimestamp);
+  const proportional = CANONICAL_TIMELINE_PLAY_DURATION_MS
+    * (delta / Math.max(1, range.end - range.start));
+  return clamp(proportional, MIN_STEP_MS, 1200);
 }
 
 // Hard-cut radar render with a two-pane double-buffer: the current frame shows
@@ -9116,7 +9381,15 @@ function waitForBufferedRadarFrame(frameIndex, now) {
     mapState.frameWaitStart = now;
   }
 
-  if (mapRendererIsGl()) return false;
+  if (mapRendererIsGl()) {
+    if (canonicalRawTimelineActive()) {
+      const status = standardTimelineFrameCacheStatus(mapState.frames[frameIndex]);
+      if (status === "error" || now - mapState.frameWaitStart > CANONICAL_TIMELINE_FRAME_WAIT_MS) {
+        stopRadarPlayback({ renderStatic: false });
+      }
+    }
+    return false;
+  }
 
   // Don't freeze forever on a failed or slow tile. Most frames are ready well
   // before this; this only keeps first-pass playback from outrunning warm tiles.
@@ -9166,10 +9439,22 @@ function playbackTick(now) {
   const bounds = playbackBounds();
   if (bounds.end <= bounds.start) { stopRadarPlayback(); return; }
   const rangeLength = bounds.end - bounds.start + 1;
-  const stepMs = radarStepMs(rangeLength);
+  const canonicalRange = standardTimelineTimeRange();
+  const stepMs = canonicalRange
+    ? canonicalTimelineStepMs(mapState.frameIndex, canonicalRange)
+    : radarStepMs(rangeLength);
   // Hold an extra beat on the most recent frame before looping back to the start.
   const atEnd = mapState.frameIndex >= bounds.end;
-  const interval = atEnd && bounds.loop ? stepMs + LAST_FRAME_HOLD_MS : stepMs;
+  const atCanonicalNow = Boolean(
+    canonicalRange
+    && mapState.frameIndex === mapState.nowIndex
+    && mapState.frameIndex < bounds.end
+  );
+  const interval = canonicalRange && atEnd
+    ? CANONICAL_TIMELINE_END_HOLD_MS
+    : atEnd && bounds.loop
+      ? stepMs + LAST_FRAME_HOLD_MS
+      : stepMs + (atCanonicalNow ? CANONICAL_TIMELINE_NOW_HOLD_MS : 0);
   if (mapState.playAccum >= interval) {
     mapState.playAccum -= interval;
     if (atEnd && !bounds.loop) {
@@ -9182,6 +9467,7 @@ function playbackTick(now) {
       if (mapRendererIsGl()) renderMapLibreWeather(mapState.frameIndex);
       else renderXfade(mapState.frameIndex); // keep the upcoming hidden pane warming
       if (!waitForBufferedRadarFrame(idx, now)) {
+        if (!mapState.playing) return;
         mapState.playAccum = interval;
         mapState.timer = requestAnimationFrame(playbackTick);
         return;
@@ -9208,7 +9494,7 @@ function toggleRadarPlayback() {
     stopRadarPlayback();
   } else {
     mapState.userPausedRadar = false;
-    startRadarPlayback({ restartIfAtEnd: !mapState.immersive });
+    startRadarPlayback({ restartIfAtEnd: canonicalRawTimelineActive() || !mapState.immersive });
   }
 }
 
@@ -9241,6 +9527,7 @@ function scheduleMapViewportMotionSync() {
 
 function maybeAutoPlayRadar() {
   if (mapState.immersive || !mapInView) return;
+  if (canonicalRawTimelineActive()) return;
   if (mapState.timelineKind !== "radar") return;
   if (mapState.userPausedRadar || !mapState.frames.length) return;
   startRadarPlayback({ restartIfAtEnd: true });
@@ -9300,6 +9587,7 @@ function stopRadarPlayback(options = {}) {
 function clearMapLayers(options = {}) {
   const stormRecord = mapLibreCurrentRecord();
   const stormActive = xweatherStormActive(stormRecord);
+  cancelStandardTimelineScrub();
   disposeRawMapEnhancement("layers-cleared");
   stopRadarPlayback(options);
   mapState.frames = [];
@@ -9985,6 +10273,7 @@ const impactTapState = {
 
 function enterImmersiveMap() {
   if (mapState.immersive) return;
+  cancelStandardTimelineScrub();
   stopRadarPlayback({ renderStatic: false });
   clearMapLibreInteractionState();
   mapState.immersive = true;
@@ -10062,6 +10351,7 @@ function refreshDeviceLocationForImmersiveMap() {
 function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
+  cancelStandardTimelineScrub();
   clearMapLibreInteractionState();
   closeXweatherStormSheet();
   stopXweatherStormLayer(mapLibreCurrentRecord(), "exit");
@@ -10134,10 +10424,23 @@ function bindImmersiveModeButtons() {
   });
   const slider = document.getElementById("immSlider");
   slider.oninput = (e) => scrubToFrame(Number(e.target.value));
-  slider.onpointerdown = () => showTimelineTimeBubble(2400);
-  slider.onpointerup = () => showTimelineTimeBubble();
-  slider.onpointercancel = () => scheduleTimelineBubbleHide();
-  slider.onblur = () => scheduleTimelineBubbleHide(300);
+  slider.onchange = () => settleStandardTimelineScrub();
+  slider.onpointerdown = () => {
+    beginStandardTimelineScrub();
+    showTimelineTimeBubble(2400);
+  };
+  slider.onpointerup = () => {
+    settleStandardTimelineScrub();
+    showTimelineTimeBubble();
+  };
+  slider.onpointercancel = () => {
+    settleStandardTimelineScrub();
+    scheduleTimelineBubbleHide();
+  };
+  slider.onblur = () => {
+    settleStandardTimelineScrub();
+    scheduleTimelineBubbleHide(300);
+  };
   slider.onkeydown = () => showTimelineTimeBubble(1400);
 }
 
