@@ -14,10 +14,10 @@ const [app, map, html, css, serviceWorker] = await Promise.all([
 
 assert.match(map, /USGSImageryOnly\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}/, "USGS aerial source uses its documented z/y/x tile order");
 assert.match(map, /MAP_AERIAL_MAX_SOURCE_ZOOM = 16/, "aerial imagery respects the service's native zoom ceiling");
-assert.match(map, /localStorage\.getItem\(MAP_BASE_MODE_KEY\) === "aerial"/, "the experimental basemap choice persists");
+assert.match(map, /localStorage\.getItem\(MAP_BASE_MODE_KEY\)/, "the experimental basemap choice persists");
 assert.match(map, /function mapAerialSupported\(/, "aerial mode is guarded by a coverage check");
 assert.match(map, /function renderClassicBaseTiles\(/, "the classic renderer supports the aerial experiment");
-assert.match(map, /syncMapLibreAerialVisibility\(record\)/, "the MapLibre renderer synchronizes aerial visibility");
+assert.match(map, /syncMapLibreBaseMode\(record\)/, "the MapLibre renderer synchronizes base-layer visibility");
 assert.ok(map.indexOf("id: MAPLIBRE_AERIAL_LAYER_ID") < map.indexOf("id: MAPLIBRE_LABEL_LAYER_ID"), "labels render above aerial imagery");
 assert.match(map, /USGS\/USDA/, "aerial attribution is visible in the map credit");
 assert.match(html, /id="immAerialToggle"/, "immersive map includes the aerial toggle");

@@ -7457,6 +7457,10 @@ body.map-immersive-active #mapLegend {
   -webkit-backdrop-filter: blur(18px) saturate(1.08);
 }
 
+.immersive-map .map-legend[hidden] {
+  display: none;
+}
+
 .immersive-map .map-legend strong {
   margin-bottom: 0;
   color: rgba(255, 255, 255, 0.88);
@@ -7625,10 +7629,85 @@ body.map-immersive-active #mapLegend {
   box-shadow: 0 0 0 4px rgba(255, 185, 89, 0.14);
 }
 
+.imm-aerial-toggle.is-satellite {
+  color: #9fd8ff;
+  border-color: rgba(159, 216, 255, 0.62);
+  background: rgba(20, 60, 91, 0.88);
+  box-shadow: 0 0 0 4px rgba(91, 180, 241, 0.14);
+}
+
 .imm-aerial-toggle.is-unavailable {
   color: rgba(255, 255, 255, 0.42);
   cursor: default;
   opacity: 0.68;
+}
+
+.imm-layer-menu {
+  display: grid;
+  gap: 5px;
+  width: min(244px, calc(100vw - 82px));
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  background: rgba(8, 13, 21, 0.84);
+  color: #fff;
+  box-shadow: 0 18px 44px rgba(2, 7, 14, 0.3);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.imm-layer-menu[hidden] {
+  display: none;
+}
+
+.imm-layer-menu:not([hidden]) + .map-location-prompt {
+  display: none;
+}
+
+.imm-layer-menu > strong {
+  padding: 3px 6px 6px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.imm-layer-menu button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.imm-layer-menu button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.imm-layer-menu button[aria-pressed="true"] {
+  border-color: rgba(150, 210, 255, 0.34);
+  background: rgba(75, 151, 211, 0.2);
+}
+
+.imm-layer-menu button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.imm-layer-menu button span {
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.imm-layer-menu button small {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.66rem;
 }
 
 @keyframes imm-location-search {
@@ -8032,6 +8111,35 @@ body.map-immersive-active #mapLegend {
 
 .imm-bottom-hud > * {
   pointer-events: auto;
+}
+
+.imm-satellite-status {
+  justify-self: start;
+  display: grid;
+  gap: 3px;
+  max-width: min(340px, calc(100vw - (var(--imm-bottom-x) * 2)));
+  padding: 10px 13px;
+  border: 1px solid rgba(159, 216, 255, 0.3);
+  border-radius: 14px;
+  background: rgba(8, 18, 28, 0.72);
+  color: #fff;
+  box-shadow: 0 12px 34px rgba(1, 6, 12, 0.25);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.imm-satellite-status[hidden],
+.imm-timeline[hidden] {
+  display: none;
+}
+
+.imm-satellite-status strong {
+  font-size: 0.8rem;
+}
+
+.imm-satellite-status span {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.65rem;
 }
 
 .imm-timeline {
@@ -8587,6 +8695,19 @@ body.map-immersive-active #mapLegend {
 
 #immersiveBaseTiles[data-map-theme="dark"] .aerial-base-layer img {
   filter: grayscale(0.58) saturate(0.42) brightness(0.68) contrast(0.96);
+}
+
+#immersiveBaseTiles .satellite-base-layer {
+  z-index: 2;
+  opacity: 0.92;
+}
+
+#immersiveBaseTiles[data-map-theme="light"] .satellite-base-layer img {
+  filter: saturate(0.9) brightness(0.94) contrast(1.04);
+}
+
+#immersiveBaseTiles[data-map-theme="dark"] .satellite-base-layer img {
+  filter: saturate(0.82) brightness(0.7) contrast(1.08);
 }
 
 /* Opacity lives on the sublayer pane (set per frame in JS) so the NOAA

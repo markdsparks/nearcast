@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.256">
-    <link rel="manifest" href="manifest.json?v=3.0.256">
+    <link rel="stylesheet" href="styles.css?v=3.0.261">
+    <link rel="manifest" href="manifest.json?v=3.0.261">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.256">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.256">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.261">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.261">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -439,7 +439,7 @@
                 <path d="M12 2v3M12 19v3M2 12h3M19 12h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
             </button>
-            <button class="imm-btn imm-aerial-toggle" id="immAerialToggle" type="button" aria-label="Show aerial map" title="Show aerial map" aria-pressed="false">
+            <button class="imm-btn imm-aerial-toggle" id="immAerialToggle" type="button" aria-label="Choose map layer. Current: Map" title="Choose map layer" aria-expanded="false" aria-controls="immLayerMenu">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="m3.2 17.7 5.2-6.2 3.1 3.5 3.7-5 5.6 7.7H3.2Z" fill="currentColor" opacity=".9"/>
                 <circle cx="17.6" cy="6.4" r="2.3" fill="currentColor"/>
@@ -459,6 +459,21 @@
               </svg>
             </button>
           </div>
+          <section class="imm-layer-menu" id="immLayerMenu" hidden aria-label="Map layer">
+            <strong>Map layer</strong>
+            <button type="button" data-map-base-mode="map" aria-pressed="true">
+              <span>Map</span>
+              <small>Roads and places</small>
+            </button>
+            <button type="button" data-map-base-mode="aerial" aria-pressed="false">
+              <span>Aerial</span>
+              <small>Detailed US photography</small>
+            </button>
+            <button type="button" data-map-base-mode="satellite" aria-pressed="false">
+              <span>Satellite</span>
+              <small>Recent Earth observation</small>
+            </button>
+          </section>
           <section class="map-location-prompt" id="mapLocationPrompt" hidden aria-live="polite">
             <button class="map-location-prompt-close" id="mapLocationPromptClose" type="button" aria-label="Not now">×</button>
             <span class="map-location-prompt-icon" aria-hidden="true">
@@ -491,6 +506,10 @@
         <div class="map-legend imm-map-legend" id="immersiveLegend" aria-label="Map legend"></div>
 
         <div class="imm-bottom-hud">
+          <div class="imm-satellite-status" id="immSatelliteStatus" hidden role="status" aria-live="polite">
+            <strong>Finding the latest satellite pass…</strong>
+            <span>Radar hidden · Regional detail</span>
+          </div>
           <div class="imm-timeline">
             <button class="play-button imm-play-button" id="immPlay" type="button" aria-label="Play radar animation" title="Play radar animation">
               <svg class="imm-play-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -838,16 +857,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.256"></script>
-    <script src="planner.js?v=3.0.256"></script>
-    <script src="app.js?v=3.0.256"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.256"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.256"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.256"></script>
-    <script src="raw-map-runtime.js?v=3.0.256"></script>
-    <script src="map.js?v=3.0.256"></script>
-    <script src="sky.js?v=3.0.256"></script>
-    <script src="daygraph.js?v=3.0.256"></script>
-    <script src="boot.js?v=3.0.256"></script>
+    <script src="weather-truth.js?v=3.0.261"></script>
+    <script src="planner.js?v=3.0.261"></script>
+    <script src="app.js?v=3.0.261"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.261"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.261"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.261"></script>
+    <script src="raw-map-runtime.js?v=3.0.261"></script>
+    <script src="map.js?v=3.0.261"></script>
+    <script src="sky.js?v=3.0.261"></script>
+    <script src="daygraph.js?v=3.0.261"></script>
+    <script src="boot.js?v=3.0.261"></script>
   </body>
 </html>
