@@ -7572,6 +7572,145 @@ body.map-immersive-active #mapLegend {
   height: 24px;
 }
 
+.imm-btn.imm-location {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--imm-control-bg-strong);
+}
+
+.imm-location svg {
+  width: 23px;
+  height: 23px;
+}
+
+.imm-location.is-following {
+  color: #8fc8ff;
+  border-color: rgba(143, 200, 255, 0.58);
+  background: rgba(17, 57, 101, 0.84);
+  box-shadow: 0 0 0 4px rgba(62, 145, 239, 0.16);
+}
+
+.imm-location.is-locating svg {
+  animation: imm-location-search 1.1s ease-in-out infinite;
+}
+
+.imm-location.is-unavailable {
+  color: rgba(255, 255, 255, 0.56);
+}
+
+@keyframes imm-location-search {
+  50% { transform: scale(0.84); opacity: 0.58; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imm-location.is-locating svg {
+    animation: none;
+  }
+}
+
+.map-location-prompt {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  width: min(310px, calc(100vw - 92px));
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  border-radius: 18px;
+  background: rgba(8, 14, 23, 0.88);
+  color: #f5f9ff;
+  box-shadow: 0 18px 48px rgba(1, 5, 12, 0.28);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+.map-location-prompt[hidden] {
+  display: none;
+}
+
+.map-location-prompt-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(54, 145, 239, 0.18);
+  color: #91cbff;
+}
+
+.map-location-prompt-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.map-location-prompt strong {
+  display: block;
+  padding-right: 20px;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.map-location-prompt p {
+  margin: 5px 0 11px;
+  color: rgba(245, 249, 255, 0.76);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.map-location-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-location-prompt-actions[hidden] {
+  display: none;
+}
+
+.map-location-prompt-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #f7fbff;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.map-location-prompt-actions button:first-child {
+  border-color: rgba(119, 190, 255, 0.5);
+  background: #287fd6;
+}
+
+.map-location-prompt-close {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.map-location-prompt.is-message p {
+  margin-bottom: 0;
+}
+
 .imm-btn.imm-storm-entry {
   position: relative;
   display: inline-grid;
@@ -9849,6 +9988,20 @@ body.map-immersive-active #mapLegend {
   .imm-place-switch svg {
     width: 23px;
     height: 23px;
+  }
+
+  .imm-btn.imm-location {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .map-location-prompt {
+    position: fixed;
+    top: calc(var(--imm-hud-top) + 148px);
+    left: var(--imm-hud-x);
+    right: var(--imm-hud-x);
+    width: auto;
   }
 
   .storm-impact-card {

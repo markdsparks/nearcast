@@ -1,4 +1,4 @@
-const VERSION = "3.0.254";
+const VERSION = "3.0.255";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -37,6 +37,8 @@ const DEVICE_LOCATION_KEY = "nearcast-device-location-v1";
 const DEVICE_LOCATION_MAP_MAX_AGE_MS = 30 * 60 * 1000;
 const DEVICE_LOCATION_REFRESH_MAX_AGE_MS = 5 * 60 * 1000;
 const DEVICE_LOCATION_REFRESH_TIMEOUT_MS = 4000;
+const DEVICE_LOCATION_WATCH_MAX_AGE_MS = 30 * 1000;
+const DEVICE_LOCATION_WATCH_TIMEOUT_MS = 10000;
 const DEFAULT_RADAR_CAPABILITY_ENDPOINT = "/api/radar/capability";
 const MRMS_RADAR_MANIFEST_URL = "radar/mrms/manifest.json";
 const MRMS_RADAR_FRAME_INDEX_URL = "https://radar.getnearcast.app/radar/mrms/frame-substrate/latest-frame-index.json";
@@ -4657,8 +4659,47 @@ async function refreshDeviceLocationForMapIfAllowed() {
   return recent;
 }
 
+async function deviceLocationPermissionState() {
+  if (!navigator.geolocation) return "unsupported";
+  if (!navigator.permissions?.query) return "prompt";
+  try {
+    const permission = await navigator.permissions.query({ name: "geolocation" });
+    return ["granted", "denied", "prompt"].includes(permission?.state)
+      ? permission.state
+      : "prompt";
+  } catch {
+    return "prompt";
+  }
+}
+
+function watchDeviceLocationForMap(onLocation, onError) {
+  if (!navigator.geolocation) return null;
+  return navigator.geolocation.watchPosition(
+    (position) => {
+      const location = persistDeviceLocation(position.coords, "gps-watch");
+      if (location && typeof onLocation === "function") onLocation(location);
+    },
+    (error) => {
+      if (typeof onError === "function") onError(error);
+    },
+    {
+      enableHighAccuracy: false,
+      timeout: DEVICE_LOCATION_WATCH_TIMEOUT_MS,
+      maximumAge: DEVICE_LOCATION_WATCH_MAX_AGE_MS
+    }
+  );
+}
+
+function stopDeviceLocationWatch(watchId) {
+  if (!navigator.geolocation || watchId === null || watchId === undefined) return;
+  navigator.geolocation.clearWatch(watchId);
+}
+
 window.nearcastLastDeviceLocation = readDeviceLocation;
 window.nearcastRefreshDeviceLocationForMap = refreshDeviceLocationForMapIfAllowed;
+window.nearcastDeviceLocationPermissionState = deviceLocationPermissionState;
+window.nearcastWatchDeviceLocationForMap = watchDeviceLocationForMap;
+window.nearcastStopDeviceLocationWatch = stopDeviceLocationWatch;
 
 function syncGeneratedRadarProviderOption() {
   if (!els.radarProvider) return;

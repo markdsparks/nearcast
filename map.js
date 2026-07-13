@@ -7,6 +7,9 @@ const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
 const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
 const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAP_DEVICE_LOCATION_KEY = "device-location";
+const MAP_LOCATION_PROMPT_KEY = "nearcast-map-location-prompt-v1";
+const MAP_LOCATION_RENDER_MIN_MS = 3000;
+const MAP_LOCATION_RENDER_MIN_METERS = 50;
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
@@ -2307,6 +2310,7 @@ function moveMapDrag(x, y) {
   mapState.panY = dragState.startPanY + dy;
   if (Math.hypot(dx, dy) > MAP_PAN_MOVE_EPSILON_PX) {
     dragState.moved = true;
+    if (mapState.immersive) disengageDeviceLocationFollow();
     pauseMapPlaybackForManualPan();
     updateAnchoredMapPan();
   }
@@ -4472,8 +4476,9 @@ function renderMapLibreMarkers(record = mapLibreCurrentRecord()) {
 
   const liveKeys = new Set();
   const placedBounds = [];
+  const deviceLocation = mapDeviceLocation();
   const activeLayout = mapLibreMarkerLayout(record, state.activePlace);
-  if (activeLayout) {
+  if (activeLayout && !deviceLocationOverlapsPlace(state.activePlace, deviceLocation)) {
     upsertMapLibreMarker(record, state.activePlace, liveKeys);
     placedBounds.push(activeLayout.bounds);
   }
@@ -4514,6 +4519,29 @@ function mapDeviceLocation() {
   };
 }
 
+function mapDistanceMeters(a, b) {
+  const lat1 = Number(a?.latitude);
+  const lon1 = Number(a?.longitude);
+  const lat2 = Number(b?.latitude);
+  const lon2 = Number(b?.longitude);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+  const radians = Math.PI / 180;
+  const dLat = (lat2 - lat1) * radians;
+  const dLon = (lon2 - lon1) * radians;
+  const x = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * radians) * Math.cos(lat2 * radians) * Math.sin(dLon / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function deviceLocationOverlapsPlace(place, location = mapDeviceLocation()) {
+  if (!place || !location) return false;
+  const accuracy = Number(location.accuracy);
+  const threshold = Number.isFinite(accuracy)
+    ? clamp(accuracy, 120, 500)
+    : 120;
+  return mapDistanceMeters(place, location) <= threshold;
+}
+
 function deviceLocationPointInView(record, location) {
   if (!record?.map || !location) return null;
   const size = record.map.getContainer()?.getBoundingClientRect?.();
@@ -4546,10 +4574,15 @@ function deviceLocationAria(location) {
 
 function applyDeviceLocationAccuracy(element, location) {
   const accuracy = Number(location?.accuracy);
-  const radius = Number.isFinite(accuracy) && accuracy > 0
-    ? Math.round(clamp(accuracy / 8, 18, 58))
+  const latitude = Number(location?.latitude);
+  const zoom = clampMapZoom(mapState.zoom);
+  const metersPerPixel = Number.isFinite(latitude)
+    ? 156543.03392 * Math.cos(latitude * Math.PI / 180) / (2 ** zoom)
+    : 0;
+  const diameter = Number.isFinite(accuracy) && accuracy > 0 && metersPerPixel > 0
+    ? Math.round(clamp((accuracy * 2) / metersPerPixel, 24, 160))
     : 30;
-  element.style.setProperty("--device-accuracy-size", `${radius}px`);
+  element.style.setProperty("--device-accuracy-size", `${diameter}px`);
   element.setAttribute("aria-label", deviceLocationAria(location));
 }
 
@@ -5600,7 +5633,10 @@ function ensureMapLibreMap() {
     record.lastError = event?.error?.message || event?.message || "MapLibre source error";
   });
   map.on("render", () => recordMapLibreRenderFrame(record));
-  map.on("movestart", () => beginMapLibreInteraction(map));
+  map.on("movestart", (event) => {
+    if (event?.originalEvent) disengageDeviceLocationFollow();
+    beginMapLibreInteraction(map);
+  });
   map.on("zoomstart", () => beginMapLibreInteraction(map));
   map.on("move", () => {
     countMapLibreDiagnosticMove(record);
@@ -5856,7 +5892,10 @@ function renderMapMarkers() {
 
   const viewport = getMapViewport();
   const placedBounds = [];
-  const activeMarker = renderMapMarker(state.activePlace, { viewport, markerNodes, liveKeys });
+  const deviceLocation = mapDeviceLocation();
+  const activeMarker = deviceLocationOverlapsPlace(state.activePlace, deviceLocation)
+    ? null
+    : renderMapMarker(state.activePlace, { viewport, markerNodes, liveKeys });
   if (activeMarker?.bounds) placedBounds.push(activeMarker.bounds);
 
   if (mapState.immersive) {
@@ -10270,6 +10309,238 @@ const impactTapState = {
   startX: 0,
   startY: 0
 };
+const immersiveLocationState = {
+  watchId: null,
+  permission: "unknown",
+  locating: false,
+  following: false,
+  lastRenderedLocation: null,
+  lastRenderedAt: 0,
+  visibilityBound: false
+};
+
+function mapLocationPromptWasSeen() {
+  try {
+    return localStorage.getItem(MAP_LOCATION_PROMPT_KEY) === "seen";
+  } catch {
+    return false;
+  }
+}
+
+function rememberMapLocationPrompt() {
+  try { localStorage.setItem(MAP_LOCATION_PROMPT_KEY, "seen"); } catch {}
+}
+
+function setMapLocationPrompt(options = {}) {
+  const prompt = document.getElementById("mapLocationPrompt");
+  if (!prompt) return;
+  if (options.hidden) {
+    prompt.hidden = true;
+    return;
+  }
+  const title = document.getElementById("mapLocationPromptTitle");
+  const text = document.getElementById("mapLocationPromptText");
+  const actions = document.getElementById("mapLocationPromptActions");
+  if (title) title.textContent = options.title || "See yourself on the map";
+  if (text) text.textContent = options.text || "Show where you are relative to nearby rain as you move.";
+  if (actions) actions.hidden = options.actions === false;
+  prompt.classList.toggle("is-message", options.actions === false);
+  prompt.hidden = false;
+}
+
+function dismissMapLocationPrompt() {
+  rememberMapLocationPrompt();
+  setMapLocationPrompt({ hidden: true });
+}
+
+function mapLocationErrorText(error) {
+  if (error?.code === 1 || immersiveLocationState.permission === "denied") {
+    return "Location is off. You can enable it for Nearcast in your browser or device settings.";
+  }
+  if (error?.code === 3) return "Your location is taking longer than expected. Try again in a moment.";
+  return "Nearcast could not get your location. Check your connection and try again.";
+}
+
+function showMapLocationError(error) {
+  setMapLocationPrompt({
+    title: "Location unavailable",
+    text: mapLocationErrorText(error),
+    actions: false
+  });
+}
+
+function updateImmersiveLocationControl() {
+  const button = document.getElementById("immLocation");
+  if (!button) return;
+  const location = mapDeviceLocation();
+  const supported = typeof window.nearcastWatchDeviceLocationForMap === "function";
+  let label = "Show my location";
+  if (!supported) label = "Location unavailable";
+  else if (immersiveLocationState.locating) label = "Finding your location";
+  else if (immersiveLocationState.following && location) label = "Following your location";
+  else if (location) label = "Recenter on my location";
+  else if (immersiveLocationState.permission === "denied") label = "Location is off";
+  button.hidden = !supported;
+  button.classList.toggle("is-locating", immersiveLocationState.locating);
+  button.classList.toggle("is-following", immersiveLocationState.following && Boolean(location));
+  button.classList.toggle("is-unavailable", immersiveLocationState.permission === "denied");
+  button.setAttribute("aria-pressed", immersiveLocationState.following && location ? "true" : "false");
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+}
+
+function shouldRenderWatchedLocation(location) {
+  const previous = immersiveLocationState.lastRenderedLocation;
+  if (!previous) return true;
+  const elapsed = Date.now() - immersiveLocationState.lastRenderedAt;
+  if (elapsed >= MAP_LOCATION_RENDER_MIN_MS) return true;
+  const accuracy = Math.max(Number(location?.accuracy) || 0, Number(previous?.accuracy) || 0);
+  return mapDistanceMeters(previous, location) >= Math.max(MAP_LOCATION_RENDER_MIN_METERS, accuracy * 0.5);
+}
+
+function renderWatchedDeviceLocation(location, options = {}) {
+  if (!mapState.immersive || !location) return;
+  if (!shouldRenderWatchedLocation(location) && !options.force) return;
+  immersiveLocationState.lastRenderedLocation = location;
+  immersiveLocationState.lastRenderedAt = Date.now();
+  if (immersiveLocationState.following) centerImmersiveMapOnLocation(location);
+  else renderMapMarkers();
+  updateImmersiveLocationControl();
+}
+
+function centerImmersiveMapOnLocation(location = mapDeviceLocation()) {
+  if (!mapState.immersive || !location || !state.activePlace) return;
+  if (mapRendererIsGl()) {
+    const record = mapLibreCurrentRecord();
+    if (record?.map) {
+      record.map.jumpTo({ center: [Number(location.longitude), Number(location.latitude)] });
+      syncMapLibreStateFromMap(record.map);
+      renderMapLibreMarkers(record);
+      return;
+    }
+  }
+  const zoom = clampMapZoom(mapState.zoom);
+  const placeWorld = projectLatLon(state.activePlace.latitude, state.activePlace.longitude, zoom);
+  const locationWorld = projectLatLon(location.latitude, location.longitude, zoom);
+  mapState.panX = placeWorld.x - locationWorld.x;
+  mapState.panY = placeWorld.y - locationWorld.y;
+  renderTileMap();
+}
+
+function disengageDeviceLocationFollow() {
+  if (!immersiveLocationState.following) return;
+  immersiveLocationState.following = false;
+  updateImmersiveLocationControl();
+}
+
+function stopImmersiveLocationWatch() {
+  if (immersiveLocationState.watchId !== null && typeof window.nearcastStopDeviceLocationWatch === "function") {
+    window.nearcastStopDeviceLocationWatch(immersiveLocationState.watchId);
+  }
+  immersiveLocationState.watchId = null;
+  immersiveLocationState.locating = false;
+  updateImmersiveLocationControl();
+}
+
+async function startImmersiveLocationWatch(options = {}) {
+  if (!mapState.immersive || document.hidden) return;
+  if (immersiveLocationState.watchId !== null) {
+    if (options.follow) {
+      immersiveLocationState.following = true;
+      centerImmersiveMapOnLocation();
+      updateImmersiveLocationControl();
+    }
+    return;
+  }
+  if (typeof window.nearcastWatchDeviceLocationForMap !== "function") {
+    showMapLocationError();
+    return;
+  }
+  if (typeof window.nearcastDeviceLocationPermissionState === "function") {
+    const permission = await window.nearcastDeviceLocationPermissionState();
+    if (permission !== "prompt" || immersiveLocationState.permission !== "granted") {
+      immersiveLocationState.permission = permission;
+    }
+  }
+  if (immersiveLocationState.permission === "denied") {
+    updateImmersiveLocationControl();
+    showMapLocationError({ code: 1 });
+    return;
+  }
+  if (!options.userInitiated && immersiveLocationState.permission !== "granted") return;
+  if (options.userInitiated) {
+    rememberMapLocationPrompt();
+    setMapLocationPrompt({ hidden: true });
+  }
+  immersiveLocationState.locating = true;
+  updateImmersiveLocationControl();
+  let followFirstFix = Boolean(options.follow);
+  let firstFix = true;
+  const watchId = window.nearcastWatchDeviceLocationForMap(
+    (location) => {
+      if (!mapState.immersive) return;
+      immersiveLocationState.permission = "granted";
+      immersiveLocationState.locating = false;
+      if (followFirstFix) {
+        immersiveLocationState.following = true;
+        followFirstFix = false;
+      }
+      setMapLocationPrompt({ hidden: true });
+      renderWatchedDeviceLocation(location, { force: firstFix });
+      firstFix = false;
+    },
+    (error) => {
+      immersiveLocationState.locating = false;
+      if (error?.code === 1) {
+        immersiveLocationState.permission = "denied";
+        stopImmersiveLocationWatch();
+      }
+      updateImmersiveLocationControl();
+      if (!mapDeviceLocation()) showMapLocationError(error);
+    }
+  );
+  immersiveLocationState.watchId = watchId;
+  if (watchId === null) {
+    immersiveLocationState.locating = false;
+    showMapLocationError();
+  }
+}
+
+async function prepareImmersiveLocation() {
+  updateImmersiveLocationControl();
+  if (!immersiveLocationState.visibilityBound) {
+    immersiveLocationState.visibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopImmersiveLocationWatch();
+      else if (mapState.immersive) prepareImmersiveLocation();
+    });
+    window.addEventListener("pagehide", stopImmersiveLocationWatch);
+  }
+  if (typeof window.nearcastDeviceLocationPermissionState === "function") {
+    const permission = await window.nearcastDeviceLocationPermissionState();
+    if (permission !== "prompt" || immersiveLocationState.permission !== "granted") {
+      immersiveLocationState.permission = permission;
+    }
+  }
+  updateImmersiveLocationControl();
+  if (immersiveLocationState.permission === "granted") {
+    startImmersiveLocationWatch({ follow: immersiveLocationState.following });
+    return;
+  }
+  if (immersiveLocationState.permission === "prompt" && !mapDeviceLocation() && !mapLocationPromptWasSeen()) {
+    setMapLocationPrompt();
+  }
+}
+
+function handleImmersiveLocationControl() {
+  const location = mapDeviceLocation();
+  immersiveLocationState.following = true;
+  if (location) {
+    centerImmersiveMapOnLocation(location);
+    updateImmersiveLocationControl();
+  }
+  startImmersiveLocationWatch({ userInitiated: true, follow: true });
+}
 
 function enterImmersiveMap() {
   if (mapState.immersive) return;
@@ -10319,7 +10590,7 @@ function enterImmersiveMap() {
     renderMapLegend();
     showFrame(mapState.frameIndex);
   };
-  refreshDeviceLocationForImmersiveMap();
+  prepareImmersiveLocation();
   requestAnimationFrame(() => requestAnimationFrame(renderImmersiveFrame));
   setTimeout(renderImmersiveFrame, 140);
   loadMapFrames(true, { timelineKind: "precip", focusNow: true });
@@ -10338,16 +10609,6 @@ function enterImmersiveMap() {
   document.addEventListener("keydown", onImmersiveKey);
 }
 
-function refreshDeviceLocationForImmersiveMap() {
-  if (typeof window.nearcastRefreshDeviceLocationForMap !== "function") return;
-  Promise.resolve(window.nearcastRefreshDeviceLocationForMap())
-    .then(() => {
-      if (!mapState.immersive) return;
-      renderMapMarkers();
-    })
-    .catch(() => {});
-}
-
 function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
@@ -10356,6 +10617,10 @@ function exitImmersiveMap() {
   closeXweatherStormSheet();
   stopXweatherStormLayer(mapLibreCurrentRecord(), "exit");
   clearStormImpact();
+  stopImmersiveLocationWatch();
+  immersiveLocationState.following = false;
+  immersiveLocationState.lastRenderedLocation = null;
+  setMapLocationPrompt({ hidden: true });
   Object.assign(els, mapState._normalEls);
   mapState._normalEls = null;
   mapState.immersive = false;
@@ -10409,6 +10674,10 @@ function bindImmersiveModeButtons() {
     exitImmersiveMap();
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
+  bindTapAction(document.getElementById("immLocation"), handleImmersiveLocationControl);
+  bindTapAction(document.getElementById("mapLocationEnable"), () => startImmersiveLocationWatch({ userInitiated: true, follow: true }));
+  bindTapAction(document.getElementById("mapLocationLater"), dismissMapLocationPrompt);
+  bindTapAction(document.getElementById("mapLocationPromptClose"), dismissMapLocationPrompt);
   bindTapAction(document.getElementById("immStormEntry"), handleXweatherStormEntry);
   bindTapAction(document.getElementById("immLightningToggle"), toggleXweatherLightningOverlay);
   bindTapAction(document.getElementById("stormViewSheetClose"), closeXweatherStormSheet);
