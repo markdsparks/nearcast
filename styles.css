@@ -7603,6 +7603,34 @@ body.map-immersive-active #mapLegend {
   color: rgba(255, 255, 255, 0.56);
 }
 
+.imm-btn.imm-aerial-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--imm-control-bg-strong);
+}
+
+.imm-aerial-toggle svg {
+  width: 24px;
+  height: 24px;
+}
+
+.imm-aerial-toggle.is-active {
+  color: #ffd79a;
+  border-color: rgba(255, 215, 154, 0.62);
+  background: rgba(84, 55, 24, 0.86);
+  box-shadow: 0 0 0 4px rgba(255, 185, 89, 0.14);
+}
+
+.imm-aerial-toggle.is-unavailable {
+  color: rgba(255, 255, 255, 0.42);
+  cursor: default;
+  opacity: 0.68;
+}
+
 @keyframes imm-location-search {
   50% { transform: scale(0.84); opacity: 0.58; }
 }
@@ -8546,6 +8574,19 @@ body.map-immersive-active #mapLegend {
 
 #immersiveBaseTiles img {
   filter: none;
+}
+
+#immersiveBaseTiles .aerial-base-layer {
+  z-index: 1;
+  opacity: 0.78;
+}
+
+#immersiveBaseTiles[data-map-theme="light"] .aerial-base-layer img {
+  filter: grayscale(0.52) saturate(0.48) brightness(0.94) contrast(0.92);
+}
+
+#immersiveBaseTiles[data-map-theme="dark"] .aerial-base-layer img {
+  filter: grayscale(0.58) saturate(0.42) brightness(0.68) contrast(0.96);
 }
 
 /* Opacity lives on the sublayer pane (set per frame in JS) so the NOAA
@@ -9996,9 +10037,15 @@ body.map-immersive-active #mapLegend {
     padding: 0;
   }
 
+  .imm-btn.imm-aerial-toggle {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
   .map-location-prompt {
     position: fixed;
-    top: calc(var(--imm-hud-top) + 148px);
+    top: calc(var(--imm-hud-top) + 198px);
     left: var(--imm-hud-x);
     right: var(--imm-hud-x);
     width: auto;
@@ -10006,7 +10053,7 @@ body.map-immersive-active #mapLegend {
 
   .storm-impact-card {
     position: fixed;
-    top: calc(var(--imm-hud-top) + 150px);
+    top: calc(var(--imm-hud-top) + 200px);
     left: var(--imm-hud-x);
     right: var(--imm-hud-x);
     width: auto;

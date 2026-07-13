@@ -5,8 +5,12 @@ const MAP_PAN_MOVE_EPSILON_PX = 0.5;
 const MAP_PAN_REBASE_PX = 96;
 const IMMERSIVE_MAP_PAN_REBASE_PX = 180;
 const MAPLIBRE_BASE_LAYER_ID = "nearcast-base";
+const MAPLIBRE_AERIAL_LAYER_ID = "nearcast-aerial";
 const MAPLIBRE_LABEL_LAYER_ID = "nearcast-labels";
 const MAP_DEVICE_LOCATION_KEY = "device-location";
+const MAP_BASE_MODE_KEY = "nearcast-map-base-mode";
+const MAP_AERIAL_MAX_SOURCE_ZOOM = 16;
+const USGS_AERIAL_TILE_TEMPLATE = "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}";
 const MAP_LOCATION_PROMPT_KEY = "nearcast-map-location-prompt-v1";
 const MAP_LOCATION_RENDER_MIN_MS = 3000;
 const MAP_LOCATION_RENDER_MIN_METERS = 50;
@@ -86,6 +90,10 @@ const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
 const MAPLIBRE_ENCODED_RADAR_EMPTY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=";
+let mapBaseModeValue = (() => {
+  try { return localStorage.getItem(MAP_BASE_MODE_KEY) === "aerial" ? "aerial" : "map"; }
+  catch { return "map"; }
+})();
 
 function stormImpactFeatureEnabled() {
   return STORM_IMPACT_ENABLED === true;
@@ -2481,6 +2489,7 @@ function clearClassicLayersForMapLibre() {
   [els.baseTileLayer, els.weatherTileLayer, els.labelTileLayer].forEach((layer) => {
     if (!layer) return;
     layer.innerHTML = "";
+    layer._tileNodes?.clear?.();
     layer.style.transform = "";
   });
   clearMapMarkerNodes();
@@ -2679,6 +2688,41 @@ function mapLibreCartoTileUrls(style) {
   return hosts.map((host) => `https://${host}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png`);
 }
 
+function mapAerialSupported(place = state.activePlace) {
+  if (!place) return false;
+  const latitude = Number(place.latitude);
+  const longitude = normalizeMapLongitude(place.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  if (latitude >= 13 && latitude <= 15 && longitude >= 143 && longitude <= 146) return true;
+  if (latitude >= 17 && latitude <= 23 && longitude >= -161 && longitude <= -65) return true;
+  if (latitude >= 51 && latitude <= 72 && longitude >= -170 && longitude <= -129) return true;
+  return latitude >= 20 && latitude <= 55 && longitude >= -130 && longitude <= -60;
+}
+
+function mapAerialEnabled() {
+  return Boolean(mapState.immersive && mapBaseModeValue === "aerial" && mapAerialSupported());
+}
+
+function mapLibreAerialPaint(theme) {
+  return theme === "dark"
+    ? {
+        "raster-opacity": 0.76,
+        "raster-saturation": -0.58,
+        "raster-contrast": -0.04,
+        "raster-brightness-min": 0.02,
+        "raster-brightness-max": 0.64,
+        "raster-fade-duration": 0
+      }
+    : {
+        "raster-opacity": 0.78,
+        "raster-saturation": -0.52,
+        "raster-contrast": -0.08,
+        "raster-brightness-min": 0.04,
+        "raster-brightness-max": 0.82,
+        "raster-fade-duration": 0
+      };
+}
+
 function mapLibreBasePaint(theme) {
   return theme === "dark"
     ? {
@@ -2710,6 +2754,14 @@ function mapLibreStyle() {
         maxzoom: MAP_MAX_ZOOM,
         attribution: "CARTO, OpenStreetMap contributors"
       },
+      "nearcast-aerial": {
+        type: "raster",
+        tiles: [USGS_AERIAL_TILE_TEMPLATE],
+        tileSize: 256,
+        minzoom: MAP_MIN_ZOOM,
+        maxzoom: MAP_AERIAL_MAX_SOURCE_ZOOM,
+        attribution: "USDA, USGS The National Map: Orthoimagery"
+      },
       "nearcast-labels": {
         type: "raster",
         tiles: mapLibreCartoTileUrls(style.labels),
@@ -2724,6 +2776,15 @@ function mapLibreStyle() {
         type: "raster",
         source: "nearcast-base",
         paint: mapLibreBasePaint(style.theme)
+      },
+      {
+        id: MAPLIBRE_AERIAL_LAYER_ID,
+        type: "raster",
+        source: "nearcast-aerial",
+        layout: {
+          visibility: mapAerialEnabled() ? "visible" : "none"
+        },
+        paint: mapLibreAerialPaint(style.theme)
       },
       {
         id: MAPLIBRE_LABEL_LAYER_ID,
@@ -5702,8 +5763,20 @@ function renderMapLibreMap() {
   if (!record) return;
   syncMapLibreCamera(record);
   if (!mapLibreRecordReady(record)) return;
+  syncMapLibreAerialVisibility(record);
   renderMapLibreOverlays();
   if (mapState.immersive) updateImmersiveHUD();
+}
+
+function syncMapLibreAerialVisibility(record = mapLibreCurrentRecord()) {
+  if (!record?.map?.getLayer?.(MAPLIBRE_AERIAL_LAYER_ID)) return;
+  try {
+    record.map.setLayoutProperty(
+      MAPLIBRE_AERIAL_LAYER_ID,
+      "visibility",
+      mapAerialEnabled() ? "visible" : "none"
+    );
+  } catch {}
 }
 
 function clearMapLibreWeather() {
@@ -9056,7 +9129,10 @@ function syncMapSourceFromFrame(frame) {
 
 function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
   const credit = xweatherStormActive(mapLibreCurrentRecord()) ? "StormScope Xweather" : mapCreditText(frame);
-  const html = `${escapeHtml(credit)} · Map <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OSM</a>`;
+  const baseCredit = mapAerialEnabled()
+    ? 'Aerial <a href="https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer" target="_blank" rel="noreferrer">USGS/USDA</a> · Labels <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OSM</a>'
+    : 'Map <a href="https://carto.com/basemaps/" target="_blank" rel="noreferrer">CARTO</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OSM</a>';
+  const html = `${escapeHtml(credit)} · ${baseCredit}`;
   document.querySelectorAll("#mapCredit, #immCredit").forEach((node) => {
     node.innerHTML = html;
   });
@@ -9879,7 +9955,7 @@ function renderTileMap() {
   const viewport = getMapViewport();
   const style = mapTileStyle();
   setMapTileTheme(style);
-  renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
+  renderClassicBaseTiles(viewport);
   if (shouldBufferRadarPlayback(mapState.frameIndex)) renderXfade(mapState.frameIndex, viewport);
   else renderWeatherTiles(viewport);
   renderTileLayer(els.labelTileLayer, viewport, labelTileUrl, { sourceZoom: mapTileSourceZoom() });
@@ -9918,6 +9994,31 @@ function setMapTileTheme(style) {
 function baseTileUrl({ z, x, y }) {
   const style = mapTileStyle();
   return cartoTileUrl(style.base, z, x, y);
+}
+
+function aerialTileUrl({ z, x, y }) {
+  return USGS_AERIAL_TILE_TEMPLATE
+    .replace("{z}", z)
+    .replace("{x}", x)
+    .replace("{y}", y);
+}
+
+function renderClassicBaseTiles(viewport) {
+  renderTileLayer(els.baseTileLayer, viewport, baseTileUrl, { sourceZoom: mapTileSourceZoom() });
+  let aerialLayer = els.baseTileLayer?.querySelector(":scope > .aerial-base-layer");
+  if (!mapAerialEnabled()) {
+    aerialLayer?._tileNodes?.clear?.();
+    aerialLayer?.remove();
+    return;
+  }
+  if (!aerialLayer) {
+    aerialLayer = document.createElement("div");
+    aerialLayer.className = "tile-sublayer aerial-base-layer";
+    els.baseTileLayer.appendChild(aerialLayer);
+  }
+  renderTileLayer(aerialLayer, viewport, aerialTileUrl, {
+    sourceZoom: Math.min(mapTileSourceZoom(), MAP_AERIAL_MAX_SOURCE_ZOOM)
+  });
 }
 
 function labelTileUrl({ z, x, y }) {
@@ -10666,6 +10767,43 @@ function updateImmersiveHUD() {
     card.setAttribute("aria-label", label);
     card.setAttribute("title", "Switch place");
   }
+  updateImmersiveAerialControl();
+}
+
+function updateImmersiveAerialControl() {
+  const button = document.getElementById("immAerialToggle");
+  if (!button) return;
+  const supported = mapAerialSupported();
+  const active = mapAerialEnabled();
+  const label = active
+    ? "Show standard map"
+    : supported
+      ? "Show aerial map"
+      : "Aerial imagery is available in the U.S.";
+  button.disabled = !supported;
+  button.classList.toggle("is-active", active);
+  button.classList.toggle("is-unavailable", !supported);
+  button.setAttribute("aria-pressed", active ? "true" : "false");
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+}
+
+function setMapBaseMode(mode) {
+  mapBaseModeValue = mode === "aerial" ? "aerial" : "map";
+  try { localStorage.setItem(MAP_BASE_MODE_KEY, mapBaseModeValue); } catch {}
+  updateImmersiveAerialControl();
+  if (mapRendererIsGl()) {
+    syncMapLibreAerialVisibility();
+    mapLibreCurrentRecord()?.map?.triggerRepaint?.();
+  } else {
+    renderTileMap();
+  }
+  renderMapCredit();
+}
+
+function toggleImmersiveAerialMap() {
+  if (!mapAerialSupported()) return;
+  setMapBaseMode(mapBaseModeValue === "aerial" ? "map" : "aerial");
 }
 
 function bindImmersiveModeButtons() {
@@ -10675,6 +10813,7 @@ function bindImmersiveModeButtons() {
   });
   bindTapAction(document.getElementById("immWeatherCard"), openPlaceSheet);
   bindTapAction(document.getElementById("immLocation"), handleImmersiveLocationControl);
+  bindTapAction(document.getElementById("immAerialToggle"), toggleImmersiveAerialMap);
   bindTapAction(document.getElementById("mapLocationEnable"), () => startImmersiveLocationWatch({ userInitiated: true, follow: true }));
   bindTapAction(document.getElementById("mapLocationLater"), dismissMapLocationPrompt);
   bindTapAction(document.getElementById("mapLocationPromptClose"), dismissMapLocationPrompt);
