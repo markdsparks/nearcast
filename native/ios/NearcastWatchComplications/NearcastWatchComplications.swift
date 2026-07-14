@@ -292,7 +292,7 @@ private struct NearcastRainComplicationView: View {
             .accessibilityLabel("Rain")
             .accessibilityValue(rain.accessibilityDescription)
         default:
-            NearcastWeatherInstrument(signal: instrument)
+            NearcastRainInstrument(signal: rain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Rain")
             .accessibilityValue(rain.accessibilityDescription)
@@ -335,18 +335,18 @@ private struct NearcastWindComplicationView: View {
             Label(inlineText(wind), systemImage: "wind")
                 .accessibilityLabel("Wind, \(wind.accessibilityDescription)")
         case .accessoryCircular:
-            NearcastSignalDial(signal: instrument)
+            NearcastSignalDial(signal: instrument, direction: entry.snapshot.windDirection)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Wind")
                 .accessibilityValue(wind.accessibilityDescription)
         case .accessoryCorner:
-            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
+            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false, direction: entry.snapshot.windDirection)
                 .widgetLabel { Text(cornerText(wind)) }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Wind")
                 .accessibilityValue(wind.accessibilityDescription)
         default:
-            NearcastWeatherInstrument(signal: instrument)
+            NearcastWindInstrument(snapshot: entry.snapshot, signal: wind)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Wind")
                 .accessibilityValue(wind.accessibilityDescription)
@@ -454,10 +454,10 @@ private struct NearcastBasicsRectangle: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 2) {
             HStack(spacing: 5) {
                 Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
                     .widgetAccentable()
                 Text(complicationCityName(snapshot.placeName))
@@ -467,76 +467,78 @@ private struct NearcastBasicsRectangle: View {
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 8) {
-                ComplicationWeatherDial(
-                    symbol: "thermometer.medium",
-                    value: "\(snapshot.temperature)°",
-                    progress: complicationTemperatureProgress(snapshot),
-                    color: Color(red: 1.0, green: 0.70, blue: 0.20)
-                )
-                ComplicationWeatherDial(
-                    symbol: "location.north.fill",
-                    value: "\(snapshot.wind)",
-                    progress: min(1, Double(snapshot.wind) / 35),
-                    color: Color(red: 0.45, green: 0.93, blue: 0.70),
-                    rotation: snapshot.windDirection
-                )
-                ComplicationWeatherDial(
-                    symbol: "drop.fill",
-                    value: "\(snapshot.rainChance)%",
-                    progress: Double(snapshot.rainChance) / 100,
-                    color: Color(red: 0.35, green: 0.79, blue: 1.0)
-                )
+            HStack(spacing: 7) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("\(snapshot.temperature)°")
+                        .font(.system(size: 25, weight: .bold, design: .rounded).monospacedDigit())
+                    HStack(spacing: 6) {
+                        ComplicationIconValue(symbol: "arrow.down", value: snapshot.low.map { "\($0)°" } ?? "—")
+                        ComplicationIconValue(symbol: "arrow.up", value: snapshot.high.map { "\($0)°" } ?? "—")
+                    }
+                }
+                .layoutPriority(1)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.20))
+                    .frame(width: 1, height: 37)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                            .widgetAccentable()
+                        Text("\(snapshot.wind)")
+                            .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                        Text(complicationCardinalDirection(snapshot))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .widgetAccentable()
+                        Text("\(snapshot.rainChance)%")
+                            .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                        ComplicationRainBars(values: complicationRainValues(snapshot))
+                            .frame(width: 26, height: 13)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
         }
     }
 }
 
-private struct ComplicationWeatherDial: View {
-    let symbol: String
-    let value: String
-    let progress: Double
-    let color: Color
-    var rotation: Int? = nil
+private struct ComplicationRainBars: View {
+    let values: [Int]
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.white.opacity(0.16), lineWidth: 4)
-            Circle()
-                .trim(from: 0, to: max(0.04, min(1, progress)))
-                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .widgetAccentable()
-            VStack(spacing: -1) {
-                Image(systemName: symbol)
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(color)
-                    .rotationEffect(.degrees(Double(rotation ?? 0)))
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(Array(values.prefix(4).enumerated()), id: \.offset) { _, value in
+                Capsule()
+                    .fill(Color.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: max(2, CGFloat(value) / 100 * 13))
                     .widgetAccentable()
-                Text(value)
-                    .font(.system(size: value.count > 3 ? 13 : 16, weight: .bold, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
             }
         }
-        .frame(width: 38, height: 38)
+        .frame(maxHeight: .infinity, alignment: .bottom)
+        .accessibilityHidden(true)
     }
 }
 
 private struct ComplicationIconValue: View {
     let symbol: String
     let value: String
-    var compact = false
 
     var body: some View {
-        HStack(spacing: compact ? 2 : 4) {
+        HStack(spacing: 2) {
             Image(systemName: symbol)
-                .font(.system(size: compact ? 8 : 11, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .widgetAccentable()
             Text(value)
-                .font(.system(size: compact ? 10 : 13, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -586,44 +588,42 @@ private struct ComplicationStateView: View {
 
 private enum NearcastInstrumentEncoding {
     case rain(probability: Int)
-    case wind(speed: Int, ceiling: Int)
+    case wind(speed: Int)
     case symbol
 }
 
 private struct NearcastInstrumentSignal {
     let symbol: String
     let primary: String
-    let secondary: String
     let encoding: NearcastInstrumentEncoding
-    let trail: [Double]
 }
 
 private struct NearcastSignalDial: View {
     let signal: NearcastInstrumentSignal
     var compact = false
     var showsPlainValue = true
+    var direction: Int? = nil
 
     @ViewBuilder
     var body: some View {
         switch signal.encoding {
         case .rain(let probability):
-            Gauge(value: Double(probability), in: 0...100) {
+            VStack(spacing: 1) {
                 Image(systemName: signal.symbol)
-            } currentValueLabel: {
+                    .font(.system(size: compact ? 16 : 19, weight: .bold))
+                    .widgetAccentable()
                 Text("\(probability)%")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded).monospacedDigit())
             }
-            .gaugeStyle(.accessoryCircular)
-            .widgetAccentable()
-        case .wind(let speed, let ceiling):
-            Gauge(value: Double(speed), in: 0...Double(max(1, ceiling))) {
-                Image(systemName: signal.symbol)
-            } currentValueLabel: {
+        case .wind(let speed):
+            VStack(spacing: 1) {
+                Image(systemName: direction == nil ? "wind" : "location.north.fill")
+                    .font(.system(size: compact ? 16 : 19, weight: .bold))
+                    .rotationEffect(.degrees(Double(direction ?? 0)))
+                    .widgetAccentable()
                 Text("\(speed)")
                     .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded))
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .widgetAccentable()
         case .symbol:
             ZStack {
                 Circle()
@@ -643,28 +643,68 @@ private struct NearcastSignalDial: View {
     }
 }
 
-private struct NearcastWeatherInstrument: View {
-    let signal: NearcastInstrumentSignal
+private struct NearcastRainInstrument: View {
+    let signal: NearcastVisualSignal
+
+    private var probability: Int {
+        signal.magnitude?.value ?? 0
+    }
+
+    private var values: [Double] {
+        signal.timelinePoints.prefix(5).compactMap { $0.magnitude?.normalizedValue }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            NearcastSignalDial(signal: signal, compact: true, showsPlainValue: false)
-                .frame(width: 42, height: 42)
+            Image(systemName: signal.symbolName)
+                .font(.system(size: 25, weight: .bold))
+                .widgetAccentable()
+            Text("\(probability)%")
+                .font(.system(size: 25, weight: .bold, design: .rounded).monospacedDigit())
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 2)
+            VStack(alignment: .trailing, spacing: 2) {
+                if let time = signal.eventTimeLabel {
+                    Text(time)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                NearcastTrail(values: values, style: .rainBars)
+                    .frame(width: 53, height: 25)
+            }
+        }
+    }
+}
+
+private struct NearcastWindInstrument: View {
+    let snapshot: NearcastWidgetSnapshot
+    let signal: NearcastVisualSignal
+
+    private var trail: [Double] {
+        signal.timelinePoints.prefix(5).compactMap { $0.magnitude?.normalizedValue }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
+                .font(.system(size: 26, weight: .bold))
+                .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                .widgetAccentable()
             VStack(alignment: .leading, spacing: 0) {
-                Text(signal.primary)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.75)
-                    .lineLimit(1)
+                HStack(alignment: .lastTextBaseline, spacing: 3) {
+                    Text("\(snapshot.wind)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                    Text(shortComplicationWindUnit(snapshot.windUnit))
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Text(complicationCardinalDirection(snapshot))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
-            .layoutPriority(1)
-            Spacer(minLength: 0)
-            if signal.trail.count > 1 {
-                NearcastTrail(
-                    values: signal.trail,
-                    style: signal.encoding.isRain ? .rainBars : .line
-                )
-                    .frame(width: 48, height: 30)
-            }
+            Spacer(minLength: 2)
+            NearcastTrail(values: trail, style: .line)
+                .frame(width: 48, height: 27)
         }
     }
 }
@@ -726,13 +766,6 @@ private struct NearcastTrail: View {
     }
 }
 
-private extension NearcastInstrumentEncoding {
-    var isRain: Bool {
-        if case .rain = self { return true }
-        return false
-    }
-}
-
 private struct NearcastPlanMark: View {
     let plan: NearcastVisualSignal
     var compact = false
@@ -782,58 +815,35 @@ private func instrumentSignal(_ signal: NearcastVisualSignal) -> NearcastInstrum
        (signal.magnitude?.value ?? 0) > 0 {
         encoding = .rain(probability: signal.magnitude?.value ?? 0)
     } else if signal.kind == .wind, let magnitude = signal.magnitude {
-        let ceiling: Int
-        if magnitude.normalizedValue > 0 {
-            ceiling = max(magnitude.value, Int((Double(magnitude.value) / magnitude.normalizedValue).rounded()))
-        } else {
-            ceiling = max(1, magnitude.value)
-        }
-        encoding = .wind(speed: magnitude.value, ceiling: ceiling)
+        encoding = .wind(speed: magnitude.value)
     } else {
         encoding = .symbol
     }
 
     let primary: String
-    let secondary: String
     switch signal.kind {
     case .rain:
         if signal.headline == "Dry" {
             primary = "Dry"
-            secondary = signal.detail ?? signal.eventTimeLabel ?? ""
         } else {
             primary = signal.eventTimeLabel ?? signal.headline
-            secondary = signal.headline
         }
     case .wind:
         primary = signal.headline
-        secondary = signal.eventTimeLabel.map { "Near \($0)" }
-            ?? signal.magnitude?.displayValue
-            ?? ""
     case .temperature:
         primary = signal.magnitude?.displayValue ?? signal.headline
-        secondary = signal.eventTimeLabel ?? signal.headline
     case .condition:
         primary = signal.eventTimeLabel ?? signal.headline
-        secondary = signal.headline
     case .steady:
         primary = signal.magnitude?.displayValue ?? signal.headline
-        secondary = signal.headline
     case .plan:
         primary = signal.planVerdict?.rawValue ?? signal.headline
-        secondary = signal.context ?? "Watched plan"
     }
-
-    let trail = signal.timelinePoints.prefix(4).compactMap { $0.magnitude?.normalizedValue }
-    let shouldShowTrail = trail.count > 1
-        && !(signal.kind == .rain && (signal.magnitude?.value ?? 0) == 0)
-        && Set(trail.map { Int(($0 * 100).rounded()) }).count > 1
 
     return NearcastInstrumentSignal(
         symbol: signal.symbolName,
         primary: primary,
-        secondary: secondary == primary ? "" : secondary,
-        encoding: encoding,
-        trail: shouldShowTrail ? trail : []
+        encoding: encoding
     )
 }
 
@@ -1111,9 +1121,19 @@ private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
         : "\(snapshot.wind) \(snapshot.windUnit) \(direction)"
 }
 
-private func complicationTemperatureProgress(_ snapshot: NearcastWidgetSnapshot) -> Double {
-    guard let low = snapshot.low, let high = snapshot.high, high > low else { return 0.55 }
-    return min(1, max(0, Double(snapshot.temperature - low) / Double(high - low)))
+private func complicationRainValues(_ snapshot: NearcastWidgetSnapshot) -> [Int] {
+    let values = (snapshot.timeline ?? []).prefix(4).compactMap(\.rainChance)
+    return values.isEmpty ? [snapshot.rainChance] : values
+}
+
+private func complicationCardinalDirection(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let label = (snapshot.windLabel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !label.isEmpty { return label }
+    return snapshot.windDirection.map(cardinalDirection) ?? "—"
+}
+
+private func shortComplicationWindUnit(_ unit: String) -> String {
+    unit.lowercased().contains("km") ? "km/h" : "mph"
 }
 
 private func complicationCityName(_ value: String) -> String {
