@@ -171,35 +171,16 @@ private struct NearcastNextComplicationView: View {
             case .accessoryInline:
                 Label("\(entry.snapshot.temperature)° · \(entry.snapshot.condition)", systemImage: "thermometer.medium")
             case .accessoryCircular:
-                VStack(spacing: -2) {
-                    Text("\(entry.snapshot.temperature)°")
-                        .font(.system(size: 21, weight: .bold, design: .rounded))
-                        .minimumScaleFactor(0.72)
-                    Text("TEMP")
-                        .font(.system(size: 7, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(entry.snapshot.temperature)°")
+                    .font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit())
+                    .minimumScaleFactor(0.72)
             case .accessoryCorner:
                 Text("\(entry.snapshot.temperature)°")
                     .font(.system(size: 21, weight: .bold, design: .rounded))
                     .widgetAccentable()
                     .widgetLabel { Text(entry.snapshot.condition.uppercased()) }
             default:
-                HStack(spacing: 8) {
-                    Image(systemName: "thermometer.medium")
-                        .font(.system(size: 23, weight: .semibold))
-                        .widgetAccentable()
-                    Text("\(entry.snapshot.temperature)°")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Temperature")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                        Text(entry.snapshot.condition)
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
+                NearcastTemperatureRectangle(snapshot: entry.snapshot)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -399,12 +380,7 @@ private struct NearcastBriefView: View {
     }
 
     private var briefPlaceholder: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "cloud.sun.fill")
-                .font(.system(size: 25, weight: .semibold))
-            Text("Today basics")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-        }
+        NearcastBasicsRectangle(snapshot: .fallback)
         .redacted(reason: .placeholder)
     }
 
@@ -441,29 +417,89 @@ private struct NearcastBriefView: View {
 
     @ViewBuilder
     private var briefFresh: some View {
-        HStack(alignment: .center, spacing: 9) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("\(entry.snapshot.temperature)°")
-                    .font(.system(size: 31, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.75)
-                Text(entry.snapshot.condition)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(highLowText(entry.snapshot))
-                Label("Rain \(entry.snapshot.rainChance)%", systemImage: "drop.fill")
-                Label(windBasicsText(entry.snapshot), systemImage: "wind")
-            }
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .lineLimit(1)
-        }
+        NearcastBasicsRectangle(snapshot: entry.snapshot)
         .foregroundStyle(renderingMode == .fullColor ? Color.white : Color.primary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Today basics")
         .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition), \(highLowText(entry.snapshot)), rain \(entry.snapshot.rainChance) percent, wind \(windBasicsText(entry.snapshot))")
+    }
+}
+
+private struct NearcastTemperatureRectangle: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
+                .font(.system(size: 29, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .widgetAccentable()
+                .frame(width: 39, height: 39)
+
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 29, weight: .bold, design: .rounded).monospacedDigit())
+                .minimumScaleFactor(0.8)
+
+            Spacer(minLength: 2)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                ComplicationIconValue(symbol: "arrow.up", value: snapshot.high.map { "\($0)°" } ?? "—")
+                ComplicationIconValue(symbol: "arrow.down", value: snapshot.low.map { "\($0)°" } ?? "—")
+            }
+        }
+    }
+}
+
+private struct NearcastBasicsRectangle: View {
+    let snapshot: NearcastWidgetSnapshot
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.11))
+                Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
+                    .font(.system(size: 25, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .widgetAccentable()
+            }
+            .frame(width: 39, height: 39)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(snapshot.temperature)°")
+                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                    .minimumScaleFactor(0.8)
+                HStack(spacing: 7) {
+                    ComplicationIconValue(symbol: "arrow.up", value: snapshot.high.map { "\($0)°" } ?? "—", compact: true)
+                    ComplicationIconValue(symbol: "arrow.down", value: snapshot.low.map { "\($0)°" } ?? "—", compact: true)
+                }
+            }
+
+            Spacer(minLength: 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                ComplicationIconValue(symbol: "drop.fill", value: "\(snapshot.rainChance)%")
+                ComplicationIconValue(symbol: "wind", value: complicationWindValue(snapshot))
+            }
+        }
+    }
+}
+
+private struct ComplicationIconValue: View {
+    let symbol: String
+    let value: String
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: compact ? 2 : 4) {
+            Image(systemName: symbol)
+                .font(.system(size: compact ? 8 : 11, weight: .bold))
+                .widgetAccentable()
+            Text(value)
+                .font(.system(size: compact ? 10 : 13, weight: .bold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
     }
 }
 
@@ -576,15 +612,9 @@ private struct NearcastWeatherInstrument: View {
                 .frame(width: 42, height: 42)
             VStack(alignment: .leading, spacing: 0) {
                 Text(signal.primary)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.75)
                     .lineLimit(1)
-                if !signal.secondary.isEmpty {
-                    Text(signal.secondary)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
             .layoutPriority(1)
             Spacer(minLength: 0)
@@ -1039,6 +1069,25 @@ private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
     return direction.isEmpty
         ? "\(snapshot.wind) \(snapshot.windUnit)"
         : "\(snapshot.wind) \(snapshot.windUnit) \(direction)"
+}
+
+private func complicationWindValue(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let direction = snapshot.windLabel ?? snapshot.windDirection.map(cardinalDirection) ?? ""
+    return direction.isEmpty ? "\(snapshot.wind)" : "\(snapshot.wind) \(direction)"
+}
+
+private func complicationConditionSymbol(_ code: Int, isDay: Bool) -> String {
+    switch code {
+    case 0: return isDay ? "sun.max.fill" : "moon.stars.fill"
+    case 1: return isDay ? "sun.min.fill" : "moon.fill"
+    case 2: return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
+    case 3: return "cloud.fill"
+    case 45, 48: return "cloud.fog.fill"
+    case 51...67, 80...82: return "cloud.rain.fill"
+    case 71...77, 85...86: return "cloud.snow.fill"
+    case 95...99: return "cloud.bolt.rain.fill"
+    default: return "cloud.fill"
+    }
 }
 
 private func cardinalDirection(_ degrees: Int) -> String {

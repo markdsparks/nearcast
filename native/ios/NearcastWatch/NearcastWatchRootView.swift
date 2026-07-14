@@ -220,34 +220,33 @@ private struct WatchTodayBasicsPage: View {
     let useUltraLayout: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: useUltraLayout ? 10 : 7) {
-            WatchPlaceHeader(snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Nearcast")
-
+        VStack(spacing: useUltraLayout ? 10 : 7) {
             if snapshot.hasWeatherData {
-                HStack(alignment: .center, spacing: useUltraLayout ? 12 : 9) {
+                HStack(alignment: .center, spacing: useUltraLayout ? 13 : 10) {
                     Image(systemName: watchConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
-                        .font(.system(size: useUltraLayout ? 38 : 32, weight: .semibold))
+                        .font(.system(size: useUltraLayout ? 48 : 41, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                        .frame(width: useUltraLayout ? 52 : 44)
+                        .frame(width: useUltraLayout ? 63 : 54, height: useUltraLayout ? 63 : 54)
+                        .background(
+                            Circle()
+                                .fill(isLuminanceReduced ? Color.clear : nearcastCyan.opacity(0.12))
+                        )
                         .accessibilityHidden(true)
 
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: -2) {
                         Text("\(snapshot.temperature)°")
-                            .font(.system(size: useUltraLayout ? 43 : 37, weight: .bold, design: .rounded))
+                            .font(.system(size: useUltraLayout ? 54 : 47, weight: .bold, design: .rounded).monospacedDigit())
                             .minimumScaleFactor(0.75)
                         Text(snapshot.condition)
-                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .font(.system(size: useUltraLayout ? 14 : 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(watchSecondary)
                             .lineLimit(1)
                     }
+                    Spacer(minLength: 0)
                 }
 
-                HStack(spacing: 5) {
-                    WatchBasicMetric(label: "Today", value: watchHighLow(snapshot))
-                    WatchBasicMetric(label: "Rain", value: "\(snapshot.rainChance)%")
-                    WatchBasicMetric(label: "Wind", value: "\(snapshot.wind) \(shortWindUnit(snapshot.windUnit))")
-                }
+                WatchGlanceStrip(snapshot: snapshot, isLuminanceReduced: isLuminanceReduced)
             } else {
                 WatchNoWeatherMessage(
                     isRefreshing: syncState == .refreshing,
@@ -265,25 +264,62 @@ private struct WatchTodayBasicsPage: View {
     }
 }
 
-private struct WatchBasicMetric: View {
-    let label: String
-    let value: String
+private struct WatchGlanceStrip: View {
+    let snapshot: NearcastWidgetSnapshot
+    let isLuminanceReduced: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(watchMuted)
+        HStack(spacing: 0) {
+            WatchGlanceMetric(
+                symbol: "arrow.up",
+                value: snapshot.high.map { "\($0)°" } ?? "—",
+                color: isLuminanceReduced ? .white : nearcastAmber
+            )
+            WatchGlanceMetric(
+                symbol: "arrow.down",
+                value: snapshot.low.map { "\($0)°" } ?? "—",
+                color: isLuminanceReduced ? .white : nearcastCyan
+            )
+            WatchGlanceMetric(
+                symbol: "drop.fill",
+                value: "\(snapshot.rainChance)%",
+                color: isLuminanceReduced ? .white : nearcastCyan
+            )
+            WatchGlanceMetric(
+                symbol: "wind",
+                value: watchWindGlanceValue(snapshot),
+                color: isLuminanceReduced ? .white : nearcastMint
+            )
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(isLuminanceReduced ? 0.32 : 0.10), lineWidth: 1)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("High \(snapshot.high.map(String.init) ?? "unavailable"), low \(snapshot.low.map(String.init) ?? "unavailable"), rain \(snapshot.rainChance) percent, wind \(snapshot.wind) \(snapshot.windUnit)")
+    }
+}
+
+private struct WatchGlanceMetric: View {
+    let symbol: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(color)
             Text(value)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(watchPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.78)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -294,32 +330,37 @@ private struct WatchBasicHoursPage: View {
     let useUltraLayout: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: useUltraLayout ? 8 : 6) {
-            WatchPlaceHeader("Next hours")
+        VStack(spacing: useUltraLayout ? 8 : 6) {
             if snapshot.hasWeatherData, let timeline = snapshot.timeline, !timeline.isEmpty {
-                HStack(spacing: 4) {
-                    Text("TIME").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("TEMP").frame(width: 38, alignment: .trailing)
-                    Text("RAIN").frame(width: 40, alignment: .trailing)
-                    Text("WIND").frame(width: 42, alignment: .trailing)
-                }
-                .font(.system(size: 8, weight: .bold, design: .rounded))
-                .foregroundStyle(watchMuted)
-
-                ForEach(Array(timeline.prefix(useUltraLayout ? 4 : 3))) { hour in
-                    HStack(spacing: 4) {
-                        Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(hour.temperature.map { "\($0)°" } ?? "—")
-                            .frame(width: 38, alignment: .trailing)
-                        Text(hour.rainChance.map { "\($0)%" } ?? "—")
-                            .frame(width: 40, alignment: .trailing)
-                        Text(hour.wind.map(String.init) ?? "—")
-                            .frame(width: 42, alignment: .trailing)
+                HStack(alignment: .top, spacing: useUltraLayout ? 6 : 4) {
+                    ForEach(Array(timeline.prefix(4))) { hour in
+                        VStack(spacing: useUltraLayout ? 5 : 3) {
+                            Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(hour.offsetHours == 0 ? watchPrimary : watchMuted)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                            Image(systemName: watchConditionSymbol(hour.conditionCode ?? snapshot.conditionCode, isDay: hour.isDay ?? snapshot.isDay))
+                                .font(.system(size: useUltraLayout ? 23 : 20, weight: .semibold))
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                            Text(hour.temperature.map { "\($0)°" } ?? "—")
+                                .font(.system(size: useUltraLayout ? 18 : 16, weight: .bold, design: .rounded).monospacedDigit())
+                            HStack(spacing: 2) {
+                                Image(systemName: "drop.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(hour.rainChance.map { "\($0)%" } ?? "—")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                            }
+                            .foregroundStyle((hour.rainChance ?? 0) >= 30 ? nearcastCyan : watchMuted)
+                        }
+                        .padding(.vertical, useUltraLayout ? 8 : 6)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            Color.white.opacity(hour.offsetHours == 0 && !isLuminanceReduced ? 0.11 : 0.05),
+                            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        )
                     }
-                    .font(.system(size: useUltraLayout ? 14 : 13, weight: .semibold, design: .rounded))
-                    .padding(.vertical, useUltraLayout ? 4 : 3)
-                    .overlay(alignment: .bottom) { Divider().opacity(0.25) }
                 }
             } else {
                 WatchNoWeatherMessage(
@@ -343,29 +384,37 @@ private struct WatchThreeDayPage: View {
     let useUltraLayout: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: useUltraLayout ? 9 : 7) {
-            WatchPlaceHeader("3 days")
+        VStack(spacing: useUltraLayout ? 8 : 6) {
             if let days = snapshot.daily, !days.isEmpty {
                 ForEach(Array(days.prefix(3))) { day in
-                    HStack(spacing: 7) {
+                    HStack(spacing: useUltraLayout ? 9 : 7) {
                         Text(day.label)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .frame(width: useUltraLayout ? 66 : 58, alignment: .leading)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(watchSecondary)
+                            .frame(width: useUltraLayout ? 48 : 43, alignment: .leading)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.72)
                         Image(systemName: watchConditionSymbol(day.conditionCode, isDay: true))
+                            .font(.system(size: useUltraLayout ? 23 : 20, weight: .semibold))
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                            .frame(width: 20)
-                        Text("\(day.high)°/\(day.low)°")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .frame(width: useUltraLayout ? 29 : 25)
+                        HStack(alignment: .lastTextBaseline, spacing: 4) {
+                            Text("\(day.high)°")
+                                .font(.system(size: useUltraLayout ? 19 : 17, weight: .bold, design: .rounded).monospacedDigit())
+                            Text("\(day.low)°")
+                                .font(.system(size: useUltraLayout ? 14 : 12, weight: .semibold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(watchMuted)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                         Label("\(day.rainChance)%", systemImage: "drop.fill")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(day.rainChance >= 30 ? nearcastCyan : watchSecondary)
-                            .frame(width: 47, alignment: .trailing)
+                            .frame(width: 43, alignment: .trailing)
                     }
-                    .padding(.vertical, useUltraLayout ? 5 : 4)
-                    .overlay(alignment: .bottom) { Divider().opacity(0.25) }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, useUltraLayout ? 8 : 6)
+                    .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.055), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                 }
             } else {
                 VStack(spacing: 8) {
@@ -1519,17 +1568,16 @@ private func cityName(_ value: String) -> String {
     return trimmed.isEmpty ? value : trimmed
 }
 
-private func watchHighLow(_ snapshot: NearcastWidgetSnapshot) -> String {
-    switch (snapshot.high, snapshot.low) {
-    case let (high?, low?): return "\(high)°/\(low)°"
-    case let (high?, nil): return "H \(high)°"
-    case let (nil, low?): return "L \(low)°"
-    default: return "—"
-    }
+private func watchWindGlanceValue(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let direction = cleanOptional(snapshot.windLabel)
+        ?? snapshot.windDirection.map(watchCardinalDirection)
+    return [String(snapshot.wind), direction].compactMap { $0 }.joined(separator: " ")
 }
 
-private func shortWindUnit(_ unit: String) -> String {
-    unit.lowercased().contains("km") ? "km/h" : "mph"
+private func watchCardinalDirection(_ degrees: Int) -> String {
+    let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    let normalized = (degrees % 360 + 360) % 360
+    return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
 }
 
 private func watchConditionSymbol(_ code: Int, isDay: Bool) -> String {

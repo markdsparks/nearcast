@@ -20,12 +20,17 @@ assert.match(complications, /configurationDisplayName\("Rain"\)/, "rain complica
 assert.match(complications, /configurationDisplayName\("Wind"\)/, "wind complication has a stable identity");
 assert.match(complications, /configurationDisplayName\("Today Basics"\)/, "rectangular complication exposes fixed basics");
 assert.match(complications, /Text\("\\\(entry\.snapshot\.temperature\)°"\)/, "temperature complication uses the current temperature directly");
+assert.match(complications, /struct NearcastBasicsRectangle/, "rectangular complication has a dedicated visual composition");
+assert.match(complications, /ComplicationIconValue\(symbol: "drop\.fill", value: "\\\(snapshot\.rainChance\)%"\)/, "rain is encoded as a drop and value without a repeated label");
+assert.doesNotMatch(complications, /Label\("Rain \\\(entry\.snapshot\.rainChance\)%"/, "rectangular complication does not spell out an icon's meaning");
 assert.doesNotMatch(complications, /transferUserInfo/, "complication source contains no queued phone transfer behavior");
 
 assert.match(watchApp, /case today[\s\S]*case hours[\s\S]*case days[\s\S]*case plan/, "watch navigation uses stable surfaces");
 assert.match(watchApp, /struct WatchTodayBasicsPage/, "watch app includes Today basics");
 assert.match(watchApp, /struct WatchBasicHoursPage/, "watch app includes fixed hourly rows");
 assert.match(watchApp, /struct WatchThreeDayPage/, "watch app includes a three-day view");
+assert.match(watchApp, /struct WatchGlanceStrip/, "Today uses one icon-led glance strip instead of labeled micro-cards");
+assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");
 assert.match(watchApp, /forecast_hours", value: "24"/, "watch app caches a full day of hourly values");
 assert.match(complications, /forecast_hours", value: "24"/, "complications can project a full day without a fresh wake-up");
 
