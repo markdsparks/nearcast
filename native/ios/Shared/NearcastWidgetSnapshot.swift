@@ -37,6 +37,7 @@ struct NearcastWidgetSnapshot: Codable {
     var watchDetail: String?
     var watchTone: String?
     var timeline: [NearcastWidgetHour]?
+    var daily: [NearcastWidgetDay]? = nil
     var sunriseAt: TimeInterval?
     var sunsetAt: TimeInterval?
     var isAvailable: Bool?
@@ -67,6 +68,16 @@ struct NearcastWidgetHour: Codable, Identifiable {
     var conditionCode: Int?
     var isDay: Bool?
     var startsAt: TimeInterval?
+}
+
+struct NearcastWidgetDay: Codable, Identifiable {
+    var id: String { date }
+    var date: String
+    var label: String
+    var high: Int
+    var low: Int
+    var rainChance: Int
+    var conditionCode: Int
 }
 
 struct NearcastWidgetPlace: Codable {
@@ -113,6 +124,7 @@ extension NearcastWidgetSnapshot {
         watchDetail: nil,
         watchTone: "neutral",
         timeline: nil,
+        daily: nil,
         sunriseAt: nil,
         sunsetAt: nil,
         isAvailable: false,
@@ -200,6 +212,7 @@ extension NearcastWidgetSnapshot {
         merged.laterLabel = weather.laterLabel
         merged.laterValue = weather.laterValue
         merged.timeline = weather.timeline
+        merged.daily = weather.daily
         merged.sunriseAt = weather.sunriseAt
         merged.sunsetAt = weather.sunsetAt
         merged.isAvailable = weather.isAvailable

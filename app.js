@@ -1,4 +1,4 @@
-const VERSION = "3.0.261";
+const VERSION = "3.0.262";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -8079,6 +8079,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       watchDetail: watchSummary.detail,
       watchTone: watchSummary.tone,
       timeline: nativeWidgetTimeline(data),
+      daily: nativeWidgetDaily(data),
       sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
       sunsetAt: Number.isFinite(sunsetAt) ? sunsetAt / 1000 : null,
       isAvailable: true,
@@ -8137,6 +8138,25 @@ function nativeWidgetTimeline(data = state.forecast) {
       startsAt: Number.isFinite(startsAt)
         ? startsAt / 1000
         : null
+    });
+  }
+  return rows;
+}
+
+function nativeWidgetDaily(data = state.forecast) {
+  const daily = data?.daily || {};
+  const dates = daily.time || [];
+  const startIndex = Math.max(0, forecastDailyIndex(data));
+  const rows = [];
+  for (let index = startIndex; index < dates.length && rows.length < 3; index += 1) {
+    const numberOrZero = (value) => Number.isFinite(Number(value)) ? Math.round(Number(value)) : 0;
+    rows.push({
+      date: dates[index],
+      label: formatDay(dates[index], rows.length),
+      high: numberOrZero(daily.temperature_2m_max?.[index]),
+      low: numberOrZero(daily.temperature_2m_min?.[index]),
+      rainChance: numberOrZero(daily.precipitation_probability_max?.[index]),
+      conditionCode: numberOrZero(daily.weather_code?.[index])
     });
   }
   return rows;

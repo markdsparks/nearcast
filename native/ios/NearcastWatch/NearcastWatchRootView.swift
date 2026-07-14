@@ -2,12 +2,13 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-private let watchWeatherStaleInterval: TimeInterval = 2 * 60 * 60
+private let watchWeatherStaleInterval: TimeInterval = 12 * 60 * 60
 private let watchPlanStaleInterval: TimeInterval = 2 * 60 * 60
 
 private enum WatchSurface: String, Hashable {
-    case brief
+    case today
     case hours
+    case days
     case plan
 
     init?(url: URL) {
@@ -18,8 +19,10 @@ private enum WatchSurface: String, Hashable {
             .value?
             .lowercased()
         switch surface {
-        case "next", "brief": self = .brief
+        case "next", "brief", "temperature", "today": self = .today
         case "rain", "hours": self = .hours
+        case "wind": self = .today
+        case "days": self = .days
         case "plan": self = .plan
         default: return nil
         }
@@ -39,7 +42,7 @@ struct NearcastWatchRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject private var snapshotReceiver = NearcastWatchSnapshotReceiver.shared
     @State private var snapshot = NearcastWidgetSnapshot.current()
-    @State private var selectedSurface: WatchSurface = .brief
+    @State private var selectedSurface: WatchSurface = .today
     @State private var syncState: WatchSyncState = .idle
 
     var body: some View {
@@ -58,15 +61,15 @@ struct NearcastWatchRootView: View {
                         )
                     } else {
                         TabView(selection: $selectedSurface) {
-                            WatchBriefPage(
+                            WatchTodayBasicsPage(
                                 snapshot: snapshot,
                                 syncState: syncState,
                                 isLuminanceReduced: isLuminanceReduced,
                                 useUltraLayout: useUltraLayout
                             )
-                            .tag(WatchSurface.brief)
+                            .tag(WatchSurface.today)
 
-                            WatchHoursPage(
+                            WatchBasicHoursPage(
                                 snapshot: snapshot,
                                 syncState: syncState,
                                 isLuminanceReduced: isLuminanceReduced,
@@ -74,12 +77,21 @@ struct NearcastWatchRootView: View {
                             )
                             .tag(WatchSurface.hours)
 
-                            WatchPlanPage(
+                            WatchThreeDayPage(
                                 snapshot: snapshot,
                                 isLuminanceReduced: isLuminanceReduced,
                                 useUltraLayout: useUltraLayout
                             )
-                            .tag(WatchSurface.plan)
+                            .tag(WatchSurface.days)
+
+                            if snapshot.hasPlan {
+                                WatchPlanPage(
+                                    snapshot: snapshot,
+                                    isLuminanceReduced: isLuminanceReduced,
+                                    useUltraLayout: useUltraLayout
+                                )
+                                .tag(WatchSurface.plan)
+                            }
                         }
                         .tabViewStyle(.verticalPage(transitionStyle: .blur))
                     }
@@ -150,17 +162,17 @@ private struct WatchAccessibleOverview: View {
         ScrollViewReader { reader in
             ScrollView {
                 VStack(spacing: 16) {
-                    WatchBriefPage(
+                    WatchTodayBasicsPage(
                         snapshot: snapshot,
                         syncState: syncState,
                         isLuminanceReduced: isLuminanceReduced,
                         useUltraLayout: useUltraLayout
                     )
-                    .id(WatchSurface.brief)
+                    .id(WatchSurface.today)
 
                     Divider()
 
-                    WatchHoursPage(
+                    WatchBasicHoursPage(
                         snapshot: snapshot,
                         syncState: syncState,
                         isLuminanceReduced: isLuminanceReduced,
@@ -170,12 +182,23 @@ private struct WatchAccessibleOverview: View {
 
                     Divider()
 
-                    WatchPlanPage(
+                    WatchThreeDayPage(
                         snapshot: snapshot,
                         isLuminanceReduced: isLuminanceReduced,
                         useUltraLayout: useUltraLayout
                     )
-                    .id(WatchSurface.plan)
+                    .id(WatchSurface.days)
+
+                    if snapshot.hasPlan {
+                        Divider()
+
+                        WatchPlanPage(
+                            snapshot: snapshot,
+                            isLuminanceReduced: isLuminanceReduced,
+                            useUltraLayout: useUltraLayout
+                        )
+                        .id(WatchSurface.plan)
+                    }
                 }
             }
             .onAppear {
@@ -186,6 +209,203 @@ private struct WatchAccessibleOverview: View {
                     reader.scrollTo(surface, anchor: .top)
                 }
             }
+        }
+    }
+}
+
+private struct WatchTodayBasicsPage: View {
+    let snapshot: NearcastWidgetSnapshot
+    let syncState: WatchSyncState
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: useUltraLayout ? 10 : 7) {
+            WatchPlaceHeader(snapshot.hasWeatherData ? cityName(snapshot.placeName) : "Nearcast")
+
+            if snapshot.hasWeatherData {
+                HStack(alignment: .center, spacing: useUltraLayout ? 12 : 9) {
+                    Image(systemName: watchConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
+                        .font(.system(size: useUltraLayout ? 38 : 32, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                        .frame(width: useUltraLayout ? 52 : 44)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("\(snapshot.temperature)°")
+                            .font(.system(size: useUltraLayout ? 43 : 37, weight: .bold, design: .rounded))
+                            .minimumScaleFactor(0.75)
+                        Text(snapshot.condition)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(watchSecondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                HStack(spacing: 5) {
+                    WatchBasicMetric(label: "Today", value: watchHighLow(snapshot))
+                    WatchBasicMetric(label: "Rain", value: "\(snapshot.rainChance)%")
+                    WatchBasicMetric(label: "Wind", value: "\(snapshot.wind) \(shortWindUnit(snapshot.windUnit))")
+                }
+            } else {
+                WatchNoWeatherMessage(
+                    isRefreshing: syncState == .refreshing,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
+            }
+
+            Spacer(minLength: 0)
+            WatchSavedForecastStatus(snapshot: snapshot, syncState: syncState)
+        }
+        .watchPagePadding(useUltraLayout)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Today in \(cityName(snapshot.placeName))")
+    }
+}
+
+private struct WatchBasicMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchMuted)
+            Text(value)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(watchPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct WatchBasicHoursPage: View {
+    let snapshot: NearcastWidgetSnapshot
+    let syncState: WatchSyncState
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: useUltraLayout ? 8 : 6) {
+            WatchPlaceHeader("Next hours")
+            if snapshot.hasWeatherData, let timeline = snapshot.timeline, !timeline.isEmpty {
+                HStack(spacing: 4) {
+                    Text("TIME").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("TEMP").frame(width: 38, alignment: .trailing)
+                    Text("RAIN").frame(width: 40, alignment: .trailing)
+                    Text("WIND").frame(width: 42, alignment: .trailing)
+                }
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .foregroundStyle(watchMuted)
+
+                ForEach(Array(timeline.prefix(useUltraLayout ? 4 : 3))) { hour in
+                    HStack(spacing: 4) {
+                        Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(hour.temperature.map { "\($0)°" } ?? "—")
+                            .frame(width: 38, alignment: .trailing)
+                        Text(hour.rainChance.map { "\($0)%" } ?? "—")
+                            .frame(width: 40, alignment: .trailing)
+                        Text(hour.wind.map(String.init) ?? "—")
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                    .font(.system(size: useUltraLayout ? 14 : 13, weight: .semibold, design: .rounded))
+                    .padding(.vertical, useUltraLayout ? 4 : 3)
+                    .overlay(alignment: .bottom) { Divider().opacity(0.25) }
+                }
+            } else {
+                WatchNoWeatherMessage(
+                    isRefreshing: syncState == .refreshing,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
+            }
+            Spacer(minLength: 0)
+            WatchSavedForecastStatus(snapshot: snapshot, syncState: syncState)
+        }
+        .watchPagePadding(useUltraLayout)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Next hours basics")
+    }
+}
+
+private struct WatchThreeDayPage: View {
+    let snapshot: NearcastWidgetSnapshot
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: useUltraLayout ? 9 : 7) {
+            WatchPlaceHeader("3 days")
+            if let days = snapshot.daily, !days.isEmpty {
+                ForEach(Array(days.prefix(3))) { day in
+                    HStack(spacing: 7) {
+                        Text(day.label)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .frame(width: useUltraLayout ? 66 : 58, alignment: .leading)
+                            .lineLimit(1)
+                        Image(systemName: watchConditionSymbol(day.conditionCode, isDay: true))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                            .frame(width: 20)
+                        Text("\(day.high)°/\(day.low)°")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Label("\(day.rainChance)%", systemImage: "drop.fill")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(day.rainChance >= 30 ? nearcastCyan : watchSecondary)
+                            .frame(width: 47, alignment: .trailing)
+                    }
+                    .padding(.vertical, useUltraLayout ? 5 : 4)
+                    .overlay(alignment: .bottom) { Divider().opacity(0.25) }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 31, weight: .semibold))
+                        .foregroundStyle(watchSecondary)
+                    Text("3-day forecast loading")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(watchSecondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Spacer(minLength: 0)
+        }
+        .watchPagePadding(useUltraLayout)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Three day forecast")
+    }
+}
+
+private struct WatchSavedForecastStatus: View {
+    let snapshot: NearcastWidgetSnapshot
+    let syncState: WatchSyncState
+
+    var body: some View {
+        if syncState == .failed, snapshot.hasWeatherData {
+            Label("Saved forecast", systemImage: "wifi.slash")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else if snapshot.hasWeatherData && snapshot.weatherAge > 2 * 60 * 60 {
+            Label(durationText(snapshot.weatherAge), systemImage: "clock")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else if syncState == .refreshing {
+            Label("Refreshing", systemImage: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }
@@ -1299,6 +1519,33 @@ private func cityName(_ value: String) -> String {
     return trimmed.isEmpty ? value : trimmed
 }
 
+private func watchHighLow(_ snapshot: NearcastWidgetSnapshot) -> String {
+    switch (snapshot.high, snapshot.low) {
+    case let (high?, low?): return "\(high)°/\(low)°"
+    case let (high?, nil): return "H \(high)°"
+    case let (nil, low?): return "L \(low)°"
+    default: return "—"
+    }
+}
+
+private func shortWindUnit(_ unit: String) -> String {
+    unit.lowercased().contains("km") ? "km/h" : "mph"
+}
+
+private func watchConditionSymbol(_ code: Int, isDay: Bool) -> String {
+    switch code {
+    case 0: return isDay ? "sun.max.fill" : "moon.stars.fill"
+    case 1: return isDay ? "sun.min.fill" : "moon.fill"
+    case 2: return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
+    case 3: return "cloud.fill"
+    case 45, 48: return "cloud.fog.fill"
+    case 51...67, 80...82: return "cloud.rain.fill"
+    case 71...77, 85...86: return "cloud.snow.fill"
+    case 95...99: return "cloud.bolt.rain.fill"
+    default: return "cloud.fill"
+    }
+}
+
 private func cleanOptional(_ value: String?) -> String? {
     let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
@@ -1350,9 +1597,11 @@ private enum NearcastWatchWeatherClient {
             URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
             URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m,wind_direction_10m"),
             URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
+            URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
             URLQueryItem(name: "temperature_unit", value: metric ? "celsius" : "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: metric ? "kmh" : "mph"),
-            URLQueryItem(name: "forecast_hours", value: "8"),
+            URLQueryItem(name: "forecast_hours", value: "24"),
+            URLQueryItem(name: "forecast_days", value: "4"),
             URLQueryItem(name: "timezone", value: "auto")
         ]
         guard let url = components?.url else { return .failed }
@@ -1389,10 +1638,15 @@ private enum NearcastWatchWeatherClient {
             updated.weatherSavedAt = refreshedAt
 
             if let hourly = forecast.hourly {
-                let rows = hourly.rows(limit: 8, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
+                let rows = hourly.rows(limit: 24, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
                 updated.timeline = rows
                 updated.rainChance = rows.first?.rainChance ?? fallback.rainChance
                 updated.uv = rows.first?.uv ?? fallback.uv
+            }
+            if let daily = forecast.daily {
+                updated.daily = daily.rows(limit: 3)
+                updated.high = updated.daily?.first?.high
+                updated.low = updated.daily?.first?.low
             }
 
             // savedAt and planSavedAt intentionally stay unchanged. A weather-only
@@ -1413,11 +1667,13 @@ private struct WatchForecast: Decodable {
     let utcOffsetSeconds: Int?
     let current: Current?
     let hourly: Hourly?
+    let daily: Daily?
 
     enum CodingKeys: String, CodingKey {
         case utcOffsetSeconds = "utc_offset_seconds"
         case current
         case hourly
+        case daily
     }
 
     struct Current: Decodable {
@@ -1482,6 +1738,37 @@ private struct WatchForecast: Decodable {
             }
         }
     }
+
+    struct Daily: Decodable {
+        let time: [String]
+        let weatherCode: [Int?]?
+        let high: [Double?]?
+        let low: [Double?]?
+        let rainChance: [Int?]?
+
+        enum CodingKeys: String, CodingKey {
+            case time
+            case weatherCode = "weather_code"
+            case high = "temperature_2m_max"
+            case low = "temperature_2m_min"
+            case rainChance = "precipitation_probability_max"
+        }
+
+        func rows(limit: Int) -> [NearcastWidgetDay] {
+            (0..<min(time.count, limit)).compactMap { index -> NearcastWidgetDay? in
+                guard let high = rounded(high?[safe: index] ?? nil),
+                      let low = rounded(low?[safe: index] ?? nil) else { return nil }
+                return NearcastWidgetDay(
+                    date: time[index],
+                    label: watchDayLabel(time[index], index: index),
+                    high: high,
+                    low: low,
+                    rainChance: (rainChance?[safe: index] ?? nil) ?? 0,
+                    conditionCode: (weatherCode?[safe: index] ?? nil) ?? 0
+                )
+            }
+        }
+    }
 }
 
 private extension Array {
@@ -1500,6 +1787,17 @@ private func shortHour(_ raw: String) -> String {
     if hour < 12 { return "\(hour)a" }
     if hour == 12 { return "12p" }
     return "\(hour - 12)p"
+}
+
+private func watchDayLabel(_ raw: String, index: Int) -> String {
+    if index == 0 { return "Today" }
+    if index == 1 { return "Tomorrow" }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd"
+    guard let date = formatter.date(from: raw) else { return raw }
+    formatter.dateFormat = "EEE"
+    return formatter.string(from: date)
 }
 
 private func hourStart(_ raw: String, utcOffsetSeconds: Int) -> TimeInterval? {

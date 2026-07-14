@@ -103,6 +103,13 @@ visual.condition = "Cloudy"
 visual.conditionCode = 2
 visual.isDay = false
 visual.wind = 8
+visual.high = 70
+visual.low = 56
+visual.daily = [
+    NearcastWidgetDay(date: "2026-07-14", label: "Today", high: 70, low: 56, rainChance: 10, conditionCode: 2),
+    NearcastWidgetDay(date: "2026-07-15", label: "Tomorrow", high: 74, low: 59, rainChance: 35, conditionCode: 61),
+    NearcastWidgetDay(date: "2026-07-16", label: "Thu", high: 77, low: 61, rainChance: 20, conditionCode: 1)
+]
 visual.timeline = (0..<6).map { offset in
     hour(offset, offset == 0 ? "Now" : "\(3 + offset)a", startsAt: baseTime + Double(offset * 3600))
 }
@@ -246,6 +253,8 @@ require(unsupportedSet.planWeather == nil, "unsupported plan risks fall back to 
 let visualRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(visual))
 require(visualRoundTrip.planStartAt == visual.planStartAt && visualRoundTrip.planEndAt == visual.planEndAt, "V6 round trips the exact plan window")
 require(visualRoundTrip.planRisk == "rain", "V6 round trips the plan risk category")
+require(visualRoundTrip.daily?.count == 3, "snapshots round trip three stable daily rows")
+require(visualRoundTrip.daily?[1].rainChance == 35, "daily basics preserve rain chance")
 
 var inFlightWeather = visual
 inFlightWeather.temperature = 71
@@ -261,5 +270,6 @@ let mergedSnapshot = newestPlan.mergingWeather(from: inFlightWeather)
 require(mergedSnapshot.temperature == 71, "an in-flight refresh merges its newer weather")
 require(mergedSnapshot.planTitle == "Newest plan" && mergedSnapshot.planStartAt == newestPlan.planStartAt, "an in-flight refresh preserves a newer plan and exact window")
 require(mergedSnapshot.planRisk == "rain", "an in-flight refresh preserves the plan risk")
+require(mergedSnapshot.daily?.first?.high == 70, "an in-flight refresh merges daily weather basics")
 
 print("PASS  Nearcast Watch snapshot trust contract")

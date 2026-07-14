@@ -64,11 +64,11 @@ enum NearcastWidgetForecastClient {
             URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
             URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
             URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
-            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,sunrise,sunset"),
+            URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"),
             URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: "mph"),
             URLQueryItem(name: "timezone", value: "auto"),
-            URLQueryItem(name: "forecast_days", value: "2")
+            URLQueryItem(name: "forecast_days", value: "4")
         ]
         guard let url = components?.url else { throw URLError(.badURL) }
 
@@ -134,6 +134,7 @@ enum NearcastWidgetForecastClient {
             watchDetail: fallback.watchDetail,
             watchTone: fallback.watchTone,
             timeline: buildTimeline(from: forecast, currentIndex: currentIndex),
+            daily: buildDaily(from: forecast),
             sunriseAt: sunriseAt,
             sunsetAt: sunsetAt,
             isAvailable: true,
@@ -166,6 +167,22 @@ enum NearcastWidgetForecastClient {
                 conditionCode: hourly.weatherCode?[safe: index].flatMap { $0 },
                 isDay: hourly.isDay?[safe: index].flatMap { $0 }.map { $0 == 1 },
                 startsAt: forecastDate(times[index], timezone: forecast.timezone)?.timeIntervalSince1970
+            )
+        }
+    }
+
+    private static func buildDaily(from forecast: WidgetForecastResponse) -> [NearcastWidgetDay] {
+        guard let daily = forecast.daily, let dates = daily.time else { return [] }
+        return (0..<min(3, dates.count)).compactMap { index -> NearcastWidgetDay? in
+            guard let high = roundedValue(flatValue(daily.temperatureMax?[safe: index])),
+                  let low = roundedValue(flatValue(daily.temperatureMin?[safe: index])) else { return nil }
+            return NearcastWidgetDay(
+                date: dates[index],
+                label: widgetDayLabel(dates[index], index: index),
+                high: high,
+                low: low,
+                rainChance: roundedValue(flatValue(daily.precipitationProbabilityMax?[safe: index])) ?? 0,
+                conditionCode: (daily.weatherCode?[safe: index] ?? nil) ?? 0
             )
         }
     }
@@ -218,6 +235,17 @@ enum NearcastWidgetForecastClient {
         let minute = pieces[1]
         let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
         return minute == 0 ? "\(hour12)" : "\(hour12):\(String(format: "%02d", minute))"
+    }
+
+    private static func widgetDayLabel(_ raw: String, index: Int) -> String {
+        if index == 0 { return "Today" }
+        if index == 1 { return "Tomorrow" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: raw) else { return raw }
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
     }
 
     private static func forecastDate(_ value: String, timezone: String?) -> Date? {
@@ -322,14 +350,20 @@ struct WidgetForecastResponse: Decodable {
     }
 
     struct Daily: Decodable {
+        let time: [String]?
+        let weatherCode: [Int?]?
         let temperatureMax: [Double?]?
         let temperatureMin: [Double?]?
+        let precipitationProbabilityMax: [Double?]?
         let sunrise: [String]?
         let sunset: [String]?
 
         enum CodingKeys: String, CodingKey {
+            case time
+            case weatherCode = "weather_code"
             case temperatureMax = "temperature_2m_max"
             case temperatureMin = "temperature_2m_min"
+            case precipitationProbabilityMax = "precipitation_probability_max"
             case sunrise
             case sunset
         }

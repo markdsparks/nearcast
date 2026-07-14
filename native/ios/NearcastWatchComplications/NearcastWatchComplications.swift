@@ -4,8 +4,10 @@ import WidgetKit
 private let nextKind = "NearcastWatchNext"
 private let planKind = "NearcastWatchPlan"
 private let rainKind = "NearcastWatchRain"
+private let windKind = "NearcastWatchWind"
 private let briefKind = "NearcastWatchBrief"
-private let staleAfter: TimeInterval = 2 * 60 * 60
+private let staleAfter: TimeInterval = 12 * 60 * 60
+private let planStaleAfter: TimeInterval = 2 * 60 * 60
 
 private enum WeatherDataState: Equatable {
     case placeholder
@@ -48,7 +50,7 @@ private struct NearcastComplicationProvider: TimelineProvider {
             let cached = NearcastWidgetSnapshot.stored()
             let snapshot = await NearcastWatchWeatherRefresh.refresh(fallback: cached ?? .fallback) ?? cached ?? .fallback
             let now = Date()
-            let offsets = [0, 30, 60, 90, 120, 180]
+            let offsets = [0, 30, 60, 90, 120, 180, 240, 360, 480, 720]
             let entries = offsets.map { minutes in
                 let date = now.addingTimeInterval(TimeInterval(minutes * 60))
                 return makeEntry(
@@ -67,6 +69,7 @@ struct NearcastWatchComplicationBundle: WidgetBundle {
         NearcastNextComplication()
         NearcastPlanComplication()
         NearcastRainComplication()
+        NearcastWindComplication()
         NearcastBriefWidget()
     }
 }
@@ -78,8 +81,8 @@ struct NearcastNextComplication: Widget {
                 .containerBackground(for: .widget) { Color.clear }
                 .widgetURL(nearcastComplicationURL("next"))
         }
-        .configurationDisplayName("Nearcast Next")
-        .description("The meaningful weather change coming next.")
+        .configurationDisplayName("Temperature")
+        .description("The current temperature, always in the same place.")
         .supportedFamilies([.accessoryCircular, .accessoryCorner, .accessoryRectangular, .accessoryInline])
     }
 }
@@ -104,8 +107,21 @@ struct NearcastRainComplication: Widget {
                 .containerBackground(for: .widget) { Color.clear }
                 .widgetURL(nearcastComplicationURL("rain"))
         }
-        .configurationDisplayName("Rain Next")
-        .description("When rain starts and how likely it is.")
+        .configurationDisplayName("Rain")
+        .description("Rain chance over the next few hours.")
+        .supportedFamilies([.accessoryCircular, .accessoryCorner, .accessoryRectangular, .accessoryInline])
+    }
+}
+
+struct NearcastWindComplication: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: windKind, provider: NearcastComplicationProvider()) { entry in
+            NearcastWindComplicationView(entry: entry)
+                .containerBackground(for: .widget) { Color.clear }
+                .widgetURL(nearcastComplicationURL("wind"))
+        }
+        .configurationDisplayName("Wind")
+        .description("Current wind speed and direction.")
         .supportedFamilies([.accessoryCircular, .accessoryCorner, .accessoryRectangular, .accessoryInline])
     }
 }
@@ -116,8 +132,8 @@ struct NearcastBriefWidget: Widget {
             NearcastBriefView(entry: entry)
                 .widgetURL(nearcastComplicationURL("brief"))
         }
-        .configurationDisplayName("Nearcast Brief")
-        .description("The most relevant weather or plan signal right now.")
+        .configurationDisplayName("Today Basics")
+        .description("Temperature, high and low, rain, and wind.")
         .supportedFamilies([.accessoryRectangular])
     }
 }
@@ -133,9 +149,9 @@ private struct NearcastNextComplicationView: View {
             ComplicationStateView(
                 family: family,
                 symbol: "cloud.sun.fill",
-                title: "Weather next",
+                title: "Temperature",
                 detail: "Nearcast",
-                cornerLabel: "WEATHER NEXT",
+                cornerLabel: "TEMPERATURE",
                 showsWidgetLabel: showsWidgetLabel
             )
             .redacted(reason: .placeholder)
@@ -150,29 +166,45 @@ private struct NearcastNextComplicationView: View {
 
     @ViewBuilder
     private var freshBody: some View {
-        let signal = visualSignalSet(entry).primaryWeather
-        let instrument = instrumentSignal(signal)
-        switch family {
-        case .accessoryInline:
-            Label(inlineText(signal), systemImage: signal.symbolName)
-                .accessibilityLabel("Nearcast Next, \(signal.accessibilityDescription)")
-        case .accessoryCircular:
-            NearcastSignalDial(signal: instrument)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibilityDescription)
-        case .accessoryCorner:
-            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
-                .widgetLabel { Text(cornerText(signal)) }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibilityDescription)
-        default:
-            NearcastWeatherInstrument(signal: instrument)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Nearcast Next")
-            .accessibilityValue(signal.accessibilityDescription)
+        Group {
+            switch family {
+            case .accessoryInline:
+                Label("\(entry.snapshot.temperature)° · \(entry.snapshot.condition)", systemImage: "thermometer.medium")
+            case .accessoryCircular:
+                VStack(spacing: -2) {
+                    Text("\(entry.snapshot.temperature)°")
+                        .font(.system(size: 21, weight: .bold, design: .rounded))
+                        .minimumScaleFactor(0.72)
+                    Text("TEMP")
+                        .font(.system(size: 7, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            case .accessoryCorner:
+                Text("\(entry.snapshot.temperature)°")
+                    .font(.system(size: 21, weight: .bold, design: .rounded))
+                    .widgetAccentable()
+                    .widgetLabel { Text(entry.snapshot.condition.uppercased()) }
+            default:
+                HStack(spacing: 8) {
+                    Image(systemName: "thermometer.medium")
+                        .font(.system(size: 23, weight: .semibold))
+                        .widgetAccentable()
+                    Text("\(entry.snapshot.temperature)°")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Temperature")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                        Text(entry.snapshot.condition)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Temperature")
+        .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition)")
     }
 }
 
@@ -246,9 +278,9 @@ private struct NearcastRainComplicationView: View {
             ComplicationStateView(
                 family: family,
                 symbol: "drop.fill",
-                title: "Rain next",
+                title: "Rain",
                 detail: "Next 4 hours",
-                cornerLabel: "RAIN NEXT",
+                cornerLabel: "RAIN",
                 showsWidgetLabel: showsWidgetLabel
             )
             .redacted(reason: .placeholder)
@@ -268,21 +300,75 @@ private struct NearcastRainComplicationView: View {
         switch family {
         case .accessoryInline:
             Label(inlineText(rain), systemImage: rain.symbolName)
-                .accessibilityLabel("Rain Next, \(rain.accessibilityDescription)")
+                .accessibilityLabel("Rain, \(rain.accessibilityDescription)")
         case .accessoryCircular:
             NearcastSignalDial(signal: instrument)
-            .accessibilityLabel("Rain Next")
+            .accessibilityLabel("Rain")
             .accessibilityValue(rain.accessibilityDescription)
         case .accessoryCorner:
             NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
                 .widgetLabel { Text(cornerText(rain)) }
-            .accessibilityLabel("Rain Next")
+            .accessibilityLabel("Rain")
             .accessibilityValue(rain.accessibilityDescription)
         default:
             NearcastWeatherInstrument(signal: instrument)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Rain Next")
+            .accessibilityLabel("Rain")
             .accessibilityValue(rain.accessibilityDescription)
+        }
+    }
+}
+
+private struct NearcastWindComplicationView: View {
+    @Environment(\.widgetFamily) private var family
+    @Environment(\.showsWidgetLabel) private var showsWidgetLabel
+    let entry: NearcastComplicationEntry
+
+    @ViewBuilder
+    var body: some View {
+        if entry.weatherState == .placeholder {
+            ComplicationStateView(
+                family: family,
+                symbol: "wind",
+                title: "Wind",
+                detail: "Speed and direction",
+                cornerLabel: "WIND",
+                showsWidgetLabel: showsWidgetLabel
+            )
+            .redacted(reason: .placeholder)
+        } else if entry.weatherState == .unavailable {
+            unavailableState(family: family, showsWidgetLabel: showsWidgetLabel)
+        } else if entry.weatherState == .stale {
+            staleState(entry: entry, family: family, showsWidgetLabel: showsWidgetLabel, subject: "weather")
+        } else {
+            freshBody
+        }
+    }
+
+    @ViewBuilder
+    private var freshBody: some View {
+        let wind = visualSignalSet(entry).wind
+        let instrument = instrumentSignal(wind)
+        switch family {
+        case .accessoryInline:
+            Label(inlineText(wind), systemImage: "wind")
+                .accessibilityLabel("Wind, \(wind.accessibilityDescription)")
+        case .accessoryCircular:
+            NearcastSignalDial(signal: instrument)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Wind")
+                .accessibilityValue(wind.accessibilityDescription)
+        case .accessoryCorner:
+            NearcastSignalDial(signal: instrument, compact: true, showsPlainValue: false)
+                .widgetLabel { Text(cornerText(wind)) }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Wind")
+                .accessibilityValue(wind.accessibilityDescription)
+        default:
+            NearcastWeatherInstrument(signal: instrument)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Wind")
+                .accessibilityValue(wind.accessibilityDescription)
         }
     }
 }
@@ -316,7 +402,7 @@ private struct NearcastBriefView: View {
         HStack(spacing: 9) {
             Image(systemName: "cloud.sun.fill")
                 .font(.system(size: 25, weight: .semibold))
-            Text("Weather next")
+            Text("Today basics")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
         }
         .redacted(reason: .placeholder)
@@ -331,7 +417,7 @@ private struct NearcastBriefView: View {
                 .font(.system(size: 17, weight: .bold, design: .rounded))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Nearcast Brief unavailable")
+        .accessibilityLabel("Today basics unavailable")
         .accessibilityValue("Open Nearcast on iPhone and choose a place")
     }
 
@@ -349,25 +435,35 @@ private struct NearcastBriefView: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Nearcast Brief needs an update")
+        .accessibilityLabel("Today basics needs an update")
         .accessibilityValue(weatherAgeText(entry))
     }
 
     @ViewBuilder
     private var briefFresh: some View {
-        let signals = visualSignalSet(entry)
-        let content = entry.planState == .fresh ? signals.primary : signals.primaryWeather
-        Group {
-            if content.kind == .plan {
-                NearcastPlanInstrument(plan: content, risk: entry.snapshot.planRisk)
-            } else {
-                NearcastWeatherInstrument(signal: instrumentSignal(content))
+        HStack(alignment: .center, spacing: 9) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(entry.snapshot.temperature)°")
+                    .font(.system(size: 31, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.75)
+                Text(entry.snapshot.condition)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            Spacer(minLength: 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(highLowText(entry.snapshot))
+                Label("Rain \(entry.snapshot.rainChance)%", systemImage: "drop.fill")
+                Label(windBasicsText(entry.snapshot), systemImage: "wind")
+            }
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .lineLimit(1)
         }
         .foregroundStyle(renderingMode == .fullColor ? Color.white : Color.primary)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Nearcast Brief")
-        .accessibilityValue(content.accessibilityDescription)
+        .accessibilityLabel("Today basics")
+        .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition), \(highLowText(entry.snapshot)), rain \(entry.snapshot.rainChance) percent, wind \(windBasicsText(entry.snapshot))")
     }
 }
 
@@ -783,7 +879,7 @@ private func makeEntry(date: Date, snapshot: NearcastWidgetSnapshot, isPlacehold
         planState = .unavailable
     } else if !snapshot.hasPlan || snapshot.planAvailable == false {
         planState = .empty
-    } else if age(at: date, savedAt: snapshot.planSavedTime) > staleAfter {
+    } else if age(at: date, savedAt: snapshot.planSavedTime) > planStaleAfter {
         planState = .stale
     } else {
         planState = .fresh
@@ -843,21 +939,12 @@ private func briefRelevance(
 ) -> TimelineEntryRelevance? {
     guard weatherState == .fresh else { return TimelineEntryRelevance(score: 5, duration: 30 * 60) }
     let signals = NearcastVisualSignalModel.make(snapshot: snapshot, now: date, horizonHours: 6)
-    if planState == .fresh && signals.plan?.planVerdict == .change {
-        return TimelineEntryRelevance(score: 100, duration: 2 * 60 * 60)
-    }
-    if planState == .fresh && signals.plan?.planVerdict == .watch {
-        return TimelineEntryRelevance(score: 85, duration: 90 * 60)
-    }
     let currentRainChance = signals.rain.timelinePoints.first?.magnitude?.value ?? snapshot.rainChance
     if currentRainChance >= 30 {
         return TimelineEntryRelevance(score: 90, duration: 60 * 60)
     }
     if signals.rain.magnitude?.value ?? 0 >= 30 {
         return TimelineEntryRelevance(score: 70, duration: 2 * 60 * 60)
-    }
-    if planState == .fresh {
-        return TimelineEntryRelevance(score: 55, duration: 60 * 60)
     }
     return TimelineEntryRelevance(score: 20, duration: 30 * 60)
 }
@@ -867,12 +954,6 @@ private func briefBackground(_ entry: NearcastComplicationEntry) -> Color {
         return Color(red: 0.12, green: 0.15, blue: 0.20)
     }
     let signals = visualSignalSet(entry)
-    if entry.planState == .fresh && signals.plan?.planVerdict == .change {
-        return Color(red: 0.68, green: 0.18, blue: 0.12)
-    }
-    if entry.planState == .fresh && signals.plan?.planVerdict == .watch {
-        return Color(red: 0.50, green: 0.28, blue: 0.05)
-    }
     if signals.rain.magnitude?.value ?? 0 >= 30 {
         return Color(red: 0.04, green: 0.26, blue: 0.48)
     }
@@ -944,6 +1025,28 @@ private func age(at date: Date, savedAt: TimeInterval) -> TimeInterval {
     return max(0, date.timeIntervalSince1970 - savedAt)
 }
 
+private func highLowText(_ snapshot: NearcastWidgetSnapshot) -> String {
+    switch (snapshot.high, snapshot.low) {
+    case let (high?, low?): return "H \(high)° · L \(low)°"
+    case let (high?, nil): return "High \(high)°"
+    case let (nil, low?): return "Low \(low)°"
+    default: return "Today"
+    }
+}
+
+private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
+    let direction = snapshot.windLabel ?? snapshot.windDirection.map(cardinalDirection) ?? ""
+    return direction.isEmpty
+        ? "\(snapshot.wind) \(snapshot.windUnit)"
+        : "\(snapshot.wind) \(snapshot.windUnit) \(direction)"
+}
+
+private func cardinalDirection(_ degrees: Int) -> String {
+    let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    let normalized = (degrees % 360 + 360) % 360
+    return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
+}
+
 private func nearcastComplicationURL(_ surface: String) -> URL? {
     URL(string: "nearcast://weather?source=watch-complication&surface=\(surface)")
 }
@@ -966,9 +1069,11 @@ private enum NearcastWatchWeatherRefresh {
             URLQueryItem(name: "longitude", value: String(format: "%.5f", requestedPlace.longitude)),
             URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m,wind_direction_10m"),
             URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
+            URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
             URLQueryItem(name: "temperature_unit", value: metricUnits ? "celsius" : "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: metricUnits ? "kmh" : "mph"),
-            URLQueryItem(name: "forecast_hours", value: "8"),
+            URLQueryItem(name: "forecast_hours", value: "24"),
+            URLQueryItem(name: "forecast_days", value: "4"),
             URLQueryItem(name: "timezone", value: "auto")
         ]
         guard let url = components?.url else { return nil }
@@ -992,10 +1097,15 @@ private enum NearcastWatchWeatherRefresh {
             weather.windDirection = Int(current.windDirection.rounded())
             weather.condition = conditionLabel(current.weatherCode)
             if let hourly = forecast.hourly {
-                let rows = hourly.rows(limit: 8, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
+                let rows = hourly.rows(limit: 24, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
                 weather.timeline = rows
                 weather.rainChance = rows.first?.rainChance ?? fallback.rainChance
                 weather.uv = rows.first?.uv ?? fallback.uv
+            }
+            if let daily = forecast.daily {
+                weather.daily = daily.rows(limit: 3)
+                weather.high = weather.daily?.first?.high
+                weather.low = weather.daily?.first?.low
             }
             return mergeWeather(
                 weather,
@@ -1055,6 +1165,9 @@ private enum NearcastWatchWeatherRefresh {
         updated.windLabel = nil
         updated.uv = weather.uv
         updated.timeline = weather.timeline
+        updated.daily = weather.daily
+        updated.high = weather.high
+        updated.low = weather.low
 
         guard let placeBeforeSave = NearcastWidgetPlace.stored(), samePlace(placeBeforeSave, requestedPlace) else {
             return nil
@@ -1133,11 +1246,13 @@ private actor NearcastWatchWeatherRefreshCoordinator {
 private struct WatchForecast: Decodable {
     let current: Current?
     let hourly: Hourly?
+    let daily: Daily?
     let utcOffsetSeconds: Int?
 
     enum CodingKeys: String, CodingKey {
         case current
         case hourly
+        case daily
         case utcOffsetSeconds = "utc_offset_seconds"
     }
 
@@ -1204,6 +1319,37 @@ private struct WatchForecast: Decodable {
             }
         }
     }
+
+    struct Daily: Decodable {
+        let time: [String]
+        let weatherCode: [Int?]?
+        let high: [Double?]?
+        let low: [Double?]?
+        let rainChance: [Int?]?
+
+        enum CodingKeys: String, CodingKey {
+            case time
+            case weatherCode = "weather_code"
+            case high = "temperature_2m_max"
+            case low = "temperature_2m_min"
+            case rainChance = "precipitation_probability_max"
+        }
+
+        func rows(limit: Int) -> [NearcastWidgetDay] {
+            (0..<min(time.count, limit)).compactMap { index -> NearcastWidgetDay? in
+                guard let high = rounded(high?[safe: index] ?? nil),
+                      let low = rounded(low?[safe: index] ?? nil) else { return nil }
+                return NearcastWidgetDay(
+                    date: time[index],
+                    label: dayLabel(time[index], index: index),
+                    high: high,
+                    low: low,
+                    rainChance: (rainChance?[safe: index] ?? nil) ?? 0,
+                    conditionCode: (weatherCode?[safe: index] ?? nil) ?? 0
+                )
+            }
+        }
+    }
 }
 
 private extension Array {
@@ -1220,6 +1366,17 @@ private func shortHour(_ raw: String) -> String {
     if hour < 12 { return "\(hour)a" }
     if hour == 12 { return "12p" }
     return "\(hour - 12)p"
+}
+
+private func dayLabel(_ raw: String, index: Int) -> String {
+    if index == 0 { return "Today" }
+    if index == 1 { return "Tomorrow" }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd"
+    guard let date = formatter.date(from: raw) else { return raw }
+    formatter.dateFormat = "EEE"
+    return formatter.string(from: date)
 }
 
 private func hourTimestamp(_ raw: String, utcOffsetSeconds: Int) -> TimeInterval? {

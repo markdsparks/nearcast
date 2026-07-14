@@ -15,6 +15,10 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
 
     private var didActivate = false
     private var pendingPayload: [String: Any]?
+    private var pendingPriorityTransfer = false
+    private var lastSnapshotData: Data?
+    private var lastPlaceData: Data?
+    private var lastPriorityTransferAt: Date?
 
     private override init() {
         super.init()
@@ -42,6 +46,11 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
             return
         }
 
+        let placeChanged = placeData != lastPlaceData
+        guard snapshotData != lastSnapshotData || placeChanged else { return }
+        lastSnapshotData = snapshotData
+        lastPlaceData = placeData
+
         var payload: [String: Any] = [
             "type": "nearcast.widget.snapshot.v1",
             "snapshot": snapshotData,
@@ -55,11 +64,12 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         refreshSessionState(session)
         guard session.activationState == .activated else {
             pendingPayload = payload
+            pendingPriorityTransfer = pendingPriorityTransfer || placeChanged
             lastError = nil
             return
         }
 
-        sendPayload(payload, session: session)
+        sendPayload(payload, session: session, forcePriority: placeChanged)
     }
 
     var statusRows: [(String, String)] {
@@ -104,26 +114,30 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
 
     private func flushPendingPayload(_ session: WCSession = .default) {
         guard session.activationState == .activated, let payload = pendingPayload else { return }
+        let forcePriority = pendingPriorityTransfer
         pendingPayload = nil
-        sendPayload(payload, session: session)
+        pendingPriorityTransfer = false
+        sendPayload(payload, session: session, forcePriority: forcePriority)
     }
 
-    private func sendPayload(_ payload: [String: Any], session: WCSession) {
+    private func sendPayload(_ payload: [String: Any], session: WCSession, forcePriority: Bool = false) {
         do {
             try session.updateApplicationContext(payload)
             lastSnapshotSentAt = Date()
             lastError = nil
         } catch {
             pendingPayload = payload
+            lastSnapshotData = nil
+            lastPlaceData = nil
             lastError = "Application context failed: \(error.localizedDescription)"
         }
 
-        if session.isPaired && session.isWatchAppInstalled {
-            session.transferUserInfo(payload)
-            if session.isComplicationEnabled {
-                session.transferCurrentComplicationUserInfo(payload)
-            }
-        }
+        guard session.isPaired, session.isWatchAppInstalled, session.isComplicationEnabled else { return }
+        let priorityInterval = lastPriorityTransferAt.map { Date().timeIntervalSince($0) } ?? .infinity
+        guard forcePriority || priorityInterval >= 30 * 60 else { return }
+        guard session.remainingComplicationUserInfoTransfers > 0 else { return }
+        session.transferCurrentComplicationUserInfo(payload)
+        lastPriorityTransferAt = Date()
     }
 }
 
