@@ -454,34 +454,74 @@ private struct NearcastBasicsRectangle: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(Color.white.opacity(0.11))
+        VStack(spacing: 3) {
+            HStack(spacing: 5) {
                 Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
-                    .font(.system(size: 25, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
                     .widgetAccentable()
+                Text(complicationCityName(snapshot.placeName))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Spacer(minLength: 0)
             }
-            .frame(width: 39, height: 39)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("\(snapshot.temperature)°")
-                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+            HStack(spacing: 8) {
+                ComplicationWeatherDial(
+                    symbol: "thermometer.medium",
+                    value: "\(snapshot.temperature)°",
+                    progress: complicationTemperatureProgress(snapshot),
+                    color: Color(red: 1.0, green: 0.70, blue: 0.20)
+                )
+                ComplicationWeatherDial(
+                    symbol: "location.north.fill",
+                    value: "\(snapshot.wind)",
+                    progress: min(1, Double(snapshot.wind) / 35),
+                    color: Color(red: 0.45, green: 0.93, blue: 0.70),
+                    rotation: snapshot.windDirection
+                )
+                ComplicationWeatherDial(
+                    symbol: "drop.fill",
+                    value: "\(snapshot.rainChance)%",
+                    progress: Double(snapshot.rainChance) / 100,
+                    color: Color(red: 0.35, green: 0.79, blue: 1.0)
+                )
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct ComplicationWeatherDial: View {
+    let symbol: String
+    let value: String
+    let progress: Double
+    let color: Color
+    var rotation: Int? = nil
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.16), lineWidth: 4)
+            Circle()
+                .trim(from: 0, to: max(0.04, min(1, progress)))
+                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .widgetAccentable()
+            VStack(spacing: -1) {
+                Image(systemName: symbol)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(color)
+                    .rotationEffect(.degrees(Double(rotation ?? 0)))
+                    .widgetAccentable()
+                Text(value)
+                    .font(.system(size: value.count > 3 ? 13 : 16, weight: .bold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                HStack(spacing: 7) {
-                    ComplicationIconValue(symbol: "arrow.up", value: snapshot.high.map { "\($0)°" } ?? "—", compact: true)
-                    ComplicationIconValue(symbol: "arrow.down", value: snapshot.low.map { "\($0)°" } ?? "—", compact: true)
-                }
-            }
-
-            Spacer(minLength: 1)
-
-            VStack(alignment: .leading, spacing: 5) {
-                ComplicationIconValue(symbol: "drop.fill", value: "\(snapshot.rainChance)%")
-                ComplicationIconValue(symbol: "wind", value: complicationWindValue(snapshot))
             }
         }
+        .frame(width: 38, height: 38)
     }
 }
 
@@ -1071,9 +1111,15 @@ private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
         : "\(snapshot.wind) \(snapshot.windUnit) \(direction)"
 }
 
-private func complicationWindValue(_ snapshot: NearcastWidgetSnapshot) -> String {
-    let direction = snapshot.windLabel ?? snapshot.windDirection.map(cardinalDirection) ?? ""
-    return direction.isEmpty ? "\(snapshot.wind)" : "\(snapshot.wind) \(direction)"
+private func complicationTemperatureProgress(_ snapshot: NearcastWidgetSnapshot) -> Double {
+    guard let low = snapshot.low, let high = snapshot.high, high > low else { return 0.55 }
+    return min(1, max(0, Double(snapshot.temperature - low) / Double(high - low)))
+}
+
+private func complicationCityName(_ value: String) -> String {
+    let city = value.split(separator: ",", maxSplits: 1).first.map(String.init) ?? value
+    let trimmed = city.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? "Nearcast" : trimmed
 }
 
 private func complicationConditionSymbol(_ code: Int, isDay: Bool) -> String {
