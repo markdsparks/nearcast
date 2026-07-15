@@ -21,9 +21,12 @@ assert.match(complications, /configurationDisplayName\("Wind"\)/, "wind complica
 assert.match(complications, /configurationDisplayName\("Today Basics"\)/, "rectangular complication exposes fixed basics");
 assert.match(complications, /Text\("\\\(entry\.snapshot\.temperature\)°"\)/, "temperature complication uses the current temperature directly");
 assert.match(complications, /struct NearcastBasicsRectangle/, "rectangular complication has a dedicated visual composition");
+assert.match(complications, /struct ComplicationTemperatureTrack/, "rectangular complications preserve the daily temperature range");
+assert.match(complications, /struct ComplicationTemperatureBezel[\s\S]*Gauge\(/, "only temperature uses a meaningful low-to-high corner gauge");
+assert.equal(complications.match(/\bGauge\(/g)?.length, 1, "temperature is the only complication encoded as a gauge");
 assert.match(complications, /struct ComplicationRainBars/, "rain chance uses a short hourly bar sequence");
 assert.match(complications, /Image\(systemName: "drop\.fill"\)[\s\S]*Text\("\\\(snapshot\.rainChance\)%"\)/, "rain is encoded as a drop and value without a repeated label");
-assert.doesNotMatch(complications, /Gauge\(/, "wind and rain are not presented as arbitrary circular gauges");
+assert.match(complications, /NearcastWindMark\(snapshot: entry\.snapshot/, "small wind complications pair current speed with current direction");
 assert.doesNotMatch(complications, /Label\("Rain \\\(entry\.snapshot\.rainChance\)%"/, "rectangular complication does not spell out an icon's meaning");
 assert.doesNotMatch(complications, /transferUserInfo/, "complication source contains no queued phone transfer behavior");
 
@@ -35,6 +38,12 @@ assert.match(watchApp, /struct WatchTodayInfographic/, "Today uses one unified i
 assert.match(watchApp, /struct WatchTemperatureRange/, "temperature preserves current, low, and high as a truthful range");
 assert.match(watchApp, /struct WatchWindVector/, "wind uses direction plus speed");
 assert.match(watchApp, /struct WatchRainProbability/, "rain uses probability plus an hourly sequence");
+assert.match(watchApp, /struct WatchHourlyForecastCard/, "hourly weather uses one continuous forecast composition");
+assert.match(watchApp, /struct WatchHourlyRainBand/, "hourly rain uses one aligned probability band");
+assert.match(watchApp, /struct WatchHourlyWindBand/, "hourly wind preserves direction and shows the speed trend");
+assert.match(watchApp, /struct WatchDailyTemperatureTrack/, "daily rows compare low-to-high ranges on one shared scale");
+assert.match(watchApp, /struct WatchPlanMetricPlot/, "plan weather uses the visual instrument for its explicit risk");
+assert.match(watchApp, /updated\.windLabel = nil/, "watch refresh cannot retain a stale cardinal label after direction changes");
 assert.match(watchApp, /safeWatchSurface/, "conditionally absent Plan pages cannot leave the pager on a blank selection");
 assert.match(watchApp, /-nearcastPreviewWeather/, "populated Watch layouts can be exercised in the simulator");
 assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");

@@ -42,7 +42,7 @@ struct NearcastWatchRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject private var snapshotReceiver = NearcastWatchSnapshotReceiver.shared
     @State private var snapshot = watchSnapshotForDisplay()
-    @State private var selectedSurface: WatchSurface = .today
+    @State private var selectedSurface: WatchSurface = watchSurfaceForLaunch()
     @State private var syncState: WatchSyncState = .idle
 
     var body: some View {
@@ -79,6 +79,7 @@ struct NearcastWatchRootView: View {
 
                             WatchThreeDayPage(
                                 snapshot: snapshot,
+                                syncState: syncState,
                                 isLuminanceReduced: isLuminanceReduced,
                                 useUltraLayout: useUltraLayout
                             )
@@ -138,6 +139,12 @@ struct NearcastWatchRootView: View {
 
     @MainActor
     private func refreshWeather() async {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-nearcastPreviewWeather") {
+            syncState = .idle
+            return
+        }
+#endif
         guard syncState != .refreshing else { return }
         syncState = .refreshing
 
@@ -190,6 +197,7 @@ private struct WatchAccessibleOverview: View {
 
                     WatchThreeDayPage(
                         snapshot: snapshot,
+                        syncState: syncState,
                         isLuminanceReduced: isLuminanceReduced,
                         useUltraLayout: useUltraLayout
                     )
@@ -269,31 +277,37 @@ private struct WatchTodayInfographic: View {
     let useUltraLayout: Bool
 
     var body: some View {
-        HStack(spacing: useUltraLayout ? 11 : 8) {
-            WatchTemperatureRange(
-                snapshot: snapshot,
-                isLuminanceReduced: isLuminanceReduced,
-                useUltraLayout: useUltraLayout
-            )
-            .frame(maxWidth: .infinity)
+        GeometryReader { proxy in
+            let spacing = CGFloat(useUltraLayout ? 11 : 8)
+            let columnWidth = max(1, (proxy.size.width - spacing * 2 - 1) / 2)
 
-            Rectangle()
-                .fill(Color.white.opacity(0.13))
-                .frame(width: 1)
-
-            VStack(spacing: useUltraLayout ? 10 : 8) {
-                WatchWindVector(
+            HStack(spacing: spacing) {
+                WatchTemperatureRange(
                     snapshot: snapshot,
                     isLuminanceReduced: isLuminanceReduced,
                     useUltraLayout: useUltraLayout
                 )
-                WatchRainProbability(
-                    snapshot: snapshot,
-                    isLuminanceReduced: isLuminanceReduced,
-                    useUltraLayout: useUltraLayout
-                )
+                .frame(width: columnWidth)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.13))
+                    .frame(width: 1)
+
+                VStack(spacing: useUltraLayout ? 10 : 8) {
+                    WatchWindVector(
+                        snapshot: snapshot,
+                        isLuminanceReduced: isLuminanceReduced,
+                        useUltraLayout: useUltraLayout
+                    )
+                    WatchRainProbability(
+                        snapshot: snapshot,
+                        isLuminanceReduced: isLuminanceReduced,
+                        useUltraLayout: useUltraLayout
+                    )
+                }
+                .frame(width: columnWidth)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, useUltraLayout ? 12 : 9)
         .padding(.vertical, useUltraLayout ? 12 : 10)
@@ -359,26 +373,37 @@ private struct WatchWindVector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: useUltraLayout ? 8 : 6) {
-                Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
-                    .font(.system(size: useUltraLayout ? 25 : 22, weight: .bold))
-                    .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
-                    .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
-                    .frame(width: useUltraLayout ? 29 : 26)
-                Text("\(snapshot.wind)")
-                    .font(.system(size: useUltraLayout ? 27 : 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                windValueRow(symbolSize: useUltraLayout ? 25 : 22, valueSize: useUltraLayout ? 27 : 24, symbolWidth: useUltraLayout ? 29 : 26)
+                windValueRow(symbolSize: 17, valueSize: 20, symbolWidth: 19)
             }
-            HStack(spacing: 5) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 5) {
+                    Text(watchWindCardinal(snapshot))
+                    Text(shortWatchWindUnit(snapshot.windUnit))
+                        .foregroundStyle(watchMuted)
+                }
                 Text(watchWindCardinal(snapshot))
-                    .font(.system(size: useUltraLayout ? 15 : 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(watchSecondary)
-                Text(shortWatchWindUnit(snapshot.windUnit))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(watchMuted)
             }
+            .font(.system(size: useUltraLayout ? 15 : 13, weight: .bold, design: .rounded))
+            .foregroundStyle(watchSecondary)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func windValueRow(symbolSize: CGFloat, valueSize: CGFloat, symbolWidth: CGFloat) -> some View {
+        HStack(spacing: useUltraLayout ? 7 : 4) {
+            Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
+                .font(.system(size: symbolSize, weight: .bold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
+                .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                .frame(width: symbolWidth)
+            Text("\(snapshot.wind)")
+                .font(.system(size: valueSize, weight: .bold, design: .rounded).monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -388,20 +413,19 @@ private struct WatchRainProbability: View {
     let useUltraLayout: Bool
 
     private var values: [Int] {
-        let hourly = (snapshot.timeline ?? []).prefix(4).compactMap(\.rainChance)
+        let hourly = NearcastVisualSignalModel.activeTimelineRows(
+            snapshot,
+            now: Date(),
+            maximumHours: 4
+        ).compactMap(\.rainChance)
         return hourly.isEmpty ? [snapshot.rainChance] : hourly
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: useUltraLayout ? 7 : 5) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: useUltraLayout ? 23 : 20, weight: .bold))
-                    .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                Text("\(snapshot.rainChance)%")
-                    .font(.system(size: useUltraLayout ? 25 : 22, weight: .bold, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+            ViewThatFits(in: .horizontal) {
+                rainValueRow(symbolSize: useUltraLayout ? 23 : 20, valueSize: useUltraLayout ? 25 : 22)
+                rainValueRow(symbolSize: 16, valueSize: 18)
             }
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
@@ -416,6 +440,18 @@ private struct WatchRainProbability: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private func rainValueRow(symbolSize: CGFloat, valueSize: CGFloat) -> some View {
+        HStack(spacing: useUltraLayout ? 7 : 4) {
+            Image(systemName: "drop.fill")
+                .font(.system(size: symbolSize, weight: .bold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+            Text("\(snapshot.rainChance)%")
+                .font(.system(size: valueSize, weight: .bold, design: .rounded).monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
 }
 
 private struct WatchBasicHoursPage: View {
@@ -424,39 +460,29 @@ private struct WatchBasicHoursPage: View {
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
+    private var hours: [NearcastWidgetHour] {
+        NearcastVisualSignalModel.activeTimelineRows(
+            snapshot,
+            now: Date(),
+            maximumHours: useUltraLayout ? 4 : 3
+        )
+    }
+
     var body: some View {
         VStack(spacing: useUltraLayout ? 8 : 6) {
-            if snapshot.hasWeatherData, let timeline = snapshot.timeline, !timeline.isEmpty {
-                HStack(alignment: .top, spacing: useUltraLayout ? 6 : 4) {
-                    ForEach(Array(timeline.prefix(3))) { hour in
-                        VStack(spacing: useUltraLayout ? 6 : 4) {
-                            Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
-                                .font(.system(size: useUltraLayout ? 13 : 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(hour.offsetHours == 0 ? watchPrimary : watchMuted)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.75)
-                            Image(systemName: watchConditionSymbol(hour.conditionCode ?? snapshot.conditionCode, isDay: hour.isDay ?? snapshot.isDay))
-                                .font(.system(size: useUltraLayout ? 29 : 25, weight: .semibold))
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                            Text(hour.temperature.map { "\($0)°" } ?? "—")
-                                .font(.system(size: useUltraLayout ? 22 : 20, weight: .bold, design: .rounded).monospacedDigit())
-                            HStack(spacing: 2) {
-                                Image(systemName: "drop.fill")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text(hour.rainChance.map { "\($0)%" } ?? "—")
-                                    .font(.system(size: useUltraLayout ? 13 : 12, weight: .semibold, design: .rounded).monospacedDigit())
-                            }
-                            .foregroundStyle((hour.rainChance ?? 0) >= 30 ? nearcastCyan : watchMuted)
-                        }
-                        .padding(.vertical, useUltraLayout ? 8 : 6)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            Color.white.opacity(hour.offsetHours == 0 && !isLuminanceReduced ? 0.11 : 0.05),
-                            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        )
-                    }
-                }
+            if snapshot.hasWeatherData, !hours.isEmpty {
+                WatchForecastPageTitle(
+                    symbol: "clock",
+                    title: "Next \(hours.count) hours",
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
+                WatchHourlyForecastCard(
+                    snapshot: snapshot,
+                    hours: hours,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
             } else {
                 WatchNoWeatherMessage(
                     isRefreshing: syncState == .refreshing,
@@ -473,44 +499,220 @@ private struct WatchBasicHoursPage: View {
     }
 }
 
-private struct WatchThreeDayPage: View {
+private struct WatchHourlyForecastCard: View {
     let snapshot: NearcastWidgetSnapshot
+    let hours: [NearcastWidgetHour]
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
     var body: some View {
         VStack(spacing: useUltraLayout ? 8 : 6) {
-            if let days = snapshot.daily, !days.isEmpty {
-                ForEach(Array(days.prefix(3))) { day in
-                    HStack(spacing: useUltraLayout ? 9 : 7) {
-                        Text(day.label)
-                            .font(.system(size: useUltraLayout ? 15 : 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(watchSecondary)
-                            .frame(width: useUltraLayout ? 48 : 43, alignment: .leading)
+            HStack(spacing: 0) {
+                ForEach(hours) { hour in
+                    VStack(spacing: useUltraLayout ? 5 : 3) {
+                        Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
+                            .font(.system(size: useUltraLayout ? 13 : 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(hour.offsetHours == 0 ? watchPrimary : watchMuted)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                        Image(systemName: watchConditionSymbol(day.conditionCode, isDay: true))
-                            .font(.system(size: useUltraLayout ? 27 : 24, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                            .frame(width: useUltraLayout ? 29 : 25)
-                        HStack(alignment: .lastTextBaseline, spacing: 4) {
-                            Text("\(day.high)°")
-                                .font(.system(size: useUltraLayout ? 22 : 20, weight: .bold, design: .rounded).monospacedDigit())
-                            Text("\(day.low)°")
-                                .font(.system(size: useUltraLayout ? 17 : 15, weight: .semibold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(watchMuted)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        Label("\(day.rainChance)%", systemImage: "drop.fill")
-                            .font(.system(size: useUltraLayout ? 14 : 13, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(day.rainChance >= 30 ? nearcastCyan : watchSecondary)
-                            .frame(width: 43, alignment: .trailing)
+                            .minimumScaleFactor(0.8)
+                        Image(systemName: watchConditionSymbol(
+                            hour.conditionCode ?? snapshot.conditionCode,
+                            isDay: hour.isDay ?? snapshot.isDay
+                        ))
+                        .font(.system(size: useUltraLayout ? 27 : 24, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                        Text(hour.temperature.map { "\($0)°" } ?? "—")
+                            .font(.system(size: useUltraLayout ? 22 : 20, weight: .bold, design: .rounded).monospacedDigit())
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, useUltraLayout ? 8 : 6)
-                    .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.055), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .frame(maxWidth: .infinity)
                 }
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(height: 1)
+
+            WatchHourlyRainBand(
+                hours: hours,
+                isLuminanceReduced: isLuminanceReduced,
+                useUltraLayout: useUltraLayout
+            )
+
+            WatchHourlyWindBand(
+                snapshot: snapshot,
+                hours: hours,
+                isLuminanceReduced: isLuminanceReduced,
+                useUltraLayout: useUltraLayout
+            )
+        }
+        .padding(.horizontal, useUltraLayout ? 10 : 8)
+        .padding(.vertical, useUltraLayout ? 9 : 7)
+        .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.065), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(isLuminanceReduced ? 0.34 : 0.10), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Hourly temperature, rain, and wind")
+    }
+}
+
+private struct WatchHourlyRainBand: View {
+    let hours: [NearcastWidgetHour]
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: useUltraLayout ? 5 : 3) {
+            Image(systemName: "drop.fill")
+                .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                .frame(width: useUltraLayout ? 20 : 18)
+                .accessibilityHidden(true)
+
+            ForEach(hours) { hour in
+                let chance = hour.rainChance ?? 0
+                VStack(spacing: 2) {
+                    Capsule()
+                        .fill(isLuminanceReduced ? Color.white : nearcastCyan)
+                        .frame(width: useUltraLayout ? 8 : 7)
+                        .frame(height: max(3, CGFloat(chance) / 100 * CGFloat(useUltraLayout ? 17 : 14)))
+                    Text("\(chance)%")
+                        .font(.system(size: useUltraLayout ? 13 : 12, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(chance >= 30 ? watchPrimary : watchMuted)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(hour.offsetHours == 0 ? "Now" : hour.timeLabel), rain chance \(chance) percent")
+            }
+        }
+    }
+}
+
+private struct WatchHourlyWindBand: View {
+    let snapshot: NearcastWidgetSnapshot
+    let hours: [NearcastWidgetHour]
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    private var first: NearcastWidgetHour? { hours.first }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            windRow(showsUnit: true, trailWidth: useUltraLayout ? 69 : 58)
+            windRow(showsUnit: false, trailWidth: useUltraLayout ? 62 : 51)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Wind from \(watchCardinalDirection(first?.windDirection ?? snapshot.windDirection)) at \(first?.wind ?? snapshot.wind) \(snapshot.windUnit)")
+    }
+
+    private func windRow(showsUnit: Bool, trailWidth: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: (first?.windDirection ?? snapshot.windDirection) == nil ? "wind" : "location.north.fill")
+                .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold))
+                .rotationEffect(.degrees(Double(first?.windDirection ?? snapshot.windDirection ?? 0)))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
+                .frame(width: 18)
+            Text("\(first?.wind ?? snapshot.wind)")
+                .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold, design: .rounded).monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+            if showsUnit {
+                Text(shortWatchWindUnit(snapshot.windUnit))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(watchMuted)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            Spacer(minLength: 2)
+            WatchHourlyWindTrail(hours: hours, color: isLuminanceReduced ? .white : nearcastMint)
+                .frame(width: trailWidth, height: useUltraLayout ? 21 : 18)
+        }
+    }
+}
+
+private struct WatchHourlyWindTrail: View {
+    let hours: [NearcastWidgetHour]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let values = hours.map { Double($0.wind ?? 0) }
+            let minimum = values.min() ?? 0
+            let maximum = values.max() ?? minimum
+            let span = max(1, maximum - minimum)
+            let step = values.count > 1 ? proxy.size.width / CGFloat(values.count - 1) : 0
+            let points = values.enumerated().map { index, value in
+                CGPoint(
+                    x: CGFloat(index) * step,
+                    y: 2 + (1 - CGFloat((value - minimum) / span)) * max(1, proxy.size.height - 4)
+                )
+            }
+            ZStack {
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: first)
+                    for point in points.dropFirst() { path.addLine(to: point) }
+                }
+                .stroke(color.opacity(0.8), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                ForEach(points.indices, id: \.self) { index in
+                    Circle()
+                        .fill(index == 0 ? Color.white : color)
+                        .frame(width: index == 0 ? 6 : 4, height: index == 0 ? 6 : 4)
+                        .position(points[index])
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WatchThreeDayPage: View {
+    let snapshot: NearcastWidgetSnapshot
+    let syncState: WatchSyncState
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    private var days: [NearcastWidgetDay] { Array((snapshot.daily ?? []).prefix(3)) }
+
+    private var domain: ClosedRange<Int> {
+        let lows = days.map(\.low)
+        let highs = days.map(\.high)
+        let minimum = lows.min() ?? snapshot.low ?? snapshot.temperature
+        let maximum = highs.max() ?? snapshot.high ?? snapshot.temperature
+        return minimum...max(minimum + 1, maximum)
+    }
+
+    var body: some View {
+        VStack(spacing: useUltraLayout ? 8 : 6) {
+            if !days.isEmpty {
+                WatchForecastPageTitle(
+                    symbol: "calendar",
+                    title: "Next 3 days",
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
+                VStack(spacing: 0) {
+                    ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
+                        WatchDailyForecastRow(
+                            day: day,
+                            domain: domain,
+                            current: index == 0 ? snapshot.temperature : nil,
+                            isLuminanceReduced: isLuminanceReduced,
+                            useUltraLayout: useUltraLayout
+                        )
+                        if index < days.count - 1 {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.10))
+                                .frame(height: 1)
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                }
+                .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.055), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .stroke(Color.white.opacity(isLuminanceReduced ? 0.34 : 0.09), lineWidth: 1)
+                )
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "calendar")
@@ -523,10 +725,126 @@ private struct WatchThreeDayPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Spacer(minLength: 0)
+            WatchSavedForecastStatus(snapshot: snapshot, syncState: syncState)
         }
         .watchPagePadding(useUltraLayout)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Three day forecast")
+    }
+}
+
+private struct WatchDailyForecastRow: View {
+    let day: NearcastWidgetDay
+    let domain: ClosedRange<Int>
+    let current: Int?
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        VStack(spacing: useUltraLayout ? 5 : 3) {
+            HStack(spacing: 7) {
+                Text(watchCompactDayLabel(day.label))
+                    .font(.system(size: useUltraLayout ? 15 : 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(watchSecondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Image(systemName: watchConditionSymbol(day.conditionCode, isDay: true))
+                    .font(.system(size: useUltraLayout ? 23 : 21, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                Spacer(minLength: 3)
+                HStack(spacing: 3) {
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: useUltraLayout ? 14 : 13, weight: .bold))
+                    Text("\(day.rainChance)%")
+                        .font(.system(size: useUltraLayout ? 14 : 13, weight: .bold, design: .rounded).monospacedDigit())
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .foregroundStyle(day.rainChance >= 30 ? (isLuminanceReduced ? Color.white : nearcastCyan) : watchSecondary)
+            }
+
+            HStack(spacing: 6) {
+                Text("\(day.low)°")
+                    .foregroundStyle(watchMuted)
+                WatchDailyTemperatureTrack(
+                    low: day.low,
+                    high: day.high,
+                    current: current,
+                    domain: domain,
+                    isLuminanceReduced: isLuminanceReduced
+                )
+                    .frame(height: 9)
+                Text("\(day.high)°")
+                    .foregroundStyle(watchPrimary)
+            }
+            .font(.system(size: useUltraLayout ? 16 : 15, weight: .bold, design: .rounded).monospacedDigit())
+        }
+        .padding(.horizontal, useUltraLayout ? 10 : 8)
+        .padding(.vertical, useUltraLayout ? 7 : 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(day.label), low \(day.low), high \(day.high), rain chance \(day.rainChance) percent")
+    }
+}
+
+private struct WatchDailyTemperatureTrack: View {
+    let low: Int
+    let high: Int
+    let current: Int?
+    let domain: ClosedRange<Int>
+    let isLuminanceReduced: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let span = max(1, domain.upperBound - domain.lowerBound)
+            let start = CGFloat(low - domain.lowerBound) / CGFloat(span)
+            let end = CGFloat(high - domain.lowerBound) / CGFloat(span)
+            let currentPosition = current.map { CGFloat($0 - domain.lowerBound) / CGFloat(span) }
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(height: 4)
+                Capsule()
+                    .fill(
+                        isLuminanceReduced
+                            ? AnyShapeStyle(Color.white)
+                            : AnyShapeStyle(
+                                LinearGradient(
+                                    colors: [nearcastCyan, nearcastAmber],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+                    .frame(width: max(7, proxy.size.width * max(0, end - start)), height: 6)
+                    .offset(x: proxy.size.width * max(0, start))
+                if let currentPosition {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 8, height: 8)
+                        .offset(x: max(0, min(proxy.size.width - 8, (proxy.size.width - 8) * currentPosition)))
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WatchForecastPageTitle: View {
+    let symbol: String
+    let title: String
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: useUltraLayout ? 16 : 15, weight: .bold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+            Text(title)
+                .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold, design: .rounded))
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -1256,6 +1574,15 @@ private struct WatchPlanVerdict: View {
         return "\(title) · \(cityName(place))"
     }
 
+    private var planTiming: String? {
+        cleanOptional(snapshot.planLabel).map { conciseWatchWords($0, maximumCharacters: 24) }
+    }
+
+    private var compactPlanContext: String {
+        let rawTitle = signal.context ?? cleanOptional(snapshot.planTitle) ?? "Your plan"
+        return conciseWatchWords(rawTitle, maximumCharacters: 12)
+    }
+
     private var showsPlanOverlap: Bool {
         guard !isStale,
               cleanOptional(snapshot.planPlace) == nil,
@@ -1270,26 +1597,50 @@ private struct WatchPlanVerdict: View {
         VStack(spacing: useUltraLayout ? 8 : 6) {
             Spacer(minLength: 0)
 
-            Image(systemName: symbol)
-                .font(.system(size: useUltraLayout ? 34 : 30, weight: .bold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(color)
-                .frame(width: useUltraLayout ? 64 : 56, height: useUltraLayout ? 64 : 56)
-                .background(isLuminanceReduced ? Color.clear : color.opacity(0.14), in: Circle())
-                .overlay(Circle().stroke(color.opacity(0.7), lineWidth: 2))
-                .accessibilityHidden(true)
+            HStack(spacing: useUltraLayout ? 12 : 9) {
+                Image(systemName: symbol)
+                    .font(.system(size: useUltraLayout ? 31 : 27, weight: .bold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(color)
+                    .frame(width: useUltraLayout ? 58 : 50, height: useUltraLayout ? 58 : 50)
+                    .background(isLuminanceReduced ? Color.clear : color.opacity(0.14), in: Circle())
+                    .overlay(Circle().stroke(color.opacity(0.7), lineWidth: 2))
+                    .accessibilityHidden(true)
 
-            Text(verdict)
-                .font(.system(size: useUltraLayout ? 32 : 27, weight: .heavy, design: .rounded))
-                .foregroundStyle(watchPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verdict)
+                        .font(.system(size: useUltraLayout ? 31 : 27, weight: .heavy, design: .rounded))
+                        .foregroundStyle(watchPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
 
-            Text(planContext)
-                .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(watchSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                    Group {
+                        if useUltraLayout {
+                            Text(planContext)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.9)
+                        } else {
+                            ViewThatFits(in: .horizontal) {
+                                Text(planContext)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                Text(compactPlanContext)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+                    }
+                    .font(.system(size: useUltraLayout ? 16 : 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(watchSecondary)
+
+                    if let planTiming {
+                        Text(planTiming)
+                            .font(.system(size: useUltraLayout ? 14 : 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(watchMuted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if showsPlanOverlap, let weatherSignal, let planWindow = signal.timeWindow {
                 WatchPlanOverlapRibbon(
@@ -1313,7 +1664,7 @@ private struct WatchPlanVerdict: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Plan check, \(verdict), \(planContext)")
+        .accessibilityLabel("Plan check, \(verdict), \(planContext)\(planTiming.map { ", \($0)" } ?? "")")
         .accessibilityValue(isStale ? "Update needed. Open Nearcast on iPhone." : signal.accessibilityDescription)
     }
 }
@@ -1329,48 +1680,55 @@ private struct WatchPlanOverlapRibbon: View {
         sampledSignalPoints(signal.timelinePoints, maximumPoints: useUltraLayout ? 5 : 4)
     }
 
+    private var metricLabel: String {
+        switch signal.kind {
+        case .rain: return "Rain during plan"
+        case .wind: return "\(signal.headline) during plan"
+        case .temperature: return "Temperature during plan"
+        default: return "Weather during plan"
+        }
+    }
+
+    private var metricValue: String? {
+        signal.magnitude?.displayValue
+    }
+
+    private var metricShortLabel: String {
+        switch signal.kind {
+        case .rain: return "Rain"
+        case .wind: return "Wind"
+        case .temperature: return "Temperature"
+        default: return "Weather"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 3) {
-            GeometryReader { proxy in
-                let positions = watchTimelineXPositions(points, width: proxy.size.width, inset: 12)
-                let planStartX = watchTimelineXPosition(
-                    timestamp: planWindow.startAt,
-                    points: points,
-                    width: proxy.size.width,
-                    inset: 12
-                )
-                let planEndX = watchTimelineXPosition(
-                    timestamp: planWindow.endAt,
-                    points: points,
-                    width: proxy.size.width,
-                    inset: 12
-                )
-
-                ZStack {
-                    Capsule()
-                        .fill(Color.white.opacity(isLuminanceReduced ? 0.35 : 0.16))
-                        .frame(height: 3)
-
-                    if let planStartX, let planEndX {
-                        Capsule()
-                            .stroke(color, lineWidth: 2)
-                            .frame(width: max(24, planEndX - planStartX), height: useUltraLayout ? 36 : 32)
-                            .position(x: (planStartX + planEndX) / 2, y: proxy.size.height / 2)
-                    }
-
-                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
-                        let isInPlanWindow = planWindow.contains(point.startsAt)
-                        Image(systemName: point.symbolName)
-                            .font(.system(size: isInPlanWindow ? 17 : 14, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(isInPlanWindow ? color : watchMuted)
-                            .frame(width: 24, height: 24)
-                            .background(Color.black, in: Circle())
-                            .position(x: positions[index], y: proxy.size.height / 2)
-                    }
+            HStack(spacing: 5) {
+                Image(systemName: signal.symbolName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(color)
+                ViewThatFits(in: .horizontal) {
+                    Text(metricLabel)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(metricShortLabel)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                Spacer(minLength: 3)
+                if let metricValue {
+                    Text(metricValue)
+                        .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
                 }
             }
-            .frame(height: useUltraLayout ? 38 : 34)
+
+            WatchPlanMetricPlot(
+                signal: signal,
+                points: points,
+                planWindow: planWindow,
+                color: color
+            )
+            .frame(height: useUltraLayout ? 31 : 27)
 
             WatchRibbonEndpoints(
                 start: points.first?.timeLabel ?? "Now",
@@ -1392,6 +1750,81 @@ private struct WatchPlanOverlapRibbon: View {
         .accessibilityValue(signal.accessibilityDescription)
     }
 
+}
+
+private struct WatchPlanMetricPlot: View {
+    let signal: NearcastVisualSignal
+    let points: [NearcastVisualTimelinePoint]
+    let planWindow: NearcastVisualTimeWindow
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let positions = watchTimelineXPositions(points, width: proxy.size.width, inset: 8)
+            let values = points.map { min(1, max(0, $0.magnitude?.normalizedValue ?? 0)) }
+            let graphPoints = values.indices.map { index in
+                CGPoint(
+                    x: positions[index],
+                    y: 3 + (1 - CGFloat(values[index])) * max(1, proxy.size.height - 6)
+                )
+            }
+            let planStartX = watchTimelineXPosition(
+                timestamp: planWindow.startAt,
+                points: points,
+                width: proxy.size.width,
+                inset: 8
+            )
+            let planEndX = watchTimelineXPosition(
+                timestamp: planWindow.endAt,
+                points: points,
+                width: proxy.size.width,
+                inset: 8
+            )
+
+            ZStack {
+                if let planStartX, let planEndX {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(color.opacity(0.12))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(color.opacity(0.55), lineWidth: 1.5))
+                        .frame(width: max(18, planEndX - planStartX), height: proxy.size.height)
+                        .position(x: (planStartX + planEndX) / 2, y: proxy.size.height / 2)
+                }
+
+                if signal.kind == .rain {
+                    ForEach(points.indices, id: \.self) { index in
+                        let height = max(4, CGFloat(values[index]) * max(4, proxy.size.height - 3))
+                        Capsule()
+                            .fill(points[index].isInPlanWindow ? color : color.opacity(0.38))
+                            .frame(width: points[index].isInPlanWindow ? 9 : 7, height: height)
+                            .position(x: positions[index], y: proxy.size.height - height / 2)
+                    }
+                } else if signal.kind == .wind || signal.kind == .temperature {
+                    Path { path in
+                        guard let first = graphPoints.first else { return }
+                        path.move(to: first)
+                        for point in graphPoints.dropFirst() { path.addLine(to: point) }
+                    }
+                    .stroke(color.opacity(0.82), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    ForEach(graphPoints.indices, id: \.self) { index in
+                        Circle()
+                            .fill(points[index].isInPlanWindow ? Color.white : color)
+                            .frame(width: points[index].isInPlanWindow ? 7 : 5, height: points[index].isInPlanWindow ? 7 : 5)
+                            .overlay(Circle().stroke(color, lineWidth: 1))
+                            .position(graphPoints[index])
+                    }
+                } else {
+                    ForEach(points.indices, id: \.self) { index in
+                        Image(systemName: points[index].symbolName)
+                            .font(.system(size: points[index].isInPlanWindow ? 16 : 13, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(points[index].isInPlanWindow ? color : watchMuted)
+                            .position(x: positions[index], y: proxy.size.height / 2)
+                    }
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
 }
 
 private struct WatchNoWeatherMessage: View {
@@ -1680,6 +2113,13 @@ private func watchWindCardinal(_ snapshot: NearcastWidgetSnapshot) -> String {
     return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
 }
 
+private func watchCardinalDirection(_ degrees: Int?) -> String {
+    guard let degrees else { return "variable" }
+    let labels = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    let normalized = (degrees % 360 + 360) % 360
+    return labels[Int((Double(normalized) / 22.5).rounded()) % labels.count]
+}
+
 private func watchConditionSymbol(_ code: Int, isDay: Bool) -> String {
     switch code {
     case 0: return isDay ? "sun.max.fill" : "moon.stars.fill"
@@ -1741,6 +2181,18 @@ private func watchSnapshotForDisplay() -> NearcastWidgetSnapshot {
     return .current()
 }
 
+private func watchSurfaceForLaunch() -> WatchSurface {
+#if DEBUG
+    let arguments = ProcessInfo.processInfo.arguments
+    if let flagIndex = arguments.firstIndex(of: "-nearcastPreviewSurface"),
+       arguments.indices.contains(flagIndex + 1),
+       let surface = WatchSurface(rawValue: arguments[flagIndex + 1].lowercased()) {
+        return surface
+    }
+#endif
+    return .today
+}
+
 #if DEBUG
 private func watchPreviewSnapshot() -> NearcastWidgetSnapshot {
     let now = Date().timeIntervalSince1970
@@ -1783,6 +2235,20 @@ private func watchPreviewSnapshot() -> NearcastWidgetSnapshot {
         NearcastWidgetDay(date: "preview-1", label: "Tomorrow", high: 84, low: 63, rainChance: 28, conditionCode: 2),
         NearcastWidgetDay(date: "preview-2", label: "Thursday", high: 79, low: 59, rainChance: 12, conditionCode: 0)
     ]
+    if ProcessInfo.processInfo.arguments.contains("-nearcastPreviewPlan") {
+        snapshot.planTitle = "Soccer practice"
+        snapshot.planLabel = "Tonight · 6–8 PM"
+        snapshot.planDetail = "Showers may overlap practice"
+        snapshot.planTone = "watch"
+        snapshot.watchStatus = "WATCH"
+        snapshot.watchDetail = "Rain may overlap practice"
+        snapshot.watchTone = "watch"
+        snapshot.planAvailable = true
+        snapshot.planSavedAt = now
+        snapshot.planRisk = "rain"
+        snapshot.planStartAt = now + 3600
+        snapshot.planEndAt = now + 3 * 3600
+    }
     return snapshot
 }
 #endif
@@ -1841,6 +2307,7 @@ private enum NearcastWatchWeatherClient {
             updated.isDay = current.isDay == 1
             updated.wind = Int(current.windSpeed.rounded())
             updated.windDirection = Int(current.windDirection.rounded())
+            updated.windLabel = nil
             updated.isAvailable = true
             updated.weatherSavedAt = refreshedAt
 
@@ -2005,6 +2472,16 @@ private func watchDayLabel(_ raw: String, index: Int) -> String {
     guard let date = formatter.date(from: raw) else { return raw }
     formatter.dateFormat = "EEE"
     return formatter.string(from: date)
+}
+
+private func watchCompactDayLabel(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch trimmed.lowercased() {
+    case "today": return "Today"
+    case "tomorrow": return "Tmrw"
+    default:
+        return String(trimmed.prefix(3))
+    }
 }
 
 private func hourStart(_ raw: String, utcOffsetSeconds: Int) -> TimeInterval? {

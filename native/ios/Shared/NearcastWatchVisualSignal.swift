@@ -128,7 +128,7 @@ enum NearcastVisualSignalModel {
         now: Date = Date(),
         horizonHours: Int = 6
     ) -> NearcastVisualSignalSet {
-        let rows = activeRows(snapshot, now: now, maximumHours: horizonHours)
+        let rows = activeTimelineRows(snapshot, now: now, maximumHours: horizonHours)
         let window = NearcastVisualTimeWindow(startAt: snapshot.planStartAt, endAt: snapshot.planEndAt)
         let rain = rainSignal(snapshot, rows: rows, planWindow: window)
         let wind = windSignal(snapshot, rows: rows, planWindow: window)
@@ -197,7 +197,7 @@ enum NearcastVisualSignalModel {
         now: Date = Date(),
         horizonHours: Int = 6
     ) -> NearcastVisualSignal {
-        let rows = activeRows(snapshot, now: now, maximumHours: horizonHours)
+        let rows = activeTimelineRows(snapshot, now: now, maximumHours: horizonHours)
         return rainSignal(
             snapshot,
             rows: rows,
@@ -650,7 +650,7 @@ enum NearcastVisualSignalModel {
         }
     }
 
-    private static func activeRows(
+    static func activeTimelineRows(
         _ snapshot: NearcastWidgetSnapshot,
         now: Date,
         maximumHours: Int
