@@ -9,6 +9,56 @@ private let briefKind = "NearcastWatchBrief"
 private let staleAfter: TimeInterval = 12 * 60 * 60
 private let planStaleAfter: TimeInterval = 2 * 60 * 60
 
+private enum NearcastComplicationColor {
+    static let rain = Color(red: 0.35, green: 0.79, blue: 1.0)
+    static let wind = Color(red: 0.45, green: 0.93, blue: 0.70)
+    static let warm = Color(red: 1.0, green: 0.77, blue: 0.30)
+    static let change = Color(red: 1.0, green: 0.42, blue: 0.39)
+
+    static func condition(code: Int, isDay: Bool) -> Color {
+        isDay && (0...2).contains(code) ? warm : rain
+    }
+
+    static func signal(_ tone: NearcastVisualSignalTone) -> Color {
+        switch tone {
+        case .rain, .cool, .neutral: return rain
+        case .wind, .go, .calm: return wind
+        case .warm, .watch: return warm
+        case .change: return change
+        }
+    }
+}
+
+private struct NearcastComplicationTint: ViewModifier {
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    let color: Color
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(renderingMode == .fullColor && !isLuminanceReduced ? color : Color.primary)
+            .widgetAccentable()
+    }
+}
+
+private extension View {
+    func nearcastComplicationTint(_ color: Color) -> some View {
+        modifier(NearcastComplicationTint(color: color))
+    }
+}
+
+private struct NearcastInlineAccentLabelStyle: LabelStyle {
+    let color: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon
+                .nearcastComplicationTint(color)
+            configuration.title
+        }
+    }
+}
+
 private enum WeatherDataState: Equatable {
     case placeholder
     case unavailable
@@ -174,6 +224,14 @@ private struct NearcastNextComplicationView: View {
                     Label(temperatureInlineText(entry.snapshot, includesRange: false), systemImage: "thermometer.medium")
                     Text("\(entry.snapshot.temperature)°")
                 }
+                .labelStyle(
+                    NearcastInlineAccentLabelStyle(
+                        color: NearcastComplicationColor.condition(
+                            code: entry.snapshot.conditionCode,
+                            isDay: entry.snapshot.isDay
+                        )
+                    )
+                )
             case .accessoryCircular:
                 NearcastTemperatureMark(snapshot: entry.snapshot, compact: showsWidgetLabel)
                     .widgetLabel {
@@ -229,6 +287,7 @@ private struct NearcastPlanComplicationView: View {
             switch family {
             case .accessoryInline:
                 Label(planInlineText(plan, risk: entry.snapshot.planRisk), systemImage: plan.symbolName)
+                    .labelStyle(NearcastInlineAccentLabelStyle(color: NearcastComplicationColor.signal(plan.tone)))
                     .accessibilityLabel("Plan Check, \(plan.accessibilityDescription)")
             case .accessoryCircular:
                 NearcastPlanMark(plan: plan)
@@ -290,6 +349,7 @@ private struct NearcastRainComplicationView: View {
                 Label(rainInlineText(rain, probability: probability, includesHorizon: false), systemImage: rain.symbolName)
                 Text("\(probability)%")
             }
+                .labelStyle(NearcastInlineAccentLabelStyle(color: NearcastComplicationColor.rain))
                 .accessibilityLabel("Rain, \(rain.accessibilityDescription)")
         case .accessoryCircular:
             NearcastRainMark(probability: probability, compact: showsWidgetLabel)
@@ -346,6 +406,7 @@ private struct NearcastWindComplicationView: View {
                 Label(windInlineText(entry.snapshot, includesUnit: false), systemImage: "wind")
                 Text("\(entry.snapshot.wind)")
             }
+                .labelStyle(NearcastInlineAccentLabelStyle(color: NearcastComplicationColor.wind))
                 .accessibilityLabel("Wind from \(complicationCardinalDirection(entry.snapshot)) at \(entry.snapshot.wind) \(entry.snapshot.windUnit)")
         case .accessoryCircular:
             NearcastWindMark(snapshot: entry.snapshot, compact: showsWidgetLabel)
@@ -369,7 +430,6 @@ private struct NearcastWindComplicationView: View {
 }
 
 private struct NearcastBriefView: View {
-    @Environment(\.widgetRenderingMode) private var renderingMode
     let entry: NearcastComplicationEntry
 
     var body: some View {
@@ -385,11 +445,7 @@ private struct NearcastBriefView: View {
             }
         }
         .containerBackground(for: .widget) {
-            if renderingMode == .fullColor {
-                briefBackground(entry)
-            } else {
-                Color.clear
-            }
+            Color.clear
         }
     }
 
@@ -432,7 +488,7 @@ private struct NearcastBriefView: View {
     @ViewBuilder
     private var briefFresh: some View {
         NearcastBasicsRectangle(snapshot: entry.snapshot)
-        .foregroundStyle(renderingMode == .fullColor ? Color.white : Color.primary)
+        .foregroundStyle(Color.primary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Today basics")
         .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition), \(highLowText(entry.snapshot)), rain \(entry.snapshot.rainChance) percent, wind \(windBasicsText(entry.snapshot))")
@@ -448,7 +504,7 @@ private struct NearcastTemperatureRectangle: View {
                 Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
                     .font(.system(size: 25, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
-                    .widgetAccentable()
+                    .nearcastComplicationTint(NearcastComplicationColor.condition(code: snapshot.conditionCode, isDay: snapshot.isDay))
                     .frame(width: 30)
 
                 Text("\(snapshot.temperature)°")
@@ -473,7 +529,7 @@ private struct NearcastBasicsRectangle: View {
                     Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
                         .font(.system(size: 16, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
-                        .widgetAccentable()
+                        .nearcastComplicationTint(NearcastComplicationColor.condition(code: snapshot.conditionCode, isDay: snapshot.isDay))
                     Text("\(snapshot.temperature)°")
                         .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
                 }
@@ -491,7 +547,7 @@ private struct NearcastBasicsRectangle: View {
                     Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                         .font(.system(size: 14, weight: .bold))
                         .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
-                        .widgetAccentable()
+                        .nearcastComplicationTint(NearcastComplicationColor.wind)
                         .frame(width: 16)
                     Text("\(snapshot.wind)")
                         .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
@@ -503,7 +559,7 @@ private struct NearcastBasicsRectangle: View {
                 HStack(spacing: 4) {
                     Image(systemName: "drop.fill")
                         .font(.system(size: 14, weight: .bold))
-                        .widgetAccentable()
+                        .nearcastComplicationTint(NearcastComplicationColor.rain)
                         .frame(width: 16)
                     Text("\(snapshot.rainChance)%")
                         .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
@@ -525,7 +581,7 @@ private struct NearcastTemperatureMark: View {
             Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
                 .font(.system(size: compact ? 12 : 14, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.condition(code: snapshot.conditionCode, isDay: snapshot.isDay))
             Text("\(snapshot.temperature)°")
                 .font(.system(size: compact ? 18 : 21, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.75)
@@ -534,6 +590,8 @@ private struct NearcastTemperatureMark: View {
 }
 
 private struct ComplicationTemperatureTrack: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
@@ -542,13 +600,21 @@ private struct ComplicationTemperatureTrack: View {
                 let progress = complicationTemperatureProgress(snapshot)
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.secondary.opacity(0.42))
+                        .fill(
+                            LinearGradient(
+                                colors: renderingMode == .fullColor && !isLuminanceReduced
+                                    ? [NearcastComplicationColor.rain, NearcastComplicationColor.warm]
+                                    : [Color.primary.opacity(0.42), Color.primary],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
                         .frame(height: 4)
+                        .widgetAccentable()
                     Circle()
                         .fill(Color.primary)
                         .frame(width: 7, height: 7)
                         .offset(x: max(0, (proxy.size.width - 7) * progress))
-                        .widgetAccentable()
                 }
                 .frame(maxHeight: .infinity)
             }
@@ -601,7 +667,7 @@ private struct NearcastRainMark: View {
         VStack(spacing: 0) {
             Image(systemName: "drop.fill")
                 .font(.system(size: compact ? 15 : 18, weight: .bold))
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.rain)
             Text("\(probability)%")
                 .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.72)
@@ -618,7 +684,7 @@ private struct NearcastWindMark: View {
             Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                 .font(.system(size: compact ? 15 : 18, weight: .bold))
                 .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.wind)
             Text("\(snapshot.wind)")
                 .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.72)
@@ -627,13 +693,15 @@ private struct NearcastWindMark: View {
 }
 
 private struct ComplicationRainBars: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let values: [Int]
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(Array(values.prefix(4).enumerated()), id: \.offset) { _, value in
                 Capsule()
-                    .fill(Color.primary)
+                    .fill(renderingMode == .fullColor && !isLuminanceReduced ? NearcastComplicationColor.rain : Color.primary)
                     .frame(maxWidth: .infinity)
                     .frame(height: max(2, CGFloat(value) / 100 * 13))
                     .widgetAccentable()
@@ -700,7 +768,7 @@ private struct NearcastRainInstrument: View {
         HStack(spacing: 8) {
             Image(systemName: signal.symbolName)
                 .font(.system(size: 25, weight: .bold))
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.rain)
             Text("\(probability)%")
                 .font(.system(size: 25, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.8)
@@ -733,7 +801,7 @@ private struct NearcastWindInstrument: View {
             Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                 .font(.system(size: 26, weight: .bold))
                 .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.wind)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .lastTextBaseline, spacing: 3) {
                     Text("\(snapshot.wind)")
@@ -759,8 +827,17 @@ private enum NearcastTrailStyle {
 }
 
 private struct NearcastTrail: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let values: [Double]
     let style: NearcastTrailStyle
+
+    private var metricColor: Color {
+        switch style {
+        case .rainBars: return NearcastComplicationColor.rain
+        case .line: return NearcastComplicationColor.wind
+        }
+    }
 
     var body: some View {
         let visible = Array(values.prefix(4)).map { min(1, max(0, $0)) }
@@ -780,9 +857,14 @@ private struct NearcastTrail: View {
                 HStack(alignment: .bottom, spacing: 4) {
                     ForEach(visible.indices, id: \.self) { index in
                         Capsule()
-                            .fill(index == peakIndex ? Color.accentColor : Color.secondary.opacity(0.55))
+                            .fill(
+                                renderingMode == .fullColor && !isLuminanceReduced
+                                    ? metricColor.opacity(index == peakIndex ? 1 : 0.48)
+                                    : Color.primary.opacity(index == peakIndex ? 1 : 0.48)
+                            )
                             .frame(maxWidth: .infinity)
                             .frame(height: max(3, CGFloat(visible[index]) * proxy.size.height))
+                            .widgetAccentable()
                     }
                 }
                 .frame(maxHeight: .infinity, alignment: .bottom)
@@ -795,32 +877,47 @@ private struct NearcastTrail: View {
                             path.addLine(to: point)
                         }
                     }
-                    .stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    .stroke(
+                        renderingMode == .fullColor && !isLuminanceReduced ? metricColor.opacity(0.58) : Color.primary.opacity(0.58),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                    )
+                    .widgetAccentable()
                     ForEach(positions.indices, id: \.self) { index in
                         Circle()
-                            .fill(index == peakIndex ? Color.accentColor : Color.secondary)
+                            .fill(
+                                renderingMode == .fullColor && !isLuminanceReduced
+                                    ? metricColor.opacity(index == peakIndex ? 1 : 0.62)
+                                    : Color.primary.opacity(index == peakIndex ? 1 : 0.62)
+                            )
                             .frame(width: index == peakIndex ? 7 : 5, height: index == peakIndex ? 7 : 5)
                             .position(positions[index])
+                            .widgetAccentable()
                     }
                 }
             }
         }
-        .widgetAccentable()
         .accessibilityHidden(true)
     }
 }
 
 private struct NearcastPlanMark: View {
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let plan: NearcastVisualSignal
     var compact = false
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(.secondary.opacity(0.35), lineWidth: compact ? 2 : 3)
+                .stroke(
+                    renderingMode == .fullColor && !isLuminanceReduced
+                        ? NearcastComplicationColor.signal(plan.tone).opacity(0.48)
+                        : Color.secondary.opacity(0.35),
+                    lineWidth: compact ? 2 : 3
+                )
             Image(systemName: plan.symbolName)
                 .font(.system(size: compact ? 19 : 25, weight: .bold))
-                .widgetAccentable()
+                .nearcastComplicationTint(NearcastComplicationColor.signal(plan.tone))
         }
     }
 }
@@ -836,6 +933,7 @@ private struct NearcastPlanInstrument: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(plan.planVerdict?.rawValue ?? plan.headline)
                     .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .nearcastComplicationTint(NearcastComplicationColor.signal(plan.tone))
                     .lineLimit(1)
                 Text(planComplicationCue(plan, risk: risk))
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -1012,17 +1110,6 @@ private func briefRelevance(
         return TimelineEntryRelevance(score: 70, duration: 2 * 60 * 60)
     }
     return TimelineEntryRelevance(score: 20, duration: 30 * 60)
-}
-
-private func briefBackground(_ entry: NearcastComplicationEntry) -> Color {
-    if entry.weatherState == .unavailable || entry.weatherState == .stale {
-        return Color(red: 0.12, green: 0.15, blue: 0.20)
-    }
-    let signals = visualSignalSet(entry)
-    if signals.rain.magnitude?.value ?? 0 >= 30 {
-        return Color(red: 0.04, green: 0.26, blue: 0.48)
-    }
-    return Color(red: 0.05, green: 0.32, blue: 0.25)
 }
 
 @ViewBuilder

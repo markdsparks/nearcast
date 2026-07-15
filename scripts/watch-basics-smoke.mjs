@@ -27,6 +27,12 @@ assert.equal(complications.match(/\bGauge\(/g)?.length, 1, "temperature is the o
 assert.match(complications, /struct ComplicationRainBars/, "rain chance uses a short hourly bar sequence");
 assert.match(complications, /Image\(systemName: "drop\.fill"\)[\s\S]*Text\("\\\(snapshot\.rainChance\)%"\)/, "rain is encoded as a drop and value without a repeated label");
 assert.match(complications, /NearcastWindMark\(snapshot: entry\.snapshot/, "small wind complications pair current speed with current direction");
+assert.match(complications, /struct NearcastComplicationTint[\s\S]*widgetRenderingMode[\s\S]*\.fullColor/, "complication colors adapt to the watch face rendering mode");
+assert.match(complications, /struct NearcastInlineAccentLabelStyle[\s\S]*configuration\.icon[\s\S]*configuration\.title/, "inline complications accent only their icon");
+assert.match(complications, /NearcastComplicationColor\.rain[\s\S]*NearcastComplicationColor\.warm/, "temperature ranges use a cool-to-warm color track");
+assert.match(complications, /NearcastRainMark[\s\S]*nearcastComplicationTint\(NearcastComplicationColor\.rain\)/, "small rain complications carry the rain accent");
+assert.match(complications, /NearcastWindMark[\s\S]*nearcastComplicationTint\(NearcastComplicationColor\.wind\)/, "small wind complications carry the wind accent");
+assert.match(complications, /NearcastPlanMark[\s\S]*NearcastComplicationColor\.signal\(plan\.tone\)/, "Plan Check color follows its verdict");
 assert.doesNotMatch(complications, /Label\("Rain \\\(entry\.snapshot\.rainChance\)%"/, "rectangular complication does not spell out an icon's meaning");
 assert.doesNotMatch(complications, /transferUserInfo/, "complication source contains no queued phone transfer behavior");
 
