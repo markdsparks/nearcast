@@ -33,6 +33,10 @@ assert.match(complications, /NearcastComplicationColor\.rain[\s\S]*NearcastCompl
 assert.match(complications, /NearcastRainMark[\s\S]*nearcastComplicationTint\(NearcastComplicationColor\.rain\)/, "small rain complications carry the rain accent");
 assert.match(complications, /NearcastWindMark[\s\S]*nearcastComplicationTint\(NearcastComplicationColor\.wind\)/, "small wind complications carry the wind accent");
 assert.match(complications, /NearcastPlanMark[\s\S]*NearcastComplicationColor\.signal\(plan\.tone\)/, "Plan Check color follows its verdict");
+assert.match(complications, /complicationBasicsMetricsWidth[\s\S]*totalWidth \* 0\.47/, "Today Basics protects nearly half its width for wind and rain");
+assert.match(complications, /Text\(complicationCardinalDirection\(snapshot\)\)[\s\S]*fixedSize\(horizontal: true/, "wind direction cannot collapse into an ellipsis");
+assert.match(complications, /ComplicationRainBars[\s\S]*minWidth: 16[\s\S]*idealWidth: 27/, "rain bars yield before metric text");
+assert.match(complications, /complicationCardinalDirection[\s\S]*if let degrees = snapshot\.windDirection[\s\S]*cardinalDirection\(degrees\)/, "the complication uses a compact cardinal instead of a verbose phone label");
 assert.doesNotMatch(complications, /Label\("Rain \\\(entry\.snapshot\.rainChance\)%"/, "rectangular complication does not spell out an icon's meaning");
 assert.doesNotMatch(complications, /transferUserInfo/, "complication source contains no queued phone transfer behavior");
 

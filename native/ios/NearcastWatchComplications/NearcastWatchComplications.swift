@@ -523,51 +523,60 @@ private struct NearcastBasicsRectangle: View {
     let snapshot: NearcastWidgetSnapshot
 
     var body: some View {
-        HStack(spacing: 7) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
-                        .font(.system(size: 16, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .nearcastComplicationTint(NearcastComplicationColor.condition(code: snapshot.conditionCode, isDay: snapshot.isDay))
-                    Text("\(snapshot.temperature)°")
-                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                }
-                ComplicationTemperatureTrack(snapshot: snapshot)
-            }
-            .frame(maxWidth: .infinity)
-            .layoutPriority(1)
+        GeometryReader { proxy in
+            let metricsWidth = complicationBasicsMetricsWidth(proxy.size.width)
 
-            Rectangle()
-                .fill(Color.primary.opacity(0.20))
-                .frame(width: 1, height: 43)
+            HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: complicationConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
+                            .font(.system(size: 16, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .nearcastComplicationTint(NearcastComplicationColor.condition(code: snapshot.conditionCode, isDay: snapshot.isDay))
+                        Text("\(snapshot.temperature)°")
+                            .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                    }
+                    ComplicationTemperatureTrack(snapshot: snapshot)
+                }
+                .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 4) {
-                    Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
-                        .nearcastComplicationTint(NearcastComplicationColor.wind)
-                        .frame(width: 16)
-                    Text("\(snapshot.wind)")
-                        .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
-                    Text(complicationCardinalDirection(snapshot))
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                Rectangle()
+                    .fill(Color.primary.opacity(0.20))
+                    .frame(width: 1, height: 43)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 4) {
+                        Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                            .nearcastComplicationTint(NearcastComplicationColor.wind)
+                            .frame(width: 16)
+                        Text("\(snapshot.wind)")
+                            .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                            .fixedSize(horizontal: true, vertical: false)
+                        Text(complicationCardinalDirection(snapshot))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .nearcastComplicationTint(NearcastComplicationColor.rain)
+                            .frame(width: 16)
+                        Text("\(snapshot.rainChance)%")
+                            .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
+                            .fixedSize(horizontal: true, vertical: false)
+                        ComplicationRainBars(values: complicationRainValues(snapshot))
+                            .frame(minWidth: 16, idealWidth: 27, maxWidth: 27, minHeight: 13, maxHeight: 13)
+                            .layoutPriority(-1)
+                    }
                 }
-                HStack(spacing: 4) {
-                    Image(systemName: "drop.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .nearcastComplicationTint(NearcastComplicationColor.rain)
-                        .frame(width: 16)
-                    Text("\(snapshot.rainChance)%")
-                        .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
-                    ComplicationRainBars(values: complicationRainValues(snapshot))
-                        .frame(width: 27, height: 13)
-                }
+                .frame(width: metricsWidth, alignment: .leading)
+                .layoutPriority(1)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }
@@ -1221,6 +1230,10 @@ private func complicationTemperatureProgress(_ snapshot: NearcastWidgetSnapshot)
     return CGFloat(min(1, max(0, Double(snapshot.temperature - low) / Double(high - low))))
 }
 
+private func complicationBasicsMetricsWidth(_ totalWidth: CGFloat) -> CGFloat {
+    min(92, max(78, totalWidth * 0.47))
+}
+
 private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
     let direction = snapshot.windLabel ?? snapshot.windDirection.map(cardinalDirection) ?? ""
     return direction.isEmpty
@@ -1234,9 +1247,18 @@ private func complicationRainValues(_ snapshot: NearcastWidgetSnapshot) -> [Int]
 }
 
 private func complicationCardinalDirection(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let degrees = snapshot.windDirection {
+        return cardinalDirection(degrees)
+    }
     let label = (snapshot.windLabel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    if !label.isEmpty { return label }
-    return snapshot.windDirection.map(cardinalDirection) ?? "—"
+    guard let candidate = label.split(whereSeparator: \.isWhitespace).last else { return "—" }
+    switch candidate.uppercased() {
+    case "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+         "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW":
+        return candidate.uppercased()
+    default:
+        return "—"
+    }
 }
 
 private func shortComplicationWindUnit(_ unit: String) -> String {
