@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.264">
-    <link rel="manifest" href="manifest.json?v=3.0.264">
+    <link rel="stylesheet" href="styles.css?v=3.0.265">
+    <link rel="manifest" href="manifest.json?v=3.0.265">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.264">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.264">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.265">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.265">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -547,7 +547,7 @@
     <div class="metric-tip" id="metricTip" hidden></div>
 
     <div class="sheet-backdrop" id="installBackdrop" hidden></div>
-    <aside class="day-sheet install-sheet" id="installSheet" hidden aria-label="Add Nearcast to your Home Screen" role="dialog" aria-modal="true">
+    <aside class="day-sheet install-sheet" id="installSheet" hidden data-pull-dismiss="enabled" aria-label="Add Nearcast to your Home Screen" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="installSheetClose" type="button" aria-label="Close install help">✕</button>
       <header class="sheet-head install-sheet-head">
@@ -572,7 +572,7 @@
     </aside>
 
     <div class="sheet-backdrop" id="glanceDetailBackdrop" hidden></div>
-    <aside class="day-sheet glance-detail-sheet" id="glanceDetailSheet" hidden aria-label="Weather detail" role="dialog" aria-modal="true">
+    <aside class="day-sheet glance-detail-sheet" id="glanceDetailSheet" hidden data-pull-dismiss="enabled" aria-label="Weather detail" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="glanceDetailClose" type="button" aria-label="Close weather detail">✕</button>
       <header class="sheet-head glance-detail-head">
@@ -587,7 +587,7 @@
     </aside>
 
     <div class="sheet-backdrop" id="placeBackdrop" hidden></div>
-    <aside class="day-sheet place-sheet" id="placeSheet" hidden aria-label="Saved places" role="dialog" aria-modal="true">
+    <aside class="day-sheet place-sheet" id="placeSheet" hidden data-pull-dismiss="enabled" aria-label="Saved places" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="placeSheetClose" type="button" aria-label="Close saved places">✕</button>
       <header class="sheet-head place-sheet-head">
@@ -615,7 +615,7 @@
     </aside>
 
     <div class="sheet-backdrop" id="dayDetailBackdrop" hidden></div>
-    <aside class="day-sheet" id="dayDetail" hidden aria-label="Day detail" role="dialog" aria-modal="true">
+    <aside class="day-sheet" id="dayDetail" hidden data-pull-dismiss="enabled" aria-label="Day detail" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="dayDetailClose" type="button" aria-label="Close detail">✕</button>
       <header class="sheet-head">
@@ -655,7 +655,7 @@
     <button class="sheet-now-jump" id="sheetNowJump" type="button" aria-label="Return to now in hourly forecast" hidden>Now</button>
 
     <div class="sheet-backdrop" id="alertBackdrop" hidden></div>
-    <aside class="day-sheet alert-sheet" id="alertSheet" hidden aria-label="Weather alerts" role="dialog" aria-modal="true">
+    <aside class="day-sheet alert-sheet" id="alertSheet" hidden data-pull-dismiss="enabled" aria-label="Weather alerts" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="alertSheetClose" type="button" aria-label="Close alerts">✕</button>
       <header class="alert-sheet-head">
@@ -673,7 +673,7 @@
     </aside>
 
     <div class="sheet-backdrop" id="aiBackdrop" hidden></div>
-    <aside class="day-sheet ai-sheet" id="aiSheet" hidden aria-label="Plan Check" role="dialog" aria-modal="true">
+    <aside class="day-sheet ai-sheet" id="aiSheet" hidden data-pull-dismiss="enabled" aria-label="Plan Check" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Plan Check">✕</button>
       <header class="sheet-head ai-sheet-head">
@@ -691,7 +691,7 @@
     </aside>
 
     <div class="sheet-backdrop memory-backdrop" id="memoryBackdrop" hidden></div>
-    <aside class="day-sheet memory-sheet" id="memorySheet" hidden aria-label="Watching" role="dialog" aria-modal="true">
+    <aside class="day-sheet memory-sheet" id="memorySheet" hidden data-pull-dismiss="enabled" aria-label="Watching" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="memorySheetClose" type="button" aria-label="Close watching">✕</button>
       <header class="sheet-head memory-sheet-head">
@@ -708,8 +708,7 @@
     </aside>
 
     <div class="sheet-backdrop memory-edit-backdrop" id="memoryEditBackdrop" hidden></div>
-    <aside class="day-sheet memory-edit-sheet" id="memoryEditSheet" hidden aria-label="Edit plan" role="dialog" aria-modal="true">
-      <div class="sheet-grabber" aria-hidden="true"></div>
+    <aside class="day-sheet memory-edit-sheet" id="memoryEditSheet" hidden data-pull-dismiss="disabled" aria-label="Edit plan" role="dialog" aria-modal="true">
       <button class="sheet-close" id="memoryEditClose" type="button" aria-label="Close plan editor">✕</button>
       <header class="sheet-head memory-edit-head">
         <span class="memory-sheet-icon" aria-hidden="true">
@@ -724,7 +723,7 @@
     </aside>
 
     <div class="sheet-backdrop" id="memoryDetailBackdrop" hidden></div>
-    <aside class="day-sheet memory-detail-sheet" id="memoryDetailSheet" hidden aria-label="Plan details" role="dialog" aria-modal="true">
+    <aside class="day-sheet memory-detail-sheet" id="memoryDetailSheet" hidden data-pull-dismiss="enabled" aria-label="Plan details" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="memoryDetailClose" type="button" aria-label="Close plan details">✕</button>
       <header class="sheet-head memory-detail-head">
@@ -737,7 +736,7 @@
     </aside>
 
     <div class="sheet-backdrop storm-view-backdrop" id="stormViewBackdrop" hidden></div>
-    <aside class="day-sheet storm-view-sheet" id="stormViewSheet" hidden aria-label="Nearcast StormScope" role="dialog" aria-modal="true">
+    <aside class="day-sheet storm-view-sheet" id="stormViewSheet" hidden data-pull-dismiss="enabled" aria-label="Nearcast StormScope" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="stormViewSheetClose" type="button" aria-label="Close Nearcast StormScope">✕</button>
       <header class="storm-view-head">
@@ -778,7 +777,7 @@
     </aside>
 
     <div class="sheet-backdrop storm-receipt-backdrop" id="stormReceiptBackdrop" hidden></div>
-    <aside class="day-sheet storm-view-sheet storm-receipt-sheet" id="stormReceiptSheet" hidden aria-label="StormScope session receipt" role="dialog" aria-modal="true">
+    <aside class="day-sheet storm-view-sheet storm-receipt-sheet" id="stormReceiptSheet" hidden data-pull-dismiss="enabled" aria-label="StormScope session receipt" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="stormReceiptClose" type="button" aria-label="Close StormScope receipt">✕</button>
       <header class="storm-view-head">
@@ -817,7 +816,7 @@
     </aside>
 
     <div class="sheet-backdrop live-activity-backdrop" id="liveActivityBackdrop" hidden></div>
-    <aside class="day-sheet storm-view-sheet live-activity-sheet" id="liveActivitySheet" hidden aria-label="Live Activity Lab" role="dialog" aria-modal="true">
+    <aside class="day-sheet storm-view-sheet live-activity-sheet" id="liveActivitySheet" hidden data-pull-dismiss="enabled" aria-label="Live Activity Lab" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="liveActivityClose" type="button" aria-label="Close Live Activity Lab">✕</button>
       <header class="storm-view-head">
@@ -857,16 +856,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.264"></script>
-    <script src="planner.js?v=3.0.264"></script>
-    <script src="app.js?v=3.0.264"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.264"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.264"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.264"></script>
-    <script src="raw-map-runtime.js?v=3.0.264"></script>
-    <script src="map.js?v=3.0.264"></script>
-    <script src="sky.js?v=3.0.264"></script>
-    <script src="daygraph.js?v=3.0.264"></script>
-    <script src="boot.js?v=3.0.264"></script>
+    <script src="weather-truth.js?v=3.0.265"></script>
+    <script src="planner.js?v=3.0.265"></script>
+    <script src="app.js?v=3.0.265"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.265"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.265"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.265"></script>
+    <script src="raw-map-runtime.js?v=3.0.265"></script>
+    <script src="map.js?v=3.0.265"></script>
+    <script src="sky.js?v=3.0.265"></script>
+    <script src="daygraph.js?v=3.0.265"></script>
+    <script src="boot.js?v=3.0.265"></script>
   </body>
 </html>

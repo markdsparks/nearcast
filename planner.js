@@ -4050,7 +4050,10 @@ function openMemoryDetail(idsOrValue, options = {}) {
   els.memoryDetailBackdrop.hidden = false;
   els.memoryDetailSheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
-  showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet);
+  showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet, {
+    onPullDismiss: closeMemoryDetail,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
 }
 
@@ -4194,7 +4197,9 @@ function openStructuredPlanEdit(memory, options = {}) {
   els.memoryEditBackdrop.hidden = false;
   els.memoryEditSheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
-  showSheet(els.memoryEditBackdrop, els.memoryEditSheet);
+  showSheet(els.memoryEditBackdrop, els.memoryEditSheet, {
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
   updateMemoryEditPreview({ fetchIfNeeded: true });
 }
@@ -5973,7 +5978,10 @@ function openGlobalMemorySheet(options = {}) {
   els.memoryBackdrop.hidden = false;
   els.memorySheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
-  showSheet(els.memoryBackdrop, els.memorySheet);
+  showSheet(els.memoryBackdrop, els.memorySheet, {
+    onPullDismiss: closeGlobalMemorySheet,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
   scrollFocusedPlanWatchCard();
   refreshPlanWatchForecasts();
@@ -7612,7 +7620,10 @@ function openAISheet(options = {}) {
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
   setSheetScrollAnchor(els.aiSheet);
-  showSheet(els.aiBackdrop, els.aiSheet);
+  showSheet(els.aiBackdrop, els.aiSheet, {
+    onPullDismiss: closeAISheet,
+    canPullDismiss: () => aiState.phase !== "generating" && !askStreaming
+  });
   document.body.style.overflow = "hidden";
   if (restoreScroll !== null && restoreScroll !== undefined) {
     requestAnimationFrame(() => {

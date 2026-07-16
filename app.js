@@ -1,4 +1,4 @@
-const VERSION = "3.0.264";
+const VERSION = "3.0.265";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3064,7 +3064,10 @@ function openInstallSheet() {
   renderInstallSheet();
   els.installBackdrop.hidden = false;
   els.installSheet.hidden = false;
-  showSheet(els.installBackdrop, els.installSheet);
+  showSheet(els.installBackdrop, els.installSheet, {
+    onPullDismiss: () => closeInstallSheet({ snooze: false }),
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
 }
 
@@ -3224,6 +3227,7 @@ function initTactileFeedback() {
 
 function bindTapAction(element, action, options = {}) {
   if (!element) return;
+  element.classList.add("tap-action-target");
   const { moveTolerance = TAP_MOVE_TOLERANCE, preventDefault = true } = options;
   let tapStart = null;
   let suppressClick = false;
@@ -3276,6 +3280,7 @@ function bindTapDelegate(container, selector, action, options = {}) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const target = matchingTarget(event.target);
     if (!target) return;
+    target.classList.add("tap-action-target");
     tapStart = { x: event.clientX, y: event.clientY, id: event.pointerId, target };
   });
 
@@ -3298,7 +3303,10 @@ function bindTapDelegate(container, selector, action, options = {}) {
       return;
     }
     const target = matchingTarget(event.target);
-    if (target) action(event, target);
+    if (target) {
+      target.classList.add("tap-action-target");
+      action(event, target);
+    }
   });
 }
 
@@ -3733,7 +3741,6 @@ function bindEvents() {
   bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
   bindTapAction(els.glanceDetailClose, closeGlanceDetail);
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
-  bindSheetPullToDismiss(els.glanceDetailSheet, closeGlanceDetail);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
   bindTapAction(els.installAction, handleInstallAction);
@@ -5834,41 +5841,95 @@ function updatePlaceGlance(placeId) {
 }
 
 const sheetPullDismissStates = new WeakMap();
+const shownSheetStack = [];
+
+function noteSheetShown(sheet) {
+  const priorIndex = shownSheetStack.indexOf(sheet);
+  if (priorIndex >= 0) shownSheetStack.splice(priorIndex, 1);
+  shownSheetStack.push(sheet);
+}
+
+function isTopmostShownSheet(sheet) {
+  for (let index = shownSheetStack.length - 1; index >= 0; index -= 1) {
+    const candidate = shownSheetStack[index];
+    if (!candidate?.isConnected || candidate.hidden || !candidate.classList.contains("show")) {
+      shownSheetStack.splice(index, 1);
+    }
+  }
+  return shownSheetStack[shownSheetStack.length - 1] === sheet;
+}
 
 function resetSheetPullDismiss(sheet) {
   if (!sheet) return;
   const gesture = sheetPullDismissStates.get(sheet);
   if (gesture) {
+    gesture.trackingAbort?.abort();
+    gesture.trackingAbort = null;
+    if (gesture.pointerId !== null) {
+      try { gesture.handle.releasePointerCapture(gesture.pointerId); } catch {}
+    }
     gesture.active = false;
     gesture.claimed = false;
     gesture.rejected = false;
     gesture.pointerId = null;
+    gesture.distance = 0;
+    gesture.velocity = 0;
   }
   sheet.classList.remove("is-dragging");
   sheet.style.removeProperty("--sheet-drag-y");
 }
 
-function bindSheetPullToDismiss(sheet, dismiss) {
+function bindSheetPullToDismiss(sheet, dismiss, canDismiss = null) {
   const handle = sheet?.querySelector?.(".sheet-grabber");
-  if (!sheet || !handle || typeof dismiss !== "function" || sheetPullDismissStates.has(sheet)) return;
+  if (!sheet || !handle) return;
+
+  const enabled = typeof dismiss === "function";
+  handle.hidden = !enabled;
+  const existing = sheetPullDismissStates.get(sheet);
+  if (existing) {
+    existing.dismiss = enabled ? dismiss : null;
+    existing.canDismiss = typeof canDismiss === "function" ? canDismiss : null;
+    if (!enabled) resetSheetPullDismiss(sheet);
+    return;
+  }
+  if (!enabled) return;
 
   const gesture = {
+    handle,
+    dismiss,
+    canDismiss: typeof canDismiss === "function" ? canDismiss : null,
     active: false,
     claimed: false,
     rejected: false,
     pointerId: null,
+    trackingAbort: null,
     startX: 0,
     startY: 0,
     startTime: 0,
-    distance: 0
+    distance: 0,
+    lastDistance: 0,
+    lastSampleTime: 0,
+    velocity: 0
   };
   sheetPullDismissStates.set(sheet, gesture);
 
   const eventTime = (event) => Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
+  const stopTracking = () => {
+    gesture.trackingAbort?.abort();
+    gesture.trackingAbort = null;
+  };
   const snapBack = () => {
+    const pointerId = gesture.pointerId;
+    stopTracking();
     gesture.active = false;
     gesture.claimed = false;
+    gesture.rejected = false;
     gesture.pointerId = null;
+    gesture.distance = 0;
+    gesture.velocity = 0;
+    if (pointerId !== null) {
+      try { handle.releasePointerCapture(pointerId); } catch {}
+    }
     sheet.classList.remove("is-dragging");
     sheet.style.setProperty("--sheet-drag-y", "0px");
     setTimeout(() => {
@@ -5878,21 +5939,7 @@ function bindSheetPullToDismiss(sheet, dismiss) {
     }, 300);
   };
 
-  handle.addEventListener("pointerdown", (event) => {
-    if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
-    if (sheet.hidden || !sheet.classList.contains("show") || sheet.classList.contains("sheet-keyboard-active")) return;
-    gesture.active = true;
-    gesture.claimed = false;
-    gesture.rejected = false;
-    gesture.pointerId = event.pointerId;
-    gesture.startX = event.clientX;
-    gesture.startY = event.clientY;
-    gesture.startTime = eventTime(event);
-    gesture.distance = 0;
-    try { handle.setPointerCapture(event.pointerId); } catch {}
-  });
-
-  window.addEventListener("pointermove", (event) => {
+  const move = (event) => {
     if (!gesture.active || event.pointerId !== gesture.pointerId || gesture.rejected) return;
     const dx = event.clientX - gesture.startX;
     const dy = event.clientY - gesture.startY;
@@ -5905,51 +5952,120 @@ function bindSheetPullToDismiss(sheet, dismiss) {
       gesture.claimed = true;
       sheet.classList.add("is-dragging");
     }
-    gesture.distance = Math.max(0, dy);
+    const nextDistance = Math.max(0, dy);
+    const sampleTime = eventTime(event);
+    const sampleElapsed = Math.max(1, sampleTime - gesture.lastSampleTime);
+    const sampleVelocity = (nextDistance - gesture.lastDistance) / sampleElapsed;
+    gesture.velocity = (gesture.velocity * 0.35) + (sampleVelocity * 0.65);
+    gesture.distance = nextDistance;
+    gesture.lastDistance = nextDistance;
+    gesture.lastSampleTime = sampleTime;
     sheet.style.setProperty("--sheet-drag-y", `${Math.round(gesture.distance)}px`);
     event.preventDefault();
-  }, { capture: true, passive: false });
+  };
 
   const finish = (event, cancelled = false) => {
     if (!gesture.active || event.pointerId !== gesture.pointerId) return;
-    const elapsed = Math.max(1, eventTime(event) - gesture.startTime);
-    const velocity = gesture.distance / elapsed;
+    const finishedAt = eventTime(event);
+    const recentVelocity = finishedAt - gesture.lastSampleTime <= 160
+      ? gesture.velocity
+      : 0;
     const distanceThreshold = Math.min(120, sheet.getBoundingClientRect().height * 0.28);
-    const shouldDismiss = !cancelled && gesture.claimed && (
-      gesture.distance >= distanceThreshold ||
-      (gesture.distance >= 36 && velocity >= 0.65)
+    const remainsDismissible = (
+      !sheet.hidden &&
+      sheet.classList.contains("show") &&
+      !sheet.classList.contains("sheet-keyboard-active") &&
+      isTopmostShownSheet(sheet) &&
+      (!gesture.canDismiss || gesture.canDismiss())
     );
+    const shouldDismiss = !cancelled && gesture.claimed && remainsDismissible && (
+      gesture.distance >= distanceThreshold ||
+      (gesture.distance >= 36 && recentVelocity >= 0.65)
+    );
+    const dismissAction = gesture.dismiss;
+    stopTracking();
     gesture.active = false;
     gesture.pointerId = null;
     try { handle.releasePointerCapture(event.pointerId); } catch {}
-    if (shouldDismiss) {
+    if (shouldDismiss && typeof dismissAction === "function") {
       gesture.claimed = false;
       sheet.classList.remove("is-dragging");
-      dismiss();
+      dismissAction();
       setTimeout(() => resetSheetPullDismiss(sheet), 300);
       return;
     }
     snapBack();
   };
 
-  window.addEventListener("pointerup", (event) => finish(event), true);
-  window.addEventListener("pointercancel", (event) => finish(event, true), true);
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (
+      sheet.hidden ||
+      !sheet.classList.contains("show") ||
+      sheet.classList.contains("sheet-keyboard-active") ||
+      !isTopmostShownSheet(sheet) ||
+      (gesture.canDismiss && !gesture.canDismiss())
+    ) return;
+    gesture.active = true;
+    gesture.claimed = false;
+    gesture.rejected = false;
+    gesture.pointerId = event.pointerId;
+    gesture.startX = event.clientX;
+    gesture.startY = event.clientY;
+    gesture.startTime = eventTime(event);
+    gesture.distance = 0;
+    gesture.lastDistance = 0;
+    gesture.lastSampleTime = gesture.startTime;
+    gesture.velocity = 0;
+
+    gesture.trackingAbort?.abort();
+    const trackingAbort = new AbortController();
+    gesture.trackingAbort = trackingAbort;
+    window.addEventListener("pointermove", move, { capture: true, passive: false, signal: trackingAbort.signal });
+    window.addEventListener("pointerup", (releaseEvent) => finish(releaseEvent), { capture: true, signal: trackingAbort.signal });
+    window.addEventListener("pointercancel", (cancelEvent) => finish(cancelEvent, true), { capture: true, signal: trackingAbort.signal });
+    window.addEventListener("blur", () => snapBack(), { once: true, signal: trackingAbort.signal });
+    try { handle.setPointerCapture(event.pointerId); } catch {}
+  });
+
+  handle.addEventListener("lostpointercapture", (event) => {
+    if (gesture.active && event.pointerId === gesture.pointerId) finish(event, true);
+  });
 }
 
-function showSheet(backdrop, sheet) {
+function showSheet(backdrop, sheet, options = {}) {
+  const {
+    onPullDismiss = null,
+    canPullDismiss = null,
+    resetScroll = false
+  } = options;
+  const pullDismissEnabled = sheet.dataset.pullDismiss !== "disabled";
+  if (sheet.dataset.pullDismiss === "enabled" && typeof onPullDismiss !== "function") {
+    console.warn(`Sheet #${sheet.id || "unknown"} is missing its pull-dismiss callback.`);
+  }
+  bindSheetPullToDismiss(
+    sheet,
+    pullDismissEnabled ? onPullDismiss : null,
+    canPullDismiss
+  );
   resetSheetPullDismiss(sheet);
+  if (resetScroll) sheet.scrollTop = 0;
   // Force the initial translated state to commit before adding `.show`.
   // This keeps the slide transition, and avoids relying on deferred timers.
   void sheet.offsetHeight;
   backdrop.classList.add("show");
   sheet.classList.add("show");
+  noteSheetShown(sheet);
 }
 
 function openPlaceSheet() {
   renderSavedPlaces();
   els.placeBackdrop.hidden = false;
   els.placeSheet.hidden = false;
-  showSheet(els.placeBackdrop, els.placeSheet);
+  showSheet(els.placeBackdrop, els.placeSheet, {
+    onPullDismiss: closePlaceSheet,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
 }
 
@@ -8516,7 +8632,11 @@ function openLiveActivityLab() {
   if (!els.liveActivitySheet || !els.liveActivityBackdrop) return;
   els.liveActivityBackdrop.hidden = false;
   els.liveActivitySheet.hidden = false;
-  showSheet(els.liveActivityBackdrop, els.liveActivitySheet);
+  showSheet(els.liveActivityBackdrop, els.liveActivitySheet, {
+    onPullDismiss: closeLiveActivityLab,
+    canPullDismiss: () => !state.nativeStormActivityDebug?.pending,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
   const bridgeReady = Boolean(nativeStormActivityBridge()?.supported);
   updateLiveActivityLabStatus(
@@ -10806,7 +10926,10 @@ function openGlanceDetail(kind, returnFocus = null) {
 
   els.glanceDetailBackdrop.hidden = false;
   els.glanceDetailSheet.hidden = false;
-  showSheet(els.glanceDetailBackdrop, els.glanceDetailSheet);
+  showSheet(els.glanceDetailBackdrop, els.glanceDetailSheet, {
+    onPullDismiss: closeGlanceDetail,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
   requestAnimationFrame(() => els.glanceDetailClose?.focus({ preventScroll: true }));
 }
@@ -11960,7 +12083,10 @@ function openAlertSheet() {
   const backdrop = document.getElementById("alertBackdrop");
   backdrop.hidden = false;
   sheet.hidden = false;
-  showSheet(backdrop, sheet);
+  showSheet(backdrop, sheet, {
+    onPullDismiss: closeAlertSheet,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
 }
 

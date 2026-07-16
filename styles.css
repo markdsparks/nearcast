@@ -896,6 +896,65 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Atomic controls should feel pressable, not like selectable document text.
+   Reading copy, form fields, code, and links intentionally stay selectable. */
+:where(
+  button,
+  summary,
+  [role="button"]:not(.sheet-hour-row),
+  [role="tab"],
+  [role="switch"],
+  [role="slider"],
+  input[type="range"],
+  .tap-action-target:not(.sheet-hour-row),
+  .hour-card,
+  .day-row,
+  .summary-strip-item,
+  .for-you-card,
+  .glance-signal:is(.has-tip, .has-detail),
+  .place-item-main,
+  .result-button,
+  .memory-main,
+  .graph-memory-window,
+  .daylight-arc,
+  .nowcast,
+  .sheet-grabber,
+  .sheet-graph,
+  .tile-map
+) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.sheet-hour-row:not(.is-expanded),
+.sheet-hour-row.is-expanded > :not(.sheet-hour-detail) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:where(
+  input:not([type="range"]),
+  textarea,
+  [contenteditable="true"],
+  pre,
+  code,
+  [data-selectable-text],
+  .sheet-hour-detail
+) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+:where(.tile-layer img, img[alt=""]) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+
 :where(
   button,
   a[href],
@@ -10321,13 +10380,20 @@ body.map-immersive-active #mapLegend {
   max-height: calc(var(--app-viewport-height, 100dvh) - 10px);
   padding-bottom: max(28px, calc(18px + env(safe-area-inset-bottom, 0px)));
 }
+
+.day-sheet[data-pull-dismiss="disabled"] {
+  padding-top: 32px;
+}
+
 .day-sheet.show {
   transform: translateY(var(--sheet-drag-y, 0px));
 }
 
 .day-sheet.is-dragging {
   transition: none;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 body.map-immersive-active .sheet-backdrop {
@@ -10339,7 +10405,7 @@ body.map-immersive-active .day-sheet {
 }
 
 body.map-immersive-active .day-sheet.show {
-  transform: translateY(0);
+  transform: translateY(var(--sheet-drag-y, 0px));
 }
 
 .day-sheet.storm-view-sheet {
@@ -10790,20 +10856,25 @@ body.map-immersive-active .day-sheet.show {
 }
 
 .sheet-grabber {
-  position: relative;
-  z-index: 2;
-  width: 64px;
-  height: 28px;
-  margin: -4px auto -2px;
+  position: sticky;
+  top: 2px;
+  z-index: 4;
+  width: 80px;
+  height: 44px;
+  margin: -8px auto -14px;
   background: transparent;
   cursor: grab;
   touch-action: none;
 }
 
+.sheet-grabber[hidden] {
+  display: none;
+}
+
 .sheet-grabber::after {
   content: "";
   position: absolute;
-  top: 8px;
+  top: 13px;
   left: 50%;
   width: 40px;
   height: 4px;

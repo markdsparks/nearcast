@@ -500,7 +500,10 @@ function openDayDetail({
   const sheet = document.getElementById("dayDetail");
   backdrop.hidden = false;
   sheet.hidden = false;
-  showSheet(backdrop, sheet);
+  showSheet(backdrop, sheet, {
+    onPullDismiss: closeDayDetail,
+    resetScroll: true
+  });
   document.body.style.overflow = "hidden";
   maybeExtendRollingTimeline();
 }

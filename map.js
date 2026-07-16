@@ -689,7 +689,12 @@ function openXweatherStormReceiptSheet(receipt = mapState.xweatherStormCloseout 
   };
   backdrop.hidden = false;
   sheet.hidden = false;
-  if (typeof showSheet === "function") showSheet(backdrop, sheet);
+  if (typeof showSheet === "function") {
+    showSheet(backdrop, sheet, {
+      onPullDismiss: closeXweatherStormReceiptSheet,
+      resetScroll: true
+    });
+  }
   else {
     backdrop.classList.add("show");
     sheet.classList.add("show");
@@ -1083,7 +1088,12 @@ function openXweatherStormSheet(options = {}) {
   }
   backdrop.hidden = false;
   sheet.hidden = false;
-  if (typeof showSheet === "function") showSheet(backdrop, sheet);
+  if (typeof showSheet === "function") {
+    showSheet(backdrop, sheet, {
+      onPullDismiss: closeXweatherStormSheet,
+      resetScroll: true
+    });
+  }
   else {
     backdrop.classList.add("show");
     sheet.classList.add("show");
