@@ -8459,7 +8459,7 @@ body.map-immersive-active #mapLegend {
   width: 100%;
   cursor: grab;
   user-select: none;
-  touch-action: none;
+  touch-action: pan-y pinch-zoom;
 }
 #weatherMap:focus-visible {
   outline: 3px solid var(--blue);
@@ -8503,6 +8503,7 @@ body.map-immersive-active #mapLegend {
   background: transparent;
   color: transparent;
   cursor: pointer;
+  touch-action: pan-y pinch-zoom;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -10321,7 +10322,12 @@ body.map-immersive-active #mapLegend {
   padding-bottom: max(28px, calc(18px + env(safe-area-inset-bottom, 0px)));
 }
 .day-sheet.show {
-  transform: translateY(0);
+  transform: translateY(var(--sheet-drag-y, 0px));
+}
+
+.day-sheet.is-dragging {
+  transition: none;
+  user-select: none;
 }
 
 body.map-immersive-active .sheet-backdrop {
@@ -10784,11 +10790,36 @@ body.map-immersive-active .day-sheet.show {
 }
 
 .sheet-grabber {
+  position: relative;
+  z-index: 2;
+  width: 64px;
+  height: 28px;
+  margin: -4px auto -2px;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheet-grabber::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 50%;
   width: 40px;
   height: 4px;
   border-radius: 999px;
   background: var(--line);
-  margin: 4px auto 14px;
+  transform: translateX(-50%);
+}
+
+.day-sheet.is-dragging .sheet-grabber {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-sheet {
+    transition: none;
+  }
 }
 
 .sheet-close {

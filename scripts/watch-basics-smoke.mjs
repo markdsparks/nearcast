@@ -53,9 +53,12 @@ assert.match(watchApp, /struct WatchTemperatureRange/, "temperature preserves cu
 assert.match(watchApp, /struct WatchWindVector/, "wind uses direction plus speed");
 assert.match(watchApp, /struct WatchRainProbability/, "rain uses probability plus an hourly sequence");
 assert.match(watchApp, /struct WatchHourlyForecastCard/, "hourly weather uses one continuous forecast composition");
-assert.match(watchApp, /struct WatchHourlyForecastCard[\s\S]*VStack\(spacing: useUltraLayout \? 5 : 3\)[\s\S]*frame\(height: useUltraLayout \? 34 : 30\)/, "hourly time, condition, and temperature use shared rows with a fixed condition height");
+assert.match(watchApp, /struct WatchHourlyForecastCard[\s\S]*metricRailWidth[\s\S]*WatchHourlyForecastColumns[\s\S]*WatchHourlyRainBand[\s\S]*WatchHourlyWindBand/, "hourly temperature, rain, and wind share one metric rail and hourly grid");
+assert.match(watchApp, /struct WatchHourlyForecastColumns[\s\S]*frame\(width: metricRailWidth\)[\s\S]*watchCompactHourLabel/, "hourly forecast columns reserve the same rail without shrinking full phone time labels");
 assert.match(watchApp, /struct WatchHourlyRainBand/, "hourly rain uses one aligned probability band");
 assert.match(watchApp, /struct WatchHourlyWindBand/, "hourly wind preserves direction and shows the speed trend");
+assert.match(watchApp, /struct WatchHourlyWindTrail[\s\S]*nearcastHourlyColumnCenter/, "wind points sit at the centers of the shared hourly columns");
+assert.doesNotMatch(watchApp, /trailWidth:|ViewThatFits\(in: \.horizontal\)[\s\S]{0,500}WatchHourlyWindTrail/, "hourly wind no longer uses a disconnected trailing chart");
 assert.match(watchApp, /struct WatchDailyTemperatureTrack/, "daily rows compare low-to-high ranges on one shared scale");
 assert.match(watchApp, /Text\(watchCompactDayLabel\(day\.label\)\)[\s\S]*frame\(width: useUltraLayout \? 47 : 43, alignment: \.leading\)/, "daily labels occupy a stable column");
 assert.match(watchApp, /watchConditionSymbol\(day\.conditionCode, isDay: true\)[\s\S]*frame\(width: useUltraLayout \? 34 : 31, height: useUltraLayout \? 27 : 25\)/, "daily condition symbols occupy a stable column");

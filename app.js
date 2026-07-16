@@ -1,4 +1,4 @@
-const VERSION = "3.0.262";
+const VERSION = "3.0.264";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -662,6 +662,7 @@ const STORM_FORECAST_FRAME_LIMIT = 6;
 const STORM_FORECAST_MIN_SAMPLE_HITS = 7;
 const STORM_FORECAST_MIN_SAMPLE_DENSITY = 0.0025;
 const MAP_TAP_MOVE_PX = 8;
+const MAP_PREVIEW_TAP_MAX_MS = 650;
 const MAP_WHEEL_ZOOM_SENSITIVITY = 360;
 const CARTO_TILE_HOSTS = ["a", "b", "c", "d"];
 const US_STATE_NAMES = {
@@ -848,6 +849,8 @@ const mapTapState = {
   moved: false,
   startX: 0,
   startY: 0,
+  pointerId: null,
+  startedAt: 0,
   targetEl: null
 };
 
@@ -3730,6 +3733,7 @@ function bindEvents() {
   bindTapAction(els.placeWelcomeButton, showWelcomeFromPlaces);
   bindTapAction(els.glanceDetailClose, closeGlanceDetail);
   bindTapAction(els.glanceDetailBackdrop, closeGlanceDetail);
+  bindSheetPullToDismiss(els.glanceDetailSheet, closeGlanceDetail);
   bindTapAction(els.welcomeLocate, useCurrentLocation);
   bindTapAction(els.welcomeAmbientLabel, handleWelcomeAmbientChip);
   bindTapAction(els.installAction, handleInstallAction);
@@ -5829,7 +5833,111 @@ function updatePlaceGlance(placeId) {
   updatePlaceSwitcher();
 }
 
+const sheetPullDismissStates = new WeakMap();
+
+function resetSheetPullDismiss(sheet) {
+  if (!sheet) return;
+  const gesture = sheetPullDismissStates.get(sheet);
+  if (gesture) {
+    gesture.active = false;
+    gesture.claimed = false;
+    gesture.rejected = false;
+    gesture.pointerId = null;
+  }
+  sheet.classList.remove("is-dragging");
+  sheet.style.removeProperty("--sheet-drag-y");
+}
+
+function bindSheetPullToDismiss(sheet, dismiss) {
+  const handle = sheet?.querySelector?.(".sheet-grabber");
+  if (!sheet || !handle || typeof dismiss !== "function" || sheetPullDismissStates.has(sheet)) return;
+
+  const gesture = {
+    active: false,
+    claimed: false,
+    rejected: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    distance: 0
+  };
+  sheetPullDismissStates.set(sheet, gesture);
+
+  const eventTime = (event) => Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
+  const snapBack = () => {
+    gesture.active = false;
+    gesture.claimed = false;
+    gesture.pointerId = null;
+    sheet.classList.remove("is-dragging");
+    sheet.style.setProperty("--sheet-drag-y", "0px");
+    setTimeout(() => {
+      if (!gesture.active && sheet.classList.contains("show")) {
+        sheet.style.removeProperty("--sheet-drag-y");
+      }
+    }, 300);
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (sheet.hidden || !sheet.classList.contains("show") || sheet.classList.contains("sheet-keyboard-active")) return;
+    gesture.active = true;
+    gesture.claimed = false;
+    gesture.rejected = false;
+    gesture.pointerId = event.pointerId;
+    gesture.startX = event.clientX;
+    gesture.startY = event.clientY;
+    gesture.startTime = eventTime(event);
+    gesture.distance = 0;
+    try { handle.setPointerCapture(event.pointerId); } catch {}
+  });
+
+  window.addEventListener("pointermove", (event) => {
+    if (!gesture.active || event.pointerId !== gesture.pointerId || gesture.rejected) return;
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    if (!gesture.claimed) {
+      if (dy <= -8 || (Math.abs(dx) >= 8 && Math.abs(dx) > Math.max(0, dy) * 1.25)) {
+        gesture.rejected = true;
+        return;
+      }
+      if (dy < 8 || dy <= Math.abs(dx) * 1.25) return;
+      gesture.claimed = true;
+      sheet.classList.add("is-dragging");
+    }
+    gesture.distance = Math.max(0, dy);
+    sheet.style.setProperty("--sheet-drag-y", `${Math.round(gesture.distance)}px`);
+    event.preventDefault();
+  }, { capture: true, passive: false });
+
+  const finish = (event, cancelled = false) => {
+    if (!gesture.active || event.pointerId !== gesture.pointerId) return;
+    const elapsed = Math.max(1, eventTime(event) - gesture.startTime);
+    const velocity = gesture.distance / elapsed;
+    const distanceThreshold = Math.min(120, sheet.getBoundingClientRect().height * 0.28);
+    const shouldDismiss = !cancelled && gesture.claimed && (
+      gesture.distance >= distanceThreshold ||
+      (gesture.distance >= 36 && velocity >= 0.65)
+    );
+    gesture.active = false;
+    gesture.pointerId = null;
+    try { handle.releasePointerCapture(event.pointerId); } catch {}
+    if (shouldDismiss) {
+      gesture.claimed = false;
+      sheet.classList.remove("is-dragging");
+      dismiss();
+      setTimeout(() => resetSheetPullDismiss(sheet), 300);
+      return;
+    }
+    snapBack();
+  };
+
+  window.addEventListener("pointerup", (event) => finish(event), true);
+  window.addEventListener("pointercancel", (event) => finish(event, true), true);
+}
+
 function showSheet(backdrop, sheet) {
+  resetSheetPullDismiss(sheet);
   // Force the initial translated state to commit before adding `.show`.
   // This keeps the slide transition, and avoids relying on deferred timers.
   void sheet.offsetHeight;
@@ -10671,13 +10779,19 @@ function removeSavedPlace(id) {
   }
 }
 
-function openGlanceDetail(kind) {
+let glanceDetailReturnFocus = null;
+
+function openGlanceDetail(kind, returnFocus = null) {
   const data = state.forecast;
   if (!data || !els.glanceDetailSheet || !els.glanceDetailBackdrop) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const detail = buildGlanceDetail(kind, data, tempUnit, windUnit, weatherTruth(data));
   if (!detail) return;
+
+  glanceDetailReturnFocus = returnFocus instanceof HTMLElement
+    ? returnFocus
+    : (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 
   hideMetricTip();
   els.glanceDetailSheet.className = `day-sheet glance-detail-sheet is-${detail.kind}`;
@@ -10694,6 +10808,7 @@ function openGlanceDetail(kind) {
   els.glanceDetailSheet.hidden = false;
   showSheet(els.glanceDetailBackdrop, els.glanceDetailSheet);
   document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => els.glanceDetailClose?.focus({ preventScroll: true }));
 }
 
 function closeGlanceDetail() {
@@ -10704,6 +10819,9 @@ function closeGlanceDetail() {
   setTimeout(() => {
     els.glanceDetailBackdrop.hidden = true;
     els.glanceDetailSheet.hidden = true;
+    const returnFocus = glanceDetailReturnFocus;
+    glanceDetailReturnFocus = null;
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }, 260);
 }
 
@@ -11113,7 +11231,7 @@ function initMetricTipListeners() {
   const openCardDetail = (card) => {
     const kind = card?.dataset?.glanceDetail;
     if (!kind) return false;
-    openGlanceDetail(kind);
+    openGlanceDetail(kind, card);
     return true;
   };
   const toggleCardTip = (card) => {

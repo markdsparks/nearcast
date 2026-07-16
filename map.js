@@ -2188,53 +2188,43 @@ function initMap() {
 
 function bindMapDrag() {
   const el = els.weatherMap;
-  document.addEventListener("click", openMapLibrePreviewFromEvent, true);
-  document.addEventListener("pointerup", openMapLibrePreviewFromEvent, true);
-  document.addEventListener("touchend", openMapLibrePreviewFromEvent, { capture: true, passive: false });
-  el.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    startMapPreviewTap(e.clientX, e.clientY, el);
-    startMapDrag(e.clientX, e.clientY, el);
-  });
-  window.addEventListener("mousemove", (e) => moveMapDrag(e.clientX, e.clientY));
-  window.addEventListener("mouseup", (e) => {
-    const shouldOpen = finishMapPreviewTap(e.clientX, e.clientY);
-    endMapGesture(el);
-    if (shouldOpen) enterImmersiveMap();
-  });
-
-  el.addEventListener("touchstart", (e) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
+  el.addEventListener("pointerdown", (event) => {
+    if (event.isPrimary === false) {
       cancelMapPreviewTap();
-      startMapPinch(e.touches[0], e.touches[1]);
       return;
     }
-    const t = e.touches[0];
-    startMapPreviewTap(t.clientX, t.clientY, el);
-    startMapDrag(t.clientX, t.clientY, el);
-  }, { passive: false });
-  el.addEventListener("touchmove", (e) => {
-    if (pinchState.active && e.touches.length === 2) {
-      e.preventDefault();
-      moveMapPinch(e.touches[0], e.touches[1]);
-      return;
-    }
-    if (e.touches.length === 1) {
-      const t = e.touches[0];
-      moveMapDrag(t.clientX, t.clientY);
-    }
-  }, { passive: false });
-  el.addEventListener("touchend", (e) => {
-    const t = e.changedTouches[0];
-    const shouldOpen = t ? finishMapPreviewTap(t.clientX, t.clientY) : false;
-    endMapGesture(el);
-    if (shouldOpen) enterImmersiveMap();
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    startMapPreviewTap(event.clientX, event.clientY, el, event.pointerId, event.timeStamp);
   });
-  el.addEventListener("touchcancel", () => {
+  el.addEventListener("pointermove", (event) => {
+    if (!mapTapState.active || event.pointerId !== mapTapState.pointerId) return;
+    updateMapPreviewTap(event.clientX, event.clientY);
+  });
+  el.addEventListener("pointerup", (event) => {
+    if (!mapTapState.active || event.pointerId !== mapTapState.pointerId) return;
+    const shouldOpen = finishMapPreviewTap(event.clientX, event.clientY, event.timeStamp);
+    if (!shouldOpen) return;
+    event.preventDefault();
+    event.stopPropagation();
+    enterImmersiveMap();
+  });
+  el.addEventListener("pointercancel", (event) => {
+    if (mapTapState.active && event.pointerId === mapTapState.pointerId) {
+      cancelMapPreviewTap();
+    }
+  });
+  el.addEventListener("click", (event) => {
+    // Physical mouse/touch activation is settled by pointerup. A zero-detail
+    // click is keyboard or assistive activation and remains a valid open path.
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.detail === 0 && state.activePlace && !mapState.immersive) {
+      enterImmersiveMap();
+    }
+  }, true);
+  el.addEventListener("dragstart", (event) => event.preventDefault());
+  el.addEventListener("lostpointercapture", () => {
     cancelMapPreviewTap();
-    endMapGesture(el);
   });
   el.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -2242,41 +2232,16 @@ function bindMapDrag() {
     e.preventDefault();
     enterImmersiveMap();
   });
-  el.addEventListener("click", (e) => {
-    openMapLibrePreviewFromEvent(e);
-  }, true);
 }
 
-function openMapLibrePreviewFromEvent(event) {
-  if (!mapRendererIsGl() || mapState.immersive || !state.activePlace) return false;
-  const target = event.target instanceof Element
-    ? event.target
-    : event.target?.parentElement;
-  const previewMap = target?.closest?.("#weatherMap.is-gl-renderer");
-  if (!previewMap || previewMap !== els.weatherMap) return false;
-  const point = eventClientPoint(event);
-  if (mapTapState.active && point && !finishMapPreviewTap(point.x, point.y)) return false;
-  event.preventDefault();
-  event.stopPropagation();
-  enterImmersiveMap();
-  return true;
-}
-
-function eventClientPoint(event) {
-  const touch = event.changedTouches?.[0] || event.touches?.[0];
-  if (touch) return { x: touch.clientX, y: touch.clientY };
-  if (typeof event.clientX === "number" && typeof event.clientY === "number") {
-    return { x: event.clientX, y: event.clientY };
-  }
-  return null;
-}
-
-function startMapPreviewTap(x, y, el = els.weatherMap) {
+function startMapPreviewTap(x, y, el = els.weatherMap, pointerId = null, startedAt = performance.now()) {
   mapTapState.active = true;
   mapTapState.valid = !mapState.immersive && Boolean(state.activePlace);
   mapTapState.moved = false;
   mapTapState.startX = x;
   mapTapState.startY = y;
+  mapTapState.pointerId = pointerId;
+  mapTapState.startedAt = Number.isFinite(startedAt) ? startedAt : performance.now();
   mapTapState.targetEl = el;
 }
 
@@ -2287,14 +2252,19 @@ function updateMapPreviewTap(x, y) {
   if (Math.hypot(dx, dy) > MAP_TAP_MOVE_PX) mapTapState.moved = true;
 }
 
-function finishMapPreviewTap(x, y) {
+function finishMapPreviewTap(x, y, finishedAt = performance.now()) {
   updateMapPreviewTap(x, y);
   const el = mapTapState.targetEl;
   const rect = el?.getBoundingClientRect();
   const inside = rect
     ? x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
     : false;
-  const shouldOpen = mapTapState.active && mapTapState.valid && !mapTapState.moved && inside;
+  const duration = Math.max(0, finishedAt - mapTapState.startedAt);
+  const shouldOpen = mapTapState.active &&
+    mapTapState.valid &&
+    !mapTapState.moved &&
+    inside &&
+    duration <= MAP_PREVIEW_TAP_MAX_MS;
   cancelMapPreviewTap();
   return shouldOpen;
 }
@@ -2303,6 +2273,8 @@ function cancelMapPreviewTap() {
   mapTapState.active = false;
   mapTapState.valid = false;
   mapTapState.moved = false;
+  mapTapState.pointerId = null;
+  mapTapState.startedAt = 0;
   mapTapState.targetEl = null;
 }
 
@@ -2478,10 +2450,6 @@ function ensureMapLibreSurface(container) {
     height: "100%",
     overflow: "hidden"
   });
-  if (!surface.dataset.nearcastTapBound) {
-    surface.dataset.nearcastTapBound = "1";
-    surface.addEventListener("click", openMapLibrePreviewFromEvent, true);
-  }
   return surface;
 }
 
@@ -2496,10 +2464,7 @@ function syncMapLibrePreviewHitbox(container) {
   hitbox.type = "button";
   hitbox.className = "maplibre-open-hitbox";
   hitbox.tabIndex = -1;
-  hitbox.setAttribute("aria-label", "Open immersive map");
-  hitbox.addEventListener("click", openMapLibrePreviewFromEvent);
-  hitbox.addEventListener("pointerup", openMapLibrePreviewFromEvent);
-  hitbox.addEventListener("touchend", openMapLibrePreviewFromEvent, { passive: false });
+  hitbox.setAttribute("aria-hidden", "true");
   container.appendChild(hitbox);
 }
 

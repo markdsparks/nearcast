@@ -276,5 +276,8 @@ require(nearcastWindFlowDegrees(from: 0) == 180, "a north wind flows toward the 
 require(nearcastWindFlowDegrees(from: 225) == 45, "a southwest wind flows toward the northeast")
 require(nearcastWindFlowDegrees(from: -90) == 90, "negative provider bearings normalize before becoming flow directions")
 require(nearcastWindFlowDegrees(from: nil) == 0, "an unknown wind direction keeps the unrotated fallback")
+require(nearcastHourlyColumnCenter(index: 0, columnCount: 4, totalWidth: 120) == 15, "the first wind point uses the first hourly column center")
+require(nearcastHourlyColumnCenter(index: 3, columnCount: 4, totalWidth: 120) == 105, "the last wind point uses the last hourly column center")
+require(nearcastHourlyColumnCenter(index: 1, columnCount: 3, totalWidth: 120) == 60, "three-column Watch layouts share the same center geometry")
 
 print("PASS  Nearcast Watch snapshot trust contract")

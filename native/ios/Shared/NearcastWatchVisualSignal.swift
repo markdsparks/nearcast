@@ -8,6 +8,13 @@ func nearcastWindFlowDegrees(from sourceDegrees: Int?) -> Double {
     return Double((normalizedSource + 180) % 360)
 }
 
+func nearcastHourlyColumnCenter(index: Int, columnCount: Int, totalWidth: Double) -> Double {
+    guard columnCount > 0 else { return max(0, totalWidth) / 2 }
+    let safeIndex = min(max(0, index), columnCount - 1)
+    let columnWidth = max(0, totalWidth) / Double(columnCount)
+    return (Double(safeIndex) + 0.5) * columnWidth
+}
+
 /// Presentation-neutral meanings used by both the Watch app and its complications.
 /// Views own color and layout; this model owns which weather fact matters.
 enum NearcastVisualSignalKind: String, Equatable {
