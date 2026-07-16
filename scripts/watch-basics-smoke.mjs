@@ -4,14 +4,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [app, html, serviceWorker, watchApp, complications, sync, snapshot] = await Promise.all([
+const [app, html, serviceWorker, watchApp, complications, sync, snapshot, visualSignal] = await Promise.all([
   readFile(path.join(root, "app.js"), "utf8"),
   readFile(path.join(root, "index.html"), "utf8"),
   readFile(path.join(root, "sw.js"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastWatch/NearcastWatchRootView.swift"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastWatchComplications/NearcastWatchComplications.swift"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastApp/Bridge/NativeWatchSnapshotSync.swift"), "utf8"),
-  readFile(path.join(root, "native/ios/Shared/NearcastWidgetSnapshot.swift"), "utf8")
+  readFile(path.join(root, "native/ios/Shared/NearcastWidgetSnapshot.swift"), "utf8"),
+  readFile(path.join(root, "native/ios/Shared/NearcastWatchVisualSignal.swift"), "utf8")
 ]);
 
 assert.match(complications, /staleAfter: TimeInterval = 12 \* 60 \* 60/, "weather remains useful through ordinary WidgetKit delays");
@@ -37,6 +38,9 @@ assert.match(complications, /complicationBasicsMetricsWidth[\s\S]*totalWidth \* 
 assert.match(complications, /Text\(complicationCardinalDirection\(snapshot\)\)[\s\S]*fixedSize\(horizontal: true/, "wind direction cannot collapse into an ellipsis");
 assert.match(complications, /ComplicationRainBars[\s\S]*minWidth: 16[\s\S]*idealWidth: 27/, "rain bars yield before metric text");
 assert.match(complications, /complicationCardinalDirection[\s\S]*if let degrees = snapshot\.windDirection[\s\S]*cardinalDirection\(degrees\)/, "the complication uses a compact cardinal instead of a verbose phone label");
+assert.match(visualSignal, /func nearcastWindFlowDegrees\(from sourceDegrees: Int\?\)[\s\S]*normalizedSource \+ 180/, "Watch arrows convert meteorological source bearings into flow directions");
+assert.equal(watchApp.match(/nearcastWindFlowDegrees\(from:/g)?.length, 2, "both Watch app wind arrows use the shared flow direction");
+assert.equal(complications.match(/nearcastWindFlowDegrees\(from:/g)?.length, 3, "all Watch complications use the shared flow direction");
 assert.doesNotMatch(complications, /Label\("Rain \\\(entry\.snapshot\.rainChance\)%"/, "rectangular complication does not spell out an icon's meaning");
 assert.doesNotMatch(complications, /transferUserInfo/, "complication source contains no queued phone transfer behavior");
 
@@ -49,9 +53,12 @@ assert.match(watchApp, /struct WatchTemperatureRange/, "temperature preserves cu
 assert.match(watchApp, /struct WatchWindVector/, "wind uses direction plus speed");
 assert.match(watchApp, /struct WatchRainProbability/, "rain uses probability plus an hourly sequence");
 assert.match(watchApp, /struct WatchHourlyForecastCard/, "hourly weather uses one continuous forecast composition");
+assert.match(watchApp, /struct WatchHourlyForecastCard[\s\S]*VStack\(spacing: useUltraLayout \? 5 : 3\)[\s\S]*frame\(height: useUltraLayout \? 34 : 30\)/, "hourly time, condition, and temperature use shared rows with a fixed condition height");
 assert.match(watchApp, /struct WatchHourlyRainBand/, "hourly rain uses one aligned probability band");
 assert.match(watchApp, /struct WatchHourlyWindBand/, "hourly wind preserves direction and shows the speed trend");
 assert.match(watchApp, /struct WatchDailyTemperatureTrack/, "daily rows compare low-to-high ranges on one shared scale");
+assert.match(watchApp, /Text\(watchCompactDayLabel\(day\.label\)\)[\s\S]*frame\(width: useUltraLayout \? 47 : 43, alignment: \.leading\)/, "daily labels occupy a stable column");
+assert.match(watchApp, /watchConditionSymbol\(day\.conditionCode, isDay: true\)[\s\S]*frame\(width: useUltraLayout \? 34 : 31, height: useUltraLayout \? 27 : 25\)/, "daily condition symbols occupy a stable column");
 assert.match(watchApp, /struct WatchPlanMetricPlot/, "plan weather uses the visual instrument for its explicit risk");
 assert.match(watchApp, /updated\.windLabel = nil/, "watch refresh cannot retain a stale cardinal label after direction changes");
 assert.match(watchApp, /safeWatchSurface/, "conditionally absent Plan pages cannot leave the pager on a blank selection");

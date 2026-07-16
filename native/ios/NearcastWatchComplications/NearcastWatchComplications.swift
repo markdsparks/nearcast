@@ -548,7 +548,7 @@ private struct NearcastBasicsRectangle: View {
                     HStack(spacing: 4) {
                         Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                             .font(.system(size: 14, weight: .bold))
-                            .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                            .rotationEffect(.degrees(nearcastWindFlowDegrees(from: snapshot.windDirection)))
                             .nearcastComplicationTint(NearcastComplicationColor.wind)
                             .frame(width: 16)
                         Text("\(snapshot.wind)")
@@ -692,7 +692,7 @@ private struct NearcastWindMark: View {
         VStack(spacing: 0) {
             Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                 .font(.system(size: compact ? 15 : 18, weight: .bold))
-                .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                .rotationEffect(.degrees(nearcastWindFlowDegrees(from: snapshot.windDirection)))
                 .nearcastComplicationTint(NearcastComplicationColor.wind)
             Text("\(snapshot.wind)")
                 .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded).monospacedDigit())
@@ -809,7 +809,7 @@ private struct NearcastWindInstrument: View {
         HStack(spacing: 8) {
             Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                 .font(.system(size: 26, weight: .bold))
-                .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                .rotationEffect(.degrees(nearcastWindFlowDegrees(from: snapshot.windDirection)))
                 .nearcastComplicationTint(NearcastComplicationColor.wind)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .lastTextBaseline, spacing: 3) {

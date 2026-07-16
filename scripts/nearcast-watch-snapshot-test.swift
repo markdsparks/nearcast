@@ -272,4 +272,9 @@ require(mergedSnapshot.planTitle == "Newest plan" && mergedSnapshot.planStartAt 
 require(mergedSnapshot.planRisk == "rain", "an in-flight refresh preserves the plan risk")
 require(mergedSnapshot.daily?.first?.high == 70, "an in-flight refresh merges daily weather basics")
 
+require(nearcastWindFlowDegrees(from: 0) == 180, "a north wind flows toward the south")
+require(nearcastWindFlowDegrees(from: 225) == 45, "a southwest wind flows toward the northeast")
+require(nearcastWindFlowDegrees(from: -90) == 90, "negative provider bearings normalize before becoming flow directions")
+require(nearcastWindFlowDegrees(from: nil) == 0, "an unknown wind direction keeps the unrotated fallback")
+
 print("PASS  Nearcast Watch snapshot trust contract")

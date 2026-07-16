@@ -397,7 +397,7 @@ private struct WatchWindVector: View {
             Image(systemName: snapshot.windDirection == nil ? "wind" : "location.north.fill")
                 .font(.system(size: symbolSize, weight: .bold))
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
-                .rotationEffect(.degrees(Double(snapshot.windDirection ?? 0)))
+                .rotationEffect(.degrees(nearcastWindFlowDegrees(from: snapshot.windDirection)))
                 .frame(width: symbolWidth)
             Text("\(snapshot.wind)")
                 .font(.system(size: valueSize, weight: .bold, design: .rounded).monospacedDigit())
@@ -507,14 +507,20 @@ private struct WatchHourlyForecastCard: View {
 
     var body: some View {
         VStack(spacing: useUltraLayout ? 8 : 6) {
-            HStack(spacing: 0) {
-                ForEach(hours) { hour in
-                    VStack(spacing: useUltraLayout ? 5 : 3) {
+            VStack(spacing: useUltraLayout ? 5 : 3) {
+                HStack(spacing: 0) {
+                    ForEach(hours) { hour in
                         Text(hour.offsetHours == 0 ? "Now" : hour.timeLabel)
                             .font(.system(size: useUltraLayout ? 13 : 12, weight: .bold, design: .rounded))
                             .foregroundStyle(hour.offsetHours == 0 ? watchPrimary : watchMuted)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
+                            .frame(minWidth: 0, maxWidth: .infinity)
+                    }
+                }
+
+                HStack(spacing: 0) {
+                    ForEach(hours) { hour in
                         Image(systemName: watchConditionSymbol(
                             hour.conditionCode ?? snapshot.conditionCode,
                             isDay: hour.isDay ?? snapshot.isDay
@@ -522,10 +528,18 @@ private struct WatchHourlyForecastCard: View {
                         .font(.system(size: useUltraLayout ? 27 : 24, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                        .frame(height: useUltraLayout ? 34 : 30)
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                    }
+                }
+
+                HStack(spacing: 0) {
+                    ForEach(hours) { hour in
                         Text(hour.temperature.map { "\($0)°" } ?? "—")
                             .font(.system(size: useUltraLayout ? 22 : 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .frame(minWidth: 0, maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
 
@@ -611,7 +625,7 @@ private struct WatchHourlyWindBand: View {
         HStack(spacing: 5) {
             Image(systemName: (first?.windDirection ?? snapshot.windDirection) == nil ? "wind" : "location.north.fill")
                 .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold))
-                .rotationEffect(.degrees(Double(first?.windDirection ?? snapshot.windDirection ?? 0)))
+                .rotationEffect(.degrees(nearcastWindFlowDegrees(from: first?.windDirection ?? snapshot.windDirection)))
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastMint)
                 .frame(width: 18)
             Text("\(first?.wind ?? snapshot.wind)")
@@ -742,23 +756,25 @@ private struct WatchDailyForecastRow: View {
 
     var body: some View {
         VStack(spacing: useUltraLayout ? 5 : 3) {
-            HStack(spacing: 7) {
+            HStack(spacing: 0) {
                 Text(watchCompactDayLabel(day.label))
                     .font(.system(size: useUltraLayout ? 15 : 14, weight: .bold, design: .rounded))
                     .foregroundStyle(watchSecondary)
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(width: useUltraLayout ? 47 : 43, alignment: .leading)
                 Image(systemName: watchConditionSymbol(day.conditionCode, isDay: true))
                     .font(.system(size: useUltraLayout ? 23 : 21, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-                Spacer(minLength: 3)
+                    .frame(width: useUltraLayout ? 34 : 31, height: useUltraLayout ? 27 : 25)
+                Spacer(minLength: 4)
                 HStack(spacing: 3) {
                     Image(systemName: "drop.fill")
                         .font(.system(size: useUltraLayout ? 14 : 13, weight: .bold))
+                        .frame(width: useUltraLayout ? 16 : 15)
                     Text("\(day.rainChance)%")
                         .font(.system(size: useUltraLayout ? 14 : 13, weight: .bold, design: .rounded).monospacedDigit())
-                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: useUltraLayout ? 39 : 36, alignment: .trailing)
                 }
                 .foregroundStyle(day.rainChance >= 30 ? (isLuminanceReduced ? Color.white : nearcastCyan) : watchSecondary)
             }
@@ -2106,11 +2122,17 @@ private func shortWatchWindUnit(_ unit: String) -> String {
 }
 
 private func watchWindCardinal(_ snapshot: NearcastWidgetSnapshot) -> String {
-    if let label = cleanOptional(snapshot.windLabel) { return label }
-    guard let degrees = snapshot.windDirection else { return "—" }
-    let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-    let normalized = (degrees % 360 + 360) % 360
-    return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
+    if let degrees = snapshot.windDirection {
+        let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        let normalized = (degrees % 360 + 360) % 360
+        return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
+    }
+    if let label = cleanOptional(snapshot.windLabel),
+       let cardinal = label.split(whereSeparator: \.isWhitespace).last.map({ String($0).uppercased() }),
+       ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"].contains(cardinal) {
+        return cardinal
+    }
+    return "—"
 }
 
 private func watchCardinalDirection(_ degrees: Int?) -> String {

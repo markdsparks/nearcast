@@ -1,5 +1,13 @@
 import Foundation
 
+/// Weather providers report the direction wind comes from. Nearcast's arrows
+/// show the direction the air is moving so they match the iPhone experience.
+func nearcastWindFlowDegrees(from sourceDegrees: Int?) -> Double {
+    guard let sourceDegrees else { return 0 }
+    let normalizedSource = (sourceDegrees % 360 + 360) % 360
+    return Double((normalizedSource + 180) % 360)
+}
+
 /// Presentation-neutral meanings used by both the Watch app and its complications.
 /// Views own color and layout; this model owns which weather fact matters.
 enum NearcastVisualSignalKind: String, Equatable {
