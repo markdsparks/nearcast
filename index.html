@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.265">
-    <link rel="manifest" href="manifest.json?v=3.0.265">
+    <link rel="stylesheet" href="styles.css?v=3.0.267">
+    <link rel="manifest" href="manifest.json?v=3.0.267">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.265">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.265">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.267">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.267">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -134,7 +134,7 @@
               <option value="noaa-wms">NOAA WMS</option>
             </select>
           </div>
-          <div class="menu-setting raw-map-setting" aria-labelledby="rawMapLabel">
+          <div class="menu-setting raw-map-setting" aria-labelledby="rawMapLabel" data-debug-setting hidden>
             <div class="menu-setting-copy">
               <strong id="rawMapLabel">Map detail</strong>
               <span id="rawMapMeta">Standard radar</span>
@@ -144,7 +144,7 @@
               <option value="both">Enhanced test</option>
             </select>
           </div>
-          <div class="menu-setting xweather-storm-setting" aria-labelledby="xweatherStormLabel">
+          <div class="menu-setting xweather-storm-setting" aria-labelledby="xweatherStormLabel" data-debug-setting hidden>
             <div class="menu-setting-copy">
               <strong id="xweatherStormLabel">StormScope</strong>
               <span id="xweatherStormMeta">Off</span>
@@ -446,7 +446,7 @@
                 <rect x="2.5" y="2.5" width="19" height="19" rx="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
               </svg>
             </button>
-            <button class="imm-btn imm-storm-entry" id="immStormEntry" type="button" hidden aria-label="Nearcast StormScope available" title="Nearcast StormScope">
+            <button class="imm-btn imm-storm-entry" id="immStormEntry" type="button" aria-label="Radar view" aria-controls="stormViewSheet" title="Radar view">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M4.5 14.4c1.5-4.6 5.2-7.2 9.9-7.2 2.3 0 4.1.5 5.1 1.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
                 <path d="M5.4 17.7c1.6-3.3 4.6-5 8.2-5 1.8 0 3.4.3 4.8 1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".72"/>
@@ -736,9 +736,9 @@
     </aside>
 
     <div class="sheet-backdrop storm-view-backdrop" id="stormViewBackdrop" hidden></div>
-    <aside class="day-sheet storm-view-sheet" id="stormViewSheet" hidden data-pull-dismiss="enabled" aria-label="Nearcast StormScope" role="dialog" aria-modal="true">
+    <aside class="day-sheet storm-view-sheet" id="stormViewSheet" hidden data-pull-dismiss="enabled" aria-label="Choose radar view" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="stormViewSheetClose" type="button" aria-label="Close Nearcast StormScope">✕</button>
+      <button class="sheet-close" id="stormViewSheetClose" type="button" aria-label="Close radar view">✕</button>
       <header class="storm-view-head">
         <span class="storm-view-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
@@ -748,27 +748,60 @@
           </svg>
         </span>
         <div>
-          <p class="storm-view-kicker" id="stormViewKicker">Premium storm map</p>
-          <h2 id="stormViewTitle">Nearcast StormScope is available</h2>
-          <p id="stormViewSummary">Use StormScope when you want a sharper read on active weather nearby.</p>
+          <p class="storm-view-kicker" id="stormViewKicker">Radar view</p>
+          <h2 id="stormViewTitle">Choose the right level of detail</h2>
+          <p id="stormViewSummary">Nearcast adapts automatically. Check StormScope when you need a closer storm read.</p>
         </div>
       </header>
-      <div class="storm-view-features">
-        <section>
-          <strong id="stormViewFeatureOneTitle">Cleaner storm shape</strong>
-          <span id="stormViewFeatureOneBody">Crisper active radar rendering that is easier to read while panning and zooming.</span>
+      <div class="radar-view-options" aria-label="Radar view options">
+        <section class="radar-view-option radar-view-option-nearcast" data-radar-view-option="nearcast">
+          <div class="radar-view-option-head">
+            <span class="radar-view-option-icon radar-view-option-icon-nearcast" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4.5 14.5c1.4-4.4 5.1-7 9.5-7 2.2 0 4.1.5 5.5 1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M6 18c1.5-3.1 4.3-4.8 7.8-4.8 1.8 0 3.3.3 4.5.9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".72"/>
+                <circle cx="14.2" cy="8.1" r="2.1" fill="currentColor"/>
+              </svg>
+            </span>
+            <div>
+              <div class="radar-view-name-line">
+                <h3>Nearcast Radar</h3>
+                <span class="radar-view-badge">Included</span>
+              </div>
+              <p>Best available live radar and forecast</p>
+            </div>
+          </div>
+          <div class="radar-view-status" data-radar-view-status="nearcast">
+            <span class="radar-view-status-dot" aria-hidden="true"></span>
+            <strong>Automatic</strong>
+            <span>Nearcast chooses the clearest available source.</span>
+          </div>
         </section>
-        <section>
-          <strong id="stormViewFeatureTwoTitle">Lightning on request</strong>
-          <span id="stormViewFeatureTwoBody">Recent strikes stay off by default and load briefly only when you ask for them.</span>
-        </section>
-        <section>
-          <strong id="stormViewFeatureThreeTitle">Motion timeline</strong>
-          <span id="stormViewFeatureThreeBody">Scrub backward and forward to understand where the storm has been and where it may go.</span>
+        <section class="radar-view-option radar-view-option-stormscope" data-radar-view-option="stormscope">
+          <div class="radar-view-option-head">
+            <span class="radar-view-option-icon radar-view-option-icon-stormscope" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4.5 14.4c1.5-4.6 5.2-7.2 9.9-7.2 2.3 0 4.1.5 5.1 1.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="m13.2 3.8-3 6h3.1l-2.4 6.3 6-8h-3.2l2.1-4.3h-2.6Z" fill="currentColor"/>
+              </svg>
+            </span>
+            <div>
+              <div class="radar-view-name-line">
+                <h3>StormScope</h3>
+                <span class="radar-view-badge radar-view-badge-beta">Beta</span>
+              </div>
+              <p>Sharper storm shape, motion, and lightning on request</p>
+            </div>
+          </div>
+          <div class="radar-view-status radar-view-status-stormscope" data-radar-view-status="stormscope">
+            <span class="radar-view-status-dot" aria-hidden="true"></span>
+            <strong>Ready to check</strong>
+            <span>Starts only when you ask.</span>
+          </div>
         </section>
       </div>
       <p class="storm-view-cost" id="stormViewCost">
-        StormScope uses paid radar data. Lightning is a separate short-lived overlay so it does not run accidentally.
+        StormScope uses paid provider data. Beta access may pause to protect the test budget.
       </p>
       <div class="storm-view-actions">
         <button class="storm-view-primary" id="stormViewStart" type="button">Activate StormScope</button>
@@ -788,14 +821,14 @@
           </svg>
         </span>
         <div>
-          <p class="storm-view-kicker">Premium session receipt</p>
+          <p class="storm-view-kicker">Radar view</p>
           <h2>StormScope session ended</h2>
-          <p id="stormReceiptSummary">Standard radar is back on.</p>
+          <p id="stormReceiptSummary">Nearcast Radar is back on.</p>
         </div>
       </header>
       <div class="storm-receipt-total">
-        <span>Estimated budget impact</span>
-        <strong id="stormReceiptAmount">About $0.09</strong>
+        <span>Session status</span>
+        <strong id="stormReceiptAmount">Complete</strong>
       </div>
       <div class="storm-view-features storm-receipt-facts">
         <section>
@@ -803,12 +836,12 @@
           <span id="stormReceiptSessionBody">StormScope radar runs in a short protected window so panning, zooming, and scrubbing stay intentional.</span>
         </section>
         <section>
-          <strong>Budget guard stayed on</strong>
-          <span>Nearcast tracks an estimated session cost so premium radar and lightning overlays do not run accidentally.</span>
+          <strong>Beta guard stayed on</strong>
+          <span>StormScope ran only for the protected session you requested.</span>
         </section>
       </div>
       <p class="storm-view-cost" id="stormReceiptDetail">
-        Estimate based on 150 MapsGL access units at $0.0006 per access. Lightning is separate and on request.
+        Paid provider access stays protected during beta. Lightning remains separate and on request.
       </p>
       <div class="storm-view-actions">
         <button class="storm-view-primary" id="stormReceiptDone" type="button">Done</button>
@@ -856,16 +889,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.265"></script>
-    <script src="planner.js?v=3.0.265"></script>
-    <script src="app.js?v=3.0.265"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.265"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.265"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.265"></script>
-    <script src="raw-map-runtime.js?v=3.0.265"></script>
-    <script src="map.js?v=3.0.265"></script>
-    <script src="sky.js?v=3.0.265"></script>
-    <script src="daygraph.js?v=3.0.265"></script>
-    <script src="boot.js?v=3.0.265"></script>
+    <script src="weather-truth.js?v=3.0.267"></script>
+    <script src="planner.js?v=3.0.267"></script>
+    <script src="app.js?v=3.0.267"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.267"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.267"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.267"></script>
+    <script src="raw-map-runtime.js?v=3.0.267"></script>
+    <script src="map.js?v=3.0.267"></script>
+    <script src="sky.js?v=3.0.267"></script>
+    <script src="daygraph.js?v=3.0.267"></script>
+    <script src="boot.js?v=3.0.267"></script>
   </body>
 </html>

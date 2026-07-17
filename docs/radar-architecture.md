@@ -263,19 +263,22 @@ per-user batch work.
 
 The user flow should be:
 
-1. Search or open a place.
-2. Map recenters immediately.
-3. Fallback radar is visible immediately if precipitation exists.
-4. The app checks the latest enhanced frame index.
-5. If the device supports enhanced rendering and fresh data covers the viewport,
-   the enhanced layer fades in.
-6. If not, the fallback remains the radar experience; background warming is
-   silent or very lightly indicated.
+1. Search or open a place and show the fast preview with fallback radar.
+2. Entering the full map opts into the best included detail available for that
+   viewport; source selection remains automatic.
+3. Fallback radar stays visible while the higher-detail frame is prepared and
+   until that frame has actually drawn.
+4. Show `High detail` only while the successfully drawn layer is onscreen.
+5. If the device, coverage, freshness, or draw fails a guard, quietly keep the
+   fallback as Nearcast Radar.
+6. Treat StormScope as a separate, explicit beta view for active storms. It
+   never starts automatically and leaving the full map or entering Satellite
+   ends the visible session.
 
-The normal user should not see a long-running "Enhancing radar" state. A short
-"Checking radar" affordance is acceptable. Anything longer than a few seconds
-should become a quiet fallback state, not a promise that the map is about to
-upgrade.
+Normal users see one included experience named **Nearcast Radar**, not Standard
+versus Enhanced provider choices. They should never see a long-running
+"Checking radar" or "Enhancing radar" promise. Source controls and readiness
+details remain available only in engineering diagnostics.
 
 ## Migration plan from today's prototype
 

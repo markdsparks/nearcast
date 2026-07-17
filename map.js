@@ -305,20 +305,44 @@ function xweatherStormViewportContextKey(viewport) {
   return String(viewport?.key || generatedRadarViewportKey() || "").trim();
 }
 
+function xweatherStormWeatherRelevance(record = mapLibreCurrentRecord()) {
+  const snapshot = typeof window.nearcastStormScopeRelevance === "function"
+    ? window.nearcastStormScopeRelevance()
+    : { eligible: false, promote: false, reason: "weather-truth-unavailable", tone: "quiet" };
+  const place = state.activePlace;
+  const bounds = record?.map?.getBounds?.();
+  const latitude = Number(place?.latitude);
+  const longitude = Number(place?.longitude);
+  if (
+    bounds
+    && Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+    && typeof bounds.contains === "function"
+    && !bounds.contains([longitude, latitude])
+  ) {
+    return {
+      ...snapshot,
+      eligible: false,
+      promote: false,
+      reason: "viewport-away-from-active-place",
+      tone: "quiet"
+    };
+  }
+  return snapshot;
+}
+
 function xweatherStormViewportContext(record = mapLibreCurrentRecord()) {
   const viewport = radarCapabilityViewport(generatedMrmsSelectionContext());
   const contextKey = xweatherStormViewportContextKey(viewport);
-  const currentFrame = mapState.frames[mapState.frameIndex] || null;
-  const currentLayers = currentFrame?.layers || (currentFrame?.url ? [{ url: currentFrame.url }] : []);
-  const hasFallbackRadar = currentLayers.some((layer) => layer?.url);
-  const hasGeneratedRadar = Boolean(mapState.generatedRadarSelectionKey || record?.radarChunkLayerState);
-  const activeWeather = Boolean(hasFallbackRadar || hasGeneratedRadar);
+  const relevance = xweatherStormWeatherRelevance(record);
   return {
     contextKey,
     viewport,
     storm: {
-      activeWeather,
-      activeWeatherReason: activeWeather ? "radar-frame-ready" : "no-radar-frame"
+      activeWeather: Boolean(relevance.eligible),
+      activeWeatherReason: relevance.reason || "weather-truth-unavailable",
+      promote: Boolean(relevance.promote),
+      tone: relevance.tone || "quiet"
     }
   };
 }
@@ -722,6 +746,10 @@ function closeXweatherStormReceiptSheet() {
 
 function showXweatherStormCostCloseout(storm = {}, reason = "off") {
   if (!storm || storm.status !== "active") return;
+  if (!DEBUG_SETTINGS_ENABLED) {
+    mapState.xweatherStormCloseout = { text: "", visibleUntil: 0 };
+    return;
+  }
   const accessCost = Number(storm.sessionEstimatedAccessCost || xweatherStormSessionAccessCost({ xweatherStorm: storm }));
   const usd = Number.isFinite(Number(storm.sessionEstimatedUsd))
     ? Number(storm.sessionEstimatedUsd)
@@ -820,7 +848,11 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       detail: "Budget protected"
     };
   }
-  if (config.status === "below-min-zoom") {
+  if (
+    config.status === "below-min-zoom"
+    && Number.isFinite(zoom)
+    && zoom + 0.001 < xweatherStormClientMinZoom()
+  ) {
     return {
       visible: true,
       enabled: false,
@@ -830,7 +862,7 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       detail: `${XWEATHER_STORM_SHORT_NAME} at street radar`
     };
   }
-  if (config.status === "no-active-weather") {
+  if (config.status === "no-active-weather" && !context.storm.activeWeather) {
     return {
       visible: true,
       enabled: false,
@@ -890,7 +922,16 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
       detail: "Starting"
     };
   }
-  if (!context.storm.activeWeather) return { visible: false };
+  if (!context.storm.activeWeather) {
+    return {
+      visible: true,
+      enabled: false,
+      tone: "standby",
+      action: "none",
+      label: "No active weather nearby",
+      detail: "Nearcast Radar is selected"
+    };
+  }
   if (Number.isFinite(zoom) && zoom + 0.001 < xweatherStormClientMinZoom()) {
     return {
       visible: true,
@@ -911,28 +952,110 @@ function xweatherStormActivationControlState(record = mapLibreCurrentRecord()) {
   };
 }
 
+function radarViewState(record = mapLibreCurrentRecord()) {
+  const storm = xweatherStormActivationControlState(record);
+  const context = xweatherStormViewportContext(record);
+  const config = xweatherStormConfigStatus();
+  const stormActive = xweatherStormActive(record);
+  const highDetail = rawMapHighDetailVisible(mapState.frames[mapState.frameIndex], record);
+  const zoom = Number(context.viewport?.zoom);
+  const belowMinZoom = Number.isFinite(zoom) && zoom + 0.001 < xweatherStormClientMinZoom();
+  const budgetPaused = xweatherStormBudgetPaused(config);
+
+  let stormStatus = "Ready to check";
+  let stormDetail = "Starts only when you ask.";
+  let primaryAction = "";
+  let primaryLabel = "";
+  let stormState = "standby";
+
+  if (stormActive) {
+    stormStatus = "Active";
+    stormDetail = "Motion radar is on.";
+    primaryAction = "deactivate";
+    primaryLabel = "Use Nearcast Radar";
+    stormState = "active";
+  } else if (storm.action === "cancel") {
+    stormStatus = "Starting";
+    stormDetail = "Checking protected beta access.";
+    primaryAction = "cancel";
+    primaryLabel = "Cancel";
+    stormState = "loading";
+  } else if (!context.storm.activeWeather) {
+    stormStatus = "No active weather nearby";
+    stormDetail = "Nearcast Radar is the useful view right now.";
+  } else if (belowMinZoom) {
+    stormStatus = "Zoom in to use";
+    stormDetail = "StormScope starts at a closer radar scale.";
+  } else if (budgetPaused) {
+    stormStatus = "Beta paused";
+    stormDetail = "The provider budget is protected.";
+    if (storm.enabled) {
+      primaryAction = "retry";
+      primaryLabel = "Check again";
+    }
+    stormState = "paused";
+  } else if (storm.action === "retry" || record?.xweatherStorm?.status === "error") {
+    stormStatus = "Unavailable";
+    stormDetail = record?.xweatherStorm?.message || "Try checking access again.";
+    primaryAction = "retry";
+    primaryLabel = "Try again";
+    stormState = "paused";
+  } else if (storm.action === "explain" || !storm.enabled) {
+    stormStatus = "Beta unavailable";
+    stormDetail = storm.detail || "Protected provider access is not available right now.";
+    if (storm.enabled) {
+      primaryAction = "retry";
+      primaryLabel = "Check again";
+    }
+    stormState = "paused";
+  } else {
+    stormStatus = "Useful now";
+    stormDetail = "A storm signal is active near this place.";
+    primaryAction = "activate";
+    primaryLabel = `Activate ${XWEATHER_STORM_SHORT_NAME}`;
+    stormState = "ready";
+  }
+
+  return {
+    storm,
+    context,
+    controlTone: stormActive ? "active" : stormState,
+    nearcastStatus: highDetail ? "High detail active" : stormActive ? "Ready when you return" : "Automatic",
+    nearcastDetail: highDetail
+      ? "Nearcast is drawing the clearest included source available."
+      : "Nearcast chooses the clearest available source.",
+    nearcastActive: !stormActive,
+    stormStatus,
+    stormDetail,
+    stormState,
+    stormActive,
+    primaryAction,
+    primaryLabel
+  };
+}
+
 function syncXweatherStormActivationControl(record = mapLibreCurrentRecord()) {
   const entry = document.getElementById("immStormEntry");
   if (!entry) {
     syncXweatherLightningToggleControl(record);
     return;
   }
-  const state = xweatherStormActivationControlState(record);
-  const entryVisible = Boolean(
-    !mapSatelliteEnabled() &&
-    state.visible &&
-    state.enabled &&
-    ["activate", "retry", "cancel", "deactivate", "explain"].includes(state.action)
-  );
+  const state = radarViewState(record);
+  const entryVisible = Boolean(mapState.immersive && !mapSatelliteEnabled());
   entry.hidden = !entryVisible;
-  entry.disabled = !entryVisible;
-  entry.dataset.tone = state.tone || "standby";
-  entry.dataset.action = state.action || "";
-  entry.setAttribute("aria-pressed", String(state.tone === "active"));
-  entry.setAttribute("aria-label", state.detail ? `${state.label}. ${state.detail}` : state.label || XWEATHER_STORM_DISPLAY_NAME);
-  entry.setAttribute("title", state.label || XWEATHER_STORM_DISPLAY_NAME);
+  entry.disabled = false;
+  entry.dataset.tone = state.controlTone || "standby";
+  entry.dataset.action = "open";
+  entry.setAttribute("aria-pressed", String(state.stormActive));
+  entry.setAttribute("aria-label", `Radar view. ${state.stormActive ? "StormScope active" : `${state.nearcastStatus}. ${state.stormStatus}`}`);
+  entry.setAttribute("title", "Radar view");
+  if (stormViewSheetOpen()) renderXweatherStormSheet();
   syncXweatherLightningToggleControl(record);
 }
+
+window.nearcastSyncRadarView = () => {
+  syncXweatherStormActivationControl(mapLibreCurrentRecord());
+};
 
 function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
   const state = xweatherStormActivationControlState(record);
@@ -947,11 +1070,14 @@ function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
       context: xweatherStormViewportContext(record)
     }))
       .then((config) => {
-        if (mapLibreCurrentRecord() === record && xweatherStormPreferenceEnabled()) syncXweatherStormLayer(record);
+        if (
+          mapLibreCurrentRecord() !== record ||
+          !mapState.immersive ||
+          !xweatherStormPreferenceEnabled()
+        ) return;
+        syncXweatherStormLayer(record);
         const latestConfig = config || xweatherStormConfigStatus();
         if (
-          mapLibreCurrentRecord() === record &&
-          mapState.immersive &&
           xweatherStormExplainableStatus(latestConfig) &&
           latestConfig.status !== "ready"
         ) {
@@ -965,7 +1091,13 @@ function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
         }
       })
       .catch((error) => {
-        if (mapLibreCurrentRecord() === record) setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
+        if (
+          mapLibreCurrentRecord() === record &&
+          mapState.immersive &&
+          xweatherStormPreferenceEnabled()
+        ) {
+          setXweatherStormStatus(record, "error", xweatherStormUserMessage(error));
+        }
       });
   } else {
     syncXweatherStormLayer(record);
@@ -973,34 +1105,36 @@ function startXweatherStormActivation(record = mapLibreCurrentRecord()) {
   return true;
 }
 
-function toggleXweatherStormActivation() {
-  const record = mapLibreCurrentRecord();
-  const state = xweatherStormActivationControlState(record);
-  if (xweatherStormActive(record) || state.action === "cancel" || state.action === "deactivate") {
-    if (typeof window.nearcastDeactivateXweatherStorm === "function") window.nearcastDeactivateXweatherStorm();
-    stopXweatherStormLayer(record, "off");
-    syncXweatherStormActivationControl(record);
-    renderMapLibreOverlays({ forceRadar: true });
-    return;
+function endXweatherStormSession(record = mapLibreCurrentRecord(), reason = "off") {
+  stopXweatherStormLayer(record, reason);
+  if (typeof window.nearcastDeactivateXweatherStorm === "function") {
+    window.nearcastDeactivateXweatherStorm();
   }
-  startXweatherStormActivation(record);
+  if (reason === "off" && mapState.immersive && !mapSatelliteEnabled()) {
+    scheduleRawMapEnhancement(mapState.timelineKind);
+  }
+  syncXweatherStormActivationControl(record);
 }
 
 let stormViewSheetCloseTimer = 0;
 
 function stormViewSheetElements() {
+  const nearcastStatus = document.querySelector('[data-radar-view-status="nearcast"]');
+  const stormscopeStatus = document.querySelector('[data-radar-view-status="stormscope"]');
   return {
     backdrop: document.getElementById("stormViewBackdrop"),
     sheet: document.getElementById("stormViewSheet"),
     kicker: document.getElementById("stormViewKicker"),
     title: document.getElementById("stormViewTitle"),
     summary: document.getElementById("stormViewSummary"),
-    featureOneTitle: document.getElementById("stormViewFeatureOneTitle"),
-    featureOneBody: document.getElementById("stormViewFeatureOneBody"),
-    featureTwoTitle: document.getElementById("stormViewFeatureTwoTitle"),
-    featureTwoBody: document.getElementById("stormViewFeatureTwoBody"),
-    featureThreeTitle: document.getElementById("stormViewFeatureThreeTitle"),
-    featureThreeBody: document.getElementById("stormViewFeatureThreeBody"),
+    nearcastOption: document.querySelector('[data-radar-view-option="nearcast"]'),
+    nearcastStatus,
+    nearcastStatusTitle: nearcastStatus?.querySelector("strong") || null,
+    nearcastStatusDetail: nearcastStatus?.querySelector("span:last-child") || null,
+    stormscopeOption: document.querySelector('[data-radar-view-option="stormscope"]'),
+    stormscopeStatus,
+    stormscopeStatusTitle: stormscopeStatus?.querySelector("strong") || null,
+    stormscopeStatusDetail: stormscopeStatus?.querySelector("span:last-child") || null,
     cost: document.getElementById("stormViewCost"),
     primary: document.getElementById("stormViewStart"),
     secondary: document.getElementById("stormViewCancel")
@@ -1012,60 +1146,58 @@ function stormViewSheetOpen() {
   return Boolean(sheet && !sheet.hidden);
 }
 
-function xweatherStormSheetCopy(state = xweatherStormActivationControlState(mapLibreCurrentRecord()), config = xweatherStormConfigStatus()) {
-  if (state.action === "explain" || xweatherStormExplainableStatus(config)) {
-    const budgetPaused = xweatherStormBudgetPaused(config);
-    return {
-      mode: budgetPaused ? "budget" : "unavailable",
-      kicker: budgetPaused ? "Budget protected" : "Storm map paused",
-      title: budgetPaused ? "StormScope is paused for now" : "StormScope is not available right now",
-      summary: budgetPaused
-        ? "StormScope uses paid radar data. Nearcast keeps it behind a budget guard, so standard radar stays on when the test budget is used up."
-        : xweatherStormBlockedMessage(config),
-      features: [
-        ["Standard radar remains on", "You can still pan, zoom, and use the normal Nearcast radar without starting a paid StormScope session."],
-        [budgetPaused ? "Budget guard is working" : "No setup needed from you", budgetPaused ? "This prevents accidental spend while we test the premium storm layer." : "Nearcast will show StormScope again when the service is available."],
-        ["Try again later", "If access opens back up, the StormScope button will let you check again without leaving the map."]
-      ],
-      cost: budgetPaused
-        ? "No StormScope map session was started. More access can be made available later when the budget resets or testing is reopened."
-        : "No StormScope map session was started.",
-      primaryLabel: "Check again",
-      primaryAction: "retry",
-      secondaryLabel: "Use standard radar"
-    };
+function xweatherStormSheetCopy() {
+  const view = radarViewState(mapLibreCurrentRecord());
+  let cost = `${XWEATHER_STORM_SHORT_NAME} uses paid provider data. Beta access may pause to protect the test budget.`;
+  if (view.stormActive) {
+    cost = "StormScope is active. Nearcast Radar remains ready whenever you switch back.";
+  } else if (view.stormState === "paused") {
+    cost = "Nearcast Radar stays available while protected StormScope beta access is paused.";
+  } else if (!view.context.storm.activeWeather) {
+    cost = "No active storm signal is nearby, so Nearcast Radar is the useful view right now.";
+  } else if (view.stormStatus === "Zoom in to use") {
+    cost = "Zoom in for the closer storm scale required by StormScope.";
   }
-
   return {
-    mode: "available",
-    kicker: "Premium storm map",
-    title: `${XWEATHER_STORM_DISPLAY_NAME} is available`,
-    summary: `Use ${XWEATHER_STORM_SHORT_NAME} when you want a sharper read on active weather nearby.`,
-    features: [
-      ["Cleaner storm shape", "Crisper active radar rendering that is easier to read while panning and zooming."],
-      ["Lightning on request", "Recent strikes stay off by default and load briefly only when you ask for them."],
-      ["Motion timeline", "Scrub backward and forward to understand where the storm has been and where it may go."]
-    ],
-    cost: `${XWEATHER_STORM_SHORT_NAME} uses paid radar data. Lightning is a separate short-lived overlay so it does not run accidentally.`,
-    primaryLabel: `Activate ${XWEATHER_STORM_SHORT_NAME}`,
-    primaryAction: "activate",
-    secondaryLabel: "Not now"
+    mode: view.stormState,
+    kicker: "Radar view",
+    title: "Choose the right level of detail",
+    summary: "Nearcast adapts automatically. Check StormScope when you need a closer storm read.",
+    nearcastStatus: view.nearcastStatus,
+    nearcastDetail: view.nearcastDetail,
+    nearcastActive: view.nearcastActive,
+    stormStatus: view.stormStatus,
+    stormDetail: view.stormDetail,
+    stormState: view.stormState,
+    stormActive: view.stormActive,
+    cost,
+    primaryLabel: view.primaryLabel,
+    primaryAction: view.primaryAction,
+    secondaryLabel: "Done"
   };
 }
 
-function renderXweatherStormSheet(state = xweatherStormActivationControlState(mapLibreCurrentRecord()), config = xweatherStormConfigStatus()) {
+function renderXweatherStormSheet() {
   const elements = stormViewSheetElements();
-  const copy = xweatherStormSheetCopy(state, config);
+  const copy = xweatherStormSheetCopy();
   if (elements.sheet) elements.sheet.dataset.mode = copy.mode || "available";
   if (elements.kicker) elements.kicker.textContent = copy.kicker;
   if (elements.title) elements.title.textContent = copy.title;
   if (elements.summary) elements.summary.textContent = copy.summary;
-  if (elements.featureOneTitle) elements.featureOneTitle.textContent = copy.features[0]?.[0] || "";
-  if (elements.featureOneBody) elements.featureOneBody.textContent = copy.features[0]?.[1] || "";
-  if (elements.featureTwoTitle) elements.featureTwoTitle.textContent = copy.features[1]?.[0] || "";
-  if (elements.featureTwoBody) elements.featureTwoBody.textContent = copy.features[1]?.[1] || "";
-  if (elements.featureThreeTitle) elements.featureThreeTitle.textContent = copy.features[2]?.[0] || "";
-  if (elements.featureThreeBody) elements.featureThreeBody.textContent = copy.features[2]?.[1] || "";
+  if (elements.nearcastOption) {
+    elements.nearcastOption.dataset.state = copy.nearcastActive ? "active" : "standby";
+    elements.nearcastOption.setAttribute("aria-current", copy.nearcastActive ? "true" : "false");
+  }
+  if (elements.nearcastStatus) elements.nearcastStatus.dataset.state = copy.nearcastActive ? "active" : "standby";
+  if (elements.nearcastStatusTitle) elements.nearcastStatusTitle.textContent = copy.nearcastStatus;
+  if (elements.nearcastStatusDetail) elements.nearcastStatusDetail.textContent = copy.nearcastDetail;
+  if (elements.stormscopeOption) {
+    elements.stormscopeOption.dataset.state = copy.stormState || "standby";
+    elements.stormscopeOption.setAttribute("aria-current", copy.stormActive ? "true" : "false");
+  }
+  if (elements.stormscopeStatus) elements.stormscopeStatus.dataset.state = copy.stormState || "standby";
+  if (elements.stormscopeStatusTitle) elements.stormscopeStatusTitle.textContent = copy.stormStatus;
+  if (elements.stormscopeStatusDetail) elements.stormscopeStatusDetail.textContent = copy.stormDetail;
   if (elements.cost) elements.cost.textContent = copy.cost;
   if (elements.primary) {
     elements.primary.hidden = !copy.primaryAction;
@@ -1076,12 +1208,9 @@ function renderXweatherStormSheet(state = xweatherStormActivationControlState(ma
 }
 
 function openXweatherStormSheet(options = {}) {
-  const state = options.state || xweatherStormActivationControlState(mapLibreCurrentRecord());
-  const config = options.config || xweatherStormConfigStatus();
-  if (!options.force && (!state.enabled || !["activate", "explain"].includes(state.action))) return;
   const { backdrop, sheet } = stormViewSheetElements();
   if (!backdrop || !sheet) return;
-  renderXweatherStormSheet(state, config);
+  renderXweatherStormSheet();
   if (stormViewSheetCloseTimer) {
     clearTimeout(stormViewSheetCloseTimer);
     stormViewSheetCloseTimer = 0;
@@ -1119,18 +1248,16 @@ function activateXweatherStormFromSheet() {
   const record = mapLibreCurrentRecord();
   const action = String(document.getElementById("stormViewStart")?.dataset.action || "activate");
   closeXweatherStormSheet();
-  if (!["activate", "retry"].includes(action)) return;
-  startXweatherStormActivation(record);
+  if (["deactivate", "cancel"].includes(action)) {
+    endXweatherStormSession(record, "off");
+    renderMapLibreOverlays({ forceRadar: true });
+    return;
+  }
+  if (["activate", "retry"].includes(action)) startXweatherStormActivation(record);
 }
 
 function handleXweatherStormEntry() {
-  const state = xweatherStormActivationControlState(mapLibreCurrentRecord());
-  if (!state.enabled) return;
-  if (state.action === "activate" || state.action === "explain") {
-    openXweatherStormSheet({ state });
-    return;
-  }
-  toggleXweatherStormActivation();
+  openXweatherStormSheet({ force: true });
 }
 
 function waitForXweatherControllerReady(controller) {
@@ -1843,6 +1970,7 @@ async function startXweatherStormLayer(record) {
       }
     });
     if (!addedLayers.length) throw new Error("No Xweather storm layers loaded");
+    disposeRawMapEnhancement("stormscope-active");
     setMapLibreStormLabelEmphasis(record, true);
     stopRadarPlayback({ renderStatic: false });
     record.xweatherStorm = {
@@ -1961,6 +2089,14 @@ function stopXweatherStormLayer(record, reason = "off") {
   syncXweatherLightningToggleControl(record);
   renderMapCredit();
   syncMapLibreDiagnosticReadout(record);
+  if (
+    reason !== "error" &&
+    mapState.immersive &&
+    !mapSatelliteEnabled() &&
+    !xweatherStormPreferenceEnabled()
+  ) {
+    scheduleRawMapEnhancement(mapState.timelineKind);
+  }
 }
 
 function syncXweatherStormLayer(record = mapLibreCurrentRecord()) {
@@ -3473,6 +3609,21 @@ function rawMapFrameLayerVisible(frame = mapState.frames[mapState.frameIndex], r
     && mapLibreRadarChunkReady(record);
 }
 
+function rawMapHighDetailVisible(
+  frame = mapState.frames[mapState.frameIndex],
+  record = mapLibreCurrentRecord()
+) {
+  return Boolean(
+    mapState.immersive
+    && !mapSatelliteEnabled()
+    && !xweatherStormActive(record)
+    && (
+      rawMapFrameLayerVisible(frame, record)
+      || mapLibreRawFrameHandoffSuppressesFallback(record)
+    )
+  );
+}
+
 function rawMapEffectiveVisualMetric(frame = mapState.frames[mapState.frameIndex]) {
   if (frame?.rawMapNoRasterFallback) return frame.rawMapVisualMetric || frame.visualMetric || "";
   if (!frame?.rawMapProvider || rawMapFrameLayerVisible(frame)) return frame?.visualMetric || "";
@@ -3483,6 +3634,8 @@ function syncRawMapPresentation(record = mapLibreCurrentRecord()) {
   if (!record) return;
   syncStandardTimelineMilestones();
   const frame = mapState.frames[mapState.frameIndex];
+  syncGeneratedRadarStatusChip();
+  if (stormViewSheetOpen()) renderXweatherStormSheet();
   const visibleProvider = rawMapFrameLayerVisible(frame, record) ? frame.rawMapProvider : "fallback";
   const key = `${mapState.frameIndex}:${frame?.rawMapIndexUrl || ""}:${visibleProvider}`;
   if (record.rawMapPresentationKey === key) return;
@@ -5185,6 +5338,10 @@ function syncMapZoomDebugReadout() {
   document.querySelectorAll(".map-zoom-debug").forEach((node) => {
     if (node.parentElement !== els.weatherMap) node.remove();
   });
+  if (!DEBUG_SETTINGS_ENABLED) {
+    els.weatherMap?.querySelector(":scope > .map-zoom-debug")?.remove();
+    return;
+  }
   if (!els.weatherMap || !mapState.initialized || !state.activePlace) return;
   let readout = els.weatherMap.querySelector(":scope > .map-zoom-debug");
   if (!readout) {
@@ -5689,17 +5846,11 @@ function syncGeneratedRadarStatusChip() {
   chip.classList.remove("is-cost-closeout");
   chip.removeAttribute("title");
   chip.classList.remove("is-storm-view");
-  const warmup = generatedRadarWarmupState();
-  const visible = generatedRadarWarmupIsActive(warmup) || warmup.state === "ready";
-  chip.hidden = !visible;
-  chip.classList.toggle("is-ready", warmup.state === "ready");
-  if (!visible) {
-    chip.textContent = "";
-    return;
-  }
-  if (warmup.state === "ready") chip.textContent = "Radar enhanced";
-  else if (warmup.state === "checking") chip.textContent = "Checking radar";
-  else chip.textContent = "Enhancing radar";
+  const highDetailVisible = rawMapHighDetailVisible();
+  chip.hidden = !highDetailVisible;
+  chip.classList.toggle("is-ready", highDetailVisible);
+  chip.classList.toggle("is-high-detail", highDetailVisible);
+  chip.textContent = highDetailVisible ? "High detail" : "";
 }
 
 function resetMapForPlaceChange(options = {}) {
@@ -7025,6 +7176,8 @@ function disposeRawMapEnhancement(reason = "disposed") {
     showFrame(mapState.frameIndex);
   }
   syncRawMapDebugAttributes();
+  syncGeneratedRadarStatusChip();
+  if (stormViewSheetOpen()) renderXweatherStormSheet();
 }
 
 async function fetchPrecipTimelineFrames() {
@@ -8703,6 +8856,7 @@ async function startRadarPrecipProbe(place, data, force = false) {
         reason: "radar-precip"
       });
     }
+    window.nearcastSyncRadarView?.();
   } catch {
     if (seq !== state.radarPrecipSeq || !state.activePlace || state.activePlace.id !== placeId) return;
     state.radarPrecipSignal = {
@@ -8713,6 +8867,7 @@ async function startRadarPrecipProbe(place, data, force = false) {
       timestamp: null,
       checkedAt: Date.now()
     };
+    window.nearcastSyncRadarView?.();
   }
 }
 
@@ -9266,6 +9421,8 @@ function showFrame(index, options = {}) {
   } else {
     renderWeatherTiles();
   }
+  syncGeneratedRadarStatusChip();
+  if (stormViewSheetOpen()) renderXweatherStormSheet();
   perfEnd("showFrame", perf);
 }
 
@@ -10915,7 +11072,8 @@ function exitImmersiveMap() {
   cancelStandardTimelineScrub();
   clearMapLibreInteractionState();
   closeXweatherStormSheet();
-  stopXweatherStormLayer(mapLibreCurrentRecord(), "exit");
+  endXweatherStormSession(mapLibreCurrentRecord(), "exit");
+  disposeRawMapEnhancement("immersive-exit");
   clearStormImpact();
   stopImmersiveLocationWatch();
   immersiveLocationState.following = false;
@@ -11039,6 +11197,13 @@ function closeImmersiveLayerMenu() {
 function setMapBaseMode(mode) {
   const nextMode = ["aerial", "satellite"].includes(mode) ? mode : "map";
   if (nextMode === "aerial" && !mapAerialSupported()) return;
+  const wasSatellite = mapSatelliteEnabled();
+  const enteringSatellite = nextMode === "satellite" && !wasSatellite;
+  if (enteringSatellite) {
+    closeXweatherStormSheet();
+    endXweatherStormSession(mapLibreCurrentRecord(), "satellite");
+    disposeRawMapEnhancement("satellite");
+  }
   mapBaseModeValue = nextMode;
   try { localStorage.setItem(MAP_BASE_MODE_KEY, mapBaseModeValue); } catch {}
   if (mapSatelliteEnabled()) stopRadarPlayback({ renderStatic: false });
@@ -11066,7 +11231,12 @@ function setMapBaseMode(mode) {
   }
   renderMapCredit();
   if (mapSatelliteEnabled()) resolveLatestSatellitePass();
-  else mapSatelliteState.requestSeq += 1;
+  else {
+    mapSatelliteState.requestSeq += 1;
+    if (mapState.immersive && (wasSatellite || rawMapExperimentEnabled())) {
+      scheduleRawMapEnhancement(mapState.timelineKind);
+    }
+  }
 }
 
 function chooseImmersiveMapLayer(event) {

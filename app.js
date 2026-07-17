@@ -1,4 +1,4 @@
-const VERSION = "3.0.265";
+const VERSION = "3.0.267";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -184,22 +184,27 @@ function isNativeIOSApp() {
 
 const DEBUG_SETTINGS_ENABLED = debugSettingsEnabled();
 
-const rawMapExperimentQueryFlag = queryValue(
+const rawMapExperimentQueryFlag = DEBUG_SETTINGS_ENABLED ? queryValue(
   "rawMap",
   "rawmap",
   "rawWeather",
   "rawweather",
   "numericWeather",
   "numericweather"
-);
-const rawMapExperimentStoredFlag = localStorage.getItem(RAW_MAP_EXPERIMENT_KEY);
+) : null;
+const rawMapExperimentStoredFlag = DEBUG_SETTINGS_ENABLED
+  ? localStorage.getItem(RAW_MAP_EXPERIMENT_KEY)
+  : null;
 let RAW_MAP_EXPERIMENT_MODE = sanitizeRawMapExperimentMode(
-  rawMapExperimentQueryFlag !== null ? rawMapExperimentQueryFlag : rawMapExperimentStoredFlag
+  rawMapExperimentQueryFlag !== null
+    ? rawMapExperimentQueryFlag
+    : rawMapExperimentStoredFlag ?? "both"
 );
-if (rawMapExperimentQueryFlag !== null) {
+if (!DEBUG_SETTINGS_ENABLED) {
+  try { localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY); } catch {}
+} else if (rawMapExperimentQueryFlag !== null) {
   try {
-    if (RAW_MAP_EXPERIMENT_MODE === "off") localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY);
-    else localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, RAW_MAP_EXPERIMENT_MODE);
+    localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, RAW_MAP_EXPERIMENT_MODE);
   } catch {}
 }
 
@@ -212,14 +217,16 @@ function sanitizeRawMapExperimentMode(value) {
 }
 
 function rawMapExperimentMode() {
+  if (!mapState.immersive || mapSatelliteEnabled()) return "off";
   return RAW_MAP_EXPERIMENT_MODE;
 }
 
 function rawMapExperimentEnabled(kind = "") {
-  if (!kind) return RAW_MAP_EXPERIMENT_MODE !== "off";
+  const effectiveMode = rawMapExperimentMode();
+  if (!kind) return effectiveMode !== "off";
   const requested = sanitizeRawMapExperimentMode(kind);
   return requested !== "off" && (
-    RAW_MAP_EXPERIMENT_MODE === "both" || RAW_MAP_EXPERIMENT_MODE === requested
+    effectiveMode === "both" || effectiveMode === requested
   );
 }
 
@@ -4245,6 +4252,36 @@ function xweatherStormActivationSnapshot() {
   };
 }
 
+function stormScopeRelevanceSnapshot() {
+  const truth = state.weatherTruth || (state.forecast ? weatherTruth(state.forecast) : null);
+  const precipPhase = String(truth?.precip?.phase || "").toLowerCase();
+  const radarPhase = String(currentRadarPrecipSignal()?.phase || "").toLowerCase();
+  const thunderPotential = Boolean(truth?.display?.stormPotential);
+  const stormAlert = (typeof activeAlerts !== "undefined" ? activeAlerts : []).find((alert) => {
+    const event = String(alert?.event || "").toLowerCase();
+    const tone = typeof alertTone === "function" ? alertTone(alert) : "";
+    return ["warning", "watch"].includes(tone)
+      && /tornado|thunderstorm|flash flood|storm|squall|hail/.test(event);
+  }) || null;
+
+  let reason = "quiet-nearby";
+  if (["active", "nearby"].includes(radarPhase)) reason = `radar-${radarPhase}`;
+  else if (["active", "nearby", "imminent", "likely-this-hour"].includes(precipPhase)) reason = `precip-${precipPhase}`;
+  else if (thunderPotential) reason = "thunder-potential";
+  else if (stormAlert) reason = "storm-alert";
+
+  const eligible = reason !== "quiet-nearby";
+  return {
+    eligible,
+    promote: eligible,
+    reason,
+    tone: stormAlert || thunderPotential ? "storm" : eligible ? "wet" : "quiet",
+    precipPhase,
+    radarPhase,
+    alertEvent: stormAlert?.event || ""
+  };
+}
+
 function activateXweatherStormView() {
   if (xweatherStormActivationTimer) clearTimeout(xweatherStormActivationTimer);
   xweatherStormActivatedUntil = Date.now() + XWEATHER_STORM_SESSION_MS;
@@ -4421,6 +4458,7 @@ window.nearcastXweatherStormActivated = xweatherStormActivated;
 window.nearcastXweatherStormActivation = xweatherStormActivationSnapshot;
 window.nearcastActivateXweatherStorm = activateXweatherStormView;
 window.nearcastDeactivateXweatherStorm = deactivateXweatherStormView;
+window.nearcastStormScopeRelevance = stormScopeRelevanceSnapshot;
 
 function xweatherUsageMonthKey(date = new Date()) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -4549,8 +4587,8 @@ function setRawMapExperimentMode(value) {
   state.rawMapExperimentMode = next;
   RAW_MAP_EXPERIMENT_MODE = next;
   try {
-    if (next === "off") localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY);
-    else localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, next);
+    if (DEBUG_SETTINGS_ENABLED) localStorage.setItem(RAW_MAP_EXPERIMENT_KEY, next);
+    else localStorage.removeItem(RAW_MAP_EXPERIMENT_KEY);
   } catch {}
   updateRawMapExperimentControl();
   window.setTimeout(() => window.location.reload(), 120);
@@ -11800,6 +11838,7 @@ function setAlertsLoading() {
   activeAlertsReady = false;
   const bar = document.getElementById("alertBar");
   if (bar) bar.hidden = true;
+  window.nearcastSyncRadarView?.();
 }
 
 function syncLaunchAfterAlertsReady() {
@@ -11814,6 +11853,7 @@ function syncLaunchAfterAlertsReady() {
 function renderAlerts(alerts) {
   activeAlerts = alerts || [];
   activeAlertsReady = true;
+  window.nearcastSyncRadarView?.();
   const bar = document.getElementById("alertBar");
   if (!activeAlerts.length) {
     bar.hidden = true;

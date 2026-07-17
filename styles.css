@@ -10512,6 +10512,257 @@ body.map-immersive-active .day-sheet.show {
   margin-top: 12px;
 }
 
+.radar-view-options {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+[data-radar-view-option] {
+  min-width: 0;
+}
+
+.radar-view-option {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  overflow: hidden;
+  border: 1px solid rgba(53, 111, 183, 0.17);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.54);
+  box-shadow: 0 12px 28px rgba(32, 68, 103, 0.06);
+}
+
+.radar-view-option::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #57a9e8;
+}
+
+.radar-view-option-stormscope {
+  border-color: rgba(116, 92, 220, 0.20);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 218, 90, 0.18), transparent 42%),
+    rgba(255, 255, 255, 0.54);
+}
+
+.radar-view-option-stormscope::before {
+  background: linear-gradient(180deg, #7868e6, #f0b83f);
+}
+
+.radar-view-option[data-state="active"] {
+  border-color: rgba(61, 162, 223, 0.42);
+  box-shadow:
+    0 14px 32px rgba(32, 68, 103, 0.09),
+    inset 0 0 0 1px rgba(61, 162, 223, 0.10);
+}
+
+.radar-view-option-stormscope[data-state="active"],
+.radar-view-option-stormscope[data-state="ready"] {
+  border-color: rgba(128, 107, 224, 0.38);
+}
+
+:root[data-theme="dark"] .radar-view-option {
+  border-color: rgba(142, 199, 255, 0.15);
+  background: rgba(255, 255, 255, 0.065);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .radar-view-option-stormscope {
+  border-color: rgba(176, 158, 255, 0.19);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 218, 90, 0.11), transparent 42%),
+    rgba(255, 255, 255, 0.065);
+}
+
+:root[data-theme="dark"] .radar-view-option[data-state="active"] {
+  border-color: rgba(116, 202, 255, 0.36);
+  box-shadow: inset 0 0 0 1px rgba(116, 202, 255, 0.08);
+}
+
+:root[data-theme="dark"] .radar-view-option-stormscope[data-state="active"],
+:root[data-theme="dark"] .radar-view-option-stormscope[data-state="ready"] {
+  border-color: rgba(181, 165, 255, 0.34);
+}
+
+.radar-view-option-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+}
+
+.radar-view-option-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  color: #276fae;
+  background: rgba(69, 154, 221, 0.13);
+}
+
+.radar-view-option-icon-stormscope {
+  color: #6a58d2;
+  background:
+    radial-gradient(circle at 68% 20%, rgba(255, 220, 92, 0.45), transparent 38%),
+    rgba(118, 98, 220, 0.12);
+}
+
+:root[data-theme="dark"] .radar-view-option-icon-nearcast {
+  color: #94d4ff;
+  background: rgba(93, 183, 246, 0.14);
+}
+
+:root[data-theme="dark"] .radar-view-option-icon-stormscope {
+  color: #c1b5ff;
+  background:
+    radial-gradient(circle at 68% 20%, rgba(255, 220, 92, 0.30), transparent 38%),
+    rgba(146, 125, 244, 0.16);
+}
+
+.radar-view-option-icon svg {
+  width: 25px;
+  height: 25px;
+}
+
+.radar-view-name-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.radar-view-name-line h3 {
+  margin: 0;
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1.08;
+}
+
+.radar-view-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #1e689d;
+  background: rgba(62, 155, 218, 0.13);
+  font-size: 0.66rem;
+  font-weight: 930;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.radar-view-badge-beta {
+  color: #654eb8;
+  background: rgba(118, 92, 214, 0.12);
+}
+
+:root[data-theme="dark"] .radar-view-badge {
+  color: #a8ddff;
+  background: rgba(95, 185, 246, 0.14);
+}
+
+:root[data-theme="dark"] .radar-view-badge-beta {
+  color: #c9beff;
+  background: rgba(155, 135, 244, 0.16);
+}
+
+.radar-view-option-head p {
+  margin: 4px 0 0;
+  color: rgba(48, 70, 91, 0.75);
+  font-size: 0.83rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+:root[data-theme="dark"] .radar-view-option-head p {
+  color: rgba(213, 229, 241, 0.71);
+}
+
+.radar-view-status {
+  display: grid;
+  grid-template-columns: 8px auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  min-height: 31px;
+  padding: 7px 9px;
+  border-radius: 11px;
+  color: #245f8d;
+  background: rgba(61, 153, 215, 0.10);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.radar-view-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #3da2df;
+  box-shadow: 0 0 0 4px rgba(61, 162, 223, 0.12);
+}
+
+.radar-view-status strong {
+  color: inherit;
+  font-weight: 930;
+  white-space: nowrap;
+}
+
+.radar-view-status > span:last-child {
+  min-width: 0;
+  color: rgba(48, 70, 91, 0.70);
+  font-weight: 680;
+}
+
+.radar-view-status-stormscope {
+  color: #604ba7;
+  background: rgba(118, 92, 214, 0.09);
+}
+
+.radar-view-status-stormscope .radar-view-status-dot {
+  background: #806be0;
+  box-shadow: 0 0 0 4px rgba(128, 107, 224, 0.12);
+}
+
+.radar-view-status[data-state="loading"] .radar-view-status-dot {
+  animation: radarStatusPulse 1.2s ease-out infinite;
+}
+
+.radar-view-status[data-state="paused"] {
+  color: #89651f;
+  background: rgba(207, 157, 52, 0.11);
+}
+
+.radar-view-status[data-state="paused"] .radar-view-status-dot {
+  background: #d3a33e;
+  box-shadow: 0 0 0 4px rgba(211, 163, 62, 0.13);
+}
+
+:root[data-theme="dark"] .radar-view-status {
+  color: #a8ddff;
+  background: rgba(76, 171, 232, 0.11);
+}
+
+:root[data-theme="dark"] .radar-view-status-stormscope {
+  color: #c9beff;
+  background: rgba(151, 128, 244, 0.12);
+}
+
+:root[data-theme="dark"] .radar-view-status[data-state="paused"] {
+  color: #f1cf87;
+  background: rgba(207, 157, 52, 0.13);
+}
+
+:root[data-theme="dark"] .radar-view-status > span:last-child {
+  color: rgba(213, 229, 241, 0.68);
+}
+
 .storm-view-features section {
   display: grid;
   gap: 3px;
