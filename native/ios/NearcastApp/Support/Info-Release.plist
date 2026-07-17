@@ -39,6 +39,8 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Nearcast uses your location to show the forecast for where you are.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Nearcast uses device motion to make the experimental sky respond subtly as you move.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

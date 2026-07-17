@@ -39,6 +39,14 @@ struct NearcastWebView: UIViewRepresentable {
         context.coordinator.load(model.currentURL, revision: model.navigationRevision, in: webView)
     }
 
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.bridge.tearDown()
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "nearcastNative")
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.scrollView.delegate = nil
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         let bridge: NativeBridge
         private weak var model: NearcastWebModel?
@@ -66,6 +74,7 @@ struct NearcastWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            bridge.stopAmbientMotionForNavigation()
             model?.startLoading()
         }
 

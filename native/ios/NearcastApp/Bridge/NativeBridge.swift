@@ -1,28 +1,45 @@
 import Foundation
+import CoreMotion
 import CoreLocation
+import UIKit
 import WebKit
 import WidgetKit
 
 @MainActor
-final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDelegate {
+final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLocationManagerDelegate {
     weak var model: NearcastWebModel?
     weak var webView: WKWebView?
 
     private let locationManager = CLLocationManager()
+    private let motionManager = CMMotionManager()
     private var pendingLocationRequests: [String: Task<Void, Never>] = [:]
+    private var ambientMotionActive = false
+    private var ambientMotionFrequencyHz = 8.0
+    private var ambientMotionHeading: CLHeading?
+    private var ambientMotionLatestSample: [String: Any]?
+    private var ambientMotionObservers: [NSObjectProtocol] = []
+    private var hasTornDown = false
 
     init(model: NearcastWebModel) {
         self.model = model
         super.init()
         locationManager.delegate = self
+        observeApplicationLifecycle()
         NativeWatchSnapshotSync.shared.activate()
     }
 
-    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        Task { @MainActor in
-            model?.recordBridgeMessage(message.body)
-            handleBridgeMessage(message.body)
-        }
+    deinit {
+        motionManager.stopDeviceMotionUpdates()
+        locationManager.stopUpdatingHeading()
+        ambientMotionObservers.forEach(NotificationCenter.default.removeObserver)
+        pendingLocationRequests.values.forEach { $0.cancel() }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let frameURL = message.frameInfo.request.url
+        let isMainFrame = message.frameInfo.isMainFrame
+        model?.recordBridgeMessage(message.body)
+        handleBridgeMessage(message.body, frameURL: frameURL, isMainFrame: isMainFrame)
     }
 
     static func bootstrapScript() -> WKUserScript {
@@ -228,18 +245,113 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
             }
           };
 
+          if (window.self === window.top) {
+            const pendingAmbientMotionRequests = new Map();
+            let nativeAmbientMotionRequestId = 0;
+
+            window.NearcastNative.__resolveAmbientMotionRequest = function(result) {
+              const requestId = result && result.requestId ? String(result.requestId) : "";
+              if (result && typeof result.active === "boolean") {
+                window.NearcastNative.ambientMotion.active = result.active;
+              }
+              if (result && result.latest && typeof result.latest === "object") {
+                window.NearcastNative.ambientMotion.latest = result.latest;
+              } else if (result && result.active === false) {
+                window.NearcastNative.ambientMotion.latest = null;
+              }
+              const pending = pendingAmbientMotionRequests.get(requestId);
+              if (!pending) return;
+              pendingAmbientMotionRequests.delete(requestId);
+              if (pending.timer) window.clearTimeout(pending.timer);
+              pending.resolve(result || {
+                ok: false,
+                active: false,
+                state: "failed",
+                reason: "native-ambient-motion-empty-result"
+              });
+            };
+
+            function nativeAmbientMotionRequest(type, options) {
+              const requestId = String(++nativeAmbientMotionRequestId);
+              return new Promise((resolve) => {
+                const timer = window.setTimeout(() => {
+                  if (!pendingAmbientMotionRequests.has(requestId)) return;
+                  pendingAmbientMotionRequests.delete(requestId);
+                  resolve({
+                    ok: false,
+                    active: !!window.NearcastNative.ambientMotion.active,
+                    state: "timeout",
+                    reason: "native-ambient-motion-timeout"
+                  });
+                }, 5000);
+                pendingAmbientMotionRequests.set(requestId, { resolve, timer });
+                window.NearcastNative.postMessage({
+                  type,
+                  requestId,
+                  options: options || {}
+                });
+              });
+            }
+
+            window.NearcastNative.__receiveAmbientMotion = function(payload) {
+              const detail = payload || {};
+              if (typeof detail.active === "boolean") {
+                window.NearcastNative.ambientMotion.active = detail.active;
+              }
+              if (detail.kind === "sample") {
+                window.NearcastNative.ambientMotion.latest = detail;
+              } else if (detail.active === false) {
+                window.NearcastNative.ambientMotion.latest = null;
+              }
+              window.dispatchEvent(new CustomEvent("nearcast-ambient-motion", { detail }));
+            };
+
+            window.NearcastNative.ambientMotion = {
+              supported: true,
+              active: false,
+              latest: null,
+              start(options) {
+                return nativeAmbientMotionRequest("ambientMotion.start", options || {});
+              },
+              stop() {
+                return nativeAmbientMotionRequest("ambientMotion.stop", {});
+              },
+              status() {
+                return nativeAmbientMotionRequest("ambientMotion.status", {});
+              }
+            };
+          }
+
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
-            detail: { platform: "ios", version: "0.1.0" }
+            detail: { platform: "ios", version: "0.2.0" }
           }));
         })();
         """
 
-        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
-    private func handleBridgeMessage(_ body: Any) {
+    private func handleBridgeMessage(_ body: Any, frameURL: URL?, isMainFrame: Bool) {
         guard let payload = body as? [String: Any],
               let type = payload["type"] as? String else {
+            return
+        }
+
+        if type.hasPrefix("ambientMotion.") {
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame) else {
+                rejectAmbientMotionRequest(payload, reason: "untrusted-frame")
+                return
+            }
+
+            if type == "ambientMotion.start" {
+                startAmbientMotion(payload)
+            } else if type == "ambientMotion.stop" {
+                stopAmbientMotionRequest(payload)
+            } else if type == "ambientMotion.status" {
+                sendAmbientMotionStatus(payload)
+            } else {
+                rejectAmbientMotionRequest(payload, reason: "unsupported-request")
+            }
             return
         }
 
@@ -258,6 +370,304 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
         } else if type == "stormActivity.status" {
             sendStormActivityStatus(payload)
         }
+    }
+
+    private func isTrustedAmbientFrame(url: URL?, isMainFrame: Bool) -> Bool {
+        guard isMainFrame,
+              let url,
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+
+        if scheme == "https" && host == "getnearcast.app" {
+            return true
+        }
+
+        #if DEBUG
+        guard let configuredURL = model?.currentURL else { return false }
+        return Self.sameOrigin(url, configuredURL)
+        #else
+        return false
+        #endif
+    }
+
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let lhsScheme = lhs.scheme?.lowercased(),
+              let rhsScheme = rhs.scheme?.lowercased(),
+              let lhsHost = lhs.host?.lowercased(),
+              let rhsHost = rhs.host?.lowercased() else {
+            return false
+        }
+
+        return lhsScheme == rhsScheme &&
+            lhsHost == rhsHost &&
+            normalizedPort(lhs) == normalizedPort(rhs)
+    }
+
+    private static func normalizedPort(_ url: URL) -> Int? {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "https":
+            return 443
+        case "http":
+            return 80
+        default:
+            return nil
+        }
+    }
+
+    private func startAmbientMotion(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        let unboundedFrequency = (options["frequencyHz"] as? NSNumber)?.doubleValue ?? 8.0
+        let requestedFrequency = unboundedFrequency.isFinite ? unboundedFrequency : 8.0
+        let frequencyHz = min(10.0, max(4.0, requestedFrequency))
+
+        guard !hasTornDown else {
+            sendAmbientMotionResult(
+                requestId: requestId,
+                ok: false,
+                state: "unavailable",
+                reason: "bridge-torn-down"
+            )
+            return
+        }
+
+        guard UIApplication.shared.applicationState == .active else {
+            sendAmbientMotionResult(
+                requestId: requestId,
+                ok: false,
+                state: "inactive",
+                reason: "app-not-active"
+            )
+            return
+        }
+
+        let motionAvailable = motionManager.isDeviceMotionAvailable
+        let headingAvailable = CLLocationManager.headingAvailable()
+        guard motionAvailable || headingAvailable else {
+            sendAmbientMotionResult(
+                requestId: requestId,
+                ok: false,
+                state: "unavailable",
+                reason: "sensors-unavailable"
+            )
+            return
+        }
+
+        if ambientMotionActive {
+            stopAmbientMotion(reason: "restarting", notifyJavaScript: false)
+        }
+
+        ambientMotionFrequencyHz = frequencyHz
+        ambientMotionActive = true
+        ambientMotionHeading = nil
+        ambientMotionLatestSample = nil
+
+        if headingAvailable {
+            locationManager.headingFilter = 2.0
+            locationManager.headingOrientation = currentHeadingOrientation()
+            locationManager.startUpdatingHeading()
+        }
+
+        if motionAvailable {
+            motionManager.deviceMotionUpdateInterval = 1.0 / frequencyHz
+            let frames = CMMotionManager.availableAttitudeReferenceFrames()
+            let referenceFrame: CMAttitudeReferenceFrame = frames.contains(.xArbitraryCorrectedZVertical)
+                ? .xArbitraryCorrectedZVertical
+                : .xArbitraryZVertical
+
+            motionManager.startDeviceMotionUpdates(using: referenceFrame, to: .main) { [weak self] motion, _ in
+                guard let motion else { return }
+                let pitch = motion.attitude.pitch
+                let roll = motion.attitude.roll
+                Task { @MainActor in
+                    self?.deliverAmbientMotionSample(pitch: pitch, roll: roll)
+                }
+            }
+        }
+
+        sendAmbientMotionEvent([
+            "kind": "state",
+            "active": true,
+            "state": "active",
+            "frequencyHz": frequencyHz,
+            "timestamp": Self.currentTimestampMilliseconds()
+        ])
+        sendAmbientMotionResult(requestId: requestId, ok: true, state: "active")
+    }
+
+    private func stopAmbientMotionRequest(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        stopAmbientMotion(reason: "requested", notifyJavaScript: true)
+        sendAmbientMotionResult(requestId: requestId, ok: true, state: "stopped")
+    }
+
+    private func sendAmbientMotionStatus(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        sendAmbientMotionResult(
+            requestId: requestId,
+            ok: true,
+            state: ambientMotionActive ? "active" : "stopped"
+        )
+    }
+
+    private func rejectAmbientMotionRequest(_ payload: [String: Any], reason: String) {
+        let requestId = payload["requestId"] as? String ?? ""
+        sendAmbientMotionResult(requestId: requestId, ok: false, state: "rejected", reason: reason)
+    }
+
+    private func sendAmbientMotionResult(
+        requestId: String,
+        ok: Bool,
+        state: String,
+        reason: String? = nil
+    ) {
+        var result: [String: Any] = [
+            "requestId": requestId,
+            "ok": ok,
+            "supported": true,
+            "active": ambientMotionActive,
+            "state": state,
+            "motionAvailable": motionManager.isDeviceMotionAvailable,
+            "headingAvailable": CLLocationManager.headingAvailable(),
+            "frequencyHz": ambientMotionFrequencyHz,
+            "latest": ambientMotionLatestSample ?? NSNull()
+        ]
+        if let reason {
+            result["reason"] = reason
+        }
+        sendJavaScriptCallback(result, resolver: "__resolveAmbientMotionRequest")
+    }
+
+    private func deliverAmbientMotionSample(pitch: Double?, roll: Double?) {
+        guard ambientMotionActive else { return }
+
+        let heading = usableAmbientHeading()
+        let boundedPitch = Self.boundedAttitudeValue(pitch)
+        let boundedRoll = Self.boundedAttitudeValue(roll)
+        let sample: [String: Any] = [
+            "kind": "sample",
+            "active": true,
+            "heading": heading.value ?? NSNull(),
+            "headingReference": heading.reference,
+            "headingAccuracy": heading.accuracy ?? NSNull(),
+            "pitch": boundedPitch ?? NSNull(),
+            "roll": boundedRoll ?? NSNull(),
+            "timestamp": Self.currentTimestampMilliseconds()
+        ]
+        ambientMotionLatestSample = sample
+        sendAmbientMotionEvent(sample)
+    }
+
+    private func usableAmbientHeading() -> (value: Double?, reference: String, accuracy: Double?) {
+        guard let ambientMotionHeading else {
+            return (nil, "unavailable", nil)
+        }
+
+        guard ambientMotionHeading.headingAccuracy >= 0,
+              ambientMotionHeading.headingAccuracy.isFinite else {
+            return (nil, "unavailable", nil)
+        }
+        let accuracy = ambientMotionHeading.headingAccuracy
+        if ambientMotionHeading.trueHeading >= 0, ambientMotionHeading.trueHeading.isFinite {
+            return (ambientMotionHeading.trueHeading, "true", accuracy)
+        }
+        if ambientMotionHeading.magneticHeading >= 0, ambientMotionHeading.magneticHeading.isFinite {
+            return (ambientMotionHeading.magneticHeading, "magnetic", accuracy)
+        }
+        return (nil, "unavailable", accuracy)
+    }
+
+    private static func boundedAttitudeValue(_ value: Double?) -> Double? {
+        guard let value, value.isFinite else { return nil }
+        let limit = Double.pi / 3.0
+        return min(limit, max(-limit, value))
+    }
+
+    private static func currentTimestampMilliseconds() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1_000)
+    }
+
+    private func sendAmbientMotionEvent(_ payload: [String: Any]) {
+        sendJavaScriptCallback(payload, resolver: "__receiveAmbientMotion")
+    }
+
+    private func currentHeadingOrientation() -> CLDeviceOrientation {
+        guard let orientation = webView?.window?.windowScene?.interfaceOrientation else {
+            return .portrait
+        }
+
+        switch orientation {
+        case .portrait:
+            return .portrait
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .landscapeLeft:
+            return .landscapeLeft
+        case .landscapeRight:
+            return .landscapeRight
+        default:
+            return .portrait
+        }
+    }
+
+    private func observeApplicationLifecycle() {
+        let center = NotificationCenter.default
+        ambientMotionObservers = [
+            center.addObserver(
+                forName: UIApplication.willResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.stopAmbientMotion(reason: "app-inactive", notifyJavaScript: true)
+                }
+            },
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.stopAmbientMotion(reason: "background", notifyJavaScript: true)
+                }
+            }
+        ]
+    }
+
+    private func stopAmbientMotion(reason: String, notifyJavaScript: Bool) {
+        let wasActive = ambientMotionActive
+        motionManager.stopDeviceMotionUpdates()
+        locationManager.stopUpdatingHeading()
+        ambientMotionActive = false
+        ambientMotionHeading = nil
+        ambientMotionLatestSample = nil
+
+        guard notifyJavaScript, wasActive else { return }
+        sendAmbientMotionEvent([
+            "kind": "state",
+            "active": false,
+            "state": "stopped",
+            "reason": reason,
+            "timestamp": Self.currentTimestampMilliseconds()
+        ])
+    }
+
+    func stopAmbientMotionForNavigation() {
+        stopAmbientMotion(reason: "navigation", notifyJavaScript: true)
+    }
+
+    func tearDown() {
+        guard !hasTornDown else { return }
+        hasTornDown = true
+        stopAmbientMotion(reason: "teardown", notifyJavaScript: false)
+        ambientMotionObservers.forEach(NotificationCenter.default.removeObserver)
+        ambientMotionObservers.removeAll()
+        pendingLocationRequests.values.forEach { $0.cancel() }
+        pendingLocationRequests.removeAll()
+        webView = nil
     }
 
     private func requestCurrentLocation(_ payload: [String: Any]) {
@@ -313,6 +723,18 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, CLLocationManagerDel
 
         let requestIds = Array(pendingLocationRequests.keys)
         requestIds.forEach { resolveLocationRequest($0, location: location) }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        guard ambientMotionActive else { return }
+        ambientMotionHeading = newHeading
+        if !motionManager.isDeviceMotionActive {
+            deliverAmbientMotionSample(pitch: nil, roll: nil)
+        }
+    }
+
+    func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
+        false
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

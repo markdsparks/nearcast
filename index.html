@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.267">
-    <link rel="manifest" href="manifest.json?v=3.0.267">
+    <link rel="stylesheet" href="styles.css?v=3.0.268">
+    <link rel="manifest" href="manifest.json?v=3.0.268">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.267">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.267">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.268">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.268">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -93,6 +93,27 @@
               <button type="button" data-time-format="12" aria-pressed="false">12</button>
               <button type="button" data-time-format="24" aria-pressed="false">24</button>
             </div>
+          </div>
+          <div class="menu-setting reactive-sky-setting" aria-labelledby="reactiveSkyLabel">
+            <div class="menu-setting-copy">
+              <strong id="reactiveSkyLabel">Reactive sky <span class="experiment-badge">Experimental</span></strong>
+              <span id="reactiveSkyMeta">Off · the current sky stays unchanged</span>
+            </div>
+            <button class="menu-action" id="reactiveSkyToggle" type="button" aria-pressed="false">Off</button>
+          </div>
+          <div class="menu-setting reactive-sky-motion-setting" id="reactiveSkyMotionSetting" aria-labelledby="reactiveSkyMotionLabel" hidden>
+            <div class="menu-setting-copy">
+              <strong id="reactiveSkyMotionLabel">Device motion</strong>
+              <span id="reactiveSkyMotionMeta">Optional · Current Location only</span>
+            </div>
+            <button class="menu-action" id="reactiveSkyMotionButton" type="button">Allow motion</button>
+          </div>
+          <div class="menu-setting reactive-sky-lab-setting" id="reactiveSkyLabSetting" aria-labelledby="reactiveSkyLabLabel" data-debug-setting hidden>
+            <div class="menu-setting-copy">
+              <strong id="reactiveSkyLabLabel">Sky Lab</strong>
+              <span id="reactiveSkyLabMeta">Experiment off</span>
+            </div>
+            <button class="menu-action" id="reactiveSkyLabReset" type="button">Reset pose</button>
           </div>
           <div class="menu-setting map-renderer-setting" aria-labelledby="mapRendererLabel" data-debug-setting hidden>
             <div class="menu-setting-copy">
@@ -889,16 +910,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.267"></script>
-    <script src="planner.js?v=3.0.267"></script>
-    <script src="app.js?v=3.0.267"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.267"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.267"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.267"></script>
-    <script src="raw-map-runtime.js?v=3.0.267"></script>
-    <script src="map.js?v=3.0.267"></script>
-    <script src="sky.js?v=3.0.267"></script>
-    <script src="daygraph.js?v=3.0.267"></script>
-    <script src="boot.js?v=3.0.267"></script>
+    <script src="weather-truth.js?v=3.0.268"></script>
+    <script src="planner.js?v=3.0.268"></script>
+    <script src="app.js?v=3.0.268"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.268"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.268"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.268"></script>
+    <script src="raw-map-runtime.js?v=3.0.268"></script>
+    <script src="map.js?v=3.0.268"></script>
+    <script src="sky.js?v=3.0.268"></script>
+    <script src="daygraph.js?v=3.0.268"></script>
+    <script src="boot.js?v=3.0.268"></script>
   </body>
 </html>

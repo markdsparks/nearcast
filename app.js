@@ -1,4 +1,4 @@
-const VERSION = "3.0.267";
+const VERSION = "3.0.268";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -54,6 +54,11 @@ const INSTALL_PROMPT_VISIT_COUNT_KEY = "nearcast-install-visit-count";
 const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
+const REACTIVE_SKY_KEY = "nearcast-reactive-sky-v1";
+const REACTIVE_SKY_MOTION_KEY = "nearcast-reactive-sky-motion-v1";
+const REACTIVE_SKY_SAMPLE_INTERVAL_MS = 120;
+const REACTIVE_SKY_HEADING_MAX_AGE_MS = 1800;
+const REACTIVE_SKY_HEADING_ACCURACY_MAX = 45;
 const WELCOME_AMBIENCE_TIMEOUT_MS = 3500;
 const WELCOME_WORLD_SKY_ROTATE_MS = 28000;
 const LOCATION_LOOKUP_TIMEOUT_MS = 12000;
@@ -447,6 +452,8 @@ const state = {
   radarProvider: sanitizeRadarProvider(localStorage.getItem(RADAR_PROVIDER_KEY)),
   radarSourceZoom: sanitizeRadarSourceZoom(localStorage.getItem(RADAR_SOURCE_ZOOM_KEY)),
   xweatherStormMode: sanitizeXweatherStormMode(localStorage.getItem(XWEATHER_STORM_MODE_KEY)),
+  reactiveSkyEnabled: localStorage.getItem(REACTIVE_SKY_KEY) === "1",
+  reactiveSkyMotionAllowed: localStorage.getItem(REACTIVE_SKY_MOTION_KEY) === "1",
   sunriseMs: null,
   sunsetMs: null,
   activePlace: null,
@@ -468,6 +475,8 @@ const state = {
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
+
+window.nearcastReactiveSkyEnabled = () => state.reactiveSkyEnabled === true;
 
 let xweatherStormConfigRecord = { status: "unknown", checkedAt: 0, credentials: null, layerCodes: [] };
 let xweatherStormConfigPromise = null;
@@ -900,6 +909,22 @@ const installPromptState = {
   visitCount: 0
 };
 
+const reactiveSkyMotionState = {
+  status: "idle",
+  source: "none",
+  started: false,
+  requestInFlight: false,
+  webPermissionGranted: false,
+  webListenerAttached: false,
+  lastSampleAt: 0,
+  lastAcceptedAt: 0,
+  lastSample: null,
+  sampleExpiryTimer: 0,
+  syncTimer: 0,
+  observer: null,
+  mediaQuery: null
+};
+
 const els = {
   themeColorMeta: document.querySelector("meta[name='theme-color']"),
   statusBarMeta: document.querySelector("meta[name='apple-mobile-web-app-status-bar-style']"),
@@ -927,6 +952,14 @@ const els = {
   installSheetSnooze: document.querySelector("#installSheetSnooze"),
   themeToggle: document.querySelector("#themeToggle"),
   unitToggle: document.querySelector("#unitToggle"),
+  reactiveSkyToggle: document.querySelector("#reactiveSkyToggle"),
+  reactiveSkyMeta: document.querySelector("#reactiveSkyMeta"),
+  reactiveSkyMotionSetting: document.querySelector("#reactiveSkyMotionSetting"),
+  reactiveSkyMotionButton: document.querySelector("#reactiveSkyMotionButton"),
+  reactiveSkyMotionMeta: document.querySelector("#reactiveSkyMotionMeta"),
+  reactiveSkyLabSetting: document.querySelector("#reactiveSkyLabSetting"),
+  reactiveSkyLabMeta: document.querySelector("#reactiveSkyLabMeta"),
+  reactiveSkyLabReset: document.querySelector("#reactiveSkyLabReset"),
   timeFormatButtons: document.querySelectorAll("[data-time-format]"),
   timeFormatMeta: document.querySelector("#timeFormatMeta"),
   debugSettings: document.querySelectorAll("[data-debug-setting]"),
@@ -2880,6 +2913,7 @@ function init() {
   renderSavedPlaces();
   updateUnitButton();
   updateTimeFormatButtons();
+  updateReactiveSkyControls();
   updateDebugSettingsVisibility();
   updateMapRendererButtons();
   updateMapDiagnosticModeControl();
@@ -2889,6 +2923,7 @@ function init() {
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
+  initReactiveSkyMotion();
   if ("serviceWorker" in navigator && typeof handleNearcastNotificationMessage === "function") {
     navigator.serviceWorker.addEventListener("message", handleNearcastNotificationMessage);
   }
@@ -3427,6 +3462,9 @@ function bindEvents() {
   });
 
   bindTapAction(els.themeToggle, toggleTheme);
+  bindTapAction(els.reactiveSkyToggle, toggleReactiveSky);
+  bindTapAction(els.reactiveSkyMotionButton, toggleReactiveSkyDeviceMotion);
+  bindTapAction(els.reactiveSkyLabReset, resetReactiveSkyPose);
   els.timeFormatButtons.forEach((button) => {
     bindTapAction(button, () => setTimeFormatPreference(button.dataset.timeFormat));
   });
@@ -3941,6 +3979,7 @@ function applyTheme(options = {}) {
   if (rerenderMap && mapState.initialized && state.activePlace) {
     renderTileMap();
   }
+  scheduleReactiveSkyMotionSync();
 }
 
 function toggleTheme() {
@@ -3953,6 +3992,420 @@ function toggleTheme() {
   localStorage.setItem("weather-theme", state.theme);
   applyTheme();
 }
+
+function reactiveSkyIsCurrentLocation(place = state.activePlace) {
+  const id = String(place?.id || "").toLowerCase();
+  return id.startsWith("gps-") || id === "device-location";
+}
+
+function reactiveSkyNativeMotionBridge() {
+  const bridge = window.NearcastNative?.ambientMotion;
+  return bridge && bridge.supported !== false && typeof bridge.start === "function" ? bridge : null;
+}
+
+function reactiveSkyWebMotionSupported() {
+  return typeof window.DeviceOrientationEvent !== "undefined";
+}
+
+function reactiveSkyMotionSupported() {
+  return Boolean(reactiveSkyNativeMotionBridge() || reactiveSkyWebMotionSupported());
+}
+
+function reactiveSkyReducedMotion() {
+  return Boolean(reactiveSkyMotionState.mediaQuery?.matches || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+
+function reactiveSkyWeatherCanRespond() {
+  const sky = state.skyState;
+  if (!sky || state.theme !== "auto") return false;
+  const condition = String(sky.condition || "");
+  if ((sky.activePrecip || sky.precipPhase === "active") && ["rain", "thunder"].includes(condition)) return true;
+  if (Number(sky.cloud) >= 12 || Number(sky.lowCloud) >= 8) return true;
+  return ["rain", "thunder", "fog", "cloudy", "partly-cloudy"].includes(condition);
+}
+
+function reactiveSkyWorkIsPaused() {
+  const root = document.documentElement;
+  return root.classList.contains("sky-motion-paused-for-map") ||
+    root.classList.contains("sky-motion-paused-for-app-work") ||
+    Boolean(mapState.immersive);
+}
+
+function reactiveSkyMotionShouldRun() {
+  return Boolean(
+    state.reactiveSkyEnabled &&
+    state.reactiveSkyMotionAllowed &&
+    reactiveSkyIsCurrentLocation() &&
+    reactiveSkyMotionSupported() &&
+    !document.hidden &&
+    !reactiveSkyReducedMotion() &&
+    !reactiveSkyWorkIsPaused() &&
+    reactiveSkyWeatherCanRespond()
+  );
+}
+
+function reactiveSkyMotionIdleStatus() {
+  if (!state.reactiveSkyEnabled || !state.reactiveSkyMotionAllowed) return "idle";
+  if (!reactiveSkyIsCurrentLocation()) return "location";
+  if (!reactiveSkyMotionSupported()) return "unsupported";
+  if (reactiveSkyReducedMotion()) return "reduced";
+  if (document.hidden || reactiveSkyWorkIsPaused()) return "paused";
+  if (!reactiveSkyWeatherCanRespond()) return "standby";
+  const needsWebGesture = !reactiveSkyNativeMotionBridge() &&
+    typeof window.DeviceOrientationEvent?.requestPermission === "function" &&
+    !reactiveSkyMotionState.webPermissionGranted;
+  return needsWebGesture ? "reconnect" : "ready";
+}
+
+function setReactiveSkyMotionStatus(status) {
+  if (reactiveSkyMotionState.status === status) return;
+  reactiveSkyMotionState.status = status;
+  updateReactiveSkyControls();
+}
+
+function reactiveSkyMotionMetaText() {
+  if (!reactiveSkyIsCurrentLocation()) return "Available at Current Location";
+  switch (reactiveSkyMotionState.status) {
+    case "requesting": return "Waiting for permission…";
+    case "active": return "Rain and clouds respond as you turn";
+    case "paused": return "Paused while the sky is covered";
+    case "standby": return "Ready when rain or low clouds appear";
+    case "reduced": return "Off while Reduce Motion is enabled";
+    case "denied": return "Not allowed · weather motion still works";
+    case "inaccurate": return "Compass signal is too uncertain";
+    case "reconnect": return "Tap to reconnect on this device";
+    case "unsupported": return "Unavailable · weather motion still works";
+    case "ready": return "Ready to respond when weather is visible";
+    default: return "Optional · processed on this device";
+  }
+}
+
+function updateReactiveSkyLab() {
+  if (!els.reactiveSkyLabMeta) return;
+  if (!state.reactiveSkyEnabled) {
+    els.reactiveSkyLabMeta.textContent = "Experiment off";
+    return;
+  }
+  const sky = state.skyState;
+  const sample = reactiveSkyMotionState.lastSample;
+  const rawFrom = sky?.windDirectionDeg ?? sky?.windDirection;
+  const rawToward = sky?.windTravelDeg;
+  const from = rawFrom == null ? NaN : Number(rawFrom);
+  const toward = rawToward == null ? NaN : Number(rawToward);
+  const pieces = [String(sky?.condition || "waiting")];
+  if (Number.isFinite(from)) pieces.push(`${Math.round(from)}° from`);
+  if (Number.isFinite(toward)) pieces.push(`${Math.round(toward)}° toward`);
+  if (Number.isFinite(sample?.heading)) pieces.push(`facing ${Math.round(sample.heading)}°`);
+  pieces.push(reactiveSkyMotionState.status);
+  els.reactiveSkyLabMeta.textContent = pieces.join(" · ");
+}
+
+function updateReactiveSkyControls() {
+  const enabled = state.reactiveSkyEnabled === true;
+  if (els.reactiveSkyToggle) {
+    els.reactiveSkyToggle.textContent = enabled ? "On" : "Off";
+    els.reactiveSkyToggle.setAttribute("aria-pressed", String(enabled));
+  }
+  if (els.reactiveSkyMeta) {
+    els.reactiveSkyMeta.textContent = enabled
+      ? "Wind shapes rain and low clouds"
+      : "Off · the current sky stays unchanged";
+  }
+  if (els.reactiveSkyMotionSetting) els.reactiveSkyMotionSetting.hidden = !enabled;
+  if (els.reactiveSkyMotionButton) {
+    const allowed = state.reactiveSkyMotionAllowed === true;
+    els.reactiveSkyMotionButton.textContent = allowed ? "Turn off" : "Allow motion";
+    els.reactiveSkyMotionButton.setAttribute("aria-pressed", String(allowed));
+    els.reactiveSkyMotionButton.disabled = reactiveSkyMotionState.requestInFlight ||
+      (!allowed && (!reactiveSkyIsCurrentLocation() || !reactiveSkyMotionSupported()));
+  }
+  if (els.reactiveSkyMotionMeta) els.reactiveSkyMotionMeta.textContent = reactiveSkyMotionMetaText();
+  updateReactiveSkyLab();
+}
+
+function rerenderReactiveSky() {
+  if (state.skyCode !== null && typeof updateSkyCanvas === "function") {
+    updateSkyCanvas(state.skyCode, state.skyIsDay, state.skyData || state.forecast, state.skyDisplayCondition);
+  }
+}
+
+function toggleReactiveSky() {
+  state.reactiveSkyEnabled = !state.reactiveSkyEnabled;
+  localStorage.setItem(REACTIVE_SKY_KEY, state.reactiveSkyEnabled ? "1" : "0");
+  updateReactiveSkyControls();
+  if (!state.reactiveSkyEnabled) stopReactiveSkyMotion("idle");
+  rerenderReactiveSky();
+  scheduleReactiveSkyMotionSync();
+}
+
+function normalizeReactiveSkyHeading(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const heading = Number(value);
+  return Number.isFinite(heading) ? ((heading % 360) + 360) % 360 : null;
+}
+
+function reactiveSkyWebHeading(event) {
+  const webkitHeading = normalizeReactiveSkyHeading(event?.webkitCompassHeading);
+  if (webkitHeading !== null) return webkitHeading;
+  if (event?.absolute !== true) return null;
+  const alpha = Number(event?.alpha);
+  return Number.isFinite(alpha) ? normalizeReactiveSkyHeading(360 - alpha) : null;
+}
+
+function acceptReactiveSkyPose(detail, source = "web") {
+  const now = Date.now();
+  if (now - reactiveSkyMotionState.lastAcceptedAt < REACTIVE_SKY_SAMPLE_INTERVAL_MS) return false;
+  if (!reactiveSkyMotionShouldRun()) return false;
+
+  const timestamp = Number(detail?.timestamp);
+  if (Number.isFinite(timestamp) && Math.abs(now - timestamp) > REACTIVE_SKY_HEADING_MAX_AGE_MS) return false;
+  if (detail?.headingReference === "unavailable") return false;
+  const heading = normalizeReactiveSkyHeading(detail?.heading);
+  if (heading === null) return false;
+  const accuracy = Number(detail?.headingAccuracy ?? detail?.accuracy);
+  if (Number.isFinite(accuracy) && (accuracy < 0 || accuracy > REACTIVE_SKY_HEADING_ACCURACY_MAX)) {
+    clearTimeout(reactiveSkyMotionState.sampleExpiryTimer);
+    reactiveSkyMotionState.lastSample = null;
+    window.nearcastSetAmbientPose?.({ active: false });
+    setReactiveSkyMotionStatus("inaccurate");
+    return false;
+  }
+
+  const pose = {
+    active: true,
+    heading,
+    pitch: Number.isFinite(Number(detail?.pitch)) ? Number(detail.pitch) : 0,
+    roll: Number.isFinite(Number(detail?.roll)) ? Number(detail.roll) : 0,
+    accuracy: Number.isFinite(accuracy) ? accuracy : null,
+    timestamp: Number.isFinite(timestamp) ? timestamp : now,
+    source
+  };
+  reactiveSkyMotionState.lastAcceptedAt = now;
+  reactiveSkyMotionState.lastSample = pose;
+  clearTimeout(reactiveSkyMotionState.sampleExpiryTimer);
+  reactiveSkyMotionState.sampleExpiryTimer = setTimeout(() => {
+    if (Date.now() - reactiveSkyMotionState.lastAcceptedAt < REACTIVE_SKY_HEADING_MAX_AGE_MS) return;
+    reactiveSkyMotionState.lastSample = null;
+    window.nearcastSetAmbientPose?.({ active: false });
+    setReactiveSkyMotionStatus(reactiveSkyMotionState.started ? "ready" : reactiveSkyMotionIdleStatus());
+  }, REACTIVE_SKY_HEADING_MAX_AGE_MS + 80);
+  window.nearcastSetAmbientPose?.(pose);
+  setReactiveSkyMotionStatus("active");
+  if (els.reactiveSkyLabMeta && now - reactiveSkyMotionState.lastSampleAt > 480) updateReactiveSkyLab();
+  reactiveSkyMotionState.lastSampleAt = now;
+  return true;
+}
+
+function handleReactiveSkyWebOrientation(event) {
+  const heading = reactiveSkyWebHeading(event);
+  if (heading === null) return;
+  acceptReactiveSkyPose({
+    heading,
+    headingReference: Number.isFinite(Number(event.webkitCompassHeading)) ? "magnetic" : "true",
+    headingAccuracy: Number(event.webkitCompassAccuracy),
+    pitch: Number(event.beta) * Math.PI / 180,
+    roll: Number(event.gamma) * Math.PI / 180,
+    timestamp: Date.now()
+  }, "web");
+}
+
+function handleReactiveSkyNativeMotion(event) {
+  const detail = event?.detail || {};
+  if (detail.active === false) {
+    clearTimeout(reactiveSkyMotionState.sampleExpiryTimer);
+    reactiveSkyMotionState.started = false;
+    reactiveSkyMotionState.source = "none";
+    reactiveSkyMotionState.lastSample = null;
+    window.nearcastSetAmbientPose?.({ active: false });
+    setReactiveSkyMotionStatus(reactiveSkyMotionIdleStatus());
+    scheduleReactiveSkyMotionSync();
+    return;
+  }
+  if (detail.kind === "sample") acceptReactiveSkyPose(detail, "native");
+}
+
+function startReactiveSkyWebMotion() {
+  if (reactiveSkyMotionState.webListenerAttached) return;
+  window.addEventListener("deviceorientation", handleReactiveSkyWebOrientation, true);
+  window.addEventListener("deviceorientationabsolute", handleReactiveSkyWebOrientation, true);
+  reactiveSkyMotionState.webListenerAttached = true;
+  reactiveSkyMotionState.source = "web";
+  reactiveSkyMotionState.started = true;
+  setReactiveSkyMotionStatus("ready");
+}
+
+function stopReactiveSkyWebMotion() {
+  if (!reactiveSkyMotionState.webListenerAttached) return;
+  window.removeEventListener("deviceorientation", handleReactiveSkyWebOrientation, true);
+  window.removeEventListener("deviceorientationabsolute", handleReactiveSkyWebOrientation, true);
+  reactiveSkyMotionState.webListenerAttached = false;
+}
+
+function reactiveSkyNativeStartSucceeded(result) {
+  if (!result || result.ok === false) return false;
+  return result.ok === true || result.active === true || ["active", "started", "ready"].includes(String(result.state || ""));
+}
+
+async function startReactiveSkyNativeMotion(options = {}) {
+  const bridge = reactiveSkyNativeMotionBridge();
+  if (!bridge || reactiveSkyMotionState.requestInFlight || reactiveSkyMotionState.started) return false;
+  reactiveSkyMotionState.requestInFlight = true;
+  if (options.userInitiated) setReactiveSkyMotionStatus("requesting");
+  updateReactiveSkyControls();
+  try {
+    const result = await bridge.start({ frequencyHz: 8, userInitiated: options.userInitiated === true });
+    if (!reactiveSkyNativeStartSucceeded(result)) {
+      if (options.userInitiated) {
+        state.reactiveSkyMotionAllowed = false;
+        localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+        setReactiveSkyMotionStatus(result?.state === "denied" || result?.reason === "denied" ? "denied" : "unsupported");
+      }
+      return false;
+    }
+    reactiveSkyMotionState.source = "native";
+    reactiveSkyMotionState.started = true;
+    setReactiveSkyMotionStatus("ready");
+    return true;
+  } catch {
+    if (options.userInitiated) {
+      state.reactiveSkyMotionAllowed = false;
+      localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+      setReactiveSkyMotionStatus("unsupported");
+    }
+    return false;
+  } finally {
+    reactiveSkyMotionState.requestInFlight = false;
+    updateReactiveSkyControls();
+  }
+}
+
+async function stopReactiveSkyMotion(status = reactiveSkyMotionIdleStatus()) {
+  const wasStarted = reactiveSkyMotionState.started || reactiveSkyMotionState.webListenerAttached;
+  const source = reactiveSkyMotionState.source;
+  reactiveSkyMotionState.started = false;
+  reactiveSkyMotionState.source = "none";
+  stopReactiveSkyWebMotion();
+  clearTimeout(reactiveSkyMotionState.sampleExpiryTimer);
+  if (source === "native") {
+    try { await reactiveSkyNativeMotionBridge()?.stop?.(); } catch { /* Fallback remains weather-driven. */ }
+  }
+  if (wasStarted || reactiveSkyMotionState.lastSample) window.nearcastSetAmbientPose?.({ active: false });
+  reactiveSkyMotionState.lastSample = null;
+  setReactiveSkyMotionStatus(status);
+}
+
+async function requestReactiveSkyWebMotion() {
+  const permissionRequest = window.DeviceOrientationEvent?.requestPermission;
+  if (typeof permissionRequest === "function") {
+    const permission = await permissionRequest.call(window.DeviceOrientationEvent);
+    if (permission !== "granted") return false;
+    reactiveSkyMotionState.webPermissionGranted = true;
+  }
+  startReactiveSkyWebMotion();
+  return true;
+}
+
+async function toggleReactiveSkyDeviceMotion() {
+  if (state.reactiveSkyMotionAllowed) {
+    state.reactiveSkyMotionAllowed = false;
+    localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+    await stopReactiveSkyMotion("idle");
+    updateReactiveSkyControls();
+    return;
+  }
+  if (!state.reactiveSkyEnabled || !reactiveSkyIsCurrentLocation() || !reactiveSkyMotionSupported()) return;
+
+  reactiveSkyMotionState.requestInFlight = true;
+  setReactiveSkyMotionStatus("requesting");
+  updateReactiveSkyControls();
+  let granted = false;
+  try {
+    if (reactiveSkyNativeMotionBridge()) {
+      reactiveSkyMotionState.requestInFlight = false;
+      granted = await startReactiveSkyNativeMotion({ userInitiated: true });
+    } else {
+      granted = await requestReactiveSkyWebMotion();
+    }
+  } catch {
+    granted = false;
+  }
+  reactiveSkyMotionState.requestInFlight = false;
+  if (granted) {
+    state.reactiveSkyMotionAllowed = true;
+    localStorage.setItem(REACTIVE_SKY_MOTION_KEY, "1");
+    setReactiveSkyMotionStatus("ready");
+  } else {
+    state.reactiveSkyMotionAllowed = false;
+    localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+    await stopReactiveSkyMotion("denied");
+  }
+  updateReactiveSkyControls();
+  scheduleReactiveSkyMotionSync(0);
+}
+
+function resetReactiveSkyPose() {
+  clearTimeout(reactiveSkyMotionState.sampleExpiryTimer);
+  reactiveSkyMotionState.lastSample = null;
+  reactiveSkyMotionState.lastAcceptedAt = 0;
+  window.nearcastSetAmbientPose?.({ active: false });
+  setReactiveSkyMotionStatus(reactiveSkyMotionIdleStatus());
+  scheduleReactiveSkyMotionSync();
+}
+
+async function syncReactiveSkyMotion() {
+  if (!reactiveSkyMotionShouldRun()) {
+    await stopReactiveSkyMotion(reactiveSkyMotionIdleStatus());
+    updateReactiveSkyControls();
+    return;
+  }
+  const nativeBridge = reactiveSkyNativeMotionBridge();
+  if (nativeBridge) {
+    const started = await startReactiveSkyNativeMotion();
+    if (started && !reactiveSkyMotionShouldRun()) await stopReactiveSkyMotion(reactiveSkyMotionIdleStatus());
+  } else {
+    const needsGesture = typeof window.DeviceOrientationEvent?.requestPermission === "function" &&
+      !reactiveSkyMotionState.webPermissionGranted;
+    if (needsGesture) setReactiveSkyMotionStatus("reconnect");
+    else startReactiveSkyWebMotion();
+  }
+  updateReactiveSkyControls();
+}
+
+function scheduleReactiveSkyMotionSync(delay = 80) {
+  clearTimeout(reactiveSkyMotionState.syncTimer);
+  reactiveSkyMotionState.syncTimer = setTimeout(() => {
+    reactiveSkyMotionState.syncTimer = 0;
+    syncReactiveSkyMotion();
+  }, delay);
+}
+
+function initReactiveSkyMotion() {
+  reactiveSkyMotionState.mediaQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)") || null;
+  reactiveSkyMotionState.mediaQuery?.addEventListener?.("change", () => scheduleReactiveSkyMotionSync(0));
+  window.addEventListener("nearcast-ambient-motion", handleReactiveSkyNativeMotion);
+  window.addEventListener("nearcast-native-ready", () => scheduleReactiveSkyMotionSync(0));
+  document.addEventListener("visibilitychange", () => scheduleReactiveSkyMotionSync(0));
+  window.addEventListener("pagehide", () => stopReactiveSkyMotion("paused"));
+  window.addEventListener("pageshow", () => scheduleReactiveSkyMotionSync(0));
+  reactiveSkyMotionState.observer = new MutationObserver(() => scheduleReactiveSkyMotionSync());
+  reactiveSkyMotionState.observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"]
+  });
+  updateReactiveSkyControls();
+  scheduleReactiveSkyMotionSync(0);
+}
+
+window.nearcastReactiveSkySnapshot = () => ({
+  enabled: state.reactiveSkyEnabled,
+  motionAllowed: state.reactiveSkyMotionAllowed,
+  motionStatus: reactiveSkyMotionState.status,
+  source: reactiveSkyMotionState.source,
+  currentLocation: reactiveSkyIsCurrentLocation(),
+  weatherCanRespond: reactiveSkyWeatherCanRespond(),
+  running: reactiveSkyMotionState.started,
+  lastSample: reactiveSkyMotionState.lastSample ? { ...reactiveSkyMotionState.lastSample } : null
+});
 
 function forecastOffsetMs(data = state.forecast) {
   const seconds = Number(data?.utc_offset_seconds);
@@ -5281,6 +5734,8 @@ function updateMode() {
     clearWelcomeTransientUi();
     cancelWelcomeAmbience();
   }
+  updateReactiveSkyControls();
+  scheduleReactiveSkyMotionSync();
 }
 
 function setForecastLaunchLoading(place) {
@@ -7015,6 +7470,7 @@ function renderForecast(data, place, options = {}) {
     reason: options.reason || "full",
     lanes: activeForecastRenderLanes(lanes)
   });
+  scheduleReactiveSkyMotionSync();
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data), truth = weatherTruth(data)) {

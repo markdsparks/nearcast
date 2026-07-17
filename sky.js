@@ -23,11 +23,212 @@ const SKY_CFG = {
 
 const SKY_SCENE_VERSION = "sky-v8";
 
+// Reactive sky is deliberately renderer-only. The setting owner exposes a
+// boolean/function hook; without it the existing SVG sky remains untouched.
+const REACTIVE_SKY_HEADING_ACCURACY_LIMIT = 45;
+const REACTIVE_SKY_SENSOR_INTERVAL_MS = 90;
+const reactiveSkyPose = {
+  heading: 0,
+  hasDeviceHeading: false,
+  lastAcceptedAt: 0,
+  lastHeadingAt: 0
+};
+let reactiveSkyPresentationActive = false;
+let reactiveSkyRainTextureCounter = 0;
+let reactiveSkyLastVector = null;
+
+function reactiveSkyEnabled() {
+  const hook = window.nearcastReactiveSkyEnabled;
+  if (typeof hook === "function") return hook() === true;
+  if (hook === true) return true;
+  const root = document.documentElement;
+  return root?.dataset?.reactiveSky === "on" || root?.dataset?.skyReactive === "on";
+}
+
+function reactiveSkyWorkPaused() {
+  const root = document.documentElement;
+  return (
+    document.visibilityState === "hidden" ||
+    window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true ||
+    root?.classList?.contains("sky-motion-paused-for-map") ||
+    root?.classList?.contains("sky-motion-paused-for-app-work")
+  );
+}
+
+function normalizeSkyBearing(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const bearing = Number(value);
+  if (!Number.isFinite(bearing)) return null;
+  return ((bearing % 360) + 360) % 360;
+}
+
+function signedSkyBearingDelta(value) {
+  const bearing = normalizeSkyBearing(value);
+  return bearing === null ? 0 : bearing > 180 ? bearing - 360 : bearing;
+}
+
+function smoothSkyHeading(previous, next, amount) {
+  return normalizeSkyBearing(previous + signedSkyBearingDelta(next - previous) * amount) ?? next;
+}
+
+function reactiveSkyVector(skyState = state.skyState) {
+  const travel = normalizeSkyBearing(skyState?.windTravelDeg);
+  const heading = reactiveSkyPose.hasDeviceHeading ? reactiveSkyPose.heading : 0;
+  const relative = signedSkyBearingDelta((travel ?? 180) - heading);
+  const radians = relative * Math.PI / 180;
+  const crosswind = travel === null ? 0 : Math.sin(radians);
+  const depth = travel === null ? 0 : Math.cos(radians);
+  const windMph = Math.max(Number(skyState?.windMph) || 0, (Number(skyState?.gustMph) || 0) * 0.65);
+  const strength = clamp01((windMph - 1) / 29);
+  return {
+    relative,
+    crosswind,
+    depth,
+    strength,
+    rainSlant: clamp(crosswind * strength * 25, -25, 25),
+    rainOffset: clamp(crosswind * strength * 22, -22, 22),
+    cloudDistance: clamp(crosswind * (24 + strength * 54), -78, 78)
+  };
+}
+
+function setReactiveSkyCssValue(name, value) {
+  const root = document.documentElement;
+  if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+}
+
+function clearReactiveSkyVectorProps() {
+  reactiveSkyLastVector = null;
+  const root = document.documentElement;
+  root.removeAttribute("data-sky-reactive-pose");
+  root.style.removeProperty("--sky-reactive-rain-slant");
+  root.style.removeProperty("--sky-reactive-rain-offset");
+  root.style.removeProperty("--sky-reactive-cloud-distance");
+}
+
+function resetReactiveSkyPresentation() {
+  reactiveSkyPresentationActive = false;
+  reactiveSkyPose.heading = 0;
+  reactiveSkyPose.hasDeviceHeading = false;
+  reactiveSkyPose.lastAcceptedAt = 0;
+  reactiveSkyPose.lastHeadingAt = 0;
+  document.documentElement.removeAttribute("data-sky-reactive-renderer");
+  clearReactiveSkyVectorProps();
+}
+
+function applyReactiveSkyPose({ force = false } = {}) {
+  if (!reactiveSkyEnabled() || !reactiveSkyPresentationActive || reactiveSkyWorkPaused()) return false;
+  const vector = reactiveSkyVector();
+  if (
+    !force &&
+    reactiveSkyLastVector &&
+    Math.abs(vector.rainSlant - reactiveSkyLastVector.rainSlant) < 0.08 &&
+    Math.abs(vector.cloudDistance - reactiveSkyLastVector.cloudDistance) < 0.2
+  ) return true;
+
+  reactiveSkyLastVector = vector;
+  setReactiveSkyCssValue("--sky-reactive-rain-slant", `${vector.rainSlant.toFixed(2)}deg`);
+  setReactiveSkyCssValue("--sky-reactive-rain-offset", `${vector.rainOffset.toFixed(2)}px`);
+  setReactiveSkyCssValue("--sky-reactive-cloud-distance", `${vector.cloudDistance.toFixed(2)}px`);
+  document.documentElement.dataset.skyReactivePose = reactiveSkyPose.hasDeviceHeading ? "heading" : "weather";
+  return true;
+}
+
+function syncReactiveSkyActivity() {
+  const enabled = reactiveSkyEnabled();
+  const paused = enabled && reactiveSkyWorkPaused();
+  const root = document.documentElement;
+  root.classList.toggle("sky-reactive-work-paused", paused);
+  if (!enabled) {
+    resetReactiveSkyPresentation();
+  } else if (!paused) {
+    applyReactiveSkyPose({ force: true });
+  }
+}
+
+// Public sensor contract. Call at no more than 5-10 Hz with compass heading in
+// degrees clockwise from north. `accuracy` is degrees; readings worse than 45
+// are ignored. `{ active: false }` returns to weather-only/north-up projection.
+// The function only updates three inherited CSS properties and never rebuilds
+// the SVG or rain textures. It returns true when the pose was accepted.
+window.nearcastSetAmbientPose = function nearcastSetAmbientPose(pose = {}) {
+  const now = Date.now();
+
+  if (pose.active === false) {
+    reactiveSkyPose.hasDeviceHeading = false;
+    reactiveSkyPose.heading = 0;
+    reactiveSkyPose.lastAcceptedAt = 0;
+    reactiveSkyPose.lastHeadingAt = 0;
+    clearReactiveSkyVectorProps();
+    if (!reactiveSkyEnabled() || !reactiveSkyPresentationActive || reactiveSkyWorkPaused()) return true;
+    return applyReactiveSkyPose({ force: true });
+  }
+
+  if (!reactiveSkyEnabled() || !reactiveSkyPresentationActive || reactiveSkyWorkPaused()) return false;
+
+  const heading = normalizeSkyBearing(pose.heading ?? pose.headingDeg);
+  const accuracy = Number(pose.accuracy ?? pose.headingAccuracy);
+  if (heading === null || (Number.isFinite(accuracy) && (accuracy < 0 || accuracy > REACTIVE_SKY_HEADING_ACCURACY_LIMIT))) {
+    return false;
+  }
+  if (reactiveSkyPose.lastAcceptedAt && now - reactiveSkyPose.lastAcceptedAt < REACTIVE_SKY_SENSOR_INTERVAL_MS) {
+    return true;
+  }
+
+  const elapsed = reactiveSkyPose.lastHeadingAt ? Math.max(0, now - reactiveSkyPose.lastHeadingAt) : 0;
+  const amount = reactiveSkyPose.hasDeviceHeading
+    ? clamp(1 - Math.exp(-elapsed / 520), 0.12, 0.42)
+    : 1;
+  reactiveSkyPose.heading = reactiveSkyPose.hasDeviceHeading
+    ? smoothSkyHeading(reactiveSkyPose.heading, heading, amount)
+    : heading;
+  reactiveSkyPose.hasDeviceHeading = true;
+  reactiveSkyPose.lastAcceptedAt = now;
+  reactiveSkyPose.lastHeadingAt = now;
+  return applyReactiveSkyPose();
+};
+
+// Setting changes use this cheap contract to swap the renderer once. Sensor
+// samples must use nearcastSetAmbientPose instead.
+window.nearcastRefreshAmbientScene = function nearcastRefreshAmbientScene() {
+  if (!state.skyData || state.theme !== "auto") {
+    syncReactiveSkyActivity();
+    return false;
+  }
+  updateSkyCanvas(state.skyCode, state.skyIsDay, state.skyData, state.skyDisplayCondition);
+  return true;
+};
+
+const reactiveSkyReducedMotionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+document.addEventListener("visibilitychange", () => {
+  if (
+    document.visibilityState !== "hidden" &&
+    reactiveSkyEnabled() &&
+    !reactiveSkyReducedMotionQuery?.matches &&
+    document.documentElement.dataset.skyReactiveRenderer === "still"
+  ) {
+    window.nearcastRefreshAmbientScene();
+    return;
+  }
+  syncReactiveSkyActivity();
+}, { passive: true });
+reactiveSkyReducedMotionQuery?.addEventListener?.("change", (event) => {
+  if (!event.matches && reactiveSkyEnabled() && document.documentElement.dataset.skyReactiveRenderer === "still") {
+    window.nearcastRefreshAmbientScene();
+    return;
+  }
+  syncReactiveSkyActivity();
+});
+new MutationObserver(syncReactiveSkyActivity).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ["class", "data-reactive-sky", "data-sky-reactive"]
+});
+
 function skyMotionProfile(condition, skyState = state.skyState) {
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
   const smallViewport = Math.min(window.innerWidth || 0, window.innerHeight || 0) < 760;
   const lowMemory = Number(navigator.deviceMemory || 8) <= 4;
+  const reactive = reactiveSkyEnabled();
 
   if (reduceMotion || document.visibilityState === "hidden") {
     return {
@@ -44,11 +245,38 @@ function skyMotionProfile(condition, skyState = state.skyState) {
   }
 
   if (coarsePointer || smallViewport || lowMemory) {
+    if (reactive) {
+      return {
+        level: "ambient",
+        density: 0.56,
+        animateClouds: 3,
+        animateStars: 2,
+        animateAtmosphere: true,
+        cloudFilter: false,
+        sunMotion: false,
+        moonMotion: false,
+        rareMotion: false
+      };
+    }
     return {
       level: "ambient",
       density: 1,
       animateClouds: Infinity,
       animateStars: Infinity,
+      animateAtmosphere: true,
+      cloudFilter: true,
+      sunMotion: true,
+      moonMotion: true,
+      rareMotion: true
+    };
+  }
+
+  if (reactive) {
+    return {
+      level: "full",
+      density: 0.82,
+      animateClouds: Infinity,
+      animateStars: 3,
       animateAtmosphere: true,
       cloudFilter: true,
       sunMotion: true,
@@ -310,6 +538,7 @@ function skyHourlySample(data, ms, displayCondition = {}) {
     diffuse: skySeriesValue(h.diffuse_radiation, idx, current.diffuse_radiation),
     uv: skySeriesValue(h.uv_index, idx, null),
     wind: skySeriesValue(h.wind_speed_10m, idx, current.wind_speed_10m),
+    windDirection: skySeriesValue(h.wind_direction_10m, idx, current.wind_direction_10m),
     gust: skySeriesValue(h.wind_gusts_10m, idx, current.wind_gusts_10m),
     isDay: h.is_day && idx >= 0 ? Boolean(h.is_day[idx]) : current.is_day !== undefined ? Boolean(current.is_day) : null
   };
@@ -363,6 +592,10 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     : 0;
   const windMph = skyWindMph(sample.wind);
   const gustMph = skyWindMph(sample.gust);
+  const windFromDeg = normalizeSkyBearing(sample.windDirection);
+  // Forecast APIs follow the meteorological convention: direction is where
+  // wind comes from. The renderer needs the direction precipitation travels.
+  const windTravelDeg = windFromDeg === null ? null : normalizeSkyBearing(windFromDeg + 180);
   const windiness = clamp01((Math.max(windMph, gustMph * 0.72) - 6) / 28);
   const precipPressure = skyPrecipPressure(precipTruth);
   const haze = clamp01(
@@ -437,6 +670,10 @@ function deriveSkyState(weatherCode, isDay, data = state.forecast, displayCondit
     humidity,
     windMph,
     gustMph,
+    windFromDeg,
+    windDirection: windFromDeg,
+    windDirectionDeg: windFromDeg,
+    windTravelDeg,
     windiness,
     airHaze,
     airRank,
@@ -681,6 +918,7 @@ function updateSkyCanvas(weatherCode, isDay, data = state.forecast, displayCondi
 function clearSkyCanvas() {
   const el = document.getElementById("skyCanvas");
   if (!el) return;
+  resetReactiveSkyPresentation();
   el.style.background = "";
   el.innerHTML = "";
   document.documentElement.removeAttribute("data-sky");
@@ -782,19 +1020,22 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
   const bg = skyBackgroundCss(condition, skyState);
   const phase = bg.phase;
+  const reactive = reactiveSkyEnabled();
 
   document.documentElement.style.setProperty("--sky-page-bg", bg.css);
   document.documentElement.style.setProperty("--sky-page-bg-color", bg.bottom || bg.top || defaultChromeColor());
   el.style.background = bg.css;
 
   const parts = [skyFilterDefs()];
-  if (cfg.stars)        parts.push(skyStars(vw, vh, cfg.stars, rngFor("stars"), motion));
-  if (cfg.stars >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
+  const starCount = reactive ? Math.round(cfg.stars * (motion.density ?? 1)) : cfg.stars;
+  const cloudCount = reactive && motion.level === "ambient" ? Math.min(cfg.clouds, 4) : cfg.clouds;
+  if (starCount)        parts.push(skyStars(vw, vh, starCount, rngFor("stars"), motion));
+  if (starCount >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
   if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
   if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow"), motion));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
   if (cfg.sun)          parts.push(skySun(vw, vh, phase, motion));
-  if (cfg.clouds)       parts.push(skyClouds(vw, vh, cfg.clouds, isDay, condition, rngFor("clouds"), skyState, motion));
+  if (cloudCount)       parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, rngFor("clouds"), skyState, motion));
   if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
   if ((skyState?.precipPressure ?? 0) > 0.08) parts.push(skyApproachVeil(vw, vh, skyState));
   if ((skyState?.airHaze ?? 0) > 0.08 || (skyState?.pollenVeil ?? 0) > 0.10) parts.push(skyAirVeil(vw, vh, skyState));
@@ -803,6 +1044,14 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (cfg.lightning)    parts.push(skyLightning(vw, vh, rngFor("lightning"), motion));
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>`;
+  if (reactive) {
+    reactiveSkyPresentationActive = Boolean(cfg.rain || cloudCount);
+    document.documentElement.dataset.skyReactiveRenderer = motion.level;
+    if (reactiveSkyPresentationActive) applyReactiveSkyPose({ force: true });
+    else clearReactiveSkyVectorProps();
+  } else {
+    resetReactiveSkyPresentation();
+  }
   perfEnd("renderSkyScene", perf);
 }
 
@@ -862,10 +1111,10 @@ function skyStars(vw, vh, count, rng, motion = skyMotionProfile("clear")) {
     const op = (rng() * 0.5 + 0.25).toFixed(2);
     groups[i % groups.length] += `<circle cx="${x}" cy="${y}" r="${r}" fill="#e8f0ff" class="sky-star" opacity="${op}"/>`;
   }
-  const animated = motion.animateStars > 0;
   return groups
     .map((content, index) => {
       if (!content) return "";
+      const animated = index < motion.animateStars;
       const dur = (4.2 + index * 1.35).toFixed(1);
       const delay = (index * 1.6).toFixed(1);
       const low = (0.42 + index * 0.08).toFixed(2);
@@ -960,7 +1209,9 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null, motion
   const haze = skyState?.haze ?? 0;
   const pressure = skyState?.precipPressure ?? 0;
   const windiness = skyState?.windiness ?? 0;
+  const reactive = reactiveSkyEnabled();
   let out = "";
+  const reactiveLayers = ["", ""];
   for (let c = 0; c < count; c++) {
     const bx = box.x + rng() * box.width * 1.26 - box.width * 0.13;
     const layerLift = highLayer * 0.045 - lowLayer * 0.035;
@@ -994,7 +1245,7 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null, motion
 
     const bodyWidth = ((isPartly ? 220 : 280) + rng() * (isPartly ? 220 : 260)) * scale;
     const bodyHeight = ((isPartly ? 36 : 42) + rng() * (isPartly ? 28 : 36)) * scale;
-    const shear = (rng() - 0.5) * 54 * scale + windiness * 46 * scale;
+    const shear = (rng() - 0.5) * 54 * scale + (reactive ? 0 : windiness * 46 * scale);
     const topY = by - bodyHeight * (0.38 + rng() * 0.24);
     const midY = by + (rng() - 0.5) * 12 * scale;
     const baseY = by + bodyHeight * (0.34 + rng() * 0.22);
@@ -1009,9 +1260,21 @@ function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null, motion
     ].join(" ");
     const lowBandY = baseY + bodyHeight * (0.10 + rng() * 0.20);
     const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.44"}"/>`;
-    const animated = c < motion.animateClouds;
+    const animated = !reactive && c < motion.animateClouds;
     const filter = motion.cloudFilter ? ` filter="url(#sky-cloud-f)"` : "";
-    out += `<g class="sky-cloud${animated ? " is-animated" : ""}" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}"${filter} opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
+    const cloud = `<g class="sky-cloud${animated ? " is-animated" : ""}" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}"${filter} opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
+    if (reactive) reactiveLayers[c % reactiveLayers.length] += cloud;
+    else out += cloud;
+  }
+  if (reactive) {
+    const animate = motion.animateClouds > 0;
+    const nearDuration = Math.round(132 - windiness * 54);
+    const farDuration = Math.round(nearDuration * 1.28);
+    out = reactiveLayers
+      .map((clouds, index) => clouds
+        ? `<g class="sky-reactive-cloud-vector sky-reactive-cloud-${index ? "far" : "near"}${animate ? " is-animated" : ""}" style="animation-duration:${index ? farDuration : nearDuration}s">${clouds}</g>`
+        : "")
+      .join("");
   }
   return out;
 }
@@ -1061,7 +1324,130 @@ function skyAirVeil(vw, vh, skyState) {
   `;
 }
 
+function skyRainTextureDataUrl({ width, height, count, intensity, color, near, rng, renderScale }) {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(2, Math.round(width * renderScale));
+  canvas.height = Math.max(2, Math.round(height * renderScale));
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) return null;
+  context.scale(renderScale, renderScale);
+  context.strokeStyle = color;
+  context.lineCap = near ? "round" : "butt";
+
+  for (let i = 0; i < count; i++) {
+    const x = rng() * width;
+    const y = rng() * height;
+    const length = near
+      ? 44 + intensity * 54 + rng() * 58
+      : 22 + intensity * 28 + rng() * 38;
+    const lineWidth = near
+      ? 0.92 + intensity * 0.72 + rng() * 0.58
+      : 0.58 + intensity * 0.42 + rng() * 0.30;
+    context.globalAlpha = near
+      ? clamp(0.18 + intensity * 0.25 + rng() * 0.14, 0.10, 0.58)
+      : clamp(0.24 + intensity * 0.26 + rng() * 0.16, 0.12, 0.62);
+    context.lineWidth = lineWidth;
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(x + (rng() - 0.5) * 2.4, y + length);
+    context.stroke();
+  }
+
+  try {
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
+
+// Experimental rain path: two low-resolution canvas textures replace hundreds
+// of animated SVG lines. Textures are produced only when the scene rebuilds;
+// pose samples move their two compositor layers through inherited CSS tokens.
+function skyReactiveRain(vw, vh, heavy, rng, skyState, motion) {
+  const wetness = skyState ? skyState.wetness || 0 : heavy ? 1 : 0.55;
+  const pressure = skyState ? skyState.precipPressure || 0 : heavy ? 0.8 : 0.45;
+  const precipitation = skyState ? skyState.precipitation || 0 : heavy ? 0.8 : 0.3;
+  const active = skyState?.activePrecip === true || skyState?.precipPhase === "active";
+  const intensity = skyPrecipVisualIntensity(skyState, heavy);
+  const atmosphereIntensity = clamp01(intensity * 0.72 + wetness * 0.14 + pressure * 0.16 + precipitation * 0.08 + (active ? 0.03 : 0));
+  const isDay = skyState?.isDay !== false;
+  const warmth = clamp01(skyState?.warmth || 0);
+  const lightRain = !heavy && intensity < 0.45;
+  const nightOpacity = isDay ? 1 : clamp(0.52 + intensity * 0.22, 0.52, 0.76);
+  const density = motion.density ?? 1;
+  const fineTotal = Math.max(12, Math.round(((lightRain ? 76 : 118) + intensity * (lightRain ? 92 : 168) + (heavy ? 44 : 0)) * density));
+  const nearTotal = Math.max(motion.level === "still" ? 0 : 3, Math.round((lightRain ? 5 + intensity * 15 : 13 + intensity * 40 + (heavy ? 14 : 0)) * density));
+  const fineColor = isDay ? lerpHex("#8da6b4", "#b89f8c", warmth * 0.45) : lerpHex("#8197a8", "#adbfcc", intensity * 0.55);
+  const nearColor = isDay ? lerpHex("#f4fafc", "#f3dcc2", warmth * 0.48) : lerpHex("#a7bac8", "#d4e0ea", intensity * 0.5);
+  const veilColor = isDay ? lerpHex("#8797a2", "#ad9683", warmth * 0.45) : "#151d29";
+  const glowColor = isDay ? lerpHex("#d5e1e7", "#ead5bf", warmth * 0.5) : "#a8bacd";
+  const veilOpacity = clamp(0.055 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.025 : 0), 0.06, heavy ? 0.29 : 0.21);
+  const horizonOpacity = clamp(0.06 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.02 : 0), 0.06, heavy ? 0.30 : 0.22);
+  const textureWidth = Math.round(clamp(vw * 0.78, 260, 420));
+  const textureHeight = Math.round(clamp(vh * 0.48, 420, 680));
+  const viewportArea = Math.max(1, vw * vh);
+  const textureRatio = clamp((textureWidth * textureHeight) / viewportArea, 0.18, 1);
+  const renderScale = motion.level === "ambient" ? 0.46 : motion.level === "still" ? 0.42 : 0.68;
+  const fineTexture = skyRainTextureDataUrl({
+    width: textureWidth,
+    height: textureHeight,
+    count: Math.max(8, Math.round(fineTotal * textureRatio)),
+    intensity,
+    color: fineColor,
+    near: false,
+    rng,
+    renderScale
+  });
+  const nearTexture = skyRainTextureDataUrl({
+    width: textureWidth,
+    height: textureHeight,
+    count: Math.max(motion.level === "still" ? 0 : 2, Math.round(nearTotal * textureRatio)),
+    intensity,
+    color: nearColor,
+    near: true,
+    rng,
+    renderScale
+  });
+  if (!fineTexture || !nearTexture) return null;
+
+  const id = ++reactiveSkyRainTextureCounter;
+  const finePattern = `sky-rain-texture-fine-${id}`;
+  const nearPattern = `sky-rain-texture-near-${id}`;
+  const overscan = Math.ceil(vh * 0.52 + 48);
+  const animated = motion.animateAtmosphere;
+  const fineDuration = clamp(1.18 - intensity * 0.34, 0.72, 1.18);
+  const nearDuration = clamp(0.82 - intensity * 0.22, 0.48, 0.82);
+
+  return `
+    <defs>
+      <pattern id="${finePattern}" width="${textureWidth}" height="${textureHeight}" patternUnits="userSpaceOnUse">
+        <image href="${fineTexture}" width="${textureWidth}" height="${textureHeight}" preserveAspectRatio="none"/>
+      </pattern>
+      <pattern id="${nearPattern}" width="${textureWidth}" height="${textureHeight}" patternUnits="userSpaceOnUse">
+        <image href="${nearTexture}" width="${textureWidth}" height="${textureHeight}" preserveAspectRatio="none"/>
+      </pattern>
+    </defs>
+    <g class="sky-rain-atmosphere">
+      <rect x="0" y="0" width="${vw}" height="${vh}" fill="${veilColor}" opacity="${veilOpacity.toFixed(3)}"/>
+      <rect x="0" y="0" width="${vw}" height="${Math.round(vh * (0.42 + intensity * 0.22))}" fill="${veilColor}" opacity="${(veilOpacity * 0.44).toFixed(3)}"/>
+      <ellipse cx="${Math.round(vw * 0.48)}" cy="${Math.round(vh * 0.74)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.30)}" fill="${glowColor}" opacity="${horizonOpacity.toFixed(3)}" filter="url(#sky-glow-f)"/>
+    </g>
+    <g class="sky-reactive-rain-vector">
+      <g class="sky-rain-layer sky-rain-curtain${animated ? " is-animated" : ""}" style="--rain-distance:${textureHeight}px;animation-duration:${fineDuration.toFixed(2)}s;animation-delay:-${(rng() * fineDuration).toFixed(2)}s">
+        <rect x="-${overscan}" y="-${textureHeight}" width="${vw + overscan * 2}" height="${vh + textureHeight * 2}" fill="url(#${finePattern})" opacity="${nightOpacity.toFixed(2)}"/>
+      </g>
+      <g class="sky-rain-layer sky-rain-foreground${animated ? " is-animated" : ""}" style="--rain-distance:${textureHeight}px;animation-duration:${nearDuration.toFixed(2)}s;animation-delay:-${(rng() * nearDuration).toFixed(2)}s">
+        <rect x="-${overscan}" y="-${textureHeight}" width="${vw + overscan * 2}" height="${vh + textureHeight * 2}" fill="url(#${nearPattern})" opacity="${nightOpacity.toFixed(2)}"/>
+      </g>
+    </g>
+  `;
+}
+
 function skyRain(vw, vh, heavy = false, rng, skyState = null, motion = skyMotionProfile(heavy ? "thunder" : "rain", skyState)) {
+  if (reactiveSkyEnabled()) {
+    const textureRain = skyReactiveRain(vw, vh, heavy, rng, skyState, motion);
+    if (textureRain) return textureRain;
+  }
   const wetness = skyState ? skyState.wetness || 0 : heavy ? 1 : 0.55;
   const pressure = skyState ? skyState.precipPressure || 0 : heavy ? 0.8 : 0.45;
   const precipitation = skyState ? skyState.precipitation || 0 : heavy ? 0.8 : 0.3;

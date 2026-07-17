@@ -761,6 +761,47 @@ html[data-sky] body {
   to   { transform: translateX(32px); }
 }
 
+@property --sky-reactive-rain-slant {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+@property --sky-reactive-rain-offset {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --sky-reactive-cloud-distance {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+:root[data-sky-reactive-renderer] {
+  transition:
+    --sky-reactive-rain-slant 560ms cubic-bezier(0.22, 0.72, 0.22, 1),
+    --sky-reactive-rain-offset 560ms cubic-bezier(0.22, 0.72, 0.22, 1),
+    --sky-reactive-cloud-distance 620ms cubic-bezier(0.22, 0.72, 0.22, 1);
+}
+
+.sky-reactive-cloud-vector.is-animated {
+  animation-name: sky-reactive-cloud-travel;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+.sky-reactive-cloud-far {
+  animation-delay: -31s;
+}
+
+@keyframes sky-reactive-cloud-travel {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--sky-reactive-cloud-distance, 0px)); }
+}
+
 .sky-rain-atmosphere,
 .sky-rain-curtain,
 .sky-rain-foreground {
@@ -779,6 +820,14 @@ html[data-sky] body {
 .sky-rain-layer {
   transform-box: view-box;
   transform-origin: 0 0;
+}
+
+.sky-reactive-rain-vector {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transform: translateX(var(--sky-reactive-rain-offset, 0px)) skewX(var(--sky-reactive-rain-slant, 0deg));
+  transition: transform 560ms cubic-bezier(0.22, 0.72, 0.22, 1);
+  will-change: transform;
 }
 
 .sky-rain-layer.is-animated {
@@ -839,6 +888,8 @@ html[data-sky] body {
 :root.sky-motion-paused-for-app-work .sky-moon-glow,
 :root.sky-motion-paused-for-map .sky-cloud,
 :root.sky-motion-paused-for-app-work .sky-cloud,
+:root.sky-motion-paused-for-map .sky-reactive-cloud-vector,
+:root.sky-motion-paused-for-app-work .sky-reactive-cloud-vector,
 :root.sky-motion-paused-for-map .sky-rain-sheet,
 :root.sky-motion-paused-for-app-work .sky-rain-sheet,
 :root.sky-motion-paused-for-map .sky-rain-layer,
@@ -848,6 +899,14 @@ html[data-sky] body {
 :root.sky-motion-paused-for-map .sky-lightning,
 :root.sky-motion-paused-for-app-work .sky-lightning {
   animation-play-state: paused !important;
+  will-change: auto !important;
+}
+
+:root.sky-reactive-work-paused .sky-reactive-cloud-vector,
+:root.sky-reactive-work-paused .sky-reactive-rain-vector,
+:root.sky-reactive-work-paused .sky-reactive-rain-vector .sky-rain-layer {
+  animation-play-state: paused !important;
+  transition: none !important;
   will-change: auto !important;
 }
 
@@ -1355,6 +1414,33 @@ h2 {
   font-size: 0.74rem;
   font-weight: 720;
   line-height: 1.2;
+}
+
+.menu-setting-copy .experiment-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 0 0 0 5px;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--blue) 11%, transparent);
+  color: var(--blue);
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  vertical-align: 1px;
+}
+
+.reactive-sky-motion-setting .menu-action,
+.reactive-sky-lab-setting .menu-action {
+  min-width: 0;
+  max-width: 118px;
+  padding-inline: 12px;
+  white-space: normal;
+  font-size: 0.78rem;
+  line-height: 1.08;
 }
 
 .segmented-control {
@@ -12549,8 +12635,14 @@ button.sheet-plan-badge:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .sky-rain-layer,
-  .sky-rain-sheet {
+  .sky-rain-sheet,
+  .sky-reactive-cloud-vector {
     animation: none;
+  }
+
+  .sky-reactive-rain-vector,
+  :root[data-sky-reactive-renderer] {
+    transition: none;
   }
 
   .loading-chip-dot {
