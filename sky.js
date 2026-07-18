@@ -21,7 +21,7 @@ const SKY_CFG = {
   }
 };
 
-const SKY_SCENE_VERSION = "sky-v8";
+const SKY_SCENE_VERSION = "sky-v9";
 
 // Reactive sky is deliberately renderer-only. The setting owner exposes a
 // boolean/function hook; without it the existing SVG sky remains untouched.
@@ -1334,9 +1334,13 @@ function skyRainTextureDataUrl({ width, height, count, intensity, color, near, r
   context.strokeStyle = color;
   context.lineCap = near ? "round" : "butt";
 
+  // Spread drops through shallow vertical strata before applying seeded
+  // jitter. This keeps one memorable random clump from becoming the visual
+  // signature of the whole repeating atlas.
+  const yPhase = rng();
   for (let i = 0; i < count; i++) {
     const x = rng() * width;
-    const y = rng() * height;
+    const y = ((i + yPhase + rng() * 0.82) % Math.max(1, count)) / Math.max(1, count) * height;
     const length = near
       ? 44 + intensity * 54 + rng() * 58
       : 22 + intensity * 28 + rng() * 38;
@@ -1358,6 +1362,67 @@ function skyRainTextureDataUrl({ width, height, count, intensity, color, near, r
   } catch {
     return null;
   }
+}
+
+function skyRainTextureDimension(value, min, max) {
+  const bounded = Math.round(clamp(value, min, max));
+  if (bounded % 2) return bounded;
+  return bounded < max ? bounded + 1 : bounded - 1;
+}
+
+function skyRainTextureScale(width, height, pixelBudget, preferredScale) {
+  const bounded = Math.sqrt(Math.max(1, pixelBudget) / Math.max(1, width * height));
+  return clamp(Math.min(preferredScale, bounded), 0.24, preferredScale);
+}
+
+function skyReactiveRainTexturePlan(vw, vh, intensity, motion, rng) {
+  // The two atlases deliberately use different, odd dimensions so their
+  // horizontal and vertical repeats do not lock together. They are logically
+  // much taller than the old tiles, while their physical canvas pixels remain
+  // capped for predictable mobile memory and scene-build cost.
+  const fineWidth = skyRainTextureDimension(vw * (1.08 + rng() * 0.12), 360, 560);
+  const fineHeight = skyRainTextureDimension(vh * (1.28 + rng() * 0.10), 860, 1320);
+  const nearWidth = skyRainTextureDimension(vw * (0.94 + rng() * 0.10), 330, 500);
+  const nearHeight = skyRainTextureDimension(vh * (0.92 + rng() * 0.10), 640, 980);
+  const pixelBudget = motion.level === "ambient" ? 90000 : motion.level === "still" ? 65000 : 190000;
+  const fineScale = skyRainTextureScale(
+    fineWidth,
+    fineHeight,
+    pixelBudget * 0.56,
+    motion.level === "ambient" ? 0.42 : motion.level === "still" ? 0.36 : 0.58
+  );
+  const nearScale = skyRainTextureScale(
+    nearWidth,
+    nearHeight,
+    pixelBudget * 0.44,
+    motion.level === "ambient" ? 0.46 : motion.level === "still" ? 0.40 : 0.64
+  );
+  const fineSpeed = 390 + intensity * 130;
+  const nearSpeed = 510 + intensity * 150;
+  const fineDuration = clamp((fineHeight / fineSpeed) * (0.96 + rng() * 0.08), 1.78, 3.25);
+  const nearDuration = clamp((nearHeight / nearSpeed) * (0.95 + rng() * 0.10), 1.02, 2.10);
+  const fineDirection = rng() < 0.5 ? -1 : 1;
+  const nearDirection = rng() < 0.5 ? -1 : 1;
+
+  return {
+    pixelBudget,
+    fine: {
+      width: fineWidth,
+      height: fineHeight,
+      renderScale: fineScale,
+      duration: fineDuration,
+      wanderA: fineDirection * (2 + rng() * 3.5),
+      wanderB: fineDirection * -(1.5 + rng() * 3)
+    },
+    near: {
+      width: nearWidth,
+      height: nearHeight,
+      renderScale: nearScale,
+      duration: nearDuration,
+      wanderA: nearDirection * (3 + rng() * 5.5),
+      wanderB: nearDirection * -(2.5 + rng() * 5)
+    }
+  };
 }
 
 // Experimental rain path: two low-resolution canvas textures replace hundreds
@@ -1383,30 +1448,29 @@ function skyReactiveRain(vw, vh, heavy, rng, skyState, motion) {
   const glowColor = isDay ? lerpHex("#d5e1e7", "#ead5bf", warmth * 0.5) : "#a8bacd";
   const veilOpacity = clamp(0.055 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.025 : 0), 0.06, heavy ? 0.29 : 0.21);
   const horizonOpacity = clamp(0.06 + atmosphereIntensity * 0.12 + pressure * 0.045 + (active ? 0.02 : 0), 0.06, heavy ? 0.30 : 0.22);
-  const textureWidth = Math.round(clamp(vw * 0.78, 260, 420));
-  const textureHeight = Math.round(clamp(vh * 0.48, 420, 680));
   const viewportArea = Math.max(1, vw * vh);
-  const textureRatio = clamp((textureWidth * textureHeight) / viewportArea, 0.18, 1);
-  const renderScale = motion.level === "ambient" ? 0.46 : motion.level === "still" ? 0.42 : 0.68;
+  const texturePlan = skyReactiveRainTexturePlan(vw, vh, intensity, motion, rng);
+  const fineRatio = clamp((texturePlan.fine.width * texturePlan.fine.height) / viewportArea, 0.18, 1.55);
+  const nearRatio = clamp((texturePlan.near.width * texturePlan.near.height) / viewportArea, 0.18, 1.35);
   const fineTexture = skyRainTextureDataUrl({
-    width: textureWidth,
-    height: textureHeight,
-    count: Math.max(8, Math.round(fineTotal * textureRatio)),
+    width: texturePlan.fine.width,
+    height: texturePlan.fine.height,
+    count: Math.max(8, Math.round(fineTotal * fineRatio)),
     intensity,
     color: fineColor,
     near: false,
     rng,
-    renderScale
+    renderScale: texturePlan.fine.renderScale
   });
   const nearTexture = skyRainTextureDataUrl({
-    width: textureWidth,
-    height: textureHeight,
-    count: Math.max(motion.level === "still" ? 0 : 2, Math.round(nearTotal * textureRatio)),
+    width: texturePlan.near.width,
+    height: texturePlan.near.height,
+    count: Math.max(motion.level === "still" ? 0 : 2, Math.round(nearTotal * nearRatio)),
     intensity,
     color: nearColor,
     near: true,
     rng,
-    renderScale
+    renderScale: texturePlan.near.renderScale
   });
   if (!fineTexture || !nearTexture) return null;
 
@@ -1415,16 +1479,28 @@ function skyReactiveRain(vw, vh, heavy, rng, skyState, motion) {
   const nearPattern = `sky-rain-texture-near-${id}`;
   const overscan = Math.ceil(vh * 0.52 + 48);
   const animated = motion.animateAtmosphere;
-  const fineDuration = clamp(1.18 - intensity * 0.34, 0.72, 1.18);
-  const nearDuration = clamp(0.82 - intensity * 0.22, 0.48, 0.82);
+  const finePhaseX = Math.round(rng() * texturePlan.fine.width);
+  const finePhaseY = Math.round(rng() * texturePlan.fine.height);
+  const nearPhaseX = Math.round(rng() * texturePlan.near.width);
+  const nearPhaseY = Math.round(rng() * texturePlan.near.height);
+
+  const rainLayerStyle = (layer, delay) => [
+    `--rain-distance:${layer.height}px`,
+    `--rain-step-a:${Math.round(layer.height * 0.37)}px`,
+    `--rain-step-b:${Math.round(layer.height * 0.71)}px`,
+    `--rain-wander-a:${layer.wanderA.toFixed(2)}px`,
+    `--rain-wander-b:${layer.wanderB.toFixed(2)}px`,
+    `animation-duration:${layer.duration.toFixed(2)}s`,
+    `animation-delay:-${delay.toFixed(2)}s`
+  ].join(";");
 
   return `
     <defs>
-      <pattern id="${finePattern}" width="${textureWidth}" height="${textureHeight}" patternUnits="userSpaceOnUse">
-        <image href="${fineTexture}" width="${textureWidth}" height="${textureHeight}" preserveAspectRatio="none"/>
+      <pattern id="${finePattern}" x="-${finePhaseX}" y="-${finePhaseY}" width="${texturePlan.fine.width}" height="${texturePlan.fine.height}" patternUnits="userSpaceOnUse">
+        <image href="${fineTexture}" width="${texturePlan.fine.width}" height="${texturePlan.fine.height}" preserveAspectRatio="none"/>
       </pattern>
-      <pattern id="${nearPattern}" width="${textureWidth}" height="${textureHeight}" patternUnits="userSpaceOnUse">
-        <image href="${nearTexture}" width="${textureWidth}" height="${textureHeight}" preserveAspectRatio="none"/>
+      <pattern id="${nearPattern}" x="-${nearPhaseX}" y="-${nearPhaseY}" width="${texturePlan.near.width}" height="${texturePlan.near.height}" patternUnits="userSpaceOnUse">
+        <image href="${nearTexture}" width="${texturePlan.near.width}" height="${texturePlan.near.height}" preserveAspectRatio="none"/>
       </pattern>
     </defs>
     <g class="sky-rain-atmosphere">
@@ -1433,11 +1509,11 @@ function skyReactiveRain(vw, vh, heavy, rng, skyState, motion) {
       <ellipse cx="${Math.round(vw * 0.48)}" cy="${Math.round(vh * 0.74)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.30)}" fill="${glowColor}" opacity="${horizonOpacity.toFixed(3)}" filter="url(#sky-glow-f)"/>
     </g>
     <g class="sky-reactive-rain-vector">
-      <g class="sky-rain-layer sky-rain-curtain${animated ? " is-animated" : ""}" style="--rain-distance:${textureHeight}px;animation-duration:${fineDuration.toFixed(2)}s;animation-delay:-${(rng() * fineDuration).toFixed(2)}s">
-        <rect x="-${overscan}" y="-${textureHeight}" width="${vw + overscan * 2}" height="${vh + textureHeight * 2}" fill="url(#${finePattern})" opacity="${nightOpacity.toFixed(2)}"/>
+      <g class="sky-rain-layer sky-rain-curtain${animated ? " is-animated" : ""}" style="${rainLayerStyle(texturePlan.fine, rng() * texturePlan.fine.duration)}">
+        <rect x="-${overscan}" y="-${texturePlan.fine.height}" width="${vw + overscan * 2}" height="${vh + texturePlan.fine.height * 2}" fill="url(#${finePattern})" opacity="${nightOpacity.toFixed(2)}"/>
       </g>
-      <g class="sky-rain-layer sky-rain-foreground${animated ? " is-animated" : ""}" style="--rain-distance:${textureHeight}px;animation-duration:${nearDuration.toFixed(2)}s;animation-delay:-${(rng() * nearDuration).toFixed(2)}s">
-        <rect x="-${overscan}" y="-${textureHeight}" width="${vw + overscan * 2}" height="${vh + textureHeight * 2}" fill="url(#${nearPattern})" opacity="${nightOpacity.toFixed(2)}"/>
+      <g class="sky-rain-layer sky-rain-foreground${animated ? " is-animated" : ""}" style="${rainLayerStyle(texturePlan.near, rng() * texturePlan.near.duration)}">
+        <rect x="-${overscan}" y="-${texturePlan.near.height}" width="${vw + overscan * 2}" height="${vh + texturePlan.near.height * 2}" fill="url(#${nearPattern})" opacity="${nightOpacity.toFixed(2)}"/>
       </g>
     </g>
   `;

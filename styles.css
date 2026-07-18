@@ -837,6 +837,10 @@ html[data-sky] body {
   will-change: transform;
 }
 
+.sky-reactive-rain-vector .sky-rain-layer.is-animated {
+  animation-name: sky-reactive-rain-layer-fall;
+}
+
 .sky-rain-streak {
   vector-effect: non-scaling-stroke;
   shape-rendering: geometricPrecision;
@@ -850,6 +854,21 @@ html[data-sky] body {
 @keyframes sky-rain-layer-fall {
   from { transform: translateY(0); }
   to   { transform: translateY(var(--rain-distance, 1200px)); }
+}
+
+@keyframes sky-reactive-rain-layer-fall {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  37% {
+    transform: translate3d(var(--rain-wander-a, 0px), var(--rain-step-a, 444px), 0);
+  }
+  71% {
+    transform: translate3d(var(--rain-wander-b, 0px), var(--rain-step-b, 852px), 0);
+  }
+  100% {
+    transform: translate3d(0, var(--rain-distance, 1200px), 0);
+  }
 }
 
 .sky-snow {

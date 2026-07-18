@@ -257,10 +257,50 @@ assert.match(rainSource, /reactiveSkyEnabled\(\)[\s\S]*skyReactiveRain/, "only t
 assert.match(rainSource, /if \(textureRain\) return textureRain;[\s\S]*sky-rain-streak/, "texture failure falls back to the established rain renderer");
 const reactiveRainSource = extractFunction(sky, "skyReactiveRain");
 assert.equal((reactiveRainSource.match(/skyRainTextureDataUrl\(/g) || []).length, 2, "reactive rain uses exactly two cached texture strata");
-assert.match(reactiveRainSource, /clamp\(vw\s*\*\s*0\.78,\s*260,\s*420\)/, "rain texture width is bounded");
-assert.match(reactiveRainSource, /clamp\(vh\s*\*\s*0\.48,\s*420,\s*680\)/, "rain texture height is bounded");
-assert.match(reactiveRainSource, /ambient"\s*\?\s*0\.46[\s\S]*still"\s*\?\s*0\.42[\s\S]*0\.68/, "rain textures render below native screen resolution");
+assert.equal((reactiveRainSource.match(/class="sky-rain-layer/g) || []).length, 2, "reactive rain keeps exactly two compositor layers");
+assert.match(reactiveRainSource, /skyReactiveRainTexturePlan\(/, "rain uses a bounded independent-atlas plan");
 assert.doesNotMatch(reactiveRainSource, /requestAnimationFrame|setInterval/, "the rain renderer creates no JavaScript animation loop");
+
+const rainDimensionSource = extractFunction(sky, "skyRainTextureDimension");
+const rainScaleSource = extractFunction(sky, "skyRainTextureScale");
+const rainPlanSource = extractFunction(sky, "skyReactiveRainTexturePlan");
+const rainPlanHarness = new Function(`
+  function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
+  function seededSkyRandom(seed) {
+    let t = seed >>> 0;
+    return () => {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  ${rainDimensionSource}
+  ${rainScaleSource}
+  ${rainPlanSource}
+  return (seed) => skyReactiveRainTexturePlan(390, 844, 0.62, { level: "ambient" }, seededSkyRandom(seed));
+`)();
+const rainPlan = rainPlanHarness(12345);
+assert.deepEqual(rainPlan, rainPlanHarness(12345), "rain atlas variation is deterministic for a scene seed");
+assert.notEqual(rainPlan.fine.width, rainPlan.near.width, "rain strata use non-matching widths");
+assert.notEqual(rainPlan.fine.height, rainPlan.near.height, "rain strata use non-matching heights");
+assert.ok(rainPlan.fine.width > 390, "the fine atlas does not repeat side-by-side on a phone");
+assert.ok(rainPlan.fine.height > 844 && rainPlan.near.height >= 640, "tall atlases lengthen the visible repeat cadence");
+assert.ok(rainPlan.fine.duration >= 1.78 && rainPlan.near.duration >= 1.02, "each rain constellation persists materially longer");
+const physicalRainPixels = [rainPlan.fine, rainPlan.near].reduce((total, layer) => (
+  total + Math.round(layer.width * layer.renderScale) * Math.round(layer.height * layer.renderScale)
+), 0);
+assert.ok(physicalRainPixels <= rainPlan.pixelBudget + 1500, "mobile rain atlas pixels stay inside the declared budget");
+assert.ok(Math.abs(rainPlan.fine.wanderA) <= 6 && Math.abs(rainPlan.fine.wanderB) <= 6, "fine rain turbulence stays subtle");
+assert.ok(Math.abs(rainPlan.near.wanderA) <= 9 && Math.abs(rainPlan.near.wanderB) <= 8, "foreground turbulence stays bounded");
+assert.doesNotMatch(rainPlanSource, /Math\.random|Date\.now|performance\.now/, "rain variation uses only the injected scene RNG");
+const rainTextureSource = extractFunction(sky, "skyRainTextureDataUrl");
+assert.match(rainTextureSource, /const yPhase = rng\(\)/, "drop placement is vertically stratified with a seeded phase");
+assert.doesNotMatch(rainTextureSource, /Math\.random/, "texture generation remains deterministic");
+const rainFallKeyframes = styles.match(/@keyframes sky-reactive-rain-layer-fall\s*\{[\s\S]*?\n\}/)?.[0] || "";
+assert.match(rainFallKeyframes, /37%[\s\S]*--rain-wander-a[\s\S]*71%[\s\S]*--rain-wander-b/, "rain follows two subtle seeded turbulence phases");
+assert.doesNotMatch(rainFallKeyframes, /filter|opacity|background-position/, "rain randomness remains transform-only");
+assert.match(styles, /\.sky-reactive-rain-vector \.sky-rain-layer\.is-animated\s*\{[\s\S]*animation-name:\s*sky-reactive-rain-layer-fall/, "only the opted-in rain renderer uses turbulent fall");
 
 const profileSource = extractFunction(sky, "skyMotionProfile");
 const profileHarness = new Function(`
