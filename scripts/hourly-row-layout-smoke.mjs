@@ -22,6 +22,8 @@ assert.doesNotMatch(styles, /\.sheet-hour-chip/, "obsolete microtext chip stylin
 assert.match(styles, /\.sheet-hour-time\s*\{[\s\S]*white-space:\s*nowrap/, "hour labels cannot wrap into stacked text");
 assert.match(styles, /@media \(max-width: 430px\)[\s\S]*grid-template-columns:\s*46px 26px minmax\(46px, 1fr\) minmax\(44px, 1fr\) minmax\(56px, 1fr\) 14px/, "phone rows share spare width across the three metric columns");
 assert.match(styles, /\.sheet-hour-temp,[\s\S]*\.sheet-hour-wind\s*\{[\s\S]*justify-self:\s*center/, "hourly metrics sit in the center of their shared tracks");
+assert.match(styles, /@media \(max-width: 430px\)[\s\S]*\.sheet-hour-rain,[\s\S]*font-size:\s*0\.84rem/, "phone rain and wind values retain a readable visual size");
+assert.match(styles, /@media \(max-width: 430px\)[\s\S]*\.sheet-hour-rain span,[\s\S]*width:\s*13px;[\s\S]*height:\s*13px/, "phone rain and wind symbols remain visually legible");
 assert.match(styles, /\.sheet-hour-alert-divider\s*\{[\s\S]*grid-template-columns:\s*8px minmax\(0, 1fr\) auto/, "alert dividers protect both their title and timing");
 
 console.log("Hourly row layout smoke passed.");

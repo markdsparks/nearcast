@@ -12225,7 +12225,7 @@ button.sheet-plan-badge:focus-visible {
 .sheet-hour-rain,
 .sheet-hour-wind {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.90rem;
   font-weight: 850;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -12240,8 +12240,8 @@ button.sheet-plan-badge:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   color: var(--muted);
   opacity: 0.72;
 }
@@ -12396,12 +12396,12 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-rain,
   .sheet-hour-wind {
     gap: 4px;
-    font-size: 0.78rem;
+    font-size: 0.86rem;
   }
   .sheet-hour-rain span,
   .sheet-hour-wind span {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
   }
   .sheet-hour-signals {
     justify-content: flex-end;
@@ -12443,12 +12443,12 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-rain,
   .sheet-hour-wind {
     gap: 3px;
-    font-size: 0.76rem;
+    font-size: 0.84rem;
   }
   .sheet-hour-rain span,
   .sheet-hour-wind span {
-    width: 11px;
-    height: 11px;
+    width: 13px;
+    height: 13px;
   }
   .sheet-hour-cue {
     width: 14px;
