@@ -98,7 +98,11 @@ private struct NearcastComplicationProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastComplicationEntry>) -> Void) {
         Task {
             let cached = NearcastWidgetSnapshot.stored()
-            let snapshot = await NearcastWatchWeatherRefresh.refresh(fallback: cached ?? .fallback) ?? cached ?? .fallback
+            let refreshed = await NearcastWatchWeatherRefresh.refresh(fallback: cached ?? .fallback)
+            // The Watch app or phone may have written a newer snapshot while
+            // the extension was awaiting its refresh. Always build the
+            // timeline from the final shared-store winner.
+            let snapshot = NearcastWidgetSnapshot.stored() ?? refreshed ?? cached ?? .fallback
             let now = Date()
             let offsets = [0, 30, 60, 90, 120, 180, 240, 360, 480, 720]
             let entries = offsets.map { minutes in
@@ -1071,24 +1075,10 @@ private func makeEntry(date: Date, snapshot: NearcastWidgetSnapshot, isPlacehold
 }
 
 private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, relativeTo now: Date) -> NearcastWidgetSnapshot {
-    guard let timeline = base.timeline, !timeline.isEmpty else { return base }
-    let rows: [NearcastWidgetHour]
-    if timeline.contains(where: { $0.startsAt != nil }) {
-        let timestamp = date.timeIntervalSince1970
-        let activeIndex = timeline.lastIndex(where: { ($0.startsAt ?? .infinity) <= timestamp }) ?? 0
-        rows = Array(timeline.suffix(from: activeIndex))
-    } else {
-        let hoursAhead = max(0, Int(date.timeIntervalSince(now) / 3600))
-        rows = timeline.filter { $0.offsetHours >= hoursAhead }
-    }
-    guard !rows.isEmpty else { return base }
+    guard let projection = base.timelineProjection(at: date, relativeTo: now) else { return base }
     var projected = base
-    projected.timeline = rows.enumerated().map { index, row in
-        var shifted = row
-        shifted.offsetHours = index
-        return shifted
-    }
-    if let current = projected.timeline?.first {
+    projected.timeline = projection.rows
+    if projection.advancesCurrentWeather, let current = projection.rows.first {
         projected.temperature = current.temperature ?? projected.temperature
         projected.feelsLike = current.feelsLike ?? projected.feelsLike
         projected.rainChance = current.rainChance ?? projected.rainChance
@@ -1382,6 +1372,14 @@ private enum NearcastWatchWeatherRefresh {
             return nil
         }
 
+        // A recent coordinator result can finish after the Watch app has
+        // already saved a newer observation. Never move shared weather time
+        // backwards; the app's in-memory view and complication must converge
+        // on the same newest snapshot.
+        if latest.hasWeatherData, latest.weatherSavedTime >= weather.weatherSavedTime {
+            return latest
+        }
+
         var updated = latest
         updated.version = max(6, max(updated.version, weather.version))
         if updated.hasPlan, updated.planSavedAt == nil, updated.savedAt > 0 {
@@ -1438,6 +1436,16 @@ private actor NearcastWatchWeatherRefreshCoordinator {
     func refresh(fallback: NearcastWidgetSnapshot) async -> NearcastWidgetSnapshot? {
         guard let requestedPlace = NearcastWidgetPlace.stored() else { return nil }
         let key = placeKey(requestedPlace)
+
+        // Reuse a current snapshot written by the Watch app or iPhone instead
+        // of immediately issuing a second request from the complication.
+        if let shared = NearcastWidgetSnapshot.stored(),
+           shared.hasWeatherData,
+           shared.weatherAge <= 10 * 60,
+           shared.placeName == requestedPlace.displayLabel,
+           shared.windUnit.lowercased().contains("km") == fallback.windUnit.lowercased().contains("km") {
+            return shared
+        }
 
         if let recent = recent[key], Date().timeIntervalSince(recent.completedAt) <= reuseWindow {
             return NearcastWatchWeatherRefresh.reuse(

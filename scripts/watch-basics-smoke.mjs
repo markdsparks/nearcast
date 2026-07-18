@@ -69,11 +69,16 @@ assert.match(watchApp, /-nearcastPreviewWeather/, "populated Watch layouts can b
 assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");
 assert.match(watchApp, /forecast_hours", value: "24"/, "watch app caches a full day of hourly values");
 assert.match(complications, /forecast_hours", value: "24"/, "complications can project a full day without a fresh wake-up");
+assert.match(complications, /if projection\.advancesCurrentWeather, let current = projection\.rows\.first/, "the current complication entry cannot replace live weather with its hourly row");
+assert.match(complications, /latest\.weatherSavedTime >= weather\.weatherSavedTime[\s\S]*return latest/, "cached complication weather cannot overwrite a newer shared snapshot");
+assert.match(complications, /let snapshot = NearcastWidgetSnapshot\.stored\(\) \?\? refreshed/, "the complication re-reads the shared winner after an asynchronous refresh");
 
 assert.match(sync, /snapshotData != lastSnapshotData/, "phone-to-watch snapshots are deduplicated");
 assert.doesNotMatch(sync, /session\.transferUserInfo\(payload\)/, "current-state snapshots do not create a stale delivery queue");
 assert.match(sync, /remainingComplicationUserInfoTransfers > 0/, "priority transfers respect the system budget");
 assert.match(snapshot, /var daily: \[NearcastWidgetDay\]\?/, "shared snapshots carry daily basics");
+assert.match(snapshot, /func preservingNewerWeather\(from stored:/, "shared snapshots arbitrate out-of-order weather by freshness");
+assert.match(snapshot, /func timelineProjection\(at date:[\s\S]*advancesCurrentWeather/, "shared timeline projection distinguishes current observations from future forecast rows");
 assert.match(app, /daily: nativeWidgetDaily\(data\)/, "the phone sends daily basics to the watch");
 
 const version = app.match(/const VERSION = "([^"]+)"/)?.[1];

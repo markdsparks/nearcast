@@ -41,8 +41,28 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
             lastError = "Snapshot payload was missing data."
             return
         }
-        NearcastWidgetSnapshotStore.saveSnapshotData(snapshotData)
-        if let placeData = payload["place"] as? Data {
+        guard let incoming = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) else {
+            lastError = "Snapshot payload could not be decoded."
+            return
+        }
+
+        let placeData = payload["place"] as? Data
+        let incomingPlace = placeData.flatMap { try? JSONDecoder().decode(NearcastWidgetPlace.self, from: $0) }
+        let storedPlace = NearcastWidgetPlace.stored()
+        let isSamePlace = incomingPlace.map { incomingPlace in
+            guard let storedPlace else { return false }
+            return abs(incomingPlace.latitude - storedPlace.latitude) < 0.00001
+                && abs(incomingPlace.longitude - storedPlace.longitude) < 0.00001
+        } ?? (incoming.placeName == NearcastWidgetSnapshot.stored()?.placeName)
+
+        let resolved: NearcastWidgetSnapshot
+        if isSamePlace, let stored = NearcastWidgetSnapshot.stored() {
+            resolved = incoming.preservingNewerWeather(from: stored)
+        } else {
+            resolved = incoming
+        }
+        NearcastWidgetSnapshotStore.save(resolved)
+        if let placeData {
             NearcastWidgetSnapshotStore.savePlaceData(placeData)
         }
         lastReceivedAt = Date()

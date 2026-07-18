@@ -272,6 +272,42 @@ require(mergedSnapshot.planTitle == "Newest plan" && mergedSnapshot.planStartAt 
 require(mergedSnapshot.planRisk == "rain", "an in-flight refresh preserves the plan risk")
 require(mergedSnapshot.daily?.first?.high == 70, "an in-flight refresh merges daily weather basics")
 
+var delayedPhoneSnapshot = newestPlan
+delayedPhoneSnapshot.temperature = 69
+delayedPhoneSnapshot.weatherSavedAt = now - 60
+delayedPhoneSnapshot.planTitle = "Phone plan"
+var freshWatchSnapshot = newestPlan
+freshWatchSnapshot.temperature = 72
+freshWatchSnapshot.weatherSavedAt = now
+freshWatchSnapshot.planTitle = "Watch plan"
+let freshnessResolved = delayedPhoneSnapshot.preservingNewerWeather(from: freshWatchSnapshot)
+require(freshnessResolved.temperature == 72, "a delayed phone payload cannot replace fresher Watch weather")
+require(freshnessResolved.planTitle == "Phone plan", "freshness arbitration preserves the incoming plan domain")
+
+var newestPhoneSnapshot = delayedPhoneSnapshot
+newestPhoneSnapshot.temperature = 74
+newestPhoneSnapshot.weatherSavedAt = now + 1
+let newestPhoneResolved = newestPhoneSnapshot.preservingNewerWeather(from: freshWatchSnapshot)
+require(newestPhoneResolved.temperature == 74, "newer incoming weather still replaces the Watch cache")
+
+var projectionSnapshot = visual
+projectionSnapshot.temperature = 72
+projectionSnapshot.timeline = [
+    hour(0, "Now", startsAt: baseTime, temperature: 69),
+    hour(1, "+1h", startsAt: baseTime + 3600, temperature: 70),
+    hour(2, "+2h", startsAt: baseTime + 7200, temperature: 71)
+]
+let projectionNow = Date(timeIntervalSince1970: baseTime + 20 * 60)
+let currentProjection = projectionSnapshot.timelineProjection(at: projectionNow, relativeTo: projectionNow)
+require(currentProjection?.advancesCurrentWeather == false, "the first complication entry keeps the true current observation")
+require(currentProjection?.rows.first?.temperature == 69, "the current hourly row remains available to the forecast ribbon")
+let futureProjection = projectionSnapshot.timelineProjection(
+    at: Date(timeIntervalSince1970: baseTime + 3600),
+    relativeTo: projectionNow
+)
+require(futureProjection?.advancesCurrentWeather == true, "a future hourly boundary advances complication weather")
+require(futureProjection?.rows.first?.temperature == 70, "future complication entries select the matching forecast hour")
+
 require(nearcastWindFlowDegrees(from: 0) == 180, "a north wind flows toward the south")
 require(nearcastWindFlowDegrees(from: 225) == 45, "a southwest wind flows toward the northeast")
 require(nearcastWindFlowDegrees(from: -90) == 90, "negative provider bearings normalize before becoming flow directions")

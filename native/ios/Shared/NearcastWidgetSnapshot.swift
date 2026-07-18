@@ -70,6 +70,11 @@ struct NearcastWidgetHour: Codable, Identifiable {
     var startsAt: TimeInterval?
 }
 
+struct NearcastWidgetTimelineProjection {
+    var rows: [NearcastWidgetHour]
+    var advancesCurrentWeather: Bool
+}
+
 struct NearcastWidgetDay: Codable, Identifiable {
     var id: String { date }
     var date: String
@@ -181,6 +186,49 @@ extension NearcastWidgetSnapshot {
 
     var age: TimeInterval {
         weatherAge
+    }
+
+    /// Keeps the receiver's incoming plan and metadata, but refuses to let an
+    /// older weather payload replace a fresher observation already on Watch.
+    func preservingNewerWeather(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
+        guard stored.hasWeatherData,
+              !hasWeatherData || stored.weatherSavedTime > weatherSavedTime else {
+            return self
+        }
+        return mergingWeather(from: stored)
+    }
+
+    /// Selects the forecast rows active at a future complication entry. The
+    /// current hourly row is useful for the ribbon, but it must not replace the
+    /// API's true current observation until the timeline advances to a new row.
+    func timelineProjection(at date: Date, relativeTo now: Date) -> NearcastWidgetTimelineProjection? {
+        guard let timeline, !timeline.isEmpty else { return nil }
+
+        let rows: [NearcastWidgetHour]
+        let advancesCurrentWeather: Bool
+        if timeline.contains(where: { $0.startsAt != nil }) {
+            let nowTimestamp = now.timeIntervalSince1970
+            let projectedTimestamp = date.timeIntervalSince1970
+            let currentIndex = timeline.lastIndex(where: { ($0.startsAt ?? .infinity) <= nowTimestamp }) ?? 0
+            let projectedIndex = timeline.lastIndex(where: { ($0.startsAt ?? .infinity) <= projectedTimestamp }) ?? currentIndex
+            rows = Array(timeline.suffix(from: projectedIndex))
+            advancesCurrentWeather = projectedIndex > currentIndex
+        } else {
+            let hoursAhead = max(0, Int(date.timeIntervalSince(now) / 3600))
+            rows = timeline.filter { $0.offsetHours >= hoursAhead }
+            advancesCurrentWeather = hoursAhead > 0
+        }
+
+        guard !rows.isEmpty else { return nil }
+        let shiftedRows = rows.enumerated().map { index, row in
+            var shifted = row
+            shifted.offsetHours = index
+            return shifted
+        }
+        return NearcastWidgetTimelineProjection(
+            rows: shiftedRows,
+            advancesCurrentWeather: advancesCurrentWeather
+        )
     }
 
     /// Replaces only forecast fields, preserving any plan delivered while a
