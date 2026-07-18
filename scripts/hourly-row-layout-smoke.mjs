@@ -20,7 +20,8 @@ assert.match(daygraph, /previousAlertKey:[\s\S]*lastAlertKey/, "rolling hourly p
 
 assert.doesNotMatch(styles, /\.sheet-hour-chip/, "obsolete microtext chip styling is removed");
 assert.match(styles, /\.sheet-hour-time\s*\{[\s\S]*white-space:\s*nowrap/, "hour labels cannot wrap into stacked text");
-assert.match(styles, /@media \(max-width: 430px\)[\s\S]*grid-template-columns:\s*46px 26px 46px 44px minmax\(56px, 1fr\) 14px/, "phone rows reserve six stable metric columns");
+assert.match(styles, /@media \(max-width: 430px\)[\s\S]*grid-template-columns:\s*46px 26px minmax\(46px, 1fr\) minmax\(44px, 1fr\) minmax\(56px, 1fr\) 14px/, "phone rows share spare width across the three metric columns");
+assert.match(styles, /\.sheet-hour-temp,[\s\S]*\.sheet-hour-wind\s*\{[\s\S]*justify-self:\s*center/, "hourly metrics sit in the center of their shared tracks");
 assert.match(styles, /\.sheet-hour-alert-divider\s*\{[\s\S]*grid-template-columns:\s*8px minmax\(0, 1fr\) auto/, "alert dividers protect both their title and timing");
 
 console.log("Hourly row layout smoke passed.");

@@ -11964,7 +11964,7 @@ body.map-immersive-active .sheet-now-jump {
 .sheet-hour-row {
   position: relative;
   display: grid;
-  grid-template-columns: 50px 34px 66px 68px minmax(80px, 1fr) 18px;
+  grid-template-columns: 50px 34px minmax(66px, 1fr) minmax(68px, 1fr) minmax(80px, 1fr) 18px;
   align-items: center;
   gap: 10px;
   min-height: 62px;
@@ -12230,6 +12230,11 @@ button.sheet-plan-badge:focus-visible {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.sheet-hour-temp,
+.sheet-hour-rain,
+.sheet-hour-wind {
+  justify-self: center;
+}
 .sheet-hour-rain span,
 .sheet-hour-wind span {
   display: inline-flex;
@@ -12374,7 +12379,7 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 46px 28px 48px 48px minmax(56px, 1fr) 16px;
+    grid-template-columns: 46px 28px minmax(48px, 1fr) minmax(48px, 1fr) minmax(56px, 1fr) 16px;
     align-items: center;
     gap: 6px;
     min-height: 58px;
@@ -12420,7 +12425,7 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 430px) {
   .sheet-hour-row {
-    grid-template-columns: 46px 26px 46px 44px minmax(56px, 1fr) 14px;
+    grid-template-columns: 46px 26px minmax(46px, 1fr) minmax(44px, 1fr) minmax(56px, 1fr) 14px;
     gap: 4px;
     padding: 10px 8px;
   }
