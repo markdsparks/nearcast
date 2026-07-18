@@ -128,6 +128,10 @@ const GENERATED_RADAR_SELECTION_HINT_MS = 60 * 1000;
 const GENERATED_RADAR_VIEWPORT_COVERAGE_MIN = 0.999;
 const GENERATED_RADAR_MIN_ZOOM_GRACE = 0.001;
 const GENERATED_RADAR_MIN_VIEWPORT_ZOOM = 7.5;
+// Keep an already-drawn enhanced field through a small zoom-out so the map
+// does not pop between sources at the boundary. A genuinely regional view
+// still falls back once it is well below the pack's intended scale.
+const GENERATED_RADAR_ENHANCED_EXIT_ZOOM = 7.0;
 const GENERATED_RADAR_CENTER_FOCUS_MIN_ZOOM = 9;
 const GENERATED_RADAR_FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = MAP_MAX_ZOOM;
 const GENERATED_RADAR_FALLBACK_RELOAD_MS = 120;
@@ -5534,6 +5538,25 @@ function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason
   const eligibility = generatedRadarFrameViewportEligibility(frame);
   if (!eligibility || eligibility.usable) return false;
 
+  // The enhanced pack's nominal floor is z7.5, but dropping it immediately
+  // at that exact boundary makes a small pinch/scroll feel like a source
+  // failure. Keep the last good enhanced surface until the viewport is
+  // clearly regional; coverage and center/viewport checks still force a
+  // fallback immediately when the data would be misleading.
+  if (
+    eligibility.reason === "below-enhanced-min-zoom"
+    && Number.isFinite(Number(eligibility.zoom))
+    && Number(eligibility.zoom) >= GENERATED_RADAR_ENHANCED_EXIT_ZOOM
+  ) {
+    recordRadarSourceDecision("radar.enhanced-zoom-hysteresis", {
+      reason,
+      zoom: Number(eligibility.zoom),
+      enterZoom: GENERATED_RADAR_MIN_VIEWPORT_ZOOM,
+      exitZoom: GENERATED_RADAR_ENHANCED_EXIT_ZOOM
+    });
+    return false;
+  }
+
   if (generatedRadarFallbackReloadTimer) return true;
   const timelineKind = mapState.timelineKind === "precip" ? "precip" : "radar";
   const shouldResumePlayback = Boolean(mapState.playing);
@@ -5544,7 +5567,6 @@ function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason
 
   clearGeneratedRadarSelection();
   clearGeneratedRadarWarmup();
-  clearMapLayers({ renderStatic: false });
   setFrameLabel("Loading radar");
   setMapLoading(true);
 
@@ -5552,7 +5574,9 @@ function maybeSwitchGeneratedRadarToFallback(index = mapState.frameIndex, reason
     generatedRadarFallbackReloadTimer = 0;
     loadMapFrames(true, {
       ...generatedRadarRefreshOptions(timelineKind),
-      preserveExisting: false,
+      // Keep the last good enhanced surface onscreen while the standard
+      // fallback timeline loads. The successful load replaces it atomically.
+      preserveExisting: true,
       resumePlayback: shouldResumePlayback
     }).catch((error) => {
       recordRadarSourceDecision("radar.fallback-reload-failed", {

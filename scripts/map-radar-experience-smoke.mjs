@@ -209,6 +209,16 @@ assert.match(statusSource, /rawMapHighDetailVisible\(/, "the public status uses 
 assert.match(statusSource, /"High detail"/, "the factual status is named High detail");
 assert.doesNotMatch(statusSource, /"(?:Checking radar|Enhancing radar|Radar enhanced)"/, "the UI makes no enhancement promise while loading");
 
+// A small pinch around the enhanced pack's nominal floor should not make the
+// map pop between sources. A true regional zoom-out still gets an atomic
+// fallback replacement, keeping the last good surface visible while loading.
+assert.match(map, /GENERATED_RADAR_ENHANCED_EXIT_ZOOM\s*=\s*7\.0/, "enhanced radar has a lower zoom exit threshold");
+const generatedFallbackSource = extractFunction(map, "maybeSwitchGeneratedRadarToFallback");
+assert.match(generatedFallbackSource, /below-enhanced-min-zoom/, "zoom hysteresis only applies to the enhanced zoom floor");
+assert.match(generatedFallbackSource, /GENERATED_RADAR_ENHANCED_EXIT_ZOOM/, "enhanced radar stays visible through the hysteresis band");
+assert.match(generatedFallbackSource, /preserveExisting:\s*true/, "fallback loading preserves the last drawn radar surface");
+assert.doesNotMatch(generatedFallbackSource, /clearMapLayers\(\{\s*renderStatic:\s*false\s*\}\)/, "fallback loading does not blank the map before replacement");
+
 // StormScope relevance must come from weather truth, not merely from the fact
 // that a fallback radar frame URL happens to exist.
 const contextSource = extractFunction(map, "xweatherStormViewportContext");
