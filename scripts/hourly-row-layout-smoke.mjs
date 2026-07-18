@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const [daygraph, styles] = await Promise.all([
+  readFile(path.join(root, "daygraph.js"), "utf8"),
+  readFile(path.join(root, "styles.css"), "utf8")
+]);
+
+const rowMarkup = daygraph.match(/function renderHourlyRowsMarkup\([\s\S]*?\n}\n\nfunction renderHourlyList/)?.[0] || "";
+assert.ok(rowMarkup, "hourly row renderer is present");
+assert.doesNotMatch(rowMarkup, /sheet-hour-badges|sheet-hour-chip/, "collapsed hourly rows contain no repeated exception pills");
+assert.match(rowMarkup, /sheet-hour-temp[\s\S]*Math\.round\(hour\.temp\)}°/, "collapsed temperature uses one compact degree value");
+assert.match(rowMarkup, /sheet-hour-wind[\s\S]*<strong>\$\{windSpeed}/, "collapsed wind keeps its arrow and numeric speed without a clipped unit");
+assert.match(rowMarkup, /sheet-hour-wind[\s\S]*sheet-hour-cue/, "the disclosure cue is its own grid item after the core metrics");
+assert.match(daygraph, /hourlyAlertDividerHtml\([\s\S]*sheet-hour-alert-divider/, "hourly alerts appear once as a block divider");
+assert.match(daygraph, /previousAlertKey:[\s\S]*lastAlertKey/, "rolling hourly pages preserve alert-divider continuity");
+
+assert.doesNotMatch(styles, /\.sheet-hour-chip/, "obsolete microtext chip styling is removed");
+assert.match(styles, /\.sheet-hour-time\s*\{[\s\S]*white-space:\s*nowrap/, "hour labels cannot wrap into stacked text");
+assert.match(styles, /@media \(max-width: 430px\)[\s\S]*grid-template-columns:\s*46px 26px 46px 44px minmax\(56px, 1fr\) 14px/, "phone rows reserve six stable metric columns");
+assert.match(styles, /\.sheet-hour-alert-divider\s*\{[\s\S]*grid-template-columns:\s*8px minmax\(0, 1fr\) auto/, "alert dividers protect both their title and timing");
+
+console.log("Hourly row layout smoke passed.");

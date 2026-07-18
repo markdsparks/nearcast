@@ -131,7 +131,8 @@ function openNext24Detail(options = {}) {
         start,
         renderedCount: nextCount,
         pageSize: ROLLING_HOURLY_PAGE_SIZE,
-        lastDay: null
+        lastDay: null,
+        lastAlertKey: ""
       }
     }
   });
@@ -482,7 +483,10 @@ function openDayDetail({
 
   graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
   dayDetailNavState = { source, dayIndex, data, eventWindow, showNow, sunriseISO, sunsetISO, contextLabel, ...(navState || {}) };
-  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = null;
+  if (dayDetailNavState.timeline) {
+    dayDetailNavState.timeline.lastDay = null;
+    dayDetailNavState.timeline.lastAlertKey = "";
+  }
   buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
   const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
     showNow,
@@ -490,7 +494,10 @@ function openDayDetail({
     eventWindow,
     showInitialDayDivider: source === "rolling"
   });
-  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = listRender?.lastDay || null;
+  if (dayDetailNavState.timeline) {
+    dayDetailNavState.timeline.lastDay = listRender?.lastDay || null;
+    dayDetailNavState.timeline.lastAlertKey = listRender?.lastAlertKey || "";
+  }
   renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
   setDayDetailMode(initialMode, persistInitialMode);
   renderRollingTimelineFooter();
@@ -622,7 +629,10 @@ function refreshOpenDayDetailMemorySurfaces() {
     eventWindow: memoryContext.eventWindow,
     showInitialDayDivider: dayDetailNavState.source === "rolling"
   });
-  if (dayDetailNavState.timeline) dayDetailNavState.timeline.lastDay = result?.lastDay || null;
+  if (dayDetailNavState.timeline) {
+    dayDetailNavState.timeline.lastDay = result?.lastDay || null;
+    dayDetailNavState.timeline.lastAlertKey = result?.lastAlertKey || "";
+  }
   renderSheetStats(hrs, {
     sunriseISO: dayDetailNavState.sunriseISO,
     sunsetISO: dayDetailNavState.sunsetISO,
@@ -809,6 +819,28 @@ function hourlyAlertDetailNote(alert) {
   return `${event} active for this hour.`;
 }
 
+function hourlyAlertRowKey(alert) {
+  if (!alert) return "";
+  return [alert.event, alert.onset || alert.effective, alert.ends || alert.expires]
+    .map((value) => String(value || "").trim())
+    .join("|");
+}
+
+function hourlyAlertDividerHtml(alert) {
+  if (!alert) return "";
+  const tone = alertTone(alert);
+  const event = String(alert.event || alertToneLabel(tone)).trim();
+  const end = alert.ends || alert.expires;
+  const timing = end ? `Until ${formatAlertTime(end)}` : "Active";
+  return `
+    <div class="sheet-hour-alert-divider is-${tone}" role="note" aria-label="${escapeHtml(`${event}. ${timing}.`)}">
+      <span class="sheet-hour-alert-mark" aria-hidden="true"></span>
+      <strong>${escapeHtml(event)}</strong>
+      <small>${escapeHtml(timing)}</small>
+    </div>
+  `;
+}
+
 function toggleSheetHourRow(row) {
   const list = document.getElementById("sheetHourlyList");
   const shouldOpen = !row.classList.contains("is-expanded");
@@ -867,12 +899,14 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     eventWindow = null,
     startRowIndex = 0,
     previousDay = null,
+    previousAlertKey = "",
     allowEventFocus = true,
     showInitialDayDivider = false
   } = opts;
   const deg = degree(tempUnit);
   const defaultExpandedIndex = allowEventFocus && eventWindow ? plannerEventFocusIndex(hrs) : -1;
   let prevDay = previousDay;
+  let prevAlertKey = previousAlertKey;
   const html = hrs.map((hour, rowOffset) => {
     const rowIndex = startRowIndex + rowOffset;
     const dayKey = hour.time.slice(0, 10);
@@ -880,6 +914,11 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       ? `<div class="sheet-day-divider"><span>${escapeHtml(dayDividerLabel(hour.time))}</span></div>`
       : "";
     prevDay = dayKey;
+    const alertKey = hourlyAlertRowKey(hour.alert);
+    const alertDivider = alertKey && alertKey !== prevAlertKey
+      ? hourlyAlertDividerHtml(hour.alert)
+      : "";
+    prevAlertKey = alertKey;
     const condition = weatherCodes[hour.code] || "Weather";
     const badges = hourlyRowBadges(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
@@ -902,36 +941,29 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
         ? `<button class="sheet-plan-badge" type="button" data-memory-detail="${escapeHtml(hour.eventMemoryIds.join(","))}" aria-label="${escapeHtml(`Show memory details for ${hour.eventLabel || "plan"}`)}">${eventBadge}</button>`
         : showEventBadge ? `<span class="sheet-plan-badge">${eventBadge}</span>` : ""
       : "";
-    const badgeChips = badges.map((badge) => {
-      const visibleLabel = badge.compactLabel || badge.label;
-      const ariaLabel = badge.compactLabel ? ` aria-label="${escapeHtml(badge.label)}"` : "";
-      return `<span class="sheet-hour-chip${badge.tone}"${ariaLabel}>${escapeHtml(visibleLabel)}</span>`;
-    }).join("");
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rainText = hourlyRowRainText(hour);
     const windText = hourlyRowWindText(hour, windUnit);
+    const windSpeed = Math.max(0, Math.round(Number(hour.wind) || 0));
     const windDirection = hourlyRowWindDirection(hour);
     const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain ${rainText}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
     const precipText = hour.precipText || (hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
-    return `${divider}
+    return `${divider}${alertDivider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
+        <div class="sheet-hour-temp">
+          <strong>${Math.round(hour.temp)}°</strong>
+        </div>
         <div class="sheet-hour-rain${hour.activePrecip || hour.precipPrimary ? " is-emphasized" : ""}">
           <span aria-hidden="true">${raindropGlyph()}</span>
           <strong>${escapeHtml(rainText)}</strong>
         </div>
-        <div class="sheet-hour-temp">
-          <strong>${Math.round(hour.temp)}${deg}</strong>
-        </div>
         <div class="sheet-hour-wind${hour.gust >= 25 ? " is-emphasized" : ""}" aria-label="${escapeHtml(`${windText}. ${windDirection.label}`)}">
           <span class="sheet-hour-wind-arrow" aria-hidden="true"${windDirection.style}>&#8593;</span>
-          <strong>${escapeHtml(windText)}</strong>
+          <strong>${windSpeed}</strong>
         </div>
-        <div class="sheet-hour-badges">
-          ${badgeChips}
-          <span class="sheet-hour-cue" aria-hidden="true"></span>
-        </div>
+        <span class="sheet-hour-cue" aria-hidden="true"></span>
         <div class="sheet-hour-detail" id="${detailId}"${expanded ? "" : " hidden"}>
           <h3 class="sheet-hour-detail-condition">${escapeHtml(condition)}</h3>
           <p>${escapeHtml(detailNote)}</p>
@@ -947,7 +979,7 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       </article>
     `;
   }).join("");
-  return { html, lastDay: prevDay };
+  return { html, lastDay: prevDay, lastAlertKey: prevAlertKey };
 }
 
 function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
@@ -1005,11 +1037,13 @@ function appendRollingHourlyRows() {
     eventWindow: dayDetailNavState.eventWindow,
     startRowIndex: rowStart,
     previousDay: timeline.lastDay,
+    previousAlertKey: timeline.lastAlertKey,
     allowEventFocus: false
   });
   document.getElementById("sheetHourlyList")?.insertAdjacentHTML("beforeend", result.html);
   timeline.renderedCount = nextCount;
   timeline.lastDay = result.lastDay || timeline.lastDay || null;
+  timeline.lastAlertKey = result.lastAlertKey || "";
   return true;
 }
 

@@ -11964,11 +11964,11 @@ body.map-immersive-active .sheet-now-jump {
 .sheet-hour-row {
   position: relative;
   display: grid;
-  grid-template-columns: 48px 34px 68px 66px minmax(112px, 1fr) minmax(92px, auto);
+  grid-template-columns: 50px 34px 66px 68px minmax(80px, 1fr) 18px;
   align-items: center;
   gap: 10px;
   min-height: 62px;
-  padding: 11px 42px 11px 12px;
+  padding: 11px 12px;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -12025,6 +12025,50 @@ body.map-immersive-active .sheet-now-jump {
   flex: 1;
   height: 1px;
   background: var(--line);
+}
+.sheet-hour-alert-divider {
+  --hour-alert-accent: rgba(179, 138, 62, 0.82);
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--hour-alert-accent) 8%, transparent);
+  color: var(--ink);
+}
+.sheet-hour-alert-divider.is-warning {
+  --hour-alert-accent: rgba(219, 77, 64, 0.92);
+}
+.sheet-hour-alert-divider.is-watch {
+  --hour-alert-accent: rgba(225, 149, 45, 0.90);
+}
+.sheet-hour-alert-divider.is-advisory,
+.sheet-hour-alert-divider.is-notice {
+  --hour-alert-accent: rgba(179, 138, 62, 0.82);
+}
+.sheet-hour-alert-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hour-alert-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hour-alert-accent) 16%, transparent);
+}
+.sheet-hour-alert-divider strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-hour-alert-divider small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 .sheet-hour-row.is-now {
   box-shadow: none;
@@ -12106,6 +12150,7 @@ body.map-immersive-active .sheet-now-jump {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 .sheet-now-badge {
   display: inline-flex;
@@ -12170,7 +12215,6 @@ button.sheet-plan-badge:focus-visible {
 }
 .sheet-hour-rain,
 .sheet-hour-wind,
-.sheet-hour-badges,
 .sheet-hour-signals {
   display: flex;
   align-items: center;
@@ -12218,61 +12262,6 @@ button.sheet-plan-badge:focus-visible {
 }
 .sheet-hour-wind.is-emphasized {
   color: color-mix(in srgb, rgba(132, 121, 255, 1) 78%, var(--ink));
-}
-.sheet-hour-badges {
-  justify-content: flex-end;
-  padding-right: 4px;
-}
-.sheet-hour-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 850;
-  line-height: 1;
-  white-space: nowrap;
-}
-.sheet-hour-chip.is-wet {
-  border-color: rgba(74, 144, 217, 0.36);
-  background: rgba(74, 144, 217, 0.12);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-wind {
-  border-color: rgba(132, 121, 255, 0.32);
-  background: rgba(132, 121, 255, 0.10);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-flag {
-  border-color: rgba(244, 180, 64, 0.34);
-  background: rgba(244, 180, 64, 0.12);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-storm {
-  border-color: rgba(238, 163, 43, 0.44);
-  background: rgba(238, 163, 43, 0.16);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-alert-warning {
-  border-color: rgba(219, 77, 64, 0.44);
-  background: rgba(219, 77, 64, 0.14);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-alert-watch {
-  border-color: rgba(225, 149, 45, 0.42);
-  background: rgba(225, 149, 45, 0.14);
-  color: var(--ink);
-}
-.sheet-hour-chip.is-alert-advisory,
-.sheet-hour-chip.is-alert-notice {
-  border-color: rgba(179, 138, 62, 0.30);
-  background: rgba(179, 138, 62, 0.10);
-  color: var(--muted);
 }
 .sheet-hour-cue {
   position: relative;
@@ -12385,11 +12374,11 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 720px) {
   .sheet-hour-row {
-    grid-template-columns: 42px 28px 52px 50px minmax(58px, 1fr) minmax(72px, auto) 16px;
+    grid-template-columns: 46px 28px 48px 48px minmax(56px, 1fr) 16px;
     align-items: center;
     gap: 6px;
     min-height: 58px;
-    padding: 10px 8px 10px 12px;
+    padding: 10px 10px;
   }
   .sheet-hour-icon {
     width: 28px;
@@ -12402,26 +12391,17 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-rain,
   .sheet-hour-wind {
     gap: 4px;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
   }
   .sheet-hour-rain span,
   .sheet-hour-wind span {
     width: 12px;
     height: 12px;
   }
-  .sheet-hour-badges,
   .sheet-hour-signals {
     justify-content: flex-end;
     flex-wrap: nowrap;
     gap: 5px;
-  }
-  .sheet-hour-chip {
-    max-width: 78px;
-    min-height: 24px;
-    padding: 4px 8px;
-    font-size: 0.66rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .sheet-hour-cue {
     width: 16px;
@@ -12440,9 +12420,9 @@ button.sheet-plan-badge:focus-visible {
 
 @media (max-width: 430px) {
   .sheet-hour-row {
-    grid-template-columns: 38px 26px 42px 52px minmax(52px, 1fr) minmax(44px, 58px) 14px;
+    grid-template-columns: 46px 26px 46px 44px minmax(56px, 1fr) 14px;
     gap: 4px;
-    padding: 10px 6px 10px 10px;
+    padding: 10px 8px;
   }
   .sheet-hour-time {
     font-size: 0.78rem;
@@ -12458,18 +12438,12 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-rain,
   .sheet-hour-wind {
     gap: 3px;
-    font-size: 0.72rem;
+    font-size: 0.76rem;
   }
   .sheet-hour-rain span,
   .sheet-hour-wind span {
     width: 11px;
     height: 11px;
-  }
-  .sheet-hour-chip {
-    max-width: 58px;
-    min-height: 22px;
-    padding: 3px 6px;
-    font-size: 0.62rem;
   }
   .sheet-hour-cue {
     width: 14px;
