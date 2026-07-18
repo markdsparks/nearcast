@@ -12028,15 +12028,34 @@ body.map-immersive-active .sheet-now-jump {
 }
 .sheet-hour-alert-divider {
   --hour-alert-accent: rgba(179, 138, 62, 0.82);
+  appearance: none;
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-columns: 8px minmax(0, 1fr) auto 14px;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  width: 100%;
+  min-height: 44px;
   padding: 8px 12px 8px 10px;
+  border: 0;
   border-bottom: 1px solid var(--line);
+  border-radius: 0;
   background: color-mix(in srgb, var(--hour-alert-accent) 8%, transparent);
   color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+.sheet-hour-alert-divider:hover,
+.sheet-hour-alert-divider:active {
+  background: color-mix(in srgb, var(--hour-alert-accent) 14%, transparent);
+}
+.sheet-hour-alert-divider:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--hour-alert-accent) 72%, transparent);
+  outline-offset: -2px;
 }
 .sheet-hour-alert-divider.is-warning {
   --hour-alert-accent: rgba(219, 77, 64, 0.92);
@@ -12069,6 +12088,13 @@ body.map-immersive-active .sheet-now-jump {
   font-size: 0.72rem;
   font-weight: 800;
   white-space: nowrap;
+}
+.sheet-hour-alert-cue {
+  justify-self: end;
+  color: var(--hour-alert-accent);
+  font-size: 1.18rem;
+  font-weight: 800;
+  line-height: 1;
 }
 .sheet-hour-row.is-now {
   box-shadow: none;
@@ -12586,6 +12612,21 @@ button.sheet-plan-badge:focus-visible {
   flex-shrink: 0;
 }
 
+#alertBackdrop {
+  z-index: 323;
+}
+.day-sheet.alert-sheet {
+  z-index: 324;
+  box-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.16),
+    0 -18px 52px rgba(0, 0, 0, 0.28);
+}
+body.map-immersive-active #alertBackdrop {
+  z-index: 1123;
+}
+body.map-immersive-active .day-sheet.alert-sheet {
+  z-index: 1124;
+}
 .alert-sheet {
   --alert-accent: #d98324;
   --alert-glow: rgba(217, 131, 36, 0.12);
@@ -12774,6 +12815,20 @@ button.sheet-plan-badge:focus-visible {
 .alert-list {
   display: grid;
   gap: 0;
+}
+.alert-list-section {
+  margin: 16px 0 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.alert-list-section + .alert-item {
+  padding-top: 0;
+}
+.alert-list-section + .alert-item::before {
+  top: 1px;
 }
 .alert-item {
   --alert-accent: #d98324;

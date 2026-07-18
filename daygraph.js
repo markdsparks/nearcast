@@ -820,7 +820,10 @@ function hourlyAlertDetailNote(alert) {
 }
 
 function hourlyAlertRowKey(alert) {
+  if (typeof alertIdentityKey === "function") return alertIdentityKey(alert);
   if (!alert) return "";
+  const id = String(alert.id || "").trim();
+  if (id) return `id:${id}`;
   return [alert.event, alert.onset || alert.effective, alert.ends || alert.expires]
     .map((value) => String(value || "").trim())
     .join("|");
@@ -832,12 +835,14 @@ function hourlyAlertDividerHtml(alert) {
   const event = String(alert.event || alertToneLabel(tone)).trim();
   const end = alert.ends || alert.expires;
   const timing = end ? `Until ${formatAlertTime(end)}` : "Active";
+  const alertKey = hourlyAlertRowKey(alert);
   return `
-    <div class="sheet-hour-alert-divider is-${tone}" role="note" aria-label="${escapeHtml(`${event}. ${timing}.`)}">
+    <button class="sheet-hour-alert-divider is-${tone}" type="button" data-alert-key="${escapeHtml(alertKey)}" aria-label="${escapeHtml(`Open ${event} details. ${timing}.`)}">
       <span class="sheet-hour-alert-mark" aria-hidden="true"></span>
       <strong>${escapeHtml(event)}</strong>
       <small>${escapeHtml(timing)}</small>
-    </div>
+      <span class="sheet-hour-alert-cue" aria-hidden="true">›</span>
+    </button>
   `;
 }
 

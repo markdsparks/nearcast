@@ -33,6 +33,13 @@ assert.match(app, /showSheet\(els\.installBackdrop[\s\S]*?onPullDismiss: \(\) =>
 assert.match(app, /showSheet\(els\.placeBackdrop[\s\S]*?onPullDismiss: closePlaceSheet/, "places uses its real close path");
 assert.match(app, /showSheet\(els\.glanceDetailBackdrop[\s\S]*?onPullDismiss: closeGlanceDetail/, "weather explainers use their real close path");
 assert.match(app, /showSheet\(backdrop, sheet,[\s\S]*?onPullDismiss: closeAlertSheet/, "alerts use their real close path");
+assert.match(app, /bindTapDelegate\(sheetHourlyList, "\.sheet-hour-alert-divider"[\s\S]*?openAlertSheet\(alertKey, \{ returnFocus: alertDivider \}\)/, "hourly alert buttons open their exact alert without toggling an hour row");
+assert.match(app, /event\.key === "Escape"[\s\S]*?!sheet\.hidden && isTopmostShownSheet\(sheet\)[\s\S]*?closeAlertSheet\(\)/, "Escape closes only the topmost alert sheet");
+assert.match(app, /function closeAlertSheet\([\s\S]*?#dayDetail:not\(\[hidden\]\)[\s\S]*?keepLocked \? "hidden" : ""/, "closing nested alert detail keeps the hourly sheet scroll lock");
+assert.match(app, /alertSheetUnderlyingDayDetail\.inert = true[\s\S]*?underlyingDayDetail\.inert = alertSheetUnderlyingWasInert/, "nested alert detail isolates and then restores the hourly sheet");
+assert.match(app, /alertSheetClose"\)\?\.focus[\s\S]*?canRestoreAlertSheetFocus\(returnFocus\)[\s\S]*?focusTarget\?\.focus/, "alert detail receives focus and returns it to a visible launch point or stable parent control");
+assert.match(styles, /#alertBackdrop\s*\{[\s\S]*?z-index:\s*323[\s\S]*?\.day-sheet\.alert-sheet\s*\{[\s\S]*?z-index:\s*324/, "nested alert detail renders above hourly detail");
+assert.match(styles, /body\.map-immersive-active #alertBackdrop\s*\{[\s\S]*?z-index:\s*1123[\s\S]*?body\.map-immersive-active \.day-sheet\.alert-sheet\s*\{[\s\S]*?z-index:\s*1124/, "alert detail remains topmost over immersive map sheets");
 assert.match(app, /showSheet\(els\.liveActivityBackdrop[\s\S]*?onPullDismiss: closeLiveActivityLab[\s\S]*?canPullDismiss/, "Live Activity protects in-flight native actions");
 assert.match(daygraph, /showSheet\(backdrop, sheet,[\s\S]*?onPullDismiss: closeDayDetail/, "day detail preserves its custom close cleanup");
 assert.match(planner, /showSheet\(els\.memoryDetailBackdrop[\s\S]*?onPullDismiss: closeMemoryDetail/, "plan detail preserves its custom close cleanup");

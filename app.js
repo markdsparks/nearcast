@@ -1,4 +1,4 @@
-const VERSION = "3.0.273";
+const VERSION = "3.0.274";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3859,7 +3859,16 @@ function bindEvents() {
   bindTapAction(document.getElementById("sheetNextDay"), () => navigateSheetDay(1));
   bindTapAction(document.getElementById("sheetNowJump"), scrollDayDetailToNow);
   document.getElementById("dayDetail").addEventListener("scroll", handleDayDetailScroll, { passive: true });
-  bindTapDelegate(document.getElementById("sheetHourlyList"), ".sheet-hour-row", (event, row) => {
+  const sheetHourlyList = document.getElementById("sheetHourlyList");
+  bindTapDelegate(sheetHourlyList, ".sheet-hour-alert-divider", (event, alertDivider) => {
+    const alertKey = alertDivider.dataset.alertKey || "";
+    const opened = openAlertSheet(alertKey, { returnFocus: alertDivider });
+    if (!opened && typeof refreshOpenDayDetailMemorySurfaces === "function") {
+      refreshOpenDayDetailMemorySurfaces();
+      document.getElementById("dayDetailClose")?.focus({ preventScroll: true });
+    }
+  }, { moveTolerance: 14 });
+  bindTapDelegate(sheetHourlyList, ".sheet-hour-row", (event, row) => {
     const memoryDetail = event.target.closest("[data-memory-detail]");
     if (memoryDetail) {
       openMemoryDetail(memoryDetail.dataset.memoryDetail);
@@ -3867,7 +3876,7 @@ function bindEvents() {
     }
     toggleSheetHourRow(row);
   });
-  document.getElementById("sheetHourlyList").addEventListener("keydown", (event) => {
+  sheetHourlyList.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     const memoryDetail = event.target.closest("[data-memory-detail]");
     if (memoryDetail) {
@@ -3896,7 +3905,8 @@ function bindEvents() {
   bindTapAction(document.getElementById("dayDetailClose"), closeDayDetail);
   bindTapAction(document.getElementById("dayDetailBackdrop"), closeDayDetail);
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !document.getElementById("dayDetail").hidden) closeDayDetail();
+    const sheet = document.getElementById("dayDetail");
+    if (event.key === "Escape" && !sheet.hidden && isTopmostShownSheet(sheet)) closeDayDetail();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.placeSheet.hidden) closePlaceSheet();
@@ -3912,11 +3922,16 @@ function bindEvents() {
   });
 
   // Severe weather alerts
-  bindTapAction(document.getElementById("alertBar"), openAlertSheet);
+  const alertBar = document.getElementById("alertBar");
+  bindTapAction(alertBar, () => openAlertSheet(null, { returnFocus: alertBar }));
   bindTapAction(document.getElementById("alertSheetClose"), closeAlertSheet);
   bindTapAction(document.getElementById("alertBackdrop"), closeAlertSheet);
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !document.getElementById("alertSheet").hidden) closeAlertSheet();
+    const sheet = document.getElementById("alertSheet");
+    if (event.key === "Escape" && !sheet.hidden && isTopmostShownSheet(sheet)) {
+      event.stopImmediatePropagation();
+      closeAlertSheet();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.memoryDetailSheet.hidden) {
@@ -12229,6 +12244,10 @@ const ALERT_TONE_RANK = { warning: 4, watch: 3, advisory: 2, notice: 1 };
 let activeAlerts = [];
 // Loading/unknown alerts are different from a confirmed empty alert list.
 let activeAlertsReady = false;
+let alertSheetReturnFocus = null;
+let alertSheetUnderlyingDayDetail = null;
+let alertSheetUnderlyingAriaHidden = null;
+let alertSheetUnderlyingWasInert = false;
 
 async function fetchAlerts(place) {
   const cacheKey = `alerts:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
@@ -12287,6 +12306,31 @@ function alertMotionClass(alert) {
 
 function alertCountLabel(count) {
   return count === 1 ? "1 active alert" : `${count} active alerts`;
+}
+
+function alertIdentityKey(alert) {
+  if (!alert) return "";
+  const id = String(alert.id || "").trim();
+  if (id) return `id:${id}`;
+  return [alert.event, alert.onset || alert.effective, alert.ends || alert.expires]
+    .map((value) => String(value || "").trim())
+    .join("|");
+}
+
+function alertsForAlertSheet(selectedAlert = null) {
+  const hasSelection = selectedAlert !== null && selectedAlert !== undefined && selectedAlert !== "";
+  const selectedKey = typeof selectedAlert === "string"
+    ? selectedAlert
+    : alertIdentityKey(selectedAlert);
+  if (!hasSelection) return [...activeAlerts];
+  if (!selectedKey) return [];
+  const selectedIndex = activeAlerts.findIndex((alert) => alertIdentityKey(alert) === selectedKey);
+  if (selectedIndex < 0) return [];
+  return [
+    activeAlerts[selectedIndex],
+    ...activeAlerts.slice(0, selectedIndex),
+    ...activeAlerts.slice(selectedIndex + 1)
+  ];
 }
 
 function setAlertsLoading() {
@@ -12537,22 +12581,38 @@ function compactAlertAreas(areaDesc, max = 5) {
   return `${areas.slice(0, max).join("; ")} +${areas.length - max} more`;
 }
 
-function openAlertSheet() {
-  if (!activeAlerts.length) return;
-  const top = activeAlerts[0];
+function openAlertSheet(selectedAlert = null, options = {}) {
+  const sheetAlerts = alertsForAlertSheet(selectedAlert);
+  if (!sheetAlerts.length) return false;
+  const top = sheetAlerts[0];
   const sheet = document.getElementById("alertSheet");
+  const explicitReturnFocus = options.returnFocus;
+  alertSheetReturnFocus = explicitReturnFocus instanceof HTMLElement
+    ? explicitReturnFocus
+    : (document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null);
+  const dayDetail = document.getElementById("dayDetail");
+  alertSheetUnderlyingDayDetail = dayDetail && !dayDetail.hidden ? dayDetail : null;
+  alertSheetUnderlyingAriaHidden = alertSheetUnderlyingDayDetail?.getAttribute("aria-hidden") ?? null;
+  alertSheetUnderlyingWasInert = Boolean(alertSheetUnderlyingDayDetail?.inert);
+  if (alertSheetUnderlyingDayDetail) {
+    alertSheetUnderlyingDayDetail.inert = true;
+    alertSheetUnderlyingDayDetail.setAttribute("aria-hidden", "true");
+  }
   sheet.className = `day-sheet alert-sheet ${alertSeverityClass(top.severity)} ${alertMotionClass(top)}`.trim();
   document.getElementById("alertSheetKicker").textContent = alertSeverityLabel(top.severity);
   document.getElementById("alertSheetTitle").textContent = top.event;
   document.getElementById("alertSheetSummary").textContent = [
     alertWindow(top),
-    activeAlerts.length > 1 ? alertCountLabel(activeAlerts.length) : ""
+    sheetAlerts.length > 1 ? alertCountLabel(sheetAlerts.length) : ""
   ].filter(Boolean).join(" · ");
   const insight = document.getElementById("alertInsight");
   if (insight) insight.innerHTML = renderAlertInsight(top);
-  document.getElementById("alertList").innerHTML = activeAlerts.map((a) => `
+  document.getElementById("alertList").innerHTML = sheetAlerts.map((a, index) => `
+    ${index === 1 ? `<h3 class="alert-list-section">Other active alerts</h3>` : ""}
     <article class="alert-item ${alertSeverityClass(a.severity)}">
-      ${activeAlerts.length > 1 ? `
+      ${index > 0 ? `
         <div class="alert-item-head">
           <div>
             <span class="alert-item-event">${escapeHtml(a.event)}</span>
@@ -12579,21 +12639,56 @@ function openAlertSheet() {
   const backdrop = document.getElementById("alertBackdrop");
   backdrop.hidden = false;
   sheet.hidden = false;
+  document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   showSheet(backdrop, sheet, {
     onPullDismiss: closeAlertSheet,
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => document.getElementById("alertSheetClose")?.focus({ preventScroll: true }));
+  return true;
+}
+
+function canRestoreAlertSheetFocus(element) {
+  if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+  if (element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
 }
 
 function closeAlertSheet() {
   const backdrop = document.getElementById("alertBackdrop");
   const sheet = document.getElementById("alertSheet");
+  if (!sheet || !backdrop || sheet.hidden) return;
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
-  document.body.style.overflow = "";
+  const keepLocked = Boolean(document.querySelector(
+    "#dayDetail:not([hidden]), #memoryDetailSheet:not([hidden]), #memorySheet:not([hidden]), #aiSheet:not([hidden]), #placeSheet:not([hidden])"
+  )) || mapState.immersive;
+  document.body.style.overflow = keepLocked ? "hidden" : "";
   setTimeout(() => {
     backdrop.hidden = true;
     sheet.hidden = true;
+    const underlyingDayDetail = alertSheetUnderlyingDayDetail;
+    if (underlyingDayDetail?.isConnected) {
+      underlyingDayDetail.inert = alertSheetUnderlyingWasInert;
+      if (alertSheetUnderlyingAriaHidden === null) underlyingDayDetail.removeAttribute("aria-hidden");
+      else underlyingDayDetail.setAttribute("aria-hidden", alertSheetUnderlyingAriaHidden);
+    }
+    alertSheetUnderlyingDayDetail = null;
+    alertSheetUnderlyingAriaHidden = null;
+    alertSheetUnderlyingWasInert = false;
+    if (typeof updateSheetNowJump === "function") updateSheetNowJump();
+    const returnFocus = alertSheetReturnFocus;
+    alertSheetReturnFocus = null;
+    const returnSheet = returnFocus?.closest?.(".day-sheet");
+    const canRestoreFocus = canRestoreAlertSheetFocus(returnFocus) && (
+      !returnSheet || (!returnSheet.hidden && returnSheet.classList.contains("show"))
+    );
+    const underlyingClose = underlyingDayDetail?.querySelector?.("#dayDetailClose");
+    const focusTarget = canRestoreFocus
+      ? returnFocus
+      : (canRestoreAlertSheetFocus(underlyingClose) ? underlyingClose : null);
+    focusTarget?.focus({ preventScroll: true });
   }, 260);
 }
