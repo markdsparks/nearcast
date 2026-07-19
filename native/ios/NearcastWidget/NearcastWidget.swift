@@ -618,7 +618,7 @@ struct NearcastWidget: Widget {
                 .containerBackground(for: .widget) {
                     NearcastWidgetBackdrop(snapshot: entry.snapshot)
                 }
-                .widgetURL(nearcastWidgetURL(snapshot: entry.snapshot))
+                .widgetURL(nearcastWidgetForecastURL(snapshot: entry.snapshot))
         }
         .configurationDisplayName("Nearcast")
         .description("A glance at the weather that matters next.")
@@ -627,26 +627,52 @@ struct NearcastWidget: Widget {
     }
 }
 
-private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot) -> URL? {
+private func nearcastWidgetForecastURL(snapshot: NearcastWidgetSnapshot) -> URL? {
+    nearcastWidgetURL(snapshot: snapshot, routeItems: [])
+}
+
+private func nearcastWidgetAttentionURL(
+    snapshot: NearcastWidgetSnapshot,
+    destination: LargeAttentionDestination?
+) -> URL? {
+    let routeItems: [URLQueryItem]
+    switch destination {
+    case .alert(let alertId):
+        routeItems = [
+            URLQueryItem(name: "nearcast", value: "notification"),
+            URLQueryItem(name: "target", value: "alerts"),
+            URLQueryItem(name: "detail", value: "alerts")
+        ]
+        if let alertId = cleanWidgetRouteValue(alertId) {
+            return nearcastWidgetURL(
+                snapshot: snapshot,
+                routeItems: routeItems + [URLQueryItem(name: "alertId", value: alertId)]
+            )
+        }
+    case .plan(let planId):
+        routeItems = [
+            URLQueryItem(name: "nearcast", value: "notification"),
+            URLQueryItem(name: "target", value: "plan"),
+            URLQueryItem(name: "memoryId", value: planId)
+        ]
+    case nil:
+        return nil
+    }
+    return nearcastWidgetURL(snapshot: snapshot, routeItems: routeItems)
+}
+
+private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot, routeItems: [URLQueryItem]) -> URL? {
     var components = URLComponents()
     components.scheme = "nearcast"
     components.host = "weather"
     var items = [URLQueryItem(name: "source", value: "widget")]
-    if hasCurrentWidgetAlert(snapshot) {
-        items.append(URLQueryItem(name: "nearcast", value: "notification"))
-        items.append(URLQueryItem(name: "target", value: "alerts"))
-        items.append(URLQueryItem(name: "detail", value: "alerts"))
-        if let alertId = cleanWidgetRouteValue(snapshot.alertId) {
-            items.append(URLQueryItem(name: "alertId", value: alertId))
-        }
-    } else if shouldShowPlanAttention(snapshot), let planId = cleanWidgetRouteValue(snapshot.planId) {
-        items.append(URLQueryItem(name: "nearcast", value: "notification"))
-        items.append(URLQueryItem(name: "target", value: "plan"))
-        items.append(URLQueryItem(name: "memoryId", value: planId))
-    }
+    items.append(contentsOf: routeItems)
     if let place = NearcastWidgetPlace.stored() {
         items.append(URLQueryItem(name: "placeName", value: place.name))
-        if let id = cleanWidgetRouteValue(place.id) {
+        // `placeId` is also notification-route syntax in the web app. Keep it
+        // only on explicit alert/plan links; the neutral widget URL uses the
+        // coordinates to restore the same forecast without opening a sheet.
+        if !routeItems.isEmpty, let id = cleanWidgetRouteValue(place.id) {
             items.append(URLQueryItem(name: "placeId", value: id))
         }
         if let admin1 = cleanWidgetRouteValue(place.admin1) {
@@ -1560,8 +1586,30 @@ private struct NearcastLargeWidgetContent: View {
                 .layoutPriority(1)
 
             if let attention = largeAttentionContext(snapshot) {
-                LargeAttentionPanel(attention: attention, palette: palette, compact: density.isCompact)
+                if let destination = nearcastWidgetAttentionURL(
+                    snapshot: snapshot,
+                    destination: attention.destination
+                ) {
+                    Link(destination: destination) {
+                        LargeAttentionPanel(
+                            attention: attention,
+                            palette: palette,
+                            compact: density.isCompact,
+                            showsDisclosure: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, minHeight: density.contextHeight, maxHeight: density.contextHeight)
+                    .accessibilityHint("Opens these details in Nearcast")
+                } else {
+                    LargeAttentionPanel(
+                        attention: attention,
+                        palette: palette,
+                        compact: density.isCompact,
+                        showsDisclosure: false
+                    )
                     .frame(height: density.contextHeight)
+                }
             } else if let days = snapshot.daily, !days.isEmpty {
                 LargeDailyOutlook(days: largeOutlookDays(days), snapshot: snapshot, palette: palette, compact: density.isCompact)
                     .frame(height: density.contextHeight)
@@ -2100,6 +2148,11 @@ private struct DailyTemperatureRange: View {
     }
 }
 
+private enum LargeAttentionDestination {
+    case alert(String?)
+    case plan(String)
+}
+
 private struct LargeAttentionContext {
     let eyebrow: String
     let title: String
@@ -2107,12 +2160,14 @@ private struct LargeAttentionContext {
     let meta: String?
     let symbol: String
     let tone: Color
+    let destination: LargeAttentionDestination?
 }
 
 private struct LargeAttentionPanel: View {
     let attention: LargeAttentionContext
     let palette: WidgetPalette
     let compact: Bool
+    let showsDisclosure: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: compact ? 10 : 12) {
@@ -2147,6 +2202,13 @@ private struct LargeAttentionPanel: View {
                 }
             }
             Spacer(minLength: 0)
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(attention.tone.opacity(0.78))
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, compact ? 11 : 13)
         .padding(.vertical, compact ? 9 : 11)
@@ -3649,7 +3711,8 @@ private func largeAttentionContext(_ snapshot: NearcastWidgetSnapshot) -> LargeA
             detail: detail,
             meta: alertAttentionMeta(snapshot),
             symbol: alertSymbol(snapshot.alertSeverity),
-            tone: alertTone(snapshot.alertSeverity)
+            tone: alertTone(snapshot.alertSeverity),
+            destination: .alert(cleanWidgetRouteValue(snapshot.alertId))
         )
     }
 
@@ -3664,7 +3727,8 @@ private func largeAttentionContext(_ snapshot: NearcastWidgetSnapshot) -> LargeA
             detail: detail,
             meta: meta,
             symbol: planSymbol(snapshot),
-            tone: planToneColor(snapshot)
+            tone: planToneColor(snapshot),
+            destination: cleanWidgetRouteValue(snapshot.planId).map(LargeAttentionDestination.plan)
         )
     }
 
