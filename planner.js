@@ -551,8 +551,9 @@ function nearcastNotificationRouteFromLocation() {
     const marker = params.get("nearcast") || params.get("nearcastTarget") || "";
     const memoryId = (params.get("memoryId") || params.get("planId") || params.get("plan") || "").trim();
     const placeId = (params.get("placeId") || params.get("place") || "").trim();
-    if (!memoryId && !placeId && marker !== "notification") return null;
-    const target = (params.get("target") || (memoryId ? "plan" : placeId ? "place" : "watching")).trim();
+    const alertId = (params.get("alertId") || params.get("alert") || "").trim();
+    if (!memoryId && !placeId && !alertId && marker !== "notification") return null;
+    const target = (params.get("target") || (memoryId ? "plan" : alertId ? "alerts" : placeId ? "place" : "watching")).trim();
     const detail = (params.get("detail") || params.get("kind") || "").trim();
     const signal = (params.get("signal") || params.get("type") || "").trim();
     const timeScope = (params.get("timeScope") || params.get("scope") || "").trim();
@@ -566,8 +567,9 @@ function nearcastNotificationRouteFromLocation() {
       mode,
       memoryId,
       placeId,
+      alertId,
       source: (params.get("source") || "notification").trim(),
-      signature: `${marker}|${target}|${detail}|${signal}|${timeScope}|${mode}|${memoryId}|${placeId}|${params.get("source") || ""}`
+      signature: `${marker}|${target}|${detail}|${signal}|${timeScope}|${mode}|${memoryId}|${placeId}|${alertId}|${params.get("source") || ""}`
     };
   } catch {
     return null;
@@ -598,6 +600,8 @@ function clearNearcastNotificationRouteUrl() {
       "plan",
       "placeId",
       "place",
+      "alertId",
+      "alert",
       "detail",
       "kind",
       "signal",
@@ -642,7 +646,7 @@ function consumeNearcastNotificationRoute(options = {}) {
   const route = nearcastNotificationRouteFromLocation();
   if (!route || route.signature === planWatchNotificationRouteConsumed) return false;
 
-  const wantsAlerts = route.target === "alerts" || (!route.memoryId && (route.detail === "alerts" || route.signal.includes("alert")));
+  const wantsAlerts = route.target === "alerts" || Boolean(route.alertId) || (!route.memoryId && (route.detail === "alerts" || route.signal.includes("alert")));
   if (
     wantsAlerts &&
     !options.forceAlerts &&
@@ -667,7 +671,8 @@ function consumeNearcastNotificationRoute(options = {}) {
   }
 
   if (wantsAlerts && typeof openAlertSheet === "function" && Array.isArray(activeAlerts) && activeAlerts.length) {
-    openAlertSheet();
+    const opened = openAlertSheet(route.alertId || null);
+    if (!opened && route.alertId) openAlertSheet();
     return true;
   }
 

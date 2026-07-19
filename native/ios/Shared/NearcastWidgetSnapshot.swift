@@ -4,11 +4,13 @@ let nearcastWidgetSuiteName = "group.app.nearcast.ios"
 let nearcastWidgetSnapshotKey = "nearcast.widget.snapshot.v1"
 let nearcastWidgetPlaceKey = "nearcast.widget.place.v1"
 let nearcastWidgetKind = "NearcastWidget"
+let nearcastWidgetAlertWithoutExpiryTTL: TimeInterval = 45 * 60
 
 struct NearcastWidgetSnapshot: Codable {
     var version: Int
     var savedAt: TimeInterval
     var placeName: String
+    var placeTimezone: String? = nil
     var temperature: Int
     var feelsLike: Int
     var high: Int?
@@ -36,6 +38,20 @@ struct NearcastWidgetSnapshot: Codable {
     var watchStatus: String?
     var watchDetail: String?
     var watchTone: String?
+    // Official alert metadata is optional so snapshots written before V7
+    // continue to decode. The identifier matches the web alert identity key,
+    // which lets a widget deep link reopen the same alert in Nearcast.
+    var alertId: String? = nil
+    var alertTitle: String? = nil
+    var alertSeverity: String? = nil
+    var alertExpiresAt: TimeInterval? = nil
+    var alertImpact: String? = nil
+    var alertCount: Int? = nil
+    var alertSavedAt: TimeInterval? = nil
+    // False means the phone refreshed weather while its alert request was
+    // still unresolved. Native receivers preserve same-place alert metadata
+    // until a successful alert response makes this true.
+    var alertStateReady: Bool? = nil
     var timeline: [NearcastWidgetHour]?
     var daily: [NearcastWidgetDay]? = nil
     var sunriseAt: TimeInterval?
@@ -98,7 +114,7 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 6,
+        version: 7,
         savedAt: 0,
         placeName: "Nearcast",
         temperature: 0,
@@ -188,6 +204,58 @@ extension NearcastWidgetSnapshot {
         weatherAge
     }
 
+    /// NWS alerts normally include an explicit end time. If one does not, keep
+    /// it only briefly so a failed refresh cannot leave an open-ended alert on
+    /// the widget indefinitely.
+    func hasCurrentOfficialAlert(
+        at timestamp: TimeInterval,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> Bool {
+        guard let title = alertTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            return false
+        }
+        if let alertExpiresAt {
+            return alertExpiresAt > timestamp
+        }
+        guard let alertSavedAt, alertSavedAt > 0 else { return false }
+        return max(0, timestamp - alertSavedAt) < missingExpiryTTL
+    }
+
+    mutating func clearOfficialAlert(checkedAt: TimeInterval? = nil) {
+        alertId = nil
+        alertTitle = nil
+        alertSeverity = nil
+        alertExpiresAt = nil
+        alertImpact = nil
+        alertCount = 0
+        alertSavedAt = checkedAt
+        alertStateReady = true
+    }
+
+    func preservingOfficialAlert(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
+        var snapshot = self
+        snapshot.alertId = stored.alertId
+        snapshot.alertTitle = stored.alertTitle
+        snapshot.alertSeverity = stored.alertSeverity
+        snapshot.alertExpiresAt = stored.alertExpiresAt
+        snapshot.alertImpact = stored.alertImpact
+        snapshot.alertCount = stored.alertCount
+        snapshot.alertSavedAt = stored.alertSavedAt
+        return snapshot
+    }
+
+    func expiringOfficialAlert(
+        at timestamp: TimeInterval,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> NearcastWidgetSnapshot {
+        guard alertTitle != nil, !hasCurrentOfficialAlert(at: timestamp, missingExpiryTTL: missingExpiryTTL) else {
+            return self
+        }
+        var snapshot = self
+        snapshot.clearOfficialAlert()
+        return snapshot
+    }
+
     /// Keeps the receiver's incoming plan and metadata, but refuses to let an
     /// older weather payload replace a fresher observation already on Watch.
     func preservingNewerWeather(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
@@ -231,15 +299,16 @@ extension NearcastWidgetSnapshot {
         )
     }
 
-    /// Replaces only forecast fields, preserving any plan delivered while a
-    /// network request was in flight.
+    /// Replaces only forecast fields, preserving plan and official-alert
+    /// metadata delivered while a network request was in flight.
     func mergingWeather(
         from weather: NearcastWidgetSnapshot,
-        minimumVersion: Int = 6
+        minimumVersion: Int = 7
     ) -> NearcastWidgetSnapshot {
         var merged = self
         merged.version = max(minimumVersion, max(version, weather.version))
         merged.placeName = weather.placeName
+        merged.placeTimezone = weather.placeTimezone
         merged.temperature = weather.temperature
         merged.feelsLike = weather.feelsLike
         merged.high = weather.high

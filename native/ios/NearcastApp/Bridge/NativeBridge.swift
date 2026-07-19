@@ -811,16 +811,37 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
               let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
             return
         }
-        NearcastWidgetSnapshotStore.saveSnapshotData(data)
+
         var placeData: Data?
+        var incomingPlace: NearcastWidgetPlace?
         if let place = payload["place"] as? [String: Any],
            JSONSerialization.isValidJSONObject(place),
            let encodedPlace = try? JSONSerialization.data(withJSONObject: place, options: []) {
             placeData = encodedPlace
-            NearcastWidgetSnapshotStore.savePlaceData(encodedPlace)
+            incomingPlace = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: encodedPlace)
+        }
+
+        var resolvedData = data
+        if let incoming = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data),
+           incoming.alertStateReady != true,
+           let incomingPlace,
+           let storedPlace = NearcastWidgetPlace.stored(),
+           abs(incomingPlace.latitude - storedPlace.latitude) < 0.00001,
+           abs(incomingPlace.longitude - storedPlace.longitude) < 0.00001,
+           let stored = NearcastWidgetSnapshot.stored() {
+            let currentStored = stored.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+            let resolved = incoming.preservingOfficialAlert(from: currentStored)
+            if let encoded = try? JSONEncoder().encode(resolved) {
+                resolvedData = encoded
+            }
+        }
+
+        NearcastWidgetSnapshotStore.saveSnapshotData(resolvedData)
+        if let placeData {
+            NearcastWidgetSnapshotStore.savePlaceData(placeData)
         }
         WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
-        NativeWatchSnapshotSync.shared.sendSnapshotData(data, placeData: placeData)
+        NativeWatchSnapshotSync.shared.sendSnapshotData(resolvedData, placeData: placeData)
     }
 
     private func startOrUpdateStormActivity(_ payload: [String: Any]) {

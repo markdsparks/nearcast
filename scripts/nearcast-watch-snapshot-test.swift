@@ -97,6 +97,7 @@ visual.savedAt = now
 visual.weatherSavedAt = now
 visual.isAvailable = true
 visual.placeName = "London"
+visual.placeTimezone = "Europe/London"
 visual.temperature = 64
 visual.feelsLike = 62
 visual.condition = "Cloudy"
@@ -108,7 +109,8 @@ visual.low = 56
 visual.daily = [
     NearcastWidgetDay(date: "2026-07-14", label: "Today", high: 70, low: 56, rainChance: 10, conditionCode: 2),
     NearcastWidgetDay(date: "2026-07-15", label: "Tomorrow", high: 74, low: 59, rainChance: 35, conditionCode: 61),
-    NearcastWidgetDay(date: "2026-07-16", label: "Thu", high: 77, low: 61, rainChance: 20, conditionCode: 1)
+    NearcastWidgetDay(date: "2026-07-16", label: "Thu", high: 77, low: 61, rainChance: 20, conditionCode: 1),
+    NearcastWidgetDay(date: "2026-07-17", label: "Fri", high: 79, low: 62, rainChance: 5, conditionCode: 0)
 ]
 visual.timeline = (0..<6).map { offset in
     hour(offset, offset == 0 ? "Now" : "\(3 + offset)a", startsAt: baseTime + Double(offset * 3600))
@@ -253,8 +255,65 @@ require(unsupportedSet.planWeather == nil, "unsupported plan risks fall back to 
 let visualRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(visual))
 require(visualRoundTrip.planStartAt == visual.planStartAt && visualRoundTrip.planEndAt == visual.planEndAt, "V6 round trips the exact plan window")
 require(visualRoundTrip.planRisk == "rain", "V6 round trips the plan risk category")
-require(visualRoundTrip.daily?.count == 3, "snapshots round trip three stable daily rows")
+require(visualRoundTrip.daily?.count == 4, "snapshots round trip today plus three future daily rows")
 require(visualRoundTrip.daily?[1].rainChance == 35, "daily basics preserve rain chance")
+require(visualRoundTrip.placeTimezone == "Europe/London", "snapshots preserve the forecast timezone for plan timing")
+
+var alertSnapshot = visual
+alertSnapshot.version = 7
+alertSnapshot.alertId = "id:urn:oid:example-alert"
+alertSnapshot.alertTitle = "Severe Thunderstorm Warning"
+alertSnapshot.alertSeverity = "Severe"
+alertSnapshot.alertExpiresAt = baseTime + 2 * 3600
+alertSnapshot.alertImpact = "Damaging wind and hail may affect travel and outdoor plans."
+alertSnapshot.alertCount = 2
+alertSnapshot.alertSavedAt = now
+alertSnapshot.alertStateReady = true
+let alertRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(alertSnapshot))
+require(alertRoundTrip.alertId == alertSnapshot.alertId, "V7 round trips the official alert identity")
+require(alertRoundTrip.alertExpiresAt == alertSnapshot.alertExpiresAt, "V7 round trips the official alert window")
+require(alertRoundTrip.alertImpact == alertSnapshot.alertImpact && alertRoundTrip.alertCount == 2 && alertRoundTrip.alertSavedAt == now, "V7 round trips official alert context")
+require(alertRoundTrip.alertStateReady == true, "V7 round trips authoritative alert readiness")
+
+var alertPendingSnapshot = alertSnapshot
+alertPendingSnapshot.alertId = nil
+alertPendingSnapshot.alertTitle = nil
+alertPendingSnapshot.alertSeverity = nil
+alertPendingSnapshot.alertExpiresAt = nil
+alertPendingSnapshot.alertImpact = nil
+alertPendingSnapshot.alertCount = 0
+alertPendingSnapshot.alertSavedAt = nil
+alertPendingSnapshot.alertStateReady = false
+let alertPendingResolved = alertPendingSnapshot.preservingOfficialAlert(from: alertSnapshot)
+require(
+    alertPendingResolved.alertId == alertSnapshot.alertId && alertPendingResolved.alertTitle == alertSnapshot.alertTitle,
+    "an unresolved same-place phone alert refresh preserves the last authoritative alert"
+)
+require(alertPendingResolved.alertStateReady == false, "preserving alert data keeps the incoming unresolved state")
+
+var noExpiryAlert = alertSnapshot
+noExpiryAlert.alertExpiresAt = nil
+noExpiryAlert.alertSavedAt = now
+require(
+    noExpiryAlert.hasCurrentOfficialAlert(at: now + nearcastWidgetAlertWithoutExpiryTTL - 1),
+    "an official alert without an end time survives briefly through refresh failures"
+)
+require(
+    !noExpiryAlert.hasCurrentOfficialAlert(at: now + nearcastWidgetAlertWithoutExpiryTTL),
+    "an official alert without an end time expires at the fallback TTL"
+)
+let expiredNoExpiryAlert = noExpiryAlert.expiringOfficialAlert(at: now + nearcastWidgetAlertWithoutExpiryTTL)
+require(
+    expiredNoExpiryAlert.alertTitle == nil && expiredNoExpiryAlert.alertId == nil && expiredNoExpiryAlert.alertCount == 0,
+    "expiring an open-ended alert clears all visible official-alert metadata"
+)
+
+var legacyOpenEndedAlert = noExpiryAlert
+legacyOpenEndedAlert.alertSavedAt = nil
+require(
+    !legacyOpenEndedAlert.hasCurrentOfficialAlert(at: now),
+    "a legacy open-ended alert without freshness metadata cannot persist indefinitely"
+)
 
 var inFlightWeather = visual
 inFlightWeather.temperature = 71
@@ -266,10 +325,15 @@ newestPlan.planTitle = "Newest plan"
 newestPlan.planDetail = "New rain timing"
 newestPlan.planStartAt = baseTime + 3 * 3600
 newestPlan.planEndAt = baseTime + 5 * 3600
+newestPlan.alertId = alertSnapshot.alertId
+newestPlan.alertTitle = alertSnapshot.alertTitle
+newestPlan.alertExpiresAt = alertSnapshot.alertExpiresAt
+newestPlan.alertSavedAt = alertSnapshot.alertSavedAt
 let mergedSnapshot = newestPlan.mergingWeather(from: inFlightWeather)
 require(mergedSnapshot.temperature == 71, "an in-flight refresh merges its newer weather")
 require(mergedSnapshot.planTitle == "Newest plan" && mergedSnapshot.planStartAt == newestPlan.planStartAt, "an in-flight refresh preserves a newer plan and exact window")
 require(mergedSnapshot.planRisk == "rain", "an in-flight refresh preserves the plan risk")
+require(mergedSnapshot.alertId == alertSnapshot.alertId && mergedSnapshot.alertTitle == alertSnapshot.alertTitle, "an in-flight refresh preserves official alert metadata")
 require(mergedSnapshot.daily?.first?.high == 70, "an in-flight refresh merges daily weather basics")
 
 var delayedPhoneSnapshot = newestPlan

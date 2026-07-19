@@ -1,4 +1,4 @@
-const VERSION = "3.0.279";
+const VERSION = "3.0.280";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -8779,12 +8779,14 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const windCue = windDirectionCue(current.wind_direction_10m);
     const widgetPlan = nativeWidgetPlanSummary(data, place);
     const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
+    const widgetAlert = nativeWidgetAlertSummary();
     const forecastSavedAt = forecastProvenance(data).savedAt;
     const snapshotSavedAt = (forecastSavedAt || Date.now()) / 1000;
     const snapshot = {
-      version: 6,
+      version: 7,
       savedAt: snapshotSavedAt,
       placeName: widgetPlaceDisplayName,
+      placeTimezone: String(data?.timezone || "").trim() || null,
       temperature: Math.round(current.temperature_2m),
       feelsLike: Math.round(current.apparent_temperature),
       high: Number.isFinite(high) ? Math.round(high) : null,
@@ -8812,6 +8814,14 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       watchStatus: watchSummary.status,
       watchDetail: watchSummary.detail,
       watchTone: watchSummary.tone,
+      alertId: widgetAlert?.id || null,
+      alertTitle: widgetAlert?.title || null,
+      alertSeverity: widgetAlert?.severity || null,
+      alertExpiresAt: widgetAlert?.expiresAt || null,
+      alertImpact: widgetAlert?.impact || null,
+      alertCount: widgetAlert?.count || 0,
+      alertSavedAt: activeAlertsReady ? Date.now() / 1000 : null,
+      alertStateReady: Boolean(activeAlertsReady),
       timeline: nativeWidgetTimeline(data),
       daily: nativeWidgetDaily(data),
       sunriseAt: Number.isFinite(sunriseAt) ? sunriseAt / 1000 : null,
@@ -8882,18 +8892,44 @@ function nativeWidgetDaily(data = state.forecast) {
   const dates = daily.time || [];
   const startIndex = Math.max(0, forecastDailyIndex(data));
   const rows = [];
-  for (let index = startIndex; index < dates.length && rows.length < 3; index += 1) {
-    const numberOrZero = (value) => Number.isFinite(Number(value)) ? Math.round(Number(value)) : 0;
+  for (let index = startIndex; index < dates.length && rows.length < 4; index += 1) {
+    const high = Number(daily.temperature_2m_max?.[index]);
+    const low = Number(daily.temperature_2m_min?.[index]);
+    if (!Number.isFinite(high) || daily.temperature_2m_max?.[index] === null ||
+        !Number.isFinite(low) || daily.temperature_2m_min?.[index] === null) continue;
+    const numberOrZero = (value) => value !== null && Number.isFinite(Number(value)) ? Math.round(Number(value)) : 0;
     rows.push({
       date: dates[index],
       label: formatDay(dates[index], rows.length),
-      high: numberOrZero(daily.temperature_2m_max?.[index]),
-      low: numberOrZero(daily.temperature_2m_min?.[index]),
+      high: Math.round(high),
+      low: Math.round(low),
       rainChance: numberOrZero(daily.precipitation_probability_max?.[index]),
       conditionCode: numberOrZero(daily.weather_code?.[index])
     });
   }
   return rows;
+}
+
+function nativeWidgetAlertSummary(alertsSource = activeAlerts) {
+  const now = Date.now();
+  const currentAlerts = (Array.isArray(alertsSource) ? alertsSource : [])
+    .filter((alert) => {
+      const expiresAt = alertEndMs(alert);
+      return expiresAt === null || expiresAt > now;
+    })
+    .sort((a, b) => alertPriority(b) - alertPriority(a));
+  const top = currentAlerts[0];
+  if (!top) return null;
+
+  const expiresAt = alertEndMs(top);
+  return {
+    id: alertIdentityKey(top),
+    title: cleanAlertText(top.event || top.headline || "Weather alert"),
+    severity: cleanAlertText(top.severity || "") || null,
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt / 1000 : null,
+    impact: alertImpactLine(top, alertKind(top)),
+    count: currentAlerts.length
+  };
 }
 
 function syncNativeStormActivity(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
@@ -12354,6 +12390,11 @@ function setAlertsLoading() {
 function syncLaunchAfterAlertsReady() {
   if (!state.forecast || !state.activePlace) return;
   refreshPlanAwareLaunchSurfaces(state.forecast, state.activePlace);
+  syncNativeWidgetSnapshot(
+    state.forecast,
+    state.activePlace,
+    state.weatherTruth || weatherTruth(state.forecast)
+  );
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const truth = state.weatherTruth || weatherTruth(state.forecast);

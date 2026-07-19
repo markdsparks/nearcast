@@ -22,42 +22,252 @@ struct NearcastWidgetProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastWidgetEntry>) -> Void) {
         Task {
             let snapshot = await refreshedWidgetSnapshot()
-            let entry = NearcastWidgetEntry(date: Date(), snapshot: snapshot)
-            let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(15 * 60)
+            let entryDate = Date()
+            let entry = NearcastWidgetEntry(date: entryDate, snapshot: snapshot)
+            let nextRefresh = nextWidgetRefreshDate(snapshot: snapshot, now: entryDate)
             completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
         }
     }
 }
 
 private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
-    let cached = NearcastWidgetSnapshot.current()
-    guard cached.age > nearcastWidgetStaleInterval, let place = NearcastWidgetPlace.stored() else {
+    let refreshStartedAt = Date().timeIntervalSince1970
+    let cached = NearcastWidgetSnapshot.current().expiringOfficialAlert(at: refreshStartedAt)
+    guard let place = NearcastWidgetPlace.stored() else {
         return cached
     }
-    do {
-        let weather = try await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
-        guard let latestPlace = NearcastWidgetPlace.stored(), sameWidgetPlace(place, latestPlace) else {
-            // The iPhone changed places while the request was in flight.
-            return NearcastWidgetSnapshot.current()
-        }
 
-        // The iPhone may also have delivered a newer watched-plan verdict while
-        // weather was loading. Merge only weather fields into that newest copy.
-        let latest = NearcastWidgetSnapshot.stored() ?? cached
-        let snapshot = latest.mergingWeather(from: weather)
-        NearcastWidgetSnapshotStore.save(snapshot)
-        return snapshot
-    } catch {
-        return cached
+    async let alertRefresh = NearcastWidgetAlertClient.refresh(for: place)
+    var refreshedWeather: NearcastWidgetSnapshot?
+    if cached.age > nearcastWidgetStaleInterval {
+        refreshedWeather = try? await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
     }
+    let refreshedAlert = await alertRefresh
+
+    guard let latestPlace = NearcastWidgetPlace.stored(), sameWidgetPlace(place, latestPlace) else {
+        // The iPhone changed places while either request was in flight.
+        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    }
+
+    // The iPhone may have delivered newer plan or alert metadata while native
+    // refreshes were in flight. Weather remains its own independently merged
+    // domain, and a phone alert newer than this refresh always wins.
+    let latest = (NearcastWidgetSnapshot.stored() ?? cached)
+        .expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    var snapshot = refreshedWeather.map { latest.mergingWeather(from: $0) } ?? latest
+    let phoneDeliveredNewerAlert = (latest.alertSavedAt ?? 0) > refreshStartedAt
+
+    if !phoneDeliveredNewerAlert {
+        switch refreshedAlert {
+        case .success(let alert, let count, let fetchedAt):
+            if let alert {
+                snapshot.alertId = alert.id
+                snapshot.alertTitle = alert.title
+                snapshot.alertSeverity = alert.severity
+                snapshot.alertExpiresAt = alert.expiresAt
+                snapshot.alertImpact = alert.impact
+                snapshot.alertCount = count
+                snapshot.alertSavedAt = fetchedAt
+                snapshot.alertStateReady = true
+            } else {
+                // An HTTP success with no active features is authoritative and
+                // intentionally different from a request failure below.
+                snapshot.clearOfficialAlert(checkedAt: fetchedAt)
+            }
+        case .failure:
+            // Preserve the last known alert through transient NWS failures. The
+            // explicit expiry or short no-expiry TTL still bounds its lifetime.
+            break
+        }
+    }
+
+    snapshot = snapshot.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    NearcastWidgetSnapshotStore.save(snapshot)
+    return snapshot
+}
+
+private func nextWidgetRefreshDate(snapshot: NearcastWidgetSnapshot, now: Date) -> Date {
+    let regular = Calendar.current.date(byAdding: .minute, value: 15, to: now)
+        ?? now.addingTimeInterval(15 * 60)
+    guard snapshot.hasCurrentOfficialAlert(at: now.timeIntervalSince1970) else { return regular }
+
+    let alertDeadline = snapshot.alertExpiresAt
+        ?? snapshot.alertSavedAt.map { $0 + nearcastWidgetAlertWithoutExpiryTTL }
+    guard let alertDeadline, alertDeadline > now.timeIntervalSince1970 else { return regular }
+    return min(regular, Date(timeIntervalSince1970: alertDeadline + 1))
 }
 
 private func sameWidgetPlace(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
     abs(lhs.latitude - rhs.latitude) < 0.00001 && abs(lhs.longitude - rhs.longitude) < 0.00001
 }
 
+private struct NearcastWidgetOfficialAlert {
+    let id: String?
+    let title: String
+    let severity: String?
+    let expiresAt: TimeInterval?
+    let impact: String
+    let priority: Int
+}
+
+private enum NearcastWidgetAlertRefresh {
+    case success(NearcastWidgetOfficialAlert?, count: Int, fetchedAt: TimeInterval)
+    case failure
+}
+
+private enum NearcastWidgetAlertClient {
+    private static let requestTimeout: TimeInterval = 5
+
+    static func refresh(for place: NearcastWidgetPlace) async -> NearcastWidgetAlertRefresh {
+        let fetchedAt = Date().timeIntervalSince1970
+        guard isUSPlace(place) else {
+            return .success(nil, count: 0, fetchedAt: fetchedAt)
+        }
+
+        do {
+            var components = URLComponents(string: "https://api.weather.gov/alerts/active")
+            components?.queryItems = [
+                URLQueryItem(
+                    name: "point",
+                    value: "\(String(format: "%.4f", place.latitude)),\(String(format: "%.4f", place.longitude))"
+                )
+            ]
+            guard let url = components?.url else { throw URLError(.badURL) }
+
+            var request = URLRequest(url: url)
+            request.timeoutInterval = requestTimeout
+            request.cachePolicy = .reloadRevalidatingCacheData
+            request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
+            request.setValue("NearcastWidget/0.1 (https://getnearcast.app)", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+
+            let payload = try JSONDecoder().decode(NWSAlertCollection.self, from: data)
+            let now = Date().timeIntervalSince1970
+            let alerts = payload.features
+                .compactMap { officialAlert(from: $0) }
+                .filter { $0.expiresAt.map { $0 > now } ?? true }
+                .sorted { lhs, rhs in
+                    if lhs.priority != rhs.priority { return lhs.priority > rhs.priority }
+                    return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+                }
+            return .success(alerts.first, count: alerts.count, fetchedAt: now)
+        } catch {
+            return .failure
+        }
+    }
+
+    private static func isUSPlace(_ place: NearcastWidgetPlace) -> Bool {
+        let code = place.countryCode?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        if !code.isEmpty {
+            return code == "US"
+        }
+        let country = place.country?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !country.isEmpty {
+            return country == "united states" || country == "united states of america"
+        }
+        // Current-location snapshots can briefly lack reverse-geocoded country
+        // metadata. Let weather.gov decide coverage instead of clearing a real
+        // US alert merely because that metadata has not arrived yet.
+        return true
+    }
+
+    private static func officialAlert(from feature: NWSAlertFeature) -> NearcastWidgetOfficialAlert? {
+        let properties = feature.properties
+        let title = compactAlertText(properties.event ?? properties.headline, limit: 90)
+        guard !title.isEmpty else { return nil }
+
+        let rawIdentifier = compactAlertText(properties.id ?? feature.id, limit: 300)
+        let severity = compactAlertText(properties.severity, limit: 24)
+        let visibleSeverity = severity.isEmpty || severity.caseInsensitiveCompare("Unknown") == .orderedSame
+            ? nil
+            : severity
+        let expiresAt = alertDate(properties.ends ?? properties.expires)?.timeIntervalSince1970
+        return NearcastWidgetOfficialAlert(
+            id: rawIdentifier.isEmpty ? nil : "id:\(rawIdentifier)",
+            title: title,
+            severity: visibleSeverity,
+            expiresAt: expiresAt,
+            impact: alertImpact(event: title),
+            priority: alertPriority(event: title, severity: severity)
+        )
+    }
+
+    private static func alertPriority(event: String, severity: String) -> Int {
+        let event = event.lowercased()
+        let toneRank: Int
+        if event.contains("warning") { toneRank = 4 }
+        else if event.contains("watch") { toneRank = 3 }
+        else if event.contains("advisory") { toneRank = 2 }
+        else if severity == "Extreme" || severity == "Severe" { toneRank = 4 }
+        else if severity == "Moderate" || severity == "Minor" { toneRank = 2 }
+        else { toneRank = 1 }
+
+        let severityRank: Int
+        switch severity {
+        case "Extreme": severityRank = 4
+        case "Severe": severityRank = 3
+        case "Moderate": severityRank = 2
+        case "Minor": severityRank = 1
+        default: severityRank = 0
+        }
+        return toneRank * 100 + severityRank * 10
+    }
+
+    private static func alertImpact(event: String) -> String {
+        let event = event.lowercased()
+        if event.contains("tornado") { return "A tornado threat can become life-threatening quickly." }
+        if event.contains("flash flood") || event.contains("flood") { return "Low spots, roads, creeks, or streams may become risky." }
+        if event.contains("thunderstorm") { return "Outdoor plans, trees, power lines, and travel may be affected." }
+        if event.contains("heat") { return "Heat risk is higher for people outside and vulnerable family members." }
+        if event.contains("winter") || event.contains("snow") || event.contains("ice") || event.contains("blizzard") { return "Roads and sidewalks may become slick or difficult." }
+        if event.contains("wind") { return "Loose outdoor items, trees, and travel may be affected." }
+        if event.contains("fog") { return "Visibility may drop quickly and make travel harder." }
+        if event.contains("fire") || event.contains("red flag") { return "Fires could start or spread quickly." }
+        if event.contains("coastal") || event.contains("surf") || event.contains("rip current") { return "Surf, currents, or water levels may be unsafe." }
+        return "Plans may need extra caution or a backup option."
+    }
+
+    private static func compactAlertText(_ value: String?, limit: Int) -> String {
+        let cleaned = (value ?? "")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return String(cleaned.prefix(limit))
+    }
+
+    private static func alertDate(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) { return date }
+        return ISO8601DateFormatter().date(from: value)
+    }
+}
+
+private struct NWSAlertCollection: Decodable {
+    let features: [NWSAlertFeature]
+}
+
+private struct NWSAlertFeature: Decodable {
+    let id: String?
+    let properties: NWSAlertProperties
+}
+
+private struct NWSAlertProperties: Decodable {
+    let id: String?
+    let event: String?
+    let headline: String?
+    let severity: String?
+    let expires: String?
+    let ends: String?
+}
+
 enum NearcastWidgetForecastClient {
     static func fetchSnapshot(for place: NearcastWidgetPlace, fallback: NearcastWidgetSnapshot) async throws -> NearcastWidgetSnapshot {
+        let usesMetricUnits = fallback.windUnit.lowercased().contains("km")
         var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")
         components?.queryItems = [
             URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)),
@@ -65,8 +275,8 @@ enum NearcastWidgetForecastClient {
             URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
             URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
             URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"),
-            URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
-            URLQueryItem(name: "wind_speed_unit", value: "mph"),
+            URLQueryItem(name: "temperature_unit", value: usesMetricUnits ? "celsius" : "fahrenheit"),
+            URLQueryItem(name: "wind_speed_unit", value: usesMetricUnits ? "kmh" : "mph"),
             URLQueryItem(name: "timezone", value: "auto"),
             URLQueryItem(name: "forecast_days", value: "4")
         ]
@@ -103,9 +313,10 @@ enum NearcastWidgetForecastClient {
         let refreshedAt = Date().timeIntervalSince1970
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 6),
+            version: max(fallback.version, 7),
             savedAt: refreshedAt,
             placeName: place.displayLabel,
+            placeTimezone: forecast.timezone ?? fallback.placeTimezone,
             temperature: temp,
             feelsLike: feels,
             high: high,
@@ -115,7 +326,7 @@ enum NearcastWidgetForecastClient {
             isDay: isDay,
             rainChance: rainChance,
             wind: wind,
-            windUnit: "mph",
+            windUnit: fallback.windUnit,
             windDirection: windDirection,
             windLabel: windDirection.map(windDirectionLabel),
             uv: uv,
@@ -124,7 +335,7 @@ enum NearcastWidgetForecastClient {
             nextLabel: "Next",
             nextValue: nextValue(rainChance: nextRainChance),
             laterLabel: "Later",
-            laterValue: laterValue(forecast: forecast, wind: wind),
+            laterValue: laterValue(forecast: forecast, wind: wind, windUnit: fallback.windUnit),
             planTitle: fallback.planTitle,
             planLabel: fallback.planLabel,
             planDetail: fallback.planDetail,
@@ -133,6 +344,14 @@ enum NearcastWidgetForecastClient {
             watchStatus: fallback.watchStatus,
             watchDetail: fallback.watchDetail,
             watchTone: fallback.watchTone,
+            alertId: fallback.alertId,
+            alertTitle: fallback.alertTitle,
+            alertSeverity: fallback.alertSeverity,
+            alertExpiresAt: fallback.alertExpiresAt,
+            alertImpact: fallback.alertImpact,
+            alertCount: fallback.alertCount,
+            alertSavedAt: fallback.alertSavedAt,
+            alertStateReady: fallback.alertStateReady,
             timeline: buildTimeline(from: forecast, currentIndex: currentIndex),
             daily: buildDaily(from: forecast),
             sunriseAt: sunriseAt,
@@ -173,7 +392,7 @@ enum NearcastWidgetForecastClient {
 
     private static func buildDaily(from forecast: WidgetForecastResponse) -> [NearcastWidgetDay] {
         guard let daily = forecast.daily, let dates = daily.time else { return [] }
-        return (0..<min(3, dates.count)).compactMap { index -> NearcastWidgetDay? in
+        return (0..<min(4, dates.count)).compactMap { index -> NearcastWidgetDay? in
             guard let high = roundedValue(flatValue(daily.temperatureMax?[safe: index])),
                   let low = roundedValue(flatValue(daily.temperatureMin?[safe: index])) else { return nil }
             return NearcastWidgetDay(
@@ -210,7 +429,8 @@ enum NearcastWidgetForecastClient {
 
     private static func nowValue(feelsLike: Int, code: Int) -> String {
         if code >= 95 { return "Storms nearby" }
-        if (51...82).contains(code) { return "Rain nearby" }
+        if (71...77).contains(code) || (85...86).contains(code) { return "Snow nearby" }
+        if (51...67).contains(code) || (80...82).contains(code) { return "Rain nearby" }
         if feelsLike >= 95 { return "Feels \(feelsLike)°" }
         if feelsLike <= 32 { return "Feels \(feelsLike)°" }
         return "Feels \(feelsLike)°"
@@ -220,11 +440,11 @@ enum NearcastWidgetForecastClient {
         rainChance >= 20 ? "Rain \(rainChance)%" : "Dry 2h"
     }
 
-    private static func laterValue(forecast: WidgetForecastResponse, wind: Int) -> String {
+    private static func laterValue(forecast: WidgetForecastResponse, wind: Int, windUnit: String) -> String {
         if let sunset = forecast.daily?.sunset?.first, let short = shortClockTime(sunset) {
             return "Sunset \(short)"
         }
-        return "Wind \(wind) mph"
+        return "Wind \(wind) \(windUnit)"
     }
 
     private static func shortClockTime(_ value: String) -> String? {
@@ -234,7 +454,8 @@ enum NearcastWidgetForecastClient {
         let hour24 = pieces[0]
         let minute = pieces[1]
         let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
-        return minute == 0 ? "\(hour12)" : "\(hour12):\(String(format: "%02d", minute))"
+        let suffix = hour24 < 12 ? "a" : "p"
+        return minute == 0 ? "\(hour12)\(suffix)" : "\(hour12):\(String(format: "%02d", minute))\(suffix)"
     }
 
     private static func widgetDayLabel(_ raw: String, index: Int) -> String {
@@ -411,6 +632,18 @@ private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot) -> URL? {
     components.scheme = "nearcast"
     components.host = "weather"
     var items = [URLQueryItem(name: "source", value: "widget")]
+    if hasCurrentWidgetAlert(snapshot) {
+        items.append(URLQueryItem(name: "nearcast", value: "notification"))
+        items.append(URLQueryItem(name: "target", value: "alerts"))
+        items.append(URLQueryItem(name: "detail", value: "alerts"))
+        if let alertId = cleanWidgetRouteValue(snapshot.alertId) {
+            items.append(URLQueryItem(name: "alertId", value: alertId))
+        }
+    } else if shouldShowPlanAttention(snapshot), let planId = cleanWidgetRouteValue(snapshot.planId) {
+        items.append(URLQueryItem(name: "nearcast", value: "notification"))
+        items.append(URLQueryItem(name: "target", value: "plan"))
+        items.append(URLQueryItem(name: "memoryId", value: planId))
+    }
     if let place = NearcastWidgetPlace.stored() {
         items.append(URLQueryItem(name: "placeName", value: place.name))
         if let id = cleanWidgetRouteValue(place.id) {
@@ -1019,7 +1252,7 @@ struct NearcastWidgetView: View {
             case .systemSmall:
                 NearcastSmallWidget(snapshot: entry.snapshot)
             case .systemLarge:
-                NearcastLargeWidget(snapshot: entry.snapshot)
+                NearcastLargeWidget(snapshot: entry.snapshot, entryDate: entry.date)
             case .accessoryCircular:
                 NearcastCircularAccessory(snapshot: entry.snapshot)
             case .accessoryRectangular:
@@ -1091,13 +1324,14 @@ private enum LargeWidgetDensity {
 
     var isCompact: Bool { self == .compact }
     var outerHorizontalPadding: CGFloat { isCompact ? 16 : 20 }
-    var outerTopPadding: CGFloat { isCompact ? 14 : 22 }
-    var outerBottomPadding: CGFloat { isCompact ? 14 : 24 }
-    var sectionSpacing: CGFloat { isCompact ? 6 : 8 }
+    var outerTopPadding: CGFloat { isCompact ? 14 : 18 }
+    var outerBottomPadding: CGFloat { isCompact ? 14 : 18 }
+    var sectionSpacing: CGFloat { isCompact ? 8 : 10 }
     var placeFont: Font { .system(size: isCompact ? 17 : 19, weight: .black, design: .rounded) }
-    var headlineFont: Font { .system(size: isCompact ? 24 : 28, weight: .black, design: .rounded) }
-    var temperatureFont: Font { .system(size: isCompact ? 40 : 45, weight: .black, design: .rounded) }
-    var timelineLimit: Int { isCompact ? 4 : 5 }
+    var headlineFont: Font { .system(size: isCompact ? 23 : 27, weight: .black, design: .rounded) }
+    var temperatureFont: Font { .system(size: isCompact ? 43 : 48, weight: .black, design: .rounded) }
+    var timelineLimit: Int { isCompact ? 5 : 6 }
+    var contextHeight: CGFloat { isCompact ? 112 : 124 }
 }
 
 private func widgetPalette(_ snapshot: NearcastWidgetSnapshot) -> WidgetPalette {
@@ -1300,11 +1534,12 @@ struct NearcastMediumWidget: View {
 
 struct NearcastLargeWidget: View {
     let snapshot: NearcastWidgetSnapshot
+    let entryDate: Date
 
     var body: some View {
         GeometryReader { proxy in
             let density = LargeWidgetDensity(size: proxy.size)
-            NearcastLargeWidgetContent(snapshot: snapshot, density: density)
+            NearcastLargeWidgetContent(snapshot: snapshot, entryDate: entryDate, density: density)
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
         }
     }
@@ -1312,63 +1547,654 @@ struct NearcastLargeWidget: View {
 
 private struct NearcastLargeWidgetContent: View {
     let snapshot: NearcastWidgetSnapshot
+    let entryDate: Date
     let density: LargeWidgetDensity
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        let focus = nextFocus(snapshot)
-        let metrics = largeMetricSpecs(snapshot, focus: focus)
         VStack(alignment: .leading, spacing: density.sectionSpacing) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(shortPlaceName(snapshot.placeName))
-                        .font(density.placeFont)
-                        .foregroundStyle(palette.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.84)
-                    Text(largeWidgetHeadline(snapshot, focus: focus))
-                        .font(density.headlineFont)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text("\(snapshot.temperature)°")
-                        .font(density.temperatureFont)
-                        .lineLimit(1)
-                        .minimumScaleFactor(WidgetText.minScale)
-                    if let high = snapshot.high, let low = snapshot.low {
-                        Text("H \(high)°  L \(low)°")
-                            .font(density.isCompact ? WidgetText.caption : WidgetText.body)
-                            .foregroundStyle(palette.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
+            LargeCurrentHeader(snapshot: snapshot, palette: palette, density: density)
 
-            NextWeatherPanel(snapshot: snapshot, focus: focus, palette: palette, density: density)
+            LargeWeatherRunway(snapshot: snapshot, entryDate: entryDate, palette: palette, density: density)
+                .frame(maxHeight: .infinity)
+                .layoutPriority(1)
 
-            if hasPlanSummary(snapshot) {
-                PlanSummaryStrip(snapshot: snapshot, palette: palette, compact: density.isCompact)
-            }
-
-            HStack(spacing: density.sectionSpacing) {
-                ForEach(metrics) { metric in
-                    LargeMetricTile(metric: metric, snapshot: snapshot, palette: palette, compact: density.isCompact)
-                }
-            }
-
-            if !density.isCompact, isWidgetSnapshotStale(snapshot) {
-                Text(freshnessText(snapshot))
-                    .font(WidgetText.eyebrow)
-                    .foregroundStyle(palette.subtle)
-                    .lineLimit(1)
+            if let attention = largeAttentionContext(snapshot) {
+                LargeAttentionPanel(attention: attention, palette: palette, compact: density.isCompact)
+                    .frame(height: density.contextHeight)
+            } else if let days = snapshot.daily, !days.isEmpty {
+                LargeDailyOutlook(days: largeOutlookDays(days), snapshot: snapshot, palette: palette, compact: density.isCompact)
+                    .frame(height: density.contextHeight)
+            } else {
+                LargeFallbackContext(snapshot: snapshot, palette: palette, compact: density.isCompact)
+                    .frame(height: density.contextHeight)
             }
         }
         .padding(.top, density.outerTopPadding)
         .padding(.horizontal, density.outerHorizontalPadding)
         .padding(.bottom, density.outerBottomPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct LargeCurrentHeader: View {
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let density: LargeWidgetDensity
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: density.isCompact ? 3 : 4) {
+                Text(shortPlaceName(snapshot.placeName))
+                    .font(density.placeFont)
+                    .foregroundStyle(palette.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.84)
+
+                HStack(spacing: 7) {
+                    Image(systemName: conditionSymbol(snapshot))
+                        .font(.system(size: density.isCompact ? 20 : 22, weight: .black))
+                        .foregroundStyle(conditionAccentColor(code: snapshot.conditionCode, isDay: snapshot.isDay))
+                        .accessibilityHidden(true)
+                    Text(widgetConditionTitle(snapshot))
+                        .font(density.headlineFont)
+                        .foregroundStyle(palette.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                }
+
+                if shouldEmphasizeFeelsLike(snapshot) {
+                    Text("Feels like \(snapshot.feelsLike)°")
+                        .font(density.isCompact ? WidgetText.caption : WidgetText.body)
+                        .foregroundStyle(feelsLikeTone(snapshot))
+                        .lineLimit(1)
+                }
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 4)
+
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(snapshot.temperature)°")
+                    .font(density.temperatureFont)
+                    .foregroundStyle(palette.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(WidgetText.minScale)
+                if let high = snapshot.high, let low = snapshot.low {
+                    Text("H \(high)°  L \(low)°")
+                        .font(density.isCompact ? WidgetText.caption : WidgetText.body)
+                        .foregroundStyle(palette.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private enum LargeRunwayMode {
+    case rain
+    case snow
+    case wind
+    case heat
+    case sun
+    case quiet
+}
+
+private struct LargeRunwayPoint: Identifiable {
+    let id: String
+    let value: Int
+    let secondaryValue: Int?
+    let time: String
+    let symbol: String?
+    let isInPlanWindow: Bool
+}
+
+private struct LargeWeatherRunway: View {
+    let snapshot: NearcastWidgetSnapshot
+    let entryDate: Date
+    let palette: WidgetPalette
+    let density: LargeWidgetDensity
+
+    var body: some View {
+        let rows = largeRunwayRows(snapshot, at: entryDate, limit: density.timelineLimit)
+        let mode = largeRunwayMode(snapshot, rows: rows)
+
+        VStack(alignment: .leading, spacing: density.isCompact ? 5 : 7) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(largeRunwayHorizonLabel(rows))
+                        .font(WidgetText.eyebrow)
+                        .tracking(0.5)
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                    Text(largeRunwayTitle(mode, snapshot: snapshot, rows: rows))
+                        .font(density.isCompact ? WidgetText.body : WidgetText.bodyLarge)
+                        .foregroundStyle(palette.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+                Spacer(minLength: 4)
+                LargeRunwayLegend(mode: mode, snapshot: snapshot, rows: rows, palette: palette)
+            }
+
+            if rows.isEmpty {
+                HStack(spacing: 8) {
+                    MiniPill(text: compactSignalValue(snapshot.nowValue), palette: palette)
+                    MiniPill(text: compactSignalValue(snapshot.nextValue), tone: signalColor(snapshot.nextValue), palette: palette)
+                    MiniPill(text: compactSignalValue(snapshot.laterValue), palette: palette)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                switch mode {
+                case .rain:
+                    LargeBarRunway(
+                        points: largeRunwayPoints(rows: rows, mode: mode, snapshot: snapshot),
+                        snapshot: snapshot,
+                        palette: palette,
+                        kind: .rain
+                    )
+                case .snow:
+                    LargeLineRunway(
+                        points: largeRunwayPoints(rows: rows, mode: mode, snapshot: snapshot),
+                        mode: mode,
+                        snapshot: snapshot,
+                        palette: palette
+                    )
+                case .sun:
+                    LargeBarRunway(
+                        points: largeRunwayPoints(rows: rows, mode: mode, snapshot: snapshot),
+                        snapshot: snapshot,
+                        palette: palette,
+                        kind: .uv
+                    )
+                case .wind, .heat, .quiet:
+                    LargeLineRunway(
+                        points: largeRunwayPoints(rows: rows, mode: mode, snapshot: snapshot),
+                        mode: mode,
+                        snapshot: snapshot,
+                        palette: palette
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, density.isCompact ? 11 : 13)
+        .padding(.vertical, density.isCompact ? 8 : 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(palette.stroke, lineWidth: 1)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(largeRunwayAccessibility(mode, snapshot: snapshot, rows: rows))
+    }
+}
+
+private struct LargeRunwayLegend: View {
+    let mode: LargeRunwayMode
+    let snapshot: NearcastWidgetSnapshot
+    let rows: [NearcastWidgetHour]
+    let palette: WidgetPalette
+
+    var body: some View {
+        switch mode {
+        case .heat:
+            VStack(alignment: .trailing, spacing: 2) {
+                LargeLegendKey(label: "FEELS", color: largeFeelsLikeColor(snapshot, rows: rows), palette: palette)
+                LargeLegendKey(label: "AIR", color: palette.secondary, palette: palette)
+            }
+        case .wind:
+            VStack(alignment: .trailing, spacing: 2) {
+                LargeLegendKey(label: "GUST", color: windRunwayColor(snapshot), palette: palette)
+                LargeLegendKey(label: "WIND", color: palette.secondary, palette: palette)
+            }
+        case .rain:
+            Image(systemName: "drop.fill")
+                .font(.system(size: 18, weight: .black))
+                .foregroundStyle(rainAccentColor(snapshot))
+                .accessibilityHidden(true)
+        case .snow:
+            Image(systemName: "snowflake")
+                .font(.system(size: 18, weight: .black))
+                .foregroundStyle(snowRunwayColor(snapshot))
+                .accessibilityHidden(true)
+        case .sun:
+            Image(systemName: "sun.max.fill")
+                .font(.system(size: 18, weight: .black))
+                .foregroundStyle(uvToneColor(snapshot.uv))
+                .accessibilityHidden(true)
+        case .quiet:
+            EmptyView()
+        }
+    }
+}
+
+private struct LargeLegendKey: View {
+    let label: String
+    let color: Color
+    let palette: WidgetPalette
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(WidgetText.eyebrow)
+                .foregroundStyle(palette.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+private enum LargeBarKind {
+    case rain
+    case uv
+}
+
+private struct LargeBarRunway: View {
+    let points: [LargeRunwayPoint]
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let kind: LargeBarKind
+
+    var body: some View {
+        GeometryReader { proxy in
+            let maximum: Int = {
+                switch kind {
+                case .rain: return 100
+                case .uv: return max(11, points.map(\.value).max() ?? 1)
+                }
+            }()
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(points) { point in
+                    VStack(spacing: 4) {
+                        Text(barValueText(point.value, kind: kind))
+                            .font(WidgetText.caption)
+                            .foregroundStyle(palette.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.86)
+                        Spacer(minLength: 0)
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [barColor(point.value).opacity(0.42), barColor(point.value)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(width: 14, height: largeBarHeight(point.value, maximum: maximum, available: proxy.size.height))
+                        Text(point.time)
+                            .font(WidgetText.eyebrow)
+                            .foregroundStyle(palette.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                point.isInPlanWindow ? planToneColor(snapshot).opacity(0.18) : Color.clear,
+                                in: Capsule()
+                            )
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+
+    private func barColor(_ value: Int) -> Color {
+        switch kind {
+        case .rain:
+            return rainTimelineColor(chance: value, snapshot: snapshot)
+        case .uv:
+            return uvToneColor(value)
+        }
+    }
+}
+
+private struct LargeLineRunway: View {
+    let points: [LargeRunwayPoint]
+    let mode: LargeRunwayMode
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+
+    var body: some View {
+        VStack(spacing: 5) {
+            GeometryReader { proxy in
+                let coordinates = largeChartCoordinates(points.map(\.value), size: proxy.size)
+                let secondaryValues = points.compactMap(\.secondaryValue)
+                let secondaryCoordinates = secondaryValues.count == points.count
+                    ? largeChartCoordinates(secondaryValues, size: proxy.size, sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] })
+                    : []
+                let primaryCoordinates = points.contains(where: { $0.secondaryValue != nil })
+                    ? largeChartCoordinates(points.map(\.value), size: proxy.size, sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] })
+                    : coordinates
+
+                ZStack(alignment: .topLeading) {
+                    if secondaryCoordinates.count == points.count {
+                        largeChartPath(secondaryCoordinates)
+                            .stroke(palette.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    }
+
+                    largeChartAreaPath(primaryCoordinates, size: proxy.size)
+                        .fill(
+                            LinearGradient(
+                                colors: [lineColor.opacity(0.22), lineColor.opacity(0.01)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
+                    largeChartPath(primaryCoordinates)
+                        .stroke(lineColor, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+
+                    ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
+                        if primaryCoordinates.indices.contains(index) {
+                            let coordinate = primaryCoordinates[index]
+                            VStack(spacing: 2) {
+                                Text(lineValueText(point.value, mode: mode))
+                                    .font(WidgetText.caption)
+                                    .foregroundStyle(palette.primary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.86)
+                                Circle()
+                                    .fill(lineColor)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().stroke(palette.surfaceStrong, lineWidth: 2))
+                            }
+                            .position(x: coordinate.x, y: max(13, coordinate.y - 9))
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 2) {
+                ForEach(points) { point in
+                    HStack(spacing: 3) {
+                        if let symbol = point.symbol {
+                            Image(systemName: symbol)
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundStyle(lineColor.opacity(0.92))
+                                .accessibilityHidden(true)
+                        }
+                        Text(point.time)
+                            .font(WidgetText.eyebrow)
+                            .foregroundStyle(palette.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(
+                        point.isInPlanWindow ? planToneColor(snapshot).opacity(0.18) : Color.clear,
+                        in: Capsule()
+                    )
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("\(point.time), \(lineValueText(point.value, mode: mode))")
+                }
+            }
+        }
+    }
+
+    private var lineColor: Color {
+        switch mode {
+        case .wind:
+            return windRunwayColor(snapshot)
+        case .heat:
+            if let focus = points
+                .filter({ $0.secondaryValue != nil })
+                .max(by: {
+                    abs($0.value - ($0.secondaryValue ?? $0.value))
+                        < abs($1.value - ($1.secondaryValue ?? $1.value))
+                }), let air = focus.secondaryValue {
+                if focus.value < air { return Color(red: 0.14, green: 0.47, blue: 0.82) }
+                if focus.value > air { return Color(red: 0.86, green: 0.35, blue: 0.16) }
+            }
+            return feelsLikeTone(snapshot)
+        case .quiet:
+            return temperatureRunwayColor(snapshot)
+        case .snow:
+            return snowRunwayColor(snapshot)
+        case .rain:
+            return rainAccentColor(snapshot)
+        case .sun:
+            return uvToneColor(snapshot.uv)
+        }
+    }
+}
+
+private struct LargeDailyOutlook: View {
+    let days: [NearcastWidgetDay]
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let compact: Bool
+
+    var body: some View {
+        let minimum = days.map(\.low).min() ?? snapshot.low ?? snapshot.temperature
+        let maximum = days.map(\.high).max() ?? snapshot.high ?? snapshot.temperature
+
+        VStack(alignment: .leading, spacing: compact ? 3 : 4) {
+            Text("NEXT DAYS")
+                .font(WidgetText.eyebrow)
+                .tracking(0.5)
+                .foregroundStyle(palette.muted)
+                .lineLimit(1)
+
+            ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
+                LargeDailyRow(
+                    day: day,
+                    globalLow: minimum,
+                    globalHigh: maximum,
+                    snapshot: snapshot,
+                    palette: palette,
+                    compact: compact
+                )
+                if index < days.count - 1 {
+                    Rectangle()
+                        .fill(palette.stroke.opacity(0.72))
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, compact ? 11 : 13)
+        .padding(.vertical, compact ? 7 : 9)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct LargeDailyRow: View {
+    let day: NearcastWidgetDay
+    let globalLow: Int
+    let globalHigh: Int
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 6 : 8) {
+            Text(compactDayLabel(day))
+                .font(compact ? WidgetText.caption : WidgetText.body)
+                .foregroundStyle(palette.primary)
+                .lineLimit(1)
+                .frame(width: compact ? 54 : 68, alignment: .leading)
+
+            Image(systemName: conditionSymbol(code: day.conditionCode, isDay: true))
+                .font(.system(size: compact ? 17 : 19, weight: .black))
+                .foregroundStyle(dailyConditionColor(day))
+                .frame(width: 25)
+                .accessibilityHidden(true)
+
+            Text("\(day.low)°")
+                .font(WidgetText.caption)
+                .foregroundStyle(palette.secondary)
+                .frame(width: 35, alignment: .trailing)
+
+            DailyTemperatureRange(
+                low: day.low,
+                high: day.high,
+                globalLow: globalLow,
+                globalHigh: globalHigh,
+                color: dailyConditionColor(day),
+                palette: palette
+            )
+            .frame(maxWidth: .infinity)
+
+            Text("\(day.high)°")
+                .font(compact ? WidgetText.caption : WidgetText.body)
+                .foregroundStyle(palette.primary)
+                .frame(width: 35, alignment: .leading)
+
+            HStack(spacing: 2) {
+                if day.rainChance >= 20 {
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: 10, weight: .black))
+                        .accessibilityHidden(true)
+                    Text("\(day.rainChance)%")
+                }
+            }
+            .font(WidgetText.eyebrow)
+            .foregroundStyle(rainTimelineColor(chance: day.rainChance, snapshot: snapshot))
+            .frame(width: compact ? 46 : 48, alignment: .trailing)
+        }
+        .frame(maxHeight: .infinity)
+        .accessibilityLabel("\(day.label), \(conditionAccessibilityLabel(code: day.conditionCode, isDay: true)), low \(day.low), high \(day.high), rain \(day.rainChance) percent")
+    }
+}
+
+private struct DailyTemperatureRange: View {
+    let low: Int
+    let high: Int
+    let globalLow: Int
+    let globalHigh: Int
+    let color: Color
+    let palette: WidgetPalette
+
+    var body: some View {
+        GeometryReader { proxy in
+            let range = max(1, globalHigh - globalLow)
+            let start = CGFloat(low - globalLow) / CGFloat(range) * proxy.size.width
+            let end = CGFloat(high - globalLow) / CGFloat(range) * proxy.size.width
+            let width = max(10, end - start)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(palette.stroke.opacity(0.74))
+                    .frame(height: 5)
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.58), color],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: width, height: 7)
+                    .offset(x: min(start, max(0, proxy.size.width - width)))
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+    }
+}
+
+private struct LargeAttentionContext {
+    let eyebrow: String
+    let title: String
+    let detail: String
+    let meta: String?
+    let symbol: String
+    let tone: Color
+}
+
+private struct LargeAttentionPanel: View {
+    let attention: LargeAttentionContext
+    let palette: WidgetPalette
+    let compact: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: compact ? 10 : 12) {
+            Image(systemName: attention.symbol)
+                .font(.system(size: compact ? 18 : 21, weight: .black))
+                .foregroundStyle(attention.tone)
+                .frame(width: compact ? 34 : 39, height: compact ? 34 : 39)
+                .background(attention.tone.opacity(0.14), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: compact ? 2 : 3) {
+                Text(attention.eyebrow.uppercased())
+                    .font(WidgetText.eyebrow)
+                    .tracking(0.5)
+                    .foregroundStyle(attention.tone)
+                    .lineLimit(1)
+                Text(attention.title)
+                    .font(compact ? WidgetText.body : WidgetText.bodyLarge)
+                    .foregroundStyle(palette.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Text(attention.detail)
+                    .font(WidgetText.caption)
+                    .foregroundStyle(palette.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+                if let meta = cleanOptional(attention.meta) {
+                    Text(meta)
+                        .font(WidgetText.eyebrow)
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, compact ? 11 : 13)
+        .padding(.vertical, compact ? 9 : 11)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(attention.tone.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(attention.tone.opacity(0.28), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct LargeFallbackContext: View {
+    let snapshot: NearcastWidgetSnapshot
+    let palette: WidgetPalette
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            LargeFallbackMetric(label: "FEELS", value: "\(snapshot.feelsLike)°", palette: palette)
+            LargeFallbackMetric(label: "RAIN", value: "\(snapshot.rainChance)%", palette: palette)
+            LargeFallbackMetric(label: "WIND", value: "\(snapshot.wind) \(snapshot.windUnit)", palette: palette)
+        }
+        .padding(.horizontal, compact ? 8 : 10)
+        .padding(.vertical, compact ? 8 : 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct LargeFallbackMetric: View {
+    let label: String
+    let value: String
+    let palette: WidgetPalette
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(label)
+                .font(WidgetText.eyebrow)
+                .foregroundStyle(palette.muted)
+            Text(value)
+                .font(WidgetText.bodyLarge)
+                .foregroundStyle(palette.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -2298,6 +3124,607 @@ private func hasPlanSummary(_ snapshot: NearcastWidgetSnapshot) -> Bool {
     cleanOptional(snapshot.planTitle) != nil || cleanOptional(snapshot.planDetail) != nil
 }
 
+private func shouldEmphasizeFeelsLike(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    let difference = abs(snapshot.feelsLike - snapshot.temperature)
+    if widgetUsesMetricUnits(snapshot) {
+        return difference >= 5 || (difference >= 3 && (snapshot.feelsLike >= 29 || snapshot.feelsLike <= 4))
+    }
+    return difference >= 8 || (difference >= 5 && (snapshot.feelsLike >= 85 || snapshot.feelsLike <= 40))
+}
+
+private func rowsEmphasizeFeelsLike(_ snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> Bool {
+    if shouldEmphasizeFeelsLike(snapshot) { return true }
+    return rows.contains { row in
+        guard let temperature = row.temperature, let feelsLike = row.feelsLike else { return false }
+        let difference = abs(feelsLike - temperature)
+        if widgetUsesMetricUnits(snapshot) {
+            return difference >= 5 || (difference >= 3 && (feelsLike >= 29 || feelsLike <= 4))
+        }
+        return difference >= 8 || (difference >= 5 && (feelsLike >= 85 || feelsLike <= 40))
+    }
+}
+
+private func widgetUsesMetricUnits(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    snapshot.windUnit.lowercased().contains("km")
+}
+
+private func feelsLikeTone(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    let hot = widgetUsesMetricUnits(snapshot) ? 32 : 90
+    let cold = widgetUsesMetricUnits(snapshot) ? 2 : 35
+    if snapshot.feelsLike >= hot {
+        return Color(red: 0.86, green: 0.35, blue: 0.16)
+    }
+    if snapshot.feelsLike <= cold {
+        return Color(red: 0.14, green: 0.47, blue: 0.82)
+    }
+    return temperatureRunwayColor(snapshot)
+}
+
+private func temperatureRunwayColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    if !snapshot.isDay { return Color(red: 0.49, green: 0.68, blue: 0.96) }
+    let warm = widgetUsesMetricUnits(snapshot) ? 30 : 86
+    let cold = widgetUsesMetricUnits(snapshot) ? 6 : 42
+    if snapshot.temperature >= warm { return Color(red: 0.92, green: 0.48, blue: 0.14) }
+    if snapshot.temperature <= cold { return Color(red: 0.20, green: 0.51, blue: 0.86) }
+    return Color(red: 0.16, green: 0.55, blue: 0.50)
+}
+
+private func isStormCode(_ code: Int) -> Bool {
+    (95...99).contains(code)
+}
+
+private func isSnowCode(_ code: Int) -> Bool {
+    (71...77).contains(code) || (85...86).contains(code)
+}
+
+private func isRainCode(_ code: Int) -> Bool {
+    isStormCode(code) || (51...67).contains(code) || (80...82).contains(code)
+}
+
+private func windRunwayColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    snapshot.isDay
+        ? Color(red: 0.34, green: 0.36, blue: 0.74)
+        : Color(red: 0.55, green: 0.59, blue: 0.96)
+}
+
+private func snowRunwayColor(_ snapshot: NearcastWidgetSnapshot) -> Color {
+    snapshot.isDay
+        ? Color(red: 0.29, green: 0.57, blue: 0.82)
+        : Color(red: 0.62, green: 0.82, blue: 1.00)
+}
+
+private func largeRunwayRows(_ snapshot: NearcastWidgetSnapshot, at date: Date, limit: Int) -> [NearcastWidgetHour] {
+    let reference = Date(timeIntervalSince1970: max(0, snapshot.weatherSavedTime))
+    if let projection = snapshot.timelineProjection(at: date, relativeTo: reference) {
+        return Array(projection.rows.prefix(limit))
+    }
+    return Array((snapshot.timeline ?? []).prefix(limit))
+}
+
+private func runwayConditionCode(_ row: NearcastWidgetHour, snapshot: NearcastWidgetSnapshot) -> Int {
+    row.offsetHours == 0 ? snapshot.conditionCode : (row.conditionCode ?? snapshot.conditionCode)
+}
+
+private func largeRunwayMode(_ snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> LargeRunwayMode {
+    let codes = rows.map { runwayConditionCode($0, snapshot: snapshot) }
+    if isSnowCode(snapshot.conditionCode) || codes.contains(where: isSnowCode) {
+        return .snow
+    }
+
+    let maxRain = rows.compactMap(\.rainChance).max() ?? snapshot.rainChance
+    let hasWetCode = isRainCode(snapshot.conditionCode) || codes.contains(where: isRainCode)
+    let maxGust = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
+    let maxUV = rows.compactMap(\.uv).max() ?? snapshot.uv
+    let windFloor = widgetUsesMetricUnits(snapshot) ? 39 : 24
+    let windPickup = widgetUsesMetricUnits(snapshot) ? 13 : 8
+
+    if !hasCurrentWidgetAlert(snapshot),
+       shouldShowPlanAttention(snapshot),
+       cleanOptional(snapshot.planPlace) == nil {
+        let risk = cleanOptional(snapshot.planRisk)?.lowercased() ?? ""
+        if ["rain", "storm", "precipitation"].contains(risk), hasWetCode || maxRain >= 20 {
+            return .rain
+        }
+        if ["wind", "gust"].contains(risk), maxGust >= max(windFloor, snapshot.wind + windPickup) {
+            return .wind
+        }
+        if ["heat", "temperature", "cold", "freeze"].contains(risk), rowsEmphasizeFeelsLike(snapshot, rows: rows) {
+            return .heat
+        }
+        if ["sun", "uv"].contains(risk), maxUV >= 6 {
+            return .sun
+        }
+    }
+
+    if hasWetCode || maxRain >= 35 { return .rain }
+    if maxGust >= max(windFloor, snapshot.wind + windPickup) { return .wind }
+    if rowsEmphasizeFeelsLike(snapshot, rows: rows) { return .heat }
+    if snapshot.isDay && maxUV >= 6 { return .sun }
+    return .quiet
+}
+
+private func largeFeelsLikeFocus(
+    _ snapshot: NearcastWidgetSnapshot,
+    rows: [NearcastWidgetHour]
+) -> (row: NearcastWidgetHour?, feelsLike: Int, air: Int, isCold: Bool) {
+    let candidates = rows.compactMap { row -> (row: NearcastWidgetHour, feelsLike: Int, air: Int)? in
+        guard let air = row.temperature, let feelsLike = row.feelsLike else { return nil }
+        return (row, feelsLike, air)
+    }
+    let rowFocus = candidates.max(by: {
+        abs($0.feelsLike - $0.air) < abs($1.feelsLike - $1.air)
+    })
+    let currentDifference = abs(snapshot.feelsLike - snapshot.temperature)
+    let rowDifference = rowFocus.map { abs($0.feelsLike - $0.air) } ?? -1
+    if currentDifference >= rowDifference {
+        return (nil, snapshot.feelsLike, snapshot.temperature, snapshot.feelsLike < snapshot.temperature)
+    }
+    if let focus = rowFocus {
+        return (focus.row, focus.feelsLike, focus.air, focus.feelsLike < focus.air)
+    }
+    return (nil, snapshot.feelsLike, snapshot.temperature, snapshot.feelsLike < snapshot.temperature)
+}
+
+private func largeFeelsLikeColor(_ snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> Color {
+    let focus = largeFeelsLikeFocus(snapshot, rows: rows)
+    if focus.feelsLike < focus.air { return Color(red: 0.14, green: 0.47, blue: 0.82) }
+    if focus.feelsLike > focus.air { return Color(red: 0.86, green: 0.35, blue: 0.16) }
+    return feelsLikeTone(snapshot)
+}
+
+private func largeRunwayTitle(_ mode: LargeRunwayMode, snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> String {
+    switch mode {
+    case .rain:
+        return largeRainRunwayTitle(snapshot, rows: rows)
+    case .snow:
+        if rows.isEmpty, isSnowCode(snapshot.conditionCode) { return "Snow now" }
+        guard let firstIndex = rows.firstIndex(where: { isSnowCode(runwayConditionCode($0, snapshot: snapshot)) }) else {
+            return "Snow possible nearby"
+        }
+        let first = rows[firstIndex]
+        let contiguousSnow = rows[firstIndex...].prefix { isSnowCode(runwayConditionCode($0, snapshot: snapshot)) }
+        if first.offsetHours == 0, let last = contiguousSnow.last, last.id != first.id {
+            return "Snow through \(runwayTimeLabel(last))"
+        }
+        return first.offsetHours == 0 ? "Snow now" : "Snow near \(runwayTimeLabel(first))"
+    case .wind:
+        let peak = rows.max { ($0.windGust ?? $0.wind ?? 0) < ($1.windGust ?? $1.wind ?? 0) }
+        let value = peak?.windGust ?? peak?.wind ?? snapshot.wind
+        let time = peak.map(runwayTimeLabel) ?? "soon"
+        return "Gusts \(value) \(snapshot.windUnit) near \(time)"
+    case .heat:
+        let focus = largeFeelsLikeFocus(snapshot, rows: rows)
+        return "Feels \(focus.feelsLike)° near \(focus.row.map(runwayTimeLabel) ?? "now")"
+    case .sun:
+        let peak = rows.max { ($0.uv ?? 0) < ($1.uv ?? 0) }
+        return "UV \(uvRiskLabel(peak?.uv ?? snapshot.uv)) near \(peak.map(runwayTimeLabel) ?? "soon")"
+    case .quiet:
+        let maxRain = rows.compactMap(\.rainChance).max() ?? snapshot.rainChance
+        if maxRain < 20, let last = rows.last {
+            return "Dry through \(runwayTimeLabel(last))"
+        }
+        guard let first = rows.first, let last = rows.last else {
+            return compactSignalValue(snapshot.nextValue)
+        }
+        let start = first.temperature ?? snapshot.temperature
+        let end = last.temperature ?? start
+        if end >= start + 3 { return "Warmer toward \(end)°" }
+        if end <= start - 3 { return "Cooling toward \(end)°" }
+        return "Holding near \(end)°"
+    }
+}
+
+private func largeRainRunwayTitle(_ snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> String {
+    if isStormCode(snapshot.conditionCode) { return "Storms nearby now" }
+    if isRainCode(snapshot.conditionCode) {
+        if let futureStorm = rows.first(where: {
+            $0.offsetHours > 0 && isStormCode(runwayConditionCode($0, snapshot: snapshot))
+        }) {
+            return "Rain now · storms \(runwayTimeLabel(futureStorm))"
+        }
+        return "Rain nearby now"
+    }
+
+    let wetRows = rows.filter { row in
+        isRainCode(runwayConditionCode(row, snapshot: snapshot)) || (row.rainChance ?? 0) >= 20
+    }
+    let firstStorm = rows.first { isStormCode(runwayConditionCode($0, snapshot: snapshot)) }
+    guard let firstWet = wetRows.first else { return firstStorm == nil ? "Rain possible nearby" : "Storms nearby" }
+
+    if let firstStorm {
+        if firstStorm.offsetHours == 0 { return "Storms nearby now" }
+        if firstWet.offsetHours == 0 {
+            return "Rain now · storms \(runwayTimeLabel(firstStorm))"
+        }
+        if firstWet.id != firstStorm.id {
+            return "Rain \(runwayTimeLabel(firstWet)) · storms \(runwayTimeLabel(firstStorm))"
+        }
+        return "Storms possible near \(runwayTimeLabel(firstStorm))"
+    }
+    return firstWet.offsetHours == 0 ? "Rain nearby now" : "Rain possible near \(runwayTimeLabel(firstWet))"
+}
+
+private func largeRunwayHorizonLabel(_ rows: [NearcastWidgetHour]) -> String {
+    guard rows.count > 1 else { return "NOW" }
+    return "NEXT \(rows.count - 1) HOURS"
+}
+
+private func largeRunwayAccessibility(_ mode: LargeRunwayMode, snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> String {
+    let title = largeRunwayTitle(mode, snapshot: snapshot, rows: rows)
+    guard let first = rows.first, let last = rows.last else { return title }
+    switch mode {
+    case .rain:
+        let peak = largeRunwayPoints(rows: rows, mode: .rain, snapshot: snapshot).map(\.value).max()
+            ?? snapshot.rainChance
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
+    case .snow:
+        let end = last.temperature ?? snapshot.temperature
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
+    case .wind:
+        let peak = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
+        let sustained = rows.compactMap(\.wind).max() ?? snapshot.wind
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Peak gust \(peak) \(snapshot.windUnit); sustained wind up to \(sustained)."
+    case .heat:
+        let focus = largeFeelsLikeFocus(snapshot, rows: rows)
+        let direction = focus.isCold ? "as low as" : "as high as"
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the air is \(focus.air)."
+    case .sun:
+        let peak = rows.compactMap(\.uv).max() ?? snapshot.uv
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
+    case .quiet:
+        let start = first.temperature ?? snapshot.temperature
+        let end = last.temperature ?? start
+        let transition = runwayConditionTransition(rows, snapshot: snapshot).map { " \($0)" } ?? ""
+        return "Next \(max(1, rows.count - 1)) hours. \(title). From \(start) to \(end) degrees.\(transition)"
+    }
+}
+
+private func runwayConditionTransition(_ rows: [NearcastWidgetHour], snapshot: NearcastWidgetSnapshot) -> String? {
+    var conditions: [String] = []
+    for row in rows {
+        let label = conditionAccessibilityLabel(
+            code: runwayConditionCode(row, snapshot: snapshot),
+            isDay: row.isDay ?? snapshot.isDay
+        )
+        if conditions.last != label { conditions.append(label) }
+    }
+    guard let first = conditions.first, let last = conditions.last, first != last else { return nil }
+    return "Conditions change from \(first) to \(last)."
+}
+
+private func largeRunwayPoints(rows: [NearcastWidgetHour], mode: LargeRunwayMode, snapshot: NearcastWidgetSnapshot) -> [LargeRunwayPoint] {
+    var previousCode: Int?
+    return rows.enumerated().map { index, row in
+        let value: Int
+        let secondary: Int?
+        switch mode {
+        case .rain:
+            let reportedChance = row.rainChance ?? snapshot.rainChance
+            value = row.offsetHours == 0 && isRainCode(snapshot.conditionCode)
+                ? max(100, reportedChance)
+                : reportedChance
+            secondary = nil
+        case .snow:
+            value = row.offsetHours == 0 ? snapshot.temperature : (row.temperature ?? snapshot.temperature)
+            secondary = nil
+        case .wind:
+            value = row.windGust ?? row.wind ?? snapshot.wind
+            secondary = row.wind ?? snapshot.wind
+        case .heat:
+            value = row.offsetHours == 0
+                ? snapshot.feelsLike
+                : (row.feelsLike ?? row.temperature ?? snapshot.feelsLike)
+            secondary = row.offsetHours == 0 ? snapshot.temperature : (row.temperature ?? snapshot.temperature)
+        case .sun:
+            value = row.uv ?? snapshot.uv
+            secondary = nil
+        case .quiet:
+            value = row.offsetHours == 0 ? snapshot.temperature : (row.temperature ?? snapshot.temperature)
+            secondary = nil
+        }
+
+        let code = runwayConditionCode(row, snapshot: snapshot)
+        let symbol: String?
+        if (mode == .quiet || mode == .snow), index == 0 || code != previousCode {
+            symbol = conditionSymbol(code: code, isDay: row.isDay ?? snapshot.isDay)
+        } else {
+            symbol = nil
+        }
+        previousCode = code
+
+        return LargeRunwayPoint(
+            id: row.id,
+            value: value,
+            secondaryValue: secondary,
+            time: runwayTimeLabel(row),
+            symbol: symbol,
+            isInPlanWindow: isInPlanWindow(row, snapshot: snapshot)
+        )
+    }
+}
+
+private func runwayTimeLabel(_ row: NearcastWidgetHour) -> String {
+    if row.offsetHours == 0 { return "Now" }
+    if let compact = compactTimeSuffix(row.timeLabel) { return compact }
+    return row.timeLabel
+        .replacingOccurrences(of: ":00", with: "")
+        .replacingOccurrences(of: " ", with: "")
+}
+
+private func barValueText(_ value: Int, kind: LargeBarKind) -> String {
+    switch kind {
+    case .rain: return "\(value)%"
+    case .uv: return "\(value)"
+    }
+}
+
+private func lineValueText(_ value: Int, mode: LargeRunwayMode) -> String {
+    switch mode {
+    case .heat, .quiet, .snow: return "\(value)°"
+    case .rain: return "\(value)%"
+    case .wind, .sun: return "\(value)"
+    }
+}
+
+private func largeBarHeight(_ value: Int, maximum: Int, available: CGFloat) -> CGFloat {
+    guard value > 0 else { return 0 }
+    let usable = max(18, available - 43)
+    let fraction = CGFloat(max(0, value)) / CGFloat(max(1, maximum))
+    return max(7, min(usable, usable * fraction))
+}
+
+private func largeChartCoordinates(_ values: [Int], size: CGSize, sharedValues: [Int]? = nil) -> [CGPoint] {
+    guard !values.isEmpty else { return [] }
+    let scaleValues = (sharedValues?.isEmpty == false ? sharedValues! : values)
+    let rawMinimum = scaleValues.min() ?? 0
+    let rawMaximum = scaleValues.max() ?? rawMinimum
+    let padding = max(2, Int(ceil(Double(max(1, rawMaximum - rawMinimum)) * 0.18)))
+    let minimum = rawMinimum - padding
+    let maximum = rawMaximum + padding
+    let range = max(1, maximum - minimum)
+    let insetX: CGFloat = min(24, max(20, size.width * 0.065))
+    let top: CGFloat = min(24, max(18, size.height * 0.28))
+    let bottom: CGFloat = max(top + 8, size.height - 4)
+    let step = values.count > 1 ? (size.width - insetX * 2) / CGFloat(values.count - 1) : 0
+
+    return values.enumerated().map { index, value in
+        let fraction = CGFloat(value - minimum) / CGFloat(range)
+        return CGPoint(
+            x: values.count == 1 ? size.width / 2 : insetX + CGFloat(index) * step,
+            y: bottom - fraction * (bottom - top)
+        )
+    }
+}
+
+private func largeChartPath(_ points: [CGPoint]) -> Path {
+    Path { path in
+        guard let first = points.first else { return }
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+    }
+}
+
+private func largeChartAreaPath(_ points: [CGPoint], size: CGSize) -> Path {
+    Path { path in
+        guard let first = points.first, let last = points.last else { return }
+        path.move(to: CGPoint(x: first.x, y: size.height))
+        path.addLine(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        path.addLine(to: CGPoint(x: last.x, y: size.height))
+        path.closeSubpath()
+    }
+}
+
+private func compactDayLabel(_ day: NearcastWidgetDay) -> String {
+    let label = day.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    if label.lowercased() == "tomorrow" { return "Tmrw" }
+    if label.lowercased() == "today" { return "Today" }
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd"
+    if let date = formatter.date(from: day.date) {
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
+    }
+    return label.split(separator: ",").first.map(String.init) ?? label
+}
+
+private func isInPlanWindow(_ row: NearcastWidgetHour, snapshot: NearcastWidgetSnapshot) -> Bool {
+    guard !hasCurrentWidgetAlert(snapshot),
+          shouldShowPlanAttention(snapshot),
+          cleanOptional(snapshot.planPlace) == nil,
+          let startsAt = row.startsAt,
+          let planStartAt = snapshot.planStartAt else { return false }
+    let planEndAt = snapshot.planEndAt ?? planStartAt + 3600
+    return startsAt >= planStartAt && startsAt < planEndAt
+}
+
+private func largeOutlookDays(_ days: [NearcastWidgetDay]) -> [NearcastWidgetDay] {
+    if days.count >= 4 {
+        return Array(days.dropFirst().prefix(3))
+    }
+    return Array(days.prefix(3))
+}
+
+private func dailyConditionColor(_ day: NearcastWidgetDay) -> Color {
+    conditionAccentColor(code: day.conditionCode, isDay: true)
+}
+
+private func conditionAccentColor(code: Int, isDay: Bool) -> Color {
+    if isStormCode(code) { return Color(red: 0.82, green: 0.43, blue: 0.12) }
+    if isSnowCode(code) { return Color(red: 0.33, green: 0.62, blue: 0.88) }
+    if (51...67).contains(code) || (80...82).contains(code) { return Color(red: 0.18, green: 0.48, blue: 0.82) }
+    if code == 45 || code == 48 { return Color(red: 0.42, green: 0.54, blue: 0.61) }
+    if !isDay { return Color(red: 0.58, green: 0.72, blue: 0.94) }
+    if (2...3).contains(code) { return Color(red: 0.38, green: 0.53, blue: 0.66) }
+    return Color(red: 0.92, green: 0.56, blue: 0.10)
+}
+
+private func conditionAccessibilityLabel(code: Int, isDay: Bool) -> String {
+    switch code {
+    case 0: return isDay ? "clear" : "clear night"
+    case 1: return "mostly clear"
+    case 2: return "partly cloudy"
+    case 3: return "cloudy"
+    case 45, 48: return "fog"
+    case 51...67: return "drizzle or rain"
+    case 71...77, 85...86: return "snow"
+    case 80...82: return "showers"
+    case 95...99: return "thunderstorms"
+    default: return "weather"
+    }
+}
+
+private func planAttentionMeta(_ snapshot: NearcastWidgetSnapshot) -> String? {
+    var parts: [String] = []
+    let planPlace = cleanOptional(snapshot.planPlace)
+    if let place = planPlace {
+        parts.append(cityName(place))
+    }
+    // Only render timing when the forecast's IANA timezone is available. This
+    // keeps a saved remote-city plan from silently using the device timezone.
+    if planPlace == nil,
+       let startsAt = snapshot.planStartAt,
+       let timezoneID = cleanOptional(snapshot.placeTimezone),
+       let timezone = TimeZone(identifier: timezoneID) {
+        let start = Date(timeIntervalSince1970: startsAt)
+        var calendar = Calendar.current
+        calendar.timeZone = timezone
+        let day: String
+        if calendar.isDateInToday(start) {
+            day = "Today"
+        } else if calendar.isDateInTomorrow(start) {
+            day = "Tomorrow"
+        } else {
+            let formatter = DateFormatter()
+            formatter.locale = Locale.current
+            formatter.timeZone = timezone
+            formatter.dateFormat = "EEE"
+            day = formatter.string(from: start)
+        }
+
+        var time = compactPlanTime(start, timezone: timezone)
+        if let endsAt = snapshot.planEndAt, endsAt > startsAt {
+            time = compactPlanTimeRange(start, Date(timeIntervalSince1970: endsAt), timezone: timezone)
+        }
+        parts.append("\(day) · \(time)")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+}
+
+private func compactPlanTime(_ date: Date, timezone: TimeZone) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = timezone
+    formatter.dateFormat = "h:mm a"
+    return formatter.string(from: date).replacingOccurrences(of: ":00", with: "")
+}
+
+private func compactPlanTimeRange(_ start: Date, _ end: Date, timezone: TimeZone) -> String {
+    let startText = compactPlanTime(start, timezone: timezone)
+    let endText = compactPlanTime(end, timezone: timezone)
+    let startSuffix = startText.split(separator: " ").last.map(String.init)
+    let endSuffix = endText.split(separator: " ").last.map(String.init)
+    if startSuffix == endSuffix, let startSuffix {
+        let shortenedStart = startText.replacingOccurrences(of: " \(startSuffix)", with: "")
+        return "\(shortenedStart)–\(endText)"
+    }
+    return "\(startText)–\(endText)"
+}
+
+private func largeAttentionContext(_ snapshot: NearcastWidgetSnapshot) -> LargeAttentionContext? {
+    if hasCurrentWidgetAlert(snapshot), let title = cleanOptional(snapshot.alertTitle) {
+        let severity = cleanOptional(snapshot.alertSeverity).flatMap {
+            $0.caseInsensitiveCompare("Unknown") == .orderedSame ? nil : $0
+        }
+        let detail = cleanOptional(snapshot.alertImpact) ?? "Open Nearcast for the latest alert details."
+        return LargeAttentionContext(
+            eyebrow: severity.map { "Weather alert · \($0)" } ?? "Weather alert",
+            title: title,
+            detail: detail,
+            meta: alertAttentionMeta(snapshot),
+            symbol: alertSymbol(snapshot.alertSeverity),
+            tone: alertTone(snapshot.alertSeverity)
+        )
+    }
+
+    if hasPlanSummary(snapshot), shouldShowPlanAttention(snapshot) {
+        let label = cleanOptional(snapshot.planLabel) ?? "Plan update"
+        let title = cleanOptional(snapshot.planTitle) ?? label
+        let detail = cleanOptional(snapshot.planDetail) ?? "Checked against the latest forecast."
+        let meta = planAttentionMeta(snapshot)
+        return LargeAttentionContext(
+            eyebrow: label,
+            title: title,
+            detail: detail,
+            meta: meta,
+            symbol: planSymbol(snapshot),
+            tone: planToneColor(snapshot)
+        )
+    }
+
+    return nil
+}
+
+private func hasCurrentWidgetAlert(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    snapshot.hasCurrentOfficialAlert(at: Date().timeIntervalSince1970)
+}
+
+private func alertAttentionMeta(_ snapshot: NearcastWidgetSnapshot) -> String? {
+    var parts: [String] = []
+    if let expiresAt = snapshot.alertExpiresAt {
+        parts.append(alertExpirationText(expiresAt))
+    }
+    if let count = snapshot.alertCount, count > 1 {
+        parts.append("+\(count - 1) more")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+}
+
+private func shouldShowPlanAttention(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    let tone = cleanOptional(snapshot.planTone)?.lowercased() ?? ""
+    let now = Date().timeIntervalSince1970
+    if let planEndAt = snapshot.planEndAt, planEndAt <= now { return false }
+    let maximumAge: TimeInterval = tone == "changed" ? 12 * 3600 : 6 * 3600
+    if snapshot.planAge > maximumAge { return false }
+    if ["changed", "caution", "watch"].contains(tone) { return true }
+    let label = cleanOptional(snapshot.planLabel)?.lowercased() ?? ""
+    return label.contains("changed")
+}
+
+private func alertTone(_ severity: String?) -> Color {
+    switch cleanOptional(severity)?.lowercased() {
+    case "extreme", "severe": return Color(red: 0.78, green: 0.18, blue: 0.16)
+    case "moderate": return Color(red: 0.86, green: 0.45, blue: 0.10)
+    default: return Color(red: 0.76, green: 0.55, blue: 0.10)
+    }
+}
+
+private func alertSymbol(_ severity: String?) -> String {
+    switch cleanOptional(severity)?.lowercased() {
+    case "extreme", "severe": return "exclamationmark.triangle.fill"
+    default: return "exclamationmark.circle.fill"
+    }
+}
+
+
+private func alertExpirationText(_ timestamp: TimeInterval) -> String {
+    let date = Date(timeIntervalSince1970: timestamp)
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    if Calendar.current.isDateInToday(date) {
+        formatter.dateFormat = "h:mm a"
+    } else {
+        formatter.dateFormat = "EEE h a"
+    }
+    return "Until \(formatter.string(from: date))"
+}
+
 private func uvRiskLabel(_ value: Int) -> String {
     if value >= 11 { return "Extreme" }
     if value >= 8 { return "Very high" }
@@ -2446,13 +3873,19 @@ private func nextFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus {
     let maxWind = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
     let hasStorm = rows.contains { row in
         guard let code = row.conditionCode else { return false }
-        return (95...99).contains(code)
+        return isStormCode(code)
+    }
+    let hasSnow = isSnowCode(snapshot.conditionCode) || rows.contains { row in
+        row.conditionCode.map(isSnowCode) ?? false
     }
     let nextText = "\(snapshot.nextValue) \(snapshot.nowValue)".lowercased()
+    if hasSnow { return .quiet }
     if hasStorm || maxRain >= 35 || nextText.contains("rain") || nextText.contains("storm") {
         return .rain
     }
-    if maxWind >= max(24, snapshot.wind + 8) || snapshot.laterValue.lowercased().contains("gust") {
+    let windFloor = widgetUsesMetricUnits(snapshot) ? 39 : 24
+    let windPickup = widgetUsesMetricUnits(snapshot) ? 13 : 8
+    if maxWind >= max(windFloor, snapshot.wind + windPickup) || snapshot.laterValue.lowercased().contains("gust") {
         return .wind
     }
     if snapshot.isDay && snapshot.uv >= 6 {
@@ -2698,6 +4131,7 @@ private func timelineColor(row: NearcastWidgetHour, focus: WidgetNextFocus, snap
     case .sun:
         return uvToneColor(row.uv ?? snapshot.uv)
     case .quiet:
+        if let code = row.conditionCode, isSnowCode(code) { return snowRunwayColor(snapshot) }
         if let code = row.conditionCode, (51...82).contains(code) { return Color(red: 0.18, green: 0.48, blue: 0.82) }
         return (row.isDay ?? snapshot.isDay)
             ? Color(red: 0.92, green: 0.56, blue: 0.10)
@@ -2714,18 +4148,20 @@ private func conditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
 }
 
 private func conditionSymbol(code: Int, isDay: Bool) -> String {
-    if (95...99).contains(code) { return "cloud.bolt.rain.fill" }
-    if (71...86).contains(code) { return "snowflake" }
+    if isStormCode(code) { return "cloud.bolt.rain.fill" }
+    if isSnowCode(code) { return "snowflake" }
     if (51...67).contains(code) || (80...82).contains(code) { return "cloud.rain.fill" }
+    if code == 45 || code == 48 { return "cloud.fog.fill" }
     if !isDay { return "moon.stars.fill" }
-    if (1...3).contains(code) { return "cloud.sun.fill" }
+    if code == 3 { return "cloud.fill" }
+    if (1...2).contains(code) { return "cloud.sun.fill" }
     return "sun.max.fill"
 }
 
 private func smallConditionSymbol(_ snapshot: NearcastWidgetSnapshot) -> String? {
     let code = snapshot.conditionCode
-    if (95...99).contains(code) { return "cloud.bolt.rain.fill" }
-    if (71...86).contains(code) { return "snowflake" }
+    if isStormCode(code) { return "cloud.bolt.rain.fill" }
+    if isSnowCode(code) { return "snowflake" }
     if (51...67).contains(code) || (80...82).contains(code) { return "cloud.rain.fill" }
     return nil
 }
@@ -2752,10 +4188,10 @@ private func widgetSolarMoment(_ snapshot: NearcastWidgetSnapshot, now: Date = D
 
 private func backdropColors(_ snapshot: NearcastWidgetSnapshot, solarMoment: WidgetSolarMoment = .none) -> [Color] {
     let code = snapshot.conditionCode
-    let stormy = code >= 95
-    let wet = (51...82).contains(code)
-    let snowy = (71...86).contains(code)
-    let hot = snapshot.feelsLike >= 95
+    let stormy = isStormCode(code)
+    let wet = (51...67).contains(code) || (80...82).contains(code)
+    let snowy = isSnowCode(code)
+    let hot = snapshot.feelsLike >= (widgetUsesMetricUnits(snapshot) ? 35 : 95)
     if !snapshot.isDay {
         if solarMoment == .sunrise {
             return [Color(red: 0.13, green: 0.12, blue: 0.22), Color(red: 0.55, green: 0.36, blue: 0.35), Color(red: 0.04, green: 0.07, blue: 0.13)]
@@ -2763,6 +4199,7 @@ private func backdropColors(_ snapshot: NearcastWidgetSnapshot, solarMoment: Wid
         if solarMoment == .sunset {
             return [Color(red: 0.08, green: 0.08, blue: 0.16), Color(red: 0.42, green: 0.24, blue: 0.29), Color(red: 0.02, green: 0.04, blue: 0.09)]
         }
+        if snowy { return [Color(red: 0.10, green: 0.15, blue: 0.25), Color(red: 0.25, green: 0.35, blue: 0.50), Color(red: 0.05, green: 0.08, blue: 0.15)] }
         if wet || stormy { return [Color(red: 0.06, green: 0.10, blue: 0.18), Color(red: 0.15, green: 0.22, blue: 0.36), Color(red: 0.03, green: 0.05, blue: 0.10)] }
         return [Color(red: 0.03, green: 0.06, blue: 0.13), Color(red: 0.10, green: 0.15, blue: 0.27), Color(red: 0.02, green: 0.03, blue: 0.08)]
     }
@@ -2773,8 +4210,8 @@ private func backdropColors(_ snapshot: NearcastWidgetSnapshot, solarMoment: Wid
         return [Color(red: 1.0, green: 0.67, blue: 0.45), Color(red: 0.76, green: 0.80, blue: 0.92), Color(red: 1.0, green: 0.84, blue: 0.52)]
     }
     if stormy { return [Color(red: 0.74, green: 0.80, blue: 0.90), Color(red: 0.42, green: 0.53, blue: 0.68), Color(red: 0.95, green: 0.78, blue: 0.38)] }
-    if wet { return [Color(red: 0.75, green: 0.88, blue: 0.96), Color(red: 0.54, green: 0.71, blue: 0.86), Color(red: 0.28, green: 0.48, blue: 0.68)] }
     if snowy { return [Color(red: 0.92, green: 0.97, blue: 1.0), Color(red: 0.75, green: 0.84, blue: 0.93), Color(red: 0.64, green: 0.74, blue: 0.86)] }
+    if wet { return [Color(red: 0.75, green: 0.88, blue: 0.96), Color(red: 0.54, green: 0.71, blue: 0.86), Color(red: 0.28, green: 0.48, blue: 0.68)] }
     if hot { return [Color(red: 1.0, green: 0.89, blue: 0.50), Color(red: 0.96, green: 0.62, blue: 0.33), Color(red: 0.55, green: 0.78, blue: 0.96)] }
     return [Color(red: 0.74, green: 0.90, blue: 1.0), Color(red: 0.58, green: 0.80, blue: 0.96), Color(red: 0.98, green: 0.88, blue: 0.55)]
 }
