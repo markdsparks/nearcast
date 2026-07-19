@@ -390,9 +390,18 @@ function detailHoursForIndices(indices, {
     const profile = hourlyPrecipProfile(data, h);
     const rawCode = profile.rawCode;
     const pop = profile.pop;
-    const precip = data.hourly.precipitation[h] || 0;
+    const rawForecastPop = data.hourly.precipitation_probability?.[h];
+    const rawForecastPrecip = data.hourly.precipitation?.[h];
+    const popAvailable = typeof rawForecastPop === "number" && Number.isFinite(rawForecastPop);
+    const precipAvailable = typeof rawForecastPrecip === "number" && Number.isFinite(rawForecastPrecip);
+    const forecastPop = popAvailable ? Math.max(0, Math.min(100, rawForecastPop)) : null;
+    const forecastPrecip = precipAvailable ? Math.max(0, rawForecastPrecip) : null;
+    const precip = forecastPrecip ?? 0;
     const code = profile.code;
-    const truth = state.weatherTruth;
+    // Live radar/current-condition truth belongs only to the active forecast.
+    // Planner details can carry a retained forecast for another place, where
+    // borrowing the active place's truth would create a false "happening now."
+    const truth = data === state.forecast ? state.weatherTruth : null;
     const ms = parseForecastTimestamp(data.hourly.time[h], data);
     const nextMs = indices.includes(h + 1)
       ? parseForecastTimestamp(data.hourly.time[h + 1], data)
@@ -413,6 +422,10 @@ function detailHoursForIndices(indices, {
       temp: data.hourly.temperature_2m[h],
       feels: data.hourly.apparent_temperature[h],
       pop,
+      forecastPop,
+      popAvailable,
+      forecastPrecip,
+      precipAvailable,
       precip: activePrecip ? Math.max(precip, truthPrecip || 0) : precip,
       wind: data.hourly.wind_speed_10m[h],
       gust: data.hourly.wind_gusts_10m[h],
@@ -440,6 +453,10 @@ function detailHoursForIndices(indices, {
   });
 }
 
+function detailPrecipUnit(data = state.forecast) {
+  return forecastUsesInches(data) ? "in" : "mm";
+}
+
 function openDayDetail({
   indices,
   title,
@@ -461,7 +478,7 @@ function openDayDetail({
 }) {
   if (!data || !indices.length) return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const precipUnit = detailPrecipUnit(data);
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const hrs = detailHoursForIndices(indices, { data, alerts, eventWindow, showNow });
 
@@ -487,7 +504,7 @@ function openDayDetail({
     dayDetailNavState.timeline.lastDay = null;
     dayDetailNavState.timeline.lastAlertKey = "";
   }
-  buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow });
+  buildHourlyGraph(hrs, tempUnit, windUnit, showNow, { dayIndex, sunriseISO, sunsetISO, data, eventWindow, precipUnit });
   const listRender = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
     showNow,
     data,
@@ -590,7 +607,7 @@ function refreshOpenDayDetailMemorySurfaces() {
   if (!data || !rows.length) return;
 
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const precipUnit = detailPrecipUnit(data);
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const scrollTop = sheet.scrollTop;
   const expandedIds = new Set(
@@ -621,7 +638,8 @@ function refreshOpenDayDetailMemorySurfaces() {
     sunriseISO: dayDetailNavState.sunriseISO,
     sunsetISO: dayDetailNavState.sunsetISO,
     data,
-    eventWindow: memoryContext.eventWindow
+    eventWindow: memoryContext.eventWindow,
+    precipUnit
   });
   const result = renderHourlyList(hrs, tempUnit, windUnit, precipUnit, {
     showNow: Boolean(dayDetailNavState.showNow),
@@ -670,21 +688,34 @@ function closeDayDetail() {
 }
 
 function buildDaySummary(hrs, windUnit) {
-  const maxPop = Math.max(...hrs.map((h) => h.pop));
+  const availablePops = hrs
+    .filter((hour) => hour.popAvailable !== false)
+    .map((hour) => hour.forecastPop ?? hour.pop)
+    .filter((value) => typeof value === "number" && Number.isFinite(value));
+  const maxPop = availablePops.length ? Math.max(...availablePops) : 0;
+  const hasMissingPop = availablePops.length < hrs.length;
   const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
   const thunder = hrs.some((h) => isThunderCode(h.code) || h.stormPotential);
   const parts = [];
   if (thunder) parts.push(`Thunder possible${maxPop >= 20 ? `, up to ${maxPop}% rain` : ""}`);
+  else if (!availablePops.length) parts.push("Rain chance unavailable");
   else if (maxPop >= 50) parts.push(`Rain likely, up to ${maxPop}% chance`);
   else if (maxPop >= 40) parts.push(`Rain possible, up to ${maxPop}% chance`);
   else if (maxPop >= 20) parts.push(`Slight chance of rain (${maxPop}%)`);
-  else parts.push("Mostly dry");
+  else parts.push(hasMissingPop ? "Available hours look mostly dry" : "Mostly dry");
+  if (hasMissingPop && thunder && !availablePops.length) parts.push("rain chance unavailable");
+  else if (hasMissingPop && availablePops.length) parts.push("some rain data unavailable");
   if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
   return parts.join(", ") + ".";
 }
 
 function hourlyRowRainText(hour) {
+  if (hour?.popAvailable === false) return "—";
   return `${Math.max(0, Math.min(100, Math.round(Number(hour.pop) || 0)))}%`;
+}
+
+function hourlyRowRainAriaText(hour) {
+  return hour?.popAvailable === false ? "unavailable" : hourlyRowRainText(hour);
 }
 
 function hourlyRowWindText(hour, windUnit) {
@@ -749,7 +780,7 @@ function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
   if (hour.activePrecip) {
     badges.push({ label: "Rain now", tone: " is-wet" });
     if (hour.precipText) badges.push({ label: hour.precipText, tone: " is-flag" });
-  } else if (hour.precipPrimary && hour.precip > 0) {
+  } else if (hour.precipAvailable !== false && hour.precipPrimary && hour.precip > 0) {
     badges.push({ label: `${formatAmount(hour.precip)} ${precipUnit}`, tone: " is-flag" });
   } else if (windy) {
     badges.push({ label: `Gust ${Math.round(hour.gust)}`, tone: " is-wind" });
@@ -798,6 +829,8 @@ function hourlyDetailNote(hour, tempUnit, windUnit) {
     weatherNote = `Gusts near ${Math.round(hour.gust)} ${windUnit}.`;
   } else if (hour.uv >= 6) {
     weatherNote = `High UV. Sunscreen helps outdoors.`;
+  } else if (hour.popAvailable === false) {
+    weatherNote = "Rain chance is unavailable for this hour.";
   } else {
     const feelsDelta = Math.round(hour.feels - hour.temp);
     weatherNote = Math.abs(feelsDelta) >= 6
@@ -948,11 +981,14 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       : "";
     const detailId = `sheet-hour-detail-${rowIndex}`;
     const rainText = hourlyRowRainText(hour);
+    const rainAriaText = hourlyRowRainAriaText(hour);
     const windText = hourlyRowWindText(hour, windUnit);
     const windSpeed = Math.max(0, Math.round(Number(hour.wind) || 0));
     const windDirection = hourlyRowWindDirection(hour);
-    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain ${rainText}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
-    const precipText = hour.precipText || (hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
+    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, rain chance ${rainAriaText}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
+    const precipText = hour.precipText || (hour.precipAvailable === false
+      ? "Unavailable"
+      : hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}${alertDivider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
@@ -1024,7 +1060,7 @@ function appendRollingHourlyRows() {
   const data = dayDetailNavState?.data || state.forecast;
   if (!timeline || !data || timeline.renderedCount >= timeline.allRows.length) return false;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
-  const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
+  const precipUnit = detailPrecipUnit(data);
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const nextCount = Math.min(timeline.renderedCount + timeline.pageSize, timeline.allRows.length);
   const rows = timeline.allRows.slice(timeline.renderedCount, nextCount);
@@ -1133,15 +1169,15 @@ function scheduleGraphCalloutReflow() {
   });
 }
 
-// The graph can plot two metrics, each as a primary curve + a dashed secondary
-// curve: Temp (with Feels-like) by default, or Wind (with Gusts). The current
-// metric + last-rendered context are kept so the toggle can redraw in place.
+// The detail sheet keeps one graph context while its metric changes. Temp and
+// Wind use paired curves, Precip uses aligned chance/amount lanes, and Sun uses
+// its daylight arc. Every newly opened sheet still starts on Temp.
 let graphMetric = "temp";
 let graphCtx = null;
 const GRAPH_WIND_COLOR = "#8479ff";
 
 function setGraphMetric(metric) {
-  graphMetric = metric === "wind" || metric === "sun" ? metric : "temp";
+  graphMetric = metric === "precip" || metric === "wind" || metric === "sun" ? metric : "temp";
   if (graphCtx) drawHourlyGraph();
 }
 
@@ -1154,23 +1190,41 @@ function drawHourlyGraph() {
   if (!graphCtx) return;
   const perf = perfStart();
   const { hrs, tempUnit, windUnit, showNow, data = state.forecast } = graphCtx;
+  const isPrecip = graphMetric === "precip";
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
 
   // Reflect the active metric in the toggle + hint.
   const tempBtn = document.getElementById("graphTempBtn");
+  const precipBtn = document.getElementById("graphPrecipBtn");
   const windBtn = document.getElementById("graphWindBtn");
   const sunBtn = document.getElementById("graphSunBtn");
+  const metricToggle = document.getElementById("graphMetricToggle");
   const hint = document.getElementById("graphMetricHint");
-  if (tempBtn && windBtn && sunBtn) {
-    tempBtn.classList.toggle("active", !isWind && !isSun);
+  if (tempBtn && precipBtn && windBtn && sunBtn) {
+    tempBtn.classList.toggle("active", !isPrecip && !isWind && !isSun);
+    precipBtn.classList.toggle("active", isPrecip);
     windBtn.classList.toggle("active", isWind);
     sunBtn.classList.toggle("active", isSun);
-    tempBtn.setAttribute("aria-pressed", String(!isWind && !isSun));
+    tempBtn.setAttribute("aria-pressed", String(!isPrecip && !isWind && !isSun));
+    precipBtn.setAttribute("aria-pressed", String(isPrecip));
     windBtn.setAttribute("aria-pressed", String(isWind));
     sunBtn.setAttribute("aria-pressed", String(isSun));
   }
-  if (hint) hint.textContent = isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : "dashed = feels like";
+  metricToggle?.classList.toggle("is-precip", isPrecip);
+  if (metricToggle) metricToggle.dataset.metric = graphMetric;
+  if (hint) {
+    hint.classList.toggle("is-precip", isPrecip);
+    hint.textContent = isPrecip
+      ? "area = chance · bars = amount"
+      : isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : "dashed = feels like";
+  }
+  document.getElementById("sheetReadout")?.setAttribute("aria-live", isPrecip ? "off" : "polite");
+  if (isPrecip) {
+    drawPrecipGraph();
+    perfEnd("drawHourlyGraph", perf);
+    return;
+  }
   if (isSun) {
     drawSunGraph();
     perfEnd("drawHourlyGraph", perf);
@@ -1181,9 +1235,9 @@ function drawHourlyGraph() {
   const VW = 340;
   const padL = 18, padR = 18;
   const plotW = VW - padL - padR;
-  const tempTop = 18, tempBottom = 104;
-  const precipTop = 116, precipBottom = 136;
-  const precipH = precipBottom - precipTop;
+  // Reserve a quiet top lane for plan-memory labels. The curves still use the
+  // full lower chart instead of drawing through that annotation text.
+  const tempTop = 34, tempBottom = 136;
   const labelY = 152;
   const n = hrs.length;
 
@@ -1218,8 +1272,8 @@ function drawHourlyGraph() {
   const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
   const memoryBands = renderGraphMemoryBands(memoryWindows, xForMs, {
     top: tempTop,
-    bottom: precipBottom,
-    labelY: precipTop - 6,
+    bottom: tempBottom,
+    labelY: 28,
     data
   });
   graphPts = pPts; // scrubbing tracks the primary curve
@@ -1245,14 +1299,6 @@ function drawHourlyGraph() {
   const primaryPath = smoothPath(pPts);
   const secondaryPath = smoothPath(sPts);
   const areaPath = `${primaryPath} L ${pPts[n - 1].x.toFixed(1)} ${tempBottom} L ${pPts[0].x.toFixed(1)} ${tempBottom} Z`;
-
-  // Precip bars — useful context in either metric.
-  const barW = Math.max((plotW / n) * 0.5, 2);
-  const precipBars = pPts.map((p) => {
-    if (p.pop <= 0) return "";
-    const h = (p.pop / 100) * precipH;
-    return `<rect x="${(p.x - barW / 2).toFixed(1)}" y="${(precipBottom - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#4a90d9" opacity="0.5"/>`;
-  }).join("");
 
   // Keep marker labels inside the chart even when a peak lands at an edge.
   const peakText = (px, py, text, cls) => {
@@ -1293,7 +1339,7 @@ function drawHourlyGraph() {
     const nearRight = lx > VW - 46;
     const tx = nearRight ? lx - 4 : lx + 4;
     const anchor = nearRight ? "end" : "start";
-    return `<line x1="${lx.toFixed(1)}" y1="${tempTop}" x2="${lx.toFixed(1)}" y2="${precipBottom}" class="graph-day-line"/>` +
+    return `<line x1="${lx.toFixed(1)}" y1="${tempTop}" x2="${lx.toFixed(1)}" y2="${tempBottom}" class="graph-day-line"/>` +
       `<text x="${tx.toFixed(1)}" y="${(tempTop + 9).toFixed(1)}" text-anchor="${anchor}" class="graph-day-label">${escapeHtml(dayShortLabel(h.time))}</text>`;
   }).join("");
 
@@ -1302,7 +1348,7 @@ function drawHourlyGraph() {
     ? padL + ((nowMs - firstMs) / (lastMs - firstMs)) * plotW
     : null;
   const nowMarker = showNow && nowX != null && nowX >= padL && nowX <= padL + plotW ? `
-    <line x1="${nowX.toFixed(1)}" y1="${tempTop}" x2="${nowX.toFixed(1)}" y2="${precipBottom}" class="graph-now-line"/>
+    <line x1="${nowX.toFixed(1)}" y1="${tempTop}" x2="${nowX.toFixed(1)}" y2="${tempBottom}" class="graph-now-line"/>
     <rect x="${(nowX - 13).toFixed(1)}" y="2" width="26" height="14" rx="7" class="graph-now-pill"/>
     <text x="${nowX.toFixed(1)}" y="12" text-anchor="middle" class="graph-now-label">Now</text>
   ` : "";
@@ -1313,14 +1359,13 @@ function drawHourlyGraph() {
       <path d="${areaPath}" fill="${areaFill}" fill-opacity="${areaOpacity}"/>
       <path d="${secondaryPath}" fill="none" stroke="${secondaryStroke}" stroke-width="1.6" stroke-dasharray="4 3" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
       <path d="${primaryPath}" fill="none" stroke="${primaryStroke}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      ${precipBars}
       ${dayLines}
       ${markers}
       ${nowMarker}
       ${axisLabels}
-      <line id="graphGuide" x1="0" y1="${tempTop}" x2="0" y2="${precipBottom}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
+      <line id="graphGuide" x1="0" y1="${tempTop}" x2="0" y2="${tempBottom}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
       <circle id="graphDot" r="4" fill="var(--ink)" style="display:none"/>
-      <rect id="graphHit" x="0" y="0" width="${VW}" height="${precipBottom}" fill="transparent" style="cursor:crosshair"/>
+      <rect id="graphHit" x="0" y="0" width="${VW}" height="${tempBottom}" fill="transparent" style="cursor:crosshair"/>
       ${memoryBands}
     </svg>
   `;
@@ -1396,6 +1441,391 @@ function drawHourlyGraph() {
   graphActiveIndex = def;
   scheduleGraphCalloutReflow();
   perfEnd("drawHourlyGraph", perf);
+}
+
+function precipGraphChance(hour) {
+  if (!hour || hour.popAvailable === false) return null;
+  const raw = hour.forecastPop ?? hour.pop;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  return Math.max(0, Math.min(100, raw));
+}
+
+function precipGraphAmount(hour) {
+  if (!hour || hour.precipAvailable === false) return null;
+  const raw = hour.forecastPrecip ?? hour.precip;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  return Math.max(0, raw);
+}
+
+function precipGraphScaleMax(amounts, unit) {
+  const finite = amounts.filter((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  const maxAmount = finite.length ? Math.max(...finite) : 0;
+  const buckets = unit === "in"
+    ? [0.05, 0.1, 0.3, 0.5, 1, 2, 3, 5]
+    : [1, 2.5, 7.5, 12.5, 25, 50, 75, 125];
+  const bucket = buckets.find((value) => value >= maxAmount);
+  if (bucket != null) return bucket;
+  const largest = buckets[buckets.length - 1];
+  return Math.ceil(maxAmount / largest) * largest;
+}
+
+function precipGraphAmountLabel(value, unit) {
+  if (unit === "in") {
+    const decimals = value < 1 ? 2 : 1;
+    return `${Number(value.toFixed(decimals))} in`;
+  }
+  const decimals = value < 10 || !Number.isInteger(value) ? 1 : 0;
+  return `${Number(value.toFixed(decimals))} mm`;
+}
+
+function formatPrecipGraphAmount(value, unit) {
+  if (value == null) return "Forecast amount unavailable";
+  if (value <= 0) return "No forecast amount";
+  const traceThreshold = unit === "in" ? 0.01 : 0.1;
+  if (value < traceThreshold) return "Trace this hour";
+  return `${precipGraphAmountLabel(value, unit)} this hour`;
+}
+
+function formatPrecipGraphTotal(value, unit) {
+  if (value == null) return "—";
+  if (value <= 0) return `0 ${unit}`;
+  const traceThreshold = unit === "in" ? 0.01 : 0.1;
+  if (value < traceThreshold) return "Trace";
+  return precipGraphAmountLabel(value, unit);
+}
+
+function formatPrecipGraphPeak(value, unit) {
+  if (!(value > 0)) return "";
+  const traceThreshold = unit === "in" ? 0.01 : 0.1;
+  if (value < traceThreshold) return "peak trace";
+  return `peak ${precipGraphAmountLabel(value, unit)}`;
+}
+
+function precipGraphHourLabel(point, data, compact = false) {
+  const parts = localDateTimeParts(point?.time);
+  if (parts && Number.isFinite(parts.hour)) return formatClock(parts.hour, 0, compact, false);
+  const ms = Number(point?.ms);
+  if (!Number.isFinite(ms)) return "--";
+  const local = new Date(ms + forecastOffsetMs(data));
+  return formatClock(local.getUTCHours(), 0, compact, false);
+}
+
+function precipGraphState(points) {
+  const chances = points.map((point) => precipGraphChance(point)).filter((value) => value != null);
+  const amounts = points.map((point) => precipGraphAmount(point)).filter((value) => value != null);
+  const maxChance = chances.length ? Math.max(...chances) : 0;
+  const maxAmount = amounts.length ? Math.max(...amounts) : 0;
+  const hasActivePrecip = points.some((point) => point?.activePrecip);
+  const hasMissingChance = chances.length < points.length;
+  const hasMissingAmount = amounts.length < points.length;
+  const details = { maxChance, maxAmount, hasActivePrecip, hasMissingChance, hasMissingAmount };
+  if (!chances.length && !amounts.length) {
+    const label = hasActivePrecip ? "Forecast data unavailable" : "Precipitation data unavailable";
+    return { kind: "unavailable", label, ...details };
+  }
+  if (!amounts.length) {
+    return { kind: "amount-unavailable", label: "Forecast amount unavailable", ...details };
+  }
+  if (maxAmount <= 0 && maxChance > 0) {
+    const label = hasMissingAmount
+      ? "No measurable amount in available hours"
+      : "No measurable amount forecast";
+    return { kind: "chance-only", label, ...details };
+  }
+  if (maxAmount <= 0 && maxChance <= 0) {
+    const hasGaps = hasMissingChance || hasMissingAmount;
+    const label = hasActivePrecip
+      ? hasGaps ? "No additional precipitation in available hours" : "No additional precipitation forecast"
+      : hasGaps ? "Available hours are dry" : "No meaningful precipitation expected";
+    return { kind: "dry", label, ...details };
+  }
+  return { kind: "wet", label: "", ...details };
+}
+
+function precipStepPaths(points, baseline) {
+  const paths = [];
+  let segment = [];
+  const flush = () => {
+    if (!segment.length) return;
+    const first = segment[0];
+    let line = `M ${first.xStart.toFixed(1)} ${first.chanceY.toFixed(1)} H ${first.xEnd.toFixed(1)}`;
+    for (let index = 1; index < segment.length; index += 1) {
+      const point = segment[index];
+      line += ` V ${point.chanceY.toFixed(1)} H ${point.xEnd.toFixed(1)}`;
+    }
+    paths.push({
+      line,
+      area: `${line} V ${baseline.toFixed(1)} H ${first.xStart.toFixed(1)} Z`
+    });
+    segment = [];
+  };
+  points.forEach((point) => {
+    if (point.chance == null) flush();
+    else segment.push(point);
+  });
+  flush();
+  return paths;
+}
+
+function drawPrecipGraph() {
+  if (!graphCtx) return;
+  const {
+    hrs,
+    showNow,
+    data = state.forecast,
+    precipUnit = detailPrecipUnit(data)
+  } = graphCtx;
+  const graph = document.getElementById("sheetGraph");
+  const callout = document.getElementById("sheetReadout");
+  const wrap = document.getElementById("sheetGraphWrap");
+  callout?.classList.remove("is-sun");
+  if (!hrs.length) {
+    graph.innerHTML = `<div class="sheet-empty">Precipitation data unavailable.</div>`;
+    callout.innerHTML = "";
+    graphPts = [];
+    graphUpdateActive = null;
+    return;
+  }
+
+  const VW = 340;
+  const padL = 18, padR = 18;
+  const plotW = VW - padL - padR;
+  const chanceTop = 18, chanceBottom = 78;
+  const dividerY = 87;
+  const amountTop = 96, amountBottom = 136;
+  const labelY = 152;
+  const hourMs = 60 * 60 * 1000;
+  const rawParsed = hrs.map((hour) => parseForecastTimestamp(hour.time, data));
+  const firstValidIndex = rawParsed.findIndex((ms) => ms != null);
+  const firstValidMs = firstValidIndex >= 0 ? rawParsed[firstValidIndex] : 0;
+  const fallbackBaseMs = firstValidMs - Math.max(firstValidIndex, 0) * hourMs;
+  const parsed = rawParsed.map((ms, index) => ms ?? fallbackBaseMs + index * hourMs);
+  const firstMs = parsed[0];
+  const domainStartMs = firstMs;
+  const domainEndMs = Math.max(parsed[parsed.length - 1] + hourMs, firstMs + hourMs);
+  const domainRange = Math.max(domainEndMs - domainStartMs, hourMs);
+  const xForMs = (ms) => padL + ((clamp(ms, domainStartMs, domainEndMs) - domainStartMs) / domainRange) * plotW;
+  const amounts = hrs.map((hour) => precipGraphAmount(hour));
+  const scaleMax = precipGraphScaleMax(amounts, precipUnit);
+  const amountRange = amountBottom - amountTop;
+  const points = hrs.map((hour, index) => {
+    const ms = parsed[index];
+    // Match the rest of Nearcast's hourly UI: a timestamp labels the hour that
+    // begins there. This keeps bars, rows, live truth, and the Now marker in the
+    // same visible column even though the provider reports accumulated fields
+    // at an hourly boundary.
+    const xStart = xForMs(ms);
+    const xEnd = xForMs(ms + hourMs);
+    const x = (xStart + xEnd) / 2;
+    const chance = precipGraphChance(hour);
+    const amount = precipGraphAmount(hour);
+    const chanceY = chance == null
+      ? chanceBottom
+      : chanceBottom - (chance / 100) * (chanceBottom - chanceTop);
+    const amountY = amount == null
+      ? amountBottom
+      : amountBottom - (Math.min(amount, scaleMax) / scaleMax) * amountRange;
+    return { ...hour, index, ms, xStart, xEnd, x, chance, amount, chanceY, amountY };
+  });
+  const nowMs = forecastNowMs(data);
+  const nowX = xForMs(nowMs);
+  const nowVisible = showNow && nowMs >= domainStartMs && nowMs <= domainEndMs;
+  const stateForGraph = precipGraphState(points);
+  const metricHint = document.getElementById("graphMetricHint");
+  if (metricHint) {
+    metricHint.textContent = stateForGraph.hasMissingChance || stateForGraph.hasMissingAmount
+      ? "area = chance · bars = amount · dashed = missing"
+      : "area = chance · bars = amount";
+  }
+  const stepPaths = precipStepPaths(points, chanceBottom);
+  const chancePaths = stepPaths.map((path) => `
+    <path d="${path.area}" class="graph-precip-chance-area"/>
+    <path d="${path.line}" class="graph-precip-chance-line"/>
+  `).join("");
+  const missingChanceMarks = points.map((point) => {
+    if (point.chance != null) return "";
+    return `<line x1="${(point.xStart + 1).toFixed(1)}" y1="${(chanceBottom - 2).toFixed(1)}" x2="${(point.xEnd - 1).toFixed(1)}" y2="${(chanceBottom - 2).toFixed(1)}" class="graph-precip-chance-missing"/>`;
+  }).join("");
+  const traceThreshold = precipUnit === "in" ? 0.01 : 0.1;
+  const amountBars = points.map((point) => {
+    if (point.amount == null || point.amount <= 0) return "";
+    const binWidth = Math.max(point.xEnd - point.xStart, 1);
+    const width = Math.max(4, Math.min(9, binWidth * 0.68));
+    const visualHeight = Math.max(point.amountY < amountBottom ? amountBottom - point.amountY : 0, 2);
+    const y = amountBottom - visualHeight;
+    const trace = point.amount < traceThreshold ? " is-trace" : "";
+    return `<rect data-precip-bar="${point.index}" x="${(point.x - width / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${width.toFixed(1)}" height="${visualHeight.toFixed(1)}" rx="2" class="graph-precip-amount-bar${trace}"/>`;
+  }).join("");
+  const activePoint = points.find((point) => point.activePrecip);
+  const activeMarkers = activePoint && nowVisible ? (() => {
+    const cy = chanceTop + 8;
+    return `<g class="graph-precip-detected" aria-hidden="true"><circle cx="${nowX.toFixed(1)}" cy="${cy.toFixed(1)}" r="7"/><circle cx="${nowX.toFixed(1)}" cy="${cy.toFixed(1)}" r="3"/></g>`;
+  })() : "";
+  const missingAmountMarks = points.map((point) => {
+    if (point.amount != null) return "";
+    return `<line x1="${(point.xStart + 1).toFixed(1)}" y1="${(amountBottom - 1).toFixed(1)}" x2="${(point.xEnd - 1).toFixed(1)}" y2="${(amountBottom - 1).toFixed(1)}" class="graph-precip-amount-missing"/>`;
+  }).join("");
+  const graphMessage = stateForGraph.kind === "dry" || stateForGraph.kind === "unavailable"
+    ? `<text x="${VW / 2}" y="62" text-anchor="middle" class="graph-precip-empty">${escapeHtml(stateForGraph.label)}</text>`
+    : stateForGraph.kind === "chance-only" || stateForGraph.kind === "amount-unavailable"
+      ? `<text x="${VW / 2}" y="121" text-anchor="middle" class="graph-precip-lane-note">${escapeHtml(stateForGraph.label)}</text>`
+      : "";
+  const scaleLabel = [
+    formatPrecipGraphPeak(stateForGraph.maxAmount, precipUnit),
+    stateForGraph.hasMissingAmount ? "amount gaps" : ""
+  ].filter(Boolean).join(" · ");
+  const labelIndices = [...new Set(Array.from({ length: 5 }, (_, step) => Math.round((step * (points.length - 1)) / 4)))];
+  const axisLabels = labelIndices.map((index) =>
+    `<text x="${points[index].x.toFixed(1)}" y="${labelY}" text-anchor="middle" class="graph-axis">${precipGraphHourLabel(points[index], data, true)}</text>`
+  ).join("");
+  const dayLines = points.map((point, index) => {
+    if (index === 0 || Math.floor(forecastLocalHour(point.time)) !== 0) return "";
+    const lineX = xForMs(point.ms);
+    const nearRight = lineX > VW - 46;
+    const textX = nearRight ? lineX - 4 : lineX + 4;
+    return `<line x1="${lineX.toFixed(1)}" y1="${chanceTop}" x2="${lineX.toFixed(1)}" y2="${amountBottom}" class="graph-day-line"/>` +
+      `<text x="${textX.toFixed(1)}" y="${(chanceTop + 9).toFixed(1)}" text-anchor="${nearRight ? "end" : "start"}" class="graph-day-label">${escapeHtml(dayShortLabel(point.time))}</text>`;
+  }).join("");
+  const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
+  const memoryBands = renderGraphMemoryBands(memoryWindows, xForMs, {
+    top: chanceTop,
+    bottom: amountBottom,
+    minLabelWidth: Infinity,
+    data
+  });
+  const nowMarker = nowVisible ? `
+    <line x1="${nowX.toFixed(1)}" y1="${chanceTop}" x2="${nowX.toFixed(1)}" y2="${amountBottom}" class="graph-now-line"/>
+    <rect x="${(nowX - 13).toFixed(1)}" y="2" width="26" height="14" rx="7" class="graph-now-pill"/>
+    <text x="${nowX.toFixed(1)}" y="12" text-anchor="middle" class="graph-now-label">Now</text>
+  ` : "";
+
+  graphPts = points;
+  graphActiveIndex = 0;
+  graphUpdateActive = null;
+  graph.innerHTML = `
+    <svg viewBox="0 0 ${VW} 162" class="hourly-graph precip-graph" role="group" aria-labelledby="precipGraphTitle precipGraphDescription">
+      <title id="precipGraphTitle">Hourly precipitation chance and forecast amount</title>
+      <desc id="precipGraphDescription">The soft area shows chance from zero to one hundred percent. Bars show the forecast accumulation for each hour.</desc>
+      <defs>
+        <linearGradient id="precipChanceGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--wx-rain)" stop-opacity="0.32"/>
+          <stop offset="100%" stop-color="var(--wx-rain)" stop-opacity="0.04"/>
+        </linearGradient>
+      </defs>
+      <line x1="${padL}" y1="${chanceBottom}" x2="${VW - padR}" y2="${chanceBottom}" class="graph-precip-baseline"/>
+      ${chancePaths}
+      ${missingChanceMarks}
+      <line x1="${padL}" y1="${dividerY}" x2="${VW - padR}" y2="${dividerY}" class="graph-precip-divider"/>
+      <text x="${padL}" y="${dividerY + 8}" class="graph-precip-scale">Forecast amount</text>
+      <text x="${VW - padR}" y="${dividerY + 8}" text-anchor="end" class="graph-precip-scale">${escapeHtml(scaleLabel)}</text>
+      <line x1="${padL}" y1="${amountBottom}" x2="${VW - padR}" y2="${amountBottom}" class="graph-precip-baseline"/>
+      ${amountBars}
+      ${missingAmountMarks}
+      ${graphMessage}
+      ${dayLines}
+      ${nowMarker}
+      ${activeMarkers}
+      ${axisLabels}
+      <line id="graphGuide" x1="0" y1="${chanceTop}" x2="0" y2="${amountBottom}" class="graph-precip-guide" style="display:none"/>
+      <circle id="graphDot" r="4" class="graph-precip-dot" style="display:none"/>
+      <rect id="graphPrecipHit" x="0" y="0" width="${VW}" height="${amountBottom}" fill="transparent" tabindex="0" role="slider" aria-label="Inspect hourly precipitation" aria-valuemin="0" aria-valuemax="${Math.max(points.length - 1, 0)}" aria-valuenow="0" style="cursor:crosshair"/>
+      <rect x="${padL}" y="${chanceTop}" width="${plotW}" height="${amountBottom - chanceTop}" rx="8" class="graph-precip-focus-ring"/>
+      ${memoryBands}
+    </svg>
+  `;
+
+  const svg = graph.querySelector("svg");
+  const guide = svg.querySelector("#graphGuide");
+  const dot = svg.querySelector("#graphDot");
+  const hit = svg.querySelector("#graphPrecipHit");
+  let selectedBar = null;
+
+  function update(index) {
+    const point = graphPts[index];
+    if (!point) return;
+    graphActiveIndex = index;
+    guide.setAttribute("x1", point.x);
+    guide.setAttribute("x2", point.x);
+    guide.style.display = "";
+    dot.setAttribute("cx", point.x);
+    dot.setAttribute("cy", point.chance != null ? point.chanceY : point.amountY);
+    dot.style.display = "";
+    selectedBar?.classList.remove("is-selected");
+    selectedBar = svg.querySelector(`[data-precip-bar="${index}"]`);
+    selectedBar?.classList.add("is-selected");
+
+    const long = precipGraphHourLabel(point, data);
+    const chanceText = point.chance == null ? "chance unavailable" : `${Math.round(point.chance)}% chance`;
+    const main = `${long} · ${chanceText}`;
+    let sub = formatPrecipGraphAmount(point.amount, precipUnit);
+    if (point.activePrecip) {
+      const detected = point.precipSource === "radar-current" ? "Detected on radar now" : "Precipitation happening now";
+      sub = point.amount > 0 ? `${sub} · happening now` : `${detected} · ${sub.toLowerCase()}`;
+    }
+    const activeMemory = graphMemoryAtMs(point.ms, memoryWindows);
+    const subText = activeMemory ? `During ${activeMemory.label} · ${sub}` : sub;
+    callout.innerHTML = `<span class="callout-main">${escapeHtml(main)}</span><span class="callout-sub">${escapeHtml(subText)}</span>`;
+    hit.setAttribute("aria-valuenow", String(index));
+    hit.setAttribute("aria-valuetext", `${main}. ${subText}.`);
+
+    const wrapWidth = wrap.clientWidth;
+    const calloutWidth = callout.offsetWidth;
+    if (!wrapWidth || !calloutWidth) return;
+    const px = (point.x / VW) * wrapWidth;
+    const minLeft = calloutWidth / 2 + 2;
+    const maxLeft = Math.max(minLeft, wrapWidth - calloutWidth / 2 - 2);
+    const left = Math.max(minLeft, Math.min(px, maxLeft));
+    const pointerX = Math.max(8, Math.min(calloutWidth - 8, px - (left - calloutWidth / 2)));
+    callout.style.left = `${left}px`;
+    callout.style.setProperty("--pointer-x", `${pointerX}px`);
+  }
+  graphUpdateActive = update;
+
+  function nearest(clientX) {
+    const rect = svg.getBoundingClientRect();
+    const viewX = ((clientX - rect.left) / rect.width) * VW;
+    let best = 0, distance = Infinity;
+    graphPts.forEach((point, index) => {
+      const next = Math.abs(point.x - viewX);
+      if (next < distance) { distance = next; best = index; }
+    });
+    return best;
+  }
+
+  svg.addEventListener("pointermove", (event) => update(nearest(event.clientX)));
+  hit.addEventListener("pointerdown", (event) => {
+    // Pointer inspection should not leave a keyboard-style focus ring behind.
+    // Keyboard users still reach the slider normally with Tab.
+    event.preventDefault();
+    update(nearest(event.clientX));
+  });
+  hit.addEventListener("keydown", (event) => {
+    let next = graphActiveIndex;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") next -= 1;
+    else if (event.key === "ArrowRight" || event.key === "ArrowUp") next += 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = graphPts.length - 1;
+    else return;
+    event.preventDefault();
+    update(Math.max(0, Math.min(graphPts.length - 1, next)));
+  });
+
+  let defaultIndex = showNow
+    ? points.findIndex((point) => isCurrentHour(point.time, data))
+    : -1;
+  if (showNow && defaultIndex < 0) {
+    defaultIndex = points.reduce((best, point, index) => {
+      const distance = Math.abs(point.ms - nowMs);
+      return distance < best.distance ? { index, distance } : best;
+    }, { index: 0, distance: Infinity }).index;
+  } else if (!showNow) {
+    defaultIndex = points.reduce((best, point, index) => {
+      const score = (point.chance || 0) + ((point.amount || 0) / scaleMax) * 100 + (point.activePrecip ? 200 : 0);
+      return score > best.score ? { index, score } : best;
+    }, { index: 0, score: -1 }).index;
+  }
+  graphActiveIndex = defaultIndex;
+  scheduleGraphCalloutReflow();
 }
 
 function drawSunGraph() {
@@ -1537,7 +1967,17 @@ function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) 
   const maxWind = Math.round(Math.max(...hrs.map((h) => h.wind)));
   const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
   const maxUv = Math.round(Math.max(...hrs.map((h) => h.uv)));
-  const totalPrecip = hrs.reduce((sum, h) => sum + h.precip, 0);
+  const forecastAmounts = hrs.map((hour) => precipGraphAmount(hour)).filter((value) => value != null);
+  const totalPrecip = forecastAmounts.reduce((sum, value) => sum + value, 0);
+  const precipStat = !forecastAmounts.length
+    ? "—"
+    : forecastAmounts.length < hrs.length
+      ? totalPrecip > 0
+        ? formatPrecipGraphTotal(totalPrecip, precipUnit) === "Trace"
+          ? "Trace+"
+          : `≥${formatPrecipGraphTotal(totalPrecip, precipUnit)}`
+        : "Partial"
+      : formatPrecipGraphTotal(totalPrecip, precipUnit);
 
   const tiles = [
     { label: "Sunrise", value: sunriseISO ? formatTime(sunriseISO) : "--" },
@@ -1545,7 +1985,7 @@ function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) 
     { label: "UV Peak", value: maxUv },
     { label: "Wind", value: `${maxWind} ${windUnit}` },
     { label: "Gusts", value: `${maxGust} ${windUnit}` },
-    { label: "Precip", value: `${formatAmount(totalPrecip)} ${precipUnit}` }
+    { label: "Precip", value: precipStat }
   ];
 
   document.getElementById("sheetStats").innerHTML = tiles.map((t) => `

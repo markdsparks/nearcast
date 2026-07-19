@@ -1,4 +1,4 @@
-const VERSION = "3.0.275";
+const VERSION = "3.0.279";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3900,6 +3900,7 @@ function bindEvents() {
     openMemoryDetail(memoryDetail.dataset.memoryDetail);
   });
   bindTapAction(document.getElementById("graphTempBtn"), () => setGraphMetric("temp"));
+  bindTapAction(document.getElementById("graphPrecipBtn"), () => setGraphMetric("precip"));
   bindTapAction(document.getElementById("graphWindBtn"), () => setGraphMetric("wind"));
   bindTapAction(document.getElementById("graphSunBtn"), () => setGraphMetric("sun"));
   bindTapAction(document.getElementById("dayDetailClose"), closeDayDetail);
@@ -12112,19 +12113,25 @@ function formatClock(hour, minute = 0, compact = false, showMinutes = true) {
 function formatTime(value) {
   const parts = localDateTimeParts(value);
   if (parts) return formatClock(parts.hour, parts.minute);
-  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric", minute: "2-digit" })).format(new Date(value));
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "--";
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric", minute: "2-digit" })).format(date);
 }
 
 function formatHour(value) {
   const parts = localDateTimeParts(value);
   if (parts) return formatClock(parts.hour, 0, false, false);
-  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric" })).format(new Date(value));
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "--";
+  return new Intl.DateTimeFormat(undefined, timeFormatOptions({ hour: "numeric" })).format(date);
 }
 
 function formatDay(value, index) {
   if (index === 0) return "Today";
   if (index === 1) return "Tomorrow";
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date(`${value}T12:00:00`));
+  const date = new Date(`${value}T12:00:00`);
+  if (!Number.isFinite(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
 // Day relative to today: 0 = today, 1 = tomorrow, etc. Used to mark the day
@@ -12136,6 +12143,7 @@ function daysFromToday(value) {
 function dayDividerDateLabel(value) {
   const day = datePart(value);
   const d = day ? new Date(`${day}T12:00:00`) : new Date(value);
+  if (!Number.isFinite(d.getTime())) return "Date unavailable";
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(d);
 }
 
@@ -12153,7 +12161,9 @@ function dayShortLabel(value) {
   const diff = daysFromToday(value);
   if (diff === 0) return "Today";
   if (diff === 1) return "Tomorrow";
-  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(value));
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Day";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
 }
 
 function timelineLocalParts(ms, data = state.forecast) {
