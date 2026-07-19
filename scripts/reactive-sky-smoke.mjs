@@ -252,6 +252,88 @@ assert.match(styles, /\.sky-reactive-rain-vector\s*\{[\s\S]*transform:[^;]*--sky
 assert.match(styles, /\.sky-reactive-cloud-vector\.is-animated[\s\S]*animation-name:\s*sky-reactive-cloud-travel/, "cloud strata share one coherent flow animation");
 assert.match(styles, /@keyframes sky-reactive-cloud-travel[\s\S]*--sky-reactive-cloud-distance/, "cloud travel uses the same weather/heading vector");
 
+// Cloudfield V2 keeps one pair of beautiful, bounded atlas layers across the
+// standard, reactive, and Reduced Motion presentations. Quality changes may
+// stop motion, but may never reveal fallback geometry.
+const cloudSource = extractFunction(sky, "skyClouds");
+const cloudPairSource = extractFunction(sky, "skyCloudAtlasPair");
+const cloudTextureSource = extractFunction(sky, "skyCloudAtlasDataUrl");
+assert.match(cloudSource, /atlas\.farDataUrl[\s\S]*atlas\.nearDataUrl/, "cloud presentation uses exactly the cached far and near artworks");
+assert.match(cloudSource, /sky-cloud-field[\s\S]*sky-reactive-cloud-vector/, "standard and reactive skies differ only through their presentation wrappers");
+assert.doesNotMatch(cloudSource, /<path|<ellipse|url\(#sky-cloud-f\)|requestAnimationFrame|setInterval/, "cloud presentation contains no slab primitives, SVG blur, or JavaScript animation loop");
+assert.doesNotMatch(cloudPairSource, /reactiveSkyEnabled|motion|density|animateClouds/, "cloud atlas identity is independent of renderer quality and motion mode");
+assert.doesNotMatch(cloudTextureSource, /Math\.random|Date\.now|performance\.now|requestAnimationFrame|setInterval/, "cloud texture generation is deterministic and scene-build-only");
+assert.doesNotMatch(sky, /id="sky-cloud-f"|url\(#sky-cloud-f\)/, "the removed SVG cloud blur cannot become a hidden quality dependency again");
+
+const cloudVisibleBoxSource = extractFunction(sky, "skyVisibleBox");
+const cloudPlanSource = extractFunction(sky, "skyCloudAtlasPlan");
+const cloudPlanHarness = new Function(`
+  const SKY_RENDER_OVERSCAN_PX = 360;
+  const SKY_CLOUD_ATLAS_PIXEL_BUDGET = 145000;
+  function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
+  ${cloudVisibleBoxSource}
+  ${cloudPlanSource}
+  return skyCloudAtlasPlan;
+`)();
+for (const [width, visibleHeight] of [[390, 844], [430, 932]]) {
+  const cloudPlan = cloudPlanHarness(width, visibleHeight + 720, "broken");
+  const cloudPixels = [cloudPlan.far, cloudPlan.near].reduce((total, layer) => total + layer.pixelWidth * layer.pixelHeight, 0);
+  assert.ok(cloudPlan.overscan >= 96, `${width}px cloud atlases cover the maximum reactive travel`);
+  assert.ok(cloudPixels <= cloudPlan.pixelBudget + 1500, `${width}px cloud atlases stay inside the declared mobile pixel budget`);
+  assert.equal(Object.keys(cloudPlan).filter((key) => key === "far" || key === "near").length, 2, "cloud plan has exactly two compositor layers");
+  assert.deepEqual(cloudPlan, cloudPlanHarness(width, visibleHeight + 720, "broken"), "cloud atlas planning is deterministic");
+}
+
+const sceneIdentitySource = extractFunction(sky, "skySceneIdentity");
+const sceneSeedSource = extractFunction(sky, "skySceneSeed");
+const layerSeedSource = extractFunction(sky, "skyLayerSeed");
+const skyHashSource = extractFunction(sky, "skyHash");
+const layerSeedHarness = new Function(`
+  let SKY_SCENE_VERSION = "sky-v9";
+  let SKY_CLOUD_VERSION = "cloudfield-v2";
+  let SKY_PRECIPITATION_VERSION = "sky-v9";
+  const state = { activePlace: { id: "home", latitude: 41.88, longitude: -87.63 }, skyState: { dayKey: "2026-07-18" }, forecast: null };
+  function datePart(value) { return String(value || "").slice(0, 10); }
+  ${skyHashSource}
+  ${sceneIdentitySource}
+  ${sceneSeedSource}
+  ${layerSeedSource}
+  return {
+    seeds: () => ({ base: skyLayerSeed("stars", "overcast", true), clouds: skyLayerSeed("clouds", "overcast", true), rain: skyLayerSeed("rain", "overcast", true), legacyRain: skyHash(String(skySceneSeed("overcast", true)) + ":rain") }),
+    cloudVersion(value) { SKY_CLOUD_VERSION = value; },
+    rainVersion(value) { SKY_PRECIPITATION_VERSION = value; }
+  };
+`)();
+const originalLayerSeeds = layerSeedHarness.seeds();
+assert.equal(originalLayerSeeds.rain, originalLayerSeeds.legacyRain, "the seed split preserves the current rain composition");
+layerSeedHarness.rainVersion("rain-v10");
+const rainVersionSeeds = layerSeedHarness.seeds();
+assert.equal(rainVersionSeeds.base, originalLayerSeeds.base, "rain changes do not reseed the base atmosphere");
+assert.equal(rainVersionSeeds.clouds, originalLayerSeeds.clouds, "rain changes do not reshuffle clouds");
+assert.notEqual(rainVersionSeeds.rain, originalLayerSeeds.rain, "rain has an independent version seed");
+layerSeedHarness.cloudVersion("cloudfield-v3");
+const cloudVersionSeeds = layerSeedHarness.seeds();
+assert.notEqual(cloudVersionSeeds.clouds, rainVersionSeeds.clouds, "cloud art has an independent version seed");
+assert.equal(cloudVersionSeeds.rain, rainVersionSeeds.rain, "cloud changes do not reshuffle rain");
+
+const cloudFamilySource = extractFunction(sky, "skyCloudVisualFamily");
+const cloudFamilyHarness = new Function(`
+  const state = { skyState: null };
+  function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
+  function clamp01(value) { return clamp(value, 0, 1); }
+  ${cloudFamilySource}
+  return skyCloudVisualFamily;
+`)();
+assert.equal(cloudFamilyHarness("overcast", { cloud: 66, lowCloud: 48, highCloud: 44, directness: 0.36, activePrecip: false }, true), "broken", "a surviving sun cue opens an overcast label into broken cloud art");
+assert.equal(cloudFamilyHarness("overcast", { cloud: 94, lowCloud: 88, highCloud: 58, directness: 0.07, activePrecip: false }, false), "overcast", "a low opaque ceiling uses continuous overcast art");
+assert.equal(cloudFamilyHarness("rain", { cloud: 96, lowCloud: 90, highCloud: 66, directness: 0.02, activePrecip: true, precipPressure: 0.8, wetness: 0.7 }, false), "rain", "active rain uses the lower storm shelf");
+assert.equal(cloudFamilyHarness("clear", { cloud: 42, lowCloud: 18, highCloud: 64, directness: 0.3, activePrecip: false }, true), "cirrus", "high-cloud-dominant clear weather stays a restrained cirrus scene");
+
+assert.match(styles, /\.sky-cloud-field\.is-animated[\s\S]*animation:\s*sky-cloud-field-drift/, "standard cloudfields use one transform-only drift per layer");
+const cloudDriftKeyframes = styles.match(/@keyframes sky-cloud-field-drift\s*\{[\s\S]*?\n\}/)?.[0] || "";
+assert.match(cloudDriftKeyframes, /transform:\s*translate3d/, "standard cloud drift stays on the compositor");
+assert.doesNotMatch(cloudDriftKeyframes, /filter|opacity|background-position/, "standard cloud drift never animates paint-heavy properties");
+
 const rainSource = extractFunction(sky, "skyRain");
 assert.match(rainSource, /reactiveSkyEnabled\(\)[\s\S]*skyReactiveRain/, "only the opted-in renderer uses rain textures");
 assert.match(rainSource, /if \(textureRain\) return textureRain;[\s\S]*sky-rain-streak/, "texture failure falls back to the established rain renderer");
@@ -325,11 +407,12 @@ const mobileProfile = profileHarness.profile();
 assert.equal(mobileProfile.level, "ambient", "phones use the ambient quality tier");
 assert.ok(mobileProfile.density <= 0.56, "phone particle density is materially reduced");
 assert.ok(Number.isFinite(mobileProfile.animateClouds) && mobileProfile.animateClouds <= 3, "phone cloud animation count is capped");
-assert.equal(mobileProfile.cloudFilter, false, "phone ambience avoids expensive SVG cloud filters");
+assert.equal("cloudFilter" in mobileProfile, false, "quality profiles cannot expose or hide cloud artwork with a filter switch");
 profileHarness.reduced(true);
 const reducedProfile = profileHarness.profile();
 assert.equal(reducedProfile.level, "still", "Reduced Motion selects a still renderer");
 assert.equal(reducedProfile.animateAtmosphere, false, "Reduced Motion disables precipitation animation");
+assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.sky-cloud-field[\s\S]*animation:\s*none/, "Reduced Motion freezes the same standard cloud artwork");
 assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.sky-reactive-cloud-vector[\s\S]*animation:\s*none/, "CSS also enforces the Reduced Motion fallback");
 
 // Native delivery is low-frequency, main-frame/origin scoped, and has complete

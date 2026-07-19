@@ -751,14 +751,20 @@ html[data-sky] body {
   50% { opacity: 0.24; }
 }
 
-.sky-cloud.is-animated {
-  animation: sky-cloud-drift ease-in-out infinite alternate;
+.sky-cloud-field {
+  transform-box: view-box;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.sky-cloud-field.is-animated {
+  animation: sky-cloud-field-drift ease-in-out infinite alternate;
   will-change: transform;
 }
 
-@keyframes sky-cloud-drift {
-  from { transform: translateX(-32px); }
-  to   { transform: translateX(32px); }
+@keyframes sky-cloud-field-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(var(--sky-cloud-drift, 24px), 0, 0); }
 }
 
 @property --sky-reactive-rain-slant {
@@ -905,8 +911,8 @@ html[data-sky] body {
 :root.sky-motion-paused-for-app-work .sky-shoot,
 :root.sky-motion-paused-for-map .sky-moon-glow,
 :root.sky-motion-paused-for-app-work .sky-moon-glow,
-:root.sky-motion-paused-for-map .sky-cloud,
-:root.sky-motion-paused-for-app-work .sky-cloud,
+:root.sky-motion-paused-for-map .sky-cloud-field,
+:root.sky-motion-paused-for-app-work .sky-cloud-field,
 :root.sky-motion-paused-for-map .sky-reactive-cloud-vector,
 :root.sky-motion-paused-for-app-work .sky-reactive-cloud-vector,
 :root.sky-motion-paused-for-map .sky-rain-sheet,
@@ -12675,6 +12681,7 @@ body.map-immersive-active .day-sheet.alert-sheet {
 @media (prefers-reduced-motion: reduce) {
   .sky-rain-layer,
   .sky-rain-sheet,
+  .sky-cloud-field,
   .sky-reactive-cloud-vector {
     animation: none;
   }

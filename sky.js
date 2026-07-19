@@ -22,6 +22,11 @@ const SKY_CFG = {
 };
 
 const SKY_SCENE_VERSION = "sky-v9";
+const SKY_CLOUD_VERSION = "cloudfield-v2";
+const SKY_PRECIPITATION_VERSION = "sky-v9";
+const SKY_CLOUD_ATLAS_PIXEL_BUDGET = 145000;
+const SKY_CLOUD_ATLAS_CACHE_LIMIT = 3;
+const skyCloudAtlasCache = new Map();
 
 // Reactive sky is deliberately renderer-only. The setting owner exposes a
 // boolean/function hook; without it the existing SVG sky remains untouched.
@@ -237,7 +242,6 @@ function skyMotionProfile(condition, skyState = state.skyState) {
       animateClouds: 0,
       animateStars: 0,
       animateAtmosphere: false,
-      cloudFilter: true,
       sunMotion: false,
       moonMotion: false,
       rareMotion: false
@@ -252,7 +256,6 @@ function skyMotionProfile(condition, skyState = state.skyState) {
         animateClouds: 3,
         animateStars: 2,
         animateAtmosphere: true,
-        cloudFilter: false,
         sunMotion: false,
         moonMotion: false,
         rareMotion: false
@@ -264,7 +267,6 @@ function skyMotionProfile(condition, skyState = state.skyState) {
       animateClouds: Infinity,
       animateStars: Infinity,
       animateAtmosphere: true,
-      cloudFilter: true,
       sunMotion: true,
       moonMotion: true,
       rareMotion: true
@@ -278,7 +280,6 @@ function skyMotionProfile(condition, skyState = state.skyState) {
       animateClouds: Infinity,
       animateStars: 3,
       animateAtmosphere: true,
-      cloudFilter: true,
       sunMotion: true,
       moonMotion: true,
       rareMotion: true
@@ -291,7 +292,6 @@ function skyMotionProfile(condition, skyState = state.skyState) {
     animateClouds: Infinity,
     animateStars: Infinity,
     animateAtmosphere: true,
-    cloudFilter: true,
     sunMotion: true,
     moonMotion: true,
     rareMotion: true
@@ -303,12 +303,25 @@ function applySkyMotionProfile(profile) {
   document.documentElement.classList.remove("sky-motion-paused-for-interaction");
 }
 
-function skySceneSeed(condition, isDay) {
+function skySceneIdentity(condition, isDay) {
   const place = state.activePlace
     ? `${state.activePlace.id || state.activePlace.name || "place"}:${Number(state.activePlace.latitude || 0).toFixed(2)}:${Number(state.activePlace.longitude || 0).toFixed(2)}`
     : "no-place";
   const day = state.skyState?.dayKey || datePart(state.forecast?.current?.time) || datePart(new Date()) || "today";
-  return skyHash(`${SKY_SCENE_VERSION}|${place}|${day}|${condition}|${isDay ? "day" : "night"}`);
+  return `${place}|${day}|${condition}|${isDay ? "day" : "night"}`;
+}
+
+function skySceneSeed(condition, isDay, version = SKY_SCENE_VERSION) {
+  return skyHash(`${version}|${skySceneIdentity(condition, isDay)}`);
+}
+
+function skyLayerSeed(key, condition, isDay) {
+  const version = key === "clouds"
+    ? SKY_CLOUD_VERSION
+    : key === "rain" || key === "snow" || key === "lightning"
+      ? SKY_PRECIPITATION_VERSION
+      : SKY_SCENE_VERSION;
+  return skyHash(`${skySceneSeed(condition, isDay, version)}:${key}`);
 }
 
 function skyHash(value) {
@@ -959,10 +972,40 @@ function setThemeChromeColor(color) {
   if (els.statusBarMeta) els.statusBarMeta.setAttribute("content", "black-translucent");
 }
 
+// Cloud art follows what the sky can visually support, not just the provider's
+// condition label. A surviving sun/direct-light cue gets broken clouds and
+// open sky; only a genuinely low, opaque ceiling becomes overcast.
+function skyCloudVisualFamily(condition, skyState = state.skyState, sunVisible = false) {
+  if (!skyState) {
+    if (condition === "rain" || condition === "thunder") return "rain";
+    if (condition === "snow") return "snow";
+    if (condition === "overcast") return "overcast";
+    if (condition === "partly-cloudy") return "broken";
+    return "clear";
+  }
+
+  const cloud = clamp(skyState.cloud ?? 0, 0, 100);
+  const low = clamp(skyState.lowCloud ?? cloud * 0.55, 0, 100);
+  const high = clamp(skyState.highCloud ?? cloud * 0.35, 0, 100);
+  const directness = clamp01(skyState.directness ?? 0);
+  const pressure = clamp01(skyState.precipPressure ?? 0);
+  const wetness = clamp01(skyState.wetness ?? 0);
+  const activePrecip = skyState.activePrecip === true || skyState.precipPhase === "active";
+
+  if ((condition === "rain" || condition === "thunder") && (activePrecip || pressure > 0.42 || wetness > 0.38)) return "rain";
+  if (condition === "snow" && (activePrecip || cloud > 62)) return "snow";
+  if (high > Math.max(46, low + 18) && low < 46 && !activePrecip) return "cirrus";
+  if (!activePrecip && (sunVisible || directness > 0.22) && cloud < 92) return "broken";
+  if (cloud >= 76 && low >= 52 && directness < 0.24) return "overcast";
+  if (condition === "partly-cloudy" || cloud >= 30) return "broken";
+  if (high >= 32) return "cirrus";
+  return "clear";
+}
+
 function skySceneConfig(condition, isDay, skyState = state.skyState) {
   const tod = isDay ? "day" : "night";
   const base = SKY_CFG[tod][condition] || SKY_CFG[tod].overcast;
-  if (!skyState) return base;
+  if (!skyState) return { ...base, cloudFamily: skyCloudVisualFamily(condition, null, base.sun) };
 
   const cloudPct = clamp(skyState.cloud, 0, 100);
   const visualCloudPct = skyVisualCloudDepth(condition, cloudPct / 100) * 100;
@@ -993,6 +1036,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
     !activePrecip &&
     condition !== "thunder" &&
     (condition === "clear" || condition === "partly-cloudy" || skyState.directness > 0.23 || cloudPct < 72);
+  const cloudFamily = skyCloudVisualFamily(condition, skyState, sunVisible);
   const stars = !isDay
     ? Math.round((base.stars || 0) * (1 - skyState.twilight * 0.85) * (1 - skyObjectCloudPct / 130) * (1 - skyState.haze * 0.55))
     : 0;
@@ -1004,6 +1048,7 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
     moonGlow: !moonVisible && !isDay && skyObjectCloudPct < 92 && condition !== "thunder",
     sun: sunVisible,
     clouds,
+    cloudFamily,
     rain: base.rain,
     snow: base.snow,
     lightning: base.lightning
@@ -1016,8 +1061,8 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   const cfg = skySceneConfig(condition, isDay, skyState);
   const motion = skyMotionProfile(condition, skyState);
   applySkyMotionProfile(motion);
-  const sceneSeed = skySceneSeed(condition, isDay);
-  const rngFor = (key) => seededSkyRandom(skyHash(`${sceneSeed}:${key}`));
+  const seedFor = (key) => skyLayerSeed(key, condition, isDay);
+  const rngFor = (key) => seededSkyRandom(seedFor(key));
   const bg = skyBackgroundCss(condition, skyState);
   const phase = bg.phase;
   const reactive = reactiveSkyEnabled();
@@ -1028,14 +1073,15 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
 
   const parts = [skyFilterDefs()];
   const starCount = reactive ? Math.round(cfg.stars * (motion.density ?? 1)) : cfg.stars;
-  const cloudCount = reactive && motion.level === "ambient" ? Math.min(cfg.clouds, 4) : cfg.clouds;
+  const cloudCount = cfg.clouds;
+  const hasCloudField = cloudCount > 0 && cfg.cloudFamily !== "clear";
   if (starCount)        parts.push(skyStars(vw, vh, starCount, rngFor("stars"), motion));
   if (starCount >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
   if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
   if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow"), motion));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
   if (cfg.sun)          parts.push(skySun(vw, vh, phase, motion));
-  if (cloudCount)       parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, rngFor("clouds"), skyState, motion));
+  if (hasCloudField)    parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, seedFor("clouds"), skyState, motion, cfg.cloudFamily, phase));
   if (skyState?.haze > 0.08 || phase.warmth > 0.18) parts.push(skyHaze(vw, vh, skyState || phase));
   if ((skyState?.precipPressure ?? 0) > 0.08) parts.push(skyApproachVeil(vw, vh, skyState));
   if ((skyState?.airHaze ?? 0) > 0.08 || (skyState?.pollenVeil ?? 0) > 0.10) parts.push(skyAirVeil(vw, vh, skyState));
@@ -1045,7 +1091,7 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid slice">${parts.join("")}</svg>`;
   if (reactive) {
-    reactiveSkyPresentationActive = Boolean(cfg.rain || cloudCount);
+    reactiveSkyPresentationActive = Boolean(cfg.rain || hasCloudField);
     document.documentElement.dataset.skyReactiveRenderer = motion.level;
     if (reactiveSkyPresentationActive) applyReactiveSkyPose({ force: true });
     else clearReactiveSkyVectorProps();
@@ -1093,9 +1139,6 @@ function skyChromeSafeMinY(defaultMinY) {
 
 function skyFilterDefs() {
   return `<defs>
-    <filter id="sky-cloud-f" x="-18%" y="-45%" width="136%" height="190%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="12"/>
-    </filter>
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
     </filter>
@@ -1197,86 +1240,321 @@ function skyShootingStar(vw, vh, rng, motion = skyMotionProfile("clear")) {
   return `<line x1="${x}" y1="${y}" x2="${(Number(x) - len * 0.92).toFixed(0)}" y2="${(Number(y) + len * 0.4).toFixed(0)}" class="sky-shoot${motion.rareMotion ? " is-animated" : ""}" stroke="#ffffff" stroke-width="2" stroke-linecap="round" style="animation-delay:${delay}s"/>`;
 }
 
-function skyClouds(vw, vh, count, isDay, condition, rng, skyState = null, motion = skyMotionProfile(condition, skyState)) {
-  const isRainy = condition === "rain" || condition === "thunder";
-  const isOvercast = condition === "overcast";
-  const isPartly = condition === "partly-cloudy";
-  const box = skyVisibleBox(vw, vh);
-  const rawCloudDepth = skyState ? clamp01(skyState.cloud / 100) : (isOvercast || isRainy ? 0.82 : 0.35);
-  const cloudDepth = skyVisualCloudDepth(condition, rawCloudDepth);
-  const lowLayer = skyState ? clamp01(skyState.lowCloud / 100) : 0.5;
-  const highLayer = skyState ? clamp01(skyState.highCloud / 100) : 0.3;
-  const haze = skyState?.haze ?? 0;
-  const pressure = skyState?.precipPressure ?? 0;
-  const windiness = skyState?.windiness ?? 0;
+// Cloudfield V2 renders a curated weather composition into two tiny atlases.
+// Noise only softens edges and adds volume; it never decides the composition.
+// The same cached pixels are used by standard, reactive, and still skies.
+function skyCloudQuantize(value, steps = 8) {
+  return Math.round(clamp01(Number(value) || 0) * steps) / steps;
+}
+
+function skyCloudDescriptor(count, isDay, family, skyState, phase) {
+  const cloud = skyState?.cloud ?? (family === "overcast" || family === "rain" ? 88 : family === "broken" ? 48 : 24);
+  const low = skyState?.lowCloud ?? cloud * 0.55;
+  const high = skyState?.highCloud ?? cloud * 0.35;
+  return {
+    family,
+    isDay: isDay !== false,
+    count: Math.round(clamp(count, 1, 7)),
+    coverage: skyCloudQuantize(cloud / 100, 10),
+    low: skyCloudQuantize(low / 100, 8),
+    high: skyCloudQuantize(high / 100, 8),
+    haze: skyCloudQuantize(skyState?.haze ?? 0, 6),
+    warmth: skyCloudQuantize(skyState?.warmth ?? phase?.warmth ?? 0, 6),
+    directness: skyCloudQuantize(skyState?.directness ?? phase?.directness ?? 0, 6),
+    pressure: skyCloudQuantize(skyState?.precipPressure ?? 0, 6),
+    sunX: skyCloudQuantize(phase?.x ?? 0.5, 10),
+    sunY: skyCloudQuantize(phase?.y ?? 0.18, 10)
+  };
+}
+
+function skyCloudAtlasPlan(vw, vh, family) {
+  const bucketWidth = Math.ceil(Math.max(320, vw) / 40) * 40;
+  const visibleHeight = Math.max(480, vh - SKY_RENDER_OVERSCAN_PX * 2);
+  const bucketVisibleHeight = Math.ceil(visibleHeight / 56) * 56;
+  const bucketHeight = bucketVisibleHeight + SKY_RENDER_OVERSCAN_PX * 2;
+  const box = skyVisibleBox(bucketWidth, bucketHeight);
+  const overscan = Math.round(clamp(bucketWidth * 0.27, 96, 148));
+  const heightFactor = family === "cirrus" ? 0.44 : family === "broken" ? 0.56 : family === "rain" ? 0.66 : 0.61;
+  const width = bucketWidth + overscan * 2;
+  const height = Math.round(box.height * heightFactor);
+  const x = -overscan;
+  const y = Math.round(box.y - box.height * 0.035);
+  const logicalArea = Math.max(1, width * height);
+  const farScale = Math.min(0.46, Math.sqrt((SKY_CLOUD_ATLAS_PIXEL_BUDGET * 0.40) / logicalArea));
+  const nearScale = Math.min(0.56, Math.sqrt((SKY_CLOUD_ATLAS_PIXEL_BUDGET * 0.60) / logicalArea));
+  const layer = (renderScale) => ({
+    width,
+    height,
+    renderScale,
+    pixelWidth: Math.max(2, Math.round(width * renderScale)),
+    pixelHeight: Math.max(2, Math.round(height * renderScale))
+  });
+  return {
+    pixelBudget: SKY_CLOUD_ATLAS_PIXEL_BUDGET,
+    viewportWidth: bucketWidth,
+    viewportHeight: bucketHeight,
+    visibleHeight: box.height,
+    overscan,
+    x,
+    y,
+    width,
+    height,
+    far: layer(farScale),
+    near: layer(nearScale)
+  };
+}
+
+function skyCloudHashSample(x, y, seed) {
+  let hash = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(seed, 1442695041);
+  hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+  return ((hash ^ (hash >>> 16)) >>> 0) / 4294967295;
+}
+
+function skyCloudValueNoise(x, y, seed) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = skyCloudHashSample(ix, iy, seed);
+  const b = skyCloudHashSample(ix + 1, iy, seed);
+  const c = skyCloudHashSample(ix, iy + 1, seed);
+  const d = skyCloudHashSample(ix + 1, iy + 1, seed);
+  const top = a + (b - a) * sx;
+  const bottom = c + (d - c) * sx;
+  return top + (bottom - top) * sy;
+}
+
+function skyCloudFbm(x, y, seed, octaves = 3) {
+  let value = 0;
+  let amplitude = 0.56;
+  let normalizer = 0;
+  for (let octave = 0; octave < octaves; octave++) {
+    value += skyCloudValueNoise(x, y, seed + octave * 37) * amplitude;
+    normalizer += amplitude;
+    const nextX = x * 1.91 - y * 0.18;
+    const nextY = x * 0.14 + y * 2.03;
+    x = nextX + 0.7;
+    y = nextY + 0.3;
+    amplitude *= 0.5;
+  }
+  return value / normalizer;
+}
+
+function skyCloudGaussian(u, v, cx, cy, rx, ry) {
+  const dx = (u - cx) / Math.max(0.01, rx);
+  const dy = (v - cy) / Math.max(0.01, ry);
+  return Math.exp(-(dx * dx + dy * dy) * 1.45);
+}
+
+function skyCloudPalette(family, isDay, layer) {
+  if (!isDay) {
+    if (family === "rain") return layer === "near" ? { light: [76, 91, 116], shade: [18, 27, 44] } : { light: [93, 108, 134], shade: [30, 40, 60] };
+    if (family === "snow") return layer === "near" ? { light: [144, 161, 187], shade: [52, 68, 94] } : { light: [166, 181, 205], shade: [68, 82, 109] };
+    if (family === "overcast") return layer === "near" ? { light: [105, 120, 146], shade: [31, 42, 63] } : { light: [124, 139, 164], shade: [47, 59, 82] };
+    return layer === "near" ? { light: [154, 169, 196], shade: [48, 65, 94] } : { light: [176, 190, 214], shade: [70, 87, 116] };
+  }
+  if (family === "rain") return layer === "near" ? { light: [139, 153, 161], shade: [45, 61, 73] } : { light: [168, 180, 185], shade: [82, 99, 110] };
+  if (family === "snow") return layer === "near" ? { light: [245, 249, 250], shade: [163, 183, 196] } : { light: [252, 253, 252], shade: [188, 204, 213] };
+  if (family === "overcast") return layer === "near" ? { light: [218, 220, 216], shade: [96, 114, 124] } : { light: [231, 233, 230], shade: [145, 162, 170] };
+  return layer === "near" ? { light: [255, 252, 242], shade: [108, 141, 163] } : { light: [249, 252, 252], shade: [166, 195, 211] };
+}
+
+function skyCloudPixel(descriptor, layer, u, v, texture, seed) {
+  const family = descriptor.family;
+  const sunU = clamp(descriptor.atlasSunX ?? descriptor.sunX, 0.08, 0.92);
+  const sunV = clamp(descriptor.atlasSunY ?? descriptor.sunY, 0.08, 0.72);
+  const visibleStart = descriptor.atlasVisibleStart ?? 0;
+  const visibleSpan = descriptor.atlasVisibleSpan ?? 1;
+  const visibleEnd = visibleStart + visibleSpan;
+  const visibleMid = visibleStart + visibleSpan * 0.5;
+  const oppositeX = visibleStart + visibleSpan * (sunU < visibleMid ? 0.72 : 0.28);
+  const jitter = (skyCloudHashSample(layer === "far" ? 13 : 29, 7, seed) - 0.5) * 0.09;
+  const opening = skyCloudGaussian(u, v, sunU, sunV, family === "cirrus" ? 0.22 : 0.30, 0.29);
+  let alpha = 0;
+  let light = clamp(0.36 + (1 - v) * 0.32 + (texture - 0.5) * 0.44, 0.12, 0.92);
+
+  if (family === "cirrus") {
+    const ridgeA = Math.exp(-Math.pow((v - (0.13 + u * 0.08 + jitter)) / 0.095, 2));
+    const ridgeB = Math.exp(-Math.pow((v - (0.28 - u * 0.045 - jitter * 0.5)) / 0.075, 2));
+    const strand = Math.max(ridgeA, ridgeB * 0.68);
+    alpha = smoothstep(0.51, 0.73, texture + strand * 0.31 - opening * 0.22) * strand * (layer === "far" ? 0.36 : 0.48);
+    light = clamp(light + 0.18, 0.25, 1);
+  } else if (family === "broken") {
+    if (layer === "far") {
+      const wispA = skyCloudGaussian(u, v, oppositeX + jitter, 0.22, 0.38, 0.13);
+      const wispB = skyCloudGaussian(u, v, clamp(oppositeX + (sunU < visibleMid ? -0.18 : 0.18), visibleStart + 0.04, visibleEnd - 0.04), 0.34, 0.22, 0.10);
+      const density = Math.max(wispA, wispB * 0.72) * 0.72 + (texture - 0.5) * 0.52 - opening * 0.62;
+      alpha = smoothstep(0.16, 0.42, density) * (1 - smoothstep(0.54, 0.88, v)) * 0.50;
+      light = clamp(0.58 + (texture - 0.5) * 0.52 - v * 0.12, 0.36, 0.94);
+    } else {
+      const side = sunU < visibleMid ? 1 : -1;
+      const lobeA = skyCloudGaussian(u, v, oppositeX - side * 0.12 + jitter, 0.36, 0.15, 0.15);
+      const lobeB = skyCloudGaussian(u, v, oppositeX + side * 0.04 - jitter * 0.5, 0.29, 0.17, 0.18);
+      const lobeC = skyCloudGaussian(u, v, oppositeX + side * 0.17 + jitter * 0.35, 0.39, 0.15, 0.15);
+      const base = skyCloudGaussian(u, v, oppositeX + jitter * 0.2, 0.49, 0.34, 0.16);
+      const satellite = skyCloudGaussian(u, v, clamp(oppositeX - side * 0.24, visibleStart + 0.03, visibleEnd - 0.03), 0.32, 0.13, 0.13);
+      const macro = Math.max(lobeA, lobeB, lobeC, base * 0.82, satellite * 0.56);
+      const density = macro * 0.86 + (texture - 0.5) * 0.46 - opening * 0.78;
+      alpha = smoothstep(0.22, 0.56, density) * (1 - smoothstep(0.65, 0.94, v)) * 0.84;
+      const crownLight = Math.max(lobeA, lobeB, lobeC);
+      light = clamp(0.20 + crownLight * 0.72 + (texture - 0.5) * 0.34 - v * 0.16, 0.10, 0.98);
+    }
+  } else if (family === "rain") {
+    const ceiling = 1 - smoothstep(layer === "far" ? 0.64 : 0.78, 1, v);
+    const shelf = skyCloudGaussian(u, v, 0.48 + jitter, layer === "far" ? 0.30 : 0.47, 0.72, layer === "far" ? 0.30 : 0.27);
+    const density = texture * 0.73 + shelf * 0.31 + descriptor.pressure * 0.10;
+    alpha = layer === "far"
+      ? 0.22 + smoothstep(0.43, 0.72, density) * 0.35
+      : smoothstep(0.43, 0.68, density) * 0.80;
+    alpha *= ceiling;
+    light = clamp(light - 0.20 - v * 0.18, 0.05, 0.58);
+  } else if (family === "snow") {
+    const ceiling = 1 - smoothstep(layer === "far" ? 0.62 : 0.76, 1, v);
+    const glow = skyCloudGaussian(u, v, 0.52, layer === "far" ? 0.30 : 0.44, 0.72, 0.34);
+    alpha = ((layer === "far" ? 0.26 : 0.20) + smoothstep(0.44, 0.72, texture + glow * 0.17) * (layer === "far" ? 0.34 : 0.52)) * ceiling;
+    light = clamp(light + 0.13, 0.28, 0.96);
+  } else {
+    const ceiling = 1 - smoothstep(layer === "far" ? 0.62 : 0.75, 1, v);
+    const underside = skyCloudGaussian(u, v, 0.52 + jitter, layer === "far" ? 0.31 : 0.46, 0.76, layer === "far" ? 0.31 : 0.26);
+    if (layer === "far") alpha = (0.16 + smoothstep(0.39, 0.72, texture + underside * 0.13) * 0.32) * ceiling;
+    else alpha = smoothstep(0.47, 0.68, texture + underside * 0.25) * 0.72 * ceiling;
+    alpha *= 1 - opening * Math.max(0.08, descriptor.directness * 0.34);
+    light = layer === "far"
+      ? clamp(0.48 + (texture - 0.5) * 0.46 - v * 0.12, 0.25, 0.78)
+      : clamp(0.14 + texture * 0.70 - v * 0.19 + underside * 0.05, 0.10, 0.76);
+  }
+
+  const coverageLift = family === "broken" || family === "cirrus" ? 0.84 + descriptor.coverage * 0.20 : 0.94 + descriptor.coverage * 0.06;
+  const maximumAlpha = family === "rain" ? 0.84 : family === "broken" || family === "cirrus" ? 0.84 : 0.88;
+  return { alpha: clamp(alpha * coverageLift, 0, maximumAlpha), light };
+}
+
+// This is the only paint-heavy cloud work. It runs once per quantized scene,
+// remains inside a fixed physical-pixel budget, and releases its canvases as
+// soon as the PNG data is cached.
+function skyCloudAtlasDataUrl(plan, descriptor, layer, seed) {
+  try {
+    const layerPlan = plan[layer];
+    const canvas = document.createElement("canvas");
+    canvas.width = layerPlan.pixelWidth;
+    canvas.height = layerPlan.pixelHeight;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) return null;
+    const image = context.createImageData(canvas.width, canvas.height);
+    const pixels = image.data;
+    const palette = skyCloudPalette(descriptor.family, descriptor.isDay, layer);
+    const atlasDescriptor = {
+      ...descriptor,
+      atlasSunX: (plan.overscan + plan.viewportWidth * descriptor.sunX) / plan.width,
+      atlasSunY: (plan.visibleHeight * 0.035 + plan.visibleHeight * descriptor.sunY) / plan.height,
+      atlasVisibleStart: plan.overscan / plan.width,
+      atlasVisibleSpan: plan.viewportWidth / plan.width
+    };
+    const seedOffset = layer === "far" ? seed + 113 : seed + 719;
+    const xScale = layer === "far" ? 2.25 : 2.95;
+    const yScale = layer === "far" ? 3.20 : 3.75;
+
+    for (let py = 0; py < canvas.height; py++) {
+      const v = canvas.height > 1 ? py / (canvas.height - 1) : 0;
+      for (let px = 0; px < canvas.width; px++) {
+        const u = canvas.width > 1 ? px / (canvas.width - 1) : 0;
+        const broad = skyCloudFbm(u * xScale + 0.7, v * yScale + 0.3, seedOffset, 3);
+        const detail = skyCloudFbm(u * xScale * 2.37 + 3.1, v * yScale * 2.08 + 1.7, seedOffset + 191, 2);
+        const texture = broad * 0.74 + detail * 0.26;
+        const cloud = skyCloudPixel(atlasDescriptor, layer, u, v, texture, seedOffset);
+        const warmDistanceX = (u - atlasDescriptor.atlasSunX) / 0.42;
+        const warmDistanceY = (v - atlasDescriptor.atlasSunY) / 0.48;
+        const warmLight = Math.exp(-(warmDistanceX * warmDistanceX + warmDistanceY * warmDistanceY) * 1.2) * descriptor.warmth;
+        const light = clamp(cloud.light + warmLight * 0.12, 0, 1);
+        const index = (py * canvas.width + px) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          const base = palette.shade[channel] + (palette.light[channel] - palette.shade[channel]) * light;
+          const warmTarget = channel === 0 ? 255 : channel === 1 ? 199 : 151;
+          pixels[index + channel] = Math.round(base + (warmTarget - base) * warmLight * 0.23);
+        }
+        pixels[index + 3] = Math.round(cloud.alpha * 255);
+      }
+    }
+    context.putImageData(image, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    canvas.width = 1;
+    canvas.height = 1;
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
+function skyCloudAtlasPair(vw, vh, count, isDay, family, seed, skyState, phase) {
+  const descriptor = skyCloudDescriptor(count, isDay, family, skyState, phase);
+  const plan = skyCloudAtlasPlan(vw, vh, family);
+  const descriptorKey = [
+    SKY_CLOUD_VERSION,
+    seed,
+    plan.viewportWidth,
+    plan.viewportHeight,
+    descriptor.family,
+    descriptor.isDay ? "day" : "night",
+    descriptor.count,
+    descriptor.coverage,
+    descriptor.low,
+    descriptor.high,
+    descriptor.haze,
+    descriptor.warmth,
+    descriptor.directness,
+    descriptor.pressure,
+    descriptor.sunX,
+    descriptor.sunY
+  ].join(":");
+  if (skyCloudAtlasCache.has(descriptorKey)) {
+    const cached = skyCloudAtlasCache.get(descriptorKey);
+    skyCloudAtlasCache.delete(descriptorKey);
+    skyCloudAtlasCache.set(descriptorKey, cached);
+    return cached;
+  }
+
+  const farDataUrl = skyCloudAtlasDataUrl(plan, descriptor, "far", seed);
+  const nearDataUrl = skyCloudAtlasDataUrl(plan, descriptor, "near", seed);
+  const atlas = farDataUrl && nearDataUrl ? { descriptor, plan, farDataUrl, nearDataUrl } : null;
+  skyCloudAtlasCache.set(descriptorKey, atlas);
+  while (skyCloudAtlasCache.size > SKY_CLOUD_ATLAS_CACHE_LIMIT) {
+    skyCloudAtlasCache.delete(skyCloudAtlasCache.keys().next().value);
+  }
+  return atlas;
+}
+
+function skyClouds(vw, vh, count, isDay, condition, seed, skyState = null, motion = skyMotionProfile(condition, skyState), family = null, phase = skyPhase(skyState)) {
+  const visualFamily = family || skyCloudVisualFamily(condition, skyState, false);
+  if (visualFamily === "clear") return "";
+  const atlas = skyCloudAtlasPair(vw, vh, count, isDay, visualFamily, seed, skyState, phase);
+  if (!atlas) return "";
+
   const reactive = reactiveSkyEnabled();
-  let out = "";
-  const reactiveLayers = ["", ""];
-  for (let c = 0; c < count; c++) {
-    const bx = box.x + rng() * box.width * 1.26 - box.width * 0.13;
-    const layerLift = highLayer * 0.045 - lowLayer * 0.035;
-    const by = box.y + box.height * (
-      isRainy ? 0.06 + rng() * 0.17 + layerLift :
-      isOvercast ? 0.05 + rng() * 0.24 + layerLift :
-      isPartly ? 0.11 + rng() * 0.22 + layerLift :
-      0.08 + rng() * 0.30 + layerLift
-    );
-    const scale = isPartly
-      ? 0.58 + rng() * 0.58 + cloudDepth * 0.12 + pressure * 0.06
-      : 0.72 + rng() * 0.84 + (cloudDepth + pressure * 0.34) * 0.22;
-    const dur = ((105 + rng() * 80) * (1 - windiness * 0.34)).toFixed(0);
-    const delay = (rng() * 90).toFixed(0);
-    const dir = rng() > 0.5 ? "normal" : "reverse";
+  const animated = motion.animateClouds > 0;
+  const windiness = clamp01(skyState?.windiness ?? 0);
+  const travel = normalizeSkyBearing(skyState?.windTravelDeg);
+  const crosswind = travel === null ? 0 : Math.sin(travel * Math.PI / 180);
+  const fallbackDirection = seed % 2 ? 1 : -1;
+  const direction = Math.abs(crosswind) > 0.14 ? Math.sign(crosswind) : fallbackDirection;
+  const nearDistance = direction * Math.round(18 + windiness * 24);
+  const farDistance = direction * Math.round(10 + windiness * 14);
+  const nearDuration = Math.round(142 - windiness * 58);
+  const farDuration = Math.round(nearDuration * 1.34);
+  const { plan } = atlas;
 
-    let fill;
-    if (!isDay) fill = isRainy ? "#151927" : (isOvercast ? "#202939" : lerpHex("#2d3b55", "#46546b", haze));
-    else if (isRainy) fill = lerpHex("#55606a", "#6f7c86", haze * 0.45);
-    else if (isOvercast) fill = lerpHex("#8d98a2", "#a8b3bc", haze * 0.5);
-    else if (isPartly) fill = lerpHex("#ffffff", "#d8e4eb", cloudDepth * 0.22 + haze * 0.16 + pressure * 0.08);
-    else fill = lerpHex("#f4f9fd", "#c5d0d8", cloudDepth * 0.34 + haze * 0.28 + pressure * 0.16);
-    const op = clamp(
-      (isOvercast || isRainy ? 0.58 : isPartly ? 0.40 : 0.34) +
-      cloudDepth * (isPartly ? 0.18 : 0.28) +
-      pressure * 0.12 +
-      rng() * 0.14,
-      isPartly ? 0.36 : 0.22,
-      isPartly ? 0.68 : 0.9
-    ).toFixed(2);
+  const image = (layer, dataUrl) => `<image class="sky-cloud-atlas sky-cloud-atlas-${layer}" href="${dataUrl}" x="${plan.x}" y="${plan.y}" width="${plan.width}" height="${plan.height}" preserveAspectRatio="none"/>`;
+  const renderLayer = (layer, dataUrl, duration, distance, delay) => {
+    const field = `<g class="sky-cloud-field sky-cloud-field-${layer}${!reactive && animated ? " is-animated" : ""}"${!reactive ? ` style="--sky-cloud-drift:${distance}px;animation-duration:${duration}s;animation-delay:-${delay}s"` : ""}>${image(layer, dataUrl)}</g>`;
+    if (!reactive) return field;
+    return `<g class="sky-reactive-cloud-vector sky-reactive-cloud-${layer}${animated ? " is-animated" : ""}" style="animation-duration:${duration}s">${field}</g>`;
+  };
 
-    const bodyWidth = ((isPartly ? 220 : 280) + rng() * (isPartly ? 220 : 260)) * scale;
-    const bodyHeight = ((isPartly ? 36 : 42) + rng() * (isPartly ? 28 : 36)) * scale;
-    const shear = (rng() - 0.5) * 54 * scale + (reactive ? 0 : windiness * 46 * scale);
-    const topY = by - bodyHeight * (0.38 + rng() * 0.24);
-    const midY = by + (rng() - 0.5) * 12 * scale;
-    const baseY = by + bodyHeight * (0.34 + rng() * 0.22);
-    const x0 = bx - bodyWidth * 0.52;
-    const x1 = bx + bodyWidth * 0.52;
-    const d = [
-      `M ${x0.toFixed(0)} ${baseY.toFixed(0)}`,
-      `C ${(x0 + bodyWidth * 0.16).toFixed(0)} ${(midY - bodyHeight * 0.45).toFixed(0)}, ${(x0 + bodyWidth * 0.32).toFixed(0)} ${(topY - bodyHeight * 0.15).toFixed(0)}, ${(bx + shear * 0.18).toFixed(0)} ${topY.toFixed(0)}`,
-      `C ${(bx + bodyWidth * 0.18).toFixed(0)} ${(topY + bodyHeight * 0.10).toFixed(0)}, ${(x1 - bodyWidth * 0.18).toFixed(0)} ${(midY - bodyHeight * 0.38).toFixed(0)}, ${x1.toFixed(0)} ${midY.toFixed(0)}`,
-      `C ${(x1 - bodyWidth * 0.12).toFixed(0)} ${(baseY + bodyHeight * 0.10).toFixed(0)}, ${(x0 + bodyWidth * 0.18).toFixed(0)} ${(baseY + bodyHeight * 0.12).toFixed(0)}, ${x0.toFixed(0)} ${baseY.toFixed(0)}`,
-      "Z"
-    ].join(" ");
-    const lowBandY = baseY + bodyHeight * (0.10 + rng() * 0.20);
-    const band = `<ellipse cx="${(bx + shear).toFixed(0)}" cy="${lowBandY.toFixed(0)}" rx="${(bodyWidth * 0.52).toFixed(0)}" ry="${(bodyHeight * 0.20).toFixed(0)}" fill="${fill}" opacity="${isOvercast || isRainy ? "0.62" : "0.44"}"/>`;
-    const animated = !reactive && c < motion.animateClouds;
-    const filter = motion.cloudFilter ? ` filter="url(#sky-cloud-f)"` : "";
-    const cloud = `<g class="sky-cloud${animated ? " is-animated" : ""}" style="animation-duration:${dur}s;animation-delay:-${delay}s;animation-direction:${dir}"${filter} opacity="${op}"><path d="${d}" fill="${fill}"/>${band}</g>`;
-    if (reactive) reactiveLayers[c % reactiveLayers.length] += cloud;
-    else out += cloud;
-  }
-  if (reactive) {
-    const animate = motion.animateClouds > 0;
-    const nearDuration = Math.round(132 - windiness * 54);
-    const farDuration = Math.round(nearDuration * 1.28);
-    out = reactiveLayers
-      .map((clouds, index) => clouds
-        ? `<g class="sky-reactive-cloud-vector sky-reactive-cloud-${index ? "far" : "near"}${animate ? " is-animated" : ""}" style="animation-duration:${index ? farDuration : nearDuration}s">${clouds}</g>`
-        : "")
-      .join("");
-  }
-  return out;
+  return [
+    renderLayer("far", atlas.farDataUrl, farDuration, farDistance, Math.round(farDuration * 0.37)),
+    renderLayer("near", atlas.nearDataUrl, nearDuration, nearDistance, Math.round(nearDuration * 0.61))
+  ].join("");
 }
 
 function skyHaze(vw, vh, skyState) {
