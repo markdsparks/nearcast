@@ -1790,7 +1790,7 @@ private struct LargeRunwayLegend: View {
         case .heat:
             VStack(alignment: .trailing, spacing: 2) {
                 LargeLegendKey(label: "FEELS", color: largeFeelsLikeColor(snapshot, rows: rows), dashed: false, palette: palette)
-                LargeLegendKey(label: "TEMP", color: palette.secondary, dashed: true, palette: palette)
+                LargeLegendKey(label: "TEMP", color: palette.secondary.opacity(0.62), dashed: true, palette: palette)
             }
         case .wind:
             VStack(alignment: .trailing, spacing: 2) {
@@ -1828,8 +1828,14 @@ private struct LargeLegendKey: View {
         HStack(spacing: 4) {
             Group {
                 if dashed {
-                    Capsule()
-                        .stroke(color, style: StrokeStyle(lineWidth: 2, dash: [3, 2]))
+                    HStack(spacing: 3) {
+                        Capsule()
+                            .fill(color)
+                            .frame(width: 6, height: 3)
+                        Capsule()
+                            .fill(color)
+                            .frame(width: 6, height: 3)
+                    }
                 } else {
                     Capsule()
                         .fill(color)
@@ -3447,7 +3453,12 @@ private func largeRunwayTitle(_ mode: LargeRunwayMode, snapshot: NearcastWidgetS
         let difference = abs(focus.feelsLike - focus.air)
         guard difference > 0 else { return "Feels \(focus.feelsLike)° now" }
         let direction = focus.isCold ? "colder" : "hotter"
-        let timing = focus.row.map { "at \(runwayTimeLabel($0))" } ?? "now"
+        let timing: String
+        if let row = focus.row, row.offsetHours > 0 {
+            timing = "at \(runwayTimeLabel(row))"
+        } else {
+            timing = "now"
+        }
         return "Feels \(difference)° \(direction) \(timing)"
     case .sun:
         let peak = rows.max { ($0.uv ?? 0) < ($1.uv ?? 0) }
