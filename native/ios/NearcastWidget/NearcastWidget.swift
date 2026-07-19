@@ -1680,7 +1680,7 @@ private struct LargeCurrentHeader: View {
     }
 }
 
-private enum LargeRunwayMode {
+private enum LargeRunwayMode: Equatable {
     case rain
     case snow
     case wind
@@ -1789,13 +1789,13 @@ private struct LargeRunwayLegend: View {
         switch mode {
         case .heat:
             VStack(alignment: .trailing, spacing: 2) {
-                LargeLegendKey(label: "FEELS", color: largeFeelsLikeColor(snapshot, rows: rows), palette: palette)
-                LargeLegendKey(label: "AIR", color: palette.secondary, palette: palette)
+                LargeLegendKey(label: "FEELS", color: largeFeelsLikeColor(snapshot, rows: rows), dashed: false, palette: palette)
+                LargeLegendKey(label: "TEMP", color: palette.secondary, dashed: true, palette: palette)
             }
         case .wind:
             VStack(alignment: .trailing, spacing: 2) {
-                LargeLegendKey(label: "GUST", color: windRunwayColor(snapshot), palette: palette)
-                LargeLegendKey(label: "WIND", color: palette.secondary, palette: palette)
+                LargeLegendKey(label: "GUST", color: windRunwayColor(snapshot), dashed: false, palette: palette)
+                LargeLegendKey(label: "WIND", color: palette.secondary, dashed: false, palette: palette)
             }
         case .rain:
             Image(systemName: "drop.fill")
@@ -1821,13 +1821,21 @@ private struct LargeRunwayLegend: View {
 private struct LargeLegendKey: View {
     let label: String
     let color: Color
+    let dashed: Bool
     let palette: WidgetPalette
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
+            Group {
+                if dashed {
+                    Capsule()
+                        .stroke(color, style: StrokeStyle(lineWidth: 2, dash: [3, 2]))
+                } else {
+                    Capsule()
+                        .fill(color)
+                }
+            }
+            .frame(width: 16, height: 3)
             Text(label)
                 .font(WidgetText.eyebrow)
                 .foregroundStyle(palette.secondary)
@@ -1911,29 +1919,60 @@ private struct LargeLineRunway: View {
     var body: some View {
         VStack(spacing: 5) {
             GeometryReader { proxy in
-                let coordinates = largeChartCoordinates(points.map(\.value), size: proxy.size)
+                let chartBottomInset: CGFloat = mode == .heat ? 20 : 4
+                let coordinates = largeChartCoordinates(
+                    points.map(\.value),
+                    size: proxy.size,
+                    bottomInset: chartBottomInset
+                )
                 let secondaryValues = points.compactMap(\.secondaryValue)
                 let secondaryCoordinates = secondaryValues.count == points.count
-                    ? largeChartCoordinates(secondaryValues, size: proxy.size, sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] })
+                    ? largeChartCoordinates(
+                        secondaryValues,
+                        size: proxy.size,
+                        sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] },
+                        bottomInset: chartBottomInset
+                    )
                     : []
                 let primaryCoordinates = points.contains(where: { $0.secondaryValue != nil })
-                    ? largeChartCoordinates(points.map(\.value), size: proxy.size, sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] })
+                    ? largeChartCoordinates(
+                        points.map(\.value),
+                        size: proxy.size,
+                        sharedValues: points.flatMap { [$0.value, $0.secondaryValue ?? $0.value] },
+                        bottomInset: chartBottomInset
+                    )
                     : coordinates
+                let secondaryStyle = mode == .heat
+                    ? StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round, dash: [6, 4])
+                    : StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
 
                 ZStack(alignment: .topLeading) {
-                    if secondaryCoordinates.count == points.count {
-                        largeChartPath(secondaryCoordinates)
-                            .stroke(palette.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    if mode == .heat, secondaryCoordinates.count == points.count {
+                        largeChartBandPath(primaryCoordinates, secondaryCoordinates)
+                            .fill(
+                                LinearGradient(
+                                    colors: [lineColor.opacity(0.18), lineColor.opacity(0.06)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
                     }
 
-                    largeChartAreaPath(primaryCoordinates, size: proxy.size)
-                        .fill(
-                            LinearGradient(
-                                colors: [lineColor.opacity(0.22), lineColor.opacity(0.01)],
-                                startPoint: .top,
-                                endPoint: .bottom
+                    if secondaryCoordinates.count == points.count {
+                        largeChartPath(secondaryCoordinates)
+                            .stroke(palette.secondary.opacity(0.62), style: secondaryStyle)
+                    }
+
+                    if mode != .heat {
+                        largeChartAreaPath(primaryCoordinates, size: proxy.size)
+                            .fill(
+                                LinearGradient(
+                                    colors: [lineColor.opacity(0.22), lineColor.opacity(0.01)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
                             )
-                        )
+                    }
 
                     largeChartPath(primaryCoordinates)
                         .stroke(lineColor, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
@@ -1941,18 +1980,67 @@ private struct LargeLineRunway: View {
                     ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
                         if primaryCoordinates.indices.contains(index) {
                             let coordinate = primaryCoordinates[index]
-                            VStack(spacing: 2) {
+                            if mode == .heat,
+                               secondaryCoordinates.indices.contains(index) {
+                                let secondary = secondaryCoordinates[index]
+                                let labelY = coordinate.y <= secondary.y
+                                    ? max(9, coordinate.y - 13)
+                                    : min(proxy.size.height - 9, coordinate.y + 13)
+
+                                Circle()
+                                    .fill(lineColor)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().stroke(palette.surfaceStrong, lineWidth: 2))
+                                    .position(coordinate)
+
                                 Text(lineValueText(point.value, mode: mode))
                                     .font(WidgetText.caption)
                                     .foregroundStyle(palette.primary)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.86)
-                                Circle()
-                                    .fill(lineColor)
-                                    .frame(width: 8, height: 8)
-                                    .overlay(Circle().stroke(palette.surfaceStrong, lineWidth: 2))
+                                    .position(x: coordinate.x, y: labelY)
+                            } else {
+                                VStack(spacing: 2) {
+                                    Text(lineValueText(point.value, mode: mode))
+                                        .font(WidgetText.caption)
+                                        .foregroundStyle(palette.primary)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.86)
+                                    Circle()
+                                        .fill(lineColor)
+                                        .frame(width: 8, height: 8)
+                                        .overlay(Circle().stroke(palette.surfaceStrong, lineWidth: 2))
+                                }
+                                .position(x: coordinate.x, y: max(13, coordinate.y - 9))
                             }
-                            .position(x: coordinate.x, y: max(13, coordinate.y - 9))
+                        }
+                    }
+
+                    if mode == .heat, secondaryCoordinates.count == points.count {
+                        ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
+                            if (index == 0 || index == points.count - 1),
+                               primaryCoordinates.indices.contains(index),
+                               secondaryCoordinates.indices.contains(index),
+                               let temperature = point.secondaryValue {
+                                let primary = primaryCoordinates[index]
+                                let secondary = secondaryCoordinates[index]
+                                let labelY = secondary.y >= primary.y
+                                    ? min(proxy.size.height - 9, secondary.y + 13)
+                                    : max(9, secondary.y - 13)
+
+                                Circle()
+                                    .fill(palette.secondary.opacity(0.78))
+                                    .frame(width: 6, height: 6)
+                                    .position(secondary)
+
+                                Text("\(temperature)°")
+                                    .font(WidgetText.caption)
+                                    .foregroundStyle(palette.secondary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 3)
+                                    .background(palette.surfaceStrong.opacity(0.82), in: Capsule())
+                                    .position(x: secondary.x, y: labelY)
+                            }
                         }
                     }
                 }
@@ -3356,7 +3444,11 @@ private func largeRunwayTitle(_ mode: LargeRunwayMode, snapshot: NearcastWidgetS
         return "Gusts \(value) \(snapshot.windUnit) near \(time)"
     case .heat:
         let focus = largeFeelsLikeFocus(snapshot, rows: rows)
-        return "Feels \(focus.feelsLike)° near \(focus.row.map(runwayTimeLabel) ?? "now")"
+        let difference = abs(focus.feelsLike - focus.air)
+        guard difference > 0 else { return "Feels \(focus.feelsLike)° now" }
+        let direction = focus.isCold ? "colder" : "hotter"
+        let timing = focus.row.map { "at \(runwayTimeLabel($0))" } ?? "now"
+        return "Feels \(difference)° \(direction) \(timing)"
     case .sun:
         let peak = rows.max { ($0.uv ?? 0) < ($1.uv ?? 0) }
         return "UV \(uvRiskLabel(peak?.uv ?? snapshot.uv)) near \(peak.map(runwayTimeLabel) ?? "soon")"
@@ -3429,7 +3521,7 @@ private func largeRunwayAccessibility(_ mode: LargeRunwayMode, snapshot: Nearcas
     case .heat:
         let focus = largeFeelsLikeFocus(snapshot, rows: rows)
         let direction = focus.isCold ? "as low as" : "as high as"
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the air is \(focus.air)."
+        return "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the actual temperature is \(focus.air)."
     case .sun:
         let peak = rows.compactMap(\.uv).max() ?? snapshot.uv
         return "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
@@ -3535,7 +3627,12 @@ private func largeBarHeight(_ value: Int, maximum: Int, available: CGFloat) -> C
     return max(7, min(usable, usable * fraction))
 }
 
-private func largeChartCoordinates(_ values: [Int], size: CGSize, sharedValues: [Int]? = nil) -> [CGPoint] {
+private func largeChartCoordinates(
+    _ values: [Int],
+    size: CGSize,
+    sharedValues: [Int]? = nil,
+    bottomInset: CGFloat = 4
+) -> [CGPoint] {
     guard !values.isEmpty else { return [] }
     let scaleValues = (sharedValues?.isEmpty == false ? sharedValues! : values)
     let rawMinimum = scaleValues.min() ?? 0
@@ -3546,7 +3643,7 @@ private func largeChartCoordinates(_ values: [Int], size: CGSize, sharedValues: 
     let range = max(1, maximum - minimum)
     let insetX: CGFloat = min(24, max(20, size.width * 0.065))
     let top: CGFloat = min(24, max(18, size.height * 0.28))
-    let bottom: CGFloat = max(top + 8, size.height - 4)
+    let bottom: CGFloat = max(top + 8, size.height - bottomInset)
     let step = values.count > 1 ? (size.width - insetX * 2) / CGFloat(values.count - 1) : 0
 
     return values.enumerated().map { index, value in
@@ -3577,6 +3674,20 @@ private func largeChartAreaPath(_ points: [CGPoint], size: CGSize) -> Path {
             path.addLine(to: point)
         }
         path.addLine(to: CGPoint(x: last.x, y: size.height))
+        path.closeSubpath()
+    }
+}
+
+private func largeChartBandPath(_ primary: [CGPoint], _ secondary: [CGPoint]) -> Path {
+    Path { path in
+        guard primary.count == secondary.count, let first = primary.first else { return }
+        path.move(to: first)
+        for point in primary.dropFirst() {
+            path.addLine(to: point)
+        }
+        for point in secondary.reversed() {
+            path.addLine(to: point)
+        }
         path.closeSubpath()
     }
 }
