@@ -490,6 +490,8 @@
 :root[data-sky="rain-night"],
 :root[data-sky="snow-night"],
 :root[data-sky="thunder-night"] {
+  /* A tiny legibility lift, not a visible spotlight behind the hero. */
+  --launch-spotlight-bg: radial-gradient(ellipse at center, rgba(115, 139, 177, 0.055), rgba(25, 38, 60, 0.025) 46%, transparent 70%);
   --daily-secondary: rgba(237, 248, 254, 0.88);
   --daily-secondary-strong: rgba(252, 255, 255, 0.96);
   --daily-section-meta: rgba(224, 239, 247, 0.88);

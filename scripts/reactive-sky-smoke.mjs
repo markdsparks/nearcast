@@ -252,18 +252,23 @@ assert.match(styles, /\.sky-reactive-rain-vector\s*\{[\s\S]*transform:[^;]*--sky
 assert.match(styles, /\.sky-reactive-cloud-vector\.is-animated[\s\S]*animation-name:\s*sky-reactive-cloud-travel/, "cloud strata share one coherent flow animation");
 assert.match(styles, /@keyframes sky-reactive-cloud-travel[\s\S]*--sky-reactive-cloud-distance/, "cloud travel uses the same weather/heading vector");
 
-// Cloudfield V2 keeps one pair of beautiful, bounded atlas layers across the
+// Cloudfield V3 keeps one pair of beautiful, bounded atlas layers across the
 // standard, reactive, and Reduced Motion presentations. Quality changes may
 // stop motion, but may never reveal fallback geometry.
 const cloudSource = extractFunction(sky, "skyClouds");
 const cloudPairSource = extractFunction(sky, "skyCloudAtlasPair");
 const cloudTextureSource = extractFunction(sky, "skyCloudAtlasDataUrl");
+const cloudPixelSource = extractFunction(sky, "skyCloudPixel");
+const cloudPaletteSource = extractFunction(sky, "skyCloudPalette");
 assert.match(cloudSource, /atlas\.farDataUrl[\s\S]*atlas\.nearDataUrl/, "cloud presentation uses exactly the cached far and near artworks");
 assert.match(cloudSource, /sky-cloud-field[\s\S]*sky-reactive-cloud-vector/, "standard and reactive skies differ only through their presentation wrappers");
 assert.doesNotMatch(cloudSource, /<path|<ellipse|url\(#sky-cloud-f\)|requestAnimationFrame|setInterval/, "cloud presentation contains no slab primitives, SVG blur, or JavaScript animation loop");
 assert.doesNotMatch(cloudPairSource, /reactiveSkyEnabled|motion|density|animateClouds/, "cloud atlas identity is independent of renderer quality and motion mode");
 assert.doesNotMatch(cloudTextureSource, /Math\.random|Date\.now|performance\.now|requestAnimationFrame|setInterval/, "cloud texture generation is deterministic and scene-build-only");
 assert.doesNotMatch(sky, /id="sky-cloud-f"|url\(#sky-cloud-f\)/, "the removed SVG cloud blur cannot become a hidden quality dependency again");
+assert.match(cloudPixelSource, /descriptor\.isDay[\s\S]*skyCloudGaussian[\s\S]*:\s*0/, "only daylight carves a celestial opening through cloud art");
+assert.match(cloudPixelSource, /!descriptor\.isDay\s*&&\s*family === "broken"[\s\S]*alpha \*=/, "broken night cloud art is explicitly restrained");
+assert.match(cloudPaletteSource, /family === "cirrus"[\s\S]*\[103, 119, 148\]/, "night wisps stay close to the navy sky palette");
 
 const cloudVisibleBoxSource = extractFunction(sky, "skyVisibleBox");
 const cloudPlanSource = extractFunction(sky, "skyCloudAtlasPlan");
@@ -290,7 +295,7 @@ const layerSeedSource = extractFunction(sky, "skyLayerSeed");
 const skyHashSource = extractFunction(sky, "skyHash");
 const layerSeedHarness = new Function(`
   let SKY_SCENE_VERSION = "sky-v9";
-  let SKY_CLOUD_VERSION = "cloudfield-v2";
+  let SKY_CLOUD_VERSION = "cloudfield-v3";
   let SKY_PRECIPITATION_VERSION = "sky-v9";
   const state = { activePlace: { id: "home", latitude: 41.88, longitude: -87.63 }, skyState: { dayKey: "2026-07-18" }, forecast: null };
   function datePart(value) { return String(value || "").slice(0, 10); }
@@ -311,7 +316,7 @@ const rainVersionSeeds = layerSeedHarness.seeds();
 assert.equal(rainVersionSeeds.base, originalLayerSeeds.base, "rain changes do not reseed the base atmosphere");
 assert.equal(rainVersionSeeds.clouds, originalLayerSeeds.clouds, "rain changes do not reshuffle clouds");
 assert.notEqual(rainVersionSeeds.rain, originalLayerSeeds.rain, "rain has an independent version seed");
-layerSeedHarness.cloudVersion("cloudfield-v3");
+layerSeedHarness.cloudVersion("cloudfield-v4");
 const cloudVersionSeeds = layerSeedHarness.seeds();
 assert.notEqual(cloudVersionSeeds.clouds, rainVersionSeeds.clouds, "cloud art has an independent version seed");
 assert.equal(cloudVersionSeeds.rain, rainVersionSeeds.rain, "cloud changes do not reshuffle rain");
@@ -328,6 +333,16 @@ assert.equal(cloudFamilyHarness("overcast", { cloud: 66, lowCloud: 48, highCloud
 assert.equal(cloudFamilyHarness("overcast", { cloud: 94, lowCloud: 88, highCloud: 58, directness: 0.07, activePrecip: false }, false), "overcast", "a low opaque ceiling uses continuous overcast art");
 assert.equal(cloudFamilyHarness("rain", { cloud: 96, lowCloud: 90, highCloud: 66, directness: 0.02, activePrecip: true, precipPressure: 0.8, wetness: 0.7 }, false), "rain", "active rain uses the lower storm shelf");
 assert.equal(cloudFamilyHarness("clear", { cloud: 42, lowCloud: 18, highCloud: 64, directness: 0.3, activePrecip: false }, true), "cirrus", "high-cloud-dominant clear weather stays a restrained cirrus scene");
+assert.equal(cloudFamilyHarness("clear", { isDay: false, cloud: 52, lowCloud: 28, highCloud: 26, directness: 0, activePrecip: false }, false), "clear", "mostly-clear nights remain open instead of becoming giant broken lobes");
+
+const sceneConfigSource = extractFunction(sky, "skySceneConfig");
+const moonSource = extractFunction(sky, "skyMoon");
+const moonGlowSource = extractFunction(sky, "skyMoonGlow");
+assert.match(sceneConfigSource, /moonDiscVisible[\s\S]*welcomeAmbient === true/, "literal background moon is reserved for the spacious welcome scene");
+assert.match(moonSource, /skyNightAccentPoint[\s\S]*vw \* 0\.052, 18, 22/, "welcome moon remains small and above launch copy");
+assert.doesNotMatch(moonSource, /fill="#cfe0f3"|opacity="0\.14"/, "moon no longer exposes an eclipse-like unlit disc");
+assert.match(moonGlowSource, /skyNightAccentPoint[\s\S]*opacity="0\.075"/, "forecast nights use one restrained off-axis lunar glow");
+assert.match(styles, /:root\[data-sky="clear-night"\],[\s\S]*--launch-spotlight-bg:[^;]*0\.055/, "night hero wash stays below spotlight visibility");
 
 assert.match(styles, /\.sky-cloud-field\.is-animated[\s\S]*animation:\s*sky-cloud-field-drift/, "standard cloudfields use one transform-only drift per layer");
 const cloudDriftKeyframes = styles.match(/@keyframes sky-cloud-field-drift\s*\{[\s\S]*?\n\}/)?.[0] || "";

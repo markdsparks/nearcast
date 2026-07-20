@@ -22,7 +22,7 @@ const SKY_CFG = {
 };
 
 const SKY_SCENE_VERSION = "sky-v9";
-const SKY_CLOUD_VERSION = "cloudfield-v2";
+const SKY_CLOUD_VERSION = "cloudfield-v3";
 const SKY_PRECIPITATION_VERSION = "sky-v9";
 const SKY_CLOUD_ATLAS_PIXEL_BUDGET = 145000;
 const SKY_CLOUD_ATLAS_CACHE_LIMIT = 3;
@@ -991,9 +991,15 @@ function skyCloudVisualFamily(condition, skyState = state.skyState, sunVisible =
   const pressure = clamp01(skyState.precipPressure ?? 0);
   const wetness = clamp01(skyState.wetness ?? 0);
   const activePrecip = skyState.activePrecip === true || skyState.precipPhase === "active";
+  const quietClearNight = skyState.isDay === false && condition === "clear" && !activePrecip;
 
   if ((condition === "rain" || condition === "thunder") && (activePrecip || pressure > 0.42 || wetness > 0.38)) return "rain";
   if (condition === "snow" && (activePrecip || cloud > 62)) return "snow";
+  // A mostly-clear night should read as open sky. Turning modest provider
+  // cloud cover into the daytime broken-cumulus composition creates giant
+  // pale lobes that compete with the hero and its condition icon.
+  if (quietClearNight && high >= 42 && low < 46) return "cirrus";
+  if (quietClearNight && (cloud < 62 || low < 42)) return "clear";
   if (high > Math.max(46, low + 18) && low < 46 && !activePrecip) return "cirrus";
   if (!activePrecip && (sunVisible || directness > 0.22) && cloud < 92) return "broken";
   if (cloud >= 76 && low >= 52 && directness < 0.24) return "overcast";
@@ -1032,6 +1038,11 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   const moonCloudLimit = welcomeClearCue ? 96 : 82;
   const moonTwilightLimit = welcomeClearCue ? 0.92 : 0.82;
   const moonVisible = !isDay && skyObjectCloudPct < moonCloudLimit && skyState.twilight < moonTwilightLimit && condition !== "rain" && condition !== "thunder";
+  // The hero already carries the literal condition icon. Keep a moon disc for
+  // the spacious welcome ambience only; the forecast uses a soft off-axis
+  // lunar glow so the background never becomes a duplicate weather glyph.
+  const moonDiscVisible = moonVisible && skyState.welcomeAmbient === true && (base.moon || condition === "overcast");
+  const moonGlowVisible = !isDay && !moonDiscVisible && skyObjectCloudPct < 92 && condition !== "rain" && condition !== "thunder";
   const sunVisible = isDay &&
     !activePrecip &&
     condition !== "thunder" &&
@@ -1044,8 +1055,8 @@ function skySceneConfig(condition, isDay, skyState = state.skyState) {
   return {
     ...base,
     stars: Math.max(0, stars),
-    moon: moonVisible && (base.moon || condition === "overcast"),
-    moonGlow: !moonVisible && !isDay && skyObjectCloudPct < 92 && condition !== "thunder",
+    moon: moonDiscVisible,
+    moonGlow: moonGlowVisible,
     sun: sunVisible,
     clouds,
     cloudFamily,
@@ -1078,7 +1089,7 @@ function renderSkyScene(el, condition, isDay, skyState = state.skyState) {
   if (starCount)        parts.push(skyStars(vw, vh, starCount, rngFor("stars"), motion));
   if (starCount >= 60 && motion.rareMotion) parts.push(skyShootingStar(vw, vh, rngFor("shoot"), motion));
   if (cfg.moon)         parts.push(skyMoon(vw, vh, phase));
-  if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, rngFor("moon-glow"), motion));
+  if (cfg.moonGlow)     parts.push(skyMoonGlow(vw, vh, phase));
   if (cfg.sun && phase.golden > 0.12) parts.push(skyHorizonGlow(vw, vh, phase));
   if (cfg.sun)          parts.push(skySun(vw, vh, phase, motion));
   if (hasCloudField)    parts.push(skyClouds(vw, vh, cloudCount, isDay, condition, seedFor("clouds"), skyState, motion, cfg.cloudFamily, phase));
@@ -1137,6 +1148,16 @@ function skyChromeSafeMinY(defaultMinY) {
   return state.skyState?.welcomeAmbient === true ? defaultMinY : Math.max(defaultMinY, 0.18);
 }
 
+function skyNightAccentPoint(vw, vh, phase) {
+  const box = skyVisibleBox(vw, vh);
+  // Reserve the left side for controls and keep the accent above launch copy.
+  const x = clamp(phase?.x ?? 0.72, 0.66, 0.84);
+  return {
+    x: Math.round(box.x + box.width * x),
+    y: Math.round(box.y + box.height * 0.105)
+  };
+}
+
 function skyFilterDefs() {
   return `<defs>
     <filter id="sky-glow-f" x="-100%" y="-100%" width="300%" height="300%">
@@ -1167,26 +1188,25 @@ function skyStars(vw, vh, count, rng, motion = skyMotionProfile("clear")) {
 }
 
 function skyMoon(vw, vh, phase) {
-  const point = skyVisiblePoint(vw, vh, phase, { minY: skyChromeSafeMinY(0.10), maxY: 0.34 });
-  const cx = point.x, cy = point.y, r = 42;
+  const point = skyNightAccentPoint(vw, vh, phase);
+  const cx = point.x, cy = point.y, r = Math.round(clamp(vw * 0.052, 18, 22));
   const { illum, waxing } = moonPhase(state.skyState?.nowMs ?? skyNow());
   // Carve the phase: white disc minus an offset black disc → crescent → gibbous.
   const sep = illum * 2 * r;
   const sx = (cx + (waxing ? -sep : sep)).toFixed(1);
   const id = `sky-moon-${++skyMaskCounter}`;
   return `
-    <circle cx="${cx}" cy="${cy}" r="${r * 4.6}" fill="#6f7fb2" opacity="0.075" filter="url(#sky-glow-f)" class="sky-moon-glow"/>
+    <circle cx="${cx}" cy="${cy}" r="${Math.round(r * 2.8)}" fill="#8093bf" opacity="0.055" filter="url(#sky-glow-f)" class="sky-lunar-haze"/>
     <defs><mask id="${id}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff"/><circle cx="${sx}" cy="${cy}" r="${r}" fill="#000"/></mask></defs>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#cfe0f3" opacity="0.14"/>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#eef4ff" opacity="0.95" mask="url(#${id})"/>
-    <circle cx="${cx - Math.round(r * 0.18)}" cy="${cy - Math.round(r * 0.14)}" r="${Math.round(r * 0.7)}" fill="#fff" opacity="0.12" mask="url(#${id})"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#eef4ff" opacity="0.82" mask="url(#${id})"/>
+    <circle cx="${cx - Math.round(r * 0.18)}" cy="${cy - Math.round(r * 0.14)}" r="${Math.round(r * 0.7)}" fill="#fff" opacity="0.08" mask="url(#${id})"/>
   `;
 }
 
-function skyMoonGlow(vw, vh, rng, motion = skyMotionProfile("overcast")) {
-  const x = Math.round(vw * (0.52 + rng() * 0.3));
-  const y = Math.round(vh * (0.05 + rng() * 0.18));
-  return `<circle cx="${x}" cy="${y}" r="90" fill="#7080b0" opacity="0.24" filter="url(#sky-glow-f)" class="sky-moon-glow${motion.moonMotion ? " is-animated" : ""}"/>`;
+function skyMoonGlow(vw, vh, phase) {
+  const point = skyNightAccentPoint(vw, vh, phase);
+  const radius = Math.round(clamp(vw * 0.15, 48, 68));
+  return `<circle cx="${point.x}" cy="${point.y}" r="${radius}" fill="#8093bd" opacity="0.075" filter="url(#sky-glow-f)" class="sky-lunar-haze"/>`;
 }
 
 function skySun(vw, vh, phase, motion = skyMotionProfile("clear")) {
@@ -1348,12 +1368,24 @@ function skyCloudGaussian(u, v, cx, cy, rx, ry) {
   return Math.exp(-(dx * dx + dy * dy) * 1.45);
 }
 
+function skyCloudSoftUnion(a, b, c, base, satellite) {
+  // Fixed arity keeps the per-pixel cloud pass allocation-free.
+  return clamp01(1 - (
+    (1 - clamp01(a * 0.76)) *
+    (1 - clamp01(b * 0.78)) *
+    (1 - clamp01(c * 0.76)) *
+    (1 - clamp01(base * 0.60)) *
+    (1 - clamp01(satellite * 0.34))
+  ));
+}
+
 function skyCloudPalette(family, isDay, layer) {
   if (!isDay) {
     if (family === "rain") return layer === "near" ? { light: [76, 91, 116], shade: [18, 27, 44] } : { light: [93, 108, 134], shade: [30, 40, 60] };
     if (family === "snow") return layer === "near" ? { light: [144, 161, 187], shade: [52, 68, 94] } : { light: [166, 181, 205], shade: [68, 82, 109] };
     if (family === "overcast") return layer === "near" ? { light: [105, 120, 146], shade: [31, 42, 63] } : { light: [124, 139, 164], shade: [47, 59, 82] };
-    return layer === "near" ? { light: [154, 169, 196], shade: [48, 65, 94] } : { light: [176, 190, 214], shade: [70, 87, 116] };
+    if (family === "cirrus") return layer === "near" ? { light: [103, 119, 148], shade: [27, 39, 65] } : { light: [121, 137, 165], shade: [38, 51, 78] };
+    return layer === "near" ? { light: [95, 112, 142], shade: [24, 36, 61] } : { light: [114, 131, 160], shade: [35, 48, 75] };
   }
   if (family === "rain") return layer === "near" ? { light: [139, 153, 161], shade: [45, 61, 73] } : { light: [168, 180, 185], shade: [82, 99, 110] };
   if (family === "snow") return layer === "near" ? { light: [245, 249, 250], shade: [163, 183, 196] } : { light: [252, 253, 252], shade: [188, 204, 213] };
@@ -1371,7 +1403,12 @@ function skyCloudPixel(descriptor, layer, u, v, texture, seed) {
   const visibleMid = visibleStart + visibleSpan * 0.5;
   const oppositeX = visibleStart + visibleSpan * (sunU < visibleMid ? 0.72 : 0.28);
   const jitter = (skyCloudHashSample(layer === "far" ? 13 : 29, 7, seed) - 0.5) * 0.09;
-  const opening = skyCloudGaussian(u, v, sunU, sunV, family === "cirrus" ? 0.22 : 0.30, 0.29);
+  // Daylight can open a believable pocket around a visible sun. At night the
+  // same subtraction reads as a hard-edged spotlight or beam, so moonlight is
+  // handled by the independent soft glow instead.
+  const opening = descriptor.isDay
+    ? skyCloudGaussian(u, v, sunU, sunV, family === "cirrus" ? 0.22 : 0.30, 0.29)
+    : 0;
   let alpha = 0;
   let light = clamp(0.36 + (1 - v) * 0.32 + (texture - 0.5) * 0.44, 0.12, 0.92);
 
@@ -1395,7 +1432,7 @@ function skyCloudPixel(descriptor, layer, u, v, texture, seed) {
       const lobeC = skyCloudGaussian(u, v, oppositeX + side * 0.17 + jitter * 0.35, 0.39, 0.15, 0.15);
       const base = skyCloudGaussian(u, v, oppositeX + jitter * 0.2, 0.49, 0.34, 0.16);
       const satellite = skyCloudGaussian(u, v, clamp(oppositeX - side * 0.24, visibleStart + 0.03, visibleEnd - 0.03), 0.32, 0.13, 0.13);
-      const macro = Math.max(lobeA, lobeB, lobeC, base * 0.82, satellite * 0.56);
+      const macro = skyCloudSoftUnion(lobeA, lobeB, lobeC, base, satellite);
       const density = macro * 0.86 + (texture - 0.5) * 0.46 - opening * 0.78;
       alpha = smoothstep(0.22, 0.56, density) * (1 - smoothstep(0.65, 0.94, v)) * 0.84;
       const crownLight = Math.max(lobeA, lobeB, lobeC);
@@ -1426,6 +1463,8 @@ function skyCloudPixel(descriptor, layer, u, v, texture, seed) {
       : clamp(0.14 + texture * 0.70 - v * 0.19 + underside * 0.05, 0.10, 0.76);
   }
 
+  if (!descriptor.isDay && family === "broken") alpha *= layer === "far" ? 0.42 : 0.30;
+  if (!descriptor.isDay && family === "cirrus") alpha *= layer === "far" ? 0.50 : 0.38;
   const coverageLift = family === "broken" || family === "cirrus" ? 0.84 + descriptor.coverage * 0.20 : 0.94 + descriptor.coverage * 0.06;
   const maximumAlpha = family === "rain" ? 0.84 : family === "broken" || family === "cirrus" ? 0.84 : 0.88;
   return { alpha: clamp(alpha * coverageLift, 0, maximumAlpha), light };
@@ -1563,9 +1602,16 @@ function skyHaze(vw, vh, skyState) {
   const cloud = clamp01((skyState?.cloud ?? 0) / 100);
   const air = clamp01(skyState?.airHaze ?? 0);
   const pollen = clamp01(skyState?.pollenVeil ?? 0);
-  const topOpacity = clamp(haze * 0.20 + warm * 0.08 + cloud * 0.04 + air * 0.10 + pollen * 0.05, 0.02, 0.3);
-  const horizonOpacity = clamp(haze * 0.30 + warm * 0.18 + air * 0.12 + pollen * 0.08, 0.03, 0.4);
-  const fill = lerpHex("#dcebf4", "#ffd0a0", warm);
+  const isDay = skyState?.isDay !== false;
+  const topOpacity = isDay
+    ? clamp(haze * 0.20 + warm * 0.08 + cloud * 0.04 + air * 0.10 + pollen * 0.05, 0.02, 0.3)
+    : clamp(haze * 0.08 + cloud * 0.015 + air * 0.04 + pollen * 0.025, 0.008, 0.11);
+  const horizonOpacity = isDay
+    ? clamp(haze * 0.30 + warm * 0.18 + air * 0.12 + pollen * 0.08, 0.03, 0.4)
+    : clamp(haze * 0.12 + warm * 0.04 + air * 0.05 + pollen * 0.035, 0.01, 0.14);
+  const fill = isDay
+    ? lerpHex("#dcebf4", "#ffd0a0", warm)
+    : lerpHex("#6e819e", "#987a86", warm);
   return `
     <rect x="0" y="0" width="${vw}" height="${vh}" fill="${fill}" opacity="${topOpacity.toFixed(2)}"/>
     <ellipse cx="${Math.round(vw * 0.5)}" cy="${Math.round(vh * 0.78)}" rx="${Math.round(vw * 0.78)}" ry="${Math.round(vh * 0.28)}" fill="${fill}" opacity="${horizonOpacity.toFixed(2)}" filter="url(#sky-glow-f)"/>
