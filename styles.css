@@ -1671,6 +1671,11 @@ h2 {
   margin: 0;
 }
 
+.watching-menu-row {
+  min-width: 0;
+  margin-top: 8px;
+}
+
 .place-switcher {
   display: flex;
   align-items: center;
@@ -1690,6 +1695,38 @@ h2 {
 }
 .place-switcher:hover {
   border-color: var(--blue);
+}
+.place-switcher:focus-visible {
+  border-color: var(--blue);
+  outline: 3px solid rgba(74, 127, 205, 0.28);
+  outline-offset: 2px;
+}
+.watching-switcher {
+  background:
+    linear-gradient(135deg, rgba(53, 111, 183, 0.10), rgba(52, 125, 98, 0.08)),
+    var(--stage-ribbon-bg);
+}
+.watching-switcher-icon {
+  background: linear-gradient(145deg, rgba(53, 111, 183, 0.18), rgba(52, 125, 98, 0.13));
+  color: var(--green);
+}
+.watching-switcher-count {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  min-width: 25px;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid rgba(53, 111, 183, 0.22);
+  border-radius: 999px;
+  background: rgba(53, 111, 183, 0.11);
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+.watching-switcher-count[hidden] {
+  display: none;
 }
 .place-switcher-icon {
   display: grid;
@@ -1924,6 +1961,7 @@ h2 {
 .launch-place-row,
 .launch-current,
 .launch-alert,
+.plan-invitation,
 .launch-stage .summary,
 .for-you-today {
   position: relative;
@@ -2178,6 +2216,198 @@ h2 {
 .launch-shortcuts button:focus-visible {
   border-color: var(--blue);
   outline: none;
+}
+
+.plan-invitation[hidden] {
+  display: none;
+}
+.plan-invitation {
+  isolation: isolate;
+  overflow: hidden;
+  width: min(640px, 100%);
+  margin: 14px auto 0;
+  border: 1px solid rgba(53, 111, 183, 0.24);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 2% 0%, rgba(53, 111, 183, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(53, 111, 183, 0.10), rgba(52, 125, 98, 0.08)),
+    var(--glass-light);
+  box-shadow:
+    inset 3px 0 0 rgba(53, 111, 183, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 28px rgba(14, 31, 45, 0.10);
+  color: var(--ink);
+  text-align: left;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.plan-invitation-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 46px 8px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.plan-invitation-main:hover .plan-invitation-copy strong,
+.plan-invitation-main:focus-visible .plan-invitation-copy strong {
+  color: var(--blue);
+}
+.plan-invitation-main:focus-visible,
+.plan-invitation-examples button:focus-visible,
+.plan-invitation-dismiss:focus-visible {
+  outline: 3px solid rgba(74, 127, 205, 0.32);
+  outline-offset: -3px;
+}
+.plan-invitation-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(53, 111, 183, 0.20);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(53, 111, 183, 0.17), rgba(52, 125, 98, 0.12));
+  color: var(--blue);
+}
+.plan-invitation-mark svg {
+  width: 27px;
+  height: 27px;
+}
+.plan-invitation-copy,
+.plan-invitation-copy span,
+.plan-invitation-copy strong,
+.plan-invitation-copy small {
+  display: block;
+  min-width: 0;
+}
+.plan-invitation-copy span {
+  color: var(--blue);
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.plan-invitation-copy strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 1.03rem;
+  font-weight: 950;
+  line-height: 1.13;
+  text-wrap: balance;
+  transition: color 150ms ease;
+}
+.plan-invitation-copy small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 760;
+  line-height: 1.28;
+}
+.plan-invitation-chevron {
+  color: var(--blue);
+  font-size: 1.45rem;
+  font-weight: 900;
+  line-height: 1;
+}
+.plan-invitation-dismiss {
+  position: absolute;
+  z-index: 3;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0 15px, transparent 15.5px);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  touch-action: manipulation;
+}
+.plan-invitation-dismiss:hover {
+  background: radial-gradient(circle, rgba(53, 111, 183, 0.12) 0 15px, transparent 15.5px);
+  color: var(--ink);
+}
+.plan-invitation-examples {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 2px 14px 12px 66px;
+}
+.plan-invitation-examples button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(53, 111, 183, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 880;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.plan-invitation-examples button:hover {
+  border-color: var(--blue);
+  background: rgba(53, 111, 183, 0.10);
+}
+
+@media (max-width: 520px) {
+  .plan-invitation {
+    width: min(100%, 94vw);
+  }
+  .plan-invitation-main {
+    gap: 10px;
+    padding: 12px 42px 8px 11px;
+  }
+  .plan-invitation-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+  .plan-invitation-mark svg {
+    width: 24px;
+    height: 24px;
+  }
+  .plan-invitation-copy strong {
+    font-size: 0.94rem;
+  }
+  .plan-invitation-copy small {
+    font-size: 0.76rem;
+  }
+  .plan-invitation-chevron {
+    display: none;
+  }
+  .plan-invitation-examples {
+    padding: 3px 11px 11px;
+  }
+  .plan-invitation-examples button {
+    min-height: 44px;
+    padding-inline: 7px;
+    font-size: 0.72rem;
+  }
 }
 
 .for-you-today[hidden] {
@@ -4458,20 +4688,21 @@ h2 {
     rgba(255, 255, 255, 0.04);
 }
 .plan-watch-overview span,
-.plan-watch-overview strong,
+.plan-watch-overview h3,
 .plan-watch-overview small {
   display: block;
   min-width: 0;
 }
 .plan-watch-overview span {
   color: var(--blue);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 950;
   letter-spacing: 0.05em;
   line-height: 1.1;
   text-transform: uppercase;
 }
-.plan-watch-overview strong {
+.plan-watch-overview h3 {
+  margin: 0;
   color: var(--ink);
   font-size: clamp(1.12rem, 4.6vw, 1.62rem);
   font-weight: 950;
@@ -4500,7 +4731,7 @@ h2 {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.13);
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-style: normal;
   font-weight: 850;
   line-height: 1.1;
@@ -4554,7 +4785,7 @@ h2 {
 }
 .focused-plan-kicker {
   color: var(--blue);
-  font-size: 0.68rem;
+  font-size: 0.76rem;
   font-weight: 950;
   letter-spacing: 0.06em;
   line-height: 1.1;
@@ -4580,6 +4811,11 @@ h2 {
   font-weight: 900;
   line-height: 1.18;
 }
+.focused-plan-hero .focused-plan-outcome {
+  color: var(--blue);
+  font-size: 1.08rem;
+  font-weight: 950;
+}
 .focused-plan-hero p {
   color: var(--ink);
   font-size: 0.86rem;
@@ -4592,8 +4828,8 @@ h2 {
 }
 .focused-plan-hero .focused-plan-advice {
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 12px 14px;
   border: 1px solid rgba(201, 152, 55, 0.26);
   border-radius: 8px;
   background: rgba(201, 152, 55, 0.10);
@@ -4601,7 +4837,7 @@ h2 {
 }
 .focused-plan-hero .focused-plan-advice span {
   color: var(--muted);
-  font-size: 0.64rem;
+  font-size: 0.76rem;
   font-weight: 950;
   letter-spacing: 0.05em;
   line-height: 1.1;
@@ -4609,10 +4845,11 @@ h2 {
 }
 .focused-plan-change {
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 13px 14px;
   border: 1px solid rgba(91, 141, 220, 0.24);
-  border-radius: 8px;
+  border-left-width: 4px;
+  border-radius: 10px;
   background: rgba(91, 141, 220, 0.10);
 }
 .focused-plan-change.is-good {
@@ -4628,37 +4865,97 @@ h2 {
   background: rgba(200, 85, 85, 0.11);
 }
 .focused-plan-change.is-reviewed {
-  border-color: rgba(52, 125, 98, 0.26);
-  background:
-    linear-gradient(135deg, rgba(52, 125, 98, 0.11), rgba(91, 141, 220, 0.07)),
-    rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(91, 141, 220, 0.14);
+}
+.focused-plan-change.is-baseline {
+  border-color: rgba(91, 141, 220, 0.24);
+  background: rgba(91, 141, 220, 0.09);
+}
+.focused-plan-change.is-stable {
+  border-color: rgba(52, 125, 98, 0.24);
+  background: rgba(52, 125, 98, 0.08);
+}
+.focused-plan-change.is-stale {
+  border-color: rgba(201, 152, 55, 0.30);
+  background: rgba(201, 152, 55, 0.10);
+}
+.focused-plan-change-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
 }
 .focused-plan-change span {
   color: var(--blue);
-  font-size: 0.64rem;
+  font-size: 0.76rem;
   font-weight: 950;
   letter-spacing: 0.05em;
   line-height: 1.1;
   text-transform: uppercase;
 }
-.focused-plan-change strong {
-  font-size: 0.86rem;
-  line-height: 1.18;
+.focused-plan-change time {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+  white-space: nowrap;
+}
+.focused-plan-change h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.04rem;
+  font-weight: 900;
+  line-height: 1.2;
 }
 .focused-plan-change p {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.86rem;
   font-weight: 820;
 }
 .focused-plan-change small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.76rem;
   font-weight: 760;
   line-height: 1.25;
 }
+.focused-plan-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.24);
+}
+.focused-plan-compare div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.focused-plan-compare div:last-child {
+  text-align: right;
+}
+.focused-plan-compare b {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 1.32rem;
+  font-weight: 980;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+.focused-plan-compare i {
+  color: var(--blue);
+  font-size: 1.32rem;
+  font-style: normal;
+  font-weight: 950;
+}
+.focused-plan-change .focused-plan-impact {
+  display: grid;
+  gap: 5px;
+  color: var(--ink);
+}
 .focused-plan-hero small {
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 780;
   line-height: 1.25;
 }
@@ -4668,14 +4965,14 @@ h2 {
 .focused-plan-receipt {
   display: grid;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid rgba(54, 76, 98, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.10);
 }
 .focused-plan-receipt > span {
   color: var(--muted);
-  font-size: 0.64rem;
+  font-size: 0.76rem;
   font-weight: 950;
   letter-spacing: 0.05em;
   line-height: 1.1;
@@ -4700,13 +4997,13 @@ h2 {
 }
 .focused-plan-receipt dt {
   color: var(--blue);
-  font-size: 0.66rem;
+  font-size: 0.76rem;
   font-weight: 950;
   text-transform: uppercase;
 }
 .focused-plan-receipt dd {
   color: var(--ink);
-  font-size: 0.76rem;
+  font-size: 0.86rem;
   font-weight: 800;
   overflow-wrap: anywhere;
 }
@@ -4718,15 +5015,15 @@ h2 {
 }
 .focused-plan-actions button,
 .focused-plan-forget {
-  min-height: 34px;
-  padding: 8px 12px;
+  min-height: 44px;
+  padding: 10px 14px;
   border: 1px solid rgba(54, 76, 98, 0.15);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.34);
   color: var(--ink);
   cursor: pointer;
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.82rem;
   font-weight: 950;
 }
 .focused-plan-actions button.is-primary {
@@ -4753,13 +5050,13 @@ h2 {
 }
 .focused-plan-forget {
   justify-self: start;
-  min-height: 28px;
+  min-height: 44px;
   margin-top: -2px;
-  padding: 4px 0;
+  padding: 10px 2px;
   border-color: transparent;
   background: transparent;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.78rem;
 }
 .watch-notify-hub {
   display: grid;
@@ -5431,7 +5728,7 @@ h2 {
 }
 .global-memory-main .global-memory-kicker {
   color: var(--blue);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -5472,7 +5769,7 @@ h2 {
   border-radius: 999px;
   background: rgba(91, 141, 220, 0.10);
   color: var(--blue);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-weight: 950;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -5535,7 +5832,7 @@ h2 {
 }
 .plan-watch-signals b {
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 900;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -5543,12 +5840,17 @@ h2 {
 .plan-watch-signals strong {
   margin-top: 2px;
   color: var(--ink);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 950;
 }
 .global-memory-actions {
   justify-content: flex-start;
   flex-wrap: wrap;
+}
+.global-memory-actions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 0.78rem;
 }
 .global-memory-card.is-past .global-memory-actions {
   opacity: 0.88;
@@ -5575,7 +5877,7 @@ h2 {
 .memory-empty-state button,
 .memory-new-btn {
   justify-self: start;
-  min-height: 36px;
+  min-height: 44px;
   padding: 7px 12px;
   border: 1px solid rgba(91, 141, 220, 0.34);
   border-radius: 999px;
@@ -6563,7 +6865,7 @@ h2 {
   }
 
   .plan-watch-overview-facts {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .plan-watch-notify {
@@ -6612,7 +6914,7 @@ h2 {
     white-space: normal;
   }
 
-  .plan-watch-overview strong,
+  .plan-watch-overview h3,
   .plan-watch-reason,
   .plan-watch-change {
     white-space: normal;

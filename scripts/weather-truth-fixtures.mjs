@@ -145,22 +145,49 @@ const baselinePlan = {
   feelsMax: 91,
   tempUnit: "°F",
   windUnit: "mph",
-  score: 82
+  score: 82,
+  savedAt: 1783080000000
 };
-const rainChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 72, score: 58 });
+const rainChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 72, score: 58, savedAt: 1783083600000 });
 assert.equal(rainChange.type, "plan-rain");
 assert.equal(rainChange.notify, true);
 assert.match(rainChange.body, /Rain now 72%/);
+assert.equal(rainChange.receipt.version, 1);
+assert.equal(rainChange.receipt.direction, "worse");
+assert.equal(rainChange.receipt.metric.label, "Rain chance");
+assert.equal(rainChange.receipt.metric.before, "20%");
+assert.equal(rainChange.receipt.metric.after, "72%");
+assert.equal(rainChange.receipt.baselineAt, 1783080000000);
+assert.equal(rainChange.receipt.checkedAt, 1783083600000);
+assert.match(rainChange.receipt.why, /plan window/i);
+assert.match(rainChange.receipt.action, /rain cover|indoor backup/i);
 
 const drierChange = truth.planWeatherChange({ ...baselinePlan, rainChance: 72 }, { ...baselinePlan, rainChance: 28 });
 assert.equal(drierChange.type, "plan-rain");
 assert.equal(drierChange.notify, false);
+assert.equal(drierChange.receipt.direction, "better");
+
+const drierButHotterChange = truth.planWeatherChange(
+  { ...baselinePlan, rainChance: 72, feelsMax: 91 },
+  { ...baselinePlan, rainChance: 28, feelsMax: 105 }
+);
+assert.equal(drierButHotterChange.type, "plan-heat", "an improvement cannot hide a simultaneous dangerous change");
+assert.equal(drierButHotterChange.notify, true);
 
 const heatChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, feelsMax: 101, score: 52 });
 assert.equal(heatChange.type, "plan-heat");
 assert.equal(heatChange.tone, "watch");
 assert.equal(heatChange.notify, true);
 assert.match(heatChange.body, /101°F/);
+assert.equal(heatChange.receipt.metric.label, "Feels-like peak");
+assert.equal(heatChange.receipt.metric.before, "91°F");
+assert.equal(heatChange.receipt.metric.after, "101°F");
+
+const changedHeatUnits = truth.planWeatherChange(
+  { ...baselinePlan, feelsMax: 95, tempUnit: "°F" },
+  { ...baselinePlan, feelsMax: 35, tempUnit: "°C" }
+);
+assert.equal(changedHeatUnits, null, "unit changes reset the heat comparison instead of fabricating a delta");
 
 const missingHeatBaseline = truth.planWeatherChange({ ...baselinePlan, feelsMax: 0 }, { ...baselinePlan, feelsMax: 96 });
 assert.equal(missingHeatBaseline, null);
@@ -168,6 +195,9 @@ assert.equal(missingHeatBaseline, null);
 const windChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, gustMax: 31, score: 61 });
 assert.equal(windChange.type, "plan-wind");
 assert.equal(windChange.notify, true);
+assert.equal(windChange.receipt.metric.label, "Peak gusts");
+assert.equal(windChange.receipt.metric.before, "18 mph");
+assert.equal(windChange.receipt.metric.after, "31 mph");
 
 const alertChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, alertTone: "warning", alertEvent: "Extreme Heat Warning" });
 assert.equal(alertChange.type, "plan-alert");
@@ -175,6 +205,9 @@ assert.equal(alertChange.notify, true);
 assert.equal(alertChange.title, "4th Party: Extreme Heat Warning overlaps plan");
 assert.match(alertChange.body, /Extreme Heat Warning/);
 assert.doesNotMatch(alertChange.title, /started/i);
+assert.equal(alertChange.receipt.metric.before, "No overlap");
+assert.equal(alertChange.receipt.metric.after, "Extreme Heat Warning");
+assert.match(alertChange.receipt.why, /official weather alert/i);
 
 const noMeaningfulChange = truth.planWeatherChange(baselinePlan, { ...baselinePlan, rainChance: 25, gustMax: 20, feelsMax: 93, score: 79 });
 assert.equal(noMeaningfulChange, null);
@@ -206,6 +239,9 @@ assert.equal(sharedInitialChange.type, "plan-alert");
 assert.equal(sharedInitialChange.notify, true);
 assert.equal(sharedInitialChange.updateBaseline, true);
 assert.equal(sharedInitialChange.title, "4th Party: Extreme Heat Warning overlaps plan");
+assert.equal(sharedInitialChange.receipt.metric.label, "Official alert");
+assert.equal(sharedInitialChange.receipt.metric.before, "First check");
+assert.match(sharedInitialChange.receipt.why, /first checked/i);
 
 const sharedLastKnown = truth.planWeatherLastKnownFromState(
   { id: "party-1", targetDate: "2026-07-03", startHour: 15, endHour: 20 },
@@ -232,6 +268,9 @@ assert.equal(sharedCandidateUrl.searchParams.get("memoryId"), "party 1");
 assert.equal(sharedCandidateUrl.searchParams.get("detail"), "alerts");
 assert.equal(sharedCandidateUrl.searchParams.get("signal"), "plan-alert");
 assert.equal(sharedCandidateUrl.searchParams.get("timeScope"), "plan-window");
+assert.equal(sharedCandidateUrl.searchParams.get("receiptKind"), "plan-alert");
+assert.equal(sharedCandidateUrl.searchParams.get("receiptBefore"), "First check");
+assert.equal(sharedCandidateUrl.searchParams.get("receiptAfter"), "Extreme Heat Warning");
 
 const placeDetailUrl = new URL(truth.planWatchNotificationTargetUrl({
   target: "place-hourly",

@@ -37,7 +37,8 @@ function planWatchNotificationTargetUrl({
   signal = "",
   timeScope = "",
   mode = "",
-  source = "plan-watch-evaluator"
+  source = "plan-watch-evaluator",
+  receipt = null
 } = {}) {
   const params = new URLSearchParams();
   const cleanMemoryId = weatherTruthCleanText(memoryId, 96);
@@ -51,6 +52,26 @@ function planWatchNotificationTargetUrl({
   if (timeScope) params.set("timeScope", weatherTruthCleanToken(timeScope, 32));
   if (mode) params.set("mode", weatherTruthCleanToken(mode, 40));
   if (source) params.set("source", weatherTruthCleanToken(source, 64));
+  if (receipt && typeof receipt === "object") {
+    const metric = receipt.metric && typeof receipt.metric === "object" ? receipt.metric : {};
+    const receiptParams = {
+      receiptKind: weatherTruthCleanToken(receipt.kind, 48),
+      receiptTone: weatherTruthCleanToken(receipt.tone, 24),
+      receiptDirection: weatherTruthCleanToken(receipt.direction, 16),
+      receiptHeadline: weatherTruthCleanText(receipt.headline, 120),
+      receiptMetric: weatherTruthCleanText(metric.label, 48),
+      receiptBefore: weatherTruthCleanText(metric.before, 48),
+      receiptAfter: weatherTruthCleanText(metric.after, 48),
+      receiptUnit: weatherTruthCleanText(metric.unit, 16),
+      receiptWhy: weatherTruthCleanText(receipt.why, 180),
+      receiptAction: weatherTruthCleanText(receipt.action, 180),
+      receiptBaselineAt: String(weatherTruthTimestamp(receipt.baselineAt) || ""),
+      receiptCheckedAt: String(weatherTruthTimestamp(receipt.checkedAt) || "")
+    };
+    Object.entries(receiptParams).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+  }
   return `./?${params.toString()}`;
 }
 
@@ -287,6 +308,14 @@ function weatherTruthNumber(value) {
   return Number.isFinite(number) ? Math.round(number) : null;
 }
 
+function weatherTruthTimestamp(value) {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : 0;
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return Math.round(number);
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function weatherTruthDelta(current, previous) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
   return current - previous;
@@ -413,14 +442,29 @@ function planWeatherWatchStateChange(previousLastKnown = {}, current = {}) {
       previousLastKnown?.body
     ].filter(Boolean).join(" "));
     if (currentSnapshot.alertTone && !hadAlert) {
-      return {
+      const title = currentSnapshot.title || "Plan";
+      const alertName = currentSnapshot.alertEvent || "A weather alert";
+      const tone = currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch"
+        ? "watch"
+        : "caution";
+      const initialAlert = {
         type: "plan-alert",
-        tone: currentSnapshot.alertTone === "warning" || currentSnapshot.alertTone === "watch" ? "watch" : "caution",
+        tone,
         notify: true,
-        updateBaseline: true,
         priority: currentSnapshot.alertTone === "warning" ? 140 : currentSnapshot.alertTone === "watch" ? 125 : 105,
-        title: planWeatherAlertChangeTitle(currentSnapshot.title || "Plan", currentSnapshot.alertEvent),
-        body: planWeatherAlertChangeBody(currentSnapshot.alertEvent)
+        title: planWeatherAlertChangeTitle(title, alertName),
+        body: `${alertName} overlaps this plan window on the first check.`
+      };
+      return {
+        ...planWeatherChangeResult(initialAlert, {}, currentSnapshot, {
+          direction: "changed",
+          metricLabel: "Official alert",
+          before: "First check",
+          after: alertName,
+          why: "An official weather alert was already present when Nearcast first checked this plan.",
+          action: "Open the alert details and adjust the plan if needed."
+        }),
+        updateBaseline: true
       };
     }
     return { type: "baseline", notify: false, updateBaseline: true, priority: 0 };
@@ -473,14 +517,16 @@ function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) 
         detail,
         signal,
         timeScope: "plan-window",
-        source: "plan-watch-evaluator"
+        source: "plan-watch-evaluator",
+        receipt: change.receipt || null
       }),
       memoryId: plan.id || "",
       target: "plan",
       detail,
       signal,
       timeScope: "plan-window",
-      source: "plan-watch-evaluator"
+      source: "plan-watch-evaluator",
+      receipt: change.receipt || null
     }
   };
 }
@@ -504,7 +550,38 @@ function planWeatherChangeSnapshot(item) {
     verdict: item.verdict || "",
     alertTone: item.alertTone || weatherTruthAlertTone(item.alert),
     alertEvent: item.alert?.event || item.alertEvent || "",
-    riskKind: item.riskKind || planWatchRiskKind(item)
+    riskKind: item.riskKind || planWatchRiskKind(item),
+    savedAt: weatherTruthTimestamp(item.savedAt),
+    checkedAt: weatherTruthTimestamp(item.checkedAt)
+  };
+}
+
+function planWeatherChangeReceipt(change = {}, previous = {}, current = {}, detail = {}) {
+  const type = weatherTruthCleanToken(change.type || detail.kind || "plan-change", 48) || "plan-change";
+  const direction = detail.direction === "better" ? "better" : detail.direction === "worse" ? "worse" : "changed";
+  return {
+    version: 1,
+    kind: type,
+    tone: change.tone || "caution",
+    direction,
+    headline: weatherTruthCleanText(change.title || detail.headline || "Forecast changed", 120),
+    metric: {
+      label: weatherTruthCleanText(detail.metricLabel || "Forecast", 48),
+      before: weatherTruthCleanText(detail.before || "Previous", 48),
+      after: weatherTruthCleanText(detail.after || "Now", 48),
+      unit: weatherTruthCleanText(detail.unit || "", 16)
+    },
+    why: weatherTruthCleanText(detail.why || "The forecast changed during this plan window.", 180),
+    action: weatherTruthCleanText(detail.action || "Review the plan window before you go.", 180),
+    baselineAt: weatherTruthTimestamp(previous.savedAt || previous.checkedAt),
+    checkedAt: weatherTruthTimestamp(current.savedAt || current.checkedAt)
+  };
+}
+
+function planWeatherChangeResult(change, previous, current, detail) {
+  return {
+    ...change,
+    receipt: planWeatherChangeReceipt(change, previous, current, detail)
   };
 }
 
@@ -521,6 +598,7 @@ function planWeatherChange(previousItem, currentItem) {
   const current = planWeatherChangeSnapshot(currentItem);
   if (!previous || !current || !samePlanWeatherWindow(previous, current)) return null;
   const title = current.title || previous.title || "Plan";
+  const candidates = [];
 
   if (
     current.alertTone &&
@@ -529,7 +607,7 @@ function planWeatherChange(previousItem, currentItem) {
   ) {
     const tone = current.alertTone === "warning" || current.alertTone === "watch" ? "watch" : "caution";
     const alertName = current.alertEvent || "A weather alert";
-    return {
+    const change = {
       type: "plan-alert",
       tone,
       notify: true,
@@ -537,10 +615,18 @@ function planWeatherChange(previousItem, currentItem) {
       title: planWeatherAlertChangeTitle(title, alertName),
       body: planWeatherAlertChangeBody(alertName)
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: "worse",
+      metricLabel: "Official alert",
+      before: previous.alertEvent || "No overlap",
+      after: alertName,
+      why: "An official weather alert now overlaps this plan window.",
+      action: "Open the alert details and adjust the plan if needed."
+    }));
   }
 
   if (previous.alertTone && !current.alertTone) {
-    return {
+    const change = {
       type: "plan-alert-ended",
       tone: "good",
       notify: false,
@@ -548,12 +634,20 @@ function planWeatherChange(previousItem, currentItem) {
       title: planWeatherAlertChangeTitle(title, previous.alertEvent, true),
       body: planWeatherAlertChangeBody(previous.alertEvent || "The weather alert", true)
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: "better",
+      metricLabel: "Official alert",
+      before: previous.alertEvent || "Alert overlap",
+      after: "No overlap",
+      why: "The official alert no longer overlaps this plan window.",
+      action: "Keep the plan, but check once more before you go."
+    }));
   }
 
   const rainDelta = weatherTruthDelta(current.rainChance, previous.rainChance);
   if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainChance, previous.rainChance) >= 35) {
     const wetter = rainDelta > 0;
-    return {
+    const change = {
       type: "plan-rain",
       tone: wetter ? "watch" : "good",
       notify: wetter,
@@ -561,9 +655,23 @@ function planWeatherChange(previousItem, currentItem) {
       title: `${title} ${wetter ? "got wetter" : "got drier"}`,
       body: `Rain now ${current.rainChance}%, ${wetter ? "up" : "down"} from ${previous.rainChance}%.`
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: wetter ? "worse" : "better",
+      metricLabel: "Rain chance",
+      before: `${previous.rainChance}%`,
+      after: `${current.rainChance}%`,
+      unit: "%",
+      why: wetter
+        ? "Rain is now more likely during this plan window."
+        : "Rain is now less likely during this plan window.",
+      action: wetter
+        ? "Bring rain cover or keep an indoor backup ready."
+        : "The original timing now looks more workable."
+    }));
   }
 
-  const heatComparisonReady = weatherTruthIsPlausibleHeatValue(current.feelsMax, current.tempUnit) &&
+  const heatComparisonReady = current.tempUnit === previous.tempUnit &&
+    weatherTruthIsPlausibleHeatValue(current.feelsMax, current.tempUnit) &&
     weatherTruthIsPlausibleHeatValue(previous.feelsMax, previous.tempUnit || current.tempUnit);
   const heatDelta = heatComparisonReady ? weatherTruthDelta(current.feelsMax, previous.feelsMax) : null;
   const seriousHeat = String(current.tempUnit || "").toLowerCase().includes("c") ? 38 : 100;
@@ -574,7 +682,7 @@ function planWeatherChange(previousItem, currentItem) {
     (crossedSeriousHeat || (Math.abs(heatDelta) >= 5 && Math.max(current.feelsMax, previous.feelsMax) >= notableHeat))
   ) {
     const hotter = heatDelta > 0;
-    return {
+    const change = {
       type: "plan-heat",
       tone: hotter ? (current.feelsMax >= 100 ? "watch" : "caution") : "good",
       notify: hotter,
@@ -582,6 +690,19 @@ function planWeatherChange(previousItem, currentItem) {
       title: `${title} ${hotter ? "got hotter" : "cooled down"}`,
       body: `Feels like now peaks at ${current.feelsMax}${current.tempUnit || ""}, ${hotter ? "up" : "down"} from ${previous.feelsMax}${current.tempUnit || ""}.`
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: hotter ? "worse" : "better",
+      metricLabel: "Feels-like peak",
+      before: `${previous.feelsMax}${current.tempUnit || ""}`,
+      after: `${current.feelsMax}${current.tempUnit || ""}`,
+      unit: current.tempUnit || "",
+      why: hotter
+        ? "The hottest part of the forecast now overlaps this plan window."
+        : "The heat burden eased during this plan window.",
+      action: hotter
+        ? "Shift away from peak heat or plan shade, water, and cooling breaks."
+        : "The plan is easier on heat, but check conditions before you go."
+    }));
   }
 
   const gustDelta = weatherTruthDelta(current.gustMax, previous.gustMax);
@@ -593,7 +714,7 @@ function planWeatherChange(previousItem, currentItem) {
     Math.max(current.gustMax, previous.gustMax) >= weatherTruthWindNotableThreshold(current.windUnit)
   ) {
     const stronger = gustDelta > 0;
-    return {
+    const change = {
       type: "plan-wind",
       tone: stronger ? "caution" : "good",
       notify: stronger,
@@ -601,22 +722,52 @@ function planWeatherChange(previousItem, currentItem) {
       title: `${title} ${stronger ? "got windier" : "eased up"}`,
       body: `Gusts now ${current.gustMax} ${current.windUnit}, ${stronger ? "from" : "down from"} ${previous.gustMax} ${current.windUnit}.`
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: stronger ? "worse" : "better",
+      metricLabel: "Peak gusts",
+      before: `${previous.gustMax} ${current.windUnit}`,
+      after: `${current.gustMax} ${current.windUnit}`,
+      unit: current.windUnit,
+      why: stronger
+        ? "Stronger gusts now overlap this plan window."
+        : "The wind risk eased during this plan window.",
+      action: stronger
+        ? "Secure loose items and reconsider wind-sensitive activity."
+        : "Wind is less limiting, but check once more before you go."
+    }));
   }
 
   const scoreDelta = weatherTruthDelta(current.score, previous.score);
   if (scoreDelta !== null && Math.abs(scoreDelta) >= 18 && weatherTruthScoreBand(current.score) !== weatherTruthScoreBand(previous.score)) {
     const better = scoreDelta > 0;
-    return {
+    const previousBand = weatherTruthScoreBand(previous.score);
+    const currentBand = weatherTruthScoreBand(current.score);
+    const change = {
       type: "plan-score",
       tone: better ? "good" : "caution",
       notify: !better,
       priority: 55 + Math.abs(scoreDelta),
       title: `${title} looks ${better ? "better" : "iffy now"}`,
-      body: `Plan window moved from ${weatherTruthScoreBand(previous.score)} to ${weatherTruthScoreBand(current.score)}.`
+      body: `Plan window moved from ${previousBand} to ${currentBand}.`
     };
+    candidates.push(planWeatherChangeResult(change, previous, current, {
+      direction: better ? "better" : "worse",
+      metricLabel: "Plan fit",
+      before: weatherTruthCapitalize(previousBand),
+      after: weatherTruthCapitalize(currentBand),
+      why: better
+        ? "The combined weather picture is more workable for this plan."
+        : "The combined weather picture crossed into a less workable range.",
+      action: better
+        ? "The plan looks more workable; check the hourly view before you go."
+        : "Review the hourly window and keep a backup option ready."
+    }));
   }
 
-  return null;
+  return candidates.sort((a, b) =>
+    Number(Boolean(b?.notify)) - Number(Boolean(a?.notify)) ||
+    (Number(b?.priority) || 0) - (Number(a?.priority) || 0)
+  )[0] || null;
 }
 
 function planWeatherNotificationState(item) {
@@ -899,6 +1050,7 @@ const NearcastWeatherTruth = {
   weatherTruthDegree,
   weatherTruthUnitPreference,
   weatherTruthNumber,
+  weatherTruthTimestamp,
   weatherTruthDelta,
   weatherTruthScoreBand,
   weatherTruthWindDeltaThreshold,
@@ -928,6 +1080,7 @@ const NearcastWeatherTruth = {
   planWeatherNotificationCandidate,
   planWeatherNotificationDetail,
   planWeatherChangeSnapshot,
+  planWeatherChangeReceipt,
   samePlanWeatherWindow,
   planWeatherChange,
   planWeatherNotificationState,

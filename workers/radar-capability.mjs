@@ -327,15 +327,25 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   }
   const now = new Date();
   const expiresAt = new Date(now.getTime() + PLAN_WATCH_SUBSCRIPTION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const client = normalizePlanWatchClient(payload.client);
+  const clientUnitChanged = Boolean(
+    existingRecord?.client?.unit &&
+    client?.unit &&
+    existingRecord.client.unit !== client.unit
+  );
   const record = {
     provider: PLAN_WATCH_PROVIDER,
     version: 1,
     subscriptionId,
     platform: normalizePlatform(payload.platform),
-    client: normalizePlanWatchClient(payload.client),
+    client,
     subscription,
     nativeChannel,
-    plans: normalizePlanWatchPlans(payload.plans, env),
+    plans: mergePlanWatchPlansWithExisting(
+      normalizePlanWatchPlans(payload.plans, env),
+      existingRecord?.plans,
+      { resetBaseline: clientUnitChanged }
+    ),
     places: mergePlanWatchPlacesWithExisting(
       normalizePlanWatchPlaces(payload.places, env),
       existingRecord?.places
@@ -1994,6 +2004,7 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     sent: 0,
     skipped: 0,
     failed: 0,
+    deferred: 0,
     updated: 0,
     errors: 0,
     results: []
@@ -2007,6 +2018,7 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     summary.sent += result.sent;
     summary.skipped += result.skipped;
     summary.failed += result.failed;
+    summary.deferred += result.deferred;
     summary.updated += result.updated;
     summary.errors += result.errors;
     summary.results.push(result);
@@ -2026,6 +2038,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     sent: 0,
     skipped: 0,
     failed: 0,
+    deferred: 0,
     updated: 0,
     errors: 0,
     reasons: []
@@ -2074,6 +2087,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   result.candidates = candidates.length;
 
   const top = candidates.sort((a, b) => b.priority - a.priority)[0];
+  let deliveredCandidate = null;
   if (top) {
     if (options.dryRun) {
       result.sent = 0;
@@ -2081,7 +2095,10 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     } else {
       const pending = buildPendingPlanWatchNotification(record, top);
       const push = await sendPlanWatchDelivery(record, pending.notification, store, env);
-      if (push.ok) result.sent = 1;
+      if (push.ok) {
+        result.sent = 1;
+        deliveredCandidate = top;
+      }
       else {
         result.failed = 1;
         result.reasons.push(`push-failed:${push.status || 0}`);
@@ -2093,15 +2110,54 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   }
 
   if (!options.dryRun && result.failed === 0) {
+    const persisted = planWatchPersistedEvaluationTargets({
+      plans,
+      places,
+      evaluatedPlans,
+      evaluatedPlaces,
+      candidates,
+      deliveredCandidate
+    });
+    result.deferred = persisted.deferred;
+    result.updated = Math.max(0, result.updated - result.deferred);
     const nextRecord = {
       ...record,
-      plans: evaluatedPlans,
-      places: evaluatedPlaces,
+      plans: persisted.plans,
+      places: persisted.places,
       evaluatedAt: new Date().toISOString()
     };
     await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
   }
   return result;
+}
+
+export function planWatchPersistedEvaluationTargets({
+  plans = [],
+  places = [],
+  evaluatedPlans = [],
+  evaluatedPlaces = [],
+  candidates = [],
+  deliveredCandidate = null
+} = {}) {
+  const candidatePlanIds = new Set(candidates.map((candidate) => candidate?.notification?.memoryId).filter(Boolean));
+  const candidatePlaceIds = new Set(candidates.map((candidate) => candidate?.notification?.placeId).filter(Boolean));
+  const deliveredPlanId = deliveredCandidate?.notification?.memoryId || "";
+  const deliveredPlaceId = deliveredCandidate?.notification?.placeId || "";
+  const originalPlans = new Map(plans.map((plan) => [plan.id, plan]));
+  const originalPlaces = new Map(places.map((place) => [place.id, place]));
+  return {
+    plans: evaluatedPlans.map((plan) =>
+      candidatePlanIds.has(plan.id) && plan.id !== deliveredPlanId
+        ? originalPlans.get(plan.id) || plan
+        : plan
+    ),
+    places: evaluatedPlaces.map((place) =>
+      candidatePlaceIds.has(place.id) && place.id !== deliveredPlaceId
+        ? originalPlaces.get(place.id) || place
+        : place
+    ),
+    deferred: Math.max(0, candidatePlanIds.size + candidatePlaceIds.size - (deliveredCandidate ? 1 : 0))
+  };
 }
 
 async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
@@ -2116,8 +2172,10 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   const windowMs = planWatchWindowMs(plan, forecast);
   const alert = topPlanWatchAlert(alerts, windowMs.startMs, windowMs.endMs);
   const current = sharedPlanWeatherWatchCurrentState(plan, stats, alert, unit);
+  const checkedAt = new Date().toISOString();
+  if (current?.snapshot) current.snapshot = { ...current.snapshot, checkedAt: Date.parse(checkedAt) };
   const change = sharedPlanWeatherWatchStateChange(plan.lastKnown, current);
-  const lastKnown = sharedPlanWeatherLastKnownFromState(plan, current, change);
+  const lastKnown = sharedPlanWeatherLastKnownFromState(plan, current, change, checkedAt);
   const nextPlan = change?.updateBaseline ? { ...plan, lastKnown } : {
     ...plan,
     lastKnown: {
@@ -2693,7 +2751,7 @@ function normalizePendingPlanWatchNotification(value = {}) {
     renotify: Boolean(source.renotify),
     icon: cleanText(source.icon || "/icons/icon-192.png", 120),
     badge: cleanText(source.badge || "/icons/icon-192.png", 120),
-    url: cleanText(source.url || "./", 200),
+    url: cleanText(source.url || "./", 1200),
     memoryId: cleanText(source.memoryId || "", 96),
     placeId: cleanText(source.placeId || "", 96),
     target: cleanToken(source.target || "", 40),
@@ -2952,6 +3010,40 @@ function normalizePlanWatchPlaces(value, env = {}) {
     .filter(Boolean);
 }
 
+function sameRegisteredPlanWindow(a = {}, b = {}) {
+  const samePlace = Math.abs(Number(a.place?.latitude) - Number(b.place?.latitude)) < 0.001 &&
+    Math.abs(Number(a.place?.longitude) - Number(b.place?.longitude)) < 0.001;
+  return Boolean(
+    a.id === b.id &&
+    a.targetDate === b.targetDate &&
+    a.startHour === b.startHour &&
+    a.endHour === b.endHour &&
+    samePlace
+  );
+}
+
+function mergePlanWatchPlansWithExisting(plans = [], existingPlans = [], options = {}) {
+  const existingById = new Map((Array.isArray(existingPlans) ? existingPlans : [])
+    .filter(Boolean)
+    .map((plan) => [plan.id, plan]));
+  return plans.map((plan) => {
+    const existing = existingById.get(plan.id);
+    const existingSnapshot = existing?.lastKnown?.snapshot;
+    const incomingSnapshot = plan?.lastKnown?.snapshot;
+    const incomingUnitsReady = Boolean(incomingSnapshot?.tempUnit && incomingSnapshot?.windUnit);
+    const sameUnits = !existingSnapshot || !incomingSnapshot || !incomingUnitsReady || (
+      existingSnapshot.tempUnit === incomingSnapshot.tempUnit &&
+      existingSnapshot.windUnit === incomingSnapshot.windUnit
+    );
+    return {
+      ...plan,
+      lastKnown: existing && !options.resetBaseline && sameRegisteredPlanWindow(existing, plan) && sameUnits
+        ? existing.lastKnown
+        : plan.lastKnown
+    };
+  });
+}
+
 function normalizePlanWatchWatchedPlace(value) {
   if (!value || typeof value !== "object") return null;
   const place = normalizePlanWatchPlace(value.place || value);
@@ -3046,9 +3138,9 @@ function planWatchRegistrationCapStorageName() {
   return "limits/registration-cap.json";
 }
 
-function normalizePlanWatchSnapshot(value = {}) {
+function normalizePlanWatchSnapshot(value) {
   if (!value || typeof value !== "object") return null;
-  return {
+  const snapshot = {
     placeId: cleanText(value.placeId, 96),
     placeName: cleanText(value.placeName, 120),
     unit: cleanToken(value.unit, 16),
@@ -3067,8 +3159,23 @@ function normalizePlanWatchSnapshot(value = {}) {
     alertTone: cleanToken(value.alertTone, 32),
     alertEvent: cleanText(value.alertEvent, 120),
     riskKind: cleanToken(value.riskKind, 32),
+    savedAt: finiteNumber(value.savedAt, 0),
+    checkedAt: finiteNumber(value.checkedAt, 0),
     days: normalizePlanWatchSnapshotDays(value.days)
   };
+  const hasContent = Boolean(
+    snapshot.placeId ||
+    snapshot.placeName ||
+    snapshot.title ||
+    snapshot.targetDate ||
+    snapshot.alertEvent ||
+    snapshot.tone ||
+    snapshot.riskKind ||
+    snapshot.days.length ||
+    ["rainChance", "gustMax", "feelsMax", "score", "startHour", "endHour"]
+      .some((key) => value[key] !== null && value[key] !== undefined && value[key] !== "" && Number.isFinite(Number(value[key])))
+  );
+  return hasContent ? snapshot : null;
 }
 
 function normalizePlanWatchSnapshotDays(value) {

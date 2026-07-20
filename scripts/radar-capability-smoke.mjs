@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import worker, {
   handleRadarCapabilityRequest,
-  handleXweatherConfigRequest
+  handleXweatherConfigRequest,
+  planWatchPersistedEvaluationTargets
 } from "../workers/radar-capability.mjs";
 
 const futureExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -594,6 +595,49 @@ try {
   const registerPlanWatchBody = await registerPlanWatch.json();
   assert.equal(registerPlanWatchBody.planCount, 1);
 
+  const planWatchRecordKey = [...planWatchBucket.objects.keys()].find((key) => key.includes("/subscriptions/"));
+  assert.ok(planWatchRecordKey, "plan-watch registration is stored");
+  const serverOwnedRecord = JSON.parse(planWatchBucket.objects.get(planWatchRecordKey).body);
+  serverOwnedRecord.plans[0].lastKnown.snapshot.rainChance = 37;
+  serverOwnedRecord.plans[0].lastKnown.checkedAt = "2026-07-02T15:00:00.000Z";
+  planWatchBucket.objects.set(planWatchRecordKey, {
+    ...planWatchBucket.objects.get(planWatchRecordKey),
+    body: JSON.stringify(serverOwnedRecord)
+  });
+
+  const routinePlanWatchResync = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subscription: {
+        endpoint: "https://push.example.test/nearcast-plan-watch",
+        keys: { p256dh: "p256dh", auth: "auth" }
+      },
+      client: { unit: "fahrenheit" },
+      plans: [{
+        id: "party-1",
+        title: "4th Party",
+        targetDate: notificationTomorrow,
+        startHour: 15,
+        endHour: 20,
+        place: {
+          name: "Maryville",
+          admin1: "Illinois",
+          country: "United States",
+          countryCode: "US",
+          latitude: 38.723,
+          longitude: -89.9559
+        },
+        lastKnown: {}
+      }],
+      places: []
+    })
+  }), planWatchEnv, {});
+  assert.equal(routinePlanWatchResync.status, 200);
+  const preservedServerRecord = JSON.parse(planWatchBucket.objects.get(planWatchRecordKey).body);
+  assert.equal(preservedServerRecord.plans[0].lastKnown.snapshot.rainChance, 37);
+  assert.equal(preservedServerRecord.plans[0].lastKnown.checkedAt, "2026-07-02T15:00:00.000Z");
+
   const evaluatePlanWatch = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/evaluate", {
     method: "POST",
     headers: {
@@ -607,6 +651,22 @@ try {
   assert.equal(evaluatePlanWatchBody.plans, 1);
   assert.equal(evaluatePlanWatchBody.candidates, 1);
   assert.equal(evaluatePlanWatchBody.results[0].reasons[0], "dry-run:plan-alert");
+
+  const originalPlanA = { id: "plan-a", lastKnown: { snapshot: { rainChance: 20 } } };
+  const originalPlanB = { id: "plan-b", lastKnown: { snapshot: { rainChance: 25 } } };
+  const evaluatedPlanA = { id: "plan-a", lastKnown: { snapshot: { rainChance: 70 } } };
+  const evaluatedPlanB = { id: "plan-b", lastKnown: { snapshot: { rainChance: 80 } } };
+  const candidateA = { notification: { target: "plan", memoryId: "plan-a" } };
+  const candidateB = { notification: { target: "plan", memoryId: "plan-b" } };
+  const persistedPlanTargets = planWatchPersistedEvaluationTargets({
+    plans: [originalPlanA, originalPlanB],
+    evaluatedPlans: [evaluatedPlanA, evaluatedPlanB],
+    candidates: [candidateA, candidateB],
+    deliveredCandidate: candidateA
+  });
+  assert.equal(persistedPlanTargets.plans[0].lastKnown.snapshot.rainChance, 70);
+  assert.equal(persistedPlanTargets.plans[1].lastKnown.snapshot.rainChance, 25);
+  assert.equal(persistedPlanTargets.deferred, 1);
 
   const placeWatchBucket = createR2Bucket();
   const placeWatchEnv = {

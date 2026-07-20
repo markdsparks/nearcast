@@ -290,6 +290,9 @@ const PLAN_WATCH_REVIEWED_CHANGES_KEY = "nearcast-plan-watch-reviewed-changes-v1
 const PLAN_WATCH_REVIEWED_MAX_CHANGES = 120;
 const PLAN_WATCH_REVIEWED_CHANGE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const PLAN_WATCH_RECENT_REVIEW_MS = 10 * 60 * 1000;
+const PLAN_WATCH_RECEIPTS_KEY = "nearcast-plan-watch-receipts-v1";
+const PLAN_WATCH_RECEIPT_MAX_ITEMS = 40;
+const PLAN_WATCH_RECEIPT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const PLAN_WATCH_PUSH_CONFIG_ENDPOINT = "/api/watch/notifications/config";
 const PLAN_WATCH_PUSH_REGISTER_ENDPOINT = "/api/watch/notifications/register";
 const PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT = "/api/watch/notifications/unregister";
@@ -300,11 +303,13 @@ const PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY = "nearcast-plan-watch-native-subscr
 const planWatchState = {
   data: {},
   alerts: {},
+  alertsReady: {},
   loading: {},
   errors: {},
   lastFetchAt: {},
   baselineStore: null,
   recentReviewedChanges: {},
+  announcedReceiptSignatures: new Set(),
   pushConfig: null,
   pushConfigPromise: null,
   pushLastSyncAt: 0,
@@ -312,6 +317,7 @@ const planWatchState = {
   pushSyncPromise: null
 };
 let planWatchFocusMemoryId = "";
+let planWatchVisibleReceiptSignature = "";
 let planWatchNotificationRouteConsumed = "";
 
 function planWatchReviewedChangesStore() {
@@ -348,7 +354,9 @@ function planWatchChangeReviewKey(memory, change) {
     memory.targetDate || "",
     memory.startHour ?? "",
     memory.endHour ?? "",
+    planWatchPlaceKey(memory.place || {}),
     change.type,
+    change.receipt?.metric?.unit || "",
     change.title || "",
     change.body || ""
   ].join("|");
@@ -376,6 +384,172 @@ function markPlanWatchChangeReviewed(memory, change) {
   writePlanWatchReviewedChangesStore(store);
   planWatchState.recentReviewedChanges[memory.id] = { change, at: now };
   return true;
+}
+
+function planWatchReceiptWindowKey(value = {}, snapshot = null) {
+  const source = snapshot || value;
+  const memory = value.memory || value;
+  return [
+    source.targetDate || memory.targetDate || "",
+    source.startHour ?? memory.startHour ?? "",
+    source.endHour ?? memory.endHour ?? "",
+    source.placeKey || planWatchPlaceKey(memory.place || {}),
+    source.tempUnit || "",
+    source.windUnit || ""
+  ].join("|");
+}
+
+function cleanPlanWatchStoredReceipt(entry = {}, fallbackMemoryId = "") {
+  const sourceChange = entry.change && typeof entry.change === "object" ? entry.change : {};
+  const sourceReceipt = sourceChange.receipt && typeof sourceChange.receipt === "object"
+    ? sourceChange.receipt
+    : entry.receipt && typeof entry.receipt === "object" ? entry.receipt : {};
+  const sourceMetric = sourceReceipt.metric && typeof sourceReceipt.metric === "object" ? sourceReceipt.metric : {};
+  const memoryId = String(entry.memoryId || fallbackMemoryId || "").trim().slice(0, 96);
+  const type = String(sourceChange.type || sourceReceipt.kind || "").trim().slice(0, 48);
+  const title = planWatchCompactText(sourceChange.title || sourceReceipt.headline || "Forecast changed", 120);
+  const body = planWatchCompactText(sourceChange.body || "Weather changed during this plan window.", 180);
+  const detectedAt = Math.max(0, Number(entry.detectedAt || sourceReceipt.checkedAt) || Date.now());
+  const reviewedAt = Math.max(0, Number(entry.reviewedAt) || 0);
+  if (!memoryId || !type || !title) return null;
+  return {
+    memoryId,
+    windowKey: String(entry.windowKey || "").slice(0, 80),
+    signature: String(entry.signature || "").slice(0, 320),
+    detectedAt,
+    reviewedAt,
+    change: {
+      type,
+      tone: ["good", "caution", "watch", "pending", "neutral"].includes(sourceChange.tone)
+        ? sourceChange.tone
+        : "caution",
+      notify: sourceChange.notify !== false,
+      priority: Math.max(0, Number(sourceChange.priority) || 0),
+      title,
+      body,
+      receipt: {
+        version: 1,
+        kind: type,
+        tone: sourceReceipt.tone || sourceChange.tone || "caution",
+        direction: ["better", "worse", "changed"].includes(sourceReceipt.direction)
+          ? sourceReceipt.direction
+          : "changed",
+        headline: planWatchCompactText(sourceReceipt.headline || title, 120),
+        metric: {
+          label: planWatchCompactText(sourceMetric.label || "Forecast", 48),
+          before: planWatchCompactText(sourceMetric.before || "Previous", 48),
+          after: planWatchCompactText(sourceMetric.after || "Now", 48),
+          unit: planWatchCompactText(sourceMetric.unit || "", 16)
+        },
+        why: planWatchCompactText(sourceReceipt.why || body, 180),
+        action: planWatchCompactText(sourceReceipt.action || "Review the plan window before you go.", 180),
+        baselineAt: Math.max(0, Number(sourceReceipt.baselineAt || entry.baselineAt) || 0),
+        checkedAt: Math.max(0, Number(sourceReceipt.checkedAt || entry.checkedAt || detectedAt) || detectedAt)
+      }
+    }
+  };
+}
+
+function readPlanWatchReceiptStore() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_RECEIPTS_KEY) || "null");
+    const raw = parsed?.receipts && typeof parsed.receipts === "object" ? parsed.receipts : {};
+    const now = Date.now();
+    const receipts = {};
+    Object.entries(raw).forEach(([memoryId, value]) => {
+      const receipt = cleanPlanWatchStoredReceipt(value, memoryId);
+      if (receipt && now - receipt.detectedAt <= PLAN_WATCH_RECEIPT_MAX_AGE_MS) receipts[memoryId] = receipt;
+    });
+    return { receipts };
+  } catch {
+    return { receipts: {} };
+  }
+}
+
+function writePlanWatchReceiptStore(store) {
+  try {
+    const now = Date.now();
+    const entries = Object.entries(store?.receipts || {})
+      .map(([memoryId, value]) => [memoryId, cleanPlanWatchStoredReceipt(value, memoryId)])
+      .filter(([, value]) => value && now - value.detectedAt <= PLAN_WATCH_RECEIPT_MAX_AGE_MS)
+      .sort((a, b) => b[1].detectedAt - a[1].detectedAt)
+      .slice(0, PLAN_WATCH_RECEIPT_MAX_ITEMS);
+    localStorage.setItem(PLAN_WATCH_RECEIPTS_KEY, JSON.stringify({ receipts: Object.fromEntries(entries) }));
+  } catch {
+    /* A durable receipt is helpful, but storage failure must not block forecasts. */
+  }
+}
+
+function planWatchStoredReceipt(memory, snapshot = null) {
+  if (!memory?.id) return null;
+  const entry = readPlanWatchReceiptStore().receipts[memory.id] || null;
+  if (!entry || entry.windowKey !== planWatchReceiptWindowKey(memory, snapshot)) return null;
+  return entry;
+}
+
+function capturePlanWatchChangeReceipt(current, previous, change) {
+  const memoryId = String(current?.memoryId || "").trim();
+  const memory = state.planMemories.find((item) => item.id === memoryId);
+  if (!memory || !change?.type || !change?.body) return null;
+  const signature = planWatchChangeReviewKey(memory, change);
+  if (!signature) return null;
+  const store = readPlanWatchReceiptStore();
+  const existing = store.receipts[memoryId];
+  if (existing?.signature === signature) return existing;
+  const receipt = cleanPlanWatchStoredReceipt({
+    memoryId,
+    windowKey: planWatchReceiptWindowKey(memory, current),
+    signature,
+    detectedAt: change.receipt?.checkedAt || current?.savedAt || Date.now(),
+    reviewedAt: 0,
+    baselineAt: change.receipt?.baselineAt || previous?.savedAt || 0,
+    checkedAt: change.receipt?.checkedAt || current?.savedAt || Date.now(),
+    change
+  }, memoryId);
+  if (!receipt) return null;
+  store.receipts[memoryId] = receipt;
+  writePlanWatchReceiptStore(store);
+  recordPlanWatchRecentUpdate({
+    key: `receipt:${signature}`,
+    targetType: "plan",
+    targetId: memoryId,
+    tone: change.tone || "caution",
+    title: change.title || planMemoryTitle(memory),
+    body: change.body,
+    at: receipt.detectedAt
+  }, { refresh: false });
+  return receipt;
+}
+
+function markPlanWatchReceiptReviewed(memoryId) {
+  const store = readPlanWatchReceiptStore();
+  const entry = store.receipts[memoryId];
+  if (!entry || entry.reviewedAt) return entry || null;
+  entry.reviewedAt = Date.now();
+  store.receipts[memoryId] = entry;
+  writePlanWatchReceiptStore(store);
+  return entry;
+}
+
+function clearPlanWatchTracking(memoryId) {
+  if (!memoryId) return;
+  const receiptStore = readPlanWatchReceiptStore();
+  delete receiptStore.receipts[memoryId];
+  writePlanWatchReceiptStore(receiptStore);
+  writePlanWatchRecentUpdates(readPlanWatchRecentUpdates().filter((update) => !(
+    update.targetType === "plan" && update.targetId === memoryId
+  )));
+  const reviewed = planWatchReviewedChangesStore();
+  reviewed.changes = Object.fromEntries(Object.entries(reviewed.changes || {}).filter(([key]) => !key.startsWith(`${memoryId}|`)));
+  writePlanWatchReviewedChangesStore(reviewed);
+  delete planWatchState.recentReviewedChanges[memoryId];
+  if (typeof loadContinuityStore === "function" && typeof saveContinuityStore === "function") {
+    const continuity = loadContinuityStore();
+    delete continuity.plans?.[`memory:${memoryId}`];
+    continuity.updatedAt = Date.now();
+    saveContinuityStore(continuity);
+    refreshPlanWatchBaselineStore(continuity);
+  }
 }
 
 function readPlanWatchNotificationState() {
@@ -459,11 +633,11 @@ function writePlanWatchRecentUpdates(updates) {
   }
 }
 
-function recordPlanWatchRecentUpdate(update = {}) {
+function recordPlanWatchRecentUpdate(update = {}, options = {}) {
   const clean = cleanPlanWatchRecentUpdate(update);
   const existing = readPlanWatchRecentUpdates().filter((item) => item.key !== clean.key);
   writePlanWatchRecentUpdates([clean, ...existing]);
-  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
+  if (options.refresh !== false && typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
   return clean;
 }
 
@@ -558,6 +732,24 @@ function nearcastNotificationRouteFromLocation() {
     const signal = (params.get("signal") || params.get("type") || "").trim();
     const timeScope = (params.get("timeScope") || params.get("scope") || "").trim();
     const mode = (params.get("mode") || params.get("layer") || "").trim();
+    const receiptKind = (params.get("receiptKind") || "").trim();
+    const receipt = receiptKind ? {
+      version: 1,
+      kind: receiptKind,
+      tone: (params.get("receiptTone") || "caution").trim(),
+      direction: (params.get("receiptDirection") || "changed").trim(),
+      headline: (params.get("receiptHeadline") || "Forecast changed").trim(),
+      metric: {
+        label: (params.get("receiptMetric") || "Forecast").trim(),
+        before: (params.get("receiptBefore") || "Previous").trim(),
+        after: (params.get("receiptAfter") || "Now").trim(),
+        unit: (params.get("receiptUnit") || "").trim()
+      },
+      why: (params.get("receiptWhy") || "The forecast changed during this plan window.").trim(),
+      action: (params.get("receiptAction") || "Review the plan window before you go.").trim(),
+      baselineAt: Math.max(0, Number(params.get("receiptBaselineAt")) || 0),
+      checkedAt: Math.max(0, Number(params.get("receiptCheckedAt")) || 0)
+    } : null;
     return {
       marker,
       target,
@@ -568,8 +760,9 @@ function nearcastNotificationRouteFromLocation() {
       memoryId,
       placeId,
       alertId,
+      receipt,
       source: (params.get("source") || "notification").trim(),
-      signature: `${marker}|${target}|${detail}|${signal}|${timeScope}|${mode}|${memoryId}|${placeId}|${alertId}|${params.get("source") || ""}`
+      signature: `${marker}|${target}|${detail}|${signal}|${timeScope}|${mode}|${memoryId}|${placeId}|${alertId}|${receipt?.checkedAt || ""}|${params.get("source") || ""}`
     };
   } catch {
     return null;
@@ -610,6 +803,18 @@ function clearNearcastNotificationRouteUrl() {
       "scope",
       "mode",
       "layer",
+      "receiptKind",
+      "receiptTone",
+      "receiptDirection",
+      "receiptHeadline",
+      "receiptMetric",
+      "receiptBefore",
+      "receiptAfter",
+      "receiptUnit",
+      "receiptWhy",
+      "receiptAction",
+      "receiptBaselineAt",
+      "receiptCheckedAt",
       "source"
     ].forEach((key) => url.searchParams.delete(key));
     const clean = `${url.pathname}${url.search}${url.hash}`;
@@ -642,6 +847,37 @@ function nearcastNotificationDetailKind(route = {}) {
   return "";
 }
 
+function capturePlanWatchRouteReceipt(route = {}) {
+  const memoryId = String(route.memoryId || "").trim();
+  const memory = state.planMemories.find((item) => item.id === memoryId);
+  const receipt = route.receipt;
+  if (!memory || !receipt?.kind || !receipt?.headline) return null;
+  const metric = receipt.metric || {};
+  const body = metric.before && metric.after
+    ? `${metric.label || "Forecast"} changed from ${metric.before} to ${metric.after}.`
+    : receipt.why || "Weather changed during this plan window.";
+  const change = {
+    type: receipt.kind,
+    tone: receipt.tone || "caution",
+    notify: receipt.direction !== "better",
+    priority: receipt.direction === "worse" ? 100 : 50,
+    title: receipt.headline,
+    body,
+    receipt
+  };
+  const current = {
+    memoryId,
+    targetDate: memory.targetDate || "",
+    startHour: memory.startHour,
+    endHour: memory.endHour,
+    placeKey: planWatchPlaceKey(memory.place || {}),
+    tempUnit: state.unit === "fahrenheit" ? "F" : "C",
+    windUnit: state.unit === "fahrenheit" ? "mph" : "km/h",
+    savedAt: receipt.checkedAt || Date.now()
+  };
+  return capturePlanWatchChangeReceipt(current, { savedAt: receipt.baselineAt || 0 }, change);
+}
+
 function consumeNearcastNotificationRoute(options = {}) {
   const route = nearcastNotificationRouteFromLocation();
   if (!route || route.signature === planWatchNotificationRouteConsumed) return false;
@@ -657,7 +893,8 @@ function consumeNearcastNotificationRoute(options = {}) {
   }
 
   planWatchNotificationRouteConsumed = route.signature;
-  const update = planWatchRecentUpdateFromRoute(route);
+  const routedReceipt = capturePlanWatchRouteReceipt(route);
+  const update = routedReceipt ? null : planWatchRecentUpdateFromRoute(route);
   if (update) recordPlanWatchRecentUpdate(update);
   clearNearcastNotificationRouteUrl();
 
@@ -2216,21 +2453,23 @@ function planAwareBriefingItems(data = state.forecast, place = state.activePlace
   const todayIndex = Number.isInteger(options.dayIndex)
     ? options.dayIndex
     : typeof forecastDailyIndex === "function" ? forecastDailyIndex(data) : 0;
-  const c = buildAIContext(data, place, activeAlerts);
+  const alerts = Array.isArray(options.alerts) ? options.alerts : activeAlerts;
+  const c = buildAIContext(data, place, alerts);
   if (!c) return [];
   return activePlanMemoryEventsForDay(todayIndex, data, place)
-    .map(({ memory, event }) => planBriefingItemFromEvent(memory, event, data, place, c))
+    .map(({ memory, event }) => planBriefingItemFromEvent(memory, event, data, place, c, alerts))
     .filter(Boolean)
     .sort((a, b) => b.priority - a.priority || a.event.startMs - b.event.startMs);
 }
 
-function nextPlanBriefingItem(data = state.forecast, place = state.activePlace) {
+function nextPlanBriefingItem(data = state.forecast, place = state.activePlace, options = {}) {
   if (!data || !place || !state.planMemories?.length) return null;
-  const c = buildAIContext(data, place, activeAlerts);
+  const alerts = Array.isArray(options.alerts) ? options.alerts : activeAlerts;
+  const c = buildAIContext(data, place, alerts);
   if (!c) return null;
   const events = planMemoryEventsForPlace(data, place, { limit: 12 });
   for (const { memory, event } of events) {
-    const item = planBriefingItemFromEvent(memory, event, data, place, c);
+    const item = planBriefingItemFromEvent(memory, event, data, place, c, alerts);
     if (item) return item;
   }
   return null;
@@ -2845,6 +3084,7 @@ async function runAsk(question, intent) {
   // a tiny model can't reliably reason about this, and even handed the correct
   // verdict it sometimes mangles or flips it. Deterministic = always correct.
   if (intent) {
+    if (typeof recordForYouSignal === "function") recordForYouSignal("plan-check-started");
     const row = beginAskResponse(question);
     try {
       finishAskResponse(row, await answerPresetIntent(intent, question, row));
@@ -2858,6 +3098,8 @@ async function runAsk(question, intent) {
     await runMemoryEdit(question, plannerEditingMemoryId);
     return;
   }
+
+  if (typeof recordForYouSignal === "function") recordForYouSignal("plan-check-started");
 
   // Free-form: answer deterministically from the data (always correct). We do
   // NOT route open questions to the model — a 0.5B hallucinates on these
@@ -2933,6 +3175,9 @@ function finishAskResponse(row, result, options = {}) {
     askThread[row].a = normalized.answer;
     askThread[row].event = normalized.event || null;
   }
+  if (normalized.event && !options.updateMemoryId && typeof recordForYouSignal === "function") {
+    recordForYouSignal("plan-check-completed");
+  }
   if (options.updateMemoryId) {
     const updated = applyPlanMemoryEdit(options.updateMemoryId, normalized, {
       row,
@@ -2981,6 +3226,7 @@ async function runPlannerClarification(index) {
       }
       row = beginAskResponse(option.label);
       if (option.confirmPlan) {
+        if (typeof recordForYouSignal === "function") recordForYouSignal("plan-check-confirmed");
         finishAskResponse(row, pending.result, editingMemoryId ? {
           updateMemoryId: editingMemoryId,
           original: plannerEditingMemoryDraft || pending.plan?.original || option.label
@@ -3852,8 +4098,14 @@ function rememberPlanFromThread(rowIndex) {
   state.planMemories = [memory, ...state.planMemories].slice(0, 60);
   exchange.memoryId = memory.id;
   savePlanMemories();
+  if (typeof recordForYouSignal === "function") recordForYouSignal("plan-watched");
   renderAsk();
   refreshPlanMemorySurfaces();
+  if (!savePlanWatchBaselineForMemory(memory.id, { replace: true })) {
+    const pending = planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+      .filter((item) => item.memory.id === memory.id);
+    if (pending.length) refreshPlanWatchForecasts(pending);
+  }
 }
 
 function clearPlannerMemoryEdit() {
@@ -3886,8 +4138,14 @@ function applyPlanMemoryEdit(memoryId, normalized, options = {}) {
     askThread[options.row].memoryId = existing.id;
   }
   savePlanMemories();
+  clearPlanWatchTracking(existing.id);
   clearPlannerMemoryEdit();
   refreshPlanMemorySurfaces();
+  if (!savePlanWatchBaselineForMemory(existing.id, { replace: true })) {
+    const pending = planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+      .filter((item) => item.memory.id === existing.id);
+    if (pending.length) refreshPlanWatchForecasts(pending);
+  }
   syncPlanWatchNotificationSubscription({ force: true, reason: "plan-edited" });
   return true;
 }
@@ -3901,6 +4159,7 @@ function forgetPlanMemory(id) {
   });
   if (plannerEditingMemoryId === id) clearPlannerMemoryEdit();
   if (state.planMemories.length !== before) savePlanMemories();
+  if (state.planMemories.length !== before) clearPlanWatchTracking(id);
   renderAsk();
   refreshPlanMemorySurfaces();
   syncPlanWatchNotificationSubscription({ force: true, reason: "plan-forgotten" });
@@ -4665,9 +4924,16 @@ async function saveStructuredMemoryEdit(event) {
       memory.id === updated.id ? updated : memory
     );
     savePlanMemories();
+    clearPlanWatchTracking(updated.id);
     clearPlannerMemoryEdit();
     renderAsk();
     refreshPlanMemorySurfaces();
+    if (!savePlanWatchBaselineForMemory(updated.id, { replace: true })) {
+      const pending = planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+        .filter((item) => item.memory.id === updated.id);
+      if (pending.length) refreshPlanWatchForecasts(pending);
+    }
+    syncPlanWatchNotificationSubscription({ force: true, reason: "plan-edited" });
     closeMemoryEditSheet();
   } catch (err) {
     if (memoryEditState) memoryEditState.saving = false;
@@ -5396,16 +5662,31 @@ function planWatchPlaceKey(place) {
   ].join("|");
 }
 
+function planWatchForecastFreshness(data, key = "") {
+  const provenance = data && typeof forecastProvenance === "function" ? forecastProvenance(data) : null;
+  const checkedAt = Math.max(0, Number(provenance?.savedAt || planWatchState.lastFetchAt[key]) || 0);
+  return {
+    checkedAt,
+    stale: Boolean(
+      provenance?.cacheFallback ||
+      (checkedAt && Date.now() - checkedAt > PLAN_WATCH_FORECAST_MAX_AGE_MS)
+    )
+  };
+}
+
 function planWatchSourceForMemory(memory, isHere = false) {
   const place = normalizePlace(memory?.place || {});
   const key = planWatchPlaceKey(place);
   if (isHere && state.forecast) {
+    const freshness = planWatchForecastFreshness(state.forecast, key);
     return {
       key,
       place: normalizePlace(state.activePlace || place),
       data: state.forecast,
       alerts: activeAlerts || [],
-      status: "ready"
+      alertsReady: typeof activeAlertsReady === "undefined" ? true : Boolean(activeAlertsReady),
+      status: "ready",
+      ...freshness
     };
   }
 
@@ -5413,13 +5694,16 @@ function planWatchSourceForMemory(memory, isHere = false) {
     ? readForecastCache(place, { maxAge: PLAN_WATCH_FORECAST_MAX_AGE_MS })
     : null;
   const data = planWatchState.data[key] || cached?.data || null;
+  const freshness = planWatchForecastFreshness(data, key);
   return {
     key,
     place,
     data,
     alerts: planWatchState.alerts[key] || [],
+    alertsReady: Boolean(planWatchState.alertsReady[key]),
     status: data ? "ready" : planWatchState.loading[key] ? "loading" : planWatchState.errors[key] ? "error" : "idle",
-    error: planWatchState.errors[key] || ""
+    error: planWatchState.errors[key] || "",
+    ...freshness
   };
 }
 
@@ -5458,7 +5742,7 @@ function planWatchBaselineStore() {
   return state.continuityBaseline?.store || planWatchState.baselineStore || refreshPlanWatchBaselineStore();
 }
 
-function planWatchChangeForItem(item, source) {
+function planWatchComparisonForItem(item, source) {
   if (
     !item?.memory ||
     !item?.stats ||
@@ -5466,13 +5750,35 @@ function planWatchChangeForItem(item, source) {
     typeof continuityPlanSnapshot !== "function" ||
     typeof continuityPlanKey !== "function" ||
     typeof continuityPlanChange !== "function"
-  ) return null;
+  ) return { snapshot: null, previous: null, change: null };
 
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit);
+  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit, {
+    alertsReady: source.alertsReady
+  });
   const previous = snapshot ? planWatchBaselineStore()?.plans?.[continuityPlanKey(snapshot)] : null;
-  return continuityPlanChange(snapshot, previous);
+  const compatible = Boolean(
+    snapshot &&
+    previous &&
+    previous.alertsReady !== false &&
+    snapshot.alertsReady !== false &&
+    previous.placeKey === snapshot.placeKey &&
+    previous.targetDate === snapshot.targetDate &&
+    previous.startHour === snapshot.startHour &&
+    previous.endHour === snapshot.endHour &&
+    previous.tempUnit === snapshot.tempUnit &&
+    previous.windUnit === snapshot.windUnit
+  );
+  return {
+    snapshot,
+    previous: compatible ? previous : null,
+    change: compatible && !source?.stale ? continuityPlanChange(snapshot, previous) : null
+  };
+}
+
+function planWatchChangeForItem(item, source) {
+  return planWatchComparisonForItem(item, source).change;
 }
 
 function planWatchResolvedForecastItem({ memory, event = null, isHere = false, isPast = false }) {
@@ -5488,11 +5794,42 @@ function planWatchResolvedForecastItem({ memory, event = null, isHere = false, i
   return { source, item, event: watchEvent, past };
 }
 
+function savePlanWatchBaselineForMemory(memoryId, options = {}) {
+  const found = planMemoryListItems(state.forecast, state.activePlace, { includePast: true })
+    .find((entry) => entry.memory.id === memoryId);
+  if (!found || found.isPast) return false;
+  const resolved = planWatchResolvedForecastItem(found);
+  if (!resolved.item || resolved.source?.stale) return false;
+  const comparison = planWatchComparisonForItem(resolved.item, resolved.source);
+  const snapshot = comparison.snapshot;
+  const key = snapshot && typeof continuityPlanKey === "function" ? continuityPlanKey(snapshot) : "";
+  if (
+    !snapshot ||
+    snapshot.alertsReady === false ||
+    !key ||
+    typeof loadContinuityStore !== "function" ||
+    typeof saveContinuityStore !== "function"
+  ) return false;
+  if (comparison.previous && !options.replace) return true;
+  let store = loadContinuityStore();
+  store.plans[key] = snapshot;
+  if (typeof pruneContinuityStore === "function") {
+    const placeKey = typeof continuityPlaceKey === "function" ? continuityPlaceKey(resolved.source.place) : "";
+    store = pruneContinuityStore(store, placeKey);
+  } else {
+    store.updatedAt = Date.now();
+  }
+  saveContinuityStore(store);
+  refreshPlanWatchBaselineStore(store);
+  return true;
+}
+
 function savePlanWatchReviewedContinuitySnapshot(item, source) {
   if (
     !item?.memory?.id ||
     !source?.data ||
     !source?.place ||
+    source?.stale ||
     typeof loadContinuityStore !== "function" ||
     typeof saveContinuityStore !== "function" ||
     typeof continuityPlanSnapshot !== "function" ||
@@ -5501,7 +5838,9 @@ function savePlanWatchReviewedContinuitySnapshot(item, source) {
 
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit);
+  const snapshot = continuityPlanSnapshot(item, source.data, source.place, tempUnit, windUnit, {
+    alertsReady: source.alertsReady
+  });
   const key = continuityPlanKey(snapshot);
   if (!key) return;
 
@@ -5517,15 +5856,22 @@ function savePlanWatchReviewedContinuitySnapshot(item, source) {
   refreshPlanWatchBaselineStore(store);
 }
 
-function markPlanWatchFocusedChangeReviewed(memoryId) {
+function markPlanWatchFocusedChangeReviewed(memoryId, expectedSignature = null) {
   const found = planMemoryListItems(state.forecast, state.activePlace, { includePast: true })
     .find((item) => item.memory.id === memoryId);
   if (!found || found.isPast) return false;
   const resolved = planWatchResolvedForecastItem(found);
   if (!resolved.item) return false;
-  const change = planWatchChangeForItem(resolved.item, resolved.source);
+  const comparison = planWatchComparisonForItem(resolved.item, resolved.source);
+  let stored = planWatchStoredReceipt(found.memory, comparison.snapshot);
+  if (comparison.change && !stored) {
+    stored = capturePlanWatchChangeReceipt(comparison.snapshot, comparison.previous, comparison.change);
+  }
+  if (expectedSignature !== null && stored?.signature !== expectedSignature) return false;
+  const change = stored?.change || comparison.change;
   if (!change?.body) return false;
   markPlanWatchChangeReviewed(found.memory, change);
+  markPlanWatchReceiptReviewed(memoryId);
   savePlanWatchReviewedContinuitySnapshot(resolved.item, resolved.source);
   if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
   return true;
@@ -5537,12 +5883,54 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
   if (!source.data) return planWatchPendingItem(memory, source, isPast);
   if (!watchEvent || !item) return planWatchPendingItem(memory, source, past);
 
-  const rawChange = planWatchChangeForItem(item, source);
-  const storedReviewedChange = rawChange && planWatchChangeWasReviewed(memory, rawChange) ? rawChange : null;
-  const recentReviewedChange = !rawChange && !past ? planWatchRecentReviewedChange(memory.id) : null;
-  const reviewedChange = storedReviewedChange || recentReviewedChange;
-  const change = reviewedChange ? null : rawChange;
+  const comparison = planWatchComparisonForItem(item, source);
+  const rawChange = comparison.change;
+  let storedReceipt = planWatchStoredReceipt(memory, comparison.snapshot);
+  if (rawChange && !past) {
+    storedReceipt = capturePlanWatchChangeReceipt(comparison.snapshot, comparison.previous, rawChange) || storedReceipt;
+  }
+  const rawSignature = rawChange ? planWatchChangeReviewKey(memory, rawChange) : "";
+  const rawAlreadyReviewed = Boolean(
+    rawChange &&
+    storedReceipt?.reviewedAt &&
+    storedReceipt.signature === rawSignature
+  );
+  const effectiveRawChange = rawAlreadyReviewed ? null : rawChange;
+  const durableUnreviewedChange = !effectiveRawChange && storedReceipt && !storedReceipt.reviewedAt
+    ? storedReceipt.change
+    : null;
+  const durableReviewedChange = storedReceipt?.reviewedAt ? storedReceipt.change : null;
+  const storedReviewedChange = effectiveRawChange && planWatchChangeWasReviewed(memory, effectiveRawChange)
+    ? effectiveRawChange
+    : null;
+  const recentReviewedChange = !effectiveRawChange && !durableUnreviewedChange && !durableReviewedChange && !past
+    ? planWatchRecentReviewedChange(memory.id)
+    : null;
+  const reviewedChange = durableReviewedChange || storedReviewedChange || recentReviewedChange;
+  const change = reviewedChange ? null : (effectiveRawChange || durableUnreviewedChange);
   const truth = planWeatherTruth({ ...item, change, isPast: past, status: "ready" }) || {};
+  const baselineAt = Number(
+    (change || reviewedChange)?.receipt?.baselineAt ||
+    comparison.previous?.savedAt ||
+    0
+  ) || 0;
+  const checkedAt = Number(
+    source.checkedAt ||
+    comparison.snapshot?.forecastCheckedAt ||
+    comparison.snapshot?.savedAt ||
+    (change || reviewedChange)?.receipt?.checkedAt ||
+    0
+  ) || 0;
+  const baselineIsCurrent = Boolean(
+    baselineAt && checkedAt && Math.abs(checkedAt - baselineAt) < 2 * 60 * 1000
+  );
+  const comparisonState = past
+    ? "past"
+    : change ? "changed"
+      : source.stale ? "stale"
+        : reviewedChange ? "reviewed"
+          : comparison.previous ? (baselineIsCurrent ? "baseline" : "stable")
+            : "baseline";
   return {
     ...item,
     ...truth,
@@ -5559,6 +5947,11 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
     change,
     reviewedChange,
     changeReviewed: Boolean(reviewedChange),
+    storedReceipt,
+    comparisonState,
+    baselineAt,
+    checkedAt,
+    changeDetectedAt: Number(storedReceipt?.detectedAt || change?.receipt?.checkedAt || 0) || 0,
     isPast: past
   };
 }
@@ -5586,11 +5979,19 @@ function renderPlanWatchStatus(watch) {
 
 function planWatchAttentionRank(watch) {
   if (!watch || watch.isPast) return 0;
+  if (watch.change?.type === "plan-alert") return 7;
+  if (watch.change?.receipt?.direction === "worse") return 6;
   if (watch.tone === "watch") return 4;
   if (watch.tone === "caution") return 3;
   if (watch.change) return 2;
   if (watch.status === "loading") return 1;
   return 0;
+}
+
+function planWatchChangeEvidence(change) {
+  const metric = change?.receipt?.metric;
+  if (!metric?.before || !metric?.after) return change?.body || "";
+  return `${metric.label}: ${metric.before} → ${metric.after}`;
 }
 
 function planWatchOverviewFactRows(watchItems) {
@@ -5630,20 +6031,40 @@ function renderPlanWatchOverview(watchItems) {
     (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
   )[0];
 
-  const tone = top?.tone || (savedPlaces ? "good" : "pending");
+  const tone = top?.comparisonState === "stale"
+    ? "caution"
+    : top?.tone || (savedPlaces ? "good" : "pending");
   let kicker = "Watching now";
   let title = "Nothing needs attention right now";
   let body = "Nearcast will keep plan and saved-place changes visible here.";
   const attentionCount = upcoming.filter((watch) => ["watch", "caution"].includes(watch.tone) && !watch.isPast).length;
-  if (top && attentionCount) {
+  if (top?.change) {
+    const changedWhen = formatPlanWatchRelativeTimestamp(top.changeDetectedAt || top.change?.receipt?.checkedAt);
+    kicker = changedWhen ? `Forecast changed · ${changedWhen}` : "Forecast changed";
+    title = top.change.title || `${planMemoryTitle(top.memory)} changed`;
+    body = `${planWatchChangeEvidence(top.change) || top.change.body || top.reason}${top.source?.stale ? " · refresh needed" : ""}`;
+  } else if (top?.comparisonState === "stale") {
+    const checkedWhen = formatPlanWatchRelativeTimestamp(top.checkedAt);
+    kicker = "Refresh needed";
+    title = "Forecast check is out of date";
+    body = `Nearcast cannot confirm whether this plan is still holding${checkedWhen ? ` · last forecast ${checkedWhen}` : ""}.`;
+  } else if (top && attentionCount) {
     kicker = attentionCount === 1 ? "Needs a look" : `${attentionCount} need a look`;
     title = `${planMemoryTitle(top.memory)}: ${top.label}`;
     body = top.change?.body || top.reason || "Nearcast found weather worth checking.";
   } else if (top) {
-    title = upcoming.length === 1 ? "Your watched plan looks manageable" : "Your watched plans look manageable";
-    body = upcoming.length === 1
-      ? "No major weather signal stands out for the next watched plan."
-      : "No major weather signal stands out across your upcoming watched plans.";
+    const checkedWhen = formatPlanWatchRelativeTimestamp(top.checkedAt);
+    if (top.comparisonState === "baseline") {
+      kicker = "Watching starts here";
+      title = upcoming.length === 1 ? "Baseline saved for your plan" : "Baselines saved for your plans";
+      body = "Nearcast will make the next meaningful forecast change easy to see.";
+    } else {
+      kicker = "All steady";
+      title = "No meaningful forecast changes";
+      body = upcoming.length === 1
+        ? `${planMemoryTitle(top.memory)}: ${top.label || "Weather looks manageable"}${checkedWhen ? ` · checked ${checkedWhen}` : ""}.`
+        : `Nothing has crossed a plan-changing threshold${checkedWhen ? ` · checked ${checkedWhen}` : ""}.`;
+    }
   } else if (savedPlaces) {
     kicker = "Saved places";
     title = "Your places are ready to watch";
@@ -5653,7 +6074,7 @@ function renderPlanWatchOverview(watchItems) {
   return `
     <section class="plan-watch-overview is-${escapeHtml(tone)}">
       <span>${escapeHtml(kicker)}</span>
-      <strong>${escapeHtml(title)}</strong>
+      <h3>${escapeHtml(title)}</h3>
       <small>${escapeHtml(planWatchCompactText(body, 136))}</small>
       ${facts.length ? `
         <div class="plan-watch-overview-facts">
@@ -5672,9 +6093,13 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
   const effectivePast = Boolean(isPast || watched?.isPast);
   const kicker = effectivePast ? "Past" : isHere ? "This place" : "Away";
   const focused = memory.id === planWatchFocusMemoryId;
+  const statusAria = watched?.change
+    ? `Forecast changed. ${planWatchChangeEvidence(watched.change) || watched.change.body}`
+    : `${watched?.label || "Waiting on forecast"}. ${watched?.reason || ""}`;
+  const accessibleMeta = meta ? `${meta}. ` : "";
   return `
     <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""}${focused ? " is-focused" : ""} is-${escapeHtml(watched?.tone || "pending")}" data-memory-card="${escapeHtml(memory.id)}">
-      <button class="memory-main global-memory-main" type="button" data-memory-detail="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Inspect ${planMemoryTitle(memory)}`)}">
+      <button class="memory-main global-memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Open ${planMemoryTitle(memory)}. ${accessibleMeta}${statusAria}`)}">
         <span class="global-memory-kicker">${escapeHtml(kicker)}</span>
         <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
         <span>${escapeHtml(meta)}</span>
@@ -5730,16 +6155,78 @@ function renderFocusedPlanNotifyAction(watch, effectivePast) {
 }
 
 function renderFocusedPlanChangeBlock(watch) {
-  const change = watch?.change || watch?.reviewedChange;
-  if (!change?.body) return "";
+  const change = watch?.change || (watch?.comparisonState === "stale" ? null : watch?.reviewedChange);
+  if (!change?.body) {
+    if (watch?.isPast) return "";
+    const baseline = formatPlanWatchRelativeTimestamp(watch?.baselineAt);
+    const checked = formatPlanWatchRelativeTimestamp(watch?.checkedAt);
+    const freshness = [
+      baseline ? `Comparison saved ${baseline}` : "",
+      checked ? `checked ${checked}` : ""
+    ].filter(Boolean).join(" · ");
+    const stateValue = watch?.comparisonState || "baseline";
+    const copy = stateValue === "stale"
+      ? {
+          label: "Refresh needed",
+          title: "Using the last usable forecast",
+          body: "Nearcast will compare again when a fresh forecast is available."
+        }
+      : stateValue === "stable"
+        ? {
+            label: "No meaningful change",
+            title: "Forecast is holding steady",
+            body: "Nothing has crossed a threshold that should change this plan."
+          }
+        : {
+            label: "Baseline saved",
+            title: "Watching starts here",
+            body: "Future forecasts will be compared with this plan window."
+          };
+    return `
+      <section class="focused-plan-change is-${escapeHtml(stateValue)}" aria-label="${escapeHtml(copy.label)}">
+        <span>${escapeHtml(copy.label)}</span>
+        <h4>${escapeHtml(copy.title)}</h4>
+        <p>${escapeHtml(copy.body)}</p>
+        ${freshness ? `<small>${escapeHtml(freshness)}</small>` : ""}
+      </section>
+    `;
+  }
   const reviewed = !watch?.change && Boolean(watch?.reviewedChange);
   const tone = change.tone || watch?.tone || "caution";
+  const receipt = change.receipt || {};
+  const metric = receipt.metric || {};
+  const changedWhen = formatPlanWatchRelativeTimestamp(watch?.changeDetectedAt || receipt.checkedAt);
+  const baselineWhen = formatPlanWatchRelativeTimestamp(receipt.baselineAt || watch?.baselineAt);
+  const checkedWhen = formatPlanWatchRelativeTimestamp(receipt.checkedAt || watch?.checkedAt);
+  const freshness = [
+    baselineWhen ? `Compared with ${baselineWhen}` : "Compared with the saved forecast",
+    checkedWhen ? `checked ${checkedWhen}` : "",
+    watch?.source?.stale ? "forecast refresh needed" : ""
+  ].filter(Boolean).join(" · ");
+  const announceSignature = !reviewed ? String(watch?.storedReceipt?.signature || "") : "";
+  const shouldAnnounce = Boolean(
+    announceSignature &&
+    !planWatchState.announcedReceiptSignatures.has(announceSignature)
+  );
+  if (shouldAnnounce) planWatchState.announcedReceiptSignatures.add(announceSignature);
+  const announcement = `${change.title || "Forecast changed"}. ${planWatchChangeEvidence(change) || change.body || ""}`.trim();
   return `
     <section class="focused-plan-change is-${escapeHtml(tone)}${reviewed ? " is-reviewed" : ""}">
-      <span>${reviewed ? "Reviewed change" : "Forecast changed"}</span>
-      <strong>${escapeHtml(change.title || "Plan changed")}</strong>
-      <p>${escapeHtml(change.body)}</p>
-      <small>${reviewed ? "Nearcast saved this forecast as the current comparison point. New changes will stand out." : "Compared with the previous forecast saved on this device."}</small>
+      ${shouldAnnounce ? `<span class="sr-only" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(announcement)}</span>` : ""}
+      <div class="focused-plan-change-head">
+        <span>${reviewed ? "Last meaningful change" : "Forecast changed"}</span>
+        ${changedWhen ? `<time datetime="${escapeHtml(new Date(watch?.changeDetectedAt || receipt.checkedAt).toISOString())}">${escapeHtml(changedWhen)}</time>` : ""}
+      </div>
+      <h4>${escapeHtml(change.title || "Plan changed")}</h4>
+      ${metric.before && metric.after ? `
+        <div class="focused-plan-compare" aria-label="${escapeHtml(`${metric.label || "Forecast"}: before ${metric.before}, now ${metric.after}`)}">
+          <div><span>Before</span><b>${escapeHtml(metric.before)}</b></div>
+          <i aria-hidden="true">→</i>
+          <div><span>Now</span><b>${escapeHtml(metric.after)}</b></div>
+        </div>
+      ` : `<p>${escapeHtml(change.body)}</p>`}
+      <p class="focused-plan-impact"><span>Why it matters</span>${escapeHtml(receipt.why || change.body)}</p>
+      <small>${escapeHtml(freshness)}${reviewed ? " · reviewed" : ""}</small>
     </section>
   `;
 }
@@ -5748,12 +6235,15 @@ function renderFocusedPlanReceipt(watch) {
   const lines = Array.isArray(watch?.receiptLines)
     ? watch.receiptLines
     : typeof planWeatherReceiptLines === "function" ? planWeatherReceiptLines(watch) : [];
-  if (!lines.length) return "";
+  const filtered = lines.filter((line) => !(
+    (watch?.change || watch?.reviewedChange) && String(line?.label || "").toLowerCase() === "changed"
+  ));
+  if (!filtered.length) return "";
   return `
     <section class="focused-plan-receipt">
-      <span>Why Nearcast says this</span>
+      <span>Plan window now</span>
       <dl>
-        ${lines.map((line) => `
+        ${filtered.map((line) => `
           <div class="is-${escapeHtml(line.kind || "neutral")}">
             <dt>${escapeHtml(line.label)}</dt>
             <dd>${escapeHtml(line.value)}</dd>
@@ -5774,19 +6264,21 @@ function renderFocusedPlanWatchHero(item, watch) {
     watch?.fullReason ||
     watch?.reason ||
     "Nearcast is checking this plan against the forecast.";
-  const advice = String(watch?.action || (!watch?.change ? watch?.advice : "") || "").trim();
   const effectivePast = Boolean(item.isPast || watch?.isPast);
+  const receiptChange = watch?.change || watch?.reviewedChange;
+  const advice = effectivePast
+    ? ""
+    : String(receiptChange?.receipt?.action || watch?.action || (!watch?.change ? watch?.advice : "") || "").trim();
   return `
     <section class="focused-plan-hero is-${escapeHtml(tone)}">
       <span class="focused-plan-kicker">${effectivePast ? "Saved plan" : "Watched plan"}</span>
-      <h3>${escapeHtml(label)}</h3>
-      <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
+      <h3>${escapeHtml(planMemoryTitle(memory))}</h3>
+      <strong class="focused-plan-outcome">${escapeHtml(label)}</strong>
       ${renderFocusedPlanChangeBlock(watch)}
-      <p class="focused-plan-reason">${escapeHtml(reason)}</p>
+      ${receiptChange ? "" : `<p class="focused-plan-reason">${escapeHtml(reason)}</p>`}
       ${advice ? `<p class="focused-plan-advice"><span>What to do</span>${escapeHtml(advice)}</p>` : ""}
       <small>${escapeHtml(planWatchMetaText(memory, watch))}</small>
       ${renderPlanWatchSignals(watch)}
-      ${renderFocusedPlanReceipt(watch)}
       <div class="focused-plan-actions">
         ${effectivePast ? "" : `<button class="is-primary" type="button" data-memory-hourly="${id}">Hourly detail</button>`}
         ${renderFocusedPlanNotifyAction(watch, effectivePast)}
@@ -5845,11 +6337,15 @@ function renderGlobalMemorySheet() {
     : null;
 
   if (focusedItem) {
+    const focusedWatch = watchById.get(focusedItem.memory.id) || planWatchItemForMemoryItem(focusedItem);
+    planWatchVisibleReceiptSignature = focusedWatch?.change
+      ? String(focusedWatch?.storedReceipt?.signature || "")
+      : "";
     setGlobalMemorySheetFocusedMode(true);
     els.memorySheetSummary.innerHTML = "";
     els.memorySheetBody.innerHTML = renderFocusedPlanWatchSheet({
       focusedItem,
-      focusedWatch: watchById.get(focusedItem.memory.id) || planWatchItemForMemoryItem(focusedItem),
+      focusedWatch,
       upcoming,
       past,
       watchById
@@ -5858,6 +6354,7 @@ function renderGlobalMemorySheet() {
   }
 
   planWatchFocusMemoryId = "";
+  planWatchVisibleReceiptSignature = "";
   setGlobalMemorySheetFocusedMode(false);
   els.memorySheetSummary.innerHTML = renderPlanWatchOverview(watchItems);
 
@@ -5919,12 +6416,12 @@ function planWatchFetchPlaces(items) {
     .slice(0, PLAN_WATCH_MAX_AUTO_FETCH_PLACES);
 }
 
-function savePlanWatchContinuitySnapshot(data, place) {
+function savePlanWatchContinuitySnapshot(data, place, options = {}) {
   if (!data || !place || typeof saveContinuitySnapshot !== "function") return;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const truth = typeof weatherTruth === "function" ? weatherTruth(data) : null;
-  saveContinuitySnapshot(data, place, tempUnit, windUnit, truth);
+  saveContinuitySnapshot(data, place, tempUnit, windUnit, truth, options);
   refreshPlanWatchBaselineStore();
 }
 
@@ -5944,23 +6441,31 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
     if (cached?.data) planWatchState.data[key] = cached.data;
 
     planWatchState.loading[key] = true;
+    planWatchState.alertsReady[key] = false;
     planWatchState.lastFetchAt[key] = now;
     delete planWatchState.errors[key];
     refreshOpenGlobalMemorySheet();
 
     Promise.all([
       fetchForecast(place),
-      safeFetchPlanAlerts(place).catch(() => [])
-    ]).then(([data, alerts]) => {
+      safeFetchPlanAlerts(place)
+        .then((alerts) => ({ alerts: alerts || [], ready: true }))
+        .catch(() => ({ alerts: [], ready: false }))
+    ]).then(([data, alertResult]) => {
       planWatchState.data[key] = data;
-      planWatchState.alerts[key] = alerts || [];
+      planWatchState.alerts[key] = alertResult.alerts;
+      planWatchState.alertsReady[key] = alertResult.ready;
       delete planWatchState.errors[key];
       if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
       maybeSyncPlanWatchNotifications();
       syncPlanWatchNotificationSubscription({ reason: "watch-forecast-refreshed" });
-      savePlanWatchContinuitySnapshot(data, place);
+      savePlanWatchContinuitySnapshot(data, place, {
+        alertsReady: alertResult.ready,
+        alerts: alertResult.alerts
+      });
     }).catch((err) => {
       planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
+      planWatchState.alertsReady[key] = false;
     }).finally(() => {
       delete planWatchState.loading[key];
       refreshOpenGlobalMemorySheet();
@@ -5971,14 +6476,17 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
 
 function openGlobalMemorySheet(options = {}) {
   if (!els.memorySheet || !els.memoryBackdrop) return;
+  if (typeof recordForYouSignal === "function") recordForYouSignal("watching-open");
   const focusMemoryId = String(options.focusMemoryId || "").trim();
   if (focusMemoryId && state.planMemories.some((memory) => memory.id === focusMemoryId)) {
+    if (planWatchFocusMemoryId && planWatchFocusMemoryId !== focusMemoryId) {
+      markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId, planWatchVisibleReceiptSignature);
+    }
     planWatchFocusMemoryId = focusMemoryId;
   } else if (!focusMemoryId) {
     planWatchFocusMemoryId = "";
   }
   refreshPlanWatchBaselineStore();
-  if (planWatchFocusMemoryId) markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId);
   renderGlobalMemorySheet();
   els.memoryBackdrop.hidden = false;
   els.memorySheet.hidden = false;
@@ -6015,6 +6523,11 @@ function refreshPlanMemorySurfaces() {
 
 function closeGlobalMemorySheet() {
   if (!els.memorySheet || !els.memoryBackdrop || els.memorySheet.hidden) return;
+  if (planWatchFocusMemoryId) {
+    markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId, planWatchVisibleReceiptSignature);
+  }
+  planWatchFocusMemoryId = "";
+  planWatchVisibleReceiptSignature = "";
   els.memoryBackdrop.classList.remove("show");
   els.memorySheet.classList.remove("show");
   const keepLocked =
@@ -7618,10 +8131,15 @@ function renderAILauncher() {
       aiState.phase === "error" ? "Plan checks work · private summary needs attention"
       : "Check a plan against the forecast.";
   }
+  if (typeof renderPlanInvitation === "function") renderPlanInvitation();
+  if (typeof updateInstallPromptUI === "function") updateInstallPromptUI();
 }
 
 function openAISheet(options = {}) {
   const { restoreScroll = null, autoBrief = false } = options;
+  if (typeof retirePlanInvitationForPlanCheckEntry === "function") {
+    retirePlanInvitationForPlanCheckEntry();
+  }
   els.aiBackdrop.hidden = false;
   els.aiSheet.hidden = false;
   setSheetScrollAnchor(els.aiSheet);

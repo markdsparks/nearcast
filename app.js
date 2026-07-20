@@ -1,4 +1,4 @@
-const VERSION = "3.0.280";
+const VERSION = "3.0.282";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -52,6 +52,8 @@ const INSTALL_PROMPT_DISMISSED_UNTIL_KEY = "nearcast-install-dismissed-until";
 const INSTALL_PROMPT_ACCEPTED_KEY = "nearcast-install-accepted";
 const INSTALL_PROMPT_VISIT_COUNT_KEY = "nearcast-install-visit-count";
 const INSTALL_PROMPT_SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
+const PLAN_INVITATION_DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
+const PLAN_INVITATION_MAX_IMPRESSIONS = 3;
 const WELCOME_AMBIENCE_CACHE_KEY = "nearcast-welcome-ambience-v1";
 const WELCOME_WORLD_SKY_CACHE_KEY = "nearcast-world-sky-cache-v1";
 const REACTIVE_SKY_KEY = "nearcast-reactive-sky-v1";
@@ -89,7 +91,16 @@ const FOR_YOU_SIGNAL_IDS = [
   "launch-summary",
   "memory-open",
   "memory-show",
-  "memory-edit"
+  "memory-edit",
+  "plan-invite-shown",
+  "plan-invite-open",
+  "plan-invite-dismiss",
+  "plan-template",
+  "plan-check-started",
+  "plan-check-confirmed",
+  "plan-check-completed",
+  "plan-watched",
+  "watching-open"
 ];
 
 const WELCOME_WORLD_SKY_PLACES = [
@@ -541,6 +552,165 @@ function recordForYouSignal(value) {
   saveUserContext();
 }
 
+function forYouSignalState(value) {
+  const signal = normalizeForYouSignal(value);
+  if (!signal) return { count: 0, lastAt: 0 };
+  const action = state.userContext?.actions?.[signal];
+  return {
+    count: Math.max(0, Number(action?.count) || 0),
+    lastAt: Math.max(0, Number(action?.lastAt) || 0)
+  };
+}
+
+function planInvitationHasUsefulForecast() {
+  return Boolean(
+    state.activePlace &&
+    state.forecast?.current &&
+    Array.isArray(state.forecast?.hourly?.time) &&
+    state.forecast.hourly.time.length
+  );
+}
+
+function planInvitationIsUnresolved(now = Date.now()) {
+  if (!els.planInvitation || !planInvitationHasUsefulForecast()) return false;
+  if (welcomeIsActive()) return false;
+  if (Array.isArray(state.planMemories) && state.planMemories.length) return false;
+
+  const engaged = ["plan", "plan-invite-open", "plan-check-started", "plan-watched"]
+    .some((signal) => forYouSignalState(signal).count > 0);
+  if (engaged) return false;
+
+  const dismissal = forYouSignalState("plan-invite-dismiss");
+  if (dismissal.lastAt && now - dismissal.lastAt < PLAN_INVITATION_DISMISS_MS) return false;
+  return forYouSignalState("plan-invite-shown").count < PLAN_INVITATION_MAX_IMPRESSIONS;
+}
+
+function planInvitationCanShow(now = Date.now()) {
+  return planInvitationIsUnresolved(now) && aiState.phase !== "unknown";
+}
+
+function clearPlanInvitationImpressionObserver() {
+  if (!planInvitationObserver) return;
+  planInvitationObserver.disconnect();
+  planInvitationObserver = null;
+}
+
+function recordPlanInvitationImpression() {
+  if (planInvitationImpressionRecorded) return;
+  planInvitationImpressionRecorded = true;
+  clearPlanInvitationImpressionObserver();
+  // Local-only, allowlisted activation count. No plan wording or location is stored.
+  recordForYouSignal("plan-invite-shown");
+}
+
+function observePlanInvitationImpression() {
+  if (!els.planInvitation || els.planInvitation.hidden || planInvitationImpressionRecorded || planInvitationObserver) return;
+  if (typeof IntersectionObserver !== "function") {
+    requestAnimationFrame(() => {
+      if (!planInvitationCanShow() || els.planInvitation.hidden || planInvitationImpressionRecorded) return;
+      const rect = els.planInvitation.getBoundingClientRect();
+      const visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+      const visibleRatio = rect.width > 0 && rect.height > 0
+        ? (visibleWidth * visibleHeight) / (rect.width * rect.height)
+        : 0;
+      if (visibleRatio >= 0.6) recordPlanInvitationImpression();
+    });
+    return;
+  }
+
+  planInvitationObserver = new IntersectionObserver((entries) => {
+    const entry = entries.find((candidate) => candidate.target === els.planInvitation);
+    if (!entry?.isIntersecting || entry.intersectionRatio < 0.6) return;
+    if (!planInvitationCanShow() || els.planInvitation.hidden) {
+      clearPlanInvitationImpressionObserver();
+      return;
+    }
+    recordPlanInvitationImpression();
+  }, { threshold: [0.6] });
+  planInvitationObserver.observe(els.planInvitation);
+}
+
+function renderPlanInvitation() {
+  if (!els.planInvitation) return;
+  const show = planInvitationCanShow();
+  els.planInvitation.hidden = !show;
+  if (!show) {
+    clearPlanInvitationImpressionObserver();
+    return;
+  }
+  observePlanInvitationImpression();
+}
+
+function openPlanInvitation(template = "") {
+  // A direct action proves meaningful visibility even if the observer has not fired yet.
+  recordPlanInvitationImpression();
+  recordForYouSignal("plan-invite-open");
+  recordForYouSignal("plan");
+  if (template) recordForYouSignal("plan-template");
+  renderPlanInvitation();
+  openAISheet({ autoBrief: false });
+  requestAnimationFrame(() => {
+    if (typeof clearPlannerMemoryEdit === "function") clearPlannerMemoryEdit();
+    if (typeof renderAsk === "function") renderAsk();
+    if (typeof fillPlannerTemplate === "function") {
+      fillPlannerTemplate(template, {
+        helperText: "Use this place, or name another one. Add a day and time when you can."
+      });
+    }
+  });
+}
+
+function dismissPlanInvitation() {
+  recordPlanInvitationImpression();
+  recordForYouSignal("plan-invite-dismiss");
+  renderPlanInvitation();
+  updateInstallPromptUI();
+}
+
+function retirePlanInvitationForPlanCheckEntry() {
+  // A deliberate Plan Check visit is durable engagement even if the nudge is
+  // snoozed or weather data has not arrived yet.
+  if (forYouSignalState("plan").count === 0) recordForYouSignal("plan");
+  renderPlanInvitation();
+  updateInstallPromptUI();
+}
+
+function activeWatchingPlanCount() {
+  const memories = Array.isArray(state.planMemories) ? state.planMemories : [];
+  if (typeof planWatchMemoryIsPast !== "function") return memories.length;
+  return memories.filter((memory) => !planWatchMemoryIsPast(memory)).length;
+}
+
+function renderWatchingSwitcher() {
+  if (!els.watchingSwitcher) return;
+  const row = els.watchingSwitcher.closest(".watching-menu-row");
+  const hasWeatherContext = !welcomeIsActive() && Boolean(state.activePlace || state.savedPlaces.length);
+  if (row) row.hidden = !hasWeatherContext;
+  if (!hasWeatherContext) return;
+
+  const planCount = activeWatchingPlanCount();
+  const placeCount = typeof placeWatchNotificationSelectedCount === "function"
+    ? Math.max(0, Number(placeWatchNotificationSelectedCount()) || 0)
+    : 0;
+  const total = planCount + placeCount;
+  let meta = "Plans and saved places";
+  if (planCount && placeCount) {
+    meta = `${planCount} ${planCount === 1 ? "plan" : "plans"} · ${placeCount} ${placeCount === 1 ? "place" : "places"}`;
+  } else if (planCount) {
+    meta = `${planCount} active ${planCount === 1 ? "plan" : "plans"}`;
+  } else if (placeCount) {
+    meta = `${placeCount} ${placeCount === 1 ? "place" : "places"} can notify you`;
+  }
+
+  if (els.watchingSwitcherMeta) els.watchingSwitcherMeta.textContent = meta;
+  if (els.watchingSwitcherCount) {
+    els.watchingSwitcherCount.hidden = total === 0;
+    els.watchingSwitcherCount.textContent = total ? String(total) : "";
+  }
+  els.watchingSwitcher.setAttribute("aria-label", `Open Watching. ${meta}.`);
+}
+
 const mapState = {
   initialized: false,
   zoom: 7,
@@ -909,6 +1079,9 @@ const installPromptState = {
   visitCount: 0
 };
 
+let planInvitationImpressionRecorded = false;
+let planInvitationObserver = null;
+
 const reactiveSkyMotionState = {
   status: "idle",
   source: "none",
@@ -1003,6 +1176,9 @@ const els = {
   nowSummary: document.querySelector("#nowSummary"),
   forYouToday: document.querySelector("#forYouToday"),
   launchShortcuts: document.querySelector("#launchShortcuts"),
+  planInvitation: document.querySelector("#planInvitation"),
+  planInvitationOpen: document.querySelector("#planInvitationOpen"),
+  planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
@@ -1062,6 +1238,9 @@ const els = {
   placeSwitcher: document.querySelector("#placeSwitcher"),
   placeSwitcherName: document.querySelector("#placeSwitcherName"),
   placeSwitcherMeta: document.querySelector("#placeSwitcherMeta"),
+  watchingSwitcher: document.querySelector("#watchingSwitcher"),
+  watchingSwitcherMeta: document.querySelector("#watchingSwitcherMeta"),
+  watchingSwitcherCount: document.querySelector("#watchingSwitcherCount"),
   placeSheet: document.querySelector("#placeSheet"),
   placeBackdrop: document.querySelector("#placeBackdrop"),
   hourly: document.querySelector("#hourly"),
@@ -3045,6 +3224,8 @@ function installPromptEarned() {
 
 function installPromptCanShow() {
   if (isNativeNearcastApp() || isInstalledPwa() || installPromptAccepted() || installPromptDismissed()) return false;
+  // Give the product-defining Plan Check invitation the first earned moment.
+  if (planInvitationIsUnresolved()) return false;
   if (!userHasWeatherContext() || !installPromptEarned()) return false;
   return Boolean(installPromptState.nativePromptAvailable || isIosLikeDevice());
 }
@@ -3354,7 +3535,6 @@ function bindTapDelegate(container, selector, action, options = {}) {
 
 function handleLaunchShortcut(action) {
   if (action === "plan") {
-    recordForYouSignal("plan");
     openAISheet({ autoBrief: false });
     return;
   }
@@ -3652,6 +3832,11 @@ function bindEvents() {
     submitAskForm();
   });
   bindTapAction(els.aiLauncher, openAISheet);
+  bindTapAction(els.planInvitationOpen, () => openPlanInvitation(""));
+  bindTapAction(els.planInvitationDismiss, dismissPlanInvitation);
+  bindTapDelegate(els.planInvitation, "[data-plan-invitation-template]", (event, target) => {
+    openPlanInvitation(target.dataset.planInvitationTemplate || "");
+  }, { preventDefault: false });
   bindTapAction(els.aiBackdrop, closeAISheet);
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
@@ -3767,6 +3952,10 @@ function bindEvents() {
   bindTapAction(els.placeSwitcher, () => {
     closeAppMenu();
     openPlaceSheet();
+  });
+  bindTapAction(els.watchingSwitcher, () => {
+    closeAppMenu();
+    openGlobalMemorySheet();
   });
   bindTapAction(els.launchPlaceButton, () => {
     if (state.activePlace || state.savedPlaces.length) openPlaceSheet();
@@ -5751,6 +5940,8 @@ function updateMode() {
     cancelWelcomeAmbience();
   }
   updateReactiveSkyControls();
+  renderWatchingSwitcher();
+  renderPlanInvitation();
   scheduleReactiveSkyMotionSync();
 }
 
@@ -5769,6 +5960,8 @@ function setForecastLaunchLoading(place) {
   if (els.glanceTitle) els.glanceTitle.textContent = "Building your local weather read.";
   if (els.forYouToday) els.forYouToday.hidden = true;
   if (els.launchShortcuts) els.launchShortcuts.hidden = true;
+  if (els.planInvitation) els.planInvitation.hidden = true;
+  clearPlanInvitationImpressionObserver();
   const alertBar = document.getElementById("alertBar");
   if (alertBar) alertBar.hidden = true;
 }
@@ -6249,6 +6442,7 @@ function renderSavedPlaces() {
   els.savedPlaces.innerHTML = "";
   updatePlaceSaveButton();
   updatePlaceSwitcher();
+  renderWatchingSwitcher();
   updateInstallPromptUI();
 
   if (state.savedPlaces.length && typeof renderSavedPlaceWatchNotificationPanel === "function") {
@@ -7423,6 +7617,8 @@ function renderForecastLaunch(ctx) {
   renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderLaunchShortcuts(ctx.data, ctx.place);
+  renderWatchingSwitcher();
+  renderPlanInvitation();
 }
 
 function renderForecastCurrentReadouts(ctx) {
@@ -8752,6 +8948,8 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
   renderLaunchShortcuts(data, place);
+  renderWatchingSwitcher();
+  renderPlanInvitation();
   syncNativeStormActivity(data, place, truth);
   updateInstallPromptUI();
 }
@@ -9962,7 +10160,7 @@ function continuityPlaceSnapshot(data, place, tempUnit, windUnit, truth = weathe
   };
 }
 
-function continuityPlanItems(data, place) {
+function continuityPlanItems(data, place, options = {}) {
   if (!data || !place || typeof nextPlanBriefingItem !== "function") return [];
   const items = [];
   const seen = new Set();
@@ -9972,22 +10170,24 @@ function continuityPlanItems(data, place) {
     seen.add(key);
     items.push(item);
   };
-  push(nextPlanBriefingItem(data, place));
+  push(nextPlanBriefingItem(data, place, options));
   if (typeof planAwareBriefingItems === "function") {
-    planAwareBriefingItems(data, place).forEach(push);
+    planAwareBriefingItems(data, place, options).forEach(push);
   }
-  return items.slice(0, 4);
+  return items.slice(0, 12);
 }
 
-function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
+function continuityPlanSnapshot(item, data, place, tempUnit, windUnit, options = {}) {
   const memory = item?.memory;
   const stats = item?.stats;
   if (!memory?.id || !stats) return null;
   const truth = typeof planWeatherTruth === "function"
     ? planWeatherTruth({ ...item, status: "ready" })
     : null;
+  const provenance = typeof forecastProvenance === "function" ? forecastProvenance(data) : null;
   return {
     savedAt: Date.now(),
+    forecastCheckedAt: Number(provenance?.savedAt) || 0,
     placeKey: continuityPlaceKey(place),
     memoryId: memory.id,
     title: typeof planMemoryTitle === "function" ? planMemoryTitle(memory) : (memory.title || "Plan"),
@@ -10009,18 +10209,20 @@ function continuityPlanSnapshot(item, data, place, tempUnit, windUnit) {
     tone: truth?.tone || item.tone || "",
     verdict: item.verdict || "",
     riskKind: truth?.riskKind || item.riskKind || "",
-    alertsReady: typeof activeAlertsReady === "undefined" ? true : Boolean(activeAlertsReady),
+    alertsReady: typeof options.alertsReady === "boolean"
+      ? options.alertsReady
+      : typeof activeAlertsReady === "undefined" ? true : Boolean(activeAlertsReady),
     alertTone: truth?.alertTone || item.alertTone || "",
     alertEvent: item.alert?.event || item.alertEvent || "",
     when: typeof planPulseWhenText === "function" ? planPulseWhenText(memory, data) : ""
   };
 }
 
-function continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
+function continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth = weatherTruth(data), options = {}) {
   return {
     place: continuityPlaceSnapshot(data, place, tempUnit, windUnit, truth),
-    plans: continuityPlanItems(data, place)
-      .map((item) => continuityPlanSnapshot(item, data, place, tempUnit, windUnit))
+    plans: continuityPlanItems(data, place, options)
+      .map((item) => continuityPlanSnapshot(item, data, place, tempUnit, windUnit, options))
       .filter(Boolean)
   };
 }
@@ -10047,15 +10249,35 @@ function pruneContinuityStore(store, currentPlaceKey = "") {
   };
 }
 
-function saveContinuitySnapshot(data, place, tempUnit, windUnit, truth = weatherTruth(data)) {
-  const snapshots = continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth);
+function saveContinuitySnapshot(data, place, tempUnit, windUnit, truth = weatherTruth(data), options = {}) {
+  const snapshots = continuityCurrentSnapshots(data, place, tempUnit, windUnit, truth, options);
   if (!snapshots.place?.placeKey) return;
   let store = loadContinuityStore();
   store.places[snapshots.place.placeKey] = snapshots.place;
+  const provenance = typeof forecastProvenance === "function" ? forecastProvenance(data) : null;
+  const canAdvancePlans = !provenance?.cacheFallback;
   snapshots.plans.forEach((snapshot) => {
     const key = continuityPlanKey(snapshot);
-    if (snapshot.alertsReady === false) return;
-    if (key) store.plans[key] = snapshot;
+    if (!key || snapshot.alertsReady === false || !canAdvancePlans) return;
+    const previous = store.plans[key] || null;
+    const comparable = Boolean(
+      previous &&
+      previous.alertsReady !== false &&
+      snapshot.alertsReady !== false &&
+      previous.placeKey === snapshot.placeKey &&
+      previous.targetDate === snapshot.targetDate &&
+      previous.startHour === snapshot.startHour &&
+      previous.endHour === snapshot.endHour &&
+      previous.tempUnit === snapshot.tempUnit &&
+      previous.windUnit === snapshot.windUnit
+    );
+    const change = comparable ? continuityPlanChange(snapshot, previous) : null;
+    if (change && typeof capturePlanWatchChangeReceipt === "function") {
+      capturePlanWatchChangeReceipt(snapshot, previous, change);
+    }
+    // Keep a quiet baseline in place so small forecast moves can accumulate into
+    // one meaningful change. Advance only for a new window/unit or after a receipt.
+    if (!previous || !comparable || change) store.plans[key] = snapshot;
   });
   store = pruneContinuityStore(store, snapshots.place.placeKey);
   saveContinuityStore(store);
