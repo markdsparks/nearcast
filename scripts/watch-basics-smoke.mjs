@@ -104,6 +104,8 @@ assert.match(complications, /latest\.weatherSavedTime >= weather\.weatherSavedTi
 assert.match(complications, /let snapshot = NearcastWidgetSnapshot\.stored\(\) \?\? refreshed/, "the complication re-reads the shared winner after an asynchronous refresh");
 assert.match(complications, /guard !requestedPlace\.tracksCurrentLocation else \{ return nil \}/, "complications never stamp the phone's old Current Location coordinate as fresh weather");
 assert.match(watchApp, /timeoutInterval: 8/, "watch app networking uses a bounded background-safe timeout");
+const watchAppInitializer = watchEntry.match(/init\(\)\s*\{([\s\S]*?)\n\s*\}\n\n\s*var body/)?.[1] ?? "";
+assert.doesNotMatch(watchAppInitializer, /NearcastWatchBackgroundRefresh\.schedule\(\)/, "watch app never schedules refresh before SwiftUI installs its background-task handler");
 assert.match(watchEntry, /backgroundTask\(\.appRefresh\(NearcastWatchBackgroundRefresh\.identifier\)\)/, "watch app handles scheduled app refreshes");
 assert.match(watchEntry, /backgroundTask\(\.watchConnectivity\)/, "watch app handles background WatchConnectivity delivery");
 assert.match(watchEntry, /scheduleBackgroundRefresh[\s\S]*static func perform\(\) async[\s\S]*await schedule\(\)[\s\S]*NearcastWatchWeatherClient\.refresh[\s\S]*reloadAllTimelines/, "watch background refresh reschedules before doing bounded network work");

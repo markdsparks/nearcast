@@ -8,7 +8,6 @@ struct NearcastWatchApp: App {
         // WatchConnectivity must be active before a background transfer wakes
         // the app; waiting for the first view appearance can miss that window.
         NearcastWatchSnapshotReceiver.shared.activate()
-        NearcastWatchBackgroundRefresh.schedule()
     }
 
     var body: some Scene {
