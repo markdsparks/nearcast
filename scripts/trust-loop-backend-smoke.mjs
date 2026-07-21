@@ -300,11 +300,13 @@ const originalDeliveryRecord = JSON.parse(deliveryBucket.objects.get(deliveryRec
 const originalFetch = globalThis.fetch;
 let pushAttempts = 0;
 let cancelledRetryResponses = 0;
+let observedAlertUserAgent = "";
 try {
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url);
     if (url.hostname === "api.open-meteo.com") return Response.json(forecastFixture(today, tomorrow));
     if (url.hostname === "api.weather.gov") {
+      observedAlertUserAgent = new Headers(init.headers).get("User-Agent") || "";
       return Response.json({
         features: [{
           properties: {
@@ -337,6 +339,8 @@ try {
   assert.equal(firstEvaluation.results[0].retries, 2);
   assert.equal(pushAttempts, 3, "transient Web Push failures retry before succeeding");
   assert.equal(cancelledRetryResponses, 2, "transient provider response streams are cancelled before retry");
+  assert.match(observedAlertUserAgent, /^Nearcast\//, "NWS requests identify the Nearcast application");
+  assert.match(observedAlertUserAgent, /getnearcast\.app/, "NWS requests include a service contact URL");
 
   const firstPending = await pendingNotification(deliveryEnv, originalDeliveryRecord.subscription);
   const replayedPending = await pendingNotification(deliveryEnv, originalDeliveryRecord.subscription);

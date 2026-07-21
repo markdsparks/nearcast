@@ -110,6 +110,7 @@ const DEFAULT_PLAN_WATCH_URGENT_EVALUATOR_LIMIT = 8;
 const PLAN_WATCH_SCAN_PAGE_HARD_LIMIT = 100;
 const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
 const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
+const PLAN_WATCH_NWS_USER_AGENT = "Nearcast/3.0 (+https://getnearcast.app)";
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_START = 22;
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_END = 7;
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY = 135;
@@ -3473,7 +3474,10 @@ async function fetchPlanWatchAlerts(place = {}) {
   const url = `https://api.weather.gov/alerts/active?point=${Number(place.latitude).toFixed(4)},${Number(place.longitude).toFixed(4)}`;
   try {
     const json = await fetchJsonWithTimeout(url, PLAN_WATCH_ALERT_TIMEOUT_MS, {
-      headers: { Accept: "application/geo+json" }
+      headers: {
+        Accept: "application/geo+json",
+        "User-Agent": PLAN_WATCH_NWS_USER_AGENT
+      }
     });
     return {
       readiness: "supported",
