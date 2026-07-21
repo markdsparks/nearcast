@@ -543,6 +543,8 @@ try {
   const planWatchEnv = {
     PLAN_WATCH_R2: planWatchBucket,
     PLAN_WATCH_TEST_TOKEN: "smoke-token",
+    PLAN_WATCH_REGISTRATION_RATE_LIMITER: createRateLimiter(),
+    PLAN_WATCH_REGISTRATION_GLOBAL_RATE_LIMITER: createRateLimiter(),
     PLAN_WATCH_EVALUATOR_LIMIT: "5",
     PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION: "3"
   };
@@ -551,10 +553,10 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       subscription: {
-        endpoint: "https://push.example.test/nearcast-plan-watch",
-        keys: { p256dh: "p256dh", auth: "auth" }
+        endpoint: "https://fcm.googleapis.com/fcm/send/nearcast-plan-watch",
+        keys: { p256dh: "BBIka7fClMnNLw3O6WmFHA0rpnXFWQ7ug7v1lOAYKlsm4V0M3LFbq-R7QXp-9oIsyxxFOv0qLxdoe8bv0c8uw6E", auth: "AAAAAAAAAAAAAAAAAAAAAA" }
       },
-      client: { unit: "fahrenheit" },
+      client: { unit: "fahrenheit", timezone: "America/Chicago" },
       plans: [{
         id: "party-1",
         title: "4th Party",
@@ -610,10 +612,10 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       subscription: {
-        endpoint: "https://push.example.test/nearcast-plan-watch",
-        keys: { p256dh: "p256dh", auth: "auth" }
+        endpoint: "https://fcm.googleapis.com/fcm/send/nearcast-plan-watch",
+        keys: { p256dh: "BBIka7fClMnNLw3O6WmFHA0rpnXFWQ7ug7v1lOAYKlsm4V0M3LFbq-R7QXp-9oIsyxxFOv0qLxdoe8bv0c8uw6E", auth: "AAAAAAAAAAAAAAAAAAAAAA" }
       },
-      client: { unit: "fahrenheit" },
+      client: { unit: "fahrenheit", timezone: "America/Chicago" },
       plans: [{
         id: "party-1",
         title: "4th Party",
@@ -672,6 +674,8 @@ try {
   const placeWatchEnv = {
     PLAN_WATCH_R2: placeWatchBucket,
     PLAN_WATCH_TEST_TOKEN: "smoke-token",
+    PLAN_WATCH_REGISTRATION_RATE_LIMITER: createRateLimiter(),
+    PLAN_WATCH_REGISTRATION_GLOBAL_RATE_LIMITER: createRateLimiter(),
     PLAN_WATCH_EVALUATOR_LIMIT: "5",
     PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION: "3"
   };
@@ -680,10 +684,10 @@ try {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       subscription: {
-        endpoint: "https://push.example.test/nearcast-place-watch",
-        keys: { p256dh: "p256dh", auth: "auth" }
+        endpoint: "https://fcm.googleapis.com/fcm/send/nearcast-place-watch",
+        keys: { p256dh: "BBIka7fClMnNLw3O6WmFHA0rpnXFWQ7ug7v1lOAYKlsm4V0M3LFbq-R7QXp-9oIsyxxFOv0qLxdoe8bv0c8uw6E", auth: "AAAAAAAAAAAAAAAAAAAAAA" }
       },
-      client: { unit: "fahrenheit" },
+      client: { unit: "fahrenheit", timezone: "America/Chicago" },
       plans: [],
       places: [{
         id: "mobile-al",
@@ -987,6 +991,12 @@ function createR2Bucket() {
           .map((key) => ({ key }))
       };
     }
+  };
+}
+
+function createRateLimiter() {
+  return {
+    async limit() { return { success: true }; }
   };
 }
 

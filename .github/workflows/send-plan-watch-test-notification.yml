@@ -1,10 +1,18 @@
-name: Send plan watch test notification
+name: Send notification delivery canary
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Delivery channel to verify. Configure its canary subscription secret first."
+        required: true
+        default: web-push
+        type: choice
+        options:
+          - web-push
+          - apns
       subscriptionId:
-        description: "Optional stored subscription id. Leave blank to send to the first fresh subscription."
+        description: "Optional explicit canary subscription id. Overrides the configured channel secret."
         required: false
         type: string
 
@@ -18,7 +26,10 @@ jobs:
     env:
       PLAN_WATCH_TEST_TOKEN: ${{ secrets.PLAN_WATCH_TEST_TOKEN }}
       PLAN_WATCH_TEST_ENDPOINT: https://getnearcast.app/api/watch/notifications/test
-      SUBSCRIPTION_ID: ${{ inputs.subscriptionId }}
+      EXPLICIT_SUBSCRIPTION_ID: ${{ inputs.subscriptionId }}
+      DELIVERY_CHANNEL: ${{ inputs.channel }}
+      WEB_PUSH_CANARY_SUBSCRIPTION_ID: ${{ secrets.PLAN_WATCH_WEB_PUSH_CANARY_SUBSCRIPTION_ID }}
+      APNS_CANARY_SUBSCRIPTION_ID: ${{ secrets.PLAN_WATCH_APNS_CANARY_SUBSCRIPTION_ID }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -31,9 +42,25 @@ jobs:
             exit 1
           fi
 
+      - name: Select a dedicated canary device
+        run: |
+          subscription_id="$EXPLICIT_SUBSCRIPTION_ID"
+          if [ -z "$subscription_id" ] && [ "$DELIVERY_CHANNEL" = "web-push" ]; then
+            subscription_id="$WEB_PUSH_CANARY_SUBSCRIPTION_ID"
+          fi
+          if [ -z "$subscription_id" ] && [ "$DELIVERY_CHANNEL" = "apns" ]; then
+            subscription_id="$APNS_CANARY_SUBSCRIPTION_ID"
+          fi
+          if [ -z "$subscription_id" ]; then
+            echo "Missing a dedicated $DELIVERY_CHANNEL canary subscription id."
+            exit 1
+          fi
+          echo "::add-mask::$subscription_id"
+          echo "SUBSCRIPTION_ID=$subscription_id" >> "$GITHUB_ENV"
+
       - name: Send test notification
         run: |
-          request_body="$(node -e 'const id = String(process.env.SUBSCRIPTION_ID || "").trim(); process.stdout.write(JSON.stringify(id ? { subscriptionId: id } : {}));')"
+          request_body="$(node -e 'const id = String(process.env.SUBSCRIPTION_ID || "").trim(); const channel = String(process.env.DELIVERY_CHANNEL || "delivery"); process.stdout.write(JSON.stringify({ subscriptionId: id, notification: { title: "Nearcast delivery test", body: `${channel} canary accepted. No action is needed.`, tag: `nearcast-${channel}-canary`, renotify: false, target: "watching", source: "production-delivery-canary" } }));')"
           response_file="$(mktemp)"
           status="$(curl -sS -o "$response_file" -w "%{http_code}" \
             -X POST "$PLAN_WATCH_TEST_ENDPOINT" \
@@ -42,8 +69,7 @@ jobs:
             --data "$request_body")"
 
           echo "HTTP $status"
-          cat "$response_file"
-          echo ""
+          RESPONSE_FILE="$response_file" node -e 'const fs=require("node:fs"); const body=JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE,"utf8")); delete body.subscriptionId; process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);'
 
           STATUS="$status" RESPONSE_FILE="$response_file" node <<'NODE'
           const fs = require("node:fs");
@@ -57,7 +83,9 @@ jobs:
           }
           if (status < 200 || status >= 300 || body.ok !== true) {
             const reason = body.error || body.state || `http-${status}`;
-            console.error(`Plan watch smoke failed: ${reason}`);
+            console.error(`Notification delivery canary failed: ${reason}`);
             process.exit(1);
           }
           NODE
+
+          echo "PASS $DELIVERY_CHANNEL delivery canary was accepted by its provider."

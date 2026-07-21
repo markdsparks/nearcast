@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 import SwiftUI
 import WidgetKit
 
@@ -33,6 +34,8 @@ private enum WatchSyncState: Equatable {
     case idle
     case refreshing
     case missingPlace
+    case locationUnavailable
+    case updateNeeded
     case failed
 }
 
@@ -43,7 +46,7 @@ struct NearcastWatchRootView: View {
     @ObservedObject private var snapshotReceiver = NearcastWatchSnapshotReceiver.shared
     @State private var snapshot = watchSnapshotForDisplay()
     @State private var selectedSurface: WatchSurface = watchSurfaceForLaunch()
-    @State private var syncState: WatchSyncState = .idle
+    @State private var syncState: WatchSyncState = watchInitialSyncState()
 
     var body: some View {
         GeometryReader { proxy in
@@ -109,6 +112,7 @@ struct NearcastWatchRootView: View {
         .background(WatchAppBackground(isLuminanceReduced: isLuminanceReduced).ignoresSafeArea())
         .onAppear {
             snapshotReceiver.activate()
+            NearcastWatchBackgroundRefresh.schedule()
             applySnapshot(watchSnapshotForDisplay())
         }
         .task {
@@ -126,6 +130,7 @@ struct NearcastWatchRootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             snapshotReceiver.activate()
+            NearcastWatchBackgroundRefresh.schedule()
             applySnapshot(watchSnapshotForDisplay())
             Task { await refreshWeather() }
         }
@@ -134,6 +139,13 @@ struct NearcastWatchRootView: View {
     @MainActor
     private func applySnapshot(_ updated: NearcastWidgetSnapshot) {
         snapshot = updated
+        if syncState != .refreshing {
+            if updated.hasWeatherData {
+                syncState = .idle
+            } else if NearcastWidgetPlace.stored() != nil {
+                syncState = .updateNeeded
+            }
+        }
         selectedSurface = safeWatchSurface(selectedSurface, snapshot: updated)
     }
 
@@ -148,15 +160,22 @@ struct NearcastWatchRootView: View {
         guard syncState != .refreshing else { return }
         syncState = .refreshing
 
-        switch await NearcastWatchWeatherClient.refresh(fallback: snapshot) {
+        switch await NearcastWatchWeatherClient.refresh(
+            fallback: snapshot,
+            allowsLocationAuthorizationRequest: true
+        ) {
         case .success(let updated):
             guard !Task.isCancelled else { return }
-            applySnapshot(updated)
-            syncState = .idle
+            let display = watchSnapshotForDisplay(updated)
+            applySnapshot(display)
+            syncState = display.hasWeatherData ? .idle : .updateNeeded
             WidgetCenter.shared.reloadAllTimelines()
         case .missingPlace:
             guard !Task.isCancelled else { return }
             syncState = .missingPlace
+        case .locationUnavailable:
+            guard !Task.isCancelled else { return }
+            syncState = .locationUnavailable
         case .failed:
             guard !Task.isCancelled else { return }
             syncState = .failed
@@ -256,7 +275,7 @@ private struct WatchTodayBasicsPage: View {
                 )
             } else {
                 WatchNoWeatherMessage(
-                    isRefreshing: syncState == .refreshing,
+                    syncState: syncState,
                     isLuminanceReduced: isLuminanceReduced,
                     useUltraLayout: useUltraLayout
                 )
@@ -485,7 +504,7 @@ private struct WatchBasicHoursPage: View {
                 )
             } else {
                 WatchNoWeatherMessage(
-                    isRefreshing: syncState == .refreshing,
+                    syncState: syncState,
                     isLuminanceReduced: isLuminanceReduced,
                     useUltraLayout: useUltraLayout
                 )
@@ -743,7 +762,7 @@ private struct WatchThreeDayPage: View {
 
     var body: some View {
         VStack(spacing: useUltraLayout ? 8 : 6) {
-            if !days.isEmpty {
+            if snapshot.hasWeatherData, !days.isEmpty {
                 WatchForecastPageTitle(
                     symbol: "calendar",
                     title: "Next 3 days",
@@ -773,15 +792,11 @@ private struct WatchThreeDayPage: View {
                         .stroke(Color.white.opacity(isLuminanceReduced ? 0.34 : 0.09), lineWidth: 1)
                 )
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 31, weight: .semibold))
-                        .foregroundStyle(watchSecondary)
-                    Text("3-day forecast loading")
-                        .font(.system(.body, design: .rounded, weight: .semibold))
-                        .foregroundStyle(watchSecondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WatchNoWeatherMessage(
+                    syncState: syncState,
+                    isLuminanceReduced: isLuminanceReduced,
+                    useUltraLayout: useUltraLayout
+                )
             }
             Spacer(minLength: 0)
             WatchSavedForecastStatus(snapshot: snapshot, syncState: syncState)
@@ -915,7 +930,12 @@ private struct WatchSavedForecastStatus: View {
 
     var body: some View {
         if syncState == .failed, snapshot.hasWeatherData {
-            Label("Saved forecast", systemImage: "wifi.slash")
+            Label("Saved \(durationText(snapshot.weatherAge))", systemImage: "wifi.slash")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchMuted)
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else if syncState == .locationUnavailable, snapshot.hasWeatherData {
+            Label("Location unavailable", systemImage: "location.slash")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(watchMuted)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -968,7 +988,7 @@ private struct WatchBriefPage: View {
                 )
             } else {
                 WatchNoWeatherMessage(
-                    isRefreshing: syncState == .refreshing,
+                    syncState: syncState,
                     isLuminanceReduced: isLuminanceReduced,
                     useUltraLayout: useUltraLayout
                 )
@@ -1018,7 +1038,7 @@ private struct WatchHoursPage: View {
                 )
             } else {
                 WatchNoWeatherMessage(
-                    isRefreshing: syncState == .refreshing,
+                    syncState: syncState,
                     isLuminanceReduced: isLuminanceReduced,
                     useUltraLayout: useUltraLayout
                 )
@@ -1081,6 +1101,8 @@ private struct WatchUnavailablePage: View {
         switch syncState {
         case .refreshing: return "Loading"
         case .failed: return "Couldn't load"
+        case .locationUnavailable: return "Location needed"
+        case .updateNeeded: return "Update needed"
         case .missingPlace, .idle: return "Add a place"
         }
     }
@@ -1889,9 +1911,31 @@ private struct WatchPlanMetricPlot: View {
 }
 
 private struct WatchNoWeatherMessage: View {
-    let isRefreshing: Bool
+    let syncState: WatchSyncState
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
+
+    private var isRefreshing: Bool { syncState == .refreshing }
+
+    private var title: String {
+        switch syncState {
+        case .refreshing: return "Loading"
+        case .failed: return "Couldn't update"
+        case .locationUnavailable: return "Location needed"
+        case .updateNeeded: return "Update needed"
+        case .missingPlace, .idle: return "Open on iPhone"
+        }
+    }
+
+    private var detail: String {
+        switch syncState {
+        case .refreshing: return "Checking your place"
+        case .failed: return "Try again when connected"
+        case .locationUnavailable: return "Allow in Watch Settings"
+        case .updateNeeded: return "Open Nearcast on iPhone"
+        case .missingPlace, .idle: return "Share your saved place"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1900,13 +1944,14 @@ private struct WatchNoWeatherMessage: View {
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
                 .symbolEffect(.pulse, isActive: isRefreshing)
                 .accessibilityHidden(true)
-            Text(isRefreshing ? "Loading" : "Open on iPhone")
+            Text(title)
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(watchPrimary)
-            Text(isRefreshing ? "Checking your place" : "Share your saved place")
+            Text(detail)
                 .font(.system(.body, design: .rounded, weight: .medium))
                 .foregroundStyle(watchSecondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
         }
         .accessibilityElement(children: .combine)
     }
@@ -2144,6 +2189,10 @@ private func unavailableVisualGuidance(_ syncState: WatchSyncState) -> String {
         return "Checking your saved place"
     case .missingPlace:
         return "Open Nearcast on iPhone"
+    case .locationUnavailable:
+        return "Allow location in Watch Settings"
+    case .updateNeeded:
+        return "Open Nearcast on iPhone"
     case .failed:
         return "Try again when connected"
     case .idle:
@@ -2264,13 +2313,55 @@ private func safeWatchSurface(_ surface: WatchSurface, snapshot: NearcastWidgetS
     surface == .plan && !snapshot.hasPlan ? .today : surface
 }
 
-private func watchSnapshotForDisplay() -> NearcastWidgetSnapshot {
+private func watchSnapshotForDisplay(
+    _ stored: NearcastWidgetSnapshot = .current(),
+    at now: Date = Date()
+) -> NearcastWidgetSnapshot {
 #if DEBUG
     if ProcessInfo.processInfo.arguments.contains("-nearcastPreviewWeather") {
         return watchPreviewSnapshot()
     }
 #endif
-    return .current()
+    guard stored.hasWeatherData else { return stored }
+
+    // Once the final cached forecast interval ends, showing its last raw
+    // values is more misleading than admitting that an update is needed.
+    guard now < stored.weatherTimelineValidUntil() else {
+        var unavailable = stored
+        unavailable.isAvailable = false
+        unavailable.timeline = nil
+        unavailable.daily = nil
+        unavailable.high = nil
+        unavailable.low = nil
+        return unavailable
+    }
+
+    var projected = stored
+    if let projection = stored.timelineProjection(at: now, relativeTo: now) {
+        projected.timeline = projection.rows
+        if let current = projection.rows.first,
+           stored.shouldPromoteCurrentWeather(from: projection) {
+            projected.temperature = current.temperature ?? projected.temperature
+            projected.feelsLike = current.feelsLike ?? projected.feelsLike
+            projected.rainChance = current.rainChance ?? projected.rainChance
+            projected.wind = current.wind ?? projected.wind
+            projected.windDirection = current.windDirection ?? projected.windDirection
+            projected.windLabel = nil
+            projected.uv = current.uv ?? projected.uv
+            projected.conditionCode = current.conditionCode ?? projected.conditionCode
+            projected.isDay = current.isDay ?? projected.isDay
+            projected.condition = conditionLabel(projected.conditionCode)
+        }
+    }
+    projected.projectDailyWeather(at: now)
+    return projected
+}
+
+private func watchInitialSyncState(now: Date = Date()) -> WatchSyncState {
+    guard NearcastWidgetPlace.stored() != nil else { return .idle }
+    let stored = NearcastWidgetSnapshot.current()
+    guard stored.hasWeatherData else { return .updateNeeded }
+    return now >= stored.weatherTimelineValidUntil() ? .updateNeeded : .idle
 }
 
 private func watchSurfaceForLaunch() -> WatchSurface {
@@ -2345,15 +2436,146 @@ private func watchPreviewSnapshot() -> NearcastWidgetSnapshot {
 }
 #endif
 
-private enum NearcastWatchWeatherRefreshResult {
+enum NearcastWatchWeatherRefreshResult {
     case success(NearcastWidgetSnapshot)
     case missingPlace
+    case locationUnavailable
     case failed
 }
 
-private enum NearcastWatchWeatherClient {
-    static func refresh(fallback: NearcastWidgetSnapshot) async -> NearcastWatchWeatherRefreshResult {
-        guard let place = NearcastWidgetPlace.stored() else { return .missingPlace }
+private struct NearcastWatchPlaceResolution {
+    let selected: NearcastWidgetPlace
+    let requestPlace: NearcastWidgetPlace
+}
+
+@MainActor
+private final class NearcastWatchLocationRequest: NSObject, @preconcurrency CLLocationManagerDelegate {
+    private static let maximumFixAge: TimeInterval = 5 * 60
+    private static let maximumHorizontalAccuracy: CLLocationAccuracy = 5_000
+
+    private let manager = CLLocationManager()
+    private let allowsAuthorizationRequest: Bool
+    private var continuation: CheckedContinuation<CLLocation?, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(allowsAuthorizationRequest: Bool) {
+        self.allowsAuthorizationRequest = allowsAuthorizationRequest
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
+    }
+
+    static func current(allowsAuthorizationRequest: Bool) async -> CLLocation? {
+        let request = NearcastWatchLocationRequest(
+            allowsAuthorizationRequest: allowsAuthorizationRequest
+        )
+        return await request.start()
+    }
+
+    private func start() async -> CLLocation? {
+        guard CLLocationManager.locationServicesEnabled() else { return nil }
+        if let cached = usableLocation(manager.location.map { [$0] } ?? []) {
+            return cached
+        }
+
+        // A watchOS background app-refresh task cannot start a new When-In-Use
+        // location session. Background callers pass false and may consume only
+        // a recent system-cached fix; the visible Watch app is the sole caller
+        // allowed to request authorization or actively request a location.
+        guard allowsAuthorizationRequest else { return nil }
+
+        let needsAuthorization: Bool
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            needsAuthorization = false
+        case .notDetermined where allowsAuthorizationRequest:
+            // This path is used only from the visible Watch app. Scheduled
+            // background refreshes pass false and can never raise a prompt.
+            needsAuthorization = true
+        case .notDetermined, .restricted, .denied:
+            return nil
+        @unknown default:
+            return nil
+        }
+
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            timeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(
+                    nanoseconds: needsAuthorization ? 15_000_000_000 : 3_000_000_000
+                )
+                guard !Task.isCancelled else { return }
+                self?.finish(nil)
+            }
+            if needsAuthorization {
+                manager.requestWhenInUseAuthorization()
+            } else {
+                manager.requestLocation()
+            }
+        }
+    }
+
+    private func finish(_ location: CLLocation?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        manager.stopUpdatingLocation()
+        continuation.resume(returning: location)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        finish(usableLocation(locations))
+    }
+
+    private func usableLocation(_ locations: [CLLocation]) -> CLLocation? {
+        let now = Date()
+        return locations
+            .filter {
+                let age = now.timeIntervalSince($0.timestamp)
+                return $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= Self.maximumHorizontalAccuracy
+                    && age >= -60
+                    && age <= Self.maximumFixAge
+            }
+            .max { $0.timestamp < $1.timestamp }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard continuation != nil else { return }
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(nil)
+        case .notDetermined:
+            break
+        @unknown default:
+            finish(nil)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == kCLErrorDomain,
+           CLError.Code(rawValue: nsError.code) == .locationUnknown {
+            return
+        }
+        finish(nil)
+    }
+}
+
+enum NearcastWatchWeatherClient {
+    static func refresh(
+        fallback: NearcastWidgetSnapshot,
+        allowsLocationAuthorizationRequest: Bool = false
+    ) async -> NearcastWatchWeatherRefreshResult {
+        guard let selectedPlace = NearcastWidgetPlace.stored() else { return .missingPlace }
+        guard let resolution = await resolvePlace(
+            selectedPlace,
+            allowsLocationAuthorizationRequest: allowsLocationAuthorizationRequest
+        ) else { return .locationUnavailable }
+        let place = resolution.requestPlace
 
         var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")
         let metric = fallback.windUnit.lowercased().contains("km")
@@ -2372,15 +2594,20 @@ private enum NearcastWatchWeatherClient {
         guard let url = components?.url else { return .failed }
 
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 12
+            var request = URLRequest(
+                url: url,
+                cachePolicy: .reloadRevalidatingCacheData,
+                timeoutInterval: 8
+            )
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard !Task.isCancelled,
                   (response as? HTTPURLResponse)?.statusCode == 200 else { return .failed }
             let forecast = try JSONDecoder().decode(WatchForecast.self, from: data)
             guard let current = forecast.current else { return .failed }
 
-            guard let latestPlace = NearcastWidgetPlace.stored(), samePlace(place, latestPlace) else {
+            guard let latestPlace = NearcastWidgetPlace.stored(),
+                  sameSelection(resolution.selected, latestPlace) else {
                 // The paired iPhone changed places while this request was in flight.
                 // Keep its newer snapshot instead of writing old-place weather over it.
                 return .success(NearcastWidgetSnapshot.current())
@@ -2392,6 +2619,7 @@ private enum NearcastWatchWeatherClient {
             var updated = NearcastWidgetSnapshot.stored() ?? fallback
             updated.version = max(6, max(updated.version, fallback.version))
             updated.placeName = place.displayLabel
+            updated.placeTimezone = forecast.timezone ?? updated.placeTimezone
             updated.temperature = Int(current.temperature.rounded())
             updated.feelsLike = Int(current.feelsLike.rounded())
             updated.conditionCode = current.weatherCode
@@ -2410,13 +2638,19 @@ private enum NearcastWatchWeatherClient {
                 updated.uv = rows.first?.uv ?? fallback.uv
             }
             if let daily = forecast.daily {
-                updated.daily = daily.rows(limit: 3)
+                // Keep one rollover day beyond the three visible rows so a
+                // deferred refresh can still show three days after midnight.
+                updated.daily = daily.rows(limit: 4)
                 updated.high = updated.daily?.first?.high
                 updated.low = updated.daily?.first?.low
             }
 
             // savedAt and planSavedAt intentionally stay unchanged. A weather-only
             // refresh cannot make an older plan verdict newly trustworthy.
+            guard let finalPlace = NearcastWidgetPlace.stored(),
+                  sameSelection(resolution.selected, finalPlace) else {
+                return .success(NearcastWidgetSnapshot.current())
+            }
             NearcastWidgetSnapshotStore.save(updated)
             return .success(updated)
         } catch {
@@ -2424,19 +2658,53 @@ private enum NearcastWatchWeatherClient {
         }
     }
 
-    private static func samePlace(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
-        abs(lhs.latitude - rhs.latitude) < 0.00001 && abs(lhs.longitude - rhs.longitude) < 0.00001
+    private static func resolvePlace(
+        _ selected: NearcastWidgetPlace,
+        allowsLocationAuthorizationRequest: Bool
+    ) async -> NearcastWatchPlaceResolution? {
+        guard selected.tracksCurrentLocation else {
+            return NearcastWatchPlaceResolution(selected: selected, requestPlace: selected)
+        }
+        guard let location = await NearcastWatchLocationRequest.current(
+            allowsAuthorizationRequest: allowsLocationAuthorizationRequest
+        ) else { return nil }
+
+        let oldLocation = CLLocation(latitude: selected.latitude, longitude: selected.longitude)
+        let distance = location.distance(from: oldLocation)
+        let movementThreshold = max(2_000, location.horizontalAccuracy * 1.5)
+        var requestPlace = selected
+        requestPlace.latitude = location.coordinate.latitude
+        requestPlace.longitude = location.coordinate.longitude
+        if distance >= movementThreshold {
+            // Avoid labeling weather from a new coordinate with the previous
+            // city; reverse geocoding would make a background wake less reliable.
+            requestPlace.name = "Current Location"
+            requestPlace.displayName = "Current Location"
+            requestPlace.admin1 = nil
+            requestPlace.country = nil
+            requestPlace.countryCode = nil
+        }
+        return NearcastWatchPlaceResolution(selected: selected, requestPlace: requestPlace)
+    }
+
+    private static func sameSelection(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
+        lhs.id == rhs.id
+            && lhs.tracksCurrentLocation == rhs.tracksCurrentLocation
+            && abs(lhs.latitude - rhs.latitude) < 0.00001
+            && abs(lhs.longitude - rhs.longitude) < 0.00001
     }
 }
 
 private struct WatchForecast: Decodable {
     let utcOffsetSeconds: Int?
+    let timezone: String?
     let current: Current?
     let hourly: Hourly?
     let daily: Daily?
 
     enum CodingKeys: String, CodingKey {
         case utcOffsetSeconds = "utc_offset_seconds"
+        case timezone
         case current
         case hourly
         case daily

@@ -63,6 +63,11 @@ let structuredPlaceData = Data(#"{"id":"maryville","name":"Maryville","displayNa
 let structuredPlace = try decoder.decode(NearcastWidgetPlace.self, from: structuredPlaceData)
 require(structuredPlace.name == "Maryville", "widget place keeps a canonical locality name")
 require(structuredPlace.displayLabel == "Maryville, Illinois", "widget place keeps a separate display label")
+require(!structuredPlace.tracksCurrentLocation, "legacy widget places remain fixed by default")
+
+let currentPlaceData = Data(#"{"id":"gps-maryville","name":"Maryville","displayName":"Maryville, Illinois","followsCurrentLocation":true,"latitude":38.7237,"longitude":-89.9559}"#.utf8)
+let currentPlace = try decoder.decode(NearcastWidgetPlace.self, from: currentPlaceData)
+require(currentPlace.tracksCurrentLocation, "widget places explicitly identify Current Location")
 
 func hour(
     _ offset: Int,
@@ -365,12 +370,60 @@ let projectionNow = Date(timeIntervalSince1970: baseTime + 20 * 60)
 let currentProjection = projectionSnapshot.timelineProjection(at: projectionNow, relativeTo: projectionNow)
 require(currentProjection?.advancesCurrentWeather == false, "the first complication entry keeps the true current observation")
 require(currentProjection?.rows.first?.temperature == 69, "the current hourly row remains available to the forecast ribbon")
+require(
+    currentProjection.map { !projectionSnapshot.shouldPromoteCurrentWeather(from: $0) } == true,
+    "a current observation newer than the active hourly row remains authoritative"
+)
+var delayedProjectionSnapshot = projectionSnapshot
+delayedProjectionSnapshot.weatherSavedAt = baseTime - 60
+require(
+    currentProjection.map { delayedProjectionSnapshot.shouldPromoteCurrentWeather(from: $0) } == true,
+    "an active forecast row replaces an observation saved before its hourly boundary"
+)
 let futureProjection = projectionSnapshot.timelineProjection(
     at: Date(timeIntervalSince1970: baseTime + 3600),
     relativeTo: projectionNow
 )
 require(futureProjection?.advancesCurrentWeather == true, "a future hourly boundary advances complication weather")
 require(futureProjection?.rows.first?.temperature == 70, "future complication entries select the matching forecast hour")
+require(
+    projectionSnapshot.weatherTimelineValidUntil().timeIntervalSince1970 == baseTime + 3 * 3600,
+    "timestamped weather expires at the end of its final forecast interval"
+)
+
+var legacyOffsetSnapshot = projectionSnapshot
+legacyOffsetSnapshot.weatherSavedAt = baseTime
+legacyOffsetSnapshot.timeline = (0..<6).map { offset in
+    var row = hour(offset, offset == 0 ? "Now" : "+\(offset)h", startsAt: baseTime + Double(offset * 3600))
+    row.startsAt = nil
+    return row
+}
+require(
+    legacyOffsetSnapshot.weatherTimelineValidUntil().timeIntervalSince1970 == baseTime + 6 * 3600,
+    "legacy offset-only weather expires after its actual final hourly row"
+)
+
+var dailyProjectionSnapshot = projectionSnapshot
+dailyProjectionSnapshot.placeTimezone = "UTC"
+dailyProjectionSnapshot.daily = [
+    NearcastWidgetDay(date: "2026-07-20", label: "Today", high: 80, low: 60, rainChance: 10, conditionCode: 1),
+    NearcastWidgetDay(date: "2026-07-21", label: "Tomorrow", high: 72, low: 55, rainChance: 30, conditionCode: 61)
+]
+dailyProjectionSnapshot.high = 80
+dailyProjectionSnapshot.low = 60
+let utcFormatter = DateFormatter()
+utcFormatter.locale = Locale(identifier: "en_US_POSIX")
+utcFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+utcFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+dailyProjectionSnapshot.projectDailyWeather(at: utcFormatter.date(from: "2026-07-21T01:00:00Z")!)
+require(
+    dailyProjectionSnapshot.high == 72 && dailyProjectionSnapshot.low == 55,
+    "projected weather rolls high and low at the selected place's midnight"
+)
+require(
+    dailyProjectionSnapshot.daily?.first?.label == "Today",
+    "the newly active daily row is relabeled Today"
+)
 
 require(nearcastWindFlowDegrees(from: 0) == 180, "a north wind flows toward the south")
 require(nearcastWindFlowDegrees(from: 225) == 45, "a southwest wind flows toward the northeast")

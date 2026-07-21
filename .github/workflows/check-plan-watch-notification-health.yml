@@ -1,0 +1,64 @@
+name: Check notification production health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 * * * *"
+
+concurrency:
+  group: check-notification-production-health
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PLAN_WATCH_TEST_TOKEN: ${{ secrets.PLAN_WATCH_TEST_TOKEN }}
+      PLAN_WATCH_HEALTH_ENDPOINT: https://getnearcast.app/api/watch/notifications/health
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify health token
+        run: |
+          if [ -z "$PLAN_WATCH_TEST_TOKEN" ]; then
+            echo "Missing PLAN_WATCH_TEST_TOKEN secret."
+            exit 1
+          fi
+
+      - name: Check scheduler, storage, and delivery readiness
+        run: |
+          response_file="$(mktemp)"
+          status="$(curl --retry 2 --retry-all-errors --connect-timeout 8 --max-time 25 \
+            -sS -o "$response_file" -w "%{http_code}" \
+            -H "Authorization: Bearer $PLAN_WATCH_TEST_TOKEN" \
+            -H "Accept: application/json" \
+            "$PLAN_WATCH_HEALTH_ENDPOINT")"
+
+          echo "HTTP $status"
+          cat "$response_file"
+          echo ""
+
+          STATUS="$status" RESPONSE_FILE="$response_file" node <<'NODE'
+          const fs = require("node:fs");
+          const status = Number(process.env.STATUS);
+          const text = fs.readFileSync(process.env.RESPONSE_FILE, "utf8");
+          let body = {};
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = {};
+          }
+          if (status < 200 || status >= 300 || body.ok !== true) {
+            const reason = body.reason || body.state || body.error || `http-${status}`;
+            console.error(`Notification production health check failed: ${reason}`);
+            process.exit(1);
+          }
+          NODE
+
+          echo "PASS Notification scheduler, storage, and provider configuration are healthy."

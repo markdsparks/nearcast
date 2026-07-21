@@ -297,8 +297,54 @@ const PLAN_WATCH_PUSH_CONFIG_ENDPOINT = "/api/watch/notifications/config";
 const PLAN_WATCH_PUSH_REGISTER_ENDPOINT = "/api/watch/notifications/register";
 const PLAN_WATCH_PUSH_UNREGISTER_ENDPOINT = "/api/watch/notifications/unregister";
 const PLAN_WATCH_PUSH_SYNC_THROTTLE_MS = 30 * 1000;
+const PLAN_WATCH_MAX_NOTIFICATION_PLANS = 3;
+const PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS = 5 * 60 * 1000;
 const PLAN_WATCH_NATIVE_CHANNEL_KEY = "nearcast-plan-watch-native-channel-v1";
 const PLAN_WATCH_NATIVE_SUBSCRIPTION_ID_KEY = "nearcast-plan-watch-native-subscription-id-v1";
+const PLAN_WATCH_PUSH_HEALTH_KEY = "nearcast-plan-watch-push-health-v1";
+let planWatchMemoryInventoryReady = false;
+
+function planWatchRegistrationExpiryTimestamp(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readPlanWatchPushHealth() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_PUSH_HEALTH_KEY) || "null");
+    return {
+      lastAttemptAt: Math.max(0, Number(parsed?.lastAttemptAt) || 0),
+      lastAttemptState: ["pending", "ready", "failed"].includes(parsed?.lastAttemptState)
+        ? parsed.lastAttemptState
+        : "",
+      lastAttemptReason: planWatchCompactText(parsed?.lastAttemptReason || "", 120),
+      lastSuccessAt: Math.max(0, Number(parsed?.lastSuccessAt) || 0),
+      registrationExpiresAt: planWatchRegistrationExpiryTimestamp(parsed?.registrationExpiresAt)
+    };
+  } catch {
+    return { lastAttemptAt: 0, lastAttemptState: "", lastAttemptReason: "", lastSuccessAt: 0, registrationExpiresAt: 0 };
+  }
+}
+
+function writePlanWatchPushHealth(health = {}) {
+  try {
+    localStorage.setItem(PLAN_WATCH_PUSH_HEALTH_KEY, JSON.stringify({
+      lastAttemptAt: Math.max(0, Number(health.lastAttemptAt) || 0),
+      lastAttemptState: ["pending", "ready", "failed"].includes(health.lastAttemptState)
+        ? health.lastAttemptState
+        : "",
+      lastAttemptReason: planWatchCompactText(health.lastAttemptReason || "", 120),
+      lastSuccessAt: Math.max(0, Number(health.lastSuccessAt) || 0),
+      registrationExpiresAt: planWatchRegistrationExpiryTimestamp(health.registrationExpiresAt)
+    }));
+  } catch {
+    /* Delivery health is explanatory UI; registration itself does not depend on storage. */
+  }
+}
+
+const initialPlanWatchPushHealth = readPlanWatchPushHealth();
 
 const planWatchState = {
   data: {},
@@ -313,6 +359,11 @@ const planWatchState = {
   pushConfig: null,
   pushConfigPromise: null,
   pushLastSyncAt: 0,
+  pushLastAttemptAt: initialPlanWatchPushHealth.lastAttemptAt,
+  pushLastAttemptState: initialPlanWatchPushHealth.lastAttemptState,
+  pushLastAttemptReason: initialPlanWatchPushHealth.lastAttemptReason,
+  pushLastSuccessAt: initialPlanWatchPushHealth.lastSuccessAt,
+  pushRegistrationExpiresAt: initialPlanWatchPushHealth.registrationExpiresAt,
   pushLastSyncResult: null,
   pushSyncPromise: null
 };
@@ -701,10 +752,11 @@ function planWatchNotificationTargetPath({
   signal = "",
   timeScope = "",
   mode = "",
-  source = "plan-watch"
+  source = "plan-watch",
+  receipt = null
 } = {}) {
   if (typeof planWatchNotificationTargetUrl === "function") {
-    return planWatchNotificationTargetUrl({ target, memoryId, placeId, detail, signal, timeScope, mode, source });
+    return planWatchNotificationTargetUrl({ target, memoryId, placeId, detail, signal, timeScope, mode, source, receipt });
   }
   const params = new URLSearchParams();
   params.set("nearcast", "notification");
@@ -716,6 +768,28 @@ function planWatchNotificationTargetPath({
   if (timeScope) params.set("timeScope", timeScope);
   if (mode) params.set("mode", mode);
   if (source) params.set("source", source);
+  if (receipt && typeof receipt === "object") {
+    const metric = receipt.metric && typeof receipt.metric === "object" ? receipt.metric : {};
+    const receiptParams = {
+      receiptKind: receipt.kind,
+      receiptTone: receipt.tone,
+      receiptDirection: receipt.direction,
+      receiptHeadline: receipt.headline,
+      receiptMetric: metric.label,
+      receiptBefore: metric.before,
+      receiptAfter: metric.after,
+      receiptUnit: metric.unit,
+      receiptWhy: receipt.why,
+      receiptAction: receipt.action,
+      receiptBaselineAt: receipt.baselineAt,
+      receiptCheckedAt: receipt.checkedAt
+    };
+    Object.entries(receiptParams).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim()) {
+        params.set(key, planWatchCompactText(value, key.includes("At") ? 24 : 180));
+      }
+    });
+  }
   return `./?${params.toString()}`;
 }
 
@@ -893,6 +967,9 @@ function consumeNearcastNotificationRoute(options = {}) {
   }
 
   planWatchNotificationRouteConsumed = route.signature;
+  if (route.marker === "notification" && typeof recordForYouSignal === "function") {
+    recordForYouSignal("notification-open");
+  }
   const routedReceipt = capturePlanWatchRouteReceipt(route);
   const update = routedReceipt ? null : planWatchRecentUpdateFromRoute(route);
   if (update) recordPlanWatchRecentUpdate(update);
@@ -1008,12 +1085,49 @@ function writePlanWatchNotificationPreference(value) {
   }
 }
 
+function cleanPlanWatchNotificationPlans(value = {}) {
+  const entries = Object.entries(value?.plans || {})
+    .filter(([id, enabled]) => String(id || "").trim() && Boolean(enabled));
+  if (!planWatchMemoryInventoryReady) {
+    // planner.js loads before app.js hydrates plan memories. Preserve the raw
+    // intent until that inventory is authoritative, otherwise an early bridge
+    // callback could erase every selection.
+    return { plans: Object.fromEntries(entries.map(([id]) => [String(id), true])) };
+  }
+  const memories = Array.isArray(state?.planMemories) ? state.planMemories : [];
+  const activeIds = new Set(
+    memories
+      .filter((memory) => !planWatchMemoryIsPast(memory))
+      .map((memory) => String(memory?.id || "").trim())
+      .filter(Boolean)
+  );
+  const plans = Object.fromEntries(
+    entries
+      .filter(([id]) => activeIds.has(String(id)))
+      .slice(0, PLAN_WATCH_MAX_NOTIFICATION_PLANS)
+      .map(([id]) => [String(id), true])
+  );
+  return { plans };
+}
+
+function markPlanWatchMemoryInventoryReady() {
+  if (planWatchMemoryInventoryReady) return;
+  planWatchMemoryInventoryReady = true;
+  const clean = readPlanWatchNotificationPlans();
+  writePlanWatchNotificationPlans(clean);
+}
+
 function readPlanWatchNotificationPlans() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY) || "null");
-    return parsed && typeof parsed === "object" && parsed.plans && typeof parsed.plans === "object"
+    const raw = parsed && typeof parsed === "object" && parsed.plans && typeof parsed.plans === "object"
       ? parsed
       : { plans: {} };
+    const clean = cleanPlanWatchNotificationPlans(raw);
+    if (JSON.stringify(raw.plans || {}) !== JSON.stringify(clean.plans)) {
+      localStorage.setItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY, JSON.stringify(clean));
+    }
+    return clean;
   } catch {
     return { plans: {} };
   }
@@ -1021,12 +1135,10 @@ function readPlanWatchNotificationPlans() {
 
 function writePlanWatchNotificationPlans(value) {
   try {
-    const plans = Object.fromEntries(
-      Object.entries(value?.plans || {})
-        .filter(([, enabled]) => Boolean(enabled))
-        .slice(0, 80)
+    localStorage.setItem(
+      PLAN_WATCH_NOTIFICATION_PLANS_KEY,
+      JSON.stringify(cleanPlanWatchNotificationPlans(value))
     );
-    localStorage.setItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY, JSON.stringify({ plans }));
   } catch {
     /* Plan-level notification intent is optional. */
   }
@@ -1040,11 +1152,25 @@ function planWatchNotificationPlanEnabled(memoryId) {
 
 function setPlanWatchNotificationPlan(memoryId, enabled) {
   const id = String(memoryId || "").trim();
-  if (!id) return;
+  if (!id) return false;
   const prefs = readPlanWatchNotificationPlans();
+  if (enabled && !prefs.plans[id] && Object.keys(prefs.plans).length >= PLAN_WATCH_MAX_NOTIFICATION_PLANS) {
+    return false;
+  }
   if (enabled) prefs.plans[id] = true;
   else delete prefs.plans[id];
   writePlanWatchNotificationPlans(prefs);
+  return planWatchNotificationPlanEnabled(id) === Boolean(enabled);
+}
+
+function planWatchNotificationSelectedCount() {
+  return Object.keys(readPlanWatchNotificationPlans().plans).length;
+}
+
+function planWatchNotificationLimitReached(memoryId = "") {
+  const id = String(memoryId || "").trim();
+  return !planWatchNotificationPlanEnabled(id) &&
+    planWatchNotificationSelectedCount() >= PLAN_WATCH_MAX_NOTIFICATION_PLANS;
 }
 
 function planWatchNotificationEnabledCount(watchItems) {
@@ -1200,11 +1326,95 @@ function planWatchNotificationsEnabled() {
 function planWatchNativeDeliveryNotConfigured() {
   if (!planWatchNativeNotificationsSupported()) return false;
   const result = planWatchState.pushLastSyncResult || {};
-  const reason = String(result.reason || result.state || result.error || "").toLowerCase();
+  const reason = String(
+    result.reason || result.state || result.error || planWatchState.pushLastAttemptReason || ""
+  ).toLowerCase();
   const nativeState = String(planWatchState.pushConfig?.nativePush?.state || "").toLowerCase();
   return nativeState === "missing-apns-config" ||
     reason.includes("native-push-not-configured") ||
     reason.includes("missing-apns");
+}
+
+function planWatchRegistrationHealth() {
+  const now = Date.now();
+  const attemptAt = Math.max(0, Number(planWatchState.pushLastAttemptAt) || 0);
+  const successAt = Math.max(0, Number(planWatchState.pushLastSuccessAt) || 0);
+  const expiresAt = planWatchRegistrationExpiryTimestamp(planWatchState.pushRegistrationExpiresAt);
+  let stateValue = planWatchState.pushLastAttemptState || "";
+  if (stateValue === "pending" && attemptAt && now - attemptAt > 2 * 60 * 1000) {
+    stateValue = "failed";
+  }
+  if (planWatchNativeDeliveryNotConfigured()) stateValue = "failed";
+  const expired = stateValue === "ready" && successAt > 0 &&
+    (!expiresAt || expiresAt <= now + PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS);
+  if (expired) stateValue = "expired";
+  return {
+    state: stateValue,
+    attemptAt,
+    successAt,
+    expiresAt,
+    expired,
+    reason: expired ? "registration-expired" : planWatchState.pushLastAttemptReason || "",
+    ready: stateValue === "ready" && successAt > 0 && successAt >= attemptAt &&
+      expiresAt > now + PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS
+  };
+}
+
+function beginPlanWatchRegistrationAttempt() {
+  const health = {
+    lastAttemptAt: Date.now(),
+    lastAttemptState: "pending",
+    lastAttemptReason: "",
+    lastSuccessAt: planWatchState.pushLastSuccessAt,
+    registrationExpiresAt: planWatchState.pushRegistrationExpiresAt
+  };
+  planWatchState.pushLastAttemptAt = health.lastAttemptAt;
+  planWatchState.pushLastAttemptState = health.lastAttemptState;
+  planWatchState.pushLastAttemptReason = health.lastAttemptReason;
+  writePlanWatchPushHealth(health);
+}
+
+function planWatchRegistrationResultSucceeded(result = {}) {
+  const reason = String(result.reason || result.state || result.error || "").toLowerCase();
+  if (result.ok === false) return false;
+  if (/deleted|disabled|no-enabled|no-subscription|unregister|paused/.test(reason)) return false;
+  const stored = result.state === "stored" || Boolean(result.subscriptionId) || result.ok === true;
+  const expiresAt = planWatchRegistrationExpiryTimestamp(result.expiresAt);
+  return stored && expiresAt > Date.now() + PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS;
+}
+
+function completePlanWatchRegistrationAttempt(result = {}) {
+  const ready = planWatchRegistrationResultSucceeded(result);
+  const now = Date.now();
+  const expiresAt = planWatchRegistrationExpiryTimestamp(result.expiresAt);
+  const accepted = result.ok !== false && (
+    result.state === "stored" || Boolean(result.subscriptionId) || result.ok === true
+  );
+  const expiryFailure = accepted && !ready
+    ? expiresAt ? "registration-expired" : "registration-expiry-missing"
+    : "";
+  planWatchState.pushLastAttemptState = ready ? "ready" : "failed";
+  planWatchState.pushLastAttemptReason = ready
+    ? ""
+    : planWatchCompactText(
+        expiryFailure || result.reason || result.error || result.state || "registration-failed",
+        120
+      );
+  if (ready) {
+    planWatchState.pushLastSuccessAt = now;
+    planWatchState.pushRegistrationExpiresAt = expiresAt;
+  }
+  writePlanWatchPushHealth({
+    lastAttemptAt: planWatchState.pushLastAttemptAt || now,
+    lastAttemptState: planWatchState.pushLastAttemptState,
+    lastAttemptReason: planWatchState.pushLastAttemptReason,
+    lastSuccessAt: planWatchState.pushLastSuccessAt,
+    registrationExpiresAt: planWatchState.pushRegistrationExpiresAt
+  });
+  if (typeof recordForYouSignal === "function") {
+    recordForYouSignal(ready ? "notification-registration-ready" : "notification-registration-failed");
+  }
+  return ready;
 }
 
 function planWatchPushSupported() {
@@ -1335,7 +1545,7 @@ function planWatchNotificationSyncPlans() {
     .filter((memory) => !planWatchMemoryIsPast(memory))
     .map((memory) => planWatchServerPlanFromMemory(memory, watchById.get(memory.id)))
     .filter(Boolean)
-    .slice(0, 40);
+    .slice(0, PLAN_WATCH_MAX_NOTIFICATION_PLANS);
 }
 
 function planWatchMemoryIsPast(memory) {
@@ -1513,6 +1723,7 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
     return { ok: true, reason: "sync-throttled" };
   }
   if (planWatchState.pushSyncPromise) return planWatchState.pushSyncPromise;
+  let attemptedRegistration = false;
   planWatchState.pushSyncPromise = (async () => {
     planWatchState.pushLastSyncAt = Date.now();
     if (!planWatchNotificationsEnabled()) {
@@ -1523,6 +1734,9 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
     if (!plans.length && !places.length) {
       return unregisterPlanWatchPushSubscription({ reason: options.reason || "no-enabled-watches" });
     }
+    attemptedRegistration = true;
+    beginPlanWatchRegistrationAttempt();
+    refreshPlanWatchDeliveryUI();
     const { subscription, nativeChannel, config, reason } = await ensurePlanWatchPushSubscription();
     if (!subscription && !nativeChannel) return { ok: false, reason };
     const endpoint = config?.push?.registerUrl || PLAN_WATCH_PUSH_REGISTER_ENDPOINT;
@@ -1545,17 +1759,27 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
     return result;
   })().then((result) => {
     planWatchState.pushLastSyncResult = result;
+    if (attemptedRegistration) completePlanWatchRegistrationAttempt(result);
     reportPlanWatchNotificationSyncResult(result);
+    refreshPlanWatchDeliveryUI();
     return result;
   }).catch((error) => {
     const result = { ok: false, reason: cleanError(error) || "sync-failed" };
     planWatchState.pushLastSyncResult = result;
+    if (attemptedRegistration) completePlanWatchRegistrationAttempt(result);
     reportPlanWatchNotificationSyncResult(result);
+    refreshPlanWatchDeliveryUI();
     return result;
   }).finally(() => {
     planWatchState.pushSyncPromise = null;
   });
   return planWatchState.pushSyncPromise;
+}
+
+function refreshPlanWatchDeliveryUI() {
+  if (typeof renderAsk === "function") renderAsk();
+  if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
+  if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
 }
 
 function reportPlanWatchNotificationSyncResult(result) {
@@ -1587,20 +1811,53 @@ function planWatchNotificationPlanCopy(memoryId) {
       disabled: true
     };
   }
+  if (id && planWatchNotificationLimitReached(id)) {
+    return {
+      label: "3-plan limit",
+      aria: "Notifications are already on for three plans; turn one off before enabling this plan",
+      title: "Up to three active plans can notify this device.",
+      pressed: false,
+      disabled: true,
+      action: "limit"
+    };
+  }
   if (id && planWatchNotificationPlanEnabled(id) && planWatchNotificationsEnabled()) {
+    const delivery = planWatchRegistrationHealth();
     if (planWatchNativeDeliveryNotConfigured()) {
       return {
-        label: "Delivery setup needed",
-        aria: "Native notification delivery needs server setup",
+        label: "Turn notifications off",
+        aria: "Turn off notifications for this plan; native delivery is unavailable",
         pressed: true,
-        disabled: false
+        disabled: false,
+        action: "disable"
+      };
+    }
+    if (delivery.state === "failed" || delivery.state === "expired") {
+      return {
+        label: delivery.state === "expired" ? "Renew delivery" : "Retry delivery",
+        aria: delivery.state === "expired"
+          ? "Renew notification delivery for this plan"
+          : "Retry notification delivery for this plan",
+        pressed: true,
+        disabled: false,
+        action: "retry"
+      };
+    }
+    if (delivery.state === "pending" || !delivery.ready) {
+      return {
+        label: "Setting up…",
+        aria: "Notification delivery is being set up for this plan",
+        pressed: true,
+        disabled: true,
+        action: "pending"
       };
     }
     return {
       label: "Notifications on",
       aria: "Turn off notifications for this plan",
       pressed: true,
-      disabled: false
+      disabled: false,
+      action: "disable"
     };
   }
   if (id && planWatchNotificationPlanEnabled(id)) {
@@ -1608,24 +1865,40 @@ function planWatchNotificationPlanCopy(memoryId) {
       label: "Resume notifications",
       aria: "Resume notifications for this plan",
       pressed: true,
-      disabled: false
+      disabled: false,
+      action: "resume"
     };
   }
   return {
     label: "Notify me",
     aria: "Notify me if this plan changes",
     pressed: false,
-    disabled: false
+    disabled: false,
+    action: "enable"
   };
 }
 
 async function requestPlanWatchNotifications(memoryId = "") {
   const planId = String(memoryId || "").trim();
+  const wasSelected = Boolean(planId && planWatchNotificationPlanEnabled(planId));
+  const planCopy = planId ? planWatchNotificationPlanCopy(planId) : null;
   if (!planWatchNotificationsSupported()) {
     renderGlobalMemorySheet();
     return;
   }
+  if (planId && planCopy?.action === "limit") {
+    if (typeof setStatus === "function") {
+      setStatus("Notifications are already on for 3 plans. Turn one off in Watching first.", true);
+    }
+    refreshPlanWatchDeliveryUI();
+    return;
+  }
   if (planId && planWatchNotificationPlanEnabled(planId) && planWatchNotificationsEnabled()) {
+    if (planCopy?.action === "retry") {
+      syncPlanWatchNotificationSubscription({ force: true, reason: "plan-retry" });
+      return;
+    }
+    if (planCopy?.action === "pending") return;
     setPlanWatchNotificationPlan(planId, false);
     renderGlobalMemorySheet();
     if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
@@ -1647,7 +1920,13 @@ async function requestPlanWatchNotifications(memoryId = "") {
   }
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
   if (permission === "granted" && planId) {
-    setPlanWatchNotificationPlan(planId, true);
+    const selected = setPlanWatchNotificationPlan(planId, true);
+    if (!selected && typeof setStatus === "function") {
+      setStatus("Notifications are already on for 3 plans. Turn one off in Watching first.", true);
+    }
+    if (selected && !wasSelected && typeof recordForYouSignal === "function") {
+      recordForYouSignal("notification-opt-in");
+    }
   }
   renderGlobalMemorySheet();
   if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
@@ -1702,6 +1981,7 @@ function planWatchNotificationPanelCopy(watchItems) {
   const permission = planWatchNotificationPermission();
   const enabled = planWatchNotificationsEnabled();
   const nativeDeliveryMissing = planWatchNativeDeliveryNotConfigured();
+  const delivery = planWatchRegistrationHealth();
   if (!supported) {
     return {
       tone: "pending",
@@ -1721,13 +2001,28 @@ function planWatchNotificationPanelCopy(watchItems) {
     };
   }
   if (enabled) {
-    if (nativeDeliveryMissing) {
+    if (nativeDeliveryMissing || delivery.state === "failed" || delivery.state === "expired") {
       return {
         tone: "caution",
-        title: "Native delivery needs setup",
-        body: "This iPhone can allow notifications, but Nearcast needs APNs server setup before it can send them outside the app.",
-        button: enabledCount ? "Pause all" : "",
-        meta: "Setup needed"
+        title: nativeDeliveryMissing
+          ? "Native delivery needs setup"
+          : delivery.state === "expired" ? "Notification delivery needs renewal" : "Notification delivery needs attention",
+        body: nativeDeliveryMissing
+          ? "This iPhone can allow notifications, but Nearcast needs APNs server setup before it can send them outside the app."
+          : delivery.state === "expired"
+            ? "The last confirmed registration expired. Nearcast is still watching in the app; renew delivery from the selected plan."
+            : "The last registration attempt failed. Nearcast is still watching in the app; retry delivery from the selected plan.",
+        button: "",
+        meta: "Not delivering"
+      };
+    }
+    if (enabledCount && !delivery.ready) {
+      return {
+        tone: "neutral",
+        title: "Finishing notification setup",
+        body: "The plan is saved and being watched. Nearcast has not confirmed delivery for this device yet.",
+        button: "",
+        meta: "Setting up"
       };
     }
     return {
@@ -1739,7 +2034,7 @@ function planWatchNotificationPanelCopy(watchItems) {
         ? "Nearcast will only notify when those plans meaningfully change."
         : "Open a watched plan and tap Notify me to opt into that plan.",
       button: enabledCount ? "Pause all" : "",
-      meta: count ? `${count} active` : "Ready"
+      meta: count ? `${count} active` : "Allowed"
     };
   }
   return {
@@ -1804,12 +2099,18 @@ function planWatchActivityRows(watchItems) {
   const placesRequested = placeWatchNotificationsRequested();
   const selectedPlaces = placeWatchNotificationSelectedCount();
   const savedPlaces = placeWatchSavedPlaces().length;
-  const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
+  const delivery = planWatchRegistrationHealth();
+  const lastAttempt = formatPlanWatchRelativeTimestamp(delivery.attemptAt);
+  const lastSuccess = formatPlanWatchRelativeTimestamp(delivery.successAt);
   const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
   const notificationState = notificationsReady
     ? nativeDeliveryMissing
       ? "Delivery setup needed"
-      : "Notifications ready"
+      : delivery.state === "failed" || delivery.state === "expired"
+        ? delivery.state === "expired" ? "Delivery expired" : "Delivery failed"
+        : delivery.ready
+          ? "Notifications ready"
+          : "Delivery not confirmed"
     : planWatchNotificationPermission() === "denied"
       ? "Notifications blocked"
       : "In-app watching";
@@ -1839,8 +2140,16 @@ function planWatchActivityRows(watchItems) {
       value: notificationState
     }
   ];
-  if (lastSync) {
-    rows.push({ label: "Last sync", value: lastSync });
+  if (lastAttempt) {
+    const attemptState = delivery.state === "ready"
+      ? "Succeeded"
+      : delivery.state === "expired" ? "Expired" : delivery.state === "failed" ? "Failed" : "In progress";
+    rows.push({ label: "Last attempt", value: `${attemptState} · ${lastAttempt}` });
+  }
+  if (lastSuccess) {
+    rows.push({ label: "Last success", value: lastSuccess });
+  } else if (notificationsReady && (enabledPlans || selectedPlaces)) {
+    rows.push({ label: "Last success", value: "None yet" });
   }
   if (lastSignal) {
     rows.push({ label: "Last matched change", value: lastSignal });
@@ -1851,16 +2160,19 @@ function planWatchActivityRows(watchItems) {
 function renderPlanWatchActivityPanel(watchItems, options = {}) {
   const rows = planWatchActivityRows(watchItems);
   const compactClass = options.compact ? " is-compact" : "";
+  const deliveryReady = planWatchNotificationsEnabled() && planWatchRegistrationHealth().ready;
   const body = planWatchNotificationsEnabled()
     ? planWatchNativeDeliveryNotConfigured()
       ? "Nearcast will still check enabled plans and saved places in the app. Native delivery needs server setup before it can interrupt you."
-      : "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
+      : planWatchRegistrationHealth().ready
+        ? "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
+        : "Nearcast is watching in the app, but notification delivery has not been confirmed for this device."
     : "Nearcast still checks watched plans in the app. Turn on notifications when you want phone/browser updates.";
   return `
     <section class="plan-watch-activity${compactClass}">
       <div class="plan-watch-activity-head">
         <span>Watching activity</span>
-        <strong>This device is set up to watch</strong>
+        <strong>${deliveryReady ? "Notification delivery is confirmed" : "Watching is active in the app"}</strong>
         <small>${escapeHtml(body)}</small>
       </div>
       <dl class="plan-watch-activity-list">
@@ -1924,6 +2236,7 @@ function planWatchNotificationHubStatus(watchItems) {
   const placeTargets = placeWatchNotificationSelectedCount();
   const placeRequested = placeWatchNotificationsRequested();
   const totalTargets = planTargets + (placeRequested ? placeTargets : 0);
+  const delivery = planWatchRegistrationHealth();
   if (!supported) {
     return {
       tone: "pending",
@@ -1955,6 +2268,42 @@ function planWatchNotificationHubStatus(watchItems) {
         primaryLabel: "Pause all"
       };
     }
+    if (delivery.state === "expired") {
+      const succeeded = formatPlanWatchRelativeTimestamp(delivery.successAt);
+      return {
+        tone: "caution",
+        eyebrow: "Renewal needed",
+        title: "Notification registration expired",
+        body: `Nearcast is still watching in the app${succeeded ? ` · last successful sync ${succeeded}` : ""}. Renew delivery before expecting another notification.`,
+        primary: "retry",
+        primaryLabel: "Renew delivery"
+      };
+    }
+    if (delivery.state === "failed") {
+      const attempted = formatPlanWatchRelativeTimestamp(delivery.attemptAt);
+      const succeeded = formatPlanWatchRelativeTimestamp(delivery.successAt);
+      return {
+        tone: "caution",
+        eyebrow: "Delivery not ready",
+        title: "The last registration attempt failed",
+        body: `Nearcast is still watching in the app${attempted ? ` · attempted ${attempted}` : ""}${succeeded ? ` · last successful sync ${succeeded}` : " · no successful sync yet"}.`,
+        primary: "retry",
+        primaryLabel: "Retry"
+      };
+    }
+    if (!delivery.ready) {
+      const attempted = formatPlanWatchRelativeTimestamp(delivery.attemptAt);
+      return {
+        tone: "neutral",
+        eyebrow: delivery.state === "pending" ? "Setting up" : "Not registered",
+        title: delivery.state === "pending" ? "Confirming notification delivery" : "Notification delivery is not confirmed",
+        body: attempted
+          ? `The plan is being watched in the app. Registration was attempted ${attempted}; no successful sync is recorded yet.`
+          : "The plan is being watched in the app. Nearcast has not registered this device for delivery yet.",
+        primary: "retry",
+        primaryLabel: delivery.state === "pending" ? "Check again" : "Set up delivery"
+      };
+    }
     return {
       tone: "good",
       eyebrow: "Ready",
@@ -1967,7 +2316,7 @@ function planWatchNotificationHubStatus(watchItems) {
   if (enabled) {
     return {
       tone: "neutral",
-      eyebrow: "Ready",
+      eyebrow: "Allowed",
       title: "Choose what can notify you",
       body: "Notifications are allowed. Pick the plans or saved places worth hearing about.",
       primary: "",
@@ -1995,6 +2344,11 @@ function planWatchNotificationHubStatus(watchItems) {
 }
 
 function planWatchSyncResultText() {
+  const health = planWatchRegistrationHealth();
+  if (health.state === "expired") return "Registration expired";
+  if (health.state === "failed") return "Registration failed";
+  if (health.state === "pending") return "Registration in progress";
+  if (health.ready) return "Delivery confirmed";
   const result = planWatchState.pushLastSyncResult;
   if (!result) {
     const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
@@ -2025,11 +2379,17 @@ function planWatchNotificationHubStats(watchItems) {
   const selectedPlaces = placeWatchNotificationSelectedCount();
   const savedPlaces = placeWatchSavedPlaces().length;
   const permission = planWatchNotificationPermission();
+  const delivery = planWatchRegistrationHealth();
+  const permissionMode = planWatchNotificationsEnabled()
+    ? "On"
+    : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const notificationMode = planWatchNotificationsEnabled()
-    ? planWatchNativeDeliveryNotConfigured() ? "Setup needed" : "On"
+    ? planWatchNativeDeliveryNotConfigured() || delivery.state === "failed" || delivery.state === "expired"
+      ? "Not delivering"
+      : delivery.ready ? "Ready" : "Not confirmed"
     : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const rows = [
-    { label: "Notifications", value: notificationMode },
+    { label: "Notifications", value: permissionMode },
     {
       label: "Plans",
       value: active.length
@@ -2044,8 +2404,19 @@ function planWatchNotificationHubStats(watchItems) {
           : `${savedPlaces} saved`
         : "None saved"
     },
-    { label: "Recent", value: planWatchSyncResultText() }
+    { label: "Delivery", value: notificationMode }
   ];
+  const lastAttempt = formatPlanWatchRelativeTimestamp(delivery.attemptAt);
+  const lastSuccess = formatPlanWatchRelativeTimestamp(delivery.successAt);
+  if (lastAttempt) {
+    const stateLabel = delivery.state === "ready"
+      ? "Succeeded"
+      : delivery.state === "expired" ? "Expired" : delivery.state === "failed" ? "Failed" : "In progress";
+    rows.push({ label: "Last attempt", value: `${stateLabel} · ${lastAttempt}` });
+  }
+  if (planWatchNotificationsEnabled() && (enabledPlans || selectedPlaces)) {
+    rows.push({ label: "Last success", value: lastSuccess || "None yet" });
+  }
   const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
   if (lastSignal) rows.push({ label: "Last call", value: lastSignal });
   return rows;
@@ -2089,7 +2460,8 @@ function renderPlanWatchNotificationRules() {
 function renderPlanWatchNotificationHubActions(status) {
   const buttons = [];
   if (status.primaryLabel) {
-    buttons.push(`<button class="is-primary" type="button" data-watch-notify>${escapeHtml(status.primaryLabel)}</button>`);
+    const action = status.primary === "retry" ? " data-watch-notify-retry" : " data-watch-notify";
+    buttons.push(`<button class="is-primary" type="button"${action}>${escapeHtml(status.primaryLabel)}</button>`);
   }
   if (!buttons.length) return "";
   return `<div class="watch-notify-actions">${buttons.join("")}</div>`;
@@ -2101,14 +2473,18 @@ function renderPlanWatchNotificationTargets(watchItems, options = {}) {
   if (!active.length && !savedPlaces.length) return "";
   const placeCopy = savedPlaceWatchNotificationPanelCopy();
   const placeRequested = placeWatchNotificationsRequested();
+  const selectedPlanCount = planWatchNotificationEnabledCount(active);
   return `
     <div class="watch-notify-targets">
       ${active.length ? `
         <div class="watch-notify-target-group">
           <div class="watch-notify-target-title">
             <span>Plans that can notify you</span>
-            <small>${escapeHtml(planWatchNotificationEnabledCount(active))}/${active.length}</small>
+            <small>${escapeHtml(selectedPlanCount)}/${PLAN_WATCH_MAX_NOTIFICATION_PLANS}</small>
           </div>
+          ${selectedPlanCount >= PLAN_WATCH_MAX_NOTIFICATION_PLANS && active.length > selectedPlanCount
+            ? `<p class="watch-notify-limit">Three plans can notify this device at once. Turn one off to choose another.</p>`
+            : ""}
           <div class="plan-watch-manage-list">
             ${active.map(renderPlanWatchManagePlanItem).join("")}
           </div>
@@ -2173,6 +2549,7 @@ function renderPlanWatchManagePlanItem(watch) {
         data-watch-notify="${id}"
         aria-pressed="${copy.pressed ? "true" : "false"}"
         aria-label="${escapeHtml(copy.aria)}"
+        title="${escapeHtml(copy.title || copy.aria)}"
         ${copy.disabled ? "disabled" : ""}
       >${escapeHtml(copy.label)}</button>
     </div>
@@ -2351,6 +2728,7 @@ async function showPlanWatchNotification(watch) {
     const registration = await navigator.serviceWorker.ready;
     const title = `Nearcast: ${planMemoryTitle(watch.memory)}`;
     const body = (watch.notification || planWeatherNotificationState(watch)).body;
+    const receipt = watch.change?.receipt || null;
     await registration.showNotification(title, {
       body,
       tag: `nearcast-plan-${watch.memory.id}`,
@@ -2366,7 +2744,8 @@ async function showPlanWatchNotification(watch) {
             : "",
           signal: (watch.notification || planWeatherNotificationState(watch)).signal || "plan-watch",
           timeScope: "plan-window",
-          source: "plan-watch"
+          source: "plan-watch",
+          receipt
         }),
         memoryId: watch.memory.id,
         target: "plan",
@@ -2375,7 +2754,8 @@ async function showPlanWatchNotification(watch) {
           : "",
         signal: (watch.notification || planWeatherNotificationState(watch)).signal || "plan-watch",
         timeScope: "plan-window",
-        source: "plan-watch"
+        source: "plan-watch",
+        receipt
       }
     });
     const update = planWatchRecentUpdateFromWatch(watch);
@@ -3352,6 +3732,7 @@ const PLAN_IMPLICIT_LOCATION_DROP_WORDS = new Set([
   "to", "for", "of", "on", "at", "from", "between", "before", "after", "around", "about", "by",
   "go", "going", "planning", "plan", "plans", "check", "checking",
   "look", "looks", "looking", "weather", "forecast", "conditions",
+  "hour", "hours", "hr", "hrs", "minute", "minutes", "min", "mins",
   "outside", "outdoors", "outdoor", "inside", "party", "birthday", "wedding",
   "concert", "festival", "parade", "camp", "camping", "recital", "meetup"
 ]);
@@ -5873,6 +6254,7 @@ function markPlanWatchFocusedChangeReviewed(memoryId, expectedSignature = null) 
   markPlanWatchChangeReviewed(found.memory, change);
   markPlanWatchReceiptReviewed(memoryId);
   savePlanWatchReviewedContinuitySnapshot(resolved.item, resolved.source);
+  if (typeof recordForYouSignal === "function") recordForYouSignal("watch-change-reviewed");
   if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
   return true;
 }
@@ -6151,7 +6533,14 @@ function renderFocusedPlanNotifyAction(watch, effectivePast) {
   const disabled = copy.disabled ? " disabled" : "";
   const active = copy.pressed ? " is-active" : "";
   const aria = `${copy.aria} ${planMemoryTitle(watch.memory)}`.trim();
-  return `<button class="${active.trim()}" type="button" data-watch-notify="${id}" aria-label="${escapeHtml(aria)}" aria-pressed="${copy.pressed ? "true" : "false"}"${disabled}>${escapeHtml(copy.label)}</button>`;
+  return `<button class="${active.trim()}" type="button" data-watch-notify="${id}" aria-label="${escapeHtml(aria)}" aria-pressed="${copy.pressed ? "true" : "false"}" title="${escapeHtml(copy.title || aria)}"${disabled}>${escapeHtml(copy.label)}</button>`;
+}
+
+function renderFocusedPlanNotifyLimit(watch, effectivePast) {
+  if (effectivePast || !watch?.memory?.id) return "";
+  const copy = planWatchNotificationPlanCopy(watch.memory.id);
+  if (copy.action !== "limit") return "";
+  return `<p class="focused-plan-notify-limit">Notifications are already on for 3 plans. Turn one off in Watching before choosing this plan.</p>`;
 }
 
 function renderFocusedPlanChangeBlock(watch) {
@@ -6284,6 +6673,7 @@ function renderFocusedPlanWatchHero(item, watch) {
         ${renderFocusedPlanNotifyAction(watch, effectivePast)}
         <button type="button" data-memory-edit="${id}">Change plan</button>
       </div>
+      ${renderFocusedPlanNotifyLimit(watch, effectivePast)}
       <button class="focused-plan-forget" type="button" data-memory-forget="${id}">Forget this plan</button>
     </section>
   `;
@@ -7859,6 +8249,71 @@ function planDecisionItemForExchange(exchange, index) {
   return planBriefingItemFromEvent(memory, event, event.data, event.place, context, alerts);
 }
 
+function renderSavedPlanWatchConfirmation(memoryId) {
+  const id = String(memoryId || "").trim();
+  if (!id) return "";
+  const escapedId = escapeHtml(id);
+  const copy = planWatchNotificationPlanCopy(id);
+  const selected = planWatchNotificationPlanEnabled(id);
+  const delivery = planWatchRegistrationHealth();
+  const permission = planWatchNotificationPermission();
+  let notificationTitle = "Want a heads-up?";
+  let notificationBody = "Optional: choose up to 3 active plans for meaningful-change notifications.";
+  let notificationAction = copy.disabled
+    ? ""
+    : `<button type="button" data-watch-notify="${escapedId}" aria-pressed="${copy.pressed ? "true" : "false"}">${escapeHtml(copy.label)}</button>`;
+  let notificationTone = "neutral";
+
+  if (permission === "denied") {
+    notificationTitle = "Watching in the app";
+    notificationBody = "Notifications are blocked in device settings, but this plan will still update here.";
+    notificationAction = "";
+    notificationTone = "caution";
+  } else if (!planWatchNotificationsSupported()) {
+    notificationTitle = "Watching in the app";
+    notificationBody = "This browser cannot deliver notifications, but the plan will still update here.";
+    notificationAction = "";
+  } else if (copy.action === "limit") {
+    notificationTitle = "Three plans already notify you";
+    notificationBody = "This plan is still watched in the app. Turn notifications off for another plan before enabling this one.";
+    notificationAction = "";
+    notificationTone = "caution";
+  } else if (selected && delivery.ready) {
+    notificationTitle = "Notifications are on";
+    notificationBody = "Nearcast can send a heads-up when this plan changes meaningfully.";
+    notificationTone = "good";
+  } else if (selected && (delivery.state === "failed" || delivery.state === "expired" || planWatchNativeDeliveryNotConfigured())) {
+    notificationTitle = delivery.state === "expired" ? "Delivery needs renewal" : "Delivery needs attention";
+    notificationBody = delivery.state === "expired"
+      ? "The plan is still watched here, but this device’s notification registration expired."
+      : "The plan is still being watched here, but notifications are not reaching this device yet.";
+    notificationTone = "caution";
+  } else if (selected) {
+    notificationTitle = "Setting up notifications";
+    notificationBody = "The plan is saved. Nearcast is still confirming delivery for this device.";
+  }
+
+  return `
+    <section class="ask-watch-saved">
+      <div class="ask-watch-confirmation" role="status" aria-live="polite">
+        <span class="ask-watch-confirmation-mark" aria-hidden="true">✓</span>
+        <span>
+          <strong>Nearcast is watching this</strong>
+          <small>We’ll compare this exact time and place as the forecast changes.</small>
+        </span>
+      </div>
+      <div class="ask-watch-next is-${escapeHtml(notificationTone)}">
+        <span>
+          <strong>${escapeHtml(notificationTitle)}</strong>
+          <small>${escapeHtml(notificationBody)}</small>
+        </span>
+        ${notificationAction}
+      </div>
+      <button class="ask-watch-open" type="button" data-memory-show="${escapedId}">Open watched plan</button>
+    </section>
+  `;
+}
+
 function renderPlanDecisionExchange(exchange, index, streaming = false) {
   const item = planDecisionItemForExchange(exchange, index);
   if (!item) return "";
@@ -7878,8 +8333,7 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
   const reasonLabel = item.tone === "good" ? "Why it works" : "Main concern";
   const actionLabel = item.tone === "good" ? "Good to know" : "Plan for this";
   const watchAction = rememberedId
-    ? `<button class="ask-decision-primary-btn" type="button" data-memory-show="${escapeHtml(rememberedId)}">Open watched plan</button>` +
-      `<span class="ask-memory-state">Nearcast is watching this window</span>`
+    ? renderSavedPlanWatchConfirmation(rememberedId)
     : `<button class="ask-decision-primary-btn" type="button" data-memory-remember="${index}">Watch this plan</button>` +
       `<span class="ask-decision-action-note">Get meaningful updates if the forecast changes.</span>`;
   const changeTarget = rememberedId || index;

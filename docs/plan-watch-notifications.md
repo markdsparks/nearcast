@@ -1,141 +1,216 @@
-# Watch Notifications
+# Production Watch Notifications
 
-Nearcast keeps notifications platform-neutral: the app syncs watched-plan and
-saved-place intent plus a delivery channel, and the server can later evaluate
-weather changes without caring whether the client is a PWA or a native app.
+Nearcast notifications have one product promise: watch the plans and saved
+places a person explicitly selects, then interrupt only when the weather story
+meaningfully changes. They are a production capability, not a replacement for
+official emergency alerts.
 
-## Current Foundation
+## Product Contract
 
-- `POST /api/watch/notifications/register` stores one delivery channel plus the
-  enabled watched plans and saved places for that device. The delivery channel
-  can be a Web Push subscription or a native iOS APNs token.
-- `POST /api/watch/notifications/unregister` removes the stored delivery
-  channel.
-- `GET /api/watch/notifications/config` advertises whether Web Push is configured
-  with a VAPID public key and whether native APNs delivery is configured.
-- `POST /api/watch/notifications/test` is a token-protected backend smoke route
-  that sends an empty Web Push to a stored subscription using VAPID signing.
-- `POST /api/watch/notifications/evaluate` is a token-protected evaluator route
-  that checks stored watched plans and saved places against fresh forecast/alert
-  data.
-- `POST /api/watch/notifications/pending` lets the service worker pull the
-  queued notification body after an empty wake-up push.
-- The service worker handles `push` events and displays a notification that opens
-  Nearcast.
-- The iOS shell exposes `window.NearcastNative.notifications`, asks iOS for
-  notification permission, registers for remote notifications, and syncs an
-  `ios-apns` delivery channel to the same registration endpoint.
-- The browser syncs enabled watched plans when notification permission is granted,
-  when a plan changes, when a plan is forgotten, and when watched forecasts refresh.
-- The browser syncs the selected saved places when saved-place notifications are
-  enabled, when the saved-place list changes, or when the user changes the
-  watched-place selection.
-- VAPID public key config lives in `wrangler.toml`; the private JWK and smoke
-  token are GitHub secrets that the deploy workflow installs as Worker secrets.
-- Native iOS delivery uses committed Worker vars for
-  `PLAN_WATCH_APNS_TEAM_ID` and `PLAN_WATCH_APNS_BUNDLE_ID`, plus Worker secrets
-  for `PLAN_WATCH_APNS_KEY_ID` and `PLAN_WATCH_APNS_PRIVATE_KEY`.
-- A Cloudflare Cron Trigger runs the evaluator every 30 minutes while
-  `PLAN_WATCH_EVALUATOR_MODE=beta`.
+- Notification permission is requested from a user action, never on launch.
+- A user chooses exactly which plans and saved places may notify them.
+- Forecast noise stays silent. Candidate selection is deterministic and uses the
+  same `weather-truth.js` rules as the in-app Watching experience.
+- A notification says what changed and opens the relevant plan, place, hourly
+  window, or official-alert detail.
+- Nearcast must not display `Notifications ready` unless this device has a
+  successfully stored, unexpired delivery channel.
+- US official-alert context comes from the National Weather Service. Outside
+  the US, Nearcast must describe official-alert coverage as unavailable rather
+  than interpreting the absence of NWS data as an all-clear.
 
-## Beta Guardrails
+## Production Architecture
 
-The notification evaluator is intentionally capped so public traffic cannot turn
-into an open-ended backend job:
+- `POST /api/watch/notifications/register` stores one Web Push subscription or
+  native iOS APNs channel plus the enabled plans and saved places for that
+  device. New-channel registration requires at least one valid watch target,
+  a valid IANA timezone, and a delivery channel that passes strict key/token and
+  provider validation. Web Push endpoints are limited to the supported FCM,
+  Mozilla Autopush, Apple Web Push, and Windows push domains; the Worker never
+  sends to an arbitrary caller-supplied host.
+- `POST /api/watch/notifications/unregister` removes that channel.
+- `GET /api/watch/notifications/config` publishes client-safe provider,
+  storage, and operating-limit readiness.
+- `GET /api/watch/notifications/health` is a token-protected operational view of
+  scheduler, storage, evaluator, and delivery readiness. It returns aggregates
+  only—never device tokens, subscription identifiers, locations, or plan text.
+- `POST /api/product/events` accepts only a small allowlist of aggregate product
+  counters using the exact `{ events: [{ name, count }], platform, version }`
+  schema. It requires same-origin browser metadata and rejects context, free
+  text, identifiers, and coordinates. `Sec-GPC: 1` or `DNT: 1` suppresses the
+  write at the edge.
+- `POST /api/watch/notifications/evaluate` is the token-protected deterministic
+  evaluator and supports a no-send dry run.
+- `POST /api/watch/notifications/test` sends a clearly labeled canary to a
+  dedicated stored device.
+- `POST /api/watch/notifications/pending` lets a Web Push service worker fetch
+  the queued notification copy after an encrypted empty wake-up push.
+- Native iOS delivery sends the copy and deep-link context directly through
+  APNs.
+- A Cloudflare Cron Trigger wakes the Worker every five minutes. A bounded urgent
+  pass performs only the official-alert lookup; it does not load forecast data.
+  A bounded standard pass follows in the same wake for ordinary plan/place
+  changes. The two passes share alert/forecast promises by place so they do not
+  repeat the same provider request in one cycle.
+- Cloudflare Rate Limiting bindings enforce separate per-client and global
+  admission limits for new delivery channels and aggregate product events.
+  Missing or failed bindings fail closed. Existing registered channels may still
+  renew their TTL or update watched targets, and no stable client hash is written
+  to R2.
 
-- `PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS=10`: at most 10 active Web Push
-  subscriptions can register during the beta. Existing subscriptions can refresh
-  their own plan state.
-- `PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION=3`: each subscribed device can sync at
-  most 3 notifying plans.
-- `PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION=3`: each subscribed device can select
-  and sync at most 3 saved places.
-- `PLAN_WATCH_EVALUATOR_LIMIT=5`: each scheduled run checks at most 5
-  subscriptions.
-- The scheduler checks the least-recently-evaluated subscriptions first, so a
-  larger beta cap rotates through devices instead of repeatedly checking the
-  same records.
-- Forecast and alert calls are cached per place/unit within each evaluation run.
+Delivery credentials remain secrets:
 
-With the default beta settings, the upper bound is 5 subscriptions x 6 watched
-items x 48 runs/day, or 1,440 item evaluations/day. Each unique place can
-require one Open-Meteo forecast request and, for US places, one NWS alert
-request. Per-run forecast and alert caching means a saved place and plan at the
-same coordinates usually share the same external requests.
+- `PLAN_WATCH_VAPID_PRIVATE_KEY`
+- `PLAN_WATCH_APNS_KEY_ID`
+- `PLAN_WATCH_APNS_PRIVATE_KEY`
+- `PLAN_WATCH_TEST_TOKEN`
+- `PLAN_WATCH_REGISTRATION_RATE_SALT` (recommended dedicated high-entropy salt;
+  the protected test token is the deployment fallback)
 
-At this beta size the expected Cloudflare-side cost should remain effectively
-inside normal free/very-low-cost usage: roughly 2,880 external weather requests
-per day at the cap before per-run place caching, 1,440 scheduled Worker
-invocations/month, and small R2 JSON
-reads/writes. Scaling is linear:
+The VAPID public key, APNs team/bundle identifiers, deterministic limits, and
+mode may remain in `wrangler.toml`.
 
-`monthly item evaluations = evaluated subscriptions per run x watched items per subscription x 48 x 30`
+## Responsible Production Limits
 
-Before raising the caps meaningfully, revisit the Worker subrequest limit,
-Open-Meteo/NWS fair-use behavior, R2 operation volume, and push-provider failure
-cleanup.
+Production is deliberately bounded. These are capacity and reliability
+controls, not a beta cohort or product tier:
 
-## Manual E2E Smoke
+- `PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS=60` caps active device channels. The cap
+  is above the former ten-device experiment and is derived from the evaluator
+  throughput/SLA below.
+- `PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION` caps notifying plans per device.
+- `PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION` caps notifying saved places per
+  device.
+- `PLAN_WATCH_EVALUATOR_LIMIT=4` and
+  `PLAN_WATCH_URGENT_EVALUATOR_LIMIT=8` bound work per five-minute pass.
+- Separate urgent and standard continuation cursors page through R2 in bounded
+  batches so every active device continues to make progress as capacity grows.
+- Forecast and alert requests are cached by place/unit inside an evaluator run.
+- At 60 active channels, the urgent cursor completes in at most eight wakes
+  (about 40 minutes) and the standard cursor in 15 wakes (about 75 minutes).
+  Health allows 45 and 90 minutes respectively, giving one-wake operating
+  headroom while still detecting capacity lag.
 
-1. Open Nearcast on the device/browser you want to test.
-2. Create or open a watched plan, then enable notifications.
-3. Wait a few seconds for the browser subscription and watched-plan intent to
-   sync to the backend.
-4. In GitHub Actions, run `Send plan watch test notification`.
-5. Leave `subscriptionId` blank to send to the first fresh stored subscription.
+Raise capacity only from observed evaluator duration, provider errors, R2
+operations, delivery acceptance, and oldest-record age—not from an arbitrary
+launch date. Change the active-channel cap and evaluator limits together so the
+45/90-minute service bounds remain true.
 
-Expected result: the device receives a generic Nearcast notification from the
-service worker. Tapping it opens Nearcast. If the workflow reports
-`subscription-not-found`, the backend does not have a fresh registered
-subscription yet; revisit the app, confirm notification permission, and update or
-watch a plan again.
+Capacity model:
 
-## Manual Evaluator Test
+`monthly item evaluations = evaluated devices per pass × watched items per device × passes per day × 30`
 
-1. Open Nearcast on the test device and make sure the app version is current.
-2. Open the watched plan and leave notifications on so the latest plan snapshot
-   syncs to the backend.
-3. In GitHub Actions, run `Evaluate plan watch notifications`.
-4. Use `dryRun: true` to inspect whether the evaluator sees the subscription and
-   plan without sending a push.
-5. Use `dryRun: false` to let the evaluator send a notification only if it sees
-   a meaningful change.
+Before each material increase, verify Cloudflare subrequest limits,
+Open-Meteo/NWS fair-use behavior, R2 volume, provider response rates, and stale
+subscription cleanup.
 
-The evaluator currently watches for high-signal changes: a new alert overlapping
-the plan window, rain increasing materially, serious heat getting worse, gusts
-getting meaningfully stronger, or the overall plan window degrading enough to
-cross a score band.
+## Production Health And Canaries
 
-Saved-place notifications baseline silently on first evaluation. After that they
-watch today/tomorrow for high-signal changes: a new alert, storms becoming
-likely, rain becoming materially more likely, tomorrow clearing up, heat risk
-rising, or gusts jumping. The evaluator sends only the highest-priority candidate
-per subscription per run.
+The production health endpoint is polled at minutes 7 and 37 by
+`.github/workflows/check-plan-watch-notification-health.yml`. A healthy result
+requires recent successful urgent and standard evaluations, ready storage, every
+configured delivery channel (Web Push and APNs in production), and cursor cycle
+age/oldest-evaluation lag within the 45/90-minute bounds. Official-alert fetch
+errors make that pass and health result degraded. HTTP 503 or `ok: false` fails
+the workflow.
 
-## Native iOS Notes
+`Send notification delivery canary` is intentionally manual because it creates
+a real interruption. It requires a dedicated canary subscription, selected by
+one of these GitHub secrets:
 
-The native app can now ask for permission and register an APNs token. If the
-Worker does not have APNs credentials yet, Nearcast stores the channel but
-returns `native-push-not-configured`; the app should explain that native delivery
-needs server setup instead of showing a silent failure.
+- `PLAN_WATCH_WEB_PUSH_CANARY_SUBSCRIPTION_ID`
+- `PLAN_WATCH_APNS_CANARY_SUBSCRIPTION_ID`
 
-APNs delivery uses the bundle id as the `apns-topic`, sends alert pushes through
-the production APNs host for TestFlight/App Store builds, and uses the sandbox
-host for debug builds.
+The workflow will not fall back to an arbitrary fresh user subscription. A
+successful HTTP/provider response proves provider acceptance, not that a person
+saw the notification; the canary device must still be checked periodically.
+The health payload reports each pass's bounded scan count, `hasMore`, cycle age,
+completed-cycle duration, oldest selected-record evaluation lag, and a
+non-sensitive cursor state (`continuing` or `wrapped`) so growing capacity lag
+is visible without exposing R2 cursor values or subscription records.
 
-## Intentionally Not Built Yet
+The existing `Evaluate plan watch notifications` workflow remains useful for a
+targeted dry run. Use a send-enabled evaluation only when validating a known
+test record.
 
-- Encrypted notification payloads with plan-specific copy.
-- User accounts or cross-device plan sync.
+Production signals to review:
 
-## Target Flow
+- last successful scheduled evaluation and its age;
+- records evaluated, deferred, failed, and errored;
+- supported/unsupported/error official-alert readiness and NWS failure rate;
+- Web Push/APNs acceptance and expired-token cleanup;
+- oldest active record waiting for evaluation;
+- registration failures and channel expiry;
+- notification opens by coarse signal type, without plan text or location.
 
-1. User enables notifications for a watched plan.
-2. User can also enable saved-place notifications from the Places sheet and
-   choose up to 3 saved places to watch.
-3. Client registers one delivery channel with watched-plan and saved-place
-   intent.
-4. A scheduled worker refreshes forecasts for stored watch places.
-5. The worker compares new weather truth to the stored last-known state.
-6. A push is sent only when a plan or saved place meaningfully changes.
-7. Tapping the notification opens Nearcast.
+## Release Gate
+
+Every push and pull request runs `.github/workflows/nearcast-ci.yml`:
+
+- JavaScript syntax checks;
+- weather-truth and notification-evaluator fixtures;
+- product-activation, hourly, gesture, map, satellite, Reactive Sky, and
+  freshness smokes;
+- native shared widget/Watch model tests on macOS;
+- an unsigned generic iOS build containing the app, widget, Watch app, and
+  complications.
+
+`scripts/nearcast-testflight.sh` runs the same portable and native-model checks,
+validates packaged metadata, archives all products, validates the archive, and
+only then uploads it. A TestFlight build should come from a clean, identifiable
+commit so the binary can be reproduced.
+
+## Delivery Semantics
+
+The evaluator watches for high-signal changes such as:
+
+- a new official alert overlapping a selected plan or saved place;
+- rain or storm risk materially increasing;
+- serious heat risk worsening;
+- gusts increasing enough to change a decision;
+- the overall plan window crossing a meaningful score band;
+- tomorrow materially clearing up when that is useful.
+
+The highest-priority candidate wins each evaluator pass. Other candidates keep
+their prior baseline and remain eligible for a later pass. A failed delivery
+must not advance the delivered candidate's baseline. Transient Web Push/APNs
+errors retry with a five-second attempt timeout and bounded exponential backoff;
+provider-expired channels are
+removed. Identical accepted deliveries are suppressed for 24 hours. Routine
+changes defer from 10 PM to 7 AM in the device timezone without consuming their
+baseline; official warnings bypass quiet hours. Nearcast adds context but does
+not replace official emergency alerts, Wireless Emergency Alerts, or local
+guidance.
+
+Web Push retries reuse the same pending notification until its two-hour TTL so
+multiple empty wakes cannot degrade into generic copy. APNs alert retries use
+the normalized notification tag as `apns-collapse-id`; Live Activity retries
+collapse by activity id.
+
+NWS outcomes are carried as `supported`, `unsupported`, or `error`. Unsupported
+geography preserves the prior alert fields without claiming an all-clear. A
+timeout, provider error, or unknown alert state never compares or advances the
+alert baseline; it fails the evaluation and is visible in protected health.
+
+## Manual End-To-End Check
+
+1. On a dedicated iPhone or browser, create a watched plan and enable its
+   notifications.
+2. Confirm Watching reports a successful channel registration and expiry—not
+   merely granted OS permission.
+3. Store that device's subscription id in the appropriate canary secret.
+4. Run `Send notification delivery canary` for Web Push or APNs.
+5. Confirm the canary arrives and opens Watching.
+6. Run `Evaluate plan watch notifications` with `dryRun: true` and confirm the
+   test plan/place is evaluated without sending.
+7. Confirm the production health workflow remains green after the next
+   scheduled evaluator pass.
+
+## Deliberate Boundaries
+
+- No user account or cross-device plan sync is required for delivery.
+- No AI model decides whether a notification is warranted.
+- No notification claims to replace NWS, Wireless Emergency Alerts, or local
+  emergency guidance.
+- No telemetry payload contains coordinates, place names, plan wording, device
+  tokens, or subscription identifiers.

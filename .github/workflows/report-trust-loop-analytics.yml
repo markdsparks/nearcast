@@ -1,0 +1,51 @@
+name: Report Trust Loop analytics
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Reporting window in days (1–90)."
+        required: true
+        default: "7"
+        type: string
+      dataset:
+        description: "Analytics Engine dataset."
+        required: true
+        default: "nearcast_product_events"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ANALYTICS_API_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_API_TOKEN }}
+      REPORT_DAYS: ${{ inputs.days }}
+      REPORT_DATASET: ${{ inputs.dataset }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify report implementation
+        run: node scripts/trust-loop-report-smoke.mjs
+
+      - name: Verify Cloudflare analytics credentials
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Missing CLOUDFLARE_ACCOUNT_ID secret."
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ANALYTICS_API_TOKEN" ]; then
+            echo "Missing CLOUDFLARE_ANALYTICS_API_TOKEN secret. Create a least-privilege token with Account > Account Analytics > Read."
+            exit 1
+          fi
+
+      - name: Build Trust Loop report
+        run: node scripts/trust-loop-report.mjs "--days=$REPORT_DAYS" "--dataset=$REPORT_DATASET"

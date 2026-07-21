@@ -1,361 +1,264 @@
-# Nearcast roadmap - from beautiful to indispensable
-
-Living product roadmap. Current as of **v3.0.169**.
-
-Nearcast is no longer a generic weather-app build. The product thesis is:
-
-- **Trustworthy weather truth**: current conditions, forecast, alerts, radar, and
-  visual atmosphere should agree with each other.
-- **Personal weather decisions**: plans, saved places, and watched windows should
-  answer "what does this mean for me?" without making the user manage weather
-  data.
-- **Beautiful, low-friction context**: the living sky and map should make the
-  app feel alive, but never at the expense of clarity, performance, or trust.
-- **Local-first by default**: stay cheap and private until a backend unlocks a
-  behavior users can immediately feel, such as reliable notifications.
-
-The next phase is not "add more widgets." It is to make Nearcast excellent at
-turning weather into timely, human guidance for places and plans.
-
-## Where We Are Now
-
-### Shipped strengths to protect
-
-- **Living current conditions**: the hero, sky, NOW/NEXT/LATER chips, glance
-  cards, hourly rows, and details form a premium first screen.
-- **Performance-aware immersion**: the animated background remains atmospheric,
-  but pauses during maps and active app work so interaction stays responsive.
-- **Free WebGL radar path**: the main app uses the free radar/map surface again,
-  with generated MRMS gated behind explicit debug experiment flags.
-- **Generated MRMS archived cleanly**: the high-detail radar spike is preserved
-  as an experiment, not carried as main-product complexity.
-- **Plan-aware weather**: users can create and watch plans, and the app can
-  compare those windows against forecast and alert context.
-- **Human-centered watched-plan UI**: watched plans now lead with what matters,
-  show contextual weather metrics, and avoid exposing plan/watch/memory
-  complexity as separate mental models.
-- **Watching command center**: the main Watching sheet now starts with the human
-  read, then explains what can notify the user, recent calls, and watched
-  plans/places from one surface.
-- **Contextual notification entry**: plan and saved-place notifications now
-  deep-link back into the relevant watched context, with recent updates kept
-  locally in the Watching surface.
-- **Contextual PWA install entry**: install guidance is now an earned,
-  dismissible nudge in the app menu and Today surface instead of an old release
-  splash.
-- **Hourly rain visibility**: hourly surfaces now keep nonzero rain chance
-  visible by default, while still reserving stronger emphasis for active or
-  meaningful rain signals.
-- **Guarded storm-view spike**: Xweather MapsGL can be tested behind debug
-  settings as an on-demand immersive map upgrade with local usage guardrails.
-- **Cleaner normal settings**: debug controls for map renderer, radar provider,
-  radar zoom, and diagnostics are hidden unless explicitly enabled.
-- **Local-first memory**: personal plan context stays inspectable and forgettable
-  without implying cloud sync or surprise persistence.
-
-### Decisions from the radar spike
-
-Generated MRMS proved that Nearcast can render beautiful radar from public
-numeric data, especially with encoded tiles and client-side WebGL styling. It
-also proved that large-scale, deep-zoom generated radar is not worth the current
-cost and operational complexity.
-
-Main-app rule:
-
-- Auto radar should stay on the free WebGL provider path.
-- Generated MRMS should stay behind experiment/debug flags.
-- Do not reintroduce generated MRMS into normal routing until it has no blanking,
-  no persistent "enhancing" state, no visible zoom-mode switching, and a clear
-  operating cost below the value it creates.
-
-See `docs/generated-mrms-spike-archive.md` for the full decision record.
-
-### Current constraints
-
-- **Weather truth is still too spread out**: plan guidance, hero visuals, radar
-  truth, alert text, and future notifications need one shared interpretation
-  layer.
-- **`app.js` is too large**: this is not a user-facing issue yet, but it slows
-  safe iteration and makes regressions more likely.
-- **Notifications require backend commitment**: reliable push needs VAPID keys,
-  subscription storage, a scheduler, and a conservative rule engine.
-- **Watched plans are promising but young**: the UX now points in the right
-  direction, but the guidance model needs sharper statuses, action language, and
-  a clean path into notifications.
-- **No real usage signal yet**: product calls are still based on hands-on testing
-  and judgment. That is fine at this stage, but roadmap bets should stay small
-  and observable.
-
-## Product Principles
-
-1. **Tell people what matters**
-   The app should translate weather into practical meaning: go now, wait, bring
-   water, expect rain, consider indoors, or keep an eye on it.
-
-2. **Truth before drama**
-   Do not overstate current conditions. Active weather, nearby weather, future
-   weather, and alert overlap should each be phrased honestly.
-
-3. **One model, many surfaces**
-   The hero, glance chips, maps, plans, details, and future notifications should
-   be different presentations of the same underlying weather truth.
+# Nearcast roadmap — from beautiful to dependable
+
+Living product roadmap, current for **v3.0.285+**.
+
+Nearcast already has a distinctive product: an unusually beautiful current
+weather experience, a capable radar map, useful iPhone widgets and Apple Watch
+surfaces, and a Plan Check that translates weather into a decision. The next
+phase is not another screen. It is proving that Nearcast remains correct and
+helpful when the user is not looking at it.
+
+## Product North Star
+
+**Nearcast remembers what matters and gives a trustworthy heads-up when the
+weather story meaningfully changes.**
+
+Four principles protect that promise:
+
+1. **Truth before drama.** Current, nearby, future, and official-alert weather
+   must never be blurred together.
+2. **One model, many surfaces.** The app, widgets, Watch, complications, plans,
+   map, and notifications present the same underlying weather truth.
+3. **Glance first, depth one tap away.** The main read is immediate; evidence
+   and hourly detail remain nearby without crowding it.
+4. **Performance is part of beauty.** Sky and map immersion must yield to input,
+   accessibility settings, battery, and thermal constraints.
+
+## Current Position
+
+### Strengths to protect
+
+- The hero, NOW/NEXT/LATER guidance, glance cards, hourly views, and living sky
+  form a coherent premium first screen.
+- Hourly temperature, rain chance/amount, wind, alerts, and explanatory detail
+  are materially more readable than a generic weather table.
+- The large widget, small widgets, Watch app, and complications now share
+  explicit freshness, hourly projection, and expiry rules instead of painting
+  one observation indefinitely.
+- Plan Check and Watching turn a forecast window into a human verdict, relevant
+  metrics, a receipt, and an optional notification target.
+- Web Push and APNs use one deterministic server evaluator and one shared
+  weather-truth contract.
+- Nearcast Radar, recent NASA GIBS satellite imagery, and the guarded StormScope
+  experience cover increasingly deep map needs without making provider names
+  the primary UX.
+- Reactive Sky is opt-in, Current Location aware, Reduced Motion aware, and
+  pauses when app work makes animation inappropriate.
+
+### Gaps that now matter most
+
+- We cannot yet see aggregate activation, freshness, delivery, or performance
+  outcomes well enough to distinguish an isolated glitch from a product-wide
+  issue.
+- Notification permission and a successful stored delivery channel are not the
+  same thing; every readiness surface must make that distinction.
+- Background refresh on iOS/watchOS is discretionary. The product must measure
+  and design around real delivery behavior rather than promise a fixed cadence.
+- Official alert context is NWS/US-only while the forecast experience is
+  worldwide. Coverage must be stated honestly.
+- The repository has broad smoke coverage but historically lacked an automatic
+  push/pull-request gate and reproducible clean-commit release discipline.
+- `app.js`, `planner.js`, `map.js`, and the native widget/watch files are large
+  enough that untested cross-surface changes carry increasing regression risk.
+
+## Priority 0 — Production Trust Loop
+
+Status: **active**.
+
+Goal: know whether Nearcast is fresh, correct, reachable, fast, and valuable
+without collecting personal weather context.
+
+### Reliability work
+
+- Record last attempt and last success separately for forecast loads, widget
+  refresh, Watch refresh, complication timelines, notification registration,
+  and server evaluation.
+- Keep enough cached forecast runway to advance widgets and complications when
+  Apple defers another extension launch; move to an explicit update-needed state
+  when the real forecast horizon ends.
+- Persist aggregate scheduled-evaluator health and expose it through the
+  protected production health endpoint.
+- Run the protected health canary twice an hour and keep dedicated manual Web
+  Push and APNs delivery canaries.
+- Add retry/backoff, expired-channel cleanup, duplicate suppression, and quiet
+  hours before materially increasing notification capacity.
+- Treat official-alert coverage as a first-class state: ready, none active,
+  unavailable here, or temporarily unknown.
+
+### Release work
+
+- Run portable product, weather-truth, notification, map, satellite, Reactive
+  Sky, and freshness checks on every push and pull request.
+- Run native shared-model tests and an unsigned iPhone/widget/Watch build on
+  macOS CI.
+- Make TestFlight execute the same production preflight before archive/export.
+- Upload only from a clean, identifiable commit and retain build-to-commit
+  traceability.
+
+### Privacy-safe product signals
+
+Nearcast may collect coarse allowlisted events such as:
+
+- forecast launch success, cache fallback, or failure;
+- Plan Check invitation shown/opened/dismissed;
+- Plan Check started, completed, and watched;
+- notification registration success/failure and coarse signal type;
+- notification open;
+- widget/Watch freshness age buckets and explicit expiry;
+- full-map open, high-detail actually visible, satellite selected, StormScope
+  activated, and provider failure;
+- Reactive Sky enabled, motion allowed, reduced-motion fallback, and long-task
+  buckets.
 
-4. **Personal context under user control**
-   Saved places and watched plans should feel helpful, editable, and easy to
-   forget. They should not turn the app into a complicated calendar.
+Never send coordinates, place names, plan wording, alert prose, device tokens,
+subscription identifiers, or raw sensor readings.
 
-5. **Glance first, depth one tap away**
-   The first screen should answer the urgent question. Details, receipts,
-   hourly ranges, maps, and plan context should be close but not crowded.
+### Definition of done
 
-6. **Performance is part of beauty**
-   Immersion only works if the app feels responsive. Motion should adapt to what
-   the user is doing.
+- Production notification health is visible and alertable.
+- `Notifications ready` means a successful unexpired server registration.
+- A failed refresh cannot leave an open-ended stale forecast or alert.
+- Every TestFlight artifact can be traced to a passing clean commit.
+- We can measure the path from Plan Check invitation → completed check → watched
+  plan → meaningful notification → return visit.
 
-7. **Backend only when it earns the cost**
-   A backend is justified for proactivity and push. It is not justified for
-   ordinary forecast display, saved places, local memories, or visual polish.
+## Priority 1 — Make Proactivity Earn The Return Visit
 
-## Priority Roadmap
+Status: **next product push after Trust Loop health is green**.
 
-### 1. Watched Plans As The Product Wedge
-
-Status: **next product push**.
-
-Goal: make a watched plan feel like the reason Nearcast exists.
-
-Target experience:
-
-- User saves or watches a plan.
-- Nearcast explains the main weather risk in human language.
-- The watched plan shows only the most relevant metrics for that risk.
-- The app suggests practical contingencies without sounding alarmist.
-- One tap opens hourly detail for the plan window.
-- The user can change or forget the plan without feeling trapped.
-
-Next build bets:
-
-- Refine plan status language into a small, consistent set:
-  `Looks good`, `Keep an eye on it`, `Plan around heat`, `Expect rain`, `Wind may
-  matter`, `Weather alert overlaps`.
-- Add contextual action copy by risk type:
-  heat, storms, rain, wind, cold, smoke/AQI, and mixed conditions.
-- Make watched-plan cards summarize multi-hour ranges consistently:
-  temperature range, feels-like range, max UV, max gusts, rain chance/range, and
-  alert overlap.
-- Add a "notify me" affordance only when the plan has a meaningful future
-  change to monitor.
-- Keep past plans and memory management secondary.
-
-Definition of done:
-
-- A normal user can tap a watched plan and understand the weather story in under
-  five seconds.
-- No clipped text.
-- No duplicate plan/watch/memory framing.
-- No provider-shaped or system-shaped language.
-
-### 2. Notification Spike
-
-Status: **prepare after watched-plan UX feels solid**.
-
-Goal: prove Nearcast can help before the user remembers to open it.
-
-First notification:
-
-```text
-Rain may affect [plan/place] around [time].
-```
-
-Why this first:
-
-- It is concrete and high value.
-- It connects directly to saved places and watched plans.
-- It can be conservative without pretending to be a full alerting platform.
-- It tests the real hard parts: install behavior, permission timing, VAPID,
-  subscription storage, background checks, and user trust.
-
-Initial scope:
-
-- One opt-in surface tied to watched plans and saved places.
-- One or two deterministic triggers:
-  rain starting soon, alert overlap worsening, or heat risk increasing.
-- Quiet hours and duplicate suppression.
-- Service worker push handler.
-- Minimal serverless endpoint and subscription store.
-
-Do not start with:
-
-- Morning briefings.
-- AI-generated push prose.
-- Severe weather replacement.
-- Multi-rule notification settings.
-- Cloud account/sync.
-
-### 3. Weather Truth Extraction
-
-Status: **started**.
-
-Goal: create one shared interpretation layer before notifications and more plan
-logic raise the cost of inconsistency.
-
-First module:
-
-- `weather-truth.js`
-
-Responsibilities:
-
-- Current-condition code selection.
-- Active precipitation vs nearby precipitation vs rain soon.
-- Alert overlap classification.
-- Multi-hour plan-window rollups.
-- Heat, UV, wind, rain, storm, cold, AQI, and mixed-risk summaries.
-- Receipts that explain why a surface says what it says.
-
-Rules:
-
-- Move-only where possible.
-- Add behavior tests around fixtures before changing logic.
-- Keep UI rendering outside the module.
-- Use deterministic rules for weather truth; AI may explain, not decide.
-
-Starter fixtures:
-
-- Clear but hot afternoon plan.
-- Rain starting within 20 minutes.
-- Radar nearby but not over the place.
-- Alert overlapping only part of a plan window.
-- Storm risk with low rain probability but active NWS alert.
-- Windy but otherwise good outdoor plan.
-
-First shipped slice:
-
-- Watched-plan receipts now come from `weather-truth.js` and explain the
-  evidence behind the verdict in the focused plan view.
-- Notification sync/evaluator records can carry receipt text in `lastKnown`, so
-  server-side watch state has room for the same explanation model.
-- The Watch sheet now includes a simple activity panel showing active plans,
-  saved-place watch selection, notification readiness, last sync, and recent
-  matched changes from this device.
-- Planner result cards now lead with one primary decision action, then tuck
-  hourly detail and plan changes into secondary actions so saving a watch feels
-  like the natural next step instead of a tool menu.
-- Forecast-change language now says `Forecast changed` instead of implying the
-  user's last tap was the baseline, and the watched-plan baseline refreshes
-  after new continuity snapshots are saved.
-- Opening a changed watched plan now reviews that exact forecast change, keeps
-  the explanation visible in the focused sheet, and advances the local baseline
-  so the same change does not keep reappearing as unresolved.
-- Focused watched-plan sheets now stay centered on the plan story and plan-level
-  actions; broader notification and saved-place controls live on the main
-  Watching overview.
-- The Watch sheet now has a unified `Watching controls` panel for plan and
-  saved-place notification opt-ins, so users can manage what can interrupt them
-  from one place.
-- `weather-truth.js` now exposes the shared plan-watch truth contract used by
-  both the browser UI and the Cloudflare notification evaluator: current state,
-  change detection, last-known receipts, and notification candidates now come
-  from the same deterministic plan weather spine.
-- The Watch sheet now has a single notification management hub that explains
-  device readiness, selected plans, selected saved places, sync health, and the
-  kinds of changes that can interrupt the user.
-- The planner is now framed as `Plan Check`: a simpler flow where the user types
-  a real plan, gets one forecast-grounded decision, and can watch that plan for
-  meaningful changes.
-- Plan Check now treats the newest forecast read as the primary result, tucks
-  earlier checks behind a disclosure, and links to Watching without duplicating
-  the watched-plan list in the planner sheet.
-- Plan Check now distinguishes explicit `next Saturday` / `next weekend` from
-  bare weekday wording, and day-change choices cover the available 10-day
-  forecast window.
-- The Watching sheet no longer exposes manual push subscription sync. Notification
-  registration stays automatic and the sheet uses plain `Updates` readiness
-  language instead of server-sync controls.
-- Watched-plan `Hourly detail` now opens a plan-window trust view instead of a
-  generic hourly sheet: it shows the main read, best adjustment, contextual
-  metrics, a key-hour callout, and only the hours around the plan.
-- The main Watching overview now opens as a user-facing command center: first the
-  plain-language watch read, then notification readiness, recent calls, and the selected
-  plan/place targets.
-
-### 4. Trust And Craft Hardening
-
-Status: **ongoing**.
-
-Goal: keep the app feeling premium as product complexity grows.
-
-Current checks:
-
-- iOS PWA performance after background pause changes.
-- Text clipping in watched-plan and bottom-sheet layouts.
-- Search, menu, map, and day-sheet motion/responsiveness.
-- Hero/background/glance agreement during rain, heat, smoke, night, and clear
-  day scenes.
-- Debug settings remain hidden in normal app use.
-
-Working rule:
-
-- If a surface feels complicated, first remove exposed concepts. Add detail only
-  after the main read is obvious.
-
-### 5. Motion And Continuity
-
-Status: **selective polish**.
-
-Goal: make Nearcast feel expensive without adding cognitive load.
-
-Candidates:
-
-- Shared transition from NOW/NEXT/LATER chips into detail.
-- Watched-plan card into hourly plan-window detail.
-- More native-feeling sheet entrance/exit motion.
-- Pull-to-refresh that feels intentional.
-- Subtle sky continuity that preserves performance.
-
-Guardrail:
-
-- Motion should support orientation. If it competes with weather meaning or
-  hurts responsiveness, it is not worth it.
-
-### 6. Local AI, Only Where It Clearly Wins
-
-Status: **limited**.
-
-Current stance:
-
-- Deterministic code should own weather truth.
-- AI is useful when it translates, explains, parses, or synthesizes personal
-  context.
-
-Good uses:
-
-- More forgiving natural-language plan parsing.
-- Plain-language translation of NWS alert jargon.
-- Tone polish for plan guidance after deterministic facts are locked.
-- Personal-context synthesis across saved plans and places.
-
-Bad uses:
-
-- Deciding whether the weather is safe.
-- Inventing risk from vague forecast text.
-- Replacing simple deterministic summaries.
-
-## Suggested Next Sequence
-
-1. Finish the watched-plan decision layer.
-2. Add notification-ready affordances in watched plans without enabling push yet.
-3. Extract `weather-truth.js` with fixtures.
-4. Build the smallest push notification spike.
-5. Continue craft/performance hardening after each shipped increment.
-6. Revisit generated radar only if usage, revenue, or architecture changes make
-   it clearly worth the cost.
+The notification system already watches high-signal changes. The next work is
+to turn it into a calm production experience:
+
+- Keep the promise narrow: selected plans and saved places only.
+- Lead with the changed decision, not raw forecast numbers.
+- Open the exact context that explains the notification.
+- Use an alert-specific cadence for time-sensitive official-alert overlap while
+  keeping routine forecast changes quieter and less frequent.
+- Let users pause all interruptions without deleting plans or saved places.
+- Let users choose sensible quiet hours; do not make them configure a rule
+  engine.
+- Show a short recent-calls receipt so users understand what Nearcast sent and
+  why.
+
+Do not position Nearcast as a replacement for NWS, Wireless Emergency Alerts,
+or local emergency guidance.
+
+Success means a user receives few notifications, but the ones that arrive are
+useful enough to keep Plan Check and Watching enabled.
+
+## Priority 2 — Improve Activation With Evidence
+
+Status: **measure, then tune**.
+
+Nearcast now gives users without a plan a limited, dismissible Plan Check
+invitation. The next iteration should be driven by the privacy-safe funnel, not
+more onboarding pages.
+
+Questions to answer:
+
+- Do people understand what Plan Check does from the invitation?
+- Which real-world starter produces a completed check rather than an abandoned
+  sheet?
+- Where do users stop: wording, place, time confirmation, result, or Watch?
+- Does the first meaningful notification lead to a return visit?
+- Do existing users discover Watching without the invitation?
+
+Improve the narrowest failing step. Preserve the current guardrails: at most
+three invitation impressions, a long dismissal interval, and no prompt after a
+user has already engaged with plans.
+
+## Priority 3 — Graduate Or Retire Experiments
+
+Status: **measured experiments only**.
+
+### Reactive Sky
+
+Keep it labeled Experimental until real-device evidence shows:
+
+- stable frame/input performance across clear, cloud, rain, storm, day, and
+  night scenes;
+- no material battery or thermal regression;
+- correct Current Location and remote-place behavior;
+- graceful Reduced Motion and poor-compass fallbacks;
+- enough retained use to justify the settings and sensor complexity.
+
+If those checks pass, make weather-driven Reactive Sky the default and leave
+device motion optional. Otherwise retain the beautiful standard sky and remove
+the experiment.
+
+### Map
+
+Measure the user outcome of each capability:
+
+- full-map opens;
+- Nearcast high detail actually rendered, not merely requested;
+- loading/failure time and visible fallback continuity;
+- satellite selection and useful dwell time;
+- StormScope activation, weather relevance, provider acceptance, and estimated
+  cost.
+
+Do not add another map tier. Reconcile the current automatic immersive
+high-detail behavior with the historical generated-radar decision record, then
+document one production routing policy. Keep satellite imagery truthful about
+its pass date and keep StormScope an explicit paid-data activation.
+
+## Priority 4 — Architecture That Protects Product Speed
+
+Status: **incremental**.
+
+- Continue moving deterministic interpretation into `weather-truth.js` with
+  fixtures shared by browser and Worker.
+- Extract notification operations, freshness projection, map routing, and
+  activation telemetry behind stable interfaces only when tests already cover
+  the behavior.
+- Add native XCTest/UI snapshot coverage for shared snapshot arbitration,
+  projection/expiry, complication families, Watch layouts, and deep links.
+- Add screenshot matrices for weather condition × day/night × device size ×
+  motion setting; recent cloud/night regressions prove that source assertions
+  alone cannot protect visual quality.
+- Keep generated-radar artifacts and provider experiments out of ordinary app
+  complexity unless measured value justifies their operating cost.
+
+## Product Scorecard
+
+The Trust Loop should make these measurable without personal data:
+
+- forecast launch success and warm-start fallback rate;
+- percentage of widget/Watch renders in fresh, projected, and expired states;
+- scheduled evaluator success and oldest-record age;
+- Web Push/APNs provider acceptance and expired-channel cleanup;
+- Plan Check completion and Watch conversion;
+- meaningful notifications per enabled device per week;
+- notification-open and seven-day return rates;
+- map high-detail success/latency and StormScope cost per useful session;
+- Reactive Sky opt-in retention and long-task rate;
+- crash-free sessions and WebKit process recovery.
+
+Targets should be set after the first trustworthy production baseline. Avoid
+optimizing raw notification volume, time in app, or animation engagement; those
+can reward noise rather than usefulness.
+
+## Recommended Sequence
+
+1. Finish the Trust Loop: health endpoint, privacy-safe event pipeline, honest
+   readiness, CI, canaries, and clean releases.
+2. Observe widget/Watch freshness and production delivery for at least one full
+   weather week; fix demonstrated failure modes.
+3. Expand notification capacity responsibly and add quiet delivery behavior.
+4. Tune the Plan Check activation funnel from observed drop-off.
+5. Decide whether Reactive Sky and each enhanced map capability graduate,
+   simplify, or retire.
+6. Only then choose the next large product surface.
 
 ## Parking Lot
 
-- Dedicated `docs/weather-truth.md`.
-- Provider bake-off for premium radar only if radar becomes a paid wedge.
-- Offline fallback polish.
-- Better saved-place comparison.
-- AQI/pollen plan refinements.
-- Install/onboarding education if notifications ship.
-- Repo cleanup for generated-radar artifacts and design explorations.
+- Cross-device account sync.
+- General morning briefings.
+- AI-generated push prose.
+- International official-alert providers.
+- Pollen-specific plan guidance.
+- Broader calendar integrations.
+- New radar providers or another map tier.
+
+These may become valuable later, but none should outrank a dependable Trust
+Loop and a proven proactive weather promise.

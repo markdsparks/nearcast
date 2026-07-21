@@ -34,6 +34,34 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
         savePayload(session.receivedApplicationContext)
     }
 
+    /// SwiftUI invokes this while completing a WatchConnectivity background
+    /// task. Delegate callbacks normally save the transfer; reading the latest
+    /// application context as well covers a delivery that arrived before the
+    /// receiver finished activating.
+    func handleBackgroundDelivery() async {
+        // A connectivity wake is also a useful chance to keep the next
+        // discretionary weather refresh queued.
+        NearcastWatchBackgroundRefresh.schedule()
+
+        let revisionAtEntry = revision
+        activate()
+        let session = WCSession.default
+        savePayload(session.receivedApplicationContext)
+
+        // Activation and the delegate delivery can arrive just after SwiftUI
+        // invokes this handler. Keep the task alive briefly, but never depend
+        // on an unbounded connectivity callback to complete it.
+        guard revision == revisionAtEntry else { return }
+        for attempt in 0..<10 {
+            guard !Task.isCancelled else { return }
+            savePayload(session.receivedApplicationContext)
+            if revision != revisionAtEntry { return }
+            if attempt < 9 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
     private func savePayload(_ payload: [String: Any]) {
         guard !payload.isEmpty else { return }
         guard payload["type"] as? String == "nearcast.widget.snapshot.v1" else { return }

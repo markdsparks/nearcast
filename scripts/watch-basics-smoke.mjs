@@ -4,18 +4,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [app, html, serviceWorker, watchApp, complications, sync, snapshot, visualSignal] = await Promise.all([
+const [app, html, serviceWorker, phoneWidget, phoneWidgetInfo, watchApp, watchEntry, watchReceiver, nativeBridge, complications, sync, snapshot, visualSignal] = await Promise.all([
   readFile(path.join(root, "app.js"), "utf8"),
   readFile(path.join(root, "index.html"), "utf8"),
   readFile(path.join(root, "sw.js"), "utf8"),
+  readFile(path.join(root, "native/ios/NearcastWidget/NearcastWidget.swift"), "utf8"),
+  readFile(path.join(root, "native/ios/NearcastWidget/Info.plist"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastWatch/NearcastWatchRootView.swift"), "utf8"),
+  readFile(path.join(root, "native/ios/NearcastWatch/NearcastWatchApp.swift"), "utf8"),
+  readFile(path.join(root, "native/ios/NearcastWatch/NearcastWatchSnapshotReceiver.swift"), "utf8"),
+  readFile(path.join(root, "native/ios/NearcastApp/Bridge/NativeBridge.swift"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastWatchComplications/NearcastWatchComplications.swift"), "utf8"),
   readFile(path.join(root, "native/ios/NearcastApp/Bridge/NativeWatchSnapshotSync.swift"), "utf8"),
   readFile(path.join(root, "native/ios/Shared/NearcastWidgetSnapshot.swift"), "utf8"),
   readFile(path.join(root, "native/ios/Shared/NearcastWatchVisualSignal.swift"), "utf8")
 ]);
 
-assert.match(complications, /staleAfter: TimeInterval = 12 \* 60 \* 60/, "weather remains useful through ordinary WidgetKit delays");
+assert.match(phoneWidget, /projectedWidgetEntries[\s\S]*timelineProjection\(at: date, relativeTo: now\)/, "iPhone widgets advance from cached hourly forecast entries");
+assert.match(phoneWidget, /nearcastWidgetProjectionHorizon: TimeInterval = 24 \* 60 \* 60/, "iPhone widgets retain a full-day projection horizon");
+assert.match(phoneWidget, /start \+ 24/, "native widget refreshes retain 25 hourly rows including the active hour");
+assert.match(phoneWidget, /isAuthorizedForWidgetUpdates[\s\S]*2_500_000_000[\s\S]*requestLocation\(\)/, "Current Location uses widget authorization and a bounded one-shot request");
+assert.match(phoneWidget, /resolveWidgetPlace[\s\S]*selected\.tracksCurrentLocation/, "only an explicitly marked Current Location requests a live coordinate");
+assert.match(phoneWidget, /resolution\.meaningfullyMoved \|\| shouldRefreshWidgetWeather[\s\S]*NearcastWidgetForecastClient\.fetchSnapshot/, "meaningful movement forces a new forecast regardless of cache age");
+assert.match(phoneWidget, /sameWidgetSelection[\s\S]*tracksCurrentLocation[\s\S]*latitude[\s\S]*longitude/, "widget refreshes discard a result after the selected place changes");
+assert.match(phoneWidget, /canRefreshResolvedPlace[\s\S]*resolution\.usedLiveLocation[\s\S]*refreshWidgetAlert[\s\S]*allowed: canRefreshResolvedPlace/, "Current Location cannot stamp an unconfirmed old coordinate as freshly updated");
+assert.match(phoneWidget, /nearcastWidgetResolvedLocationKey[\s\S]*saveWidgetRefreshResult[\s\S]*sameWidgetSelection/, "the widget keeps a separately guarded live-location fallback");
+assert.match(phoneWidgetInfo, /<key>NSWidgetWantsLocation<\/key>\s*<true\/>/, "the iPhone widget opts into user-approved WidgetKit location access");
+assert.match(app, /followsCurrentLocation: reactiveSkyIsCurrentLocation\(place\)/, "the phone snapshot explicitly identifies Current Location");
+assert.match(app, /rows\.length < 25/, "phone-authored snapshots retain a full day of hourly entries");
+assert.match(app, /followsCurrentLocation: false/, "saving a GPS-derived place freezes it instead of following the device");
+assert.match(app, /typeof place\.followsCurrentLocation === "boolean"[\s\S]*normalized\.followsCurrentLocation = place\.followsCurrentLocation/, "place normalization preserves explicit current-location intent without freezing legacy GPS places");
+assert.match(app, /refreshCurrentLocationAfterNativeReopen[\s\S]*requestDeviceLocationOnce[\s\S]*loadPlace\(resolved, true\)/, "the native app quietly re-resolves Current Location on an ordinary reopen");
+assert.match(nativeBridge, /resolvedWidgetLocationMeaningfullyDiffers[\s\S]*incoming\.mergingWeather\(from: destination\)/, "a stale web warm start cannot overwrite newer extension-resolved Current Location weather");
+assert.match(snapshot, /var followsCurrentLocation: Bool\?[\s\S]*var tracksCurrentLocation: Bool/, "shared place data defaults legacy places to fixed behavior");
+assert.match(phoneWidget, /weatherValidUntil[\s\S]*weatherExpired:[\s\S]*date >= weatherValidUntil/, "the iPhone widget appends an explicit expired-weather state");
+assert.match(phoneWidget, /NearcastWidgetUpdateNeededView[\s\S]*Weather needs an update/, "expired iPhone widget entries visibly ask for an update");
+assert.match(snapshot, /func weatherTimelineValidUntil[\s\S]*lastOffset \+ 1/, "shared forecast validity honors timestamped and legacy offset-only horizons");
+assert.match(snapshot, /func shouldPromoteCurrentWeather[\s\S]*activeRow\.startsAt[\s\S]*weatherSavedTime/, "old observations yield to the forecast row active after their save time");
+
+assert.match(complications, /complicationWeatherValidUntil[\s\S]*weatherTimelineValidUntil/, "weather remains useful through the shared final cached forecast interval");
 assert.match(complications, /configurationDisplayName\("Temperature"\)/, "temperature complication has a stable identity");
 assert.match(complications, /configurationDisplayName\("Rain"\)/, "rain complication has a stable identity");
 assert.match(complications, /configurationDisplayName\("Wind"\)/, "wind complication has a stable identity");
@@ -69,9 +96,25 @@ assert.match(watchApp, /-nearcastPreviewWeather/, "populated Watch layouts can b
 assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");
 assert.match(watchApp, /forecast_hours", value: "24"/, "watch app caches a full day of hourly values");
 assert.match(complications, /forecast_hours", value: "24"/, "complications can project a full day without a fresh wake-up");
-assert.match(complications, /if projection\.advancesCurrentWeather, let current = projection\.rows\.first/, "the current complication entry cannot replace live weather with its hourly row");
+assert.match(complications, /complicationTimelineDates[\s\S]*24 \* 60 \* 60[\s\S]*compactMap\(\\\.startsAt\)/, "complications advance on cached forecast boundaries across the available day");
+assert.match(complications, /let staleDate = complicationWeatherValidUntil\(snapshot\)[\s\S]*dates\.append\(staleDate\)/, "the complication timeline ends with an explicit stale state");
+assert.match(complications, /timeoutInterval: 8/, "complication networking leaves time for a cached fallback");
+assert.match(complications, /shouldPromoteCurrentWeather\(from: projection\)/, "the current complication entry preserves a newer observation but advances an old one");
 assert.match(complications, /latest\.weatherSavedTime >= weather\.weatherSavedTime[\s\S]*return latest/, "cached complication weather cannot overwrite a newer shared snapshot");
 assert.match(complications, /let snapshot = NearcastWidgetSnapshot\.stored\(\) \?\? refreshed/, "the complication re-reads the shared winner after an asynchronous refresh");
+assert.match(complications, /guard !requestedPlace\.tracksCurrentLocation else \{ return nil \}/, "complications never stamp the phone's old Current Location coordinate as fresh weather");
+assert.match(watchApp, /timeoutInterval: 8/, "watch app networking uses a bounded background-safe timeout");
+assert.match(watchEntry, /backgroundTask\(\.appRefresh\(NearcastWatchBackgroundRefresh\.identifier\)\)/, "watch app handles scheduled app refreshes");
+assert.match(watchEntry, /backgroundTask\(\.watchConnectivity\)/, "watch app handles background WatchConnectivity delivery");
+assert.match(watchEntry, /scheduleBackgroundRefresh[\s\S]*static func perform\(\) async[\s\S]*await schedule\(\)[\s\S]*NearcastWatchWeatherClient\.refresh[\s\S]*reloadAllTimelines/, "watch background refresh reschedules before doing bounded network work");
+assert.match(watchReceiver, /handleBackgroundDelivery\(\) async[\s\S]*schedule\(\)[\s\S]*activate\(\)[\s\S]*receivedApplicationContext[\s\S]*Task\.sleep/, "background connectivity activation waits briefly for the latest application context");
+assert.match(watchApp, /watchSnapshotForDisplay[\s\S]*weatherTimelineValidUntil[\s\S]*shouldPromoteCurrentWeather[\s\S]*projectDailyWeather/, "the Watch app projects cached hourly and daily weather but expires the final forecast");
+assert.match(watchApp, /authorizationStatus[\s\S]*authorizedWhenInUse[\s\S]*3_000_000_000[\s\S]*maximumHorizontalAccuracy/, "Current Location uses a bounded, quality-gated Watch fix");
+assert.match(watchApp, /allowsLocationAuthorizationRequest: true[\s\S]*notDetermined where allowsAuthorizationRequest[\s\S]*requestWhenInUseAuthorization/, "only the visible Watch app can request its one-time Current Location permission");
+assert.match(watchApp, /manager\.location\.map[\s\S]*guard allowsAuthorizationRequest else \{ return nil \}[\s\S]*manager\.requestLocation\(\)/, "a background Watch wake can consume a recent cached fix but never starts a When-In-Use location session");
+assert.match(watchEntry, /NearcastWatchWeatherClient\.refresh\(fallback: fallback\)/, "scheduled Watch refresh uses the no-prompt location default");
+assert.match(watchApp, /tracksCurrentLocation[\s\S]*NearcastWatchLocationRequest\.current/, "Watch resolves an authorized live coordinate for Current Location");
+assert.match(watchApp, /sameSelection\(resolution\.selected, finalPlace\)[\s\S]*NearcastWidgetSnapshotStore\.save/, "Watch rechecks the selected place immediately before saving weather");
 
 assert.match(sync, /snapshotData != lastSnapshotData/, "phone-to-watch snapshots are deduplicated");
 assert.doesNotMatch(sync, /session\.transferUserInfo\(payload\)/, "current-state snapshots do not create a stale delivery queue");

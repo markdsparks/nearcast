@@ -40,6 +40,9 @@ watch_complications_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersio
 watch_companion="$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$watch/Info.plist")"
 watch_icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$watch/Info.plist")"
 watch_url_scheme="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$watch/Info.plist")"
+widget_wants_location="$(/usr/libexec/PlistBuddy -c 'Print :NSWidgetWantsLocation' "$widget/Info.plist" 2>/dev/null || true)"
+app_location_usage="$(/usr/libexec/PlistBuddy -c 'Print :NSLocationWhenInUseUsageDescription' "$app/Info.plist" 2>/dev/null || true)"
+watch_location_usage="$(/usr/libexec/PlistBuddy -c 'Print :NSLocationWhenInUseUsageDescription' "$watch/Info.plist" 2>/dev/null || true)"
 
 if [[ "$app_version" != "$widget_version" || "$app_version" != "$watch_version" || "$app_version" != "$watch_complications_version" ]]; then
   printf 'FAIL  Build numbers differ: app=%s widget=%s watch=%s complications=%s\n' \
@@ -62,8 +65,15 @@ if [[ "$watch_url_scheme" != "nearcast" ]]; then
   exit 1
 fi
 
+if [[ "$widget_wants_location" != "true" || -z "$app_location_usage" || -z "$watch_location_usage" ]]; then
+  printf 'FAIL  Current Location metadata is incomplete (widget=%s app-purpose=%s watch-purpose=%s)\n' \
+    "$widget_wants_location" "${app_location_usage:+present}" "${watch_location_usage:+present}" >&2
+  exit 1
+fi
+
 printf 'PASS  Build number %s matches across app, widget, Watch, and complications\n' "$app_version"
 printf 'PASS  Watch companion bundle identifier is app.nearcast.ios\n'
 printf 'PASS  Watch app icon catalog is compiled\n'
 printf 'PASS  Watch deep links use the nearcast URL scheme\n'
+printf 'PASS  Widget and Watch Current Location metadata is packaged\n'
 printf 'PASS  Archive is ready for export validation\n'

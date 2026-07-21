@@ -1,13 +1,110 @@
 import Foundation
 import ActivityKit
+import CoreLocation
 import SwiftUI
 import WidgetKit
 
 private let nearcastWidgetStaleInterval: TimeInterval = 25 * 60
+private let nearcastWidgetRefreshInterval: TimeInterval = 30 * 60
+private let nearcastWidgetExpiredRetryInterval: TimeInterval = 15 * 60
+private let nearcastWidgetProjectionHorizon: TimeInterval = 24 * 60 * 60
+private let nearcastWidgetMinimumProjectedCoverage: TimeInterval = 22 * 60 * 60
+private let nearcastWidgetLocationMovementThreshold: CLLocationDistance = 2_000
+private let nearcastWidgetMaximumLocationAccuracy: CLLocationAccuracy = 3_000
+private let nearcastWidgetLocationUncertaintyMultiplier: Double = 1.5
+private let nearcastWidgetResolvedLocationKey = "nearcast.widget.resolved-location.v1"
+
+private struct NearcastWidgetResolvedLocation: Codable {
+    let selectionIdentity: String
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let resolvedAt: TimeInterval
+    let requiresWeatherRefresh: Bool
+}
+
+private struct NearcastWidgetPlaceResolution {
+    let place: NearcastWidgetPlace
+    let usedLiveLocation: Bool
+    let meaningfullyMoved: Bool
+    let horizontalAccuracy: CLLocationAccuracy?
+}
+
+@MainActor
+private final class NearcastWidgetLocationRequest: NSObject, @preconcurrency CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<CLLocation?, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
+    }
+
+    static func current() async -> CLLocation? {
+        let request = NearcastWidgetLocationRequest()
+        return await request.start()
+    }
+
+    private func start() async -> CLLocation? {
+        guard manager.isAuthorizedForWidgetUpdates else { return nil }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            timeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                guard !Task.isCancelled else { return }
+                self?.finish(nil)
+            }
+            manager.requestLocation()
+        }
+    }
+
+    private func finish(_ location: CLLocation?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        manager.stopUpdatingLocation()
+        continuation.resume(returning: location)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let newest = locations
+            .filter {
+                $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= nearcastWidgetMaximumLocationAccuracy
+                    && CLLocationCoordinate2DIsValid($0.coordinate)
+            }
+            .max { $0.timestamp < $1.timestamp }
+        let age = newest.map { Date().timeIntervalSince($0.timestamp) }
+        // requestLocation can deliver a coarse cached fix before a useful one.
+        // Keep waiting until the timeout instead of anchoring weather to a
+        // multi-kilometre uncertainty circle.
+        guard let newest, let age, age >= -60, age <= 15 * 60 else { return }
+        finish(newest)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == kCLErrorDomain,
+           CLError.Code(rawValue: nsError.code) == .locationUnknown {
+            return
+        }
+        finish(nil)
+    }
+}
 
 struct NearcastWidgetEntry: TimelineEntry {
     let date: Date
     let snapshot: NearcastWidgetSnapshot
+    let weatherExpired: Bool
+
+    init(date: Date, snapshot: NearcastWidgetSnapshot, weatherExpired: Bool = false) {
+        self.date = date
+        self.snapshot = snapshot
+        self.weatherExpired = weatherExpired
+    }
 }
 
 struct NearcastWidgetProvider: TimelineProvider {
@@ -16,16 +113,22 @@ struct NearcastWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (NearcastWidgetEntry) -> Void) {
-        completion(NearcastWidgetEntry(date: Date(), snapshot: NearcastWidgetSnapshot.current()))
+        let now = Date()
+        let snapshot = NearcastWidgetSnapshot.current()
+        completion(NearcastWidgetEntry(
+            date: now,
+            snapshot: projectedWidgetSnapshot(snapshot, at: now, relativeTo: now),
+            weatherExpired: !snapshot.hasWeatherData || now >= widgetWeatherValidUntil(snapshot)
+        ))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastWidgetEntry>) -> Void) {
         Task {
             let snapshot = await refreshedWidgetSnapshot()
-            let entryDate = Date()
-            let entry = NearcastWidgetEntry(date: entryDate, snapshot: snapshot)
-            let nextRefresh = nextWidgetRefreshDate(snapshot: snapshot, now: entryDate)
-            completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
+            let now = Date()
+            let entries = projectedWidgetEntries(snapshot: snapshot, now: now)
+            let nextRefresh = nextWidgetRefreshDate(snapshot: snapshot, now: now)
+            completion(Timeline(entries: entries, policy: .after(nextRefresh)))
         }
     }
 }
@@ -33,20 +136,62 @@ struct NearcastWidgetProvider: TimelineProvider {
 private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     let refreshStartedAt = Date().timeIntervalSince1970
     let cached = NearcastWidgetSnapshot.current().expiringOfficialAlert(at: refreshStartedAt)
-    guard let place = NearcastWidgetPlace.stored() else {
+    guard let selectedPlace = NearcastWidgetPlace.stored() else {
         return cached
     }
+    let resolution = await resolveWidgetPlace(selectedPlace)
+    let place = resolution.place
+    let pendingResolution = storedResolvedLocation(for: selectedPlace)
+    let canRefreshResolvedPlace = !selectedPlace.tracksCurrentLocation
+        || resolution.usedLiveLocation
+        || (pendingResolution?.requiresWeatherRefresh == true
+            && max(0, refreshStartedAt - (pendingResolution?.resolvedAt ?? 0)) <= 60 * 60)
 
-    async let alertRefresh = NearcastWidgetAlertClient.refresh(for: place)
+    async let alertRefresh = refreshWidgetAlert(
+        for: place,
+        allowed: canRefreshResolvedPlace
+    )
     var refreshedWeather: NearcastWidgetSnapshot?
-    if cached.age > nearcastWidgetStaleInterval {
+    if canRefreshResolvedPlace,
+       resolution.meaningfullyMoved || shouldRefreshWidgetWeather(cached, now: refreshStartedAt) {
         refreshedWeather = try? await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
     }
     let refreshedAlert = await alertRefresh
 
-    guard let latestPlace = NearcastWidgetPlace.stored(), sameWidgetPlace(place, latestPlace) else {
+    guard let latestPlace = NearcastWidgetPlace.stored(),
+          sameWidgetSelection(selectedPlace, latestPlace) else {
         // The iPhone changed places while either request was in flight.
         return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    }
+
+    let resolvedFallback = resolvedLocationRecord(
+        for: resolution,
+        selected: selectedPlace,
+        weatherRefreshSucceeded: refreshedWeather != nil,
+        resolvedAt: Date().timeIntervalSince1970
+    )
+
+    // Never mix origin weather with destination alerts. Once travel is known,
+    // a failed weather request intentionally produces the update-needed state;
+    // the successfully resolved destination alert can still be shown there.
+    if resolution.meaningfullyMoved && refreshedWeather == nil {
+        var unavailable = (NearcastWidgetSnapshot.stored() ?? cached)
+            .expiringOfficialAlert(at: Date().timeIntervalSince1970)
+        unavailable.placeName = place.displayLabel
+        unavailable.isAvailable = false
+        unavailable.weatherSavedAt = 0
+        unavailable.timeline = nil
+        unavailable.daily = nil
+        unavailable.clearOfficialAlert(checkedAt: Date().timeIntervalSince1970)
+        if case .success(let alert, let count, let fetchedAt) = refreshedAlert,
+           let alert {
+            applyWidgetAlert(alert, count: count, fetchedAt: fetchedAt, to: &unavailable)
+        }
+        return saveWidgetRefreshResult(
+            unavailable,
+            selected: selectedPlace,
+            resolvedLocation: resolvedFallback
+        )
     }
 
     // The iPhone may have delivered newer plan or alert metadata while native
@@ -55,40 +200,221 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     let latest = (NearcastWidgetSnapshot.stored() ?? cached)
         .expiringOfficialAlert(at: Date().timeIntervalSince1970)
     var snapshot = refreshedWeather.map { latest.mergingWeather(from: $0) } ?? latest
-    let phoneDeliveredNewerAlert = (latest.alertSavedAt ?? 0) > refreshStartedAt
+    let phoneDeliveredNewerAlert = !resolution.meaningfullyMoved
+        && (latest.alertSavedAt ?? 0) > refreshStartedAt
 
     if !phoneDeliveredNewerAlert {
         switch refreshedAlert {
         case .success(let alert, let count, let fetchedAt):
             if let alert {
-                snapshot.alertId = alert.id
-                snapshot.alertTitle = alert.title
-                snapshot.alertSeverity = alert.severity
-                snapshot.alertExpiresAt = alert.expiresAt
-                snapshot.alertImpact = alert.impact
-                snapshot.alertCount = count
-                snapshot.alertSavedAt = fetchedAt
-                snapshot.alertStateReady = true
+                applyWidgetAlert(alert, count: count, fetchedAt: fetchedAt, to: &snapshot)
             } else {
                 // An HTTP success with no active features is authoritative and
                 // intentionally different from a request failure below.
                 snapshot.clearOfficialAlert(checkedAt: fetchedAt)
             }
         case .failure:
-            // Preserve the last known alert through transient NWS failures. The
-            // explicit expiry or short no-expiry TTL still bounds its lifetime.
-            break
+            if resolution.meaningfullyMoved {
+                // An alert for the prior coordinate must not follow the person.
+                snapshot.clearOfficialAlert(checkedAt: Date().timeIntervalSince1970)
+            }
+            // At a fixed place, preserve the last known alert through transient
+            // NWS failures. Its expiry or short no-expiry TTL still bounds it.
         }
     }
 
     snapshot = snapshot.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    return saveWidgetRefreshResult(
+        snapshot,
+        selected: selectedPlace,
+        resolvedLocation: resolvedFallback
+    )
+}
+
+private func refreshWidgetAlert(
+    for place: NearcastWidgetPlace,
+    allowed: Bool
+) async -> NearcastWidgetAlertRefresh {
+    guard allowed else { return .failure }
+    return await NearcastWidgetAlertClient.refresh(for: place)
+}
+
+private func resolveWidgetPlace(_ selected: NearcastWidgetPlace) async -> NearcastWidgetPlaceResolution {
+    guard selected.tracksCurrentLocation else {
+        return NearcastWidgetPlaceResolution(
+            place: selected,
+            usedLiveLocation: false,
+            meaningfullyMoved: false,
+            horizontalAccuracy: nil
+        )
+    }
+
+    let storedResolution = storedResolvedLocation(for: selected)
+    var anchor = selected
+    let selectedAnchor = CLLocation(latitude: selected.latitude, longitude: selected.longitude)
+    if let storedResolution {
+        anchor.latitude = storedResolution.latitude
+        anchor.longitude = storedResolution.longitude
+        anchor.name = "Current Location"
+        anchor.displayName = "Current Location"
+        anchor.admin1 = nil
+        anchor.country = nil
+        anchor.countryCode = nil
+    }
+
+    guard let location = await NearcastWidgetLocationRequest.current() else {
+        let canonicalDistance = CLLocation(
+            latitude: anchor.latitude,
+            longitude: anchor.longitude
+        ).distance(from: selectedAnchor)
+        let canonicalMismatchThreshold = max(
+            nearcastWidgetLocationMovementThreshold,
+            nearcastWidgetLocationUncertaintyMultiplier * (storedResolution?.horizontalAccuracy ?? 0)
+        )
+        return NearcastWidgetPlaceResolution(
+            place: anchor,
+            usedLiveLocation: false,
+            meaningfullyMoved: storedResolution?.requiresWeatherRefresh == true
+                || canonicalDistance >= canonicalMismatchThreshold,
+            horizontalAccuracy: storedResolution?.horizontalAccuracy
+        )
+    }
+
+    let anchorLocation = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
+    let distance = location.distance(from: anchorLocation)
+    let priorUncertainty = storedResolution?.horizontalAccuracy ?? 0
+    let movementThreshold = max(
+        nearcastWidgetLocationMovementThreshold,
+        nearcastWidgetLocationUncertaintyMultiplier * (location.horizontalAccuracy + priorUncertainty)
+    )
+    let canonicalDistance = anchorLocation.distance(from: selectedAnchor)
+    let canonicalMismatchThreshold = max(
+        nearcastWidgetLocationMovementThreshold,
+        nearcastWidgetLocationUncertaintyMultiplier * priorUncertainty
+    )
+    let meaningfullyMoved = storedResolution?.requiresWeatherRefresh == true
+        || canonicalDistance >= canonicalMismatchThreshold
+        || distance >= movementThreshold
+    var resolved = anchor
+    resolved.latitude = location.coordinate.latitude
+    resolved.longitude = location.coordinate.longitude
+    if meaningfullyMoved {
+        // Reverse geocoding would add another discretionary network dependency
+        // to the extension. Use an honest generic label until the app next opens.
+        resolved.name = "Current Location"
+        resolved.displayName = "Current Location"
+        resolved.admin1 = nil
+        resolved.country = nil
+        resolved.countryCode = nil
+    }
+    return NearcastWidgetPlaceResolution(
+        place: resolved,
+        usedLiveLocation: true,
+        meaningfullyMoved: meaningfullyMoved,
+        horizontalAccuracy: location.horizontalAccuracy
+    )
+}
+
+private func resolvedLocationRecord(
+    for resolution: NearcastWidgetPlaceResolution,
+    selected: NearcastWidgetPlace,
+    weatherRefreshSucceeded: Bool,
+    resolvedAt: TimeInterval
+) -> NearcastWidgetResolvedLocation? {
+    // The fallback coordinate is a weather anchor, not a breadcrumb trail. Do
+    // not advance it for every sub-threshold GPS fix or slow travel could keep
+    // cached weather at the origin indefinitely. Advance it after a successful
+    // refresh, or retain known travel as pending so the next launch retries.
+    guard selected.tracksCurrentLocation,
+          resolution.meaningfullyMoved || weatherRefreshSucceeded else {
+        return nil
+    }
+    return NearcastWidgetResolvedLocation(
+        selectionIdentity: widgetSelectionIdentity(selected),
+        latitude: resolution.place.latitude,
+        longitude: resolution.place.longitude,
+        horizontalAccuracy: max(0, resolution.horizontalAccuracy ?? 0),
+        resolvedAt: resolvedAt,
+        requiresWeatherRefresh: !weatherRefreshSucceeded
+    )
+}
+
+private func storedResolvedLocation(for selected: NearcastWidgetPlace) -> NearcastWidgetResolvedLocation? {
+    guard selected.tracksCurrentLocation,
+          let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
+          let data = defaults.data(forKey: nearcastWidgetResolvedLocationKey),
+          let resolution = try? JSONDecoder().decode(NearcastWidgetResolvedLocation.self, from: data),
+          resolution.selectionIdentity == widgetSelectionIdentity(selected),
+          CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(
+            latitude: resolution.latitude,
+            longitude: resolution.longitude
+          )) else { return nil }
+    return resolution
+}
+
+private func saveResolvedLocation(_ resolution: NearcastWidgetResolvedLocation) {
+    guard let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
+          let data = try? JSONEncoder().encode(resolution) else { return }
+    defaults.set(data, forKey: nearcastWidgetResolvedLocationKey)
+}
+
+private func widgetSelectionIdentity(_ place: NearcastWidgetPlace) -> String {
+    let id = (place.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !id.isEmpty { return "\(place.tracksCurrentLocation ? "live" : "fixed")|\(id)" }
+    return String(
+        format: "%@|%.5f|%.5f",
+        place.tracksCurrentLocation ? "live" : "fixed",
+        place.latitude,
+        place.longitude
+    )
+}
+
+private func saveWidgetRefreshResult(
+    _ snapshot: NearcastWidgetSnapshot,
+    selected: NearcastWidgetPlace,
+    resolvedLocation: NearcastWidgetResolvedLocation?
+) -> NearcastWidgetSnapshot {
+    // Re-read before publishing any extension-owned result. The host app can change
+    // selection while the extension's network work is in flight; an old task
+    // must never publish a coordinate or weather for the newly selected place.
+    guard let current = NearcastWidgetPlace.stored(),
+          sameWidgetSelection(selected, current) else {
+        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    }
+    if let resolvedLocation {
+        saveResolvedLocation(resolvedLocation)
+    }
+    // The selection guard is intentionally repeated immediately before the
+    // snapshot write, after the separate fallback write.
+    guard let latest = NearcastWidgetPlace.stored(),
+          sameWidgetSelection(selected, latest) else {
+        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    }
     NearcastWidgetSnapshotStore.save(snapshot)
     return snapshot
 }
 
+private func applyWidgetAlert(
+    _ alert: NearcastWidgetOfficialAlert,
+    count: Int,
+    fetchedAt: TimeInterval,
+    to snapshot: inout NearcastWidgetSnapshot
+) {
+    snapshot.alertId = alert.id
+    snapshot.alertTitle = alert.title
+    snapshot.alertSeverity = alert.severity
+    snapshot.alertExpiresAt = alert.expiresAt
+    snapshot.alertImpact = alert.impact
+    snapshot.alertCount = count
+    snapshot.alertSavedAt = fetchedAt
+    snapshot.alertStateReady = true
+}
+
 private func nextWidgetRefreshDate(snapshot: NearcastWidgetSnapshot, now: Date) -> Date {
-    let regular = Calendar.current.date(byAdding: .minute, value: 15, to: now)
-        ?? now.addingTimeInterval(15 * 60)
+    if !snapshot.hasWeatherData || now >= widgetWeatherValidUntil(snapshot) {
+        return now.addingTimeInterval(nearcastWidgetExpiredRetryInterval)
+    }
+    let regular = now.addingTimeInterval(nearcastWidgetRefreshInterval)
     guard snapshot.hasCurrentOfficialAlert(at: now.timeIntervalSince1970) else { return regular }
 
     let alertDeadline = snapshot.alertExpiresAt
@@ -97,8 +423,146 @@ private func nextWidgetRefreshDate(snapshot: NearcastWidgetSnapshot, now: Date) 
     return min(regular, Date(timeIntervalSince1970: alertDeadline + 1))
 }
 
-private func sameWidgetPlace(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
-    abs(lhs.latitude - rhs.latitude) < 0.00001 && abs(lhs.longitude - rhs.longitude) < 0.00001
+/// Build the weather changes into the timeline itself. WidgetKit controls when
+/// the provider gets another background launch, but it can advance entries we
+/// have already supplied without waking the extension again.
+private func projectedWidgetEntries(
+    snapshot: NearcastWidgetSnapshot,
+    now: Date
+) -> [NearcastWidgetEntry] {
+    let weatherValidUntil = widgetWeatherValidUntil(snapshot)
+    return widgetEntryDates(snapshot: snapshot, now: now).map { date in
+        NearcastWidgetEntry(
+            date: date,
+            snapshot: projectedWidgetSnapshot(snapshot, at: date, relativeTo: now),
+            weatherExpired: !snapshot.hasWeatherData || date >= weatherValidUntil
+        )
+    }
+}
+
+private func widgetEntryDates(snapshot: NearcastWidgetSnapshot, now: Date) -> [Date] {
+    let nowTimestamp = now.timeIntervalSince1970
+    let horizonEnd = nowTimestamp + nearcastWidgetProjectionHorizon
+    var timestamps = [nowTimestamp]
+
+    if let rows = snapshot.timeline, !rows.isEmpty {
+        let datedRows = rows.compactMap(\.startsAt)
+        if !datedRows.isEmpty {
+            timestamps.append(contentsOf: datedRows.filter { $0 > nowTimestamp && $0 <= horizonEnd })
+        } else {
+            timestamps.append(contentsOf: rows.compactMap { row in
+                guard row.offsetHours > 0 else { return nil }
+                let timestamp = nowTimestamp + TimeInterval(row.offsetHours * 60 * 60)
+                return timestamp <= horizonEnd ? timestamp : nil
+            })
+        }
+    }
+
+    // Do not leave an expired warning painted on the widget merely because
+    // WidgetKit deferred the requested provider reload.
+    if snapshot.hasCurrentOfficialAlert(at: nowTimestamp) {
+        let deadline = snapshot.alertExpiresAt
+            ?? snapshot.alertSavedAt.map { $0 + nearcastWidgetAlertWithoutExpiryTTL }
+        if let deadline {
+            // Alert deadlines can extend beyond the weather projection. Keep
+            // the exact transition in the timeline so it cannot persist simply
+            // because WidgetKit deferred another provider launch.
+            let transition = deadline + 1
+            if transition > nowTimestamp { timestamps.append(transition) }
+        }
+    }
+
+    // The last cached forecast row must not remain painted on screen forever
+    // if WidgetKit defers our requested provider reload. At the end of the
+    // forecast's real validity window, advance to an explicit update state.
+    let weatherValidUntil = widgetWeatherValidUntil(snapshot).timeIntervalSince1970
+    if weatherValidUntil > nowTimestamp {
+        timestamps.append(weatherValidUntil)
+    }
+
+    var lastTimestamp: TimeInterval?
+    return timestamps.sorted().compactMap { timestamp in
+        // Forecast rows and an alert transition can occasionally land on the
+        // same second. WidgetKit expects strictly increasing entry dates.
+        if let lastTimestamp, abs(timestamp - lastTimestamp) < 1 { return nil }
+        lastTimestamp = timestamp
+        return Date(timeIntervalSince1970: timestamp)
+    }
+}
+
+private func projectedWidgetSnapshot(
+    _ base: NearcastWidgetSnapshot,
+    at date: Date,
+    relativeTo now: Date
+) -> NearcastWidgetSnapshot {
+    var projected = base.expiringOfficialAlert(at: date.timeIntervalSince1970)
+
+    if let projection = base.timelineProjection(at: date, relativeTo: now) {
+        projected.timeline = projection.rows
+        if let current = projection.rows.first,
+           base.shouldPromoteCurrentWeather(from: projection) {
+            projected.temperature = current.temperature ?? projected.temperature
+            projected.feelsLike = current.feelsLike ?? projected.feelsLike
+            projected.rainChance = current.rainChance ?? projected.rainChance
+            projected.wind = current.wind ?? projected.wind
+            projected.windDirection = current.windDirection ?? projected.windDirection
+            projected.windLabel = projected.windDirection.map(NearcastWidgetForecastClient.windDirectionLabel)
+            projected.uv = current.uv ?? projected.uv
+            projected.conditionCode = current.conditionCode ?? projected.conditionCode
+            projected.isDay = current.isDay ?? projected.isDay
+            projected.condition = NearcastWidgetForecastClient.conditionLabel(
+                code: projected.conditionCode,
+                isDay: projected.isDay
+            )
+            projected.nowLabel = "Now"
+            projected.nowValue = NearcastWidgetForecastClient.nowValue(
+                feelsLike: projected.feelsLike,
+                code: projected.conditionCode
+            )
+            let nextRainChance = projection.rows.prefix(3).compactMap(\.rainChance).max() ?? projected.rainChance
+            projected.nextLabel = "Next"
+            projected.nextValue = NearcastWidgetForecastClient.nextValue(rainChance: nextRainChance)
+            if projected.sunsetAt.map({ $0 > date.timeIntervalSince1970 }) != true {
+                projected.laterLabel = "Later"
+                projected.laterValue = "Wind \(projected.wind) \(projected.windUnit)"
+            }
+        }
+    }
+
+    projectWidgetDay(in: &projected, at: date)
+    return projected
+}
+
+/// The final hourly row remains representative until its interval ends. A
+/// timeline-free legacy snapshot gets only a short grace period because there
+/// is no forecast data with which to advance it truthfully.
+private func widgetWeatherValidUntil(_ snapshot: NearcastWidgetSnapshot) -> Date {
+    snapshot.weatherTimelineValidUntil()
+}
+
+private func projectWidgetDay(in snapshot: inout NearcastWidgetSnapshot, at date: Date) {
+    snapshot.projectDailyWeather(at: date)
+}
+
+private func shouldRefreshWidgetWeather(_ snapshot: NearcastWidgetSnapshot, now: TimeInterval) -> Bool {
+    guard snapshot.hasWeatherData else { return true }
+    if max(0, now - snapshot.weatherSavedTime) > nearcastWidgetStaleInterval { return true }
+
+    guard let rows = snapshot.timeline, !rows.isEmpty else { return true }
+    let coverage: TimeInterval
+    if let latestStart = rows.compactMap(\.startsAt).max() {
+        coverage = latestStart - now
+    } else {
+        coverage = TimeInterval((rows.map(\.offsetHours).max() ?? 0) * 60 * 60)
+    }
+    return coverage < nearcastWidgetMinimumProjectedCoverage
+}
+
+private func sameWidgetSelection(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
+    lhs.id == rhs.id
+        && lhs.tracksCurrentLocation == rhs.tracksCurrentLocation
+        && abs(lhs.latitude - rhs.latitude) < 0.00001
+        && abs(lhs.longitude - rhs.longitude) < 0.00001
 }
 
 private struct NearcastWidgetOfficialAlert {
@@ -370,7 +834,10 @@ enum NearcastWidgetForecastClient {
     private static func buildTimeline(from forecast: WidgetForecastResponse, currentIndex: Int) -> [NearcastWidgetHour] {
         guard let hourly = forecast.hourly, let times = hourly.time, !times.isEmpty else { return [] }
         let start = max(0, min(currentIndex, times.count - 1))
-        let end = min(times.count - 1, start + 5)
+        // Keep a full day of forecast rows in the shared snapshot. Those rows
+        // let WidgetKit advance temperature and conditions even when the next
+        // requested background reload is deferred by the system.
+        let end = min(times.count - 1, start + 24)
         guard start <= end else { return [] }
         return (start...end).map { index in
             NearcastWidgetHour(
@@ -427,7 +894,7 @@ enum NearcastWidgetForecastClient {
             .max() ?? 0
     }
 
-    private static func nowValue(feelsLike: Int, code: Int) -> String {
+    fileprivate static func nowValue(feelsLike: Int, code: Int) -> String {
         if code >= 95 { return "Storms nearby" }
         if (71...77).contains(code) || (85...86).contains(code) { return "Snow nearby" }
         if (51...67).contains(code) || (80...82).contains(code) { return "Rain nearby" }
@@ -436,7 +903,7 @@ enum NearcastWidgetForecastClient {
         return "Feels \(feelsLike)°"
     }
 
-    private static func nextValue(rainChance: Int) -> String {
+    fileprivate static func nextValue(rainChance: Int) -> String {
         rainChance >= 20 ? "Rain \(rainChance)%" : "Dry 2h"
     }
 
@@ -479,7 +946,7 @@ enum NearcastWidgetForecastClient {
         return formatter.date(from: value)
     }
 
-    private static func conditionLabel(code: Int, isDay: Bool) -> String {
+    fileprivate static func conditionLabel(code: Int, isDay: Bool) -> String {
         switch code {
         case 0:
             return isDay ? "Clear" : "Clear night"
@@ -506,7 +973,7 @@ enum NearcastWidgetForecastClient {
         }
     }
 
-    private static func windDirectionLabel(_ degrees: Int) -> String {
+    fileprivate static func windDirectionLabel(_ degrees: Int) -> String {
         let normalized = ((degrees % 360) + 360) % 360
         let labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
         let index = Int((Double(normalized) / 45.0).rounded()) % labels.count
@@ -667,8 +1134,24 @@ private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot, routeItems: [UR
     components.host = "weather"
     var items = [URLQueryItem(name: "source", value: "widget")]
     items.append(contentsOf: routeItems)
-    if let place = NearcastWidgetPlace.stored() {
+    if let storedPlace = NearcastWidgetPlace.stored() {
+        var place = storedPlace
+        // The extension deliberately never mutates the phone's canonical place
+        // record. For a neutral widget tap, route with the last coordinate that
+        // actually anchored widget weather (or is awaiting its retry).
+        if routeItems.isEmpty, let resolved = storedResolvedLocation(for: storedPlace) {
+            place.latitude = resolved.latitude
+            place.longitude = resolved.longitude
+            place.name = "Current Location"
+            place.displayName = "Current Location"
+            place.admin1 = nil
+            place.country = nil
+            place.countryCode = nil
+        }
         items.append(URLQueryItem(name: "placeName", value: place.name))
+        if place.tracksCurrentLocation {
+            items.append(URLQueryItem(name: "followsCurrentLocation", value: "1"))
+        }
         // `placeId` is also notification-route syntax in the web app. Keep it
         // only on explicit alert/plan links; the neutral widget URL uses the
         // coordinates to restore the same forecast without opening a sheet.
@@ -1274,22 +1757,156 @@ struct NearcastWidgetView: View {
 
     var body: some View {
         Group {
-            switch family {
-            case .systemSmall:
-                NearcastSmallWidget(snapshot: entry.snapshot)
-            case .systemLarge:
-                NearcastLargeWidget(snapshot: entry.snapshot, entryDate: entry.date)
-            case .accessoryCircular:
-                NearcastCircularAccessory(snapshot: entry.snapshot)
-            case .accessoryRectangular:
-                NearcastRectangularAccessory(snapshot: entry.snapshot)
-            case .accessoryInline:
-                NearcastInlineAccessory(snapshot: entry.snapshot)
-            default:
-                NearcastMediumWidget(snapshot: entry.snapshot)
+            if entry.weatherExpired || !entry.snapshot.hasWeatherData {
+                NearcastWidgetUpdateNeededView(entry: entry)
+            } else {
+                switch family {
+                case .systemSmall:
+                    NearcastSmallWidget(snapshot: entry.snapshot)
+                case .systemLarge:
+                    NearcastLargeWidget(snapshot: entry.snapshot, entryDate: entry.date)
+                case .accessoryCircular:
+                    NearcastCircularAccessory(snapshot: entry.snapshot)
+                case .accessoryRectangular:
+                    NearcastRectangularAccessory(snapshot: entry.snapshot)
+                case .accessoryInline:
+                    NearcastInlineAccessory(snapshot: entry.snapshot)
+                default:
+                    NearcastMediumWidget(snapshot: entry.snapshot)
+                }
             }
         }
         .foregroundStyle(widgetPalette(entry.snapshot).primary)
+    }
+}
+
+private struct NearcastWidgetUpdateNeededView: View {
+    @Environment(\.widgetFamily) private var family
+    let entry: NearcastWidgetEntry
+
+    private var activeAlertTitle: String? {
+        guard entry.snapshot.hasCurrentOfficialAlert(at: entry.date.timeIntervalSince1970) else { return nil }
+        return cleanOptional(entry.snapshot.alertTitle)
+    }
+
+    private var ageDetail: String {
+        guard entry.snapshot.weatherSavedTime > 0 else { return "No recent weather" }
+        let age = max(0, entry.date.timeIntervalSince1970 - entry.snapshot.weatherSavedTime)
+        if age < 60 * 60 {
+            return "Updated \(max(1, Int(age / 60)))m ago"
+        }
+        return "Updated \(max(1, Int(age / 3600)))h ago"
+    }
+
+    private var primaryTitle: String {
+        activeAlertTitle ?? "Weather needs an update"
+    }
+
+    private var detail: String {
+        activeAlertTitle == nil ? "\(ageDetail) · Open Nearcast" : "Weather update needed · Open Nearcast"
+    }
+
+    var body: some View {
+        Group {
+            switch family {
+            case .accessoryInline:
+                Text(activeAlertTitle.map { "Alert · \($0)" } ?? "Nearcast · Update needed")
+                    .widgetAccentable()
+                    .lineLimit(1)
+
+            case .accessoryCircular:
+                VStack(spacing: 2) {
+                    Image(systemName: activeAlertTitle == nil ? "arrow.clockwise" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 17, weight: .black))
+                        .widgetAccentable()
+                    Text(activeAlertTitle == nil ? "UPDATE" : "ALERT")
+                        .font(.system(size: 8, weight: .black, design: .rounded))
+                        .lineLimit(1)
+                }
+                .containerBackground(.clear, for: .widget)
+
+            case .accessoryRectangular:
+                HStack(spacing: 7) {
+                    Image(systemName: activeAlertTitle == nil ? "arrow.clockwise" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 17, weight: .black))
+                        .widgetAccentable()
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(activeAlertTitle == nil ? "Update needed" : primaryTitle)
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text(activeAlertTitle == nil ? ageDetail : "Open Nearcast")
+                            .font(.system(size: 11, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .containerBackground(.clear, for: .widget)
+
+            case .systemSmall:
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(shortPlaceName(entry.snapshot.placeName))
+                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: activeAlertTitle == nil ? "arrow.clockwise" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 28, weight: .black))
+                        .foregroundStyle(activeAlertTitle == nil ? Color.primary : Color.orange)
+                    if activeAlertTitle != nil {
+                        Text("WEATHER ALERT")
+                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .foregroundStyle(Color.orange)
+                    }
+                    Text(primaryTitle)
+                        .font(.system(size: 19, weight: .black, design: .rounded))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                    Text(detail)
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.84)
+                }
+                .padding(20)
+
+            default:
+                HStack(spacing: 18) {
+                    Image(systemName: activeAlertTitle == nil ? "arrow.clockwise" : "exclamationmark.triangle.fill")
+                        .font(.system(size: family == .systemLarge ? 44 : 36, weight: .black))
+                        .foregroundStyle(activeAlertTitle == nil ? Color.primary : Color.orange)
+                        .frame(width: family == .systemLarge ? 58 : 48)
+                    VStack(alignment: .leading, spacing: family == .systemLarge ? 8 : 4) {
+                        Text(shortPlaceName(entry.snapshot.placeName))
+                            .font(.system(size: family == .systemLarge ? 17 : 14, weight: .black, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if activeAlertTitle != nil {
+                            Text("WEATHER ALERT")
+                                .font(.system(size: family == .systemLarge ? 14 : 11, weight: .black, design: .rounded))
+                                .foregroundStyle(Color.orange)
+                        }
+                        Text(primaryTitle)
+                            .font(.system(size: family == .systemLarge ? 28 : 22, weight: .black, design: .rounded))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.82)
+                        Text(detail)
+                            .font(.system(size: family == .systemLarge ? 17 : 14, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(family == .systemLarge ? 32 : 24)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(activeAlertTitle.map { "Weather alert, \($0)" } ?? "Nearcast weather needs an update")
+        .accessibilityValue(detail)
     }
 }
 

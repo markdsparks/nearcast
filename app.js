@@ -1,4 +1,4 @@
-const VERSION = "3.0.283";
+const VERSION = "3.0.285";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -100,8 +100,21 @@ const FOR_YOU_SIGNAL_IDS = [
   "plan-check-confirmed",
   "plan-check-completed",
   "plan-watched",
-  "watching-open"
+  "watching-open",
+  "notification-opt-in",
+  "notification-registration-ready",
+  "notification-registration-failed",
+  "notification-open",
+  "watch-change-reviewed"
 ];
+const PRODUCT_EVENT_ENDPOINT = "/api/product/events";
+const PRODUCT_EVENT_BATCH_DELAY_MS = 2400;
+const PRODUCT_EVENT_MAX_BATCH_EVENTS = 20;
+const PRODUCT_EVENT_MAX_BATCH_COUNT = 20;
+const PRODUCT_EVENT_MAX_TOTAL_COUNT = 100;
+let productEventBatch = {};
+let productEventFlushTimer = 0;
+let productEventFlushPromise = null;
 
 const WELCOME_WORLD_SKY_PLACES = [
   { id: "paris", name: "Paris", country: "France", countryCode: "FR", latitude: 48.8566, longitude: 2.3522 },
@@ -157,6 +170,12 @@ function queryRoutePlace() {
   const admin1 = queryValue("admin1") || matchedPlace?.admin1 || "";
   const country = queryValue("country") || matchedPlace?.country || "";
   const countryCode = queryValue("countryCode", "countrycode") || matchedPlace?.countryCode || "";
+  const followsCurrentLocationValue = String(queryValue(
+    "followsCurrentLocation",
+    "followscurrentlocation"
+  ) || "").trim().toLowerCase();
+  const followsCurrentLocation = ["1", "true", "yes", "on"].includes(followsCurrentLocationValue)
+    || matchedPlace?.followsCurrentLocation === true;
   const matchedName = canonicalPlaceName({
     name: matchedPlace?.name || "",
     admin1: matchedPlace?.admin1 || admin1,
@@ -180,9 +199,57 @@ function queryRoutePlace() {
     admin1,
     country,
     countryCode,
+    followsCurrentLocation,
     latitude,
     longitude
   });
+}
+
+function locationDistanceMeters(lhs, rhs) {
+  const latitude1 = Number(lhs?.latitude);
+  const longitude1 = Number(lhs?.longitude);
+  const latitude2 = Number(rhs?.latitude);
+  const longitude2 = Number(rhs?.longitude);
+  if (![latitude1, longitude1, latitude2, longitude2].every(Number.isFinite)) return Infinity;
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const latitudeDelta = radians(latitude2 - latitude1);
+  const longitudeDelta = radians(longitude2 - longitude1);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(latitude1)) * Math.cos(radians(latitude2))
+      * Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+}
+
+async function refreshCurrentLocationAfterNativeReopen(startingPlace) {
+  if (!isNativeNearcastApp() || !reactiveSkyIsCurrentLocation(startingPlace)) return;
+  const startingId = String(startingPlace?.id || "");
+  const location = await requestDeviceLocationOnce();
+  if (!location || !state.activePlace || !reactiveSkyIsCurrentLocation(state.activePlace)) return;
+  if (String(state.activePlace.id || "") !== startingId) return;
+
+  const accuracy = Math.max(0, Number(location.accuracy) || 0);
+  if (accuracy > 3_000) return;
+  const movementThreshold = Math.max(2_000, accuracy * 1.5);
+  const meaningfullyMoved = locationDistanceMeters(startingPlace, location) >= movementThreshold;
+  const fallback = meaningfullyMoved
+    ? placeFromCoordinates(location)
+    : normalizePlace({
+        ...startingPlace,
+        followsCurrentLocation: true,
+        latitude: location.latitude,
+        longitude: location.longitude
+      });
+  let resolved = fallback;
+  if (meaningfullyMoved) {
+    try {
+      resolved = await reverseGeocodePlace(location, fallback);
+    } catch {}
+  }
+  if (!state.activePlace || String(state.activePlace.id || "") !== startingId) return;
+  // Always complete one live Current Location load. Even when the device has
+  // returned near the canonical coordinate, a widget may have last resolved a
+  // different travel destination that the web view cannot see directly.
+  loadPlace(resolved, true);
 }
 
 function debugSettingsEnabled() {
@@ -538,6 +605,121 @@ function saveUserContext() {
   }
 }
 
+function productEventPlatform() {
+  if (typeof isNativeNearcastApp === "function" && isNativeNearcastApp()) return "ios";
+  if (window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone === true) return "pwa";
+  return "web";
+}
+
+function productEventCollectionAllowed() {
+  return navigator.globalPrivacyControl !== true && navigator.doNotTrack !== "1";
+}
+
+function mergeProductEventBatch(events = []) {
+  events.forEach((entry) => {
+    const name = normalizeForYouSignal(entry?.name);
+    if (!name) return;
+    productEventBatch[name] = Math.min(
+      PRODUCT_EVENT_MAX_BATCH_COUNT,
+      (Number(productEventBatch[name]) || 0) + Math.max(1, Number(entry?.count) || 1)
+    );
+  });
+}
+
+function takeProductEventBatch() {
+  const events = [];
+  const remaining = {};
+  let totalCount = 0;
+  Object.entries(productEventBatch).forEach(([name, rawCount]) => {
+    if (!normalizeForYouSignal(name)) return;
+    const count = Math.max(1, Math.min(PRODUCT_EVENT_MAX_BATCH_COUNT, Number(rawCount) || 1));
+    const available = Math.max(0, PRODUCT_EVENT_MAX_TOTAL_COUNT - totalCount);
+    if (events.length >= PRODUCT_EVENT_MAX_BATCH_EVENTS || !available) {
+      remaining[name] = count;
+      return;
+    }
+    const included = Math.min(count, available);
+    events.push({ name, count: included });
+    totalCount += included;
+    if (included < count) remaining[name] = count - included;
+  });
+  productEventBatch = remaining;
+  return events;
+}
+
+function scheduleProductEventFlush() {
+  if (productEventFlushTimer) clearTimeout(productEventFlushTimer);
+  productEventFlushTimer = setTimeout(() => {
+    productEventFlushTimer = 0;
+    void flushProductEvents();
+  }, PRODUCT_EVENT_BATCH_DELAY_MS);
+}
+
+function queueProductEvent(value) {
+  const name = normalizeForYouSignal(value);
+  if (!name || !productEventCollectionAllowed()) return;
+  mergeProductEventBatch([{ name, count: 1 }]);
+  scheduleProductEventFlush();
+}
+
+function productEventPayload(events) {
+  return {
+    events: events.map(({ name, count }) => ({ name, count })),
+    platform: productEventPlatform(),
+    version: VERSION
+  };
+}
+
+function flushProductEvents(options = {}) {
+  if (!productEventCollectionAllowed()) {
+    productEventBatch = {};
+    return Promise.resolve(false);
+  }
+  if (productEventFlushPromise) return productEventFlushPromise;
+  const events = takeProductEventBatch();
+  if (!events.length) return Promise.resolve(false);
+  const payload = productEventPayload(events);
+  const body = JSON.stringify(payload);
+
+  if (options.beacon && typeof navigator.sendBeacon === "function") {
+    const accepted = navigator.sendBeacon(
+      PRODUCT_EVENT_ENDPOINT,
+      new Blob([body], { type: "application/json" })
+    );
+    if (accepted) return Promise.resolve(true);
+  }
+
+  let failed = false;
+  productEventFlushPromise = fetch(PRODUCT_EVENT_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true
+  }).then((response) => {
+    if (!response.ok) throw new Error("product-events-rejected");
+    return true;
+  }).catch(() => {
+    // The local activation record is authoritative. A failed anonymous upload
+    // is quietly re-batched and can retry with the next event or page hide.
+    failed = true;
+    mergeProductEventBatch(events);
+    return false;
+  }).finally(() => {
+    productEventFlushPromise = null;
+    if (!failed && Object.keys(productEventBatch).length) scheduleProductEventFlush();
+  });
+  return productEventFlushPromise;
+}
+
+function initProductEventFlush() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) void flushProductEvents({ beacon: true });
+  });
+  window.addEventListener("pagehide", () => {
+    void flushProductEvents({ beacon: true });
+  });
+}
+
 function recordForYouSignal(value) {
   const signal = normalizeForYouSignal(value);
   if (!signal) return;
@@ -550,6 +732,9 @@ function recordForYouSignal(value) {
   };
   state.userContext.updatedAt = Date.now();
   saveUserContext();
+  // Only the allowlisted event name and a coarse count leave the device. Plan
+  // wording, location, installation identifiers, and timestamps remain local.
+  queueProductEvent(signal);
 }
 
 function forYouSignalState(value) {
@@ -599,7 +784,7 @@ function recordPlanInvitationImpression() {
   if (planInvitationImpressionRecorded) return;
   planInvitationImpressionRecorded = true;
   clearPlanInvitationImpressionObserver();
-  // Local-only, allowlisted activation count. No plan wording or location is stored.
+  // Allowlisted activation count. No plan wording or location is stored or sent.
   recordForYouSignal("plan-invite-shown");
 }
 
@@ -3087,6 +3272,12 @@ function updateFloatingChrome(options = {}) {
 function init() {
   initPerfDiagnostics();
   initViewportGeometrySync();
+  // Plan memories are loaded synchronously into state before init. Only now is
+  // it safe for planner.js to prune stale notification selections and enforce
+  // the server's three-plan cap without mistaking startup for an empty list.
+  if (typeof markPlanWatchMemoryInventoryReady === "function") {
+    markPlanWatchMemoryInventoryReady();
+  }
   document.getElementById("appVersion").textContent = `v${VERSION}`;
   applyTheme();
   renderSavedPlaces();
@@ -3102,6 +3293,7 @@ function init() {
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
+  initProductEventFlush();
   initReactiveSkyMotion();
   if ("serviceWorker" in navigator && typeof handleNearcastNotificationMessage === "function") {
     navigator.serviceWorker.addEventListener("message", handleNearcastNotificationMessage);
@@ -3130,6 +3322,13 @@ function init() {
   if (startingPlace) {
     warmStartForecast(startingPlace);
     loadPlace(startingPlace);
+    // Current Location is an intent, not a frozen coordinate. On an ordinary
+    // native reopen (there is no widget route carrying the extension's newer
+    // coordinate), quietly re-resolve it using the already-authorized native
+    // location bridge and replace the initial load only after meaningful travel.
+    if (!deepLinkRoutePlace && !notificationRoutePlace) {
+      void refreshCurrentLocationAfterNativeReopen(startingPlace);
+    }
   } else {
     updateMode(); // welcome mode
     if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
@@ -3773,7 +3972,7 @@ function bindEvents() {
   bindTapDelegate(els.launchShortcuts, "[data-launch-jump]", (event, target) => {
     handleLaunchShortcut(target.dataset.launchJump);
   }, { preventDefault: false });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-watch-notify]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
     if (memoryOpen) {
       openGlobalMemorySheet();
@@ -3782,6 +3981,16 @@ function bindEvents() {
     const remember = target.closest("[data-memory-remember]");
     if (remember) {
       rememberPlanFromThread(Number(remember.dataset.memoryRemember));
+      return;
+    }
+    const watchNotify = target.closest("[data-watch-notify]");
+    if (watchNotify) {
+      if (typeof requestPlanWatchNotifications === "function") {
+        Promise.resolve(requestPlanWatchNotifications(watchNotify.dataset.watchNotify || ""))
+          .finally(() => {
+            if (typeof renderAsk === "function") renderAsk();
+          });
+      }
       return;
     }
     const memoryDetail = target.closest("[data-memory-detail]");
@@ -3841,13 +4050,20 @@ function bindEvents() {
   bindTapAction(document.getElementById("aiSheetClose"), closeAISheet);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-watch-notify-retry], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
     const notificationPlace = target.closest("[data-notification-place]");
     if (notificationPlace) {
       const place = state.savedPlaces.find((item) => item.id === notificationPlace.dataset.notificationPlace);
       if (place) {
         closeGlobalMemorySheet();
         loadPlace(place);
+      }
+      return;
+    }
+    const watchNotifyRetry = target.closest("[data-watch-notify-retry]");
+    if (watchNotifyRetry) {
+      if (typeof syncPlanWatchNotificationSubscription === "function") {
+        syncPlanWatchNotificationSubscription({ force: true, reason: "manual-retry" });
       }
       return;
     }
@@ -4199,8 +4415,18 @@ function toggleTheme() {
 }
 
 function reactiveSkyIsCurrentLocation(place = state.activePlace) {
+  if (typeof place?.followsCurrentLocation === "boolean") {
+    return place.followsCurrentLocation;
+  }
   const id = String(place?.id || "").toLowerCase();
-  return id.startsWith("gps-") || id === "device-location";
+  if (id === "device-location") return true;
+  if (!id.startsWith("gps-")) return false;
+
+  // Legacy current-location places used a gps-* identifier, but saved places
+  // intentionally keep that identifier when the user freezes one. Treat a
+  // matching saved place as fixed until the next location lookup writes the
+  // explicit followsCurrentLocation flag.
+  return !state.savedPlaces.some((saved) => String(saved?.id || "").toLowerCase() === id);
 }
 
 function reactiveSkyNativeMotionBridge() {
@@ -9043,6 +9269,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
         admin1: normalizedWidgetPlace.admin1,
         country: normalizedWidgetPlace.country,
         countryCode: normalizedWidgetPlace.countryCode,
+        followsCurrentLocation: reactiveSkyIsCurrentLocation(place),
         latitude: Number(normalizedWidgetPlace.latitude),
         longitude: Number(normalizedWidgetPlace.longitude)
       }
@@ -9058,7 +9285,7 @@ function nativeWidgetTimeline(data = state.forecast) {
   const startIndex = currentHourlyIndex(data);
   if (startIndex < 0 || !times[startIndex]) return [];
   const rows = [];
-  for (let index = startIndex; index < times.length && rows.length < 6; index += 1) {
+  for (let index = startIndex; index < times.length && rows.length < 25; index += 1) {
     const offsetHours = rows.length;
     const roundOrNull = (value) => {
       const number = Number(value);
@@ -9943,6 +10170,7 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
     watchingCard: watching.html,
     watchingMemoryId: watching.memoryId,
     watchingCount: watching.count,
+    watchingUnreviewedCount: watching.unreviewedCount,
     interruptionCard: interruption.html,
     interruptionType: interruption.type,
     installCard: install.html,
@@ -9953,11 +10181,17 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
 function todayPriorityCards(context) {
   if (!context) return [];
   const cards = [];
-  if (context.continuityCard) cards.push(context.continuityCard);
+  const watchingOwnsPlanChange = Boolean(
+    context.watchingCard &&
+    context.watchingUnreviewedCount &&
+    context.continuityMemoryId &&
+    context.watchingMemoryId === context.continuityMemoryId
+  );
+  if (context.continuityCard && !watchingOwnsPlanChange) cards.push(context.continuityCard);
 
   if (
     context.watchingCard &&
-    (!context.continuityMemoryId || context.watchingMemoryId !== context.continuityMemoryId)
+    (watchingOwnsPlanChange || !context.continuityMemoryId || context.watchingMemoryId !== context.continuityMemoryId)
   ) cards.push(context.watchingCard);
 
   if (context.interruptionCard && context.interruptionType !== context.continuityType) {
@@ -9986,10 +10220,10 @@ function forYouWatchingCard(data, place) {
     !Array.isArray(state.planMemories) ||
     !state.planMemories.length ||
     typeof planMemoryListItems !== "function"
-  ) return { html: "", memoryId: "", count: 0 };
+  ) return { html: "", memoryId: "", count: 0, unreviewedCount: 0 };
 
   const items = planMemoryListItems(data, place, { includePast: false });
-  if (!items.length) return { html: "", memoryId: "", count: 0 };
+  if (!items.length) return { html: "", memoryId: "", count: 0, unreviewedCount: 0 };
 
   const watches = typeof planWatchItemForMemoryItem === "function"
     ? items.map(planWatchItemForMemoryItem).filter(Boolean)
@@ -9998,29 +10232,41 @@ function forYouWatchingCard(data, place) {
     (typeof planWatchAttentionRank === "function" ? planWatchAttentionRank(b) - planWatchAttentionRank(a) : 0) ||
     (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
   ));
-  const top = ranked[0];
+  const unreviewed = ranked.filter((watch) => !watch?.isPast && watch?.change);
+  const top = unreviewed[0] || ranked[0];
   const attentionCount = watches.filter((watch) =>
     !watch?.isPast && ["watch", "caution"].includes(watch?.tone)
   ).length;
-  const changedCount = watches.filter((watch) => !watch?.isPast && watch?.change).length;
+  const changedCount = unreviewed.length;
   const loadingCount = watches.filter((watch) =>
     watch?.status === "loading" || watch?.status === "idle"
   ).length;
-  const tone = attentionCount ? "caution" : changedCount ? "changed" : loadingCount ? "pending" : "good";
+  const tone = changedCount ? "changed" : attentionCount ? "caution" : loadingCount ? "pending" : "good";
   const topTitle = top?.memory ? (typeof planMemoryTitle === "function" ? planMemoryTitle(top.memory) : top.memory.title || "Plan") : "";
   const attentionLabel = top?.label && !["Looks good", "Past"].includes(top.label)
     ? top.label
     : top?.tone === "watch" ? "Needs attention" : "May be affected by weather";
-  const title = attentionCount && topTitle
-    ? `${topTitle}: ${attentionLabel}`
-    : changedCount && topTitle
-      ? `${topTitle} changed`
+  const title = changedCount && topTitle
+    ? top.change?.title || `${topTitle} changed`
+    : attentionCount && topTitle
+      ? `${topTitle}: ${attentionLabel}`
       : loadingCount
         ? "Checking your plans"
         : `Watching ${items.length} ${items.length === 1 ? "plan" : "plans"}`;
-  const body = top?.change?.body ||
+  const body = (top?.change && typeof planWatchChangeEvidence === "function"
+    ? planWatchChangeEvidence(top.change)
+    : top?.change?.body) ||
     top?.reason ||
     (loadingCount ? "Nearcast is checking saved plan windows." : "No major weather signal right now.");
+  const checkedWhen = typeof formatPlanWatchRelativeTimestamp === "function"
+    ? formatPlanWatchRelativeTimestamp(top?.checkedAt)
+    : "";
+  const changedWhen = typeof formatPlanWatchRelativeTimestamp === "function"
+    ? formatPlanWatchRelativeTimestamp(top?.changeDetectedAt || top?.change?.receipt?.checkedAt)
+    : "";
+  const checkedLabel = top?.source?.stale
+    ? checkedWhen ? `Last checked ${checkedWhen} · refresh needed` : "Refresh needed"
+    : checkedWhen ? `Last checked ${checkedWhen}` : loadingCount ? "Checking now" : "First check pending";
   const focusId = top?.memory?.id || "";
   const opensPlan = Boolean(focusId && (attentionCount || changedCount || items.length === 1));
   const actionAttr = opensPlan
@@ -10029,12 +10275,14 @@ function forYouWatchingCard(data, place) {
   return {
     memoryId: focusId,
     count: items.length,
+    unreviewedCount: changedCount,
     html: `
     <button class="for-you-card is-watching is-${escapeHtml(tone)}" type="button" ${actionAttr}>
-      <span class="for-you-kicker"><span>Watching</span><em>${escapeHtml(`${items.length} active`)}</em></span>
+      <span class="for-you-kicker"><span>${changedCount ? "New forecast change" : "Watching"}</span><em>${escapeHtml(changedCount ? `${changedCount} unreviewed` : `${items.length} active`)}</em></span>
       <strong>${escapeHtml(title)}</strong>
       <span class="for-you-body">${escapeHtml(compactForYouText(body, 92))}</span>
-      <small>${opensPlan ? "View plan" : "Review"}</small>
+      <span class="for-you-watch-check">${escapeHtml(changedCount && changedWhen ? `Changed ${changedWhen} · ${checkedLabel}` : checkedLabel)}</span>
+      <small>${changedCount ? "Review change" : opensPlan ? "View plan" : "Review"}</small>
     </button>
   `
   };
@@ -11588,6 +11836,7 @@ function placeFromCoordinates(coords) {
     name: "Current Location",
     admin1: "",
     country: "",
+    followsCurrentLocation: true,
     latitude: coords.latitude,
     longitude: coords.longitude
   };
@@ -11642,7 +11891,9 @@ function placeFromReverseGeocode(json, fallback) {
 }
 
 function savePlace(place) {
-  const normalized = normalizePlace(place);
+  // Saving Current Location creates a fixed place. It must never silently
+  // follow future device movement just because its historical id starts gps-.
+  const normalized = { ...normalizePlace(place), followsCurrentLocation: false };
   if (!state.savedPlaces.some((saved) => saved.id === normalized.id)) {
     state.savedPlaces = [normalized, ...state.savedPlaces].slice(0, 8);
     localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
@@ -12233,7 +12484,7 @@ function setLoadingStatus(message) {
 
 function normalizePlace(place) {
   const name = canonicalPlaceName(place);
-  return {
+  const normalized = {
     id: place.id || `${slug(name)}-${Number(place.latitude).toFixed(3)}-${Number(place.longitude).toFixed(3)}`,
     name,
     admin1: place.admin1 || "",
@@ -12242,6 +12493,13 @@ function normalizePlace(place) {
     latitude: Number(place.latitude),
     longitude: Number(place.longitude)
   };
+  // Preserve absence for places written before the explicit current-location
+  // flag existed. reactiveSkyIsCurrentLocation can then migrate a legacy
+  // unsaved gps-* last-place without mistaking a saved gps-* place for live.
+  if (typeof place.followsCurrentLocation === "boolean") {
+    normalized.followsCurrentLocation = place.followsCurrentLocation;
+  }
+  return normalized;
 }
 
 function canonicalPlaceName(place) {

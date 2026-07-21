@@ -23,6 +23,8 @@ const PLAN_WATCH_UNREGISTER_ENDPOINT_PATH = "/api/watch/notifications/unregister
 const PLAN_WATCH_TEST_ENDPOINT_PATH = "/api/watch/notifications/test";
 const PLAN_WATCH_PENDING_ENDPOINT_PATH = "/api/watch/notifications/pending";
 const PLAN_WATCH_EVALUATE_ENDPOINT_PATH = "/api/watch/notifications/evaluate";
+const PLAN_WATCH_HEALTH_ENDPOINT_PATH = "/api/watch/notifications/health";
+const PRODUCT_EVENTS_ENDPOINT_PATH = "/api/product/events";
 const LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH = "/api/live-activities/register";
 const LIVE_ACTIVITY_END_ENDPOINT_PATH = "/api/live-activities/end";
 const XWEATHER_CONFIG_ENDPOINT_PATH = "/api/xweather/config";
@@ -40,6 +42,7 @@ const PLAN_WATCH_VAPID_SUBJECT_ENV = "PLAN_WATCH_VAPID_SUBJECT";
 const PLAN_WATCH_TEST_TOKEN_ENV = "PLAN_WATCH_TEST_TOKEN";
 const PLAN_WATCH_EVALUATOR_MODE_ENV = "PLAN_WATCH_EVALUATOR_MODE";
 const PLAN_WATCH_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_EVALUATOR_LIMIT";
+const PLAN_WATCH_URGENT_EVALUATOR_LIMIT_ENV = "PLAN_WATCH_URGENT_EVALUATOR_LIMIT";
 const PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV = "PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS";
 const PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION";
 const PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION_ENV = "PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION";
@@ -47,6 +50,15 @@ const PLAN_WATCH_APNS_TEAM_ID_ENV = "PLAN_WATCH_APNS_TEAM_ID";
 const PLAN_WATCH_APNS_KEY_ID_ENV = "PLAN_WATCH_APNS_KEY_ID";
 const PLAN_WATCH_APNS_PRIVATE_KEY_ENV = "PLAN_WATCH_APNS_PRIVATE_KEY";
 const PLAN_WATCH_APNS_BUNDLE_ID_ENV = "PLAN_WATCH_APNS_BUNDLE_ID";
+const PLAN_WATCH_QUIET_HOURS_START_ENV = "PLAN_WATCH_QUIET_HOURS_START";
+const PLAN_WATCH_QUIET_HOURS_END_ENV = "PLAN_WATCH_QUIET_HOURS_END";
+const PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY_ENV = "PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY";
+const PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS_ENV = "PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS";
+const PLAN_WATCH_DELIVERY_RETRY_BASE_MS_ENV = "PLAN_WATCH_DELIVERY_RETRY_BASE_MS";
+const PLAN_WATCH_DELIVERY_TIMEOUT_MS_ENV = "PLAN_WATCH_DELIVERY_TIMEOUT_MS";
+const PLAN_WATCH_HEALTH_MAX_AGE_MINUTES_ENV = "PLAN_WATCH_HEALTH_MAX_AGE_MINUTES";
+const PLAN_WATCH_REGISTRATION_RATE_SALT_ENV = "PLAN_WATCH_REGISTRATION_RATE_SALT";
+const PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS_ENV = "PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS";
 const XWEATHER_CLIENT_ID_ENV = "XWEATHER_CLIENT_ID";
 const XWEATHER_CLIENT_SECRET_ENV = "XWEATHER_CLIENT_SECRET";
 const XWEATHER_LAYER_CODES_ENV = "XWEATHER_LAYER_CODES";
@@ -85,7 +97,7 @@ const ENHANCED_MIN_ZOOM_GRACE = 0.001;
 const ENHANCED_MIN_VIEWPORT_ZOOM = 7.5;
 const ENHANCED_CENTER_FOCUS_MIN_ZOOM = 9;
 const FRAME_SUBSTRATE_MAX_CLIENT_ZOOM = 18;
-const DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = 10;
+const DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = 0;
 const DEFAULT_PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = 3;
 const DEFAULT_PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION = 3;
 const PLAN_WATCH_SUBSCRIPTION_TTL_DAYS = 45;
@@ -94,8 +106,49 @@ const PLAN_WATCH_PENDING_TTL_SECONDS = 2 * 60 * 60;
 const PLAN_WATCH_REGISTRATION_CAP_CACHE_SECONDS = 10 * 60;
 const DEFAULT_PLAN_WATCH_EVALUATOR_LIMIT = 5;
 const PLAN_WATCH_EVALUATOR_HARD_LIMIT = 25;
+const DEFAULT_PLAN_WATCH_URGENT_EVALUATOR_LIMIT = 8;
+const PLAN_WATCH_SCAN_PAGE_HARD_LIMIT = 100;
 const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
 const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
+const DEFAULT_PLAN_WATCH_QUIET_HOURS_START = 22;
+const DEFAULT_PLAN_WATCH_QUIET_HOURS_END = 7;
+const DEFAULT_PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY = 135;
+const DEFAULT_PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS = 3;
+const DEFAULT_PLAN_WATCH_DELIVERY_RETRY_BASE_MS = 250;
+const DEFAULT_PLAN_WATCH_DELIVERY_TIMEOUT_MS = 5000;
+const PLAN_WATCH_DELIVERY_RETRY_MAX_DELAY_MS = 2500;
+const PLAN_WATCH_DELIVERY_DEDUPE_SECONDS = 24 * 60 * 60;
+const DEFAULT_PLAN_WATCH_HEALTH_MAX_AGE_MINUTES = 75;
+const PLAN_WATCH_URGENT_HEALTH_MAX_AGE_MINUTES = 15;
+const PLAN_WATCH_STANDARD_BACKLOG_SLA_MINUTES = 90;
+const PLAN_WATCH_URGENT_BACKLOG_SLA_MINUTES = 45;
+const PRODUCT_EVENTS_MAX_BODY_BYTES = 8 * 1024;
+const PRODUCT_EVENTS_MAX_BATCH = 20;
+const PRODUCT_EVENTS_MAX_COUNT = 20;
+const PRODUCT_EVENTS_MAX_TOTAL_COUNT = 100;
+const PRODUCT_EVENT_NAMES = new Set([
+  "best-dry", "best-walk", "best-dinner", "best-patio", "plan", "launch-summary",
+  "memory-open", "memory-show", "memory-edit", "plan-invite-shown", "plan-invite-open",
+  "plan-invite-dismiss", "plan-template", "plan-check-started", "plan-check-confirmed",
+  "plan-check-completed", "plan-watched", "watching-open", "notification-opt-in",
+  "notification-registration-ready", "notification-registration-failed", "notification-open",
+  "watch-change-reviewed"
+]);
+const PRODUCT_EVENT_PLATFORMS = new Set(["web", "pwa", "ios", "ipados", "watchos"]);
+const PLAN_WATCH_REGISTRATION_WINDOW_SECONDS = 60;
+const PLAN_WATCH_REGISTRATION_CLIENT_LIMIT = 6;
+const PLAN_WATCH_REGISTRATION_GLOBAL_LIMIT = 300;
+const PRODUCT_EVENTS_CLIENT_RATE_LIMIT = 60;
+const PRODUCT_EVENTS_GLOBAL_RATE_LIMIT = 2000;
+const WEB_PUSH_PROVIDER_HOSTS = new Set([
+  "fcm.googleapis.com",
+  "android.googleapis.com",
+  "updates.push.services.mozilla.com"
+]);
+const WEB_PUSH_PROVIDER_HOST_SUFFIXES = [
+  ".push.apple.com",
+  ".notify.windows.com"
+];
 const LIVE_ACTIVITY_TTL_SECONDS = 3 * 60 * 60;
 const LIVE_ACTIVITY_SCAN_LIMIT = 40;
 
@@ -123,6 +176,12 @@ export default {
     if (url.pathname === PLAN_WATCH_EVALUATE_ENDPOINT_PATH) {
       return handlePlanWatchNotificationEvaluateRequest(request, env);
     }
+    if (url.pathname === PLAN_WATCH_HEALTH_ENDPOINT_PATH) {
+      return handlePlanWatchNotificationHealthRequest(request, env);
+    }
+    if (url.pathname === PRODUCT_EVENTS_ENDPOINT_PATH) {
+      return handleProductEventsRequest(request, env);
+    }
     if (url.pathname === LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH) {
       return handleLiveActivityRegisterRequest(request, env);
     }
@@ -140,11 +199,9 @@ export default {
   },
   async scheduled(event, env = {}, ctx = {}) {
     ctx.waitUntil(evaluateLiveActivities(env, { reason: "scheduled" }));
-    const scheduledMinute = new Date(Number(event?.scheduledTime) || Date.now()).getUTCMinutes();
-    if (planWatchScheduledEvaluatorEnabled(env) && scheduledMinute % 30 === 0) {
-      ctx.waitUntil(evaluatePlanWatchNotifications(env, {
-        reason: "scheduled",
-        limit: configuredPlanWatchEvaluatorLimit(env)
+    if (planWatchScheduledEvaluatorEnabled(env)) {
+      ctx.waitUntil(runScheduledPlanWatchEvaluations(env, {
+        includeStandard: true
       }));
     }
   }
@@ -201,11 +258,12 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     version: 1,
     checkedAt: new Date().toISOString(),
     push: {
-      state: publicKey ? "ready" : "missing-vapid-key",
+      state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
       vapidPublicKey: publicKey,
       registerUrl: PLAN_WATCH_REGISTER_ENDPOINT_PATH,
       unregisterUrl: PLAN_WATCH_UNREGISTER_ENDPOINT_PATH,
-      pendingUrl: PLAN_WATCH_PENDING_ENDPOINT_PATH
+      pendingUrl: PLAN_WATCH_PENDING_ENDPOINT_PATH,
+      healthUrl: PLAN_WATCH_HEALTH_ENDPOINT_PATH
     },
     delivery: {
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
@@ -221,12 +279,202 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     },
     limits: {
       mode: configuredPlanWatchEvaluatorMode(env),
-      maxActiveSubscriptions: configuredPlanWatchMaxActiveSubscriptions(env),
+      maxActiveSubscriptions: configuredPlanWatchMaxActiveSubscriptions(env) || null,
       maxPlansPerSubscription: configuredPlanWatchMaxPlansPerSubscription(env),
       maxPlacesPerSubscription: configuredPlanWatchMaxPlacesPerSubscription(env),
-      scheduledEvaluationLimit: configuredPlanWatchEvaluatorLimit(env)
+      scheduledEvaluationLimit: configuredPlanWatchEvaluatorLimit(env),
+      urgentEvaluationLimit: configuredPlanWatchUrgentEvaluatorLimit(env),
+      standardCadenceMinutes: 5,
+      urgentCadenceMinutes: 5,
+      backlogSlaMinutes: {
+        standard: PLAN_WATCH_STANDARD_BACKLOG_SLA_MINUTES,
+        urgent: PLAN_WATCH_URGENT_BACKLOG_SLA_MINUTES
+      },
+      quietHours: configuredPlanWatchQuietHours(env),
+      requiredDeliveryChannels: configuredPlanWatchRequiredDeliveryChannels(env)
     }
   });
+}
+
+export async function handleProductEventsRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "method-not-allowed" }, { status: 405 });
+  }
+  if (request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1") {
+    return jsonResponse({}, { status: 204 });
+  }
+  if (!productEventsSameOrigin(request)) {
+    return jsonResponse({ ok: false, error: "origin-not-allowed" }, { status: 403 });
+  }
+  const admission = await productEventsAdmission(request, env);
+  if (!admission.allowed) {
+    return jsonResponse({ ok: false, error: admission.reason }, {
+      status: admission.state === "rate-limited" ? 429 : 503,
+      headers: admission.retryAfterSeconds ? { "Retry-After": String(admission.retryAfterSeconds) } : {}
+    });
+  }
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (contentLength > PRODUCT_EVENTS_MAX_BODY_BYTES) {
+    return jsonResponse({ ok: false, error: "payload-too-large" }, { status: 413 });
+  }
+  let raw = "";
+  try {
+    raw = await request.text();
+  } catch {
+    return jsonResponse({ ok: false, error: "invalid-json" }, { status: 400 });
+  }
+  if (!raw || new TextEncoder().encode(raw).byteLength > PRODUCT_EVENTS_MAX_BODY_BYTES) {
+    return jsonResponse({ ok: false, error: raw ? "payload-too-large" : "invalid-json" }, {
+      status: raw ? 413 : 400
+    });
+  }
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return jsonResponse({ ok: false, error: "invalid-json" }, { status: 400 });
+  }
+  const normalized = normalizeProductEventsPayload(payload);
+  if (!normalized.ok) {
+    return jsonResponse({ ok: false, error: normalized.error }, { status: 400 });
+  }
+  const analytics = env?.PRODUCT_ANALYTICS;
+  if (!analytics || typeof analytics.writeDataPoint !== "function") {
+    return jsonResponse({ ok: false, error: "analytics-unavailable" }, { status: 503 });
+  }
+  try {
+    for (const event of normalized.events) {
+      analytics.writeDataPoint({
+        blobs: [event.name, normalized.platform, normalized.version],
+        doubles: [event.count],
+        indexes: [event.name]
+      });
+    }
+  } catch {
+    return jsonResponse({ ok: false, error: "analytics-write-failed" }, { status: 503 });
+  }
+  return jsonResponse({
+    ok: true,
+    state: "accepted",
+    acceptedEvents: normalized.events.length,
+    acceptedCount: normalized.events.reduce((sum, event) => sum + event.count, 0)
+  }, { status: 202 });
+}
+
+function productEventsSameOrigin(request) {
+  const expectedOrigin = new URL(request.url).origin;
+  const origin = String(request.headers.get("Origin") || "").trim();
+  const referer = String(request.headers.get("Referer") || "").trim();
+  if (!origin && !referer) return false;
+  if (origin) {
+    if (origin === "null") return false;
+    try {
+      if (new URL(origin).origin !== expectedOrigin) return false;
+    } catch {
+      return false;
+    }
+  }
+  if (referer) {
+    try {
+      if (new URL(referer).origin !== expectedOrigin) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function normalizeProductEventsPayload(payload) {
+  if (!plainObjectWithOnlyKeys(payload, ["events", "platform", "version"])) {
+    return { ok: false, error: "invalid-payload-shape" };
+  }
+  const platform = String(payload.platform || "").trim().toLowerCase();
+  const version = String(payload.version || "").trim();
+  if (!PRODUCT_EVENT_PLATFORMS.has(platform)) return { ok: false, error: "invalid-platform" };
+  if (!/^\d{1,4}(?:\.\d{1,4}){1,3}$/.test(version)) return { ok: false, error: "invalid-version" };
+  if (!Array.isArray(payload.events) || !payload.events.length || payload.events.length > PRODUCT_EVENTS_MAX_BATCH) {
+    return { ok: false, error: "invalid-events" };
+  }
+  const events = [];
+  let total = 0;
+  for (const item of payload.events) {
+    if (!plainObjectWithOnlyKeys(item, ["name", "count"])) return { ok: false, error: "invalid-event-shape" };
+    const name = String(item.name || "").trim();
+    const count = Number(item.count);
+    if (!PRODUCT_EVENT_NAMES.has(name)) return { ok: false, error: "event-not-allowed" };
+    if (!Number.isInteger(count) || count < 1 || count > PRODUCT_EVENTS_MAX_COUNT) {
+      return { ok: false, error: "invalid-event-count" };
+    }
+    total += count;
+    if (total > PRODUCT_EVENTS_MAX_TOTAL_COUNT) return { ok: false, error: "event-count-too-large" };
+    events.push({ name, count });
+  }
+  return { ok: true, platform, version, events };
+}
+
+function plainObjectWithOnlyKeys(value, allowedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+export async function handlePlanWatchNotificationHealthRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, error: "method-not-allowed" }, { status: 405 });
+  }
+  const auth = planWatchTestAuthorization(request, env);
+  if (!auth.available) return jsonResponse({ ok: false, error: "health-disabled" }, { status: 404 });
+  if (!auth.authorized) return jsonResponse({ ok: false, error: "unauthorized" }, { status: 401 });
+
+  const store = planWatchStore(env);
+  const mode = configuredPlanWatchEvaluatorMode(env);
+  const webPushReady = Boolean(configuredPlanWatchVapidPublicKey(env) && configuredPlanWatchVapidPrivateKey(env));
+  const nativePushReady = planWatchApnsConfigured(env);
+  const requiredChannels = configuredPlanWatchRequiredDeliveryChannels(env);
+  const standard = store?.getJson ? await store.getJson(planWatchHealthStorageName("standard")) : null;
+  const urgent = store?.getJson ? await store.getJson(planWatchHealthStorageName("urgent")) : null;
+  const now = Date.now();
+  const standardMaxAgeMs = configuredPlanWatchHealthMaxAgeMinutes(env) * 60 * 1000;
+  const urgentMaxAgeMs = PLAN_WATCH_URGENT_HEALTH_MAX_AGE_MINUTES * 60 * 1000;
+  const standardFresh = planWatchHealthFresh(standard, standardMaxAgeMs, now);
+  const urgentFresh = planWatchHealthFresh(urgent, urgentMaxAgeMs, now);
+  const standardBacklogReady = planWatchBacklogWithinSla(standard, PLAN_WATCH_STANDARD_BACKLOG_SLA_MINUTES);
+  const urgentBacklogReady = planWatchBacklogWithinSla(urgent, PLAN_WATCH_URGENT_BACKLOG_SLA_MINUTES);
+  const checks = {
+    evaluator: planWatchScheduledEvaluatorEnabled(env),
+    storage: Boolean(store?.getJson && store?.putJson && store?.listPage),
+    delivery: requiredChannels.every((channel) => channel === "web-push" ? webPushReady : nativePushReady),
+    standardSchedule: standardFresh && standard?.ok === true,
+    urgentSchedule: urgentFresh && urgent?.ok === true,
+    standardBacklog: standardBacklogReady,
+    urgentBacklog: urgentBacklogReady
+  };
+  const ok = Object.values(checks).every(Boolean);
+  const state = ok ? "healthy" : (checks.storage && checks.evaluator ? "degraded" : "unhealthy");
+  return jsonResponse({
+    ok,
+    provider: `${PLAN_WATCH_PROVIDER}-health`,
+    version: 1,
+    state,
+    checkedAt: new Date(now).toISOString(),
+    mode,
+    checks,
+    delivery: {
+      required: requiredChannels,
+      webPush: webPushReady ? "ready" : "unavailable",
+      nativePush: nativePushReady ? "ready" : "unavailable"
+    },
+    evaluator: {
+      backlogSlaMinutes: {
+        standard: PLAN_WATCH_STANDARD_BACKLOG_SLA_MINUTES,
+        urgent: PLAN_WATCH_URGENT_BACKLOG_SLA_MINUTES
+      },
+      standard: sanitizePlanWatchHealthSummary(standard),
+      urgent: sanitizePlanWatchHealthSummary(urgent)
+    }
+  }, { status: ok ? 200 : 503 });
 }
 
 export async function handleXweatherConfigRequest(request, env = {}) {
@@ -277,9 +525,18 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   }
   const payload = await readJsonRequest(request);
   const subscription = normalizeWebPushSubscription(payload.subscription);
-  const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel);
+  const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel, env);
   if (!subscription && !nativeChannel) {
     return jsonResponse({ ok: false, error: "invalid-delivery-channel" }, { status: 400 });
+  }
+  const normalizedPlans = normalizePlanWatchPlans(payload.plans, env);
+  const normalizedPlaces = normalizePlanWatchPlaces(payload.places, env);
+  if (!normalizedPlans.length && !normalizedPlaces.length) {
+    return jsonResponse({ ok: false, error: "missing-watch-target" }, { status: 400 });
+  }
+  const normalizedClient = normalizePlanWatchClient(payload.client);
+  if (!normalizedClient.timezone) {
+    return jsonResponse({ ok: false, error: "invalid-client-timezone" }, { status: 400 });
   }
   const store = planWatchStore(env);
   if (!store) {
@@ -298,12 +555,27 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     ? await store.getJson(planWatchSubscriptionStorageName(subscriptionId))
     : null;
   if (!planWatchRecordHasDeliveryChannel(existingRecord)) {
+    const admission = await planWatchRegistrationAdmission(request, store, env);
+    if (!admission.allowed) {
+      return jsonResponse({
+        ok: false,
+        provider: PLAN_WATCH_PROVIDER,
+        state: admission.state,
+        reason: admission.reason,
+        retryAfterSeconds: admission.retryAfterSeconds
+      }, {
+        status: admission.state === "rate-limited" ? 429 : 503,
+        headers: admission.retryAfterSeconds ? { "Retry-After": String(admission.retryAfterSeconds) } : {}
+      });
+    }
+  }
+  if (!planWatchRecordHasDeliveryChannel(existingRecord) && configuredPlanWatchMaxActiveSubscriptions(env) > 0) {
     const capMarker = await planWatchRegistrationCapMarker(store);
     if (capMarker.full) {
       return jsonResponse({
         ok: false,
         provider: PLAN_WATCH_PROVIDER,
-        state: "beta-full",
+        state: "capacity-reached",
         reason: "plan-watch-registration-limit",
         subscriptionId,
         activeSubscriptions: capMarker.activeSubscriptions,
@@ -317,7 +589,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
       return jsonResponse({
         ok: false,
         provider: PLAN_WATCH_PROVIDER,
-        state: "beta-full",
+        state: "capacity-reached",
         reason: "plan-watch-registration-limit",
         subscriptionId,
         activeSubscriptions: capacity.activeSubscriptions,
@@ -327,7 +599,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   }
   const now = new Date();
   const expiresAt = new Date(now.getTime() + PLAN_WATCH_SUBSCRIPTION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const client = normalizePlanWatchClient(payload.client);
+  const client = normalizedClient;
   const clientUnitChanged = Boolean(
     existingRecord?.client?.unit &&
     client?.unit &&
@@ -342,12 +614,12 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     subscription,
     nativeChannel,
     plans: mergePlanWatchPlansWithExisting(
-      normalizePlanWatchPlans(payload.plans, env),
+      normalizedPlans,
       existingRecord?.plans,
       { resetBaseline: clientUnitChanged }
     ),
     places: mergePlanWatchPlacesWithExisting(
-      normalizePlanWatchPlaces(payload.places, env),
+      normalizedPlaces,
       existingRecord?.places
     ),
     registeredAt: existingRecord?.registeredAt || now.toISOString(),
@@ -358,12 +630,18 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   if (store.deleteJson && planWatchRecordHasDeliveryChannel(existingRecord)) {
     await store.deleteJson(planWatchRegistrationCapStorageName());
   }
+  const webDeliveryReady = !subscription || Boolean(
+    configuredPlanWatchVapidPublicKey(env) && configuredPlanWatchVapidPrivateKey(env)
+  );
   const nativeDeliveryReady = !nativeChannel || planWatchApnsConfigured(env);
+  const deliveryReady = webDeliveryReady && nativeDeliveryReady;
   return jsonResponse({
-    ok: nativeDeliveryReady,
+    ok: deliveryReady,
     provider: PLAN_WATCH_PROVIDER,
-    state: nativeDeliveryReady ? "stored" : "stored-native-delivery-not-configured",
-    reason: nativeDeliveryReady ? "" : "native-push-not-configured",
+    state: deliveryReady
+      ? "stored"
+      : nativeDeliveryReady ? "stored-web-delivery-not-configured" : "stored-native-delivery-not-configured",
+    reason: deliveryReady ? "" : nativeDeliveryReady ? "web-push-not-configured" : "native-push-not-configured",
     subscriptionId,
     planCount: record.plans.length,
     placeCount: record.places.length,
@@ -420,6 +698,9 @@ export async function handlePlanWatchNotificationTestRequest(request, env = {}) 
   }
 
   const payload = await readJsonRequest(request);
+  if (!cleanText(payload.subscriptionId, 120) && !payload.subscription && !payload.nativeChannel && !payload.channel) {
+    return jsonResponse({ ok: false, error: "missing-canary-subscription" }, { status: 400 });
+  }
   const store = planWatchStore(env);
   if (!store) {
     return jsonResponse({ ok: false, error: "plan-watch-store-unavailable" }, { status: 503 });
@@ -469,7 +750,6 @@ export async function handlePlanWatchNotificationPendingRequest(request, env = {
     if (pending && store.deleteJson) await store.deleteJson(pendingName);
     return jsonResponse({ ok: false, state: "no-pending-notification" }, { status: 204 });
   }
-  if (store.deleteJson) await store.deleteJson(pendingName);
   return jsonResponse({
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
@@ -493,6 +773,7 @@ export async function handlePlanWatchNotificationEvaluateRequest(request, env = 
   const result = await evaluatePlanWatchNotifications(env, {
     reason: "manual",
     dryRun: Boolean(payload.dryRun),
+    urgentOnly: Boolean(payload.urgentOnly),
     subscriptionId: cleanText(payload.subscriptionId, 120),
     limit: configuredPlanWatchEvaluatorLimit(env, payload.limit)
   });
@@ -1542,7 +1823,7 @@ function configuredPlanWatchEvaluatorMode(env = {}) {
 }
 
 function planWatchScheduledEvaluatorEnabled(env = {}) {
-  return ["beta", "on", "enabled", "true"].includes(configuredPlanWatchEvaluatorMode(env));
+  return ["production", "on", "enabled", "true"].includes(configuredPlanWatchEvaluatorMode(env));
 }
 
 function configuredPlanWatchEvaluatorLimit(env = {}, value = undefined) {
@@ -1555,13 +1836,89 @@ function configuredPlanWatchEvaluatorLimit(env = {}, value = undefined) {
   return boundedInteger(value, defaultLimit, 1, PLAN_WATCH_EVALUATOR_HARD_LIMIT);
 }
 
+function configuredPlanWatchUrgentEvaluatorLimit(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_URGENT_EVALUATOR_LIMIT_ENV],
+    DEFAULT_PLAN_WATCH_URGENT_EVALUATOR_LIMIT,
+    1,
+    PLAN_WATCH_EVALUATOR_HARD_LIMIT
+  );
+}
+
 function configuredPlanWatchMaxActiveSubscriptions(env = {}) {
   return boundedInteger(
     env?.[PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS_ENV],
     DEFAULT_PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS,
     0,
-    500
+    100000
   );
+}
+
+function configuredPlanWatchQuietHours(env = {}) {
+  return {
+    start: boundedInteger(
+      env?.[PLAN_WATCH_QUIET_HOURS_START_ENV],
+      DEFAULT_PLAN_WATCH_QUIET_HOURS_START,
+      0,
+      23
+    ),
+    end: boundedInteger(
+      env?.[PLAN_WATCH_QUIET_HOURS_END_ENV],
+      DEFAULT_PLAN_WATCH_QUIET_HOURS_END,
+      0,
+      23
+    ),
+    bypassPriority: boundedInteger(
+      env?.[PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY_ENV],
+      DEFAULT_PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY,
+      1,
+      500
+    )
+  };
+}
+
+function configuredPlanWatchDeliveryRetryAttempts(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS_ENV],
+    DEFAULT_PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS,
+    1,
+    5
+  );
+}
+
+function configuredPlanWatchDeliveryRetryBaseMs(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_DELIVERY_RETRY_BASE_MS_ENV],
+    DEFAULT_PLAN_WATCH_DELIVERY_RETRY_BASE_MS,
+    0,
+    2000
+  );
+}
+
+function configuredPlanWatchDeliveryTimeoutMs(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_DELIVERY_TIMEOUT_MS_ENV],
+    DEFAULT_PLAN_WATCH_DELIVERY_TIMEOUT_MS,
+    1000,
+    15000
+  );
+}
+
+function configuredPlanWatchHealthMaxAgeMinutes(env = {}) {
+  return boundedInteger(
+    env?.[PLAN_WATCH_HEALTH_MAX_AGE_MINUTES_ENV],
+    DEFAULT_PLAN_WATCH_HEALTH_MAX_AGE_MINUTES,
+    15,
+    24 * 60
+  );
+}
+
+function configuredPlanWatchRequiredDeliveryChannels(env = {}) {
+  const values = String(env?.[PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS_ENV] || "web-push,apns")
+    .split(/[\s,]+/)
+    .map((value) => cleanToken(value, 24).toLowerCase())
+    .filter((value) => value === "web-push" || value === "apns");
+  return [...new Set(values.length ? values : ["web-push", "apns"])];
 }
 
 function configuredPlanWatchMaxPlansPerSubscription(env = {}) {
@@ -1591,31 +1948,97 @@ function planWatchTestAuthorization(request, env = {}) {
   return { available: true, authorized: token === expected };
 }
 
+async function planWatchRegistrationAdmission(request, store, env = {}) {
+  return edgeRateAdmission(request, store, env, {
+    scope: "plan-watch-register",
+    clientBinding: env?.PLAN_WATCH_REGISTRATION_RATE_LIMITER,
+    globalBinding: env?.PLAN_WATCH_REGISTRATION_GLOBAL_RATE_LIMITER,
+    clientLimit: PLAN_WATCH_REGISTRATION_CLIENT_LIMIT,
+    globalLimit: PLAN_WATCH_REGISTRATION_GLOBAL_LIMIT
+  });
+}
+
+async function productEventsAdmission(request, env = {}) {
+  return edgeRateAdmission(request, planWatchStore(env), env, {
+    scope: "product-events",
+    clientBinding: env?.PRODUCT_EVENTS_RATE_LIMITER,
+    globalBinding: env?.PRODUCT_EVENTS_GLOBAL_RATE_LIMITER,
+    clientLimit: PRODUCT_EVENTS_CLIENT_RATE_LIMIT,
+    globalLimit: PRODUCT_EVENTS_GLOBAL_RATE_LIMIT
+  });
+}
+
+async function edgeRateAdmission(request, _store, env, options) {
+  const clientKey = await edgeRateClientKey(request, env, options.scope);
+  if (!clientKey) {
+    return { allowed: false, state: "unavailable", reason: "rate-limit-identity-unavailable" };
+  }
+  if (!options.clientBinding?.limit || !options.globalBinding?.limit) {
+    return { allowed: false, state: "unavailable", reason: "rate-limit-binding-unavailable" };
+  }
+  try {
+    const [client, global] = await Promise.all([
+      options.clientBinding.limit({ key: clientKey }),
+      options.globalBinding.limit({ key: "global" })
+    ]);
+    if (client?.success && global?.success) return { allowed: true, state: "allowed", source: "edge" };
+    return {
+      allowed: false,
+      state: "rate-limited",
+      reason: client?.success ? "global-rate-limit" : "client-rate-limit",
+      retryAfterSeconds: PLAN_WATCH_REGISTRATION_WINDOW_SECONDS
+    };
+  } catch {
+    return { allowed: false, state: "unavailable", reason: "rate-limit-binding-failed" };
+  }
+}
+
+async function edgeRateClientKey(request, env = {}, scope = "edge") {
+  const salt = String(
+    env?.[PLAN_WATCH_REGISTRATION_RATE_SALT_ENV] ||
+    configuredPlanWatchTestToken(env) ||
+    configuredPlanWatchApnsPrivateKey(env) ||
+    JSON.stringify(configuredPlanWatchVapidPrivateKey(env) || "")
+  ).trim();
+  if (!salt) return "";
+  const forwarded = String(request.headers.get("X-Forwarded-For") || "").split(",")[0].trim();
+  const address = String(request.headers.get("CF-Connecting-IP") || forwarded || "").trim();
+  const fallback = cleanText(request.headers.get("User-Agent") || "unknown-client", 160);
+  return (await sha256Hex(`${scope}:${salt}:${address || fallback}`)).slice(0, 32);
+}
+
 async function planWatchRegistrationCapacity(store, subscriptionId, env = {}) {
   const maxActiveSubscriptions = configuredPlanWatchMaxActiveSubscriptions(env);
   if (maxActiveSubscriptions <= 0) {
-    return { allowed: false, activeSubscriptions: 0, maxActiveSubscriptions };
+    return { allowed: true, activeSubscriptions: null, maxActiveSubscriptions: null };
   }
-  if (!store?.listNames || !store?.getJson) {
+  if (!store?.listPage || !store?.getJson) {
     return { allowed: true, activeSubscriptions: null, maxActiveSubscriptions };
   }
-  const names = await store.listNames(
-    "subscriptions/",
-    Math.min(1000, Math.max(maxActiveSubscriptions + 25, 50))
-  );
   let activeSubscriptions = 0;
-  for (const name of names) {
-    const record = await store.getJson(name);
-    if (!planWatchRecordHasDeliveryChannel(record)) continue;
-    if (planWatchSubscriptionExpired(record)) {
-      if (store.deleteJson && record.subscriptionId) {
-        await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+  let cursor = "";
+  do {
+    const page = await store.listPage(
+      "subscriptions/",
+      Math.min(1000, Math.max(50, maxActiveSubscriptions - activeSubscriptions + 1)),
+      cursor
+    );
+    for (const name of page.names) {
+      const record = await store.getJson(name);
+      if (!planWatchRecordHasDeliveryChannel(record)) continue;
+      if (planWatchSubscriptionExpired(record)) {
+        if (store.deleteJson && record.subscriptionId) {
+          await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+        }
+        continue;
       }
-      continue;
+      if (record.subscriptionId === subscriptionId) continue;
+      activeSubscriptions += 1;
+      if (activeSubscriptions >= maxActiveSubscriptions) break;
     }
-    if (record.subscriptionId === subscriptionId) continue;
-    activeSubscriptions += 1;
-  }
+    if (activeSubscriptions >= maxActiveSubscriptions || !page.truncated || !page.cursor) break;
+    cursor = page.cursor;
+  } while (cursor);
   return {
     allowed: activeSubscriptions < maxActiveSubscriptions,
     activeSubscriptions,
@@ -1688,14 +2111,23 @@ function planWatchStore(env = {}) {
       return null;
     },
     async listNames(namePrefix = "", limit = 25) {
-      if (!bucket.list) return [];
+      const page = await this.listPage(namePrefix, limit);
+      return page.names;
+    },
+    async listPage(namePrefix = "", limit = 25, cursor = "") {
+      if (!bucket.list) return { names: [], cursor: "", truncated: false };
       const listPrefix = storageKey(namePrefix);
-      const result = await bucket.list({ prefix: listPrefix, limit });
+      const result = await bucket.list({ prefix: listPrefix, limit, ...(cursor ? { cursor } : {}) });
       const stripPrefix = prefix ? `${prefix}/` : "";
-      return (result?.objects || [])
+      const names = (result?.objects || [])
         .map((object) => String(object?.key || ""))
         .filter(Boolean)
         .map((key) => key.startsWith(stripPrefix) ? key.slice(stripPrefix.length) : key);
+      return {
+        names,
+        cursor: result?.truncated ? String(result.cursor || "") : "",
+        truncated: Boolean(result?.truncated)
+      };
     }
   };
 }
@@ -1893,13 +2325,14 @@ async function sendLiveActivityApns(record, event, state, env = {}) {
   const jwt = await planWatchApnsJwt(env);
   const host = record.environment === "development" ? "https://api.sandbox.push.apple.com" : "https://api.push.apple.com";
   const bundleId = record.bundleId || configuredPlanWatchApnsBundleId(env);
-  const response = await fetch(`${host}/3/device/${record.token}`, {
+  return planWatchFetchWithRetry(`${host}/3/device/${record.token}`, {
     method: "POST",
     headers: {
       authorization: `bearer ${jwt}`,
       "apns-topic": `${bundleId}.push-type.liveactivity`,
       "apns-push-type": "liveactivity",
       "apns-priority": event === "end" ? "10" : "5",
+      "apns-collapse-id": cleanToken(record.activityId || "nearcast-live-activity", 64),
       "apns-expiration": String(Math.floor(Date.now() / 1000) + 15 * 60),
       "content-type": "application/json"
     },
@@ -1911,8 +2344,7 @@ async function sendLiveActivityApns(record, event, state, env = {}) {
         ...(event === "end" ? { "dismissal-date": Math.floor(Date.now() / 1000) + 10 * 60 } : {})
       }
     })
-  });
-  return { ok: response.ok, status: response.status, body: response.ok ? "" : cleanText(await response.text().catch(() => ""), 240) };
+  }, env);
 }
 
 async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
@@ -1933,36 +2365,75 @@ async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
     const record = await store.getJson(planWatchSubscriptionStorageName(id));
     if (planWatchRecordHasDeliveryChannel(record)) return record;
   }
-  if (!store.listNames || !store.getJson) return null;
-  const names = await store.listNames("subscriptions/", 20);
-  for (const name of names) {
-    const record = await store.getJson(name);
-    if (planWatchRecordHasDeliveryChannel(record) && !planWatchSubscriptionExpired(record)) return record;
-  }
   return null;
 }
 
 async function planWatchSubscriptionRecords(store, options = {}) {
-  if (!store?.getJson || !store?.listNames) return [];
+  if (!store?.getJson || !store?.listPage) return { records: [], scan: { scanned: 0, hasMore: false, wrapped: false } };
   const subscriptionId = cleanText(options.subscriptionId, 120);
   if (subscriptionId) {
     const record = await store.getJson(planWatchSubscriptionStorageName(subscriptionId));
-    return planWatchRecordHasDeliveryChannel(record) ? [record] : [];
+    return {
+      records: planWatchRecordHasDeliveryChannel(record) ? [record] : [],
+      scan: { scanned: record ? 1 : 0, hasMore: false, wrapped: false, direct: true }
+    };
   }
   const evaluationLimit = configuredPlanWatchEvaluatorLimit(options.env, options.limit);
-  const scanLimit = Math.min(
-    1000,
-    Math.max(evaluationLimit, configuredPlanWatchMaxActiveSubscriptions(options.env))
-  );
-  const names = await store.listNames("subscriptions/", scanLimit);
-  const records = [];
-  for (const name of names) {
-    const record = await store.getJson(name);
-    if (planWatchRecordHasDeliveryChannel(record) && !planWatchSubscriptionExpired(record)) records.push(record);
+  const scanLimit = Math.min(PLAN_WATCH_SCAN_PAGE_HARD_LIMIT, evaluationLimit);
+  const scope = options.urgentOnly ? "urgent" : "standard";
+  const useCursor = options.reason === "scheduled";
+  const cursorState = useCursor ? await store.getJson(planWatchEvaluatorCursorStorageName(scope)) : null;
+  const startCursor = cleanText(cursorState?.cursor, 1200);
+  const scanStartedAt = Date.now();
+  const existingCycleStartedAt = timestamp(cursorState?.cycleStartedAt);
+  const cycleStartedAt = startCursor && Number.isFinite(existingCycleStartedAt)
+    ? existingCycleStartedAt
+    : scanStartedAt;
+  let page;
+  try {
+    page = await store.listPage("subscriptions/", scanLimit, startCursor);
+  } catch {
+    page = await store.listPage("subscriptions/", scanLimit, "");
   }
-  return records
-    .sort((a, b) => planWatchLastEvaluatedAt(a) - planWatchLastEvaluatedAt(b))
-    .slice(0, evaluationLimit);
+  const records = [];
+  for (const name of page.names) {
+    const record = await store.getJson(name);
+    if (planWatchSubscriptionExpired(record)) {
+      if (store.deleteJson && record?.subscriptionId) {
+        await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+      }
+      continue;
+    }
+    if (planWatchRecordHasDeliveryChannel(record)) records.push(record);
+    if (records.length >= evaluationLimit) break;
+  }
+  const nextCursor = page.truncated && page.cursor ? page.cursor : "";
+  if (useCursor && store.putJson) {
+    await store.putJson(planWatchEvaluatorCursorStorageName(scope), {
+      provider: PLAN_WATCH_PROVIDER,
+      version: 1,
+      scope,
+      cursor: nextCursor,
+      cycleStartedAt: new Date(nextCursor ? cycleStartedAt : scanStartedAt).toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+  return {
+    records,
+    scan: {
+      scanned: page.names.length,
+      selected: records.length,
+      hasMore: Boolean(nextCursor),
+      wrapped: Boolean(startCursor && !nextCursor),
+      cycleAgeMs: Math.max(0, scanStartedAt - cycleStartedAt),
+      completedCycleMs: !nextCursor ? Math.max(0, scanStartedAt - cycleStartedAt) : null,
+      oldestEvaluationLagMs: records.reduce((oldest, record) => {
+        const evaluatedAt = timestamp(scope === "urgent" ? record.urgentEvaluatedAt : record.evaluatedAt);
+        const fallback = timestamp(record.registeredAt || record.updatedAt) || scanStartedAt;
+        return Math.max(oldest, Math.max(0, scanStartedAt - (evaluatedAt || fallback)));
+      }, 0)
+    }
+  };
 }
 
 function planWatchSubscriptionExpired(record) {
@@ -1979,9 +2450,133 @@ function planWatchPendingExpired(record) {
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
 }
 
+export async function runScheduledPlanWatchEvaluations(env = {}, options = {}) {
+  const summaries = [];
+  const context = { forecastCache: new Map(), alertsCache: new Map(), externalRequests: 0 };
+  summaries.push(await runScheduledPlanWatchEvaluation(env, { urgentOnly: true, context }));
+  if (options.includeStandard) {
+    summaries.push(await runScheduledPlanWatchEvaluation(env, { urgentOnly: false, context }));
+  }
+  return summaries;
+}
+
+async function runScheduledPlanWatchEvaluation(env = {}, options = {}) {
+  const startedAtMs = Date.now();
+  const scope = options.urgentOnly ? "urgent" : "standard";
+  let summary;
+  try {
+    summary = await evaluatePlanWatchNotifications(env, {
+      reason: "scheduled",
+      urgentOnly: Boolean(options.urgentOnly),
+      limit: options.urgentOnly
+        ? configuredPlanWatchUrgentEvaluatorLimit(env)
+        : configuredPlanWatchEvaluatorLimit(env),
+      context: options.context
+    });
+  } catch (error) {
+    summary = {
+      ok: false,
+      provider: PLAN_WATCH_PROVIDER,
+      state: "evaluation-failed",
+      reason: "scheduled",
+      scope,
+      checkedAt: new Date().toISOString(),
+      subscriptions: 0,
+      plans: 0,
+      places: 0,
+      candidates: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 1,
+      deferred: 0,
+      updated: 0,
+      errors: 1,
+      deduplicated: 0,
+      deliveryAttempts: 0,
+      retries: 0,
+      alertSupported: 0,
+      alertUnsupported: 0,
+      alertErrors: 1,
+      externalRequests: Math.max(0, Number(options.context?.externalRequests || 0)),
+      error: cleanText(error?.message || String(error), 160)
+    };
+  }
+  const health = sanitizePlanWatchHealthSummary({
+    ...summary,
+    scope,
+    startedAt: new Date(startedAtMs).toISOString(),
+    durationMs: Math.max(0, Date.now() - startedAtMs)
+  });
+  const store = planWatchStore(env);
+  if (store?.putJson) {
+    const slot = Math.floor(startedAtMs / (5 * 60 * 1000)) % 288;
+    await Promise.all([
+      store.putJson(planWatchHealthStorageName(scope), health),
+      store.putJson(`health/evaluator-history/${scope}/${String(slot).padStart(3, "0")}.json`, health)
+    ]);
+  }
+  return summary;
+}
+
+function sanitizePlanWatchHealthSummary(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    provider: `${PLAN_WATCH_PROVIDER}-evaluator-health`,
+    version: 1,
+    ok: Boolean(value.ok && Number(value.failed || 0) === 0 && Number(value.errors || 0) === 0),
+    state: cleanToken(value.state || "unknown", 40),
+    scope: value.scope === "urgent" ? "urgent" : "standard",
+    checkedAt: cleanText(value.checkedAt, 40),
+    startedAt: cleanText(value.startedAt, 40),
+    durationMs: Math.max(0, Math.round(finiteNumber(value.durationMs, 0))),
+    subscriptions: Math.max(0, Math.round(finiteNumber(value.subscriptions, 0))),
+    plans: Math.max(0, Math.round(finiteNumber(value.plans, 0))),
+    places: Math.max(0, Math.round(finiteNumber(value.places, 0))),
+    candidates: Math.max(0, Math.round(finiteNumber(value.candidates, 0))),
+    sent: Math.max(0, Math.round(finiteNumber(value.sent, 0))),
+    skipped: Math.max(0, Math.round(finiteNumber(value.skipped, 0))),
+    failed: Math.max(0, Math.round(finiteNumber(value.failed, 0))),
+    deferred: Math.max(0, Math.round(finiteNumber(value.deferred, 0))),
+    updated: Math.max(0, Math.round(finiteNumber(value.updated, 0))),
+    errors: Math.max(0, Math.round(finiteNumber(value.errors, 0))),
+    deduplicated: Math.max(0, Math.round(finiteNumber(value.deduplicated, 0))),
+    deliveryAttempts: Math.max(0, Math.round(finiteNumber(value.deliveryAttempts, 0))),
+    retries: Math.max(0, Math.round(finiteNumber(value.retries, 0))),
+    alertSupported: Math.max(0, Math.round(finiteNumber(value.alertSupported, 0))),
+    alertUnsupported: Math.max(0, Math.round(finiteNumber(value.alertUnsupported, 0))),
+    alertErrors: Math.max(0, Math.round(finiteNumber(value.alertErrors, 0))),
+    externalRequests: Math.max(0, Math.round(finiteNumber(value.externalRequests, 0))),
+    scan: {
+      scanned: Math.max(0, Math.round(finiteNumber(value.scan?.scanned, 0))),
+      selected: Math.max(0, Math.round(finiteNumber(value.scan?.selected, value.subscriptions || 0))),
+      hasMore: Boolean(value.scan?.hasMore),
+      wrapped: Boolean(value.scan?.wrapped),
+      cursor: value.scan?.hasMore ? "continuing" : "wrapped",
+      cycleAgeMs: Math.max(0, Math.round(finiteNumber(value.scan?.cycleAgeMs, 0))),
+      completedCycleMs: Math.max(0, Math.round(finiteNumber(value.scan?.completedCycleMs, 0))),
+      oldestEvaluationLagMs: Math.max(0, Math.round(finiteNumber(value.scan?.oldestEvaluationLagMs, 0)))
+    }
+  };
+}
+
+function planWatchHealthFresh(summary, maxAgeMs, now = Date.now()) {
+  const checkedAt = timestamp(summary?.checkedAt);
+  return Number.isFinite(checkedAt) && now - checkedAt >= 0 && now - checkedAt <= maxAgeMs;
+}
+
+function planWatchBacklogWithinSla(summary, slaMinutes) {
+  if (!summary?.scan) return false;
+  const maxMs = slaMinutes * 60 * 1000;
+  return [
+    finiteNumber(summary.scan.cycleAgeMs, 0),
+    finiteNumber(summary.scan.completedCycleMs, 0),
+    finiteNumber(summary.scan.oldestEvaluationLagMs, 0)
+  ].every((value) => value >= 0 && value <= maxMs);
+}
+
 async function evaluatePlanWatchNotifications(env = {}, options = {}) {
   const store = planWatchStore(env);
-  if (!store?.getJson || !store?.putJson || !store?.listNames) {
+  if (!store?.getJson || !store?.putJson || !store?.listPage) {
     return {
       ok: false,
       provider: PLAN_WATCH_PROVIDER,
@@ -1989,12 +2584,15 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
       reason: options.reason || ""
     };
   }
-  const records = await planWatchSubscriptionRecords(store, { ...options, env });
+  const selection = await planWatchSubscriptionRecords(store, { ...options, env });
+  const records = selection.records;
+  const externalRequestsAtStart = Math.max(0, Number(options.context?.externalRequests || 0));
   const summary = {
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
     state: "evaluated",
     reason: options.reason || "",
+    scope: options.urgentOnly ? "urgent" : "standard",
     dryRun: Boolean(options.dryRun),
     checkedAt: new Date().toISOString(),
     subscriptions: records.length,
@@ -2007,6 +2605,13 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     deferred: 0,
     updated: 0,
     errors: 0,
+    deduplicated: 0,
+    deliveryAttempts: 0,
+    retries: 0,
+    alertSupported: 0,
+    alertUnsupported: 0,
+    alertErrors: 0,
+    scan: selection.scan,
     results: []
   };
 
@@ -2021,8 +2626,17 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     summary.deferred += result.deferred;
     summary.updated += result.updated;
     summary.errors += result.errors;
+    summary.deduplicated += result.deduplicated;
+    summary.deliveryAttempts += result.deliveryAttempts;
+    summary.retries += result.retries;
+    summary.alertSupported += result.alertSupported;
+    summary.alertUnsupported += result.alertUnsupported;
+    summary.alertErrors += result.alertErrors;
     summary.results.push(result);
   }
+  summary.ok = summary.failed === 0 && summary.errors === 0;
+  summary.state = summary.ok ? "evaluated" : "degraded";
+  summary.externalRequests = Math.max(0, Number(options.context?.externalRequests || 0) - externalRequestsAtStart);
   return summary;
 }
 
@@ -2039,6 +2653,12 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     skipped: 0,
     failed: 0,
     deferred: 0,
+    deduplicated: 0,
+    deliveryAttempts: 0,
+    retries: 0,
+    alertSupported: 0,
+    alertUnsupported: 0,
+    alertErrors: 0,
     updated: 0,
     errors: 0,
     reasons: []
@@ -2048,10 +2668,12 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   const evaluatedPlans = [];
   const evaluatedPlaces = [];
   const candidates = [];
-  const context = {
+  const context = options.context || {
     forecastCache: new Map(),
-    alertsCache: new Map()
+    alertsCache: new Map(),
+    externalRequests: 0
   };
+  context.urgentOnly = Boolean(options.urgentOnly);
   for (const plan of plans) {
     const evaluation = await evaluatePlanWatchPlan(plan, record, context).catch((error) => ({
       plan,
@@ -2059,10 +2681,13 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     }));
     if (evaluation?.error) {
       result.errors += 1;
+      if (evaluation.alertReadiness === "error") result.alertErrors += 1;
       result.reasons.push(`${plan?.id || "plan"}:${evaluation.error}`);
       evaluatedPlans.push(plan);
       continue;
     }
+    if (evaluation.alertReadiness === "supported") result.alertSupported += 1;
+    else if (evaluation.alertReadiness === "unsupported") result.alertUnsupported += 1;
     evaluatedPlans.push(evaluation.plan);
     if (evaluation.updated) result.updated += 1;
     if (evaluation.candidate) candidates.push(evaluation.candidate);
@@ -2075,10 +2700,13 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     }));
     if (evaluation?.error) {
       result.errors += 1;
+      if (evaluation.alertReadiness === "error") result.alertErrors += 1;
       result.reasons.push(`${place?.id || "place"}:${evaluation.error}`);
       evaluatedPlaces.push(place);
       continue;
     }
+    if (evaluation.alertReadiness === "supported") result.alertSupported += 1;
+    else if (evaluation.alertReadiness === "unsupported") result.alertUnsupported += 1;
     evaluatedPlaces.push(evaluation.place);
     if (evaluation.updated) result.updated += 1;
     if (evaluation.candidate) candidates.push(evaluation.candidate);
@@ -2086,49 +2714,138 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
   }
   result.candidates = candidates.length;
 
-  const top = candidates.sort((a, b) => b.priority - a.priority)[0];
+  const eligibleCandidates = options.urgentOnly
+    ? candidates.filter(planWatchCandidateIsUrgent)
+    : candidates;
+  const top = eligibleCandidates.sort((a, b) => b.priority - a.priority)[0];
   let deliveredCandidate = null;
   if (top) {
     if (options.dryRun) {
       result.sent = 0;
       result.reasons.push(`dry-run:${top.type}`);
+    } else if (planWatchCandidateInQuietHours(record, top, env)) {
+      result.reasons.push(`quiet-hours:${top.type}`);
     } else {
-      const pending = buildPendingPlanWatchNotification(record, top);
-      const push = await sendPlanWatchDelivery(record, pending.notification, store, env);
-      if (push.ok) {
-        result.sent = 1;
+      const duplicate = await planWatchDeliveryDuplicate(record, top, store);
+      if (duplicate) {
+        result.deduplicated = 1;
+        result.skipped += 1;
+        result.reasons.push(`duplicate-suppressed:${top.type}`);
         deliveredCandidate = top;
-      }
-      else {
-        result.failed = 1;
-        result.reasons.push(`push-failed:${push.status || 0}`);
-        if ((push.status === 404 || push.status === 410) && store.deleteJson) {
-          await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+      } else {
+        const pending = buildPendingPlanWatchNotification(record, top);
+        const push = await sendPlanWatchDelivery(record, pending.notification, store, env);
+        result.deliveryAttempts = Math.max(1, Number(push.attempts || 1));
+        result.retries = Math.max(0, result.deliveryAttempts - 1);
+        if (push.ok) {
+          result.sent = 1;
+          deliveredCandidate = top;
+          await writePlanWatchDeliveryDedupe(record, top, store);
+        }
+        else {
+          result.failed = 1;
+          result.reasons.push(`push-failed:${push.status || 0}`);
+          if ((push.status === 404 || push.status === 410) && store.deleteJson) {
+            await store.deleteJson(planWatchSubscriptionStorageName(record.subscriptionId));
+          }
         }
       }
     }
   }
 
   if (!options.dryRun && result.failed === 0) {
-    const persisted = planWatchPersistedEvaluationTargets({
-      plans,
-      places,
-      evaluatedPlans,
-      evaluatedPlaces,
-      candidates,
-      deliveredCandidate
-    });
+    const persisted = options.urgentOnly && !deliveredCandidate
+      ? { plans, places, deferred: candidates.length }
+      : planWatchPersistedEvaluationTargets({
+        plans,
+        places,
+        evaluatedPlans,
+        evaluatedPlaces,
+        candidates,
+        deliveredCandidate
+      });
     result.deferred = persisted.deferred;
     result.updated = Math.max(0, result.updated - result.deferred);
     const nextRecord = {
       ...record,
       plans: persisted.plans,
       places: persisted.places,
-      evaluatedAt: new Date().toISOString()
+      ...(options.urgentOnly
+        ? { urgentEvaluatedAt: new Date().toISOString() }
+        : { evaluatedAt: new Date().toISOString() })
     };
     await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
   }
   return result;
+}
+
+export function planWatchCandidateIsUrgent(candidate = {}) {
+  const type = cleanToken(candidate.type || candidate.notification?.signal, 64).toLowerCase();
+  return Number(candidate.priority || 0) >= DEFAULT_PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY &&
+    (type.includes("alert") || type.includes("warning") || type.includes("critical"));
+}
+
+export function planWatchCandidateInQuietHours(record = {}, candidate = {}, env = {}, now = new Date()) {
+  const quiet = configuredPlanWatchQuietHours(env);
+  const bypassesQuietHours = planWatchCandidateIsUrgent(candidate) &&
+    Number(candidate.priority || 0) >= quiet.bypassPriority;
+  if (quiet.start === quiet.end || bypassesQuietHours) return false;
+  const timezone = cleanText(record?.client?.timezone, 80);
+  if (!timezone) return false;
+  let hour;
+  try {
+    const part = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(now).find((item) => item.type === "hour");
+    hour = Number(part?.value);
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(hour)) return false;
+  return quiet.start < quiet.end
+    ? hour >= quiet.start && hour < quiet.end
+    : hour >= quiet.start || hour < quiet.end;
+}
+
+async function planWatchDeliveryFingerprint(record = {}, candidate = {}) {
+  const notification = normalizePendingPlanWatchNotification(candidate.notification || {});
+  return sha256Hex(JSON.stringify([
+    record.subscriptionId || "",
+    candidate.type || "",
+    notification.tag,
+    notification.title,
+    notification.body,
+    notification.memoryId,
+    notification.placeId,
+    notification.signal,
+    notification.timeScope
+  ]));
+}
+
+async function planWatchDeliveryDuplicate(record, candidate, store) {
+  if (!store?.getJson) return false;
+  const fingerprint = await planWatchDeliveryFingerprint(record, candidate);
+  const storageName = planWatchDeliveryDedupeStorageName(record.subscriptionId, fingerprint);
+  const marker = await store.getJson(storageName);
+  if (marker && planWatchPendingExpired(marker)) {
+    if (store.deleteJson) await store.deleteJson(storageName);
+    return false;
+  }
+  return Boolean(marker?.sentAt);
+}
+
+async function writePlanWatchDeliveryDedupe(record, candidate, store) {
+  if (!store?.putJson) return;
+  const now = Date.now();
+  const fingerprint = await planWatchDeliveryFingerprint(record, candidate);
+  return store.putJson(planWatchDeliveryDedupeStorageName(record.subscriptionId, fingerprint), {
+    provider: PLAN_WATCH_PROVIDER,
+    version: 1,
+    sentAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + PLAN_WATCH_DELIVERY_DEDUPE_SECONDS * 1000).toISOString()
+  });
 }
 
 export function planWatchPersistedEvaluationTargets({
@@ -2164,14 +2881,21 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   if (!plan || planWatchPlanIsPast(plan)) {
     return { plan, updated: false, candidate: null };
   }
+  if (context.urgentOnly) return evaluateUrgentPlanWatchAlert(plan, record, context);
   const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
   const forecast = await cachedPlanWatchForecast(plan.place, unit, context);
   const stats = planWatchWindowStats(plan, forecast, unit);
   if (!stats) return { plan, updated: false, candidate: null, error: "forecast-window-unavailable" };
-  const alerts = await cachedPlanWatchAlerts(plan.place, context).catch(() => []);
+  const alertState = await cachedPlanWatchAlerts(plan.place, context);
+  if (alertState.readiness === "error") {
+    return { plan, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
+  }
   const windowMs = planWatchWindowMs(plan, forecast);
-  const alert = topPlanWatchAlert(alerts, windowMs.startMs, windowMs.endMs);
+  const alert = alertState.readiness === "supported"
+    ? topPlanWatchAlert(alertState.alerts, windowMs.startMs, windowMs.endMs)
+    : null;
   const current = sharedPlanWeatherWatchCurrentState(plan, stats, alert, unit);
+  preservePlanWatchAlertBaseline(current, plan.lastKnown, alertState.readiness);
   const checkedAt = new Date().toISOString();
   if (current?.snapshot) current.snapshot = { ...current.snapshot, checkedAt: Date.parse(checkedAt) };
   const change = sharedPlanWeatherWatchStateChange(plan.lastKnown, current);
@@ -2187,16 +2911,82 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   return {
     plan: nextPlan,
     updated: Boolean(change?.updateBaseline),
-    candidate
+    candidate,
+    alertReadiness: alertState.readiness
   };
+}
+
+async function evaluateUrgentPlanWatchAlert(plan, record = {}, context = {}) {
+  const alertState = await cachedPlanWatchAlerts(plan.place, context);
+  if (alertState.readiness === "error") {
+    return { plan, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
+  }
+  if (alertState.readiness !== "supported") {
+    return { plan, updated: false, candidate: null, alertReadiness: alertState.readiness };
+  }
+  const windowMs = planWatchWindowMsForTimeZone(plan, record?.client?.timezone);
+  if (!windowMs) {
+    return { plan, updated: false, candidate: null, error: "official-alert-timezone-error", alertReadiness: "error" };
+  }
+  const alert = topPlanWatchAlert(alertState.alerts, windowMs.startMs, windowMs.endMs);
+  const previous = normalizePlanWatchSnapshot(plan.lastKnown?.snapshot) || {};
+  const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
+  const stats = {
+    rainChance: finiteNumber(previous.rainChance, 0),
+    gustMax: finiteNumber(previous.gustMax, 0),
+    feelsMax: finiteNumber(previous.feelsMax, 0),
+    score: finiteNumber(previous.score, 100),
+    tone: previous.tone || "good",
+    riskKind: previous.riskKind || "good",
+    stormPotential: false
+  };
+  const current = sharedPlanWeatherWatchCurrentState(plan, stats, alert, unit);
+  preservePlanWatchAlertBaseline(current, plan.lastKnown, "supported");
+  const checkedAt = new Date().toISOString();
+  if (current?.snapshot) current.snapshot.checkedAt = Date.parse(checkedAt);
+  const change = sharedPlanWeatherWatchStateChange(plan.lastKnown, current);
+  const lastKnown = sharedPlanWeatherLastKnownFromState(plan, current, change, checkedAt);
+  const nextPlan = change?.updateBaseline ? { ...plan, lastKnown } : plan;
+  return {
+    plan: nextPlan,
+    updated: Boolean(change?.updateBaseline),
+    candidate: change?.notify ? sharedPlanWeatherNotificationCandidate(plan, current, change) : null,
+    alertReadiness: "supported"
+  };
+}
+
+function preservePlanWatchAlertBaseline(current, previousLastKnown = {}, readiness = "unknown") {
+  if (!current?.snapshot) return;
+  current.snapshot.alertReadiness = readiness;
+  if (readiness === "supported") return;
+  const previous = normalizePlanWatchSnapshot(previousLastKnown?.snapshot);
+  current.snapshot.alertTone = previous?.alertTone || "";
+  current.snapshot.alertEvent = previous?.alertEvent || "";
+}
+
+function preserveSavedPlaceAlertBaseline(days = [], previousLastKnown = {}) {
+  const previous = normalizePlanWatchSnapshot(previousLastKnown?.snapshot);
+  const previousByDate = new Map((previous?.days || []).map((day) => [day.date, day]));
+  return days.map((day) => {
+    const prior = previousByDate.get(day.date);
+    return prior ? {
+      ...day,
+      alertTone: prior.alertTone || "",
+      alertEvent: prior.alertEvent || ""
+    } : day;
+  });
 }
 
 async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) {
   if (!watchedPlace?.place) return { place: watchedPlace, updated: false, candidate: null };
+  if (context.urgentOnly) return evaluateUrgentSavedPlaceAlert(watchedPlace, record, context);
   const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
   const forecast = await cachedPlanWatchForecast(watchedPlace.place, unit, context);
-  const alerts = await cachedPlanWatchAlerts(watchedPlace.place, context).catch(() => []);
-  const current = savedPlaceWatchCurrentState(watchedPlace, forecast, alerts, unit);
+  const alertState = await cachedPlanWatchAlerts(watchedPlace.place, context);
+  if (alertState.readiness === "error") {
+    return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
+  }
+  const current = savedPlaceWatchCurrentState(watchedPlace, forecast, alertState, unit);
   const change = savedPlaceWatchStateChange(watchedPlace.lastKnown, current);
   const lastKnown = savedPlaceWatchLastKnownFromState(watchedPlace, current, change);
   const nextPlace = change?.updateBaseline ? { ...watchedPlace, lastKnown } : {
@@ -2210,14 +3000,73 @@ async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) 
   return {
     place: nextPlace,
     updated: Boolean(change?.updateBaseline),
-    candidate
+    candidate,
+    alertReadiness: alertState.readiness
   };
 }
 
-function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alerts = [], unit = "fahrenheit") {
+async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context = {}) {
+  const alertState = await cachedPlanWatchAlerts(watchedPlace.place, context);
+  if (alertState.readiness === "error") {
+    return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
+  }
+  if (alertState.readiness !== "supported") {
+    return { place: watchedPlace, updated: false, candidate: null, alertReadiness: alertState.readiness };
+  }
+  const timezone = record?.client?.timezone;
+  const dates = planWatchDatesForTimeZone(timezone, 2);
+  if (dates.length !== 2) {
+    return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-timezone-error", alertReadiness: "error" };
+  }
+  const previous = normalizePlanWatchSnapshot(watchedPlace.lastKnown?.snapshot);
+  const previousByDate = new Map((previous?.days || []).map((day) => [day.date, day]));
+  const days = dates.map((date, index) => {
+    const window = planWatchDateWindowForTimeZone(date, timezone);
+    const alert = window ? topPlanWatchAlert(alertState.alerts, window.startMs, window.endMs) : null;
+    const prior = previousByDate.get(date) || {};
+    return {
+      ...prior,
+      date,
+      label: index === 0 ? "today" : "tomorrow",
+      alertTone: planWatchAlertTone(alert),
+      alertEvent: cleanText(alert?.event || "", 120)
+    };
+  });
+  const snapshot = {
+    ...(previous || {}),
+    placeId: watchedPlace.id || "",
+    placeName: watchedPlace.place?.name || "Saved place",
+    unit: record?.client?.unit === "celsius" ? "celsius" : "fahrenheit",
+    alertReadiness: "supported",
+    days
+  };
+  const current = {
+    signal: "place-watch",
+    tone: days.some((day) => day.alertTone === "warning" || day.alertTone === "watch") ? "watch" : "good",
+    label: "Saved place forecast",
+    reason: savedPlaceWatchSnapshotReason(snapshot, snapshot.unit),
+    body: savedPlaceWatchSnapshotReason(snapshot, snapshot.unit),
+    receipt: savedPlaceWatchSnapshotReceipt(snapshot, snapshot.unit),
+    snapshot
+  };
+  let change = savedPlaceWatchStateChange(watchedPlace.lastKnown, current);
+  if (!previous?.days?.length) {
+    const warningDay = days.find((day) => day.alertTone === "warning");
+    if (warningDay) change = savedPlaceWatchDayChange(snapshot, { ...warningDay, alertTone: "", alertEvent: "" }, warningDay);
+  }
+  const lastKnown = savedPlaceWatchLastKnownFromState(watchedPlace, current, change);
+  return {
+    place: change?.updateBaseline ? { ...watchedPlace, lastKnown } : watchedPlace,
+    updated: Boolean(change?.updateBaseline),
+    candidate: change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change) : null,
+    alertReadiness: "supported"
+  };
+}
+
+function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alertState = {}, unit = "fahrenheit") {
   const place = watchedPlace.place || {};
   const days = [0, 1]
-    .map((dayIndex) => savedPlaceWatchDayStats(forecast, dayIndex, alerts, unit))
+    .map((dayIndex) => savedPlaceWatchDayStats(forecast, dayIndex, alertState.alerts || [], unit))
     .filter(Boolean);
   if (!days.length) return { snapshot: null };
   const placeName = place.name || "Saved place";
@@ -2225,7 +3074,10 @@ function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alerts = 
     placeId: watchedPlace.id || "",
     placeName,
     unit,
-    days
+    alertReadiness: cleanToken(alertState.readiness || "unknown", 24),
+    days: alertState.readiness === "supported"
+      ? days
+      : preserveSavedPlaceAlertBaseline(days, watchedPlace.lastKnown)
   };
   return {
     signal: "place-watch",
@@ -2553,6 +3405,7 @@ async function cachedPlanWatchForecast(place = {}, unit = "fahrenheit", context 
   if (!context.forecastCache) return fetchPlanWatchForecast(place, unit);
   const key = planWatchPlaceCacheKey(place, unit);
   if (!context.forecastCache.has(key)) {
+    context.externalRequests = Math.max(0, Number(context.externalRequests || 0)) + 1;
     context.forecastCache.set(key, fetchPlanWatchForecast(place, unit));
   }
   return context.forecastCache.get(key);
@@ -2562,6 +3415,7 @@ async function cachedPlanWatchAlerts(place = {}, context = {}) {
   if (!context.alertsCache) return fetchPlanWatchAlerts(place);
   const key = planWatchPlaceCacheKey(place, "alerts");
   if (!context.alertsCache.has(key)) {
+    context.externalRequests = Math.max(0, Number(context.externalRequests || 0)) + 1;
     context.alertsCache.set(key, fetchPlanWatchAlerts(place));
   }
   return context.alertsCache.get(key);
@@ -2610,13 +3464,28 @@ async function fetchPlanWatchForecast(place = {}, unit = "fahrenheit") {
 
 async function fetchPlanWatchAlerts(place = {}) {
   const countryCode = cleanToken(place.countryCode || place.country_code || "", 8).toUpperCase();
-  if (countryCode && !["US", "USA"].includes(countryCode)) return [];
-  if (!Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return [];
+  if (countryCode && !["US", "USA"].includes(countryCode)) {
+    return { readiness: "unsupported", alerts: [] };
+  }
+  if (!Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) {
+    return { readiness: "error", alerts: [], reason: "official-alert-coordinates-invalid" };
+  }
   const url = `https://api.weather.gov/alerts/active?point=${Number(place.latitude).toFixed(4)},${Number(place.longitude).toFixed(4)}`;
-  const json = await fetchJsonWithTimeout(url, PLAN_WATCH_ALERT_TIMEOUT_MS, {
-    headers: { Accept: "application/geo+json" }
-  });
-  return (json?.features || []).map((feature) => feature.properties).filter(Boolean);
+  try {
+    const json = await fetchJsonWithTimeout(url, PLAN_WATCH_ALERT_TIMEOUT_MS, {
+      headers: { Accept: "application/geo+json" }
+    });
+    return {
+      readiness: "supported",
+      alerts: (json?.features || []).map((feature) => feature.properties).filter(Boolean)
+    };
+  } catch (error) {
+    return {
+      readiness: "error",
+      alerts: [],
+      reason: cleanToken(error?.message || "official-alert-fetch-error", 80)
+    };
+  }
 }
 
 async function fetchJsonWithTimeout(url, timeoutMs, init = {}) {
@@ -2688,6 +3557,54 @@ function planWatchWindowMs(plan, forecast = {}) {
   const start = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.startHour, 0), offset);
   const end = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.endHour, 24), offset);
   return { startMs: start, endMs: Math.max(end, start + 60 * 60 * 1000) };
+}
+
+function planWatchWindowMsForTimeZone(plan = {}, timezone = "") {
+  const startMs = planWatchZonedDateHourMs(plan.targetDate, finiteNumber(plan.startHour, 0), timezone);
+  const endMs = planWatchZonedDateHourMs(plan.targetDate, finiteNumber(plan.endHour, 24), timezone);
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs ? { startMs, endMs } : null;
+}
+
+function planWatchDateWindowForTimeZone(date, timezone) {
+  const startMs = planWatchZonedDateHourMs(date, 0, timezone);
+  const endMs = planWatchZonedDateHourMs(date, 24, timezone);
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs ? { startMs, endMs } : null;
+}
+
+function planWatchDatesForTimeZone(timezone, count = 2, now = new Date()) {
+  if (!validTimeZone(timezone)) return [];
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const value = (type) => parts.find((part) => part.type === type)?.value || "";
+  const base = Date.UTC(Number(value("year")), Number(value("month")) - 1, Number(value("day")), 12);
+  return Array.from({ length: count }, (_, index) => new Date(base + index * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+}
+
+function planWatchZonedDateHourMs(date, hour, timezone) {
+  if (!validTimeZone(timezone) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NaN;
+  const [year, month, day] = date.split("-").map(Number);
+  const desiredUtc = Date.UTC(year, month - 1, day, hour);
+  let guess = desiredUtc;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(guess));
+    const part = (type) => Number(parts.find((item) => item.type === type)?.value);
+    const representedUtc = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+    guess = desiredUtc - (representedUtc - guess);
+  }
+  return guess;
 }
 
 function planWatchLocalDateHourMs(date, hour, utcOffsetMs) {
@@ -2773,19 +3690,13 @@ async function sendPlanWatchPush(subscription, env = {}) {
     return { ok: false, status: 0, body: "missing-subscription-endpoint" };
   }
   const headers = await planWatchVapidHeaders(subscription.endpoint, env, publicKey, privateKey);
-  const response = await fetch(subscription.endpoint, {
+  return planWatchFetchWithRetry(subscription.endpoint, {
     method: "POST",
     headers: {
       ...headers,
       TTL: String(PLAN_WATCH_PUSH_TTL_SECONDS)
     }
-  });
-  const body = response.ok ? "" : cleanText(await response.text().catch(() => ""), 240);
-  return {
-    ok: response.ok,
-    status: response.status,
-    body
-  };
+  }, env);
 }
 
 async function sendPlanWatchDelivery(record, notification, store, env = {}) {
@@ -2825,13 +3736,14 @@ async function sendPlanWatchApns(nativeChannel, notification, env = {}) {
   const host = channel.environment === "development"
     ? "https://api.sandbox.push.apple.com"
     : "https://api.push.apple.com";
-  const response = await fetch(`${host}/3/device/${channel.token}`, {
+  return planWatchFetchWithRetry(`${host}/3/device/${channel.token}`, {
     method: "POST",
     headers: {
       authorization: `bearer ${jwt}`,
       "apns-topic": bundleId,
       "apns-push-type": "alert",
       "apns-priority": "10",
+      "apns-collapse-id": cleanToken(payload.tag || "nearcast-plan-watch", 64),
       "apns-expiration": String(Math.floor(Date.now() / 1000) + PLAN_WATCH_PUSH_TTL_SECONDS),
       "content-type": "application/json"
     },
@@ -2855,13 +3767,79 @@ async function sendPlanWatchApns(nativeChannel, notification, env = {}) {
         source: payload.source
       }
     })
-  });
-  const body = response.ok ? "" : cleanText(await response.text().catch(() => ""), 240);
+  }, env);
+}
+
+export async function planWatchFetchWithRetry(input, init, env = {}) {
+  const maxAttempts = configuredPlanWatchDeliveryRetryAttempts(env);
+  const baseDelayMs = configuredPlanWatchDeliveryRetryBaseMs(env);
+  const timeoutMs = configuredPlanWatchDeliveryTimeoutMs(env);
+  let lastResponse = null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      lastResponse = await planWatchFetchAttempt(input, init, timeoutMs);
+      lastError = null;
+      if (lastResponse.ok || !planWatchDeliveryStatusIsTransient(lastResponse.status) || attempt >= maxAttempts) {
+        const body = lastResponse.ok ? "" : cleanText(await lastResponse.text().catch(() => ""), 240);
+        return {
+          ok: lastResponse.ok,
+          status: lastResponse.status,
+          body,
+          attempts: attempt
+        };
+      }
+      await lastResponse.body?.cancel?.().catch(() => {});
+    } catch (error) {
+      lastError = error;
+      lastResponse = null;
+      if (attempt >= maxAttempts) break;
+    }
+    const retryAfterMs = planWatchRetryAfterMs(lastResponse?.headers?.get?.("Retry-After"));
+    const exponentialMs = Math.min(
+      PLAN_WATCH_DELIVERY_RETRY_MAX_DELAY_MS,
+      baseDelayMs * (2 ** (attempt - 1)) + Math.floor(Math.random() * Math.max(1, baseDelayMs))
+    );
+    await planWatchSleep(Math.max(retryAfterMs, exponentialMs));
+  }
   return {
-    ok: response.ok,
-    status: response.status,
-    body
+    ok: false,
+    status: lastResponse?.status || 0,
+    body: cleanText(lastError?.message || "delivery-network-error", 240),
+    attempts: maxAttempts
   };
+}
+
+async function planWatchFetchAttempt(input, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function planWatchDeliveryStatusIsTransient(status) {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function planWatchRetryAfterMs(value) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  const seconds = Number(text);
+  if (Number.isFinite(seconds)) {
+    return Math.min(PLAN_WATCH_DELIVERY_RETRY_MAX_DELAY_MS, Math.max(0, Math.round(seconds * 1000)));
+  }
+  const date = Date.parse(text);
+  return Number.isFinite(date)
+    ? Math.min(PLAN_WATCH_DELIVERY_RETRY_MAX_DELAY_MS, Math.max(0, date - Date.now()))
+    : 0;
+}
+
+function planWatchSleep(delayMs) {
+  if (!delayMs) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 async function planWatchVapidHeaders(endpoint, env, publicKey, privateJwk) {
@@ -2940,26 +3918,46 @@ function pemToArrayBuffer(pem) {
 function normalizeWebPushSubscription(value) {
   if (!value || typeof value !== "object") return null;
   const endpoint = String(value.endpoint || "").trim();
-  if (!/^https:\/\/.+/i.test(endpoint)) return null;
+  if (!endpoint || endpoint.length > 2048) return null;
+  let endpointUrl;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  if (
+    endpointUrl.protocol !== "https:" ||
+    endpointUrl.username ||
+    endpointUrl.password ||
+    endpointUrl.hash ||
+    (endpointUrl.port && endpointUrl.port !== "443") ||
+    (endpointUrl.pathname === "/" && !endpointUrl.search) ||
+    !publicDeliveryHostname(endpointUrl.hostname) ||
+    !supportedWebPushProviderHostname(endpointUrl.hostname)
+  ) return null;
   const keys = value.keys && typeof value.keys === "object" ? value.keys : {};
   const p256dh = String(keys.p256dh || "").trim();
   const auth = String(keys.auth || "").trim();
-  if (!p256dh || !auth) return null;
+  const p256dhBytes = base64UrlDecodedBytes(p256dh);
+  const authBytes = base64UrlDecodedBytes(auth);
+  if (p256dhBytes?.length !== 65 || p256dhBytes[0] !== 4 || authBytes?.length !== 16) return null;
   return {
-    endpoint,
+    endpoint: endpointUrl.toString(),
     expirationTime: value.expirationTime || null,
     keys: { p256dh, auth }
   };
 }
 
-function normalizeNativeApnsChannel(value) {
+function normalizeNativeApnsChannel(value, env = null) {
   if (!value || typeof value !== "object") return null;
   const token = cleanToken(value.token, 220).toLowerCase();
-  if (!/^[a-f0-9]{32,220}$/.test(token)) return null;
+  if (!/^[a-f0-9]{32,200}$/.test(token) || token.length % 2 !== 0) return null;
   const environment = cleanToken(value.environment || "production", 24).toLowerCase() === "development"
     ? "development"
     : "production";
   const bundleId = cleanText(value.bundleId, 120);
+  const configuredBundleId = env ? configuredPlanWatchApnsBundleId(env) : "";
+  if (!bundleId || (configuredBundleId && bundleId !== configuredBundleId)) return null;
   return {
     kind: "ios-apns",
     token,
@@ -2968,6 +3966,32 @@ function normalizeNativeApnsChannel(value) {
     deviceModel: cleanText(value.deviceModel, 80),
     systemVersion: cleanText(value.systemVersion, 40)
   };
+}
+
+function base64UrlDecodedBytes(value) {
+  const text = String(value || "").trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(text)) return null;
+  try {
+    const padded = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - text.length % 4) % 4);
+    const binary = atob(padded);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function publicDeliveryHostname(value) {
+  const hostname = String(value || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!hostname || hostname === "localhost" || !hostname.includes(".")) return false;
+  if (hostname.endsWith(".local") || hostname.endsWith(".internal") || hostname.endsWith(".test")) return false;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) || hostname.includes(":")) return false;
+  return /^[a-z0-9.-]+$/.test(hostname) && !hostname.startsWith(".") && !hostname.endsWith(".");
+}
+
+function supportedWebPushProviderHostname(value) {
+  const hostname = String(value || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return WEB_PUSH_PROVIDER_HOSTS.has(hostname) ||
+    WEB_PUSH_PROVIDER_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
 }
 
 function planWatchRecordHasDeliveryChannel(record) {
@@ -2986,12 +4010,23 @@ function normalizePlatform(value = {}) {
 
 function normalizePlanWatchClient(value = {}) {
   const source = value && typeof value === "object" ? value : {};
+  const timezone = cleanText(source.timezone, 80);
   return {
     appVersion: cleanText(source.appVersion, 24),
     locale: cleanText(source.locale, 48),
-    timezone: cleanText(source.timezone, 80),
+    timezone: validTimeZone(timezone) ? timezone : "",
     unit: ["fahrenheit", "celsius"].includes(source.unit) ? source.unit : ""
   };
+}
+
+function validTimeZone(value) {
+  if (!value) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizePlanWatchPlans(value, env = {}) {
@@ -3075,15 +4110,20 @@ function normalizePlanWatchPlan(value) {
   if (!value || typeof value !== "object") return null;
   const id = cleanText(value.id, 96);
   const targetDate = cleanText(value.targetDate, 16);
-  if (!id || !targetDate) return null;
+  if (!id || !validPlanWatchTargetDate(targetDate)) return null;
   const place = normalizePlanWatchPlace(value.place);
   if (!place) return null;
+  const startHour = finiteNumber(value.startHour, null);
+  const endHour = finiteNumber(value.endHour, null);
+  if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || startHour < 0 || endHour > 24 || startHour >= endHour) {
+    return null;
+  }
   return {
     id,
     title: cleanText(value.title, 120),
     targetDate,
-    startHour: finiteNumber(value.startHour, null),
-    endHour: finiteNumber(value.endHour, null),
+    startHour,
+    endHour,
     place,
     lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
   };
@@ -3092,8 +4132,11 @@ function normalizePlanWatchPlan(value) {
 function normalizePlanWatchPlace(value = {}) {
   if (!value || typeof value !== "object") return null;
   const latitude = finiteNumber(value.latitude, null);
-  const longitude = normalizeLongitude(value.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const longitude = finiteNumber(value.longitude, null);
+  if (
+    !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+    !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+  ) return null;
   return {
     name: cleanText(value.name, 120),
     admin1: cleanText(value.admin1, 120),
@@ -3102,6 +4145,14 @@ function normalizePlanWatchPlace(value = {}) {
     latitude,
     longitude
   };
+}
+
+function validPlanWatchTargetDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(`${value}T12:00:00Z`);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) return false;
+  const dayMs = 24 * 60 * 60 * 1000;
+  return parsed >= Date.now() - 2 * dayMs && parsed <= Date.now() + 370 * dayMs;
 }
 
 function planWatchPlaceStableId(place = {}) {
@@ -3134,6 +4185,18 @@ function planWatchPendingStorageName(subscriptionId) {
   return `pending/${cleanStorageName(subscriptionId)}.json`;
 }
 
+function planWatchDeliveryDedupeStorageName(subscriptionId, fingerprint) {
+  return `delivery-dedupe/${cleanStorageName(subscriptionId)}/${cleanStorageName(fingerprint)}.json`;
+}
+
+function planWatchEvaluatorCursorStorageName(scope = "standard") {
+  return `health/evaluator-cursor-${scope === "urgent" ? "urgent" : "standard"}.json`;
+}
+
+function planWatchHealthStorageName(scope = "standard") {
+  return `health/evaluator-latest-${scope === "urgent" ? "urgent" : "standard"}.json`;
+}
+
 function planWatchRegistrationCapStorageName() {
   return "limits/registration-cap.json";
 }
@@ -3158,6 +4221,7 @@ function normalizePlanWatchSnapshot(value) {
     verdict: cleanText(value.verdict, 60),
     alertTone: cleanToken(value.alertTone, 32),
     alertEvent: cleanText(value.alertEvent, 120),
+    alertReadiness: cleanToken(value.alertReadiness, 24),
     riskKind: cleanToken(value.riskKind, 32),
     savedAt: finiteNumber(value.savedAt, 0),
     checkedAt: finiteNumber(value.checkedAt, 0),

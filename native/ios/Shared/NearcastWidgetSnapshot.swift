@@ -108,6 +108,7 @@ struct NearcastWidgetPlace: Codable {
     var admin1: String?
     var country: String?
     var countryCode: String?
+    var followsCurrentLocation: Bool? = nil
     var latitude: Double
     var longitude: Double
 }
@@ -299,6 +300,73 @@ extension NearcastWidgetSnapshot {
         )
     }
 
+    /// A true current observation wins while it is newer than the active
+    /// hourly forecast row. If a background request fails after an hourly
+    /// boundary, the active forecast row is the more honest current value.
+    func shouldPromoteCurrentWeather(from projection: NearcastWidgetTimelineProjection) -> Bool {
+        guard let activeRow = projection.rows.first else { return false }
+        return projection.advancesCurrentWeather
+            || (activeRow.startsAt ?? -.infinity) > weatherSavedTime
+    }
+
+    /// Cached forecast weather is truthful only through the end of its final
+    /// row. This shared boundary keeps iPhone widgets and Watch complications
+    /// from leaving the final projected value displayed indefinitely.
+    func weatherTimelineValidUntil(
+        currentOnlyLifetime: TimeInterval = 2 * 60 * 60
+    ) -> Date {
+        let timestamps = (timeline ?? []).compactMap(\.startsAt).sorted()
+        if let last = timestamps.last {
+            let rowDuration: TimeInterval
+            if timestamps.count >= 2 {
+                rowDuration = min(3 * 60 * 60, max(15 * 60, last - timestamps[timestamps.count - 2]))
+            } else {
+                rowDuration = 60 * 60
+            }
+            return Date(timeIntervalSince1970: last + rowDuration)
+        }
+
+        if let timeline, !timeline.isEmpty {
+            // Older snapshots carried offset rows but no absolute timestamp.
+            // Their useful life is the final offset plus one hourly interval,
+            // not an assumed full day.
+            let lastOffset = max(0, timeline.map(\.offsetHours).max() ?? 0)
+            let lifetime = TimeInterval((lastOffset + 1) * 60 * 60)
+            return Date(timeIntervalSince1970: weatherSavedTime + lifetime)
+        }
+        return Date(timeIntervalSince1970: weatherSavedTime + currentOnlyLifetime)
+    }
+
+    /// Rolls daily basics at the selected place's midnight so a future entry
+    /// never pairs tomorrow's current temperature with today's high/low.
+    mutating func projectDailyWeather(at date: Date) {
+        guard let daily, !daily.isEmpty else { return }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = placeTimezone.flatMap { TimeZone(identifier: $0) } ?? .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let dateKey = formatter.string(from: date)
+        guard let dayIndex = daily.firstIndex(where: { $0.date == dateKey }) else { return }
+
+        var projectedDays = Array(daily.suffix(from: dayIndex))
+        for index in projectedDays.indices {
+            if index == 0 {
+                projectedDays[index].label = "Today"
+            } else if index == 1 {
+                projectedDays[index].label = "Tomorrow"
+            } else {
+                formatter.dateFormat = "yyyy-MM-dd"
+                if let day = formatter.date(from: projectedDays[index].date) {
+                    formatter.dateFormat = "EEE"
+                    projectedDays[index].label = formatter.string(from: day)
+                }
+            }
+        }
+        self.daily = projectedDays
+        high = projectedDays.first?.high ?? high
+        low = projectedDays.first?.low ?? low
+    }
+
     /// Replaces only forecast fields, preserving plan and official-alert
     /// metadata delivered while a network request was in flight.
     func mergingWeather(
@@ -339,6 +407,10 @@ extension NearcastWidgetSnapshot {
 }
 
 extension NearcastWidgetPlace {
+    var tracksCurrentLocation: Bool {
+        followsCurrentLocation == true
+    }
+
     var displayLabel: String {
         let trimmed = (displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? name : trimmed

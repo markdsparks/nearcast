@@ -5,6 +5,17 @@ import UIKit
 import WebKit
 import WidgetKit
 
+private let nearcastNativeResolvedWidgetLocationKey = "nearcast.widget.resolved-location.v1"
+
+private struct NearcastNativeResolvedWidgetLocation: Decodable {
+    let selectionIdentity: String
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let resolvedAt: TimeInterval
+    let requiresWeatherRefresh: Bool
+}
+
 @MainActor
 final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLocationManagerDelegate {
     weak var model: NearcastWebModel?
@@ -821,8 +832,41 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             incomingPlace = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: encodedPlace)
         }
 
+        var incomingSnapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data)
         var resolvedData = data
-        if let incoming = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data),
+
+        // The web view can restore an older localStorage coordinate before its
+        // live-location request completes. If the widget extension has already
+        // resolved this same Current Location intent elsewhere, do not let that
+        // warm-start render replace destination weather on widgets or Watch.
+        if var place = incomingPlace,
+           let resolution = resolvedWidgetLocation(for: place),
+           resolvedWidgetLocationMeaningfullyDiffers(resolution, from: place) {
+            place.latitude = resolution.latitude
+            place.longitude = resolution.longitude
+            place.name = "Current Location"
+            place.displayName = "Current Location"
+            place.admin1 = nil
+            place.country = nil
+            place.countryCode = nil
+            if let adjustedPlaceData = try? JSONEncoder().encode(place) {
+                placeData = adjustedPlaceData
+                incomingPlace = place
+            }
+
+            if let incoming = incomingSnapshot,
+               let stored = NearcastWidgetSnapshot.stored() {
+                let destination = stored.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+                var protected = incoming.mergingWeather(from: destination)
+                protected = protected.preservingOfficialAlert(from: destination)
+                incomingSnapshot = protected
+                if let encoded = try? JSONEncoder().encode(protected) {
+                    resolvedData = encoded
+                }
+            }
+        }
+
+        if let incoming = incomingSnapshot,
            incoming.alertStateReady != true,
            let incomingPlace,
            let storedPlace = NearcastWidgetPlace.stored(),
@@ -842,6 +886,42 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         }
         WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
         NativeWatchSnapshotSync.shared.sendSnapshotData(resolvedData, placeData: placeData)
+    }
+
+    private func resolvedWidgetLocation(
+        for place: NearcastWidgetPlace
+    ) -> NearcastNativeResolvedWidgetLocation? {
+        guard place.tracksCurrentLocation,
+              let defaults = UserDefaults(suiteName: NearcastWidgetSnapshotStore.suiteName),
+              let data = defaults.data(forKey: nearcastNativeResolvedWidgetLocationKey),
+              let resolution = try? JSONDecoder().decode(NearcastNativeResolvedWidgetLocation.self, from: data),
+              resolution.selectionIdentity == widgetSelectionIdentity(place),
+              CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(
+                latitude: resolution.latitude,
+                longitude: resolution.longitude
+              )) else { return nil }
+        return resolution
+    }
+
+    private func widgetSelectionIdentity(_ place: NearcastWidgetPlace) -> String {
+        let id = (place.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { return "\(place.tracksCurrentLocation ? "live" : "fixed")|\(id)" }
+        return String(
+            format: "%@|%.5f|%.5f",
+            place.tracksCurrentLocation ? "live" : "fixed",
+            place.latitude,
+            place.longitude
+        )
+    }
+
+    private func resolvedWidgetLocationMeaningfullyDiffers(
+        _ resolution: NearcastNativeResolvedWidgetLocation,
+        from place: NearcastWidgetPlace
+    ) -> Bool {
+        let incoming = CLLocation(latitude: place.latitude, longitude: place.longitude)
+        let resolved = CLLocation(latitude: resolution.latitude, longitude: resolution.longitude)
+        let uncertaintyThreshold = max(2_000, max(0, resolution.horizontalAccuracy) * 1.5)
+        return incoming.distance(from: resolved) >= uncertaintyThreshold
     }
 
     private func startOrUpdateStormActivity(_ payload: [String: Any]) {

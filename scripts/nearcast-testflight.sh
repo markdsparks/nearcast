@@ -31,6 +31,16 @@ if [[ ! -f "$KEY_PATH" ]]; then
   exit 1
 fi
 
+printf 'Running production Trust Loop release preflight...\n'
+bash "$ROOT/scripts/nearcast-ci.sh" portable
+bash "$ROOT/scripts/nearcast-ci.sh" native-model
+/usr/bin/plutil -lint \
+  "$ROOT/native/ios/NearcastApp/Support/Info-Debug.plist" \
+  "$ROOT/native/ios/NearcastApp/Support/Info-Release.plist" \
+  "$ROOT/native/ios/NearcastWidget/Info.plist" \
+  "$ROOT/native/ios/NearcastWatch/Info.plist" \
+  "$ROOT/native/ios/NearcastWatchComplications/Info.plist"
+
 archive="$ROOT/native/ios/build/Nearcast-${build}.xcarchive"
 export_path="$ROOT/native/ios/build/upload-testflight-${build}"
 

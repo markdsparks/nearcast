@@ -62,6 +62,7 @@ function extractFunction(name) {
 
 const functionNames = [
   "queryRoutePlace",
+  "reactiveSkyIsCurrentLocation",
   "normalizeQualifierKey",
   "normalizePlace",
   "canonicalPlaceName",
@@ -89,10 +90,44 @@ vm.runInContext(`
     return key === "weather-last-place" ? globalThis.lastPlace : null;
   }
   ${functionNames.map(extractFunction).join("\n")}
-  globalThis.api = { queryRoutePlace, normalizePlace, canonicalPlaceName, placeLabel };
+  globalThis.api = { queryRoutePlace, reactiveSkyIsCurrentLocation, normalizePlace, canonicalPlaceName, placeLabel };
 `, sandbox);
 
-const { queryRoutePlace, normalizePlace, canonicalPlaceName, placeLabel } = sandbox.api;
+const { queryRoutePlace, reactiveSkyIsCurrentLocation, normalizePlace, canonicalPlaceName, placeLabel } = sandbox.api;
+
+const legacyCurrentLocation = normalizePlace({
+  id: "gps-legacy-current",
+  name: "Current Location",
+  latitude: 38.72,
+  longitude: -89.96
+});
+assert.equal(
+  Object.prototype.hasOwnProperty.call(legacyCurrentLocation, "followsCurrentLocation"),
+  false,
+  "normalization preserves an absent legacy location-intent flag"
+);
+sandbox.state.savedPlaces = [];
+assert.equal(
+  reactiveSkyIsCurrentLocation(legacyCurrentLocation),
+  true,
+  "an unsaved legacy GPS last-place migrates as Current Location"
+);
+sandbox.state.savedPlaces = [legacyCurrentLocation];
+assert.equal(
+  reactiveSkyIsCurrentLocation(legacyCurrentLocation),
+  false,
+  "a deliberately saved legacy GPS place remains fixed"
+);
+assert.equal(
+  reactiveSkyIsCurrentLocation({ ...legacyCurrentLocation, followsCurrentLocation: true }),
+  true,
+  "an explicit Current Location flag wins"
+);
+assert.equal(
+  reactiveSkyIsCurrentLocation({ ...legacyCurrentLocation, followsCurrentLocation: false }),
+  false,
+  "an explicit fixed-place flag wins"
+);
 
 const polluted = {
   id: "maryville",

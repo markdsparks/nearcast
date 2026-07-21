@@ -1,0 +1,58 @@
+name: Nearcast production checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: nearcast-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: Product, Worker, map, and freshness smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run portable production checks
+        run: bash scripts/nearcast-ci.sh portable
+
+  native-models:
+    name: Native shared models and unsigned app build
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shared widget and Watch model checks
+        run: bash scripts/nearcast-ci.sh native-model
+
+      - name: Validate native metadata
+        run: |
+          /usr/bin/plutil -lint \
+            native/ios/NearcastApp/Support/Info-Debug.plist \
+            native/ios/NearcastApp/Support/Info-Release.plist \
+            native/ios/NearcastWidget/Info.plist \
+            native/ios/NearcastWatch/Info.plist \
+            native/ios/NearcastWatchComplications/Info.plist
+
+      - name: Build iPhone, widget, Watch, and complications without signing
+        run: |
+          xcodebuild \
+            -project native/ios/Nearcast.xcodeproj \
+            -scheme Nearcast \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/NearcastDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build

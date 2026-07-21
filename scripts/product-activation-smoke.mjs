@@ -68,12 +68,29 @@ for (const signal of [
   "plan-check-confirmed",
   "plan-check-completed",
   "plan-watched",
-  "watching-open"
+  "watching-open",
+  "notification-opt-in",
+  "notification-registration-ready",
+  "notification-registration-failed",
+  "notification-open",
+  "watch-change-reviewed"
 ]) {
-  assert.ok(app.includes(`"${signal}"`), `${signal} is an allowlisted local-only activation signal`);
+  assert.ok(app.includes(`"${signal}"`), `${signal} is an allowlisted activation signal`);
 }
-assert.match(app, /Local-only, allowlisted activation count\. No plan wording or location is stored\./, "the activation boundary is documented beside collection");
-assert.doesNotMatch(extractFunction(app, "recordForYouSignal"), /fetch\(|sendBeacon|XMLHttpRequest/, "local activation signals never leave the device");
+assert.match(app, /Only the allowlisted event name and a coarse count leave the device\.[\s\S]*Plan[\s\S]*wording, location, installation identifiers, and timestamps remain local\./, "the anonymous activation boundary is documented beside collection");
+assert.match(extractFunction(app, "recordForYouSignal"), /queueProductEvent\(signal\)/, "local activation signals also queue an anonymous aggregate event");
+assert.match(extractFunction(app, "productEventPayload"), /events: events\.map\(\(\{ name, count \}\) => \(\{ name, count \}\)\)/, "the upload contains only allowlisted event names and coarse counts");
+assert.match(extractFunction(app, "productEventPayload"), /platform: productEventPlatform\(\)/, "the upload includes a coarse platform dimension");
+assert.match(extractFunction(app, "productEventPayload"), /version: VERSION/, "the upload includes the app version for release comparison");
+assert.doesNotMatch(extractFunction(app, "productEventPayload"), /latitude|longitude|place|plan|install|timestamp|lastAt|device/i, "the anonymous payload excludes location, plan content, identifiers, and timestamps");
+assert.match(extractFunction(app, "productEventCollectionAllowed"), /globalPrivacyControl !== true[\s\S]*doNotTrack !== "1"/, "GPC and Do Not Track keep activation events local-only");
+assert.match(extractFunction(app, "queueProductEvent"), /normalizeForYouSignal[\s\S]*productEventCollectionAllowed/, "only allowlisted signals enter a privacy-permitted network batch");
+assert.match(extractFunction(app, "flushProductEvents"), /fetch\(PRODUCT_EVENT_ENDPOINT/, "anonymous activation batches use the production event endpoint");
+assert.match(extractFunction(app, "flushProductEvents"), /navigator\.sendBeacon[\s\S]*PRODUCT_EVENT_ENDPOINT/, "page exit uses a non-blocking aggregate beacon");
+assert.match(extractFunction(app, "flushProductEvents"), /mergeProductEventBatch\(events\)/, "failed activation uploads return to the batch for a later retry");
+assert.equal(Number(app.match(/const PRODUCT_EVENT_MAX_BATCH_COUNT = (\d+)/)?.[1]), 20, "event bursts stay within the strict endpoint count cap");
+assert.equal(Number(app.match(/const PRODUCT_EVENT_MAX_BATCH_EVENTS = (\d+)/)?.[1]), 20, "aggregate batches stay within the strict event cap");
+assert.equal(Number(app.match(/const PRODUCT_EVENT_MAX_TOTAL_COUNT = (\d+)/)?.[1]), 100, "aggregate batches stay within the strict total-count cap");
 assert.match(extractFunction(app, "observePlanInvitationImpression"), /IntersectionObserver/, "invitation impressions wait for actual viewport visibility");
 assert.match(extractFunction(app, "observePlanInvitationImpression"), /intersectionRatio < 0\.6/, "most of the invitation must be visible before an impression counts");
 

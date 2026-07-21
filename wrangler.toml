@@ -20,6 +20,38 @@ bucket_name = "nearcast-radar-state"
 binding = "PLAN_WATCH_R2"
 bucket_name = "nearcast-plan-watch-state"
 
+[[analytics_engine_datasets]]
+binding = "PRODUCT_ANALYTICS"
+dataset = "nearcast_product_events"
+
+[[ratelimits]]
+name = "PLAN_WATCH_REGISTRATION_RATE_LIMITER"
+namespace_id = "11001"
+[ratelimits.simple]
+limit = 6
+period = 60
+
+[[ratelimits]]
+name = "PLAN_WATCH_REGISTRATION_GLOBAL_RATE_LIMITER"
+namespace_id = "11002"
+[ratelimits.simple]
+limit = 300
+period = 60
+
+[[ratelimits]]
+name = "PRODUCT_EVENTS_RATE_LIMITER"
+namespace_id = "11003"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "PRODUCT_EVENTS_GLOBAL_RATE_LIMITER"
+namespace_id = "11004"
+[ratelimits.simple]
+limit = 2000
+period = 60
+
 [[queues.producers]]
 binding = "RADAR_GENERATION_QUEUE"
 queue = "nearcast-radar-generation-preview"
@@ -49,11 +81,20 @@ PLAN_WATCH_VAPID_PUBLIC_KEY = "BBIka7fClMnNLw3O6WmFHA0rpnXFWQ7ug7v1lOAYKlsm4V0M3
 PLAN_WATCH_VAPID_SUBJECT = "https://getnearcast.app"
 PLAN_WATCH_APNS_TEAM_ID = "22PRZ6YK2P"
 PLAN_WATCH_APNS_BUNDLE_ID = "app.nearcast.ios"
-PLAN_WATCH_EVALUATOR_MODE = "beta"
-PLAN_WATCH_EVALUATOR_LIMIT = "5"
-PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = "10"
+PLAN_WATCH_EVALUATOR_MODE = "production"
+PLAN_WATCH_EVALUATOR_LIMIT = "4"
+PLAN_WATCH_URGENT_EVALUATOR_LIMIT = "8"
+PLAN_WATCH_MAX_ACTIVE_SUBSCRIPTIONS = "60"
 PLAN_WATCH_MAX_PLANS_PER_SUBSCRIPTION = "3"
 PLAN_WATCH_MAX_PLACES_PER_SUBSCRIPTION = "3"
+PLAN_WATCH_QUIET_HOURS_START = "22"
+PLAN_WATCH_QUIET_HOURS_END = "7"
+PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY = "135"
+PLAN_WATCH_DELIVERY_RETRY_ATTEMPTS = "3"
+PLAN_WATCH_DELIVERY_RETRY_BASE_MS = "250"
+PLAN_WATCH_DELIVERY_TIMEOUT_MS = "5000"
+PLAN_WATCH_HEALTH_MAX_AGE_MINUTES = "75"
+PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS = "web-push,apns"
 XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons"
 XWEATHER_STORM_MODE = "beta"
 XWEATHER_MIN_VIEWPORT_ZOOM = "7.5"

@@ -6,7 +6,6 @@ private let planKind = "NearcastWatchPlan"
 private let rainKind = "NearcastWatchRain"
 private let windKind = "NearcastWatchWind"
 private let briefKind = "NearcastWatchBrief"
-private let staleAfter: TimeInterval = 12 * 60 * 60
 private let planStaleAfter: TimeInterval = 2 * 60 * 60
 
 private enum NearcastComplicationColor {
@@ -92,7 +91,12 @@ private struct NearcastComplicationProvider: TimelineProvider {
             completion(placeholder(in: context))
             return
         }
-        completion(makeEntry(date: Date(), snapshot: .current()))
+        let now = Date()
+        let snapshot = NearcastWidgetSnapshot.current()
+        completion(makeEntry(
+            date: now,
+            snapshot: projectedSnapshot(snapshot, at: now, relativeTo: now)
+        ))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NearcastComplicationEntry>) -> Void) {
@@ -104,12 +108,12 @@ private struct NearcastComplicationProvider: TimelineProvider {
             // timeline from the final shared-store winner.
             let snapshot = NearcastWidgetSnapshot.stored() ?? refreshed ?? cached ?? .fallback
             let now = Date()
-            let offsets = [0, 30, 60, 90, 120, 180, 240, 360, 480, 720]
-            let entries = offsets.map { minutes in
-                let date = now.addingTimeInterval(TimeInterval(minutes * 60))
+            let weatherValidUntil = complicationWeatherValidUntil(snapshot)
+            let entries = complicationTimelineDates(snapshot: snapshot, now: now).map { date in
                 return makeEntry(
                     date: date,
-                    snapshot: projectedSnapshot(snapshot, at: date, relativeTo: now)
+                    snapshot: projectedSnapshot(snapshot, at: date, relativeTo: now),
+                    weatherValidUntil: weatherValidUntil
                 )
             }
             completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(30 * 60))))
@@ -1035,13 +1039,18 @@ private extension Array where Element: Hashable {
     }
 }
 
-private func makeEntry(date: Date, snapshot: NearcastWidgetSnapshot, isPlaceholder: Bool = false) -> NearcastComplicationEntry {
+private func makeEntry(
+    date: Date,
+    snapshot: NearcastWidgetSnapshot,
+    isPlaceholder: Bool = false,
+    weatherValidUntil: Date? = nil
+) -> NearcastComplicationEntry {
     let weatherState: WeatherDataState
     if isPlaceholder {
         weatherState = .placeholder
     } else if !snapshot.hasWeatherData {
         weatherState = .unavailable
-    } else if age(at: date, savedAt: snapshot.weatherSavedTime) > staleAfter {
+    } else if date >= (weatherValidUntil ?? complicationWeatherValidUntil(snapshot)) {
         weatherState = .stale
     } else {
         weatherState = .fresh
@@ -1078,7 +1087,8 @@ private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, re
     guard let projection = base.timelineProjection(at: date, relativeTo: now) else { return base }
     var projected = base
     projected.timeline = projection.rows
-    if projection.advancesCurrentWeather, let current = projection.rows.first {
+    if let current = projection.rows.first,
+       base.shouldPromoteCurrentWeather(from: projection) {
         projected.temperature = current.temperature ?? projected.temperature
         projected.feelsLike = current.feelsLike ?? projected.feelsLike
         projected.rainChance = current.rainChance ?? projected.rainChance
@@ -1090,7 +1100,55 @@ private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, re
         projected.isDay = current.isDay ?? projected.isDay
         projected.condition = conditionLabel(projected.conditionCode)
     }
+    projected.projectDailyWeather(at: date)
     return projected
+}
+
+/// Gives WidgetKit enough forecast-backed entries to keep advancing the
+/// complication for the full cached horizon even when the system defers the
+/// provider's next network refresh. Timestamped rows are preferred so changes
+/// happen on the forecast's real local-hour boundaries.
+private func complicationTimelineDates(snapshot: NearcastWidgetSnapshot, now: Date) -> [Date] {
+    let horizonEnd = now.addingTimeInterval(24 * 60 * 60)
+    var dates = [now, now.addingTimeInterval(30 * 60)]
+
+    if let timeline = snapshot.timeline, !timeline.isEmpty {
+        let timestampedRows = timeline.compactMap(\.startsAt).sorted()
+        if !timestampedRows.isEmpty {
+            dates.append(contentsOf: timestampedRows.compactMap { timestamp in
+                let date = Date(timeIntervalSince1970: timestamp)
+                guard date > now, date <= horizonEnd else { return nil }
+                return date
+            })
+        } else {
+            let lastOffset = min(23, timeline.map(\.offsetHours).max() ?? 0)
+            if lastOffset > 0 {
+                dates.append(contentsOf: (1...lastOffset).map {
+                    now.addingTimeInterval(TimeInterval($0 * 60 * 60))
+                })
+            }
+        }
+    }
+
+    let staleDate = complicationWeatherValidUntil(snapshot)
+    if staleDate > now {
+        dates.append(staleDate)
+    }
+
+    // Coalesce the half-hour safety entry with a forecast boundary when they
+    // are effectively the same time.
+    return dates.sorted().reduce(into: [Date]()) { result, date in
+        guard result.last.map({ date.timeIntervalSince($0) >= 60 }) ?? true else { return }
+        result.append(date)
+    }
+}
+
+/// Forecast rows are truthful until the final row's interval ends. This is a
+/// better freshness boundary than a fixed age cutoff: a cached hourly forecast
+/// can keep the complication useful while watchOS defers a wake, but it cannot
+/// masquerade as current weather after the cached horizon is exhausted.
+private func complicationWeatherValidUntil(_ snapshot: NearcastWidgetSnapshot) -> Date {
+    snapshot.weatherTimelineValidUntil()
 }
 
 private func briefRelevance(
@@ -1306,8 +1364,15 @@ private enum NearcastWatchWeatherRefresh {
         ]
         guard let url = components?.url else { return nil }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            var request = URLRequest(
+                url: url,
+                cachePolicy: .reloadRevalidatingCacheData,
+                timeoutInterval: 8
+            )
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled,
+                  (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             let forecast = try JSONDecoder().decode(WatchForecast.self, from: data)
             guard let current = forecast.current else { return nil }
             let refreshedAt = Date().timeIntervalSince1970
@@ -1435,6 +1500,11 @@ private actor NearcastWatchWeatherRefreshCoordinator {
 
     func refresh(fallback: NearcastWidgetSnapshot) async -> NearcastWidgetSnapshot? {
         guard let requestedPlace = NearcastWidgetPlace.stored() else { return nil }
+        // A phone-authored Current Location coordinate can be old after travel.
+        // Only the Watch app's bounded CoreLocation path may stamp that weather
+        // fresh; complications project the shared result instead of fetching
+        // the last phone coordinate as though it were still local.
+        guard !requestedPlace.tracksCurrentLocation else { return nil }
         let key = placeKey(requestedPlace)
 
         // Reuse a current snapshot written by the Watch app or iPhone instead

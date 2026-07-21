@@ -1,16 +1,16 @@
-name: Evaluate plan watch notifications
+name: Evaluate notification rules
 
 on:
   workflow_dispatch:
     inputs:
       subscriptionId:
-        description: "Optional stored subscription id. Leave blank to evaluate the first fresh subscriptions."
+        description: "Optional dedicated test subscription. Required for a send-enabled run."
         required: false
         type: string
       dryRun:
         description: "Check plans without sending a push."
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -36,6 +36,13 @@ jobs:
             echo "Missing PLAN_WATCH_TEST_TOKEN secret."
             exit 1
           fi
+          if [ "$DRY_RUN" != "true" ] && [ -z "$SUBSCRIPTION_ID" ]; then
+            echo "A send-enabled evaluation requires an explicit dedicated test subscription id."
+            exit 1
+          fi
+          if [ -n "$SUBSCRIPTION_ID" ]; then
+            echo "::add-mask::$SUBSCRIPTION_ID"
+          fi
 
       - name: Evaluate watched plans
         run: |
@@ -48,8 +55,15 @@ jobs:
             --data "$request_body")"
 
           echo "HTTP $status"
-          cat "$response_file"
-          echo ""
+          RESPONSE_FILE="$response_file" node <<'NODE'
+          const fs = require("node:fs");
+          const body = JSON.parse(fs.readFileSync(process.env.RESPONSE_FILE, "utf8"));
+          const summary = {};
+          for (const key of ["ok", "state", "reason", "dryRun", "checkedAt", "subscriptions", "plans", "places", "candidates", "sent", "skipped", "failed", "deferred", "updated", "errors"]) {
+            if (body[key] !== undefined) summary[key] = body[key];
+          }
+          process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+          NODE
 
           STATUS="$status" RESPONSE_FILE="$response_file" node <<'NODE'
           const fs = require("node:fs");
