@@ -7086,6 +7086,56 @@ h2 {
 }
 
 /* ---------- Planner launcher (main view) + sheet ---------- */
+.nearcast-ai-fab[hidden],
+html[data-boot] .nearcast-ai-fab {
+  display: none;
+}
+
+.nearcast-ai-fab {
+  position: fixed;
+  right: max(16px, calc((100vw - 1120px) / 2));
+  bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 12px));
+  z-index: 76;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 17px;
+  border: 1px solid rgba(118, 174, 255, 0.30);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-heavy) 88%, rgba(53, 111, 183, 0.24));
+  color: var(--ink);
+  box-shadow: 0 14px 38px rgba(5, 16, 28, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nearcast-ai-fab span {
+  color: var(--blue);
+  font-size: 1rem;
+}
+
+.nearcast-ai-fab strong {
+  font-size: 0.82rem;
+  font-weight: 880;
+}
+
+.nearcast-ai-fab:hover,
+.nearcast-ai-fab:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+body:has(.ai-sheet.show) .nearcast-ai-fab,
+body.map-immersive-active .nearcast-ai-fab {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .ai-launcher[hidden] {
   display: none;
 }

@@ -2,7 +2,7 @@
 // verification, and bounded repair. Inference routes to Apple's system model
 // in the native app when available, otherwise to Qwen in a WebGPU worker.
 import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.84";
-import { runOperon } from "./operon-runtime.js?v=3.0.292";
+import { runOperon } from "./operon-runtime.js?v=3.0.297";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
@@ -12,7 +12,7 @@ import {
   summarySource,
   validatePlanIntentOutput,
   validateSummaryOutput
-} from "./ai-contracts.js?v=3.0.292";
+} from "./ai-contracts.js?v=3.0.297";
 
 const WEB_MODEL = "Qwen3-0.6B-q4f16_1-MLC";
 const WEB_APP_CONFIG = {
@@ -198,4 +198,36 @@ export async function extractPlanIntent(question, signal) {
     traceEvents: result.trace?.length || 0
   };
   return JSON.stringify(output);
+}
+
+// Full Nearcast agent sessions use Operon's planner and the finite skill catalog
+// supplied by the application. The model chooses typed calls; Nearcast owns all
+// data access, navigation, confirmation, storage, and other side effects.
+export async function runAgent({
+  query,
+  skills,
+  invokeSkill,
+  searchMemory,
+  memoryScope,
+  signal
+}) {
+  await load();
+  const result = await runOperon({
+    query: String(query || "").slice(0, 500),
+    generate: (request) => generate(request, signal),
+    planning: "always",
+    skills,
+    invokeSkill,
+    searchMemory,
+    memoryScope,
+    timeoutMs: 60000
+  });
+  lastRun = {
+    task: "agent",
+    provider: provider?.kind,
+    repaired: Boolean(result.was_repaired),
+    traceEvents: result.trace?.length || 0,
+    skillCalls: result.plan?.skill_calls?.length || 0
+  };
+  return result;
 }

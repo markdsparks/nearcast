@@ -127,4 +127,119 @@ const normalizedApplePayload = JSON.parse(appleStyleResponse.text);
 assert.deepEqual(normalizedApplePayload.used_source_ids, ["S1"]);
 assert.match(normalizedApplePayload.answer, /\[S1\]$/);
 
+const skillDescriptor = {
+  id: "nearcast.map_open",
+  description: "Open the weather map centered on a place.",
+  input_schema: {
+    type: "object",
+    properties: { place: { type: "string" } },
+    required: ["place"],
+    additionalProperties: false
+  },
+  output_schema: {
+    type: "object",
+    properties: {
+      status: { type: "string", enum: ["opened", "unavailable"] },
+      message: { type: "string" },
+      place: { type: "string" }
+    },
+    required: ["status", "message", "place"],
+    additionalProperties: false
+  },
+  requires_user_confirmation: false
+};
+let invokedSkill = null;
+let searchedMemory = false;
+const agentResult = await operon.run(
+  "Open the weather map in Liverpool",
+  {
+    policy: {
+      local_only: true,
+      planning: "always",
+      verification: "adaptive",
+      max_repair_attempts: 1,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000
+    },
+    has_grounding: false,
+    output_schema: null,
+    has_application_validator: false,
+    memory_scope: {
+      namespace: "nearcast.local",
+      subject: "primary-profile",
+      allowed_sensitivities: ["private"]
+    },
+    skills: [skillDescriptor]
+  },
+  {
+    generate: async ({ stage }) => {
+      if (stage === "classify") {
+        return {
+          text: JSON.stringify({
+            intent: "open a place on the weather map",
+            subquestions: [],
+            needs_grounding: false,
+            answer_requirements: ["confirm the opened place"],
+            skill_calls: [{ skill_id: "nearcast.map_open", arguments: { place: "Liverpool" } }]
+          })
+        };
+      }
+      return {
+        text: JSON.stringify({
+          answer: "Opening the weather map centered on Liverpool. [S1]",
+          confidence: 0.99,
+          used_source_ids: ["S1"]
+        })
+      };
+    },
+    invokeSkill: async (command) => {
+      invokedSkill = command;
+      return {
+        output: {
+          status: "opened",
+          message: "Opening the weather map centered on Liverpool.",
+          place: "Liverpool"
+        },
+        sources: []
+      };
+    },
+    searchMemory: async ({ scope }) => {
+      searchedMemory = true;
+      assert.equal(scope.namespace, "nearcast.local");
+      return [{
+        id: "saved-liverpool",
+        namespace: "nearcast.local",
+        subject: "primary-profile",
+        kind: "fact",
+        content: "Liverpool is a saved Nearcast place.",
+        authority: "user_confirmed",
+        sensitivity: "private",
+        confidence: 1,
+        source_ids: [],
+        observed_at: "2026-07-22T00:00:00.000Z",
+        status: "active",
+        created_by: "nearcast",
+        schema_version: 1
+      }];
+    }
+  }
+);
+assert.equal(invokedSkill?.skill_id, "nearcast.map_open");
+assert.deepEqual(invokedSkill?.arguments, { place: "Liverpool" });
+assert.equal(searchedMemory, true);
+assert.match(agentResult.answer, /Liverpool/);
+assert.equal(agentResult.plan.skill_calls.length, 1);
+assert.equal(agentResult.sources[0].path, "skill://nearcast.map_open");
+
+const normalizedSkillPayload = JSON.parse(normalizeProviderCitations({
+  text: JSON.stringify({
+    answer: "Opening the weather map centered on Liverpool. [skill://nearcast.map_open]",
+    confidence: 0.99,
+    used_source_ids: ["skill://nearcast.map_open"]
+  })
+}, [{ id: "S1", path: "skill://nearcast.map_open" }]).text);
+assert.deepEqual(normalizedSkillPayload.used_source_ids, ["S1"]);
+assert.match(normalizedSkillPayload.answer, /\[S1\]$/);
+
 console.log("AI Operon smoke passed");

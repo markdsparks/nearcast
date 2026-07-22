@@ -47,6 +47,12 @@ function localAIIntentReady(ai) {
     (typeof ai.isLoaded !== "function" || ai.isLoaded());
 }
 
+function localAIAgentReady(ai) {
+  return aiState.phase === "ready" &&
+    typeof ai?.runAgent === "function" &&
+    (typeof ai.isLoaded !== "function" || ai.isLoaded());
+}
+
 function detectBrowserName(ua) {
   if (/Edg\//.test(ua)) return "Edge";
   if (/CriOS\//.test(ua)) return "Chrome iOS";
@@ -3180,11 +3186,11 @@ function resetBriefing() {
 function renderBriefing() {
   const slot = els.briefing;
   if (!slot) return;
-  if (!state.forecast || !state.activePlace ||
-      aiState.phase === "unknown") {
+  if (aiState.phase === "unknown") {
     slot.hidden = true;
     return;
   }
+  const hasForecast = Boolean(state.forecast && state.activePlace);
   const showSummarySurface = aiState.phase === "idle" ||
     aiState.phase === "ready" ||
     aiState.phase === "unsupported" ||
@@ -3200,8 +3206,8 @@ function renderBriefing() {
 
   // Privacy is the headline feature: the model runs entirely on-device.
   const privateTag =
-    `<span class="briefing-tag">${lockGlyph()}Private AI summary · runs on your device</span>`;
-  const planBriefing = renderPlanAwareBriefing();
+    `<span class="briefing-tag">${lockGlyph()}Nearcast AI · runs on your device</span>`;
+  const planBriefing = hasForecast ? renderPlanAwareBriefing() : "";
 
   if (aiState.phase === "unsupported") {
     slot.className = "briefing briefing-stack briefing-compat";
@@ -3211,9 +3217,9 @@ function renderBriefing() {
       `<div class="briefing-row">` +
         `<span class="briefing-spark">${lockGlyph()}</span>` +
         `<div class="briefing-copy">` +
-          `<strong>Private AI summary unavailable here</strong>` +
+          `<strong>Nearcast AI unavailable here</strong>` +
           `<p>${escapeHtml(supportReason())}</p>` +
-          `<small>Planner windows and planning answers still work on this device.</small>` +
+          `<small>Nearcast's deterministic forecast and planning tools still work.</small>` +
         `</div>` +
       `</div>` +
       renderSupportActions(false));
@@ -3228,7 +3234,7 @@ function renderBriefing() {
       planBriefing +
       `<button class="briefing-enable" data-ai="enable" type="button">` +
         `<span class="briefing-spark">${lockGlyph()}</span>` +
-        `<span class="briefing-enable-copy"><strong>Enable private AI summary</strong>` +
+        `<span class="briefing-enable-copy"><strong>Enable Nearcast AI</strong>` +
         `<small>${escapeHtml(warning || `Runs locally with WebGPU · ~${LOCAL_AI_MODEL_MB} MB, one time`)}</small></span></button>`;
     return;
   }
@@ -3239,7 +3245,7 @@ function renderBriefing() {
       planBriefing +
       briefingPanel(
       `<div class="briefing-progress-head"><span class="briefing-spark spin">✦</span>` +
-      `<span>${escapeHtml(aiState.status || "Preparing local AI summary…")}</span>` +
+      `<span>${escapeHtml(aiState.status || "Preparing Nearcast AI…")}</span>` +
       `<em>${aiState.progress}%</em></div>` +
       `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>` +
       `<span class="briefing-tag">${lockGlyph()}${aiState.support?.activeProvider === "apple" ? "Apple on-device model · private on this device" : "One-time model download, then private on this device"}</span>`);
@@ -3266,9 +3272,9 @@ function renderBriefing() {
       `<div class="briefing-row">` +
         `<span class="briefing-spark">!</span>` +
         `<div class="briefing-copy">` +
-          `<strong>Private AI summary needs attention</strong>` +
-          `<p>${escapeHtml(aiState.error || "Private AI summary unavailable.")}</p>` +
-          `<small>Planner windows and planning answers are still available.</small>` +
+          `<strong>Nearcast AI needs attention</strong>` +
+          `<p>${escapeHtml(aiState.error || "Nearcast AI is unavailable.")}</p>` +
+          `<small>Deterministic forecast and planning tools are still available.</small>` +
         `</div>` +
       `</div>` +
       renderSupportActions(true));
@@ -3276,7 +3282,15 @@ function renderBriefing() {
   }
 
   // ready
-  if (aiState.text) {
+  if (!hasForecast) {
+    slot.className = "briefing briefing-stack briefing-cta";
+    slot.innerHTML = briefingPanel(
+      `<div class="briefing-row"><span class="briefing-spark">✦</span>` +
+      `<div class="briefing-copy"><strong>Nearcast AI is ready</strong>` +
+      `<p>Ask it to open a forecast or weather map for any place.</p></div></div>` +
+      privateTag
+    );
+  } else if (aiState.text) {
     slot.className = "briefing briefing-stack briefing-text";
     slot.innerHTML =
       planBriefing +
@@ -3303,8 +3317,8 @@ function lockGlyph() {
 }
 
 /* ---------- Ask the forecast (Q&A + planner templates) ---------- */
-// Chips and typed questions are answered by local deterministic forecast logic.
-// The tiny model stays focused on summaries; it never owns weather verdicts.
+// Forecast facts and verdicts stay in deterministic Nearcast logic. The local
+// model may route a request through Operon skills, but it never owns weather truth.
 const ACTIVITY_CHIPS = [
   { label: "Ballgame", template: "I have a ballgame " },
   { label: "Golf", template: "I'm golfing " },
@@ -3460,6 +3474,267 @@ let memoryDetailMode = "facts";
 let memoryEditState = null;
 let launchSummaryTargets = [];
 
+const NEARCAST_AGENT_MEMORY_NAMESPACE = "nearcast.local";
+const NEARCAST_AGENT_MEMORY_SUBJECT = "primary-profile";
+
+const NEARCAST_AGENT_SKILLS = Object.freeze([
+  {
+    id: "nearcast.plan_check",
+    description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities.",
+    input_schema: {
+      type: "object",
+      properties: { request: { type: "string" } },
+      required: ["request"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["checked", "needs_input", "unavailable"] },
+        message: { type: "string" }
+      },
+      required: ["status", "message"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false
+  },
+  {
+    id: "nearcast.weather_answer",
+    description: "Answer a weather question for the currently selected Nearcast place using the app's deterministic forecast calculations.",
+    input_schema: {
+      type: "object",
+      properties: { request: { type: "string" } },
+      required: ["request"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["answered", "needs_input", "unavailable"] },
+        message: { type: "string" }
+      },
+      required: ["status", "message"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false
+  },
+  {
+    id: "nearcast.forecast_open",
+    description: "Select a place and pull up its Nearcast forecast. Use when the user asks to show, open, switch to, or look up a forecast in a place.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" } },
+      required: ["place"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["opened", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" }
+      },
+      required: ["status", "message", "place"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false
+  },
+  {
+    id: "nearcast.map_open",
+    description: "Open Nearcast's full-screen weather map centered on a place. Use for map, radar, precipitation map, or weather-layer requests.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" } },
+      required: ["place"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["opened", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" }
+      },
+      required: ["status", "message", "place"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false
+  }
+]);
+
+function nearcastAgentMemoryScope() {
+  return {
+    namespace: NEARCAST_AGENT_MEMORY_NAMESPACE,
+    subject: NEARCAST_AGENT_MEMORY_SUBJECT,
+    allowed_sensitivities: ["private"]
+  };
+}
+
+function nearcastAgentMemoryRecord({ id, kind, content, authority = "application_verified", observedAt = null }) {
+  const timestamp = observedAt || new Date().toISOString();
+  return {
+    id,
+    namespace: NEARCAST_AGENT_MEMORY_NAMESPACE,
+    subject: NEARCAST_AGENT_MEMORY_SUBJECT,
+    kind,
+    content,
+    authority,
+    sensitivity: "private",
+    confidence: 1,
+    source_ids: [],
+    observed_at: timestamp,
+    status: "active",
+    created_by: "nearcast",
+    schema_version: 1
+  };
+}
+
+function nearcastAgentMemoryRecords() {
+  const records = [];
+  const active = state.activePlace;
+  if (active) {
+    records.push(nearcastAgentMemoryRecord({
+      id: "active-place",
+      kind: "fact",
+      content: `The currently selected place is ${placeLabel(active)}.`
+    }));
+  }
+  (state.savedPlaces || []).slice(0, 20).forEach((place, index) => {
+    records.push(nearcastAgentMemoryRecord({
+      id: `saved-place-${String(place.id || index)}`,
+      kind: "fact",
+      content: `${placeLabel(place)} is a saved Nearcast place.`
+    }));
+  });
+  (state.planMemories || []).slice(0, 30).forEach((memory) => {
+    records.push(nearcastAgentMemoryRecord({
+      id: `watched-${memory.id}`,
+      kind: "decision",
+      content: `Nearcast is watching ${memory.title} at ${placeLabel(memory.place)} on ${memory.targetDate} from ${hourText(memory.startHour)} to ${hourText(memory.endHour)}.`,
+      authority: "user_confirmed",
+      observedAt: new Date(memory.updatedAt || memory.createdAt || Date.now()).toISOString()
+    }));
+  });
+  return records;
+}
+
+function nearcastAgentMemorySearch(query, scope, limit = 6) {
+  if (scope?.namespace !== NEARCAST_AGENT_MEMORY_NAMESPACE) return [];
+  const terms = String(query || "").toLowerCase().match(/[a-z0-9]{2,}/g) || [];
+  return nearcastAgentMemoryRecords()
+    .map((record, index) => {
+      const content = record.content.toLowerCase();
+      const matches = terms.reduce((count, term) => count + (content.includes(term) ? 1 : 0), 0);
+      return { record, score: matches * 10 - index * 0.01 };
+    })
+    .filter(({ record, score }) => score > 0 || record.id === "active-place")
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, Number(limit) || 6))
+    .map(({ record }) => record);
+}
+
+async function resolveNearcastAgentPlace(rawPlace) {
+  const requested = String(rawPlace || "").trim();
+  if (!requested || /^(?:here|current|current place|selected place)$/i.test(requested)) {
+    return state.activePlace || state.savedPlaces?.[0] || null;
+  }
+  const options = await fetchPlannerPlaceOptions(requested);
+  return options.matches?.[0]?.place ? normalizePlace(options.matches[0].place) : null;
+}
+
+function cleanNearcastAgentAnswer(value) {
+  return String(value || "")
+    .replace(/\s*\[S\d+\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function runNearcastAgent(question, rowIndex) {
+  if (aiState.phase !== "ready") return null;
+  const ai = await loadAIModule();
+  if (!localAIAgentReady(ai)) return null;
+
+  const receipt = {
+    answer: "",
+    event: null,
+    clarification: null,
+    navigation: null,
+    skillCalls: 0
+  };
+  const invokeSkill = async ({ skillId, arguments: args }) => {
+    receipt.skillCalls += 1;
+    if (skillId === "nearcast.plan_check" || skillId === "nearcast.weather_answer") {
+      const request = String(args?.request || question).trim();
+      const checked = await answerPlanRequest(request);
+      if (checked?.clarification) {
+        receipt.clarification = checked.clarification;
+        receipt.answer = checked.clarification.prompt;
+        return { output: { status: "needs_input", message: receipt.answer }, sources: [] };
+      }
+      const fallback = checked?.answer || answerFreeform(request);
+      receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
+      receipt.event = checked?.event || null;
+      return {
+        output: {
+          status: fallback ? (skillId === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
+          message: receipt.answer
+        },
+        sources: []
+      };
+    }
+
+    if (skillId === "nearcast.forecast_open" || skillId === "nearcast.map_open") {
+      const place = await resolveNearcastAgentPlace(args?.place);
+      if (!place) {
+        receipt.answer = `I could not find ${String(args?.place || "that place")}. Try city + state or country.`;
+        return {
+          output: { status: "unavailable", message: receipt.answer, place: "" },
+          sources: []
+        };
+      }
+      await loadPlace(place);
+      if (!samePlanPlace(place, state.activePlace)) {
+        receipt.answer = `I could not load the forecast for ${placeLabel(place)}.`;
+        return {
+          output: { status: "unavailable", message: receipt.answer, place: placeLabel(place) },
+          sources: []
+        };
+      }
+      const label = placeLabel(state.activePlace || place);
+      const isMap = skillId === "nearcast.map_open";
+      receipt.answer = isMap
+        ? `Opening the weather map centered on ${label}.`
+        : `Showing the forecast for ${label}.`;
+      receipt.navigation = isMap ? "map" : "forecast";
+      return {
+        output: { status: "opened", message: receipt.answer, place: label },
+        sources: []
+      };
+    }
+
+    throw new Error(`Unknown Nearcast skill ${skillId}`);
+  };
+
+  const abort = { aborted: false };
+  const result = await ai.runAgent({
+    query: question,
+    skills: NEARCAST_AGENT_SKILLS,
+    invokeSkill,
+    searchMemory: nearcastAgentMemorySearch,
+    memoryScope: nearcastAgentMemoryScope(),
+    signal: abort
+  });
+  if (receipt.clarification) setPlannerClarification(receipt.clarification, rowIndex);
+  const answer = receipt.answer || cleanNearcastAgentAnswer(result?.answer);
+  if (!answer) return null;
+  return {
+    answer,
+    event: receipt.event,
+    navigation: receipt.navigation,
+    skillCalls: receipt.skillCalls
+  };
+}
+
 function setPlannerClarification(clarification, rowIndex = null) {
   if (!clarification) {
     plannerClarification = null;
@@ -3534,11 +3809,31 @@ async function runAsk(question, intent) {
   if (typeof recordForYouSignal === "function") recordForYouSignal("plan-check-started");
 
   // Free-form: answer deterministically from the data (always correct). We do
-  // NOT route open questions to the model — a 0.5B hallucinates on these
-  // (e.g. inventing a day's forecast). If we can't answer exactly, say what we
-  // CAN answer rather than guessing.
+  // not give the model direct weather or UI authority. When available, Operon
+  // lets it choose from a typed Nearcast skill catalog; every selected skill is
+  // still executed by the deterministic application host below.
   const row = beginAskResponse(question);
   try {
+    try {
+      const agent = await runNearcastAgent(question, row);
+      if (agent) {
+        finishAskResponse(row, agent);
+        if (agent.navigation === "map") {
+          setTimeout(() => {
+            closeAISheet();
+            setTimeout(() => enterImmersiveMap(), 320);
+          }, 180);
+        } else if (agent.navigation === "forecast") {
+          setTimeout(() => {
+            closeAISheet();
+            try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
+          }, 180);
+        }
+        return;
+      }
+    } catch (agentError) {
+      planIntentDiagnostics.agentError = cleanError(agentError);
+    }
     const plan = await answerPlanRequest(question);
     if (plan?.clarification) {
       setPlannerClarification(plan.clarification, row);
@@ -8335,9 +8630,9 @@ function renderPlannerClarification(disabledAttr = "") {
 
 function plannerStarterExamples() {
   return [
-    { label: "Outdoor party", template: "outdoor party Friday 3-8" },
-    { label: "Practice", template: "soccer practice tomorrow 6-8" },
-    { label: "Patio dinner", template: "dinner outside tonight" }
+    { label: "Open radar", template: "Open the weather map here" },
+    { label: "Find forecast", template: "Show me the forecast in " },
+    { label: "Check a plan", template: "Would Saturday evening work for " }
   ];
 }
 
@@ -8572,8 +8867,7 @@ function renderAsk() {
     perfEnd("renderAsk", perf);
     return;
   }
-  const available = state.forecast && state.activePlace &&
-    aiState.phase !== "unknown";
+  const available = aiState.phase !== "unknown";
   if (!available) {
     panel.hidden = true;
     perfEnd("renderAsk", perf);
@@ -8592,31 +8886,38 @@ function renderAsk() {
   ).join("");
   const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
   const place = state.activePlace ? placeLabel(state.activePlace) : "this place";
-  const promptTitle = editing ? "Update this plan" : "What should Nearcast check?";
+  const promptTitle = editing ? "Update this plan" : "What can Nearcast do?";
   const promptCopy = editing
     ? "Change the activity, time, or place. Nearcast will check the new window against the forecast."
-    : `Using ${place} unless you mention another place.`;
+    : state.activePlace
+      ? `Ask about weather, plans, maps, or places. Using ${place} unless you mention another place.`
+      : "Ask Nearcast to open a forecast or map for any place.";
   const latestIndex = latestAskDecisionIndex();
   const latest = renderLatestAskDecision(latestIndex);
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
   const activeThread = renderAskWorkingThread(latestIndex, errLine, clarification);
   const history = renderAskHistory(latestIndex);
+  const agentKicker = aiState.phase === "ready"
+    ? "Nearcast AI · on device"
+    : aiState.phase === "idle"
+      ? "Nearcast AI · setup available"
+      : "Nearcast AI · app tools";
 
   panel.innerHTML =
-    `<section class="ask-plan-check" aria-label="Plan Check">` +
+    `<section class="ask-plan-check" aria-label="Nearcast AI">` +
       `<div class="ask-plan-copy">` +
-        `<span>Plan Check</span>` +
+        `<span>${escapeHtml(agentKicker)}</span>` +
         `<h3>${escapeHtml(promptTitle)}</h3>` +
         `<p>${escapeHtml(promptCopy)}</p>` +
       `</div>` +
       `<form class="ask-form" id="askForm">` +
         `<input id="askInput" type="text" autocomplete="off" ` +
-          `placeholder="outdoor party Friday 3-8"${dis}>` +
-        `<button type="submit" class="ask-send" aria-label="Check plan"${dis}>↑</button>` +
+          `placeholder="Show radar in Liverpool"${dis}>` +
+        `<button type="submit" class="ask-send" aria-label="Ask Nearcast"${dis}>↑</button>` +
       `</form>` +
       `<div class="ask-plan-examples" aria-label="Plan examples">${examples}</div>` +
-      `<p class="ask-helper">Name another city only when the plan is away from ${escapeHtml(place)}.</p>` +
+      `<p class="ask-helper">Nearcast AI can use forecasts, maps, saved places, and watched plans.</p>` +
     `</section>` +
     latest +
     activeThread +
@@ -8702,14 +9003,18 @@ function plannerEventContextLabel(event) {
 /* ---------- Planner launcher + sheet ---------- */
 function renderAILauncher() {
   const btn = els.aiLauncher;
-  if (!btn) return;
+  const agentButton = els.aiAgentButton;
   const show = state.forecast && state.activePlace &&
     aiState.phase !== "unknown";
-  btn.hidden = !show;
+  if (btn) btn.hidden = !show;
+  if (agentButton) {
+    agentButton.hidden = aiState.phase === "unknown";
+    agentButton.setAttribute("aria-label", aiState.phase === "ready" ? "Open Nearcast AI" : "Set up Nearcast AI");
+  }
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
-      aiState.phase === "error" ? "Plan checks work · private summary needs attention"
-      : "Check a plan against the forecast.";
+      aiState.phase === "error" ? "App tools work · local AI needs attention"
+      : "Ask about weather, plans, maps, or places.";
   }
   if (typeof renderPlanInvitation === "function") renderPlanInvitation();
   if (typeof updateInstallPromptUI === "function") updateInstallPromptUI();

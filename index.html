@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.292">
-    <link rel="manifest" href="manifest.json?v=3.0.292">
+    <link rel="stylesheet" href="styles.css?v=3.0.297">
+    <link rel="manifest" href="manifest.json?v=3.0.297">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.292">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.292">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.297">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.297">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -20,6 +20,10 @@
       <span class="pull-refresh-spinner" aria-hidden="true"></span>
       <strong data-pull-refresh-label>Pull to update</strong>
     </div>
+    <button class="nearcast-ai-fab" id="aiAgentButton" type="button" hidden aria-label="Open Nearcast AI">
+      <span aria-hidden="true">✦</span>
+      <strong>Ask Nearcast</strong>
+    </button>
     <main class="shell mode-boot">
       <section class="boot-screen" id="bootScreen" aria-live="polite" aria-label="Nearcast is loading">
         <div class="boot-mark" aria-hidden="true">
@@ -406,8 +410,8 @@
           <button class="ai-launcher" id="aiLauncher" type="button" hidden>
             <span class="ai-launcher-spark" aria-hidden="true">✦</span>
             <span class="ai-launcher-copy">
-              <strong>Plan Check</strong>
-              <small id="aiLauncherSub">Check a plan against the forecast.</small>
+              <strong>Nearcast AI</strong>
+              <small id="aiLauncherSub">Ask about weather, plans, maps, or places.</small>
             </span>
             <span class="ai-launcher-chev" aria-hidden="true">›</span>
           </button>
@@ -734,18 +738,18 @@
     </aside>
 
     <div class="sheet-backdrop" id="aiBackdrop" hidden></div>
-    <aside class="day-sheet ai-sheet" id="aiSheet" hidden data-pull-dismiss="enabled" aria-label="Plan Check" role="dialog" aria-modal="true">
+    <aside class="day-sheet ai-sheet" id="aiSheet" hidden data-pull-dismiss="enabled" aria-label="Nearcast AI" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Plan Check">✕</button>
+      <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Nearcast AI">✕</button>
       <header class="sheet-head ai-sheet-head">
         <span class="ai-sheet-spark" aria-hidden="true">✦</span>
         <div class="sheet-head-text">
-          <h2>Plan Check</h2>
-          <p class="ai-sheet-sub">Forecast guidance for something you are doing</p>
+          <h2>Nearcast AI</h2>
+          <p class="ai-sheet-sub">Your private, on-device weather agent</p>
         </div>
       </header>
       <p class="ai-trust-note">
-        Describe the plan. Nearcast checks the timing, place, official weather alerts, and forecast window, then gives you the practical read.
+        Ask Nearcast to check a plan, answer a forecast question, switch places, or open the weather map. App actions stay controlled by Nearcast.
       </p>
       <div class="ai-ask" id="aiAsk" hidden></div>
       <div class="briefing" id="briefing" hidden></div>
@@ -950,16 +954,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.292"></script>
-    <script src="planner.js?v=3.0.292"></script>
-    <script src="app.js?v=3.0.292"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.292"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.292"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.292"></script>
-    <script src="raw-map-runtime.js?v=3.0.292"></script>
-    <script src="map.js?v=3.0.292"></script>
-    <script src="sky.js?v=3.0.292"></script>
-    <script src="daygraph.js?v=3.0.292"></script>
-    <script src="boot.js?v=3.0.292"></script>
+    <script src="weather-truth.js?v=3.0.297"></script>
+    <script src="planner.js?v=3.0.297"></script>
+    <script src="app.js?v=3.0.297"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.297"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.297"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.297"></script>
+    <script src="raw-map-runtime.js?v=3.0.297"></script>
+    <script src="map.js?v=3.0.297"></script>
+    <script src="sky.js?v=3.0.297"></script>
+    <script src="daygraph.js?v=3.0.297"></script>
+    <script src="boot.js?v=3.0.297"></script>
   </body>
 </html>

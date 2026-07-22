@@ -1,4 +1,4 @@
-const VERSION = "3.0.292";
+const VERSION = "3.0.297";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -1406,6 +1406,7 @@ const els = {
   planPulse: document.querySelector("#planPulse"),
   briefing: document.querySelector("#briefing"),
   aiAsk: document.querySelector("#aiAsk"),
+  aiAgentButton: document.querySelector("#aiAgentButton"),
   aiLauncher: document.querySelector("#aiLauncher"),
   aiLauncherSub: document.querySelector("#aiLauncherSub"),
   aiSheet: document.querySelector("#aiSheet"),
@@ -4041,6 +4042,7 @@ function bindEvents() {
     submitAskForm();
   });
   bindTapAction(els.aiLauncher, openAISheet);
+  bindTapAction(els.aiAgentButton, () => openAISheet({ autoBrief: false }));
   bindTapAction(els.planInvitationOpen, () => openPlanInvitation(""));
   bindTapAction(els.planInvitationDismiss, dismissPlanInvitation);
   bindTapDelegate(els.planInvitation, "[data-plan-invitation-template]", (event, target) => {

@@ -1,5 +1,5 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.292";
+const OPERON_ASSET_VERSION = "3.0.297";
 
 // Some guided model providers treat a source's display path as its identifier.
 // Operon's contract intentionally distinguishes the stable ID (S1) from the
@@ -56,11 +56,19 @@ async function loadDriver() {
   return driverPromise;
 }
 
-function sessionConfig({ schema, grounding, validateOutput, timeoutMs }) {
+function sessionConfig({
+  schema,
+  grounding,
+  validateOutput,
+  timeoutMs,
+  planning = "never",
+  memoryScope = null,
+  skills = []
+}) {
   return {
     policy: {
       local_only: true,
-      planning: "never",
+      planning,
       verification: "adaptive",
       max_repair_attempts: 1,
       max_context_chars: 6000,
@@ -69,7 +77,9 @@ function sessionConfig({ schema, grounding, validateOutput, timeoutMs }) {
     },
     has_grounding: Boolean(grounding),
     output_schema: schema,
-    has_application_validator: typeof validateOutput === "function"
+    has_application_validator: typeof validateOutput === "function",
+    memory_scope: memoryScope,
+    skills: Array.isArray(skills) ? skills : []
   };
 }
 
@@ -79,6 +89,11 @@ export async function runOperon({
   generate,
   grounding = null,
   validateOutput = null,
+  planning = "never",
+  memoryScope = null,
+  searchMemory = null,
+  skills = [],
+  invokeSkill = null,
   timeoutMs = 60000
 }) {
   if (typeof generate !== "function") throw new TypeError("Operon requires a generation provider");
@@ -86,7 +101,15 @@ export async function runOperon({
   let suppliedSources = [];
   return driver.run(
     query,
-    sessionConfig({ schema, grounding, validateOutput, timeoutMs }),
+    sessionConfig({
+      schema,
+      grounding,
+      validateOutput,
+      timeoutMs,
+      planning,
+      memoryScope,
+      skills
+    }),
     {
       generate: async ({ request }) => normalizeProviderCitations(
         await generate(request),
@@ -95,8 +118,36 @@ export async function runOperon({
       retrieve: async ({ query: retrievalQuery, limit }) => {
         if (typeof grounding !== "function") return [];
         const sources = await grounding(retrievalQuery, limit);
-        suppliedSources = Array.isArray(sources) ? sources : [];
-        return suppliedSources;
+        const retrieved = Array.isArray(sources) ? sources : [];
+        const offset = suppliedSources.length;
+        suppliedSources.push(...retrieved.map((source, index) => ({
+          ...source,
+          id: `S${offset + index + 1}`
+        })));
+        return retrieved;
+      },
+      searchMemory: async ({ query: memoryQuery, scope, limit }) => {
+        if (typeof searchMemory !== "function") return [];
+        const records = await searchMemory(memoryQuery, scope, limit);
+        return Array.isArray(records) ? records : [];
+      },
+      invokeSkill: async ({ skill_id, arguments: skillArguments, requires_user_confirmation }) => {
+        if (typeof invokeSkill !== "function") {
+          throw new Error(`No Nearcast handler is registered for ${skill_id}`);
+        }
+        const result = await invokeSkill({
+          skillId: skill_id,
+          arguments: skillArguments,
+          requiresUserConfirmation: requires_user_confirmation === true
+        });
+        const skillSources = Array.isArray(result?.sources) ? result.sources : [];
+        const offset = suppliedSources.length;
+        suppliedSources.push({ id: `S${offset + 1}`, path: `skill://${skill_id}` });
+        suppliedSources.push(...skillSources.map((source, index) => ({
+          ...source,
+          id: `S${offset + index + 2}`
+        })));
+        return result;
       },
       validateOutput: async ({ output }) => {
         if (typeof validateOutput !== "function") return [];
