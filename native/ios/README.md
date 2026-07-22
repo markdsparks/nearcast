@@ -20,6 +20,25 @@ Nearcast should not wait on TestFlight for every product iteration. The native a
 
 This keeps the daily loop fast while still moving toward a real iOS app.
 
+## Private AI runtime
+
+Nearcast uses one JavaScript contract for private summaries and Plan Check
+intent parsing, with Operon validating every model result before the product
+uses it.
+
+- On an eligible Apple Intelligence device running iOS 26 or later, the native
+  bridge uses Apple's on-device system language model. No Nearcast model
+  download is required.
+- Other compatible browsers can opt in to a local Qwen3 0.6B WebLLM model.
+- If neither runtime is available, deterministic forecast and planner features
+  continue to work without AI.
+
+The bridge exposes `NearcastNative.ai.availability()` and
+`NearcastNative.ai.generate(request)`. Native requests are accepted only from
+the trusted main Nearcast page; requests from subframes or arbitrary origins
+are rejected. Apple's model availability must be tested on an eligible
+physical device because it is unavailable in Simulator.
+
 ## Recommended loops
 
 Use three loops, from fastest to slowest.

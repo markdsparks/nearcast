@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import init, * as wasm from "../vendor/operon/operon_core.js";
+import { createBrowserDriver } from "../vendor/operon/driver.js";
+import {
+  PLAN_INTENT_OUTPUT_SCHEMA,
+  SUMMARY_OUTPUT_SCHEMA,
+  validatePlanIntentOutput,
+  validateSummaryOutput
+} from "../ai-contracts.js";
+
+const wasmBytes = await readFile(new URL("../vendor/operon/operon_core_bg.wasm", import.meta.url));
+await init({ module_or_path: wasmBytes });
+const operon = createBrowserDriver(wasm);
+
+const facts = [
+  "Place: Austin, Texas. Local time 7:10am, daytime.",
+  "Right now: 58°F and partly cloudy.",
+  "Rest of today: high 88°F. UV index peaks at 8.",
+  "No active weather alerts."
+].join("\n");
+const summary = "A cool, partly cloudy start near 58° warms to a high of 88°. Plan shade around midday because the UV peaks at 8.";
+
+const summaryResult = await operon.run(
+  "Write the validated summary.",
+  {
+    policy: {
+      local_only: true,
+      planning: "never",
+      verification: "adaptive",
+      max_repair_attempts: 1,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000
+    },
+    has_grounding: true,
+    output_schema: SUMMARY_OUTPUT_SCHEMA,
+    has_application_validator: true
+  },
+  {
+    retrieve: async () => [{ id: "S1", path: "nearcast://facts", text: facts, score: 1 }],
+    generate: async () => ({
+      text: JSON.stringify({
+        answer: `${summary} [S1]`,
+        confidence: 0.95,
+        used_source_ids: ["S1"],
+        output: { summary }
+      }),
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      finish_reason: "stop"
+    }),
+    validateOutput: async ({ output }) => validateSummaryOutput(output, facts)
+  }
+);
+
+assert.equal(summaryResult.output.summary, summary);
+assert.equal(summaryResult.sources.length, 1);
+assert.equal(summaryResult.protocol_version, "0.1");
+assert.deepEqual(validateSummaryOutput({ summary }, facts), []);
+assert.match(
+  validateSummaryOutput({ summary: summary.replace("88°", "99°") }, facts).join(" "),
+  /99/
+);
+
+const message = "Ballgame Saturday morning in Fairview Heights";
+const intent = {
+  activity: "Ballgame",
+  day: "Saturday",
+  time: "morning",
+  location: "Fairview Heights"
+};
+assert.deepEqual(validatePlanIntentOutput(intent, message), []);
+assert.match(
+  validatePlanIntentOutput({ ...intent, location: "St. Louis" }, message).join(" "),
+  /exact words/
+);
+assert.equal(PLAN_INTENT_OUTPUT_SCHEMA.additionalProperties, false);
+
+console.log("AI Operon smoke passed");

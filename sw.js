@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30285";
-const ASSET_VERSION = "3.0.285";
+const CACHE = "nearcast-v30286";
+const ASSET_VERSION = "3.0.286";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -23,6 +23,11 @@ const SHELL = [
   `${BASE}boot.js?v=${ASSET_VERSION}`,
   `${BASE}ai.js?v=${ASSET_VERSION}`,
   `${BASE}ai-worker.js?v=${ASSET_VERSION}`,
+  `${BASE}ai-contracts.js?v=${ASSET_VERSION}`,
+  `${BASE}operon-runtime.js?v=${ASSET_VERSION}`,
+  `${BASE}vendor/operon/driver.js?v=${ASSET_VERSION}`,
+  `${BASE}vendor/operon/operon_core.js?v=${ASSET_VERSION}`,
+  `${BASE}vendor/operon/operon_core_bg.wasm?v=${ASSET_VERSION}`,
   `${BASE}manifest.json`,
   `${BASE}manifest.json?v=${ASSET_VERSION}`,
   `${BASE}icons/nearcast-mark.svg`,
@@ -109,6 +114,9 @@ self.addEventListener("fetch", e => {
     url.hostname.includes("noaa-mrms-pds.s3.amazonaws.com") ||
     url.hostname.includes("noaa-hrrr-bdp-pds.s3.amazonaws.com") ||
     url.hostname.includes("hrrrzarr.s3.amazonaws.com") ||
+    url.hostname.includes("huggingface.co") ||
+    url.hostname.includes("xethub.hf.co") ||
+    url.hostname.includes("hf.co") ||
     url.hostname.includes("nominatim.openstreetmap.org") ||
     url.hostname.includes("openstreetmap.org") ||
     url.hostname.includes("tile.openstreetmap") ||

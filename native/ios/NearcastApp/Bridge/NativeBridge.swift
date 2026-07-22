@@ -256,6 +256,53 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             }
           };
 
+          const pendingAIRequests = new Map();
+          let nativeAIRequestId = 0;
+          window.NearcastNative.__resolveAIRequest = function(result) {
+            const requestId = result && result.requestId ? String(result.requestId) : "";
+            const pending = pendingAIRequests.get(requestId);
+            if (!pending) return;
+            pendingAIRequests.delete(requestId);
+            if (pending.timer) window.clearTimeout(pending.timer);
+            pending.resolve(result || {
+              ok: false,
+              available: false,
+              reason: "native-ai-empty-result"
+            });
+          };
+
+          function nativeAIRequest(type, options, timeoutMs) {
+            const requestId = String(++nativeAIRequestId);
+            return new Promise((resolve) => {
+              const timer = window.setTimeout(() => {
+                if (!pendingAIRequests.has(requestId)) return;
+                pendingAIRequests.delete(requestId);
+                resolve({
+                  ok: false,
+                  available: false,
+                  reason: "native-ai-timeout",
+                  message: "The on-device model timed out."
+                });
+              }, timeoutMs);
+              pendingAIRequests.set(requestId, { resolve, timer });
+              window.NearcastNative.postMessage({
+                type,
+                requestId,
+                options: options || {}
+              });
+            });
+          }
+
+          window.NearcastNative.ai = {
+            supported: true,
+            availability() {
+              return nativeAIRequest("ai.availability", {}, 5000);
+            },
+            generate(options) {
+              return nativeAIRequest("ai.generate", options || {}, 70000);
+            }
+          };
+
           if (window.self === window.top) {
             const pendingAmbientMotionRequests = new Map();
             let nativeAmbientMotionRequestId = 0;
@@ -334,7 +381,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           }
 
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
-            detail: { platform: "ios", version: "0.2.0" }
+            detail: { platform: "ios", version: "0.3.0" }
           }));
         })();
         """
@@ -345,6 +392,21 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     private func handleBridgeMessage(_ body: Any, frameURL: URL?, isMainFrame: Bool) {
         guard let payload = body as? [String: Any],
               let type = payload["type"] as? String else {
+            return
+        }
+
+        if type.hasPrefix("ai.") {
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame) else {
+                rejectNativeAIRequest(payload, reason: "untrusted-frame")
+                return
+            }
+            if type == "ai.availability" {
+                sendNativeAIAvailability(payload)
+            } else if type == "ai.generate" {
+                generateWithNativeAI(payload)
+            } else {
+                rejectNativeAIRequest(payload, reason: "unsupported-request")
+            }
             return
         }
 
@@ -949,6 +1011,56 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         var result = NativeStormActivityController.shared.status()
         result["requestId"] = requestId
         sendJavaScriptCallback(result, resolver: "__resolveStormActivityRequest")
+    }
+
+    private func sendNativeAIAvailability(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        var result: [String: Any]
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            result = NativeLanguageModelController.availability()
+        } else {
+            result = nativeAIUnavailable(reason: "os-not-supported")
+        }
+        #else
+        result = nativeAIUnavailable(reason: "framework-unavailable")
+        #endif
+        result["requestId"] = requestId
+        sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+    }
+
+    private func generateWithNativeAI(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            Task { @MainActor in
+                var result = await NativeLanguageModelController.generate(options: options)
+                result["requestId"] = requestId
+                sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+            }
+            return
+        }
+        #endif
+        var result = nativeAIUnavailable(reason: "os-not-supported")
+        result["requestId"] = requestId
+        sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+    }
+
+    private func rejectNativeAIRequest(_ payload: [String: Any], reason: String) {
+        let requestId = payload["requestId"] as? String ?? ""
+        var result = nativeAIUnavailable(reason: reason)
+        result["requestId"] = requestId
+        sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+    }
+
+    private func nativeAIUnavailable(reason: String) -> [String: Any] {
+        [
+            "ok": false,
+            "available": false,
+            "reason": reason,
+            "model": "apple-system-language-model"
+        ]
     }
 
     private func sendJavaScriptCallback(_ payload: [String: Any], resolver: String) {

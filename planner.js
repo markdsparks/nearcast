@@ -1,9 +1,9 @@
 /* Nearcast planner, local AI summary, and plan memory surfaces. */
 
 /* ---------- Planner: local AI summary (Tier 1, opt-in) ---------- */
-const LOCAL_AI_MODEL = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
-const LOCAL_AI_MODEL_MB = 350;
-const LOCAL_AI_MIN_FREE_BYTES = 450 * 1024 * 1024;
+const LOCAL_AI_MODEL = "Qwen3-0.6B-q4f16_1-MLC";
+const LOCAL_AI_MODEL_MB = 360;
+const LOCAL_AI_MIN_FREE_BYTES = 500 * 1024 * 1024;
 
 // phase: unknown | unsupported | idle | loading | ready | generating | error
 const aiState = {
@@ -24,6 +24,14 @@ let aiWarmLoading = false;
 function loadAIModule() {
   if (!aiModule) aiModule = import(`./ai.js?v=${encodeURIComponent(VERSION)}`);
   return aiModule;
+}
+
+function applyAIProviderInfo(ai) {
+  const info = typeof ai?.providerInfo === "function" ? ai.providerInfo() : null;
+  if (!info || !aiState.support) return;
+  aiState.support.activeProvider = info.kind || "unknown";
+  aiState.support.model = info.model || aiState.support.model;
+  aiState.support.operon = info.operon === true;
 }
 
 function localAIIntentReady(ai) {
@@ -129,7 +137,7 @@ function adapterSnapshot(adapter) {
 async function probeLocalAI() {
   const report = {
     appVersion: VERSION,
-    model: LOCAL_AI_MODEL,
+    model: aiState.support?.model || LOCAL_AI_MODEL,
     modelDownloadMB: LOCAL_AI_MODEL_MB,
     checkedAt: new Date().toISOString(),
     host: plannerHostInfo(),
@@ -140,6 +148,9 @@ async function probeLocalAI() {
     device: false,
     moduleWorker: supportsModuleWorker(),
     cacheApi: "caches" in window,
+    nativeAI: null,
+    activeProvider: "",
+    operon: true,
     storage: null,
     adapterDetails: null,
     result: "unknown",
@@ -156,6 +167,30 @@ async function probeLocalAI() {
 
   if (!report.secureContext) {
     return fail("needs-secure-context", "Private AI summary needs HTTPS or localhost.");
+  }
+
+  const nativeBridge = window.NearcastNative?.ai;
+  if (nativeBridge && typeof nativeBridge.availability === "function") {
+    try {
+      const availability = await nativeBridge.availability();
+      report.nativeAI = {
+        supported: true,
+        available: availability?.available === true,
+        reason: availability?.reason || "unknown",
+        model: availability?.model || "apple-system-language-model"
+      };
+      if (report.nativeAI.available) {
+        report.model = report.nativeAI.model;
+        report.activeProvider = "apple";
+        report.result = "ready";
+        report.reason = "Apple's private on-device language model is ready.";
+        return { ok: true, report };
+      }
+      report.warnings.push(`Apple on-device model unavailable (${report.nativeAI.reason}); checking WebGPU fallback.`);
+    } catch (err) {
+      report.nativeAI = { supported: true, available: false, reason: cleanError(err) };
+      report.warnings.push("Apple on-device model availability check failed; checking WebGPU fallback.");
+    }
   }
   if (!report.webgpu) {
     return fail("no-webgpu", "This browser does not expose WebGPU.");
@@ -210,6 +245,7 @@ async function probeLocalAI() {
   }
 
   report.result = "ready";
+  report.activeProvider = "webllm";
   report.reason = report.warnings.length
     ? "Local AI summary appears supported, with compatibility warnings."
     : "Local AI summary appears supported.";
@@ -3025,7 +3061,10 @@ function warmAI() {
     }
     aiWarmLoading = true;
     loadAIModule()
-      .then((ai) => ai.load())
+      .then(async (ai) => {
+        await ai.load();
+        applyAIProviderInfo(ai);
+      })
       .catch(() => {}) // a failed warm just means the first tap pays the load
       .finally(() => { aiWarmLoading = false; });
   });
@@ -3074,6 +3113,7 @@ async function enableAI() {
       aiState.status = p.text || "Preparing local AI summary…";
       renderBriefing();
     });
+    applyAIProviderInfo(ai);
     localStorage.setItem("ai-enabled", "1");
     aiState.phase = "ready";
     aiState.text = "";
@@ -3137,7 +3177,9 @@ function renderBriefing() {
     slot.hidden = true;
     return;
   }
-  const showSummarySurface = aiState.phase === "loading" ||
+  const showSummarySurface = aiState.phase === "idle" ||
+    aiState.phase === "unsupported" ||
+    aiState.phase === "loading" ||
     aiState.phase === "generating" ||
     aiState.phase === "error" ||
     Boolean(aiState.text);
@@ -3171,7 +3213,8 @@ function renderBriefing() {
 
   if (aiState.phase === "idle") {
     slot.className = "briefing briefing-stack briefing-cta";
-    const warning = aiState.support?.warnings?.[0];
+    const usingApple = aiState.support?.activeProvider === "apple";
+    const warning = usingApple ? "Uses Apple's private on-device model · no Nearcast model download" : aiState.support?.warnings?.[0];
     slot.innerHTML =
       planBriefing +
       `<button class="briefing-enable" data-ai="enable" type="button">` +
@@ -3190,7 +3233,7 @@ function renderBriefing() {
       `<span>${escapeHtml(aiState.status || "Preparing local AI summary…")}</span>` +
       `<em>${aiState.progress}%</em></div>` +
       `<div class="briefing-bar"><i style="width:${aiState.progress}%"></i></div>` +
-      `<span class="briefing-tag">${lockGlyph()}One-time model download, then private on this device</span>`);
+      `<span class="briefing-tag">${lockGlyph()}${aiState.support?.activeProvider === "apple" ? "Apple on-device model · private on this device" : "One-time model download, then private on this device"}</span>`);
     return;
   }
 
@@ -3702,7 +3745,7 @@ const PLAN_SIGNAL_PHRASES = [
   " camp ", " camping ", " recital ", " meetup ", " meet up "
 ];
 const PLAN_FLEXIBLE_ASK_PHRASES = ["best", "best time", "best window", "when should", "when can", "window"];
-const PLAN_LOCAL_AI_TIMEOUT_MS = 2200;
+const PLAN_LOCAL_AI_TIMEOUT_MS = 8000;
 
 const ASK_PERIODS = {
   morning: { start: 6, end: 12, label: "morning" },
