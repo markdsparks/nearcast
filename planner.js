@@ -3638,8 +3638,77 @@ async function resolveNearcastAgentPlace(rawPlace) {
   if (!requested || /^(?:here|current|current place|selected place)$/i.test(requested)) {
     return state.activePlace || state.savedPlaces?.[0] || null;
   }
+  const requestedKey = normalizeQualifierKey(requested);
+  const knownPlace = [state.activePlace, ...(state.savedPlaces || [])]
+    .filter(Boolean)
+    .find((place) => {
+      const nameKey = normalizeQualifierKey(place.name || "");
+      const labelKey = normalizeQualifierKey(placeLabel(place));
+      return requestedKey === nameKey || requestedKey === labelKey;
+    });
+  if (knownPlace) return normalizePlace(knownPlace);
   const options = await fetchPlannerPlaceOptions(requested);
   return options.matches?.[0]?.place ? normalizePlace(options.matches[0].place) : null;
+}
+
+function parseNearcastDirectNavigation(question) {
+  const raw = String(question || "").trim();
+  if (!/\b(?:open|show|pull up|take me to|go to|switch to)\b/i.test(raw)) return null;
+  const type = /\b(?:map|radar)\b/i.test(raw)
+    ? "map"
+    : /\b(?:forecast|weather)\b/i.test(raw)
+      ? "forecast"
+      : "";
+  if (!type) return null;
+  const target = raw.match(/\b(?:in|for|at|near|around)\s+(.+?)[.!?]*$/i)?.[1] || "";
+  const place = target
+    .replace(/\b(?:weather\s+)?(?:map|radar|forecast)\b.*$/i, "")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  return { type, place };
+}
+
+async function runNearcastDirectNavigation(question) {
+  const command = parseNearcastDirectNavigation(question);
+  if (!command) return null;
+  const place = await resolveNearcastAgentPlace(command.place);
+  if (!place) {
+    return {
+      answer: `I could not find ${command.place || "that place"}. Try city + state or country.`,
+      navigation: null,
+      skillCalls: 0
+    };
+  }
+  if (!samePlanPlace(place, state.activePlace) || !state.forecast) await loadPlace(place);
+  if (!samePlanPlace(place, state.activePlace)) {
+    return {
+      answer: `I could not load the forecast for ${placeLabel(place)}.`,
+      navigation: null,
+      skillCalls: 0
+    };
+  }
+  const label = placeLabel(state.activePlace || place);
+  return {
+    answer: command.type === "map"
+      ? `Opening the weather map centered on ${label}.`
+      : `Showing the forecast for ${label}.`,
+    navigation: command.type,
+    skillCalls: 0
+  };
+}
+
+function scheduleNearcastAgentNavigation(navigation) {
+  if (navigation === "map") {
+    setTimeout(() => {
+      closeAISheet();
+      setTimeout(() => enterImmersiveMap(), 320);
+    }, 180);
+  } else if (navigation === "forecast") {
+    setTimeout(() => {
+      closeAISheet();
+      try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
+    }, 180);
+  }
 }
 
 function cleanNearcastAgentAnswer(value) {
@@ -3652,6 +3721,11 @@ function cleanNearcastAgentAnswer(value) {
 async function runNearcastAgent(question, rowIndex) {
   if (aiState.phase !== "ready") return null;
   const ai = await loadAIModule();
+  if (typeof ai?.runAgent !== "function") return null;
+  if (typeof ai.isLoaded === "function" && !ai.isLoaded()) {
+    await ai.load();
+    applyAIProviderInfo(ai);
+  }
   if (!localAIAgentReady(ai)) return null;
 
   const receipt = {
@@ -3726,6 +3800,7 @@ async function runNearcastAgent(question, rowIndex) {
   });
   if (receipt.clarification) setPlannerClarification(receipt.clarification, rowIndex);
   const answer = receipt.answer || cleanNearcastAgentAnswer(result?.answer);
+  if (receipt.skillCalls === 0 && parseNearcastDirectNavigation(question)) return null;
   if (!answer) return null;
   return {
     answer,
@@ -3818,21 +3893,17 @@ async function runAsk(question, intent) {
       const agent = await runNearcastAgent(question, row);
       if (agent) {
         finishAskResponse(row, agent);
-        if (agent.navigation === "map") {
-          setTimeout(() => {
-            closeAISheet();
-            setTimeout(() => enterImmersiveMap(), 320);
-          }, 180);
-        } else if (agent.navigation === "forecast") {
-          setTimeout(() => {
-            closeAISheet();
-            try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
-          }, 180);
-        }
+        scheduleNearcastAgentNavigation(agent.navigation);
         return;
       }
     } catch (agentError) {
       planIntentDiagnostics.agentError = cleanError(agentError);
+    }
+    const directNavigation = await runNearcastDirectNavigation(question);
+    if (directNavigation) {
+      finishAskResponse(row, directNavigation);
+      scheduleNearcastAgentNavigation(directNavigation.navigation);
+      return;
     }
     const plan = await answerPlanRequest(question);
     if (plan?.clarification) {
