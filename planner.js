@@ -3508,10 +3508,13 @@ const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
 const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   {
     id: "nearcast.plan_check",
-    description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities. Recent typed artifacts may supply the same place or forecast window.",
+    description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities. For a contextual follow-up, pass window_ref as the compatible typed artifact ID or 'last_result'; the host validates it and supplies canonical place and time context.",
     input_schema: {
       type: "object",
-      properties: { request: { type: "string" } },
+      properties: {
+        request: { type: "string" },
+        window_ref: { type: "string" }
+      },
       required: ["request"],
       additionalProperties: false
     },
@@ -3530,10 +3533,13 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.weather_answer",
-    description: "Answer a weather question using Nearcast's deterministic forecast calculations. Never use this for a request to open, show, switch, or navigate to a map, forecast, or hourly view.",
+    description: "Answer a weather question using Nearcast's deterministic forecast calculations. For a contextual follow-up, pass window_ref as the compatible typed artifact ID or 'last_result'; the host validates it and supplies canonical place and time context. Never use this for a request to open, show, switch, or navigate to a map, forecast, or hourly view.",
     input_schema: {
       type: "object",
-      properties: { request: { type: "string" } },
+      properties: {
+        request: { type: "string" },
+        window_ref: { type: "string" }
+      },
       required: ["request"],
       additionalProperties: false
     },
@@ -3598,7 +3604,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.forecast_open_hourly",
-    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details. For a follow-up like 'show hourly for that', pass window_ref as the referenced typed artifact ID or 'last_result'; the host prepares canonical place and day arguments.",
+    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details. For a contextual follow-up such as 'show hourly for that' or the elliptical 'show me the hourly', pass window_ref as the referenced typed artifact ID or 'last_result'; the host validates the artifact and prepares canonical place and day arguments.",
     input_schema: {
       type: "object",
       properties: {
@@ -3626,7 +3632,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.plan_find_and_draft",
-    description: "Find the best weather window for an activity at a place on a stated day or period and prepare a Nearcast plan draft. Use for requests like finding a two-hour evening walk window. The user still confirms before Nearcast watches the plan.",
+    description: "Find the best weather window for an activity at a place on a stated day or period and prepare a Nearcast plan draft. Use for requests like finding a two-hour evening walk window. For a contextual follow-up, pass window_ref as the compatible typed artifact ID or 'last_result'; the host validates it and supplies canonical place and time context. The user still confirms before Nearcast watches the plan.",
     input_schema: {
       type: "object",
       properties: {
@@ -3634,7 +3640,8 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
         place: { type: "string" },
         day: { type: "string" },
         period: { type: "string", enum: ["morning", "afternoon", "evening", "night", "day"] },
-        duration_hours: { type: "number", minimum: 1, maximum: 8 }
+        duration_hours: { type: "number", minimum: 1, maximum: 8 },
+        window_ref: { type: "string" }
       },
       required: ["request"],
       additionalProperties: false
@@ -4078,8 +4085,13 @@ function prepareNearcastHourlySkill(args, context, definition) {
   const question = String(context?.question || "");
   const referencesContext = nearcastReferencesConversation(question);
   const referencesWindow = nearcastReferencesWindow(question);
-  const requestedWindowRef = referencesWindow ? source.window_ref : "";
-  const windowArtifact = referencesWindow
+  // Operon is allowed to resolve ellipsis by selecting an application-owned
+  // typed artifact. The host trusts that selection only after validating the
+  // reference against this bounded session; it still never trusts invented
+  // place/day values from model arguments.
+  const requestedWindowRef = String(source.window_ref || "").trim();
+  const shouldResolveWindow = referencesWindow || Boolean(requestedWindowRef);
+  const windowArtifact = shouldResolveWindow
     ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
       nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
     : null;
@@ -4123,13 +4135,22 @@ function prepareNearcastHourlySkill(args, context, definition) {
 }
 
 function prepareNearcastAnswerSkill(args, context, definition) {
-  let request = nearcastScopedSkillRequest(args?.request, context?.question, definition.id);
-  const referencesContext = nearcastReferencesConversation(request);
-  const referencesWindow = nearcastReferencesWindow(request);
+  const source = args || {};
+  let request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
+  const requestedWindowRef = String(source.window_ref || "").trim();
+  const referencesContext = nearcastReferencesConversation(request) || Boolean(requestedWindowRef);
+  const referencesWindow = nearcastReferencesWindow(request) || Boolean(requestedWindowRef);
   const windowArtifact = referencesWindow
-    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window) ||
-      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan)
+    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
     : null;
+  if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      "I can’t find that forecast window anymore. Which place and day should I use?",
+      ["place", "day"]
+    );
+  }
   const placeArtifact = nearcastPlaceArtifactForPreparation(context);
   const value = windowArtifact?.value || placeArtifact?.value || {};
   const explicitQuestionPlace = extractPlanLocationQuery(request);
@@ -4158,9 +4179,9 @@ function prepareNearcastAnswerSkill(args, context, definition) {
 function prepareNearcastPlanSkill(args, context, definition) {
   const source = args || {};
   const request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
-  const referencesContext = nearcastReferencesConversation(request);
-  const referencesWindow = nearcastReferencesWindow(request);
-  const requestedWindowRef = referencesWindow ? source.window_ref : "";
+  const requestedWindowRef = String(source.window_ref || "").trim();
+  const referencesContext = nearcastReferencesConversation(request) || Boolean(requestedWindowRef);
+  const referencesWindow = nearcastReferencesWindow(request) || Boolean(requestedWindowRef);
   const windowArtifact = referencesWindow
     ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
       nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
@@ -4374,12 +4395,13 @@ async function executeNearcastHourlyOpenSkill(args, context) {
     nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window) ||
     nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan);
   const sourceValue = sourceWindow?.value || {};
-  const matchesSourceDate = sourceValue.target_date === state.forecast.daily.time[dayIndex];
+  const matchesSourcePlace = Boolean(sourceValue.place && samePlanPlace(sourceValue.place, place));
+  const matchesSourceWindow = matchesSourcePlace && sourceValue.target_date === state.forecast.daily.time[dayIndex];
   const window = {
     dayIdx: dayIndex,
-    startHour: matchesSourceDate ? sourceValue.start_hour : 8,
-    endHour: matchesSourceDate ? sourceValue.end_hour : 20,
-    period: matchesSourceDate ? sourceValue.period : "day"
+    startHour: matchesSourceWindow ? sourceValue.start_hour : 8,
+    endHour: matchesSourceWindow ? sourceValue.end_hour : 20,
+    period: matchesSourceWindow ? sourceValue.period : "day"
   };
   const windowArtifact = nearcastWindowArtifact(place, window, context, { dayText });
   context.receipt.answer = `Opening ${dayLabel} hourly details for ${placeLabel(place)}.`;
@@ -4388,7 +4410,7 @@ async function executeNearcastHourlyOpenSkill(args, context) {
     dayIndex,
     startHour: window.startHour,
     endHour: window.endHour,
-    focusWindow: Boolean(matchesSourceDate && (
+    focusWindow: Boolean(matchesSourceWindow && (
       sourceValue.period !== "day" || sourceValue.start_hour !== 8 || sourceValue.end_hour !== 20
     ))
   };
@@ -4574,6 +4596,61 @@ async function runNearcastDirectNavigation(question, signal = null, rowIndex = n
   if (!receipt.answer && prepared?.kind !== "ready") {
     receipt.answer = prepared?.clarification?.prompt || prepared?.reason || "I need more information before I can do that.";
   }
+  return {
+    answer: receipt.answer,
+    event: receipt.event,
+    clarification: receipt.clarification,
+    navigation: receipt.navigation,
+    skillCalls: receipt.skillCalls
+  };
+}
+
+function nearcastLooksLikeWeatherQuestion(question, sessionArtifacts = []) {
+  if (parseNearcastDirectNavigation(question)) return false;
+  if (detectAskActivity(question) || detectPlanActivity(question)) return true;
+  const hasTypedWeatherWindow = sessionArtifacts.some((artifact) =>
+    artifact?.kind === NEARCAST_AGENT_ARTIFACT_KINDS.window ||
+    artifact?.kind === NEARCAST_AGENT_ARTIFACT_KINDS.plan
+  );
+  const isTemporalEllipsis = /^(?:what|how)\s+about\b|^and\b/i.test(String(question || "").trim()) &&
+    Boolean(nearcastExplicitDayText(question) || nearcastExplicitPeriodText(question));
+  if (hasTypedWeatherWindow && isTemporalEllipsis && nearcastReferencesConversation(question)) return true;
+  const text = plannerParseText(question);
+  return hasAny(text, [
+    " weather ", " forecast ", " condition ", " conditions ", " look like ", " going to be ", " outside ",
+    " rain ", " wet ", " precip ", " shower ", " storm ", " drizzle ", " sleet ", " snow ", " pour ",
+    " hot ", " warm ", " cold ", " temperature ", " temp ", " high ", " low ", " degrees ",
+    " wind ", " windy ", " gust ", " gusts ", " breeze ", " breezy ",
+    " humidity ", " humid ", " muggy ", " sticky ", " dry air ",
+    " uv ", " sunburn ", " sunscreen ", " sun strong ", " strong is the sun ",
+    " air quality ", " aqi ", " pollution ", " polluted ", " pm2 ", " pm 2 ", " smoke ", " hazy air ",
+    " pollen ", " allergy ", " allergies ", " hay fever ",
+    " sunrise ", " sun rise ", " sunset ", " sun set ", " sundown ", " get dark ", " get light ",
+    " umbrella ", " what to wear ", " should i wear ", " what to put on ", " jacket ", " coat ", " bundle ",
+    " best time ", " best window ", " when should ", " when can ", " what time ", " compare ", " which day ", " better "
+  ]);
+}
+
+async function runNearcastDirectWeatherAnswer(question, signal = null, rowIndex = null) {
+  const context = createNearcastAgentContext(question, rowIndex, signal);
+  if (!nearcastLooksLikeWeatherQuestion(question, context.sessionArtifacts)) return null;
+  const skillId = "nearcast.weather_answer";
+  const prepared = await prepareRegisteredNearcastSkill(context, {
+    skillId,
+    partialArguments: { request: question },
+    artifacts: context.sessionArtifacts.map(({ id, kind, summary }) => ({ id, kind, summary }))
+  });
+  if (prepared?.kind === "ready") {
+    await invokeRegisteredNearcastSkill(context, {
+      skillId,
+      arguments: prepared.arguments
+    });
+  }
+  const { receipt } = context;
+  if (!receipt.answer && prepared?.kind !== "ready") {
+    receipt.answer = prepared?.clarification?.prompt || prepared?.reason || "I need more information before I can check that weather.";
+  }
+  if (!receipt.answer) return null;
   return {
     answer: receipt.answer,
     event: receipt.event,
@@ -4812,6 +4889,16 @@ async function runAsk(question, intent) {
         captureArtifacts: false
       });
       await scheduleNearcastAgentNavigation(directNavigation.navigation);
+      return;
+    }
+    // If Operon declines an obvious weather question, execute the same
+    // place-aware application skill directly. This keeps weather facts and
+    // typed artifacts correct without letting a model synthesize either.
+    const directWeather = await runNearcastDirectWeatherAnswer(question, runSignal, row);
+    if (!runIsCurrent()) return;
+    if (directWeather) {
+      if (directWeather.clarification) setPlannerClarification(directWeather.clarification, row);
+      finishAskResponse(row, directWeather, { captureArtifacts: false });
       return;
     }
     const plan = await answerPlanRequest(question);

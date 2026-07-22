@@ -137,6 +137,8 @@ assert.match(planner, /directCommandSatisfied[\s\S]*receipt\.outputs\.some\(\(it
 assert.match(planner, /context\.requiredSkillId && definition\.id !== context\.requiredSkillId/, "single-action commands reject a mismatched skill before it can mutate app state");
 assert.match(planner, /rawSkillId[\s\S]*type: "agent-skill"[\s\S]*sessionId: context\.sessionId/, "raw Operon skill clarifications become resumable host continuations");
 assert.match(planner, /preparedSkillState[\s\S]*preparedState\?\.windowArtifact/, "hourly execution retains the exact artifact selected during preparation");
+assert.match(planner, /matchesSourcePlace[\s\S]*samePlanPlace\(sourceValue\.place, place\)[\s\S]*matchesSourceWindow/, "an old forecast window can focus hourly only when both its date and place match");
+assert.match(planner, /runNearcastDirectWeatherAnswer\(question, runSignal, row\)[\s\S]*captureArtifacts: false/, "a no-skill weather turn reuses the place-aware host skill instead of stale global forecast state");
 assert.match(daygraph, /const focusedEvent = options\.eventWindow \|\| memoryEvent[\s\S]*if \(focusedEvent\) scrollFocusedSheetHour\(\)/, "hourly navigation focuses the referenced forecast window");
 assert.match(operonRuntime, /loadSession: async \(\{ session_id, limit \}\)[\s\S]*loadSession\(session_id, limit\)/, "the browser adapter translates Operon 0.2 session loading");
 assert.match(operonRuntime, /prepareSkill: async \(\{ skill_id, partial_arguments, artifacts \}\)[\s\S]*skillId: skill_id[\s\S]*partialArguments: partial_arguments/, "the browser adapter translates Operon 0.2 skill preparation");
@@ -230,6 +232,9 @@ const preparationSandbox = {
   parseNearcastDirectNavigation: (value) => /\b(?:open|show)\b[\s\S]*\bhourly\b/i.test(String(value || ""))
     ? { skillId: "nearcast.forecast_open_hourly" }
     : null,
+  askText: (value) => ` ${String(value || "").toLowerCase().replace(/[^\w\s:]/g, " ").replace(/\s+/g, " ")} `,
+  plannerParseText: (value) => ` ${String(value || "").toLowerCase().replace(/[^\w\s:]/g, " ").replace(/\s+/g, " ")} `,
+  hasAny: (text, words) => words.some((word) => text.includes(word)),
   detectAskActivity: () => null,
   detectPlanActivity: () => null,
   NEARCAST_AGENT_PERIODS: new Set(["morning", "afternoon", "evening", "night", "day"]),
@@ -256,6 +261,7 @@ vm.runInContext(`
   ${extractFunction(planner, "prepareNearcastHourlySkill")}
   ${extractFunction(planner, "prepareNearcastAnswerSkill")}
   ${extractFunction(planner, "prepareNearcastPlanSkill")}
+  ${extractFunction(planner, "nearcastLooksLikeWeatherQuestion")}
   ${extractFunction(planner, "nearcastRequestMaxReplans")}
   globalThis.prepareHourlyTest = prepareNearcastHourlySkill;
   globalThis.prepareAnswerTest = prepareNearcastAnswerSkill;
@@ -263,6 +269,7 @@ vm.runInContext(`
   globalThis.referencesConversationTest = nearcastReferencesConversation;
   globalThis.scopedRequestTest = nearcastScopedSkillRequest;
   globalThis.clarificationPlaceTest = nearcastClarificationPlaceText;
+  globalThis.looksLikeWeatherTest = nearcastLooksLikeWeatherQuestion;
   globalThis.maxReplansTest = nearcastRequestMaxReplans;
 `, preparationSandbox);
 assert.equal(preparationSandbox.referencesConversationTest("Is it going to rain tomorrow?"), false, "weather grammar does not mistake existential 'it' for conversation memory");
@@ -283,6 +290,37 @@ assert.equal(
   preparationSandbox.maxReplansTest("Open the map, show the forecast, and open hourly"),
   2,
   "three requested actions receive two bounded replans"
+);
+[
+  "How does the weather look in Fairview Heights Saturday morning?",
+  "Do I need sunscreen in Fairview Heights Saturday morning?",
+  "How is the air quality tomorrow?",
+  "Will pollen be bad Tuesday?",
+  "Will it feel muggy tonight?",
+  "How breezy will Saturday be?",
+  "What should I wear tomorrow?"
+].forEach((question) => {
+  assert.equal(preparationSandbox.looksLikeWeatherTest(question), true, `host weather fallback recognizes: ${question}`);
+});
+assert.equal(preparationSandbox.looksLikeWeatherTest("Show me the hourly."), false, "navigation stays with its dedicated app skill");
+assert.equal(preparationSandbox.looksLikeWeatherTest("Tell me a joke."), false, "unrelated chat does not trigger a place load");
+assert.equal(preparationSandbox.looksLikeWeatherTest("Tell me a joke tomorrow."), false, "a date alone cannot turn unrelated chat into weather");
+assert.equal(preparationSandbox.looksLikeWeatherTest("Remind me Saturday."), false, "a calendar-like request is not silently replaced with a forecast");
+const fallbackWindowReference = [{ kind: "nearcast.forecast-window" }];
+assert.equal(
+  preparationSandbox.looksLikeWeatherTest("What about the morning?", fallbackWindowReference),
+  true,
+  "a compact temporal follow-up can use an available typed forecast window"
+);
+assert.equal(
+  preparationSandbox.looksLikeWeatherTest("Remind me there tomorrow.", fallbackWindowReference),
+  false,
+  "generic deixis plus a date cannot hijack the weather fallback even when a forecast artifact exists"
+);
+assert.equal(
+  preparationSandbox.looksLikeWeatherTest("Tell me about that.", fallbackWindowReference),
+  false,
+  "a typed weather artifact does not turn unsupported generic follow-ups into forecasts"
 );
 const forecastTarget = {
   id: "window-1",
@@ -316,6 +354,28 @@ assert.equal(
   preparedFollowupContext.preparedSkillState.get("nearcast.forecast_open_hourly")?.windowArtifact?.id,
   forecastTarget.id,
   "the exact typed window survives preparation for hourly focus"
+);
+const bareHourlyContext = {
+  question: "Show me the hourly.",
+  sessionArtifacts: [forecastTarget],
+  artifactReferences: [{ id: forecastTarget.id }],
+  preparedSkillState: new Map(),
+  lastPlace: null
+};
+const bareHourlyFollowup = preparationSandbox.prepareHourlyTest(
+  { window_ref: "last_result" },
+  bareHourlyContext,
+  { id: "nearcast.forecast_open_hourly" }
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(bareHourlyFollowup.arguments)),
+  { place: "Maryville, Illinois", day: "2026-07-23" },
+  "Operon's validated typed reference resolves a bare elliptical hourly follow-up without a host phrase veto"
+);
+assert.equal(
+  bareHourlyContext.preparedSkillState.get("nearcast.forecast_open_hourly")?.windowArtifact?.id,
+  forecastTarget.id,
+  "the Operon-selected artifact—not a host text guess—owns bare follow-up resolution"
 );
 const missingFollowup = preparationSandbox.prepareHourlyTest(
   { window_ref: "last_result" },
@@ -377,6 +437,57 @@ assert.equal(
   "an unstated model day cannot bypass hourly clarification"
 );
 forecastTarget.value.period = "evening";
+const operonSelectedAnswer = preparationSandbox.prepareAnswerTest(
+  { request: "Tell me more.", window_ref: forecastTarget.id },
+  {
+    question: "Tell me more.",
+    sessionArtifacts: [forecastTarget],
+    artifactReferences: [{ id: forecastTarget.id }],
+    lastPlace: null
+  },
+  { id: "nearcast.weather_answer" }
+);
+assert.equal(operonSelectedAnswer.kind, "ready");
+assert.equal(
+  operonSelectedAnswer.arguments.request,
+  "Tell me more. on 2026-07-23 during evening",
+  "weather follow-ups trust an Operon-selected typed forecast window even when the surface text is elliptical"
+);
+assert.equal(
+  preparationSandbox.prepareAnswerTest(
+    { request: "Tell me more.", window_ref: "stale-window" },
+    {
+      question: "Tell me more.",
+      sessionArtifacts: [forecastTarget],
+      artifactReferences: [{ id: forecastTarget.id }],
+      lastPlace: null
+    },
+    { id: "nearcast.weather_answer" }
+  ).kind,
+  "needs_input",
+  "trusting Operon still rejects an invented or expired forecast artifact"
+);
+const operonSelectedPlan = preparationSandbox.preparePlanTest(
+  { request: "Find a two-hour walk slot.", window_ref: "last_result" },
+  {
+    question: "Find a two-hour walk slot.",
+    sessionArtifacts: [forecastTarget],
+    artifactReferences: [{ id: forecastTarget.id }],
+    lastPlace: null
+  },
+  { id: "nearcast.plan_find_and_draft" }
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(operonSelectedPlan.arguments)),
+  {
+    request: "Find a two-hour walk slot.",
+    place: "Maryville, Illinois",
+    day: "2026-07-23",
+    period: "evening",
+    duration_hours: 2
+  },
+  "plan creation can reuse the same Operon-selected typed window without another host phrase matcher"
+);
 const ellipticalAnswer = preparationSandbox.prepareAnswerTest(
   { request: "What about the morning?" },
   {
