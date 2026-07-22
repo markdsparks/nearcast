@@ -3956,7 +3956,10 @@ function planFromIntentFragments(original, c, fragments, source) {
   const dayIdx = resolveDayIndex(fragments.day || original, c);
   const dayMention = plannerWeekdayMention(fragments.day || original);
   const targetDate = dayIdx == null ? null : planTargetDate(dayIdx);
-  const locationQuery = cleanPlanLocation(fragments.location || "");
+  const rawLocation = String(fragments.location || "").trim();
+  const locationQuery = /^(?:outside|outdoors|outdoor|inside)$/i.test(rawLocation)
+    ? ""
+    : cleanPlanLocation(rawLocation);
   const timingText = fragments.time
     ? normalizePlanTimeClarification(fragments.time)
     : original;
@@ -3983,6 +3986,7 @@ function planFromIntentFragments(original, c, fragments, source) {
     locationQuery,
     locationExplicit: Boolean(locationQuery),
     locationImplicit: Boolean(locationQuery && !extractPlanLocationQuery(original)),
+    locationResolvedByIntent: source === "local-ai" || source === "generic-event-fallback",
     timing,
     intent: plannerIntentReceipt({
       source,
@@ -4419,7 +4423,7 @@ async function completePlanRequest(plan, override = {}) {
     return { clarification: buildTimeClarification(nextPlan) };
   }
 
-  const inferredLocation = !override.place && !nextPlan.locationQuery
+  const inferredLocation = !override.place && !nextPlan.locationQuery && !nextPlan.locationResolvedByIntent
     ? await inferImplicitPlanLocation(nextPlan)
     : null;
   if (inferredLocation) {

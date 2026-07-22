@@ -27,6 +27,8 @@ assert.match(
 assert.match(plannerSource, /PLAN_LOCAL_AI_TIMEOUT_MS = 22000/);
 assert.match(plannerSource, /route = "generic-event-fallback"/);
 assert.match(plannerSource, /activityLabel: activityText/);
+assert.match(plannerSource, /!nextPlan\.locationResolvedByIntent/);
+assert.match(plannerSource, /locationResolvedByIntent: source === "local-ai"/);
 assert.match(plannerSource, /planIntent: planIntentDiagnostics/);
 assert.match(
   planIntentQuery("Would Saturday evening work for senior pictures outside?"),
@@ -106,6 +108,10 @@ assert.deepEqual(validatePlanIntentOutput(intent, message), []);
 assert.match(
   validatePlanIntentOutput({ ...intent, location: "St. Louis" }, message).join(" "),
   /exact words/
+);
+assert.match(
+  validatePlanIntentOutput({ ...intent, location: "outside" }, `${message} outside`).join(" "),
+  /named place/
 );
 assert.equal(PLAN_INTENT_OUTPUT_SCHEMA.additionalProperties, false);
 

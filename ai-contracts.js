@@ -95,6 +95,10 @@ export function validatePlanIntentOutput(output, message) {
       continue;
     }
     const value = output[key].trim().toLocaleLowerCase();
+    if (key === "location" && /^(?:outside|outdoors|outdoor|inside)$/.test(value)) {
+      errors.push("output.location must be a named place or an empty string");
+      continue;
+    }
     if (value && !source.includes(value)) {
       errors.push(`output.${key} must copy exact words from the user message`);
     }
