@@ -7388,10 +7388,11 @@ body.map-immersive-active .nearcast-ai-fab {
   left: 12px;
   width: auto;
   max-width: 620px;
-  height: 174px;
-  max-height: 174px;
+  height: auto;
+  min-height: 174px;
+  max-height: min(360px, calc(var(--app-viewport-height, 100dvh) - var(--sheet-keyboard-inset, 0px) - 24px));
   padding: 0;
-  overflow: visible;
+  overflow: hidden;
   border: 0;
   border-radius: 30px;
   background: transparent;
@@ -7419,21 +7420,23 @@ body.map-immersive-active .nearcast-ai-fab {
 }
 .ai-sheet.is-entry .ai-ask {
   display: block;
-  height: 100%;
+  min-height: 174px;
 }
 .ai-sheet.is-entry .ask-composer-dock {
-  height: 100%;
+  min-height: 174px;
 }
 .ai-sheet.is-entry .ask-plan-check {
-  height: 100%;
+  min-height: 174px;
   margin: 0;
   border-radius: 30px;
 }
 .ai-sheet.is-entry .ask-form {
-  min-height: 100%;
+  min-height: 174px;
+  height: auto;
   padding: 25px 20px 14px;
 }
 .ai-sheet.is-entry .ask-form textarea {
+  max-height: 132px;
   padding-right: 34px;
 }
 

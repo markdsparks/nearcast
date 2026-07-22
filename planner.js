@@ -9860,7 +9860,7 @@ function syncAskComposerState() {
   send.disabled = input.disabled || busy || !hasValue;
   if (input.tagName === "TEXTAREA") {
     input.style.height = "auto";
-    const maxComposerHeight = nearcastAISurfaceMode === "entry" ? 72 : 96;
+    const maxComposerHeight = nearcastAISurfaceMode === "entry" ? 132 : 96;
     input.style.height = `${Math.min(input.scrollHeight, maxComposerHeight)}px`;
   }
 }
