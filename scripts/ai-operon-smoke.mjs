@@ -6,12 +6,18 @@ import { normalizeProviderCitations } from "../operon-runtime.js";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
+  summaryQuery,
   validatePlanIntentOutput,
   validateSummaryOutput
 } from "../ai-contracts.js";
 
 const wasmBytes = await readFile(new URL("../vendor/operon/operon_core_bg.wasm", import.meta.url));
 const plannerSource = await readFile(new URL("../planner.js", import.meta.url), "utf8");
+assert.deepEqual(
+  summaryQuery().replaceAll("S1", "").match(/\d+(?:\.\d+)?/g) || [],
+  [],
+  "summary instructions must not contain example numbers the model can copy into a forecast"
+);
 assert.match(
   plannerSource,
   /showSummarySurface\s*=\s*aiState\.phase === "idle"\s*\|\|\s*aiState\.phase === "ready"/,

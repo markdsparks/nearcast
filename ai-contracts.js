@@ -23,25 +23,14 @@ export const PLAN_INTENT_OUTPUT_SCHEMA = Object.freeze({
   additionalProperties: false
 });
 
-const EXAMPLE_FACTS =
-  "Place: Austin, Texas. Local time 7:10am, daytime.\n" +
-  "Right now: 58°F, feels like 56°F, partly cloudy. Wind 6 mph from the S. Humidity 72%.\n" +
-  "Next 2 hours: dry.\n" +
-  "Rest of today: high 88°F, low 57°F, 20% chance of rain. UV index peaks at 8. Sunset 8:14pm.\n" +
-  "Tomorrow: partly cloudy, high 90°F, low 60°F, 10% chance of rain.\n" +
-  "No active weather alerts.";
-
-const EXAMPLE_SUMMARY =
-  "A cool, partly cloudy start near 58° warms fast to a summery high of 88°, staying mostly dry. " +
-  "Get outdoor plans in early — the midday UV hits an 8, so keep sunscreen handy this afternoon.";
-
 export function summaryQuery() {
   return (
     "Write a Nearcast weather summary using only source S1. The output.summary value must be " +
-    "exactly two natural sentences and no more than 45 words. Sentence one says what to expect; " +
+    "exactly two natural sentences and no more than forty-five words. Sentence one says what to expect; " +
     "sentence two gives one practical tip. Never invent, calculate, or alter a number. Do not use " +
-    "a greeting, list, or markdown. The top-level answer may repeat the summary and cite [S1].\n\n" +
-    `STYLE EXAMPLE FACTS:\n${EXAMPLE_FACTS}\n\nSTYLE EXAMPLE SUMMARY:\n${EXAMPLE_SUMMARY}`
+    "a greeting, list, markdown, or citation inside output.summary. There are no example weather " +
+    "facts in this instruction: every condition, number, time, and recommendation must be supported " +
+    "by S1. The top-level answer may repeat the summary and cite [S1]."
   );
 }
 
