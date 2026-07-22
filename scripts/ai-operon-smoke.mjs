@@ -72,6 +72,15 @@ assert.equal(summaryResult.output.summary, summary);
 assert.equal(summaryResult.sources.length, 1);
 assert.equal(summaryResult.protocol_version, "0.1");
 assert.deepEqual(validateSummaryOutput({ summary }, facts), []);
+assert.deepEqual(
+  validateSummaryOutput({ summary: "Partly cloudy and dry through 8 p.m." }, "Partly cloudy and dry through 8 p.m."),
+  [],
+  "a concise single sentence with a time abbreviation remains valid"
+);
+assert.match(
+  validateSummaryOutput({ summary: "Partly cloudy and dry" }, facts).join(" "),
+  /complete sentence/
+);
 assert.match(
   validateSummaryOutput({ summary: summary.replace("88°", "99°") }, facts).join(" "),
   /99/

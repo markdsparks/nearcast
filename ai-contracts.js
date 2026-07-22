@@ -26,8 +26,8 @@ export const PLAN_INTENT_OUTPUT_SCHEMA = Object.freeze({
 export function summaryQuery() {
   return (
     "Write a Nearcast weather summary using only source S1. The output.summary value must be " +
-    "exactly two natural sentences and no more than forty-five words. Sentence one says what to expect; " +
-    "sentence two gives one practical tip. Never invent, calculate, or alter a number. Do not use " +
+    "one or two natural sentences and no more than forty-five words. Say what to expect and, when " +
+    "useful, give one practical tip. Never invent, calculate, or alter a number. Do not use " +
     "a greeting, list, markdown, or citation inside output.summary. There are no example weather " +
     "facts in this instruction: every condition, number, time, and recommendation must be supported " +
     "by S1. The top-level answer may repeat the summary and cite [S1]."
@@ -62,9 +62,8 @@ export function validateSummaryOutput(output, factSheet) {
   const words = summary.match(/\S+/g) || [];
   if (words.length > 45) errors.push("output.summary must contain no more than 45 words");
 
-  const sentences = summary.match(/[^.!?]+[.!?]+(?:[\"'”’)]*)/g) || [];
-  if (sentences.length !== 2 || sentences.join(" ").replace(/\s+/g, " ").trim() !== summary.replace(/\s+/g, " ").trim()) {
-    errors.push("output.summary must contain exactly two complete sentences");
+  if (!/[.!?][\"'”’)]*$/.test(summary)) {
+    errors.push("output.summary must end as a complete sentence");
   }
   if (/^\s*(?:hello|hi|hey|greetings)\b/i.test(summary)) {
     errors.push("output.summary must not contain a greeting");
