@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import init, * as wasm from "../vendor/operon/operon_core.js";
 import { createBrowserDriver } from "../vendor/operon/driver.js";
+import { normalizeProviderCitations } from "../operon-runtime.js";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
@@ -20,6 +21,7 @@ const facts = [
   "No active weather alerts."
 ].join("\n");
 const summary = "A cool, partly cloudy start near 58° warms to a high of 88°. Plan shade around midday because the UV peaks at 8.";
+const summarySources = [{ id: "S1", path: "nearcast://current-weather-facts", text: facts, score: 1 }];
 
 const summaryResult = await operon.run(
   "Write the validated summary.",
@@ -38,18 +40,18 @@ const summaryResult = await operon.run(
     has_application_validator: true
   },
   {
-    retrieve: async () => [{ id: "S1", path: "nearcast://facts", text: facts, score: 1 }],
-    generate: async () => ({
+    retrieve: async () => summarySources,
+    generate: async () => normalizeProviderCitations({
       text: JSON.stringify({
-        answer: `${summary} [S1]`,
+        answer: `${summary} [nearcast://current-weather-facts]`,
         confidence: 0.95,
-        used_source_ids: ["S1"],
+        used_source_ids: ["nearcast://current-weather-facts"],
         output: { summary }
       }),
       prompt_tokens: 100,
       completion_tokens: 40,
       finish_reason: "stop"
-    }),
+    }, summarySources),
     validateOutput: async ({ output }) => validateSummaryOutput(output, facts)
   }
 );
@@ -76,5 +78,17 @@ assert.match(
   /exact words/
 );
 assert.equal(PLAN_INTENT_OUTPUT_SCHEMA.additionalProperties, false);
+
+const appleStyleResponse = normalizeProviderCitations({
+  text: JSON.stringify({
+    answer: `${summary} [nearcast://current-weather-facts]`,
+    confidence: 0.9,
+    used_source_ids: ["nearcast://current-weather-facts"],
+    output: { summary }
+  })
+}, summarySources);
+const normalizedApplePayload = JSON.parse(appleStyleResponse.text);
+assert.deepEqual(normalizedApplePayload.used_source_ids, ["S1"]);
+assert.match(normalizedApplePayload.answer, /\[S1\]$/);
 
 console.log("AI Operon smoke passed");

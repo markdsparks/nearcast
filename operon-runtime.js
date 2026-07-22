@@ -1,5 +1,44 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.286";
+const OPERON_ASSET_VERSION = "3.0.287";
+
+// Some guided model providers treat a source's display path as its identifier.
+// Operon's contract intentionally distinguishes the stable ID (S1) from the
+// path, so canonicalize only exact paths that the host supplied before the
+// response reaches Operon's provenance validator.
+export function normalizeProviderCitations(response, sources = []) {
+  if (!response?.text || !Array.isArray(sources) || sources.length === 0) return response;
+  try {
+    const payload = JSON.parse(response.text);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return response;
+    const pathToId = new Map(
+      sources
+        .filter((source) => source?.id && source?.path && source.id !== source.path)
+        .map((source) => [String(source.path), String(source.id)])
+    );
+    if (pathToId.size === 0) return response;
+
+    let changed = false;
+    if (Array.isArray(payload.used_source_ids)) {
+      payload.used_source_ids = payload.used_source_ids.map((value) => {
+        const replacement = pathToId.get(String(value));
+        if (replacement) changed = true;
+        return replacement || value;
+      });
+    }
+    if (typeof payload.answer === "string") {
+      for (const [path, id] of pathToId) {
+        const citation = `[${path}]`;
+        if (payload.answer.includes(citation)) {
+          payload.answer = payload.answer.split(citation).join(`[${id}]`);
+          changed = true;
+        }
+      }
+    }
+    return changed ? { ...response, text: JSON.stringify(payload) } : response;
+  } catch {
+    return response;
+  }
+}
 
 async function loadDriver() {
   if (!driverPromise) {
@@ -44,14 +83,20 @@ export async function runOperon({
 }) {
   if (typeof generate !== "function") throw new TypeError("Operon requires a generation provider");
   const driver = await loadDriver();
+  let suppliedSources = [];
   return driver.run(
     query,
     sessionConfig({ schema, grounding, validateOutput, timeoutMs }),
     {
-      generate: async ({ request }) => generate(request),
+      generate: async ({ request }) => normalizeProviderCitations(
+        await generate(request),
+        suppliedSources
+      ),
       retrieve: async ({ query: retrievalQuery, limit }) => {
         if (typeof grounding !== "function") return [];
-        return grounding(retrievalQuery, limit);
+        const sources = await grounding(retrievalQuery, limit);
+        suppliedSources = Array.isArray(sources) ? sources : [];
+        return suppliedSources;
       },
       validateOutput: async ({ output }) => {
         if (typeof validateOutput !== "function") return [];
