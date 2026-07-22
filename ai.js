@@ -2,7 +2,7 @@
 // verification, and bounded repair. Inference routes to Apple's system model
 // in the native app when available, otherwise to Qwen in a WebGPU worker.
 import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.84";
-import { runOperon } from "./operon-runtime.js?v=3.0.290";
+import { runOperon } from "./operon-runtime.js?v=3.0.291";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
@@ -12,7 +12,7 @@ import {
   summarySource,
   validatePlanIntentOutput,
   validateSummaryOutput
-} from "./ai-contracts.js?v=3.0.290";
+} from "./ai-contracts.js?v=3.0.291";
 
 const WEB_MODEL = "Qwen3-0.6B-q4f16_1-MLC";
 const WEB_APP_CONFIG = {
@@ -187,7 +187,7 @@ export async function extractPlanIntent(question, signal) {
     schema: PLAN_INTENT_OUTPUT_SCHEMA,
     generate: (request) => generate(request, signal),
     validateOutput: (output) => validatePlanIntentOutput(output, question),
-    timeoutMs: 12000
+    timeoutMs: 20000
   });
   const output = outputFromOperonResult(result);
   if (!output) throw new Error("Operon returned no validated plan intent");

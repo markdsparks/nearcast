@@ -38,7 +38,10 @@ export function planIntentQuery(message) {
   const input = String(message || "").slice(0, 220);
   return (
     "Extract the outdoor plan from USER MESSAGE into output.activity, output.day, output.time, " +
-    "and output.location. Copy only exact words that appear in USER MESSAGE. Use an empty string " +
+    "and output.location. Activity is the shortest meaningful phrase describing what the person " +
+    "wants to do, even when it is unfamiliar; in a question shaped like 'would DAY TIME work for " +
+    "ACTIVITY', copy ACTIVITY. Day and time are their shortest explicit phrases. Location is only a " +
+    "named place, never 'outside' or 'outdoors'. Copy only exact words from USER MESSAGE. Use an empty string " +
     "for a missing field. Do not answer a weather question, infer a forecast, normalize a date, " +
     "or invent details. The top-level answer should briefly say that the plan fields were extracted.\n\n" +
     `USER MESSAGE:\n${input}`

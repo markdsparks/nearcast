@@ -1,5 +1,5 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.290";
+const OPERON_ASSET_VERSION = "3.0.291";
 
 // Some guided model providers treat a source's display path as its identifier.
 // Operon's contract intentionally distinguishes the stable ID (S1) from the

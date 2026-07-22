@@ -20,6 +20,13 @@ let aiBriefAbort = null;
 let aiModule = null;
 let aiWarmQueued = false;
 let aiWarmLoading = false;
+let planIntentDiagnostics = {
+  checkedAt: null,
+  route: "none",
+  aiStatus: "not-attempted",
+  inputLength: 0,
+  error: null
+};
 
 function loadAIModule() {
   if (!aiModule) aiModule = import(`./ai.js?v=${encodeURIComponent(VERSION)}`);
@@ -265,8 +272,9 @@ function supportReportText() {
     app: "Nearcast",
     appVersion: VERSION,
     plannerPhase: aiState.phase,
-    model: LOCAL_AI_MODEL,
+    model: aiState.support?.model || LOCAL_AI_MODEL,
     support: aiState.support,
+    planIntent: planIntentDiagnostics,
     loadError: aiState.loadError || null
   }, null, 2);
 }
@@ -3746,7 +3754,7 @@ const PLAN_SIGNAL_PHRASES = [
   " camp ", " camping ", " recital ", " meetup ", " meet up "
 ];
 const PLAN_FLEXIBLE_ASK_PHRASES = ["best", "best time", "best window", "when should", "when can", "window"];
-const PLAN_LOCAL_AI_TIMEOUT_MS = 8000;
+const PLAN_LOCAL_AI_TIMEOUT_MS = 22000;
 
 const ASK_PERIODS = {
   morning: { start: 6, end: 12, label: "morning" },
@@ -3791,11 +3799,35 @@ async function answerPlanRequest(question) {
 }
 
 async function buildPlannerIntent(question, c) {
+  planIntentDiagnostics = {
+    checkedAt: new Date().toISOString(),
+    route: "none",
+    aiStatus: "not-attempted",
+    inputLength: String(question || "").length,
+    error: null
+  };
   const deterministic = parsePlanRequest(question, c);
-  if (deterministic) return deterministic;
+  if (deterministic) {
+    planIntentDiagnostics.route = "rules";
+    return deterministic;
+  }
   const repaired = repairPlanIntent(question, c);
-  if (repaired) return repaired;
-  return localAIPlanIntent(question, c);
+  if (repaired) {
+    planIntentDiagnostics.route = "repaired-rules";
+    return repaired;
+  }
+  const modelPlan = await localAIPlanIntent(question, c);
+  if (modelPlan) {
+    planIntentDiagnostics.route = "local-ai";
+    return modelPlan;
+  }
+  const generic = genericUnfamiliarOutdoorPlan(question, c);
+  if (generic) {
+    planIntentDiagnostics.route = "generic-event-fallback";
+    return generic;
+  }
+  planIntentDiagnostics.route = "unresolved";
+  return null;
 }
 
 function parsePlanRequest(question, c, options = {}) {
@@ -3942,6 +3974,7 @@ function planFromIntentFragments(original, c, fragments, source) {
   return {
     original,
     activityKey,
+    activityLabel: activityText,
     dayIdx,
     dayExplicit: dayIdx != null,
     dayDisplay: dayMention && dayIdx != null ? dayMention.label : "",
@@ -3954,24 +3987,64 @@ function planFromIntentFragments(original, c, fragments, source) {
     intent: plannerIntentReceipt({
       source,
       confidence,
-      notes: source === "local-ai" ? ["local intent extraction"] : ["repaired loose phrasing"]
+      notes: source === "local-ai"
+        ? ["local intent extraction"]
+        : source === "generic-event-fallback"
+          ? ["generic outdoor-event fallback"]
+          : ["repaired loose phrasing"]
     })
   };
 }
 
 async function localAIPlanIntent(question, c) {
-  if (!shouldTryLocalAIPlanIntent(question, c)) return null;
+  if (!shouldTryLocalAIPlanIntent(question, c)) {
+    planIntentDiagnostics.aiStatus = "not-eligible";
+    return null;
+  }
   try {
+    planIntentDiagnostics.aiStatus = "running";
+    const startedAt = performance.now();
     const ai = await loadAIModule();
-    if (!localAIIntentReady(ai)) return null;
+    if (!localAIIntentReady(ai)) {
+      planIntentDiagnostics.aiStatus = "not-ready";
+      return null;
+    }
     const abort = { aborted: false };
     const raw = await withPlannerTimeout(ai.extractPlanIntent(question, abort), PLAN_LOCAL_AI_TIMEOUT_MS, abort);
     const fragments = parseLocalAIIntent(raw);
-    if (!fragments) return null;
-    return planFromIntentFragments(question, c, fragments, "local-ai");
-  } catch (_) {
+    planIntentDiagnostics.durationMs = Math.round(performance.now() - startedAt);
+    if (!fragments) {
+      planIntentDiagnostics.aiStatus = "invalid-output";
+      return null;
+    }
+    const plan = planFromIntentFragments(question, c, fragments, "local-ai");
+    planIntentDiagnostics.aiStatus = plan ? "success" : "unusable-output";
+    planIntentDiagnostics.fields = Object.fromEntries(
+      Object.entries(fragments).map(([key, value]) => [key, Boolean(value)])
+    );
+    return plan;
+  } catch (error) {
+    const detail = cleanError(error);
+    planIntentDiagnostics.aiStatus = /timed out/i.test(detail) ? "timeout" : "error";
+    planIntentDiagnostics.error = detail || "Local intent extraction failed.";
     return null;
   }
+}
+
+function genericUnfamiliarOutdoorPlan(question, c) {
+  const s = plannerParseText(question);
+  const dayIdx = resolveDayIndex(s, c);
+  const period = inferPlanPeriod(s);
+  if (dayIdx == null || !period || !/\b(?:outside|outdoor|outdoors)\b/.test(s)) return null;
+  const raw = String(question || "").trim();
+  const afterFor = raw.match(/\bfor\s+(.+?)(?:[?.!]|$)/i)?.[1] || "";
+  const activity = afterFor.trim().replace(/\s+/g, " ").slice(0, 90) || "outdoor plan";
+  return planFromIntentFragments(question, c, {
+    activity,
+    day: c.daily?.[dayIdx]?.label || plannerWeekdayMention(question)?.label || "",
+    time: period,
+    location: ""
+  }, "generic-event-fallback");
 }
 
 function shouldTryLocalAIPlanIntent(question, c) {
@@ -7354,7 +7427,11 @@ function planDisplayName(plan) {
   if (hasAny(s, [" ballgame ", " ball game ", " baseball ", " softball "])) return "Ballgame";
   if (plan.activityKey === "golf") return "Golf";
   if (plan.activityKey === "sports") return "Game/practice";
-  if (plan.activityKey === "event") return "Event";
+  if (plan.activityKey === "event") {
+    const label = String(plan.activityLabel || "").trim();
+    if (label && normalizeQualifierKey(label) !== "event") return capitalize(label);
+    return "Event";
+  }
   const label = ACTIVITY_RULES[plan.activityKey]?.label || "Plan";
   return capitalize(label.replace(/^a\s+/, "").replace(/^the\s+/, ""));
 }
@@ -7385,6 +7462,7 @@ function planWhy(plan, place, stats, units, alert) {
   if (plan.dayCorrection) reasons.push(`read "${plan.dayCorrection.from}" as ${plan.dayCorrection.to}`);
   if (plan.locationImplicit) reasons.push(`read ${placeLabel(place)} as the place`);
   if (plan.intent?.source === "local-ai") reasons.push("read the plan details from your wording");
+  else if (plan.intent?.source === "generic-event-fallback") reasons.push("treated the unfamiliar activity as an outdoor event");
   return reasons.join(", ");
 }
 

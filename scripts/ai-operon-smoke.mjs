@@ -6,6 +6,7 @@ import { normalizeProviderCitations } from "../operon-runtime.js";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
+  planIntentQuery,
   summaryQuery,
   validatePlanIntentOutput,
   validateSummaryOutput
@@ -22,6 +23,14 @@ assert.match(
   plannerSource,
   /showSummarySurface\s*=\s*aiState\.phase === "idle"\s*\|\|\s*aiState\.phase === "ready"/,
   "a previously enabled AI provider must keep the Generate summary control visible after reload"
+);
+assert.match(plannerSource, /PLAN_LOCAL_AI_TIMEOUT_MS = 22000/);
+assert.match(plannerSource, /route = "generic-event-fallback"/);
+assert.match(plannerSource, /activityLabel: activityText/);
+assert.match(plannerSource, /planIntent: planIntentDiagnostics/);
+assert.match(
+  planIntentQuery("Would Saturday evening work for senior pictures outside?"),
+  /shortest meaningful phrase describing what the person wants to do/
 );
 await init({ module_or_path: wasmBytes });
 const operon = createBrowserDriver(wasm);
