@@ -31,6 +31,8 @@ assert.match(plannerSource, /!nextPlan\.locationResolvedByIntent/);
 assert.match(plannerSource, /locationResolvedByIntent: source === "local-ai"/);
 assert.match(plannerSource, /planIntent: planIntentDiagnostics/);
 assert.match(plannerSource, /NEARCAST_AGENT_SKILL_REGISTRY = new Map/);
+assert.match(plannerSource, /id: "nearcast\.place_switch"/);
+assert.match(plannerSource, /executeNearcastPlaceSwitchSkill/);
 assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
 assert.match(plannerSource, /invokeRegisteredNearcastSkill\(context, command\)/);

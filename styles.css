@@ -7334,6 +7334,11 @@ body.map-immersive-active .nearcast-ai-fab {
 .ai-sheet-head {
   margin-bottom: 4px;
 }
+.ai-sheet.is-conversation .sheet-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
 .ai-sheet-spark {
   color: var(--blue);
   font-size: 1.6rem;
@@ -7494,6 +7499,8 @@ body.map-immersive-active .nearcast-ai-fab {
   font-size: 1.3rem;
 }
 .ai-sheet.is-conversation .ai-sheet-sub {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

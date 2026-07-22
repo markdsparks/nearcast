@@ -3557,6 +3557,29 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     execute: executeNearcastAnswerSkill
   },
   {
+    id: "nearcast.place_switch",
+    description: "Change Nearcast's active place to a named location. Use for direct requests such as 'switch places to Maryville' or 'change my location to Basel'. This updates the app's selected place and forecast without opening a separate view.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" } },
+      required: ["place"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["switched", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" }
+      },
+      required: ["status", "message", "place"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    prepare: prepareNearcastPlaceSkill,
+    execute: executeNearcastPlaceSwitchSkill
+  },
+  {
     id: "nearcast.forecast_open",
     description: "Select a place and pull up its Nearcast forecast. Use when the user asks to show, open, switch to, or look up a forecast in a place.",
     input_schema: {
@@ -4367,6 +4390,21 @@ async function executeNearcastPlaceNavigationSkill(args, context, type) {
   );
 }
 
+async function executeNearcastPlaceSwitchSkill(args, context) {
+  const requested = String(args?.place || "").trim();
+  const place = await ensureNearcastSkillPlace(requested, context);
+  if (!place) {
+    context.receipt.answer = `I could not switch to ${requested || "that place"}. Try city + state or country.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "" });
+  }
+  const label = placeLabel(place);
+  context.receipt.answer = `Switched Nearcast to ${label}.`;
+  return nearcastSkillResult(
+    { status: "switched", message: context.receipt.answer, place: label },
+    [nearcastPlaceArtifact(place, context)]
+  );
+}
+
 function executeNearcastForecastOpenSkill(args, context) {
   return executeNearcastPlaceNavigationSkill(args, context, "forecast");
 }
@@ -4526,6 +4564,14 @@ async function invokeRegisteredNearcastSkill(context, command) {
 
 function parseNearcastDirectNavigation(question) {
   const raw = String(question || "").trim();
+  const switchMatch = raw.match(/\b(?:switch|change|set)\s+(?:(?:my|the)\s+)?(?:place|places|location)(?:\s+to)?\s+(.+?)[.!?]*$/i) ||
+    raw.match(/\bswitch\s+to\s+(.+?)[.!?]*$/i);
+  if (switchMatch) {
+    const place = String(switchMatch[1] || "").trim();
+    if (place && !nearcastSemanticReference(place)) {
+      return { skillId: "nearcast.place_switch", arguments: { place } };
+    }
+  }
   const activityKey = detectAskActivity(raw) || detectPlanActivity(raw);
   if (activityKey && /\b(?:find|best|best time|best window|when should|when can|window|slot)\b/i.test(raw)) {
     const day = raw.match(/\b((?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1] || "";
