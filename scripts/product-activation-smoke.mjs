@@ -115,6 +115,13 @@ assert.match(styles, /\.plan-invitation-examples[\s\S]*grid-template-columns: re
 assert.match(styles, /\.plan-invitation-dismiss \{[\s\S]*width: 44px;[\s\S]*height: 44px;/, "dismissal has a reliable touch target");
 assert.match(styles, /\.plan-invitation-examples button \{[\s\S]*min-height: 44px;/, "plan starters have reliable touch targets");
 assert.match(styles, /\.watching-switcher-count\[hidden\]/, "a zero Watching count does not leave an empty badge");
+assert.doesNotMatch(html, /class="ai-trust-note"/, "the AI sheet no longer leads with an explanatory card");
+assert.match(planner, /<textarea id="askInput"[\s\S]*aria-label="Ask Nearcast"/, "Nearcast uses a multiline floating composer");
+assert.match(planner, /event\.key !== "Enter" \|\| event\.shiftKey \|\| event\.isComposing/, "Enter submits while Shift+Enter remains available for a new line");
+assert.match(planner, /const target = askStreaming \? form : \(result \|\| form\)/, "submission stays with the composer before revealing the result");
+assert.match(styles, /\.ask-plan-check \{[\s\S]*border-radius: 26px;[\s\S]*backdrop-filter: blur\(24px\)/, "the Nearcast composer uses the intended floating glass treatment");
+assert.match(styles, /\.ask-composer-toolbar \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto 46px/, "the composer toolbar reserves a stable submit target");
+assert.match(styles, /@media \(max-width: 390px\)[\s\S]*\.ask-composer-status \{[\s\S]*display: none;/, "the compact phone layout protects the place and submit controls");
 
 const sandbox = {
   state: {

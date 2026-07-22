@@ -244,6 +244,9 @@ const sheetActivationSource = extractFunction(map, "activateXweatherStormFromShe
 assert.match(sheetActivationSource, /startXweatherStormActivation\(/, "StormScope starts only from the sheet CTA");
 const enterSource = extractFunction(map, "enterImmersiveMap");
 assert.doesNotMatch(enterSource, /nearcastActivateXweatherStorm|startXweatherStormActivation/, "opening the full map never resumes StormScope");
+assert.match(enterSource, /await loadMapFrames\(true, \{ timelineKind: "precip", focusNow: true \}\)/, "immersive entry waits for the requested place timeline");
+assert.match(enterSource, /await waitForImmersiveMapReady\(\)/, "immersive entry waits for a rendered surface postcondition");
+assert.match(map, /fallbackMapLibreRenderer\("Immersive map did not reach its ready postcondition"\)/, "a stuck GL surface falls back to the classic map");
 
 const activationSource = extractFunction(map, "startXweatherStormActivation");
 assert.match(

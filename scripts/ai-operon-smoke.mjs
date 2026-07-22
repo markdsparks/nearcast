@@ -30,6 +30,12 @@ assert.match(plannerSource, /activityLabel: activityText/);
 assert.match(plannerSource, /!nextPlan\.locationResolvedByIntent/);
 assert.match(plannerSource, /locationResolvedByIntent: source === "local-ai"/);
 assert.match(plannerSource, /planIntent: planIntentDiagnostics/);
+assert.match(plannerSource, /NEARCAST_AGENT_SKILL_REGISTRY = new Map/);
+assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
+assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
+assert.match(plannerSource, /invokeRegisteredNearcastSkill\(context, command\)/);
+assert.match(plannerSource, /openDayFromIndex\(Number\(navigation\.dayIndex\)/);
+assert.match(plannerSource, /options\.hours = Math\.max\(1, Math\.min\(8/);
 assert.match(
   planIntentQuery("Would Saturday evening work for senior pictures outside?"),
   /shortest meaningful phrase describing what the person wants to do/

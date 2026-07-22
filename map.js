@@ -11022,8 +11022,26 @@ function handleImmersiveLocationControl() {
   startImmersiveLocationWatch({ userInitiated: true, follow: true });
 }
 
-function enterImmersiveMap() {
-  if (mapState.immersive) return;
+function nextMapPaint() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+async function waitForImmersiveMapReady(timeoutMs = 8000) {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < timeoutMs) {
+    const canvas = document.getElementById("immersiveMapCanvas");
+    const rect = canvas?.getBoundingClientRect();
+    const surfaceReady = Boolean(rect?.width && rect?.height);
+    const record = canvas ? mapLibreRecords.get(canvas) : null;
+    const rendererReady = !mapRendererIsGl() || Boolean(record?.rendered || mapLibreRecordReady(record));
+    if (mapState.immersive && surfaceReady && rendererReady) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+async function enterImmersiveMap() {
+  if (mapState.immersive) return waitForImmersiveMapReady();
   cancelStandardTimelineScrub();
   stopRadarPlayback({ renderStatic: false });
   clearMapLibreInteractionState();
@@ -11063,17 +11081,16 @@ function enterImmersiveMap() {
   syncStandardTimelineSlider(mapState.frameIndex);
   setPlaybackButtonState(els.playRadar, mapState.playing);
 
-  // Wait two frames so the browser has painted the full-screen canvas
-  // before we measure its bounding rect for tile placement
+  // Do not treat the map as open until the full-screen surface has measurable
+  // geometry, the requested place's timeline is loaded, and the renderer has
+  // produced a frame. Agent navigation can therefore await a real postcondition
+  // instead of racing a fixed timeout against WebKit and MapLibre startup.
   const renderImmersiveFrame = () => {
     renderTileMap();
     renderMapLegend();
     showFrame(mapState.frameIndex);
   };
   prepareImmersiveLocation();
-  requestAnimationFrame(() => requestAnimationFrame(renderImmersiveFrame));
-  setTimeout(renderImmersiveFrame, 140);
-  loadMapFrames(true, { timelineKind: "precip", focusNow: true });
   syncXweatherStormActivationControl();
 
   updateImmersiveHUD();
@@ -11088,6 +11105,20 @@ function enterImmersiveMap() {
     bindImmersiveDrag();
   }
   document.addEventListener("keydown", onImmersiveKey);
+
+  await nextMapPaint();
+  renderImmersiveFrame();
+  await loadMapFrames(true, { timelineKind: "precip", focusNow: true });
+  renderImmersiveFrame();
+  const ready = await waitForImmersiveMapReady();
+  if (!ready && mapRendererIsGl()) {
+    // A loaded-but-never-painted GL surface is the failure mode users perceive
+    // as a stuck map. The existing classic renderer is a safe in-session fallback.
+    fallbackMapLibreRenderer("Immersive map did not reach its ready postcondition");
+    await nextMapPaint();
+    renderImmersiveFrame();
+  }
+  return true;
 }
 
 function exitImmersiveMap() {

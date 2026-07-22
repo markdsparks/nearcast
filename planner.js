@@ -3477,7 +3477,7 @@ let launchSummaryTargets = [];
 const NEARCAST_AGENT_MEMORY_NAMESPACE = "nearcast.local";
 const NEARCAST_AGENT_MEMORY_SUBJECT = "primary-profile";
 
-const NEARCAST_AGENT_SKILLS = Object.freeze([
+const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   {
     id: "nearcast.plan_check",
     description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities.",
@@ -3496,7 +3496,8 @@ const NEARCAST_AGENT_SKILLS = Object.freeze([
       required: ["status", "message"],
       additionalProperties: false
     },
-    requires_user_confirmation: false
+    requires_user_confirmation: false,
+    execute: executeNearcastAnswerSkill
   },
   {
     id: "nearcast.weather_answer",
@@ -3516,7 +3517,8 @@ const NEARCAST_AGENT_SKILLS = Object.freeze([
       required: ["status", "message"],
       additionalProperties: false
     },
-    requires_user_confirmation: false
+    requires_user_confirmation: false,
+    execute: executeNearcastAnswerSkill
   },
   {
     id: "nearcast.forecast_open",
@@ -3537,7 +3539,8 @@ const NEARCAST_AGENT_SKILLS = Object.freeze([
       required: ["status", "message", "place"],
       additionalProperties: false
     },
-    requires_user_confirmation: false
+    requires_user_confirmation: false,
+    execute: executeNearcastForecastOpenSkill
   },
   {
     id: "nearcast.map_open",
@@ -3558,9 +3561,72 @@ const NEARCAST_AGENT_SKILLS = Object.freeze([
       required: ["status", "message", "place"],
       additionalProperties: false
     },
-    requires_user_confirmation: false
+    requires_user_confirmation: false,
+    execute: executeNearcastMapOpenSkill
+  },
+  {
+    id: "nearcast.forecast_open_hourly",
+    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        place: { type: "string" },
+        day: { type: "string" }
+      },
+      required: ["place", "day"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["opened", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" },
+        day: { type: "string" }
+      },
+      required: ["status", "message", "place", "day"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    execute: executeNearcastHourlyOpenSkill
+  },
+  {
+    id: "nearcast.plan_find_and_draft",
+    description: "Find the best weather window for an activity at a place on a stated day or period and prepare a Nearcast plan draft. Use for requests like finding a two-hour evening walk window. The user still confirms before Nearcast watches the plan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        request: { type: "string" },
+        place: { type: "string" },
+        day: { type: "string" },
+        period: { type: "string", enum: ["morning", "afternoon", "evening", "night", "day"] },
+        duration_hours: { type: "number", minimum: 1, maximum: 8 }
+      },
+      required: ["request"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["drafted", "needs_input", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" },
+        window: { type: "string" }
+      },
+      required: ["status", "message", "place", "window"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    execute: executeNearcastFindAndDraftSkill
   }
 ]);
+
+const NEARCAST_AGENT_SKILL_REGISTRY = new Map(
+  NEARCAST_AGENT_SKILL_DEFINITIONS.map((definition) => [definition.id, definition])
+);
+const NEARCAST_AGENT_SKILLS = Object.freeze(
+  NEARCAST_AGENT_SKILL_DEFINITIONS.map(({ execute, ...descriptor }) => Object.freeze(descriptor))
+);
 
 function nearcastAgentMemoryScope() {
   return {
@@ -3651,63 +3717,216 @@ async function resolveNearcastAgentPlace(rawPlace) {
   return options.matches?.[0]?.place ? normalizePlace(options.matches[0].place) : null;
 }
 
+function createNearcastAgentContext(question, rowIndex) {
+  return {
+    question,
+    rowIndex,
+    receipt: {
+      answer: "",
+      event: null,
+      clarification: null,
+      navigation: null,
+      skillCalls: 0,
+      outputs: []
+    },
+    lastPlace: state.activePlace || null,
+    lastWindow: null
+  };
+}
+
+async function ensureNearcastSkillPlace(rawPlace, context) {
+  const place = await resolveNearcastAgentPlace(rawPlace);
+  if (!place) return null;
+  if (!samePlanPlace(place, state.activePlace) || !state.forecast) await loadPlace(place);
+  if (!samePlanPlace(place, state.activePlace) || !state.forecast) return null;
+  context.lastPlace = state.activePlace;
+  return state.activePlace;
+}
+
+function nearcastSkillResult(output) {
+  return { output, sources: [] };
+}
+
+async function executeNearcastAnswerSkill(args, context, definition) {
+  const request = String(args?.request || context.question).trim();
+  const checked = await answerPlanRequest(request);
+  if (checked?.clarification) {
+    context.receipt.clarification = checked.clarification;
+    context.receipt.answer = checked.clarification.prompt;
+    return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer });
+  }
+  const fallback = checked?.answer || answerFreeform(request);
+  context.receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
+  context.receipt.event = checked?.event || null;
+  return nearcastSkillResult({
+    status: fallback ? (definition.id === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
+    message: context.receipt.answer
+  });
+}
+
+async function executeNearcastPlaceNavigationSkill(args, context, type) {
+  const requested = String(args?.place || "").trim();
+  const place = await ensureNearcastSkillPlace(requested, context);
+  if (!place) {
+    context.receipt.answer = `I could not load ${requested || "that place"}. Try city + state or country.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "" });
+  }
+  const label = placeLabel(place);
+  context.receipt.answer = type === "map"
+    ? `Opening the weather map centered on ${label}.`
+    : `Showing the forecast for ${label}.`;
+  context.receipt.navigation = { type };
+  return nearcastSkillResult({ status: "opened", message: context.receipt.answer, place: label });
+}
+
+function executeNearcastForecastOpenSkill(args, context) {
+  return executeNearcastPlaceNavigationSkill(args, context, "forecast");
+}
+
+function executeNearcastMapOpenSkill(args, context) {
+  return executeNearcastPlaceNavigationSkill(args, context, "map");
+}
+
+async function executeNearcastHourlyOpenSkill(args, context) {
+  const place = await ensureNearcastSkillPlace(args?.place, context);
+  const dayText = String(args?.day || "").trim();
+  const dayIndex = place ? resolveDayIndex(plannerParseText(dayText), buildAIContext()) : null;
+  if (!place || dayIndex == null || !state.forecast?.daily?.time?.[dayIndex]) {
+    context.receipt.answer = `I could not open hourly details for ${dayText || "that day"}.`;
+    return nearcastSkillResult({
+      status: "unavailable",
+      message: context.receipt.answer,
+      place: place ? placeLabel(place) : "",
+      day: dayText
+    });
+  }
+  const dayLabel = formatDay(state.forecast.daily.time[dayIndex], dayIndex);
+  context.receipt.answer = `Opening ${dayLabel} hourly details for ${placeLabel(place)}.`;
+  context.receipt.navigation = { type: "hourly", dayIndex };
+  return nearcastSkillResult({
+    status: "opened",
+    message: context.receipt.answer,
+    place: placeLabel(place),
+    day: dayLabel
+  });
+}
+
+async function executeNearcastFindAndDraftSkill(args, context) {
+  const requestedPlace = String(args?.place || extractPlanLocationQuery(args?.request) || "").trim();
+  const place = await ensureNearcastSkillPlace(requestedPlace, context);
+  if (!place) {
+    context.receipt.answer = `I could not load ${requestedPlace || "the requested place"}.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "", window: "" });
+  }
+  const request = [args?.request, args?.day, args?.period].filter(Boolean).join(" ");
+  const c = buildAIContext();
+  const options = bestWindowOptionsFromText(request, c);
+  if (Number.isFinite(Number(args?.duration_hours))) {
+    options.hours = Math.max(1, Math.min(8, Number(args.duration_hours)));
+  }
+  const activityKey = detectAskActivity(request) || detectPlanActivity(request) || "walk";
+  const result = bestWindowResult(activityKey, options);
+  if (!result?.event) {
+    context.receipt.answer = result?.answer || "I could not find a forecast window for that plan.";
+    return nearcastSkillResult({
+      status: "unavailable",
+      message: context.receipt.answer,
+      place: placeLabel(place),
+      window: ""
+    });
+  }
+  context.lastWindow = result.event;
+  context.receipt.event = result.event;
+  context.receipt.answer = `${result.answer} I prepared it as a plan draft; you can choose Watch this plan to save it.`;
+  return nearcastSkillResult({
+    status: "drafted",
+    message: context.receipt.answer,
+    place: placeLabel(place),
+    window: result.event.label || `${hourText(result.event.startHour)}-${hourText(result.event.endHour)}`
+  });
+}
+
+async function invokeRegisteredNearcastSkill(context, command) {
+  const definition = NEARCAST_AGENT_SKILL_REGISTRY.get(command?.skillId);
+  if (!definition || typeof definition.execute !== "function") {
+    throw new Error(`Unknown Nearcast skill ${command?.skillId || ""}`);
+  }
+  context.receipt.skillCalls += 1;
+  const result = await definition.execute(command.arguments || {}, context, definition);
+  context.receipt.outputs.push({ skillId: definition.id, output: result?.output || null });
+  return result;
+}
+
 function parseNearcastDirectNavigation(question) {
   const raw = String(question || "").trim();
+  const activityKey = detectAskActivity(raw) || detectPlanActivity(raw);
+  if (activityKey && /\b(?:find|best|best time|best window|when should|when can|window|slot)\b/i.test(raw)) {
+    const day = raw.match(/\b((?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1] || "";
+    const period = raw.match(/\b(morning|afternoon|evening|night|day)\b/i)?.[1]?.toLowerCase() || "";
+    const durationHours = Number(raw.match(/\b(\d+(?:\.\d+)?)\s*(?:hour|hours|hr|hrs)\b/i)?.[1]);
+    const args = {
+      request: raw,
+      place: extractPlanLocationQuery(raw),
+      day,
+      period
+    };
+    if (Number.isFinite(durationHours)) args.duration_hours = durationHours;
+    return { skillId: "nearcast.plan_find_and_draft", arguments: args };
+  }
   if (!/\b(?:open|show|pull up|take me to|go to|switch to)\b/i.test(raw)) return null;
-  const type = /\b(?:map|radar)\b/i.test(raw)
+  const type = /\bhourly\b/i.test(raw)
+    ? "hourly"
+    : /\b(?:map|radar)\b/i.test(raw)
     ? "map"
     : /\b(?:forecast|weather)\b/i.test(raw)
       ? "forecast"
       : "";
   if (!type) return null;
-  const target = raw.match(/\b(?:in|for|at|near|around)\s+(.+?)[.!?]*$/i)?.[1] || "";
+  const targetMatches = [...raw.matchAll(/\b(?:in|for|at|near|around)\s+(.+?)(?=\s+\b(?:in|for|at|near|around)\s+|[.!?]*$)/gi)];
+  const target = targetMatches[targetMatches.length - 1]?.[1] || "";
   const place = target
     .replace(/\b(?:weather\s+)?(?:map|radar|forecast)\b.*$/i, "")
     .replace(/[.!?]+$/g, "")
     .trim();
-  return { type, place };
+  const day = raw.match(/\b((?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1] || "";
+  if (type === "hourly" && !day) return null;
+  const hourlyPlace = type === "hourly" ? (extractPlanLocationQuery(raw) || place) : place;
+  return {
+    skillId: type === "hourly"
+      ? "nearcast.forecast_open_hourly"
+      : type === "map"
+        ? "nearcast.map_open"
+        : "nearcast.forecast_open",
+    arguments: type === "hourly" ? { place: hourlyPlace, day } : { place }
+  };
 }
 
 async function runNearcastDirectNavigation(question) {
   const command = parseNearcastDirectNavigation(question);
   if (!command) return null;
-  const place = await resolveNearcastAgentPlace(command.place);
-  if (!place) {
-    return {
-      answer: `I could not find ${command.place || "that place"}. Try city + state or country.`,
-      navigation: null,
-      skillCalls: 0
-    };
-  }
-  if (!samePlanPlace(place, state.activePlace) || !state.forecast) await loadPlace(place);
-  if (!samePlanPlace(place, state.activePlace)) {
-    return {
-      answer: `I could not load the forecast for ${placeLabel(place)}.`,
-      navigation: null,
-      skillCalls: 0
-    };
-  }
-  const label = placeLabel(state.activePlace || place);
+  const context = createNearcastAgentContext(question, null);
+  await invokeRegisteredNearcastSkill(context, command);
+  const { receipt } = context;
   return {
-    answer: command.type === "map"
-      ? `Opening the weather map centered on ${label}.`
-      : `Showing the forecast for ${label}.`,
-    navigation: command.type,
-    skillCalls: 0
+    answer: receipt.answer,
+    event: receipt.event,
+    navigation: receipt.navigation,
+    skillCalls: receipt.skillCalls
   };
 }
 
-function scheduleNearcastAgentNavigation(navigation) {
-  if (navigation === "map") {
-    setTimeout(() => {
-      closeAISheet();
-      setTimeout(() => enterImmersiveMap(), 320);
-    }, 180);
-  } else if (navigation === "forecast") {
-    setTimeout(() => {
-      closeAISheet();
-      try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
-    }, 180);
+async function scheduleNearcastAgentNavigation(navigation) {
+  const type = typeof navigation === "string" ? navigation : navigation?.type;
+  if (!type) return;
+  closeAISheet();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  if (type === "map") {
+    ensureInlineMapReady(true);
+    await enterImmersiveMap();
+  } else if (type === "hourly") {
+    openDayFromIndex(Number(navigation.dayIndex), { initialMode: "hourly", persistInitialMode: false });
+  } else if (type === "forecast") {
+    try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
   }
 }
 
@@ -3728,72 +3947,14 @@ async function runNearcastAgent(question, rowIndex) {
   }
   if (!localAIAgentReady(ai)) return null;
 
-  const receipt = {
-    answer: "",
-    event: null,
-    clarification: null,
-    navigation: null,
-    skillCalls: 0
-  };
-  const invokeSkill = async ({ skillId, arguments: args }) => {
-    receipt.skillCalls += 1;
-    if (skillId === "nearcast.plan_check" || skillId === "nearcast.weather_answer") {
-      const request = String(args?.request || question).trim();
-      const checked = await answerPlanRequest(request);
-      if (checked?.clarification) {
-        receipt.clarification = checked.clarification;
-        receipt.answer = checked.clarification.prompt;
-        return { output: { status: "needs_input", message: receipt.answer }, sources: [] };
-      }
-      const fallback = checked?.answer || answerFreeform(request);
-      receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
-      receipt.event = checked?.event || null;
-      return {
-        output: {
-          status: fallback ? (skillId === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
-          message: receipt.answer
-        },
-        sources: []
-      };
-    }
-
-    if (skillId === "nearcast.forecast_open" || skillId === "nearcast.map_open") {
-      const place = await resolveNearcastAgentPlace(args?.place);
-      if (!place) {
-        receipt.answer = `I could not find ${String(args?.place || "that place")}. Try city + state or country.`;
-        return {
-          output: { status: "unavailable", message: receipt.answer, place: "" },
-          sources: []
-        };
-      }
-      await loadPlace(place);
-      if (!samePlanPlace(place, state.activePlace)) {
-        receipt.answer = `I could not load the forecast for ${placeLabel(place)}.`;
-        return {
-          output: { status: "unavailable", message: receipt.answer, place: placeLabel(place) },
-          sources: []
-        };
-      }
-      const label = placeLabel(state.activePlace || place);
-      const isMap = skillId === "nearcast.map_open";
-      receipt.answer = isMap
-        ? `Opening the weather map centered on ${label}.`
-        : `Showing the forecast for ${label}.`;
-      receipt.navigation = isMap ? "map" : "forecast";
-      return {
-        output: { status: "opened", message: receipt.answer, place: label },
-        sources: []
-      };
-    }
-
-    throw new Error(`Unknown Nearcast skill ${skillId}`);
-  };
+  const context = createNearcastAgentContext(question, rowIndex);
+  const { receipt } = context;
 
   const abort = { aborted: false };
   const result = await ai.runAgent({
     query: question,
     skills: NEARCAST_AGENT_SKILLS,
-    invokeSkill,
+    invokeSkill: (command) => invokeRegisteredNearcastSkill(context, command),
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
     signal: abort
@@ -3846,6 +4007,7 @@ function fillPlannerTemplate(template, options = {}) {
   input.addEventListener("input", () => {
     form?.classList.remove("is-drafting");
   }, { once: true });
+  syncAskComposerState();
 }
 
 async function runAsk(question, intent) {
@@ -4134,7 +4296,8 @@ const ASK_PERIODS = {
 const PLAN_LOCATION_STOP_WORDS = [
   "today", "tomorrow", "tonight", "morning", "afternoon", "evening", "night",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "on", "for", "at", "from", "between", "before", "after", "around", "about"
+  "on", "for", "at", "from", "between", "before", "after", "around", "about",
+  "that", "which", "where", "would", "could", "should"
 ];
 const PLAN_LOCATION_IGNORE = new Set([
   "the morning", "morning", "the afternoon", "afternoon", "the evening", "evening",
@@ -8646,10 +8809,13 @@ function resetAsk() {
 }
 
 function scrollAskIntoView() {
-  // Keep the newest exchange + input visible inside the sheet.
+  // Submission stays anchored to the composer while work is in flight. Once
+  // Nearcast finishes, move only enough to reveal the fresh receipt or plan.
   requestAnimationFrame(() => {
     const form = document.getElementById("askForm");
-    if (form) form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const result = document.querySelector(".ask-latest-result, .ask-active-thread");
+    const target = askStreaming ? form : (result || form);
+    if (target) target.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
 }
 
@@ -8657,6 +8823,32 @@ function submitAskForm() {
   const input = document.getElementById("askInput");
   if (!input || input.disabled) return;
   runAsk(input.value);
+}
+
+function syncAskComposerState() {
+  const input = document.getElementById("askInput");
+  const form = document.getElementById("askForm");
+  const send = form?.querySelector(".ask-send");
+  if (!input || !form || !send) return;
+  const hasValue = Boolean(input.value.trim());
+  form.classList.toggle("has-value", hasValue);
+  send.disabled = input.disabled || !hasValue;
+  if (input.tagName === "TEXTAREA") {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 132)}px`;
+  }
+}
+
+function bindAskComposerInput() {
+  const input = document.getElementById("askInput");
+  if (!input) return;
+  input.addEventListener("input", syncAskComposerState);
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    submitAskForm();
+  });
+  syncAskComposerState();
 }
 
 function bindAskSendButton() {
@@ -8957,44 +9149,49 @@ function renderAsk() {
   ).join("");
   const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
   const place = state.activePlace ? placeLabel(state.activePlace) : "this place";
-  const promptTitle = editing ? "Update this plan" : "What can Nearcast do?";
-  const promptCopy = editing
-    ? "Change the activity, time, or place. Nearcast will check the new window against the forecast."
-    : state.activePlace
-      ? `Ask about weather, plans, maps, or places. Using ${place} unless you mention another place.`
-      : "Ask Nearcast to open a forecast or map for any place.";
+  const placeholder = editing
+    ? "What would you like to change?"
+    : "Ask Nearcast anything…";
   const latestIndex = latestAskDecisionIndex();
   const latest = renderLatestAskDecision(latestIndex);
   const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
   const activeThread = renderAskWorkingThread(latestIndex, errLine, clarification);
   const history = renderAskHistory(latestIndex);
-  const agentKicker = aiState.phase === "ready"
-    ? "Nearcast AI · on device"
+  const agentKicker = busy
+    ? "Working locally"
+    : aiState.phase === "ready"
+      ? "On-device agent"
     : aiState.phase === "idle"
-      ? "Nearcast AI · setup available"
-      : "Nearcast AI · app tools";
+      ? "App tools ready"
+      : "App tools ready";
+  const showExamples = !editing && !askThread.length && !plannerClarification;
 
   panel.innerHTML =
-    `<section class="ask-plan-check" aria-label="Nearcast AI">` +
-      `<div class="ask-plan-copy">` +
-        `<span>${escapeHtml(agentKicker)}</span>` +
-        `<h3>${escapeHtml(promptTitle)}</h3>` +
-        `<p>${escapeHtml(promptCopy)}</p>` +
-      `</div>` +
+    `<section class="ask-plan-check${busy ? " is-busy" : ""}" aria-label="Ask Nearcast">` +
       `<form class="ask-form" id="askForm">` +
-        `<input id="askInput" type="text" autocomplete="off" ` +
-          `placeholder="Show radar in Liverpool"${dis}>` +
-        `<button type="submit" class="ask-send" aria-label="Ask Nearcast"${dis}>↑</button>` +
+        `<textarea id="askInput" rows="1" maxlength="500" autocomplete="off" ` +
+          `aria-label="Ask Nearcast" placeholder="${escapeHtml(placeholder)}"${dis}></textarea>` +
+        `<div class="ask-composer-toolbar">` +
+          `<span class="ask-composer-place" title="${escapeHtml(place)}">` +
+            `<span aria-hidden="true">⌖</span>${escapeHtml(place)}` +
+          `</span>` +
+          `<span class="ask-composer-status" role="status">` +
+            `<span aria-hidden="true">ϟ</span>${escapeHtml(agentKicker)}` +
+          `</span>` +
+          `<button type="submit" class="ask-send" aria-label="Ask Nearcast"${dis}>` +
+            `<span class="ask-send-glyph" aria-hidden="true">↑</span>` +
+          `</button>` +
+        `</div>` +
       `</form>` +
-      `<div class="ask-plan-examples" aria-label="Plan examples">${examples}</div>` +
-      `<p class="ask-helper">Nearcast AI can use forecasts, maps, saved places, and watched plans.</p>` +
     `</section>` +
+    (showExamples ? `<div class="ask-plan-examples" aria-label="Try asking Nearcast">${examples}</div>` : "") +
     latest +
     activeThread +
     history +
     memorySection;
   bindAskSendButton();
+  bindAskComposerInput();
   const input = document.getElementById("askInput");
   bindInputResponsiveness(input, "planner-input");
   bindSheetInputViewportGuard(input, els.aiSheet);
