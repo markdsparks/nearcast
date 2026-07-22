@@ -3172,14 +3172,16 @@ async function runBrief() {
   }
 }
 
-// Clear per-city briefing text + Q&A when the forecast changes; keep engine state.
+// Clear only the generated briefing when the forecast changes. Nearcast AI is
+// a conversation, so a place-switching skill must not erase its own in-flight
+// turn. Conversation lifetime is controlled only by New chat.
 function resetBriefing() {
   if (aiBriefAbort) aiBriefAbort.aborted = true;
   if (aiState.phase === "generating") aiState.phase = localAIReady() ? "ready" : "unsupported";
   if (aiState.phase === "ready") aiState.text = "";
   aiState.reportCopied = false;
   renderBriefing();
-  resetAsk();
+  renderAsk();
   renderAILauncher();
 }
 
@@ -3414,7 +3416,9 @@ function resolveDayIndex(s, c) {
     const dayName = PLANNER_WEEKDAY_NAMES[wd];
     if (new RegExp(`\\b(?:next|following)\\s+${dayName}\\b`).test(s)) {
       const matches = days.map((day, index) => day.dow === wd ? index : -1).filter((index) => index >= 0);
-      return matches[1] ?? null;
+      // "Next Tuesday" means the upcoming Tuesday unless today itself is
+      // Tuesday, in which case it means the following-week occurrence.
+      return matches[0] === 0 ? (matches[1] ?? null) : (matches[0] ?? null);
     }
     if (new RegExp(`\\b(?:this|coming)\\s+${dayName}\\b`).test(s)) {
       for (let i = 0; i < days.length; i++) if (days[i].dow === wd) return i;
@@ -3422,7 +3426,7 @@ function resolveDayIndex(s, c) {
   }
   if (/\b(?:next|following)\s+weekend\b/.test(s)) {
     const saturdays = days.map((day, index) => day.dow === 6 ? index : -1).filter((index) => index >= 0);
-    return saturdays[1] ?? null;
+    return saturdays[0] === 0 ? (saturdays[1] ?? null) : (saturdays[0] ?? null);
   }
   if (/\b(?:this|coming)\s+weekend\b/.test(s)) {
     for (let i = 0; i < days.length; i++) if (days[i].dow === 6) return i;
@@ -3465,6 +3469,11 @@ let askThread = [];
 let askStreaming = false;
 let askError = "";
 let askAbort = null;
+let nearcastAISurfaceMode = "entry";
+let nearcastAITranscriptScrollTop = null;
+let nearcastAILastAnnouncement = "";
+let nearcastAICloseTimer = 0;
+let nearcastAIFocusReturn = null;
 let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
@@ -3717,10 +3726,11 @@ async function resolveNearcastAgentPlace(rawPlace) {
   return options.matches?.[0]?.place ? normalizePlace(options.matches[0].place) : null;
 }
 
-function createNearcastAgentContext(question, rowIndex) {
+function createNearcastAgentContext(question, rowIndex, signal = null) {
   return {
     question,
     rowIndex,
+    signal,
     receipt: {
       answer: "",
       event: null,
@@ -3734,10 +3744,22 @@ function createNearcastAgentContext(question, rowIndex) {
   };
 }
 
+function assertNearcastAgentRunActive(context) {
+  if (!context?.signal?.aborted) return;
+  throw new Error("Nearcast request cancelled.");
+}
+
 async function ensureNearcastSkillPlace(rawPlace, context) {
-  const place = await resolveNearcastAgentPlace(rawPlace);
+  assertNearcastAgentRunActive(context);
+  const requested = String(rawPlace || "").trim();
+  const useConversationPlace = !requested || /^(?:here|current|current place|selected place)$/i.test(requested);
+  const place = useConversationPlace
+    ? (context.lastPlace || state.activePlace || state.savedPlaces?.[0] || null)
+    : await resolveNearcastAgentPlace(requested);
+  assertNearcastAgentRunActive(context);
   if (!place) return null;
   if (!samePlanPlace(place, state.activePlace) || !state.forecast) await loadPlace(place);
+  assertNearcastAgentRunActive(context);
   if (!samePlanPlace(place, state.activePlace) || !state.forecast) return null;
   context.lastPlace = state.activePlace;
   return state.activePlace;
@@ -3749,6 +3771,13 @@ function nearcastSkillResult(output) {
 
 async function executeNearcastAnswerSkill(args, context, definition) {
   const request = String(args?.request || context.question).trim();
+  // A closed chat may keep working while the user browses elsewhere. For an
+  // implicit-place follow-up, restore the place captured when this turn began
+  // before deterministic weather reasoning reads global forecast state.
+  if (!extractPlanLocationQuery(request)) {
+    await ensureNearcastSkillPlace("", context);
+  }
+  assertNearcastAgentRunActive(context);
   const checked = await answerPlanRequest(request);
   if (checked?.clarification) {
     context.receipt.clarification = checked.clarification;
@@ -3847,12 +3876,14 @@ async function executeNearcastFindAndDraftSkill(args, context) {
 }
 
 async function invokeRegisteredNearcastSkill(context, command) {
+  assertNearcastAgentRunActive(context);
   const definition = NEARCAST_AGENT_SKILL_REGISTRY.get(command?.skillId);
   if (!definition || typeof definition.execute !== "function") {
     throw new Error(`Unknown Nearcast skill ${command?.skillId || ""}`);
   }
   context.receipt.skillCalls += 1;
   const result = await definition.execute(command.arguments || {}, context, definition);
+  assertNearcastAgentRunActive(context);
   context.receipt.outputs.push({ skillId: definition.id, output: result?.output || null });
   return result;
 }
@@ -3901,10 +3932,10 @@ function parseNearcastDirectNavigation(question) {
   };
 }
 
-async function runNearcastDirectNavigation(question) {
+async function runNearcastDirectNavigation(question, signal = null) {
   const command = parseNearcastDirectNavigation(question);
   if (!command) return null;
-  const context = createNearcastAgentContext(question, null);
+  const context = createNearcastAgentContext(question, null, signal);
   await invokeRegisteredNearcastSkill(context, command);
   const { receipt } = context;
   return {
@@ -3918,7 +3949,7 @@ async function runNearcastDirectNavigation(question) {
 async function scheduleNearcastAgentNavigation(navigation) {
   const type = typeof navigation === "string" ? navigation : navigation?.type;
   if (!type) return;
-  closeAISheet();
+  closeAISheet({ restoreFocus: false });
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   if (type === "map") {
     ensureInlineMapReady(true);
@@ -3937,7 +3968,23 @@ function cleanNearcastAgentAnswer(value) {
     .trim();
 }
 
-async function runNearcastAgent(question, rowIndex) {
+function nearcastAgentConversationQuery(question, rowIndex) {
+  const prior = askThread
+    .slice(0, Number.isInteger(rowIndex) ? rowIndex : askThread.length)
+    .filter((exchange) => exchange?.q && exchange?.a)
+    .slice(-3)
+    .map((exchange) =>
+      `User: ${String(exchange.q).slice(0, 120)}\nNearcast: ${String(exchange.a).slice(0, 180)}`
+    );
+  if (!prior.length) return question;
+  return [
+    "Use the recent conversation only to resolve follow-ups. The latest request is authoritative.",
+    ...prior,
+    `Latest user request: ${question}`
+  ].join("\n");
+}
+
+async function runNearcastAgent(question, rowIndex, signal = null) {
   if (aiState.phase !== "ready") return null;
   const ai = await loadAIModule();
   if (typeof ai?.runAgent !== "function") return null;
@@ -3947,18 +3994,18 @@ async function runNearcastAgent(question, rowIndex) {
   }
   if (!localAIAgentReady(ai)) return null;
 
-  const context = createNearcastAgentContext(question, rowIndex);
+  const context = createNearcastAgentContext(question, rowIndex, signal);
   const { receipt } = context;
 
-  const abort = { aborted: false };
   const result = await ai.runAgent({
-    query: question,
+    query: nearcastAgentConversationQuery(question, rowIndex),
     skills: NEARCAST_AGENT_SKILLS,
     invokeSkill: (command) => invokeRegisteredNearcastSkill(context, command),
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
-    signal: abort
+    signal: signal || { aborted: false }
   });
+  assertNearcastAgentRunActive(context);
   if (receipt.clarification) setPlannerClarification(receipt.clarification, rowIndex);
   const answer = receipt.answer || cleanNearcastAgentAnswer(result?.answer);
   if (receipt.skillCalls === 0 && parseNearcastDirectNavigation(question)) return null;
@@ -4016,9 +4063,14 @@ async function runAsk(question, intent) {
   // Engine does one generation at a time — ignore taps while it's busy.
   if (aiState.phase === "generating" || askStreaming) return;
   askError = "";
+  setNearcastAISurfaceMode("conversation", { render: false });
+  const runSignal = { aborted: false };
+  if (askAbort) askAbort.aborted = true;
+  askAbort = runSignal;
+  const runIsCurrent = () => !runSignal.aborted && askAbort === runSignal;
 
   if (plannerClarification && !intent && shouldUseAsClarification(question)) {
-    await continuePlannerClarificationWithText(question);
+    await continuePlannerClarificationWithText(question, runSignal);
     return;
   }
   plannerClarification = null;
@@ -4031,15 +4083,16 @@ async function runAsk(question, intent) {
     if (typeof recordForYouSignal === "function") recordForYouSignal("plan-check-started");
     const row = beginAskResponse(question);
     try {
-      finishAskResponse(row, await answerPresetIntent(intent, question, row));
+      const preset = await answerPresetIntent(intent, question, row);
+      if (runIsCurrent()) finishAskResponse(row, preset);
     } catch {
-      finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
+      if (runIsCurrent()) finishAskResponse(row, "I hit a snag checking that preset. Try typing the plan with a day and time.");
     }
     return;
   }
 
   if (plannerEditingMemoryId) {
-    await runMemoryEdit(question, plannerEditingMemoryId);
+    await runMemoryEdit(question, plannerEditingMemoryId, runSignal);
     return;
   }
 
@@ -4052,22 +4105,26 @@ async function runAsk(question, intent) {
   const row = beginAskResponse(question);
   try {
     try {
-      const agent = await runNearcastAgent(question, row);
+      const agent = await runNearcastAgent(question, row, runSignal);
+      if (!runIsCurrent()) return;
       if (agent) {
         finishAskResponse(row, agent);
-        scheduleNearcastAgentNavigation(agent.navigation);
+        await scheduleNearcastAgentNavigation(agent.navigation);
         return;
       }
     } catch (agentError) {
+      if (!runIsCurrent()) return;
       planIntentDiagnostics.agentError = cleanError(agentError);
     }
-    const directNavigation = await runNearcastDirectNavigation(question);
+    const directNavigation = await runNearcastDirectNavigation(question, runSignal);
+    if (!runIsCurrent()) return;
     if (directNavigation) {
       finishAskResponse(row, directNavigation);
-      scheduleNearcastAgentNavigation(directNavigation.navigation);
+      await scheduleNearcastAgentNavigation(directNavigation.navigation);
       return;
     }
     const plan = await answerPlanRequest(question);
+    if (!runIsCurrent()) return;
     if (plan?.clarification) {
       setPlannerClarification(plan.clarification, row);
       finishAskResponse(row, plan.clarification.prompt);
@@ -4076,15 +4133,16 @@ async function runAsk(question, intent) {
     const direct = plan?.answer || answerFreeform(question);
     finishAskResponse(row, plan?.answer ? plan : direct);
   } catch (error) {
-    finishAskResponse(row, "I hit a snag checking that plan. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
+    if (runIsCurrent()) finishAskResponse(row, "I hit a snag checking that plan. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
   }
 }
 
-async function runMemoryEdit(question, memoryId) {
+async function runMemoryEdit(question, memoryId, signal = null) {
   plannerEditingMemoryDraft = question;
   const row = beginAskResponse(question);
   try {
     const result = await answerPlanRequest(question);
+    if (signal?.aborted || (signal && askAbort !== signal)) return;
     if (result?.clarification) {
       setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
@@ -4095,7 +4153,9 @@ async function runMemoryEdit(question, memoryId) {
       original: question
     });
   } catch {
-    finishAskResponse(row, "I hit a snag updating that memory. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
+    if (!signal?.aborted && (!signal || askAbort === signal)) {
+      finishAskResponse(row, "I hit a snag updating that memory. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
+    }
   }
 }
 
@@ -4171,6 +4231,10 @@ async function runPlannerClarification(index) {
   if (!option) return;
   const pending = plannerClarification;
   const editingMemoryId = plannerEditingMemoryId;
+  const runSignal = { aborted: false };
+  if (askAbort) askAbort.aborted = true;
+  askAbort = runSignal;
+  const runIsCurrent = () => !runSignal.aborted && askAbort === runSignal;
   plannerClarification = null;
   let row = null;
   try {
@@ -4202,6 +4266,7 @@ async function runPlannerClarification(index) {
     }
     row = beginAskResponse(option.label);
     const result = await completePlanRequest(pending.plan, option);
+    if (!runIsCurrent()) return;
     if (result?.clarification) {
       setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
@@ -4212,6 +4277,7 @@ async function runPlannerClarification(index) {
       original: plannerEditingMemoryDraft || pending.plan?.original || option.label
     } : {});
   } catch {
+    if (!runIsCurrent()) return;
     if (Number.isInteger(row)) {
       finishAskResponse(row, "I could not check that plan. Try adding the city/state and a time window.");
     } else {
@@ -4222,7 +4288,7 @@ async function runPlannerClarification(index) {
   }
 }
 
-async function continuePlannerClarificationWithText(text) {
+async function continuePlannerClarificationWithText(text, signal = null) {
   const pending = plannerClarification;
   const editingMemoryId = plannerEditingMemoryId;
   plannerClarification = null;
@@ -4240,6 +4306,7 @@ async function continuePlannerClarificationWithText(text) {
       option.replaceTime = Boolean(pending.replaceTime);
     }
     const result = await completePlanRequest(pending.plan, option);
+    if (signal?.aborted || (signal && askAbort !== signal)) return;
     if (result?.clarification) {
       setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
@@ -4250,7 +4317,9 @@ async function continuePlannerClarificationWithText(text) {
       original: plannerEditingMemoryDraft || pending.plan?.original || text
     } : {});
   } catch {
-    finishAskResponse(row, `I could not use that detail. Try something like "${formatClock(18, 0, false, false)}" or "Fillmore, IL."`);
+    if (!signal?.aborted && (!signal || askAbort === signal)) {
+      finishAskResponse(row, `I could not use that detail. Try something like "${formatClock(18, 0, false, false)}" or "Fillmore, IL."`);
+    }
   }
 }
 
@@ -5224,8 +5293,9 @@ function startMemoryTextEdit(id) {
   const memory = state.planMemories.find((item) => item.id === id);
   if (!memory) return;
 
+  const chatLog = document.getElementById("askChatLog");
   const restoreScroll = !els.aiSheet?.hidden
-    ? els.aiSheet.scrollTop
+    ? chatLog?.scrollTop ?? 0
     : plannerReturnAfterDayDetail?.scrollTop ?? null;
   if (!els.memoryDetailSheet?.hidden) closeMemoryDetail();
   if (!els.memoryEditSheet?.hidden) closeMemoryEditSheet();
@@ -5239,7 +5309,7 @@ function startMemoryTextEdit(id) {
   if (els.aiSheet?.hidden) {
     openAISheet({ restoreScroll, autoBrief: false });
   } else if (restoreScroll !== null && restoreScroll !== undefined) {
-    els.aiSheet.scrollTop = restoreScroll;
+    if (chatLog) chatLog.scrollTop = restoreScroll;
   }
   renderAsk();
   requestAnimationFrame(() => editPlanMemory(memory.id));
@@ -5267,8 +5337,9 @@ async function showPlanMemory(id, options = {}) {
   const memory = state.planMemories.find((item) => item.id === id);
   if (!memory) return;
   const returnToPlanner = options.returnToPlanner ?? !els.aiSheet?.hidden;
+  const chatLog = document.getElementById("askChatLog");
   plannerReturnAfterDayDetail = returnToPlanner
-    ? { scrollTop: els.aiSheet?.scrollTop || 0 }
+    ? { scrollTop: chatLog?.scrollTop ?? 0 }
     : null;
   if (!els.aiSheet?.hidden) closeAISheet();
   const switchingPlaces = !samePlanPlace(memory.place, state.activePlace);
@@ -8801,28 +8872,98 @@ function answerFreeform(q) {
 
 function resetAsk() {
   if (askAbort) askAbort.aborted = true;
+  askAbort = null;
   askThread = [];
   askStreaming = false;
   askError = "";
   plannerClarification = null;
+  nearcastAITranscriptScrollTop = null;
+  nearcastAILastAnnouncement = "";
+  setNearcastAISurfaceMode("entry", { render: false });
+  const input = document.getElementById("askInput");
+  if (input) input.value = "";
+  const announcement = document.getElementById("askAnnouncement");
+  if (announcement) announcement.textContent = "";
   renderAsk();
 }
 
-function scrollAskIntoView() {
-  // Submission stays anchored to the composer while work is in flight. Once
-  // Nearcast finishes, move only enough to reveal the fresh receipt or plan.
+function startNewNearcastConversation() {
+  clearPlannerMemoryEdit();
+  resetAsk();
   requestAnimationFrame(() => {
-    const form = document.getElementById("askForm");
-    const result = document.querySelector(".ask-latest-result, .ask-active-thread");
-    const target = askStreaming ? form : (result || form);
-    if (target) target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    try { document.getElementById("askInput")?.focus({ preventScroll: true }); } catch {}
+  });
+}
+
+function stopNearcastResponse() {
+  if (askAbort) askAbort.aborted = true;
+  if (aiState.phase === "generating" && aiBriefAbort) aiBriefAbort.aborted = true;
+  askAbort = null;
+  const active = askThread[askThread.length - 1];
+  if (askStreaming && active && !active.a) active.a = "Stopped.";
+  askStreaming = false;
+  renderAsk();
+  scrollAskIntoView();
+}
+
+function handleNearcastHeaderAction() {
+  if (aiState.phase === "generating" || askStreaming) {
+    stopNearcastResponse();
+    return;
+  }
+  startNewNearcastConversation();
+}
+
+function trapNearcastAIFocus(event) {
+  if (event.key !== "Tab" || els.aiSheet?.hidden || !els.aiSheet?.classList.contains("show")) return;
+  const focusable = [...els.aiSheet.querySelectorAll(
+    'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+  )].filter((element) => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden");
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !els.aiSheet.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !els.aiSheet.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function setNearcastAISurfaceMode(mode, options = {}) {
+  const next = mode === "conversation" ? "conversation" : "entry";
+  nearcastAISurfaceMode = next;
+  const sheet = els.aiSheet;
+  const backdrop = els.aiBackdrop;
+  sheet?.classList.toggle("is-entry", next === "entry");
+  sheet?.classList.toggle("is-conversation", next === "conversation");
+  if (sheet) sheet.dataset.aiSurface = next;
+  backdrop?.classList.toggle("is-ai-entry", next === "entry");
+  backdrop?.classList.toggle("is-ai-conversation", next === "conversation");
+  if (options.render !== false) renderAsk();
+}
+
+function scrollAskIntoView() {
+  requestAnimationFrame(() => {
+    syncAskComposerState();
+    const log = document.getElementById("askChatLog");
+    if (!log || nearcastAISurfaceMode !== "conversation") return;
+    try { log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); }
+    catch { log.scrollTop = log.scrollHeight; }
   });
 }
 
 function submitAskForm() {
   const input = document.getElementById("askInput");
   if (!input || input.disabled) return;
-  runAsk(input.value);
+  if (aiState.phase === "generating" || askStreaming) return;
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = "";
+  syncAskComposerState();
+  if (window.matchMedia?.("(pointer: coarse)")?.matches) input.blur();
+  runAsk(question);
 }
 
 function syncAskComposerState() {
@@ -8831,11 +8972,13 @@ function syncAskComposerState() {
   const send = form?.querySelector(".ask-send");
   if (!input || !form || !send) return;
   const hasValue = Boolean(input.value.trim());
+  const busy = aiState.phase === "generating" || askStreaming;
   form.classList.toggle("has-value", hasValue);
-  send.disabled = input.disabled || !hasValue;
+  send.disabled = input.disabled || busy || !hasValue;
   if (input.tagName === "TEXTAREA") {
     input.style.height = "auto";
-    input.style.height = `${Math.min(input.scrollHeight, 132)}px`;
+    const maxComposerHeight = nearcastAISurfaceMode === "entry" ? 72 : 96;
+    input.style.height = `${Math.min(input.scrollHeight, maxComposerHeight)}px`;
   }
 }
 
@@ -8844,7 +8987,9 @@ function bindAskComposerInput() {
   if (!input) return;
   input.addEventListener("input", syncAskComposerState);
   input.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    if (event.key !== "Enter" || event.isComposing) return;
+    const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
+    if ((coarsePointer && !event.ctrlKey && !event.metaKey) || event.shiftKey) return;
     event.preventDefault();
     submitAskForm();
   });
@@ -9062,6 +9207,30 @@ function renderAskExchange(exchange, index) {
   `</div>`;
 }
 
+function renderNearcastConversationExchange(exchange, index) {
+  const streaming = askStreaming && index === askThread.length - 1;
+  const userMessage = `
+    <div class="ask-chat-message is-user">
+      <div class="ask-chat-bubble">${escapeHtml(exchange.q)}</div>
+    </div>`;
+  if (exchange.event && !streaming) {
+    return `<article class="ask-chat-turn" data-turn-index="${index}">` +
+      userMessage +
+      `<div class="ask-chat-message is-assistant is-card">${renderPlanDecisionExchange(exchange, index)}</div>` +
+    `</article>`;
+  }
+  const answer = streaming
+    ? `<span class="ask-chat-thinking"><i></i><i></i><i></i><span>Working on that…</span></span>`
+    : escapeHtml(exchange.a || AI_FALLBACK_MSG);
+  return `<article class="ask-chat-turn" data-turn-index="${index}">` +
+    userMessage +
+    `<div class="ask-chat-message is-assistant">` +
+      `<div class="ask-chat-avatar" aria-hidden="true">✦</div>` +
+      `<div class="ask-chat-bubble">${answer}</div>` +
+    `</div>` +
+  `</article>`;
+}
+
 function latestAskDecisionIndex() {
   for (let index = askThread.length - 1; index >= 0; index -= 1) {
     const streaming = askStreaming && index === askThread.length - 1;
@@ -9138,26 +9307,15 @@ function renderAsk() {
   }
   panel.hidden = false;
 
+  setNearcastAISurfaceMode(nearcastAISurfaceMode, { render: false });
   const busy = aiState.phase === "generating" || askStreaming;
   const dis = busy ? " disabled" : "";
-
-  const memorySection = renderPlanMemorySection();
-  const examples = plannerStarterExamples().map((example) =>
-    `<button class="ask-example-chip" type="button" data-ask-template="${escapeHtml(example.template)}"${dis}>` +
-      `${escapeHtml(example.label)}` +
-    `</button>`
-  ).join("");
   const editing = plannerEditingMemoryId && state.planMemories.some((memory) => memory.id === plannerEditingMemoryId);
   const place = state.activePlace ? placeLabel(state.activePlace) : "this place";
   const placeholder = editing
     ? "What would you like to change?"
     : "Ask Nearcast anything…";
-  const latestIndex = latestAskDecisionIndex();
-  const latest = renderLatestAskDecision(latestIndex);
-  const errLine = askError ? `<p class="ask-err">${escapeHtml(askError)}</p>` : "";
   const clarification = renderPlannerClarification(dis);
-  const activeThread = renderAskWorkingThread(latestIndex, errLine, clarification);
-  const history = renderAskHistory(latestIndex);
   const agentKicker = busy
     ? "Working locally"
     : aiState.phase === "ready"
@@ -9165,36 +9323,63 @@ function renderAsk() {
     : aiState.phase === "idle"
       ? "App tools ready"
       : "App tools ready";
-  const showExamples = !editing && !askThread.length && !plannerClarification;
-
-  panel.innerHTML =
-    `<section class="ask-plan-check${busy ? " is-busy" : ""}" aria-label="Ask Nearcast">` +
-      `<form class="ask-form" id="askForm">` +
-        `<textarea id="askInput" rows="1" maxlength="500" autocomplete="off" ` +
-          `aria-label="Ask Nearcast" placeholder="${escapeHtml(placeholder)}"${dis}></textarea>` +
-        `<div class="ask-composer-toolbar">` +
-          `<span class="ask-composer-place" title="${escapeHtml(place)}">` +
-            `<span aria-hidden="true">⌖</span>${escapeHtml(place)}` +
-          `</span>` +
-          `<span class="ask-composer-status" role="status">` +
-            `<span aria-hidden="true">ϟ</span>${escapeHtml(agentKicker)}` +
-          `</span>` +
-          `<button type="submit" class="ask-send" aria-label="Ask Nearcast"${dis}>` +
-            `<span class="ask-send-glyph" aria-hidden="true">↑</span>` +
-          `</button>` +
-        `</div>` +
-      `</form>` +
-    `</section>` +
-    (showExamples ? `<div class="ask-plan-examples" aria-label="Try asking Nearcast">${examples}</div>` : "") +
-    latest +
-    activeThread +
-    history +
-    memorySection;
-  bindAskSendButton();
-  bindAskComposerInput();
   const input = document.getElementById("askInput");
-  bindInputResponsiveness(input, "planner-input");
-  bindSheetInputViewportGuard(input, els.aiSheet);
+  const form = document.getElementById("askForm");
+  const card = form?.closest(".ask-plan-check");
+  const placeNode = document.getElementById("askComposerPlace");
+  const statusNode = document.getElementById("askComposerStatus");
+  const contextNode = document.getElementById("aiSheetContext");
+  const log = document.getElementById("askChatLog");
+  const announcement = document.getElementById("askAnnouncement");
+  const newChat = document.getElementById("aiNewChat");
+  if (input && input.dataset.askComposerBound !== "1") {
+    input.dataset.askComposerBound = "1";
+    bindAskComposerInput();
+    bindInputResponsiveness(input, "planner-input");
+    bindSheetInputViewportGuard(input, els.aiSheet);
+  }
+  if (form && form.dataset.askSubmitBound !== "1") {
+    form.dataset.askSubmitBound = "1";
+    bindAskSendButton();
+  }
+  if (input) {
+    input.placeholder = placeholder;
+    // Keep the field draftable while Nearcast is working. Only submission is
+    // disabled, so a follow-up typed during a long local run is never lost.
+    input.disabled = false;
+  }
+  card?.classList.toggle("is-busy", busy);
+  if (newChat) {
+    newChat.disabled = false;
+    newChat.textContent = busy ? "Stop" : "New chat";
+    newChat.setAttribute("aria-label", busy ? "Stop Nearcast response" : "Start a new Nearcast chat");
+  }
+  if (placeNode) {
+    placeNode.title = place;
+    placeNode.innerHTML = `<span aria-hidden="true">⌖</span>${escapeHtml(place)}`;
+  }
+  if (statusNode) statusNode.innerHTML = `<span aria-hidden="true">ϟ</span>${escapeHtml(agentKicker)}`;
+  if (contextNode) contextNode.textContent = `${place} · ${agentKicker}`;
+  if (log) {
+    const turns = askThread.map(renderNearcastConversationExchange).join("");
+    const errorBlock = askError
+      ? `<div class="ask-chat-message is-assistant is-error"><div class="ask-chat-avatar" aria-hidden="true">!</div><div class="ask-chat-bubble">${escapeHtml(askError)}</div></div>`
+      : "";
+    const followup = clarification ? `<div class="ask-chat-followup">${clarification}</div>` : "";
+    log.innerHTML = turns + errorBlock + followup;
+    log.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+  const latestAnswer = askThread[askThread.length - 1]?.a || "";
+  const nextAnnouncement = askError
+    ? askError
+    : busy
+      ? "Nearcast is working."
+      : latestAnswer;
+  if (announcement && nextAnnouncement && nextAnnouncement !== nearcastAILastAnnouncement) {
+    announcement.textContent = nextAnnouncement;
+    nearcastAILastAnnouncement = nextAnnouncement;
+  }
+  syncAskComposerState();
   perfEnd("renderAsk", perf);
 }
 
@@ -9202,7 +9387,7 @@ function showPlannerEvent(rowIndex) {
   const event = askThread[rowIndex]?.event;
   if (!event?.data || !event.place) return;
   plannerReturnAfterDayDetail = {
-    scrollTop: els.aiSheet?.scrollTop || 0
+    scrollTop: document.getElementById("askChatLog")?.scrollTop || 0
   };
   closeAISheet();
   const opened = openPlannerEventDetail(event);
@@ -9290,6 +9475,18 @@ function renderAILauncher() {
 
 function openAISheet(options = {}) {
   const { restoreScroll = null, autoBrief = false } = options;
+  if (nearcastAICloseTimer) {
+    clearTimeout(nearcastAICloseTimer);
+    nearcastAICloseTimer = 0;
+  }
+  if (els.aiSheet?.hidden) nearcastAIFocusReturn = document.activeElement;
+  const requestedMode = options.mode || (
+    askThread.length || plannerClarification || plannerEditingMemoryId || askStreaming
+      ? "conversation"
+      : "entry"
+  );
+  setNearcastAISurfaceMode(requestedMode, { render: false });
+  renderAsk();
   if (typeof retirePlanInvitationForPlanCheckEntry === "function") {
     retirePlanInvitationForPlanCheckEntry();
   }
@@ -9301,23 +9498,34 @@ function openAISheet(options = {}) {
     canPullDismiss: () => aiState.phase !== "generating" && !askStreaming
   });
   document.body.style.overflow = "hidden";
-  if (restoreScroll !== null && restoreScroll !== undefined) {
-    requestAnimationFrame(() => {
-      els.aiSheet.scrollTop = restoreScroll;
-    });
-  }
+  requestAnimationFrame(() => {
+    const log = document.getElementById("askChatLog");
+    if (nearcastAISurfaceMode === "conversation" && log) {
+      log.scrollTop = restoreScroll ?? nearcastAITranscriptScrollTop ?? log.scrollHeight;
+    } else {
+      try { document.getElementById("askInput")?.focus({ preventScroll: true }); } catch {}
+    }
+  });
   // Summary generation is optional; the planner sheet opens directly to plan checking.
   if (autoBrief && aiState.phase === "ready" && !aiState.text) runBrief();
 }
 
-function closeAISheet() {
+function closeAISheet(options = {}) {
+  const log = document.getElementById("askChatLog");
+  if (log) nearcastAITranscriptScrollTop = log.scrollTop;
   els.aiBackdrop.classList.remove("show");
   els.aiSheet.classList.remove("show");
   clearSheetScrollAnchor(els.aiSheet);
   clearSheetKeyboardGuard(els.aiSheet);
   document.body.style.overflow = "";
-  setTimeout(() => {
+  if (nearcastAICloseTimer) clearTimeout(nearcastAICloseTimer);
+  nearcastAICloseTimer = setTimeout(() => {
+    nearcastAICloseTimer = 0;
+    if (els.aiSheet.classList.contains("show")) return;
     els.aiBackdrop.hidden = true;
     els.aiSheet.hidden = true;
+    if (options?.restoreFocus !== false && nearcastAIFocusReturn?.isConnected) {
+      try { nearcastAIFocusReturn.focus({ preventScroll: true }); } catch {}
+    }
   }, 280);
 }

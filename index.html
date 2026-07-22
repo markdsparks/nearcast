@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.302">
-    <link rel="manifest" href="manifest.json?v=3.0.302">
+    <link rel="stylesheet" href="styles.css?v=3.0.303">
+    <link rel="manifest" href="manifest.json?v=3.0.303">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.302">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.302">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.303">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.303">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -738,17 +738,35 @@
     </aside>
 
     <div class="sheet-backdrop" id="aiBackdrop" hidden></div>
-    <aside class="day-sheet ai-sheet" id="aiSheet" hidden data-pull-dismiss="enabled" aria-label="Nearcast AI" role="dialog" aria-modal="true">
+    <aside class="day-sheet ai-sheet is-entry" id="aiSheet" hidden data-pull-dismiss="enabled" aria-labelledby="aiSheetTitle" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
+      <button class="ai-new-chat" id="aiNewChat" type="button">New chat</button>
       <button class="sheet-close" id="aiSheetClose" type="button" aria-label="Close Nearcast AI">✕</button>
       <header class="sheet-head ai-sheet-head">
         <span class="ai-sheet-spark" aria-hidden="true">✦</span>
         <div class="sheet-head-text">
-          <h2>Nearcast AI</h2>
-          <p class="ai-sheet-sub">Ask, plan, and move through Nearcast</p>
+          <h2 id="aiSheetTitle">Nearcast AI</h2>
+          <p class="ai-sheet-sub" id="aiSheetContext">Private, on-device weather agent</p>
         </div>
       </header>
-      <div class="ai-ask" id="aiAsk" hidden></div>
+      <div class="ai-ask" id="aiAsk" hidden>
+        <div class="ask-chat-log" id="askChatLog" aria-label="Nearcast conversation"></div>
+        <div class="sr-only" id="askAnnouncement" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div class="ask-composer-dock">
+          <section class="ask-plan-check" aria-label="Ask Nearcast">
+            <form class="ask-form" id="askForm">
+              <textarea id="askInput" rows="1" maxlength="500" autocomplete="off" aria-label="Ask Nearcast" placeholder="Ask Nearcast anything…"></textarea>
+              <div class="ask-composer-toolbar">
+                <span class="ask-composer-place" id="askComposerPlace"></span>
+                <span class="ask-composer-status" id="askComposerStatus" role="status"></span>
+                <button type="submit" class="ask-send" aria-label="Ask Nearcast" disabled>
+                  <span class="ask-send-glyph" aria-hidden="true">↑</span>
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
       <div class="briefing" id="briefing" hidden></div>
     </aside>
 
@@ -951,16 +969,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.302"></script>
-    <script src="planner.js?v=3.0.302"></script>
-    <script src="app.js?v=3.0.302"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.302"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.302"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.302"></script>
-    <script src="raw-map-runtime.js?v=3.0.302"></script>
-    <script src="map.js?v=3.0.302"></script>
-    <script src="sky.js?v=3.0.302"></script>
-    <script src="daygraph.js?v=3.0.302"></script>
-    <script src="boot.js?v=3.0.302"></script>
+    <script src="weather-truth.js?v=3.0.303"></script>
+    <script src="planner.js?v=3.0.303"></script>
+    <script src="app.js?v=3.0.303"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.303"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.303"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.303"></script>
+    <script src="raw-map-runtime.js?v=3.0.303"></script>
+    <script src="map.js?v=3.0.303"></script>
+    <script src="sky.js?v=3.0.303"></script>
+    <script src="daygraph.js?v=3.0.303"></script>
+    <script src="boot.js?v=3.0.303"></script>
   </body>
 </html>

@@ -116,12 +116,28 @@ assert.match(styles, /\.plan-invitation-dismiss \{[\s\S]*width: 44px;[\s\S]*heig
 assert.match(styles, /\.plan-invitation-examples button \{[\s\S]*min-height: 44px;/, "plan starters have reliable touch targets");
 assert.match(styles, /\.watching-switcher-count\[hidden\]/, "a zero Watching count does not leave an empty badge");
 assert.doesNotMatch(html, /class="ai-trust-note"/, "the AI sheet no longer leads with an explanatory card");
-assert.match(planner, /<textarea id="askInput"[\s\S]*aria-label="Ask Nearcast"/, "Nearcast uses a multiline floating composer");
-assert.match(planner, /event\.key !== "Enter" \|\| event\.shiftKey \|\| event\.isComposing/, "Enter submits while Shift+Enter remains available for a new line");
-assert.match(planner, /const target = askStreaming \? form : \(result \|\| form\)/, "submission stays with the composer before revealing the result");
+assert.match(html, /class="day-sheet ai-sheet is-entry"[\s\S]*id="askChatLog"[\s\S]*<textarea id="askInput"[\s\S]*aria-label="Ask Nearcast"/, "Nearcast keeps a persistent prompt and conversation shell");
+assert.match(planner, /setNearcastAISurfaceMode\("conversation", \{ render: false \}\)[\s\S]*beginAskResponse\(question\)/, "every submitted prompt promotes into the conversation workspace");
+assert.match(planner, /coarsePointer[\s\S]*event\.shiftKey/, "desktop Enter submits while phone Return and Shift+Enter remain available for a new line");
+assert.match(planner, /askThread\.map\(renderNearcastConversationExchange\)/, "the conversation renders all turns in chronological order");
+assert.match(planner, /function resetBriefing\([\s\S]*renderAsk\(\);[\s\S]*renderAILauncher\(\);/, "forecast refreshes preserve the active Nearcast conversation");
+assert.doesNotMatch(planner.match(/function resetBriefing\([\s\S]*?\n\}/)?.[0] || "", /resetAsk\(/, "place-changing skills cannot erase their own conversation");
+assert.match(planner, /function nearcastAgentConversationQuery\([\s\S]*Latest user request:/, "Operon receives bounded recent conversation context for follow-ups");
+assert.match(planner, /matches\[0\] === 0 \? \(matches\[1\] \?\? null\) : \(matches\[0\] \?\? null\)/, "next-weekday requests use the upcoming occurrence unless today has that weekday");
+assert.match(planner, /useConversationPlace[\s\S]*context\.lastPlace \|\| state\.activePlace[\s\S]*function executeNearcastAnswerSkill[\s\S]*ensureNearcastSkillPlace\("", context\)/, "implicit-place follow-ups stay grounded in the conversation's submission context");
+assert.match(planner, /input\.disabled = false;[\s\S]*syncAskComposerState\(\)/, "users can draft a follow-up while local AI is working");
+assert.match(planner, /send\.disabled = input\.disabled \|\| busy \|\| !hasValue/, "follow-up drafts cannot submit until the active local run finishes");
+assert.match(planner, /const runIsCurrent = \(\)[\s\S]*if \(!runIsCurrent\(\)\) return;/, "stale agent runs cannot complete or navigate a replacement conversation");
+assert.match(planner, /function stopNearcastResponse\([\s\S]*askAbort\.aborted = true[\s\S]*active\.a = "Stopped\."/, "the conversation offers a real stop action without discarding prior turns");
+assert.match(planner, /function trapNearcastAIFocus\([\s\S]*event\.key !== "Tab"[\s\S]*last\.focus\(\)/, "the modal conversation keeps keyboard focus inside its visible controls");
+assert.match(planner, /function openAISheet\([\s\S]*clearTimeout\(nearcastAICloseTimer\)/, "a quick reopen cancels the stale sheet-close timer");
 assert.match(styles, /\.ask-plan-check \{[\s\S]*border-radius: 26px;[\s\S]*backdrop-filter: blur\(24px\)/, "the Nearcast composer uses the intended floating glass treatment");
 assert.match(styles, /\.ask-composer-toolbar \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto 46px/, "the composer toolbar reserves a stable submit target");
-assert.match(styles, /@media \(max-width: 390px\)[\s\S]*\.ask-composer-status \{[\s\S]*display: none;/, "the compact phone layout protects the place and submit controls");
+assert.match(styles, /\.ai-sheet\.is-entry \{[\s\S]*height: 174px/, "first open is a compact floating prompt rather than a full sheet");
+assert.match(styles, /\.ai-sheet\[hidden\] \{[\s\S]*display: none !important;/, "closed conversations leave the visual and accessibility trees during app handoffs");
+assert.match(styles, /\.ai-sheet\.is-conversation \{[\s\S]*height: min\(92dvh, 840px\)/, "submitted prompts expand into a full conversation workspace");
+assert.match(styles, /\.ai-sheet\.is-conversation\.sheet-keyboard-active \{[\s\S]*inset: 0 0 var\(--sheet-keyboard-inset/, "the phone keyboard cannot cover the conversation composer");
+assert.match(styles, /@media \(max-width: 390px\)[\s\S]*\.ai-sheet\.is-conversation \.ask-composer-status \{[\s\S]*display: none;/, "the compact phone conversation protects the place and submit controls");
 
 const sandbox = {
   state: {
@@ -165,6 +181,36 @@ assert.equal(sandbox.invitationTest.unresolved(now), false, "ignored prompts sto
 delete sandbox.state.userContext.actions["plan-invite-shown"];
 sandbox.state.planMemories = [{ id: "saved" }];
 assert.equal(sandbox.invitationTest.unresolved(now), false, "a watched plan makes the activation prompt unnecessary");
+
+const daySandbox = {
+  PLANNER_WEEKDAY_NAMES: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+  plannerParseText: (value) => String(value || "").toLowerCase()
+};
+vm.createContext(daySandbox);
+vm.runInContext(`
+  ${extractFunction(planner, "resolveDayIndex")}
+  globalThis.resolveDayIndexTest = resolveDayIndex;
+`, daySandbox);
+const wednesdayForecast = [3, 4, 5, 6, 0, 1, 2, 3, 4, 5].map((dow) => ({ dow }));
+const tuesdayForecast = [2, 3, 4, 5, 6, 0, 1, 2, 3, 4].map((dow) => ({ dow }));
+assert.equal(daySandbox.resolveDayIndexTest("next Tuesday", { daily: wednesdayForecast }), 6, "next Tuesday uses the upcoming Tuesday from Wednesday");
+assert.equal(daySandbox.resolveDayIndexTest("next Tuesday", { daily: tuesdayForecast }), 7, "next Tuesday skips today when today is Tuesday");
+
+const conversationSandbox = {
+  askThread: Array.from({ length: 4 }, (_, index) => ({
+    q: `prior question ${index} ${"q".repeat(180)}`,
+    a: `prior answer ${index} ${"a".repeat(260)}`
+  }))
+};
+vm.createContext(conversationSandbox);
+vm.runInContext(`
+  ${extractFunction(planner, "nearcastAgentConversationQuery")}
+  globalThis.conversationQueryTest = nearcastAgentConversationQuery;
+`, conversationSandbox);
+const latestRequest = `latest request ${"z".repeat(480)}`;
+const boundedConversation = conversationSandbox.conversationQueryTest(latestRequest, conversationSandbox.askThread.length);
+assert.ok(boundedConversation.length <= 1800, "recent Operon conversation context fits the local model query budget");
+assert.ok(boundedConversation.endsWith(latestRequest), "the latest user request survives conversation-context bounding intact");
 
 const version = app.match(/const VERSION = "([^"]+)"/)?.[1];
 assert.ok(version, "app version is declared");
