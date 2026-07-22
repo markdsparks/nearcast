@@ -4,11 +4,12 @@ This directory contains the browser execution core used by Nearcast's private
 SLM layer.
 
 - Source repository: `markdsparks/operon`
-- Source commit: `6a99bc1`
-- Protocol version: `0.1`
+- Source commit: `884d6386a3ca34e7800f3468f9d924d853613630`
+- Protocol version: `0.2`
 - `operon_core_bg.wasm` SHA-256:
-  `9eb89d5d7cf232e55e6dd99a3ca9b91101fecfa00cbd8f46429e081ae6457dc3`
+  `e3948db178112e61eda1e135a544dbfe3307fc6e8daaae421f21dffda65052b7`
 
 The model, weather sources, validation, storage, and network authority remain
 owned by Nearcast. The WASM module only runs Operon's deterministic resumable
-state machine, including scoped memory search and host-controlled typed skills.
+state machine, including scoped memory search, typed session artifacts,
+host-prepared skills, structured clarification, and bounded replanning.

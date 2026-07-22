@@ -2,7 +2,7 @@
 // verification, and bounded repair. Inference routes to Apple's system model
 // in the native app when available, otherwise to Qwen in a WebGPU worker.
 import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.84";
-import { runOperon } from "./operon-runtime.js?v=3.0.303";
+import { runOperon } from "./operon-runtime.js?v=3.0.304";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
@@ -12,7 +12,7 @@ import {
   summarySource,
   validatePlanIntentOutput,
   validateSummaryOutput
-} from "./ai-contracts.js?v=3.0.303";
+} from "./ai-contracts.js?v=3.0.304";
 
 const WEB_MODEL = "Qwen3-0.6B-q4f16_1-MLC";
 const WEB_APP_CONFIG = {
@@ -209,6 +209,10 @@ export async function runAgent({
   invokeSkill,
   searchMemory,
   memoryScope,
+  sessionId,
+  loadSession,
+  prepareSkill,
+  maxReplans = 0,
   signal
 }) {
   await load();
@@ -220,6 +224,12 @@ export async function runAgent({
     invokeSkill,
     searchMemory,
     memoryScope,
+    sessionId,
+    maxSessionArtifacts: 8,
+    loadSession,
+    prepareSkill,
+    maxReplans,
+    requireSkillOrClarification: false,
     timeoutMs: 60000
   });
   lastRun = {

@@ -1,5 +1,5 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.303";
+const OPERON_ASSET_VERSION = "3.0.304";
 
 // Some guided model providers treat a source's display path as its identifier.
 // Operon's contract intentionally distinguishes the stable ID (S1) from the
@@ -63,7 +63,11 @@ function sessionConfig({
   timeoutMs,
   planning = "never",
   memoryScope = null,
-  skills = []
+  skills = [],
+  sessionId = null,
+  maxSessionArtifacts = 8,
+  maxReplans = 0,
+  requireSkillOrClarification = false
 }) {
   return {
     policy: {
@@ -73,13 +77,19 @@ function sessionConfig({
       max_repair_attempts: 1,
       max_context_chars: 6000,
       max_sources: 3,
-      request_timeout_ms: timeoutMs || 60000
+      request_timeout_ms: timeoutMs || 60000,
+      max_replans: Math.max(0, Math.min(3, Number(maxReplans) || 0)),
+      require_skill_or_clarification: requireSkillOrClarification === true
     },
     has_grounding: Boolean(grounding),
     output_schema: schema,
     has_application_validator: typeof validateOutput === "function",
     memory_scope: memoryScope,
-    skills: Array.isArray(skills) ? skills : []
+    skills: Array.isArray(skills) ? skills : [],
+    session_id: sessionId ? String(sessionId) : null,
+    max_session_artifacts: sessionId
+      ? Math.max(1, Math.min(16, Number(maxSessionArtifacts) || 8))
+      : 0
   };
 }
 
@@ -94,6 +104,12 @@ export async function runOperon({
   searchMemory = null,
   skills = [],
   invokeSkill = null,
+  sessionId = null,
+  maxSessionArtifacts = 8,
+  loadSession = null,
+  prepareSkill = null,
+  maxReplans = 0,
+  requireSkillOrClarification = false,
   timeoutMs = 60000
 }) {
   if (typeof generate !== "function") throw new TypeError("Operon requires a generation provider");
@@ -108,7 +124,11 @@ export async function runOperon({
       timeoutMs,
       planning,
       memoryScope,
-      skills
+      skills,
+      sessionId,
+      maxSessionArtifacts,
+      maxReplans,
+      requireSkillOrClarification
     }),
     {
       generate: async ({ request }) => normalizeProviderCitations(
@@ -131,6 +151,21 @@ export async function runOperon({
         const records = await searchMemory(memoryQuery, scope, limit);
         return Array.isArray(records) ? records : [];
       },
+      loadSession: async ({ session_id, limit }) => {
+        if (typeof loadSession !== "function") return [];
+        const artifacts = await loadSession(session_id, limit);
+        return Array.isArray(artifacts) ? artifacts : [];
+      },
+      prepareSkill: async ({ skill_id, partial_arguments, artifacts }) => {
+        if (typeof prepareSkill !== "function") {
+          return { kind: "ready", arguments: partial_arguments || {} };
+        }
+        return prepareSkill({
+          skillId: skill_id,
+          partialArguments: partial_arguments || {},
+          artifacts: Array.isArray(artifacts) ? artifacts : []
+        });
+      },
       invokeSkill: async ({ skill_id, arguments: skillArguments, requires_user_confirmation }) => {
         if (typeof invokeSkill !== "function") {
           throw new Error(`No Nearcast handler is registered for ${skill_id}`);
@@ -147,7 +182,10 @@ export async function runOperon({
           ...source,
           id: `S${offset + index + 2}`
         })));
-        return result;
+        return {
+          ...result,
+          artifacts: Array.isArray(result?.artifacts) ? result.artifacts : []
+        };
       },
       validateOutput: async ({ output }) => {
         if (typeof validateOutput !== "function") return [];

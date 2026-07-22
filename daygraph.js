@@ -17,10 +17,11 @@ function openDayFromIndex(i, options = {}) {
   const code = representativeDailyCode(data, i);
   const memoryItems = activePlanMemoryEventsForDay(i, data);
   const memoryEvent = planMemoryDetailEventForDay(memoryItems, data);
+  const focusedEvent = options.eventWindow || memoryEvent;
   openDayDetail({
     indices,
     title: formatDay(data.daily.time[i], i),
-    contextLabel: planMemoryDayContextLabel(memoryItems, memoryEvent),
+    contextLabel: options.contextLabel || planMemoryDayContextLabel(memoryItems, memoryEvent),
     code,
     stormPotential: hasThunderPotentialForDay(data, i, code),
     isDay: true,
@@ -30,10 +31,10 @@ function openDayFromIndex(i, options = {}) {
     initialMode: options.initialMode || (memoryEvent ? "hourly" : getDayDetailMode()),
     persistInitialMode: options.persistInitialMode ?? false,
     showNow: i === 0,
-    eventWindow: memoryEvent,
+    eventWindow: focusedEvent,
     source: "day"
   });
-  if (memoryEvent) scrollFocusedSheetHour();
+  if (focusedEvent) scrollFocusedSheetHour();
 }
 
 // Rolling next-24-hours window from "now".

@@ -34,7 +34,7 @@ assert.match(plannerSource, /NEARCAST_AGENT_SKILL_REGISTRY = new Map/);
 assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
 assert.match(plannerSource, /invokeRegisteredNearcastSkill\(context, command\)/);
-assert.match(plannerSource, /openDayFromIndex\(Number\(navigation\.dayIndex\)/);
+assert.match(plannerSource, /openDayFromIndex\(dayIndex, \{[\s\S]*eventWindow: focusEvent/);
 assert.match(plannerSource, /options\.hours = Math\.max\(1, Math\.min\(8/);
 assert.match(
   planIntentQuery("Would Saturday evening work for senior pictures outside?"),
@@ -87,7 +87,7 @@ const summaryResult = await operon.run(
 
 assert.equal(summaryResult.output.summary, summary);
 assert.equal(summaryResult.sources.length, 1);
-assert.equal(summaryResult.protocol_version, "0.1");
+assert.equal(summaryResult.protocol_version, "0.2");
 assert.deepEqual(validateSummaryOutput({ summary }, facts), []);
 assert.deepEqual(
   validateSummaryOutput({ summary: "Partly cloudy and dry through 8 p.m." }, "Partly cloudy and dry through 8 p.m."),
@@ -166,7 +166,9 @@ const agentResult = await operon.run(
       max_repair_attempts: 1,
       max_context_chars: 6000,
       max_sources: 3,
-      request_timeout_ms: 12000
+      request_timeout_ms: 12000,
+      max_replans: 0,
+      require_skill_or_clarification: false
     },
     has_grounding: false,
     output_schema: null,
@@ -198,6 +200,10 @@ const agentResult = await operon.run(
           used_source_ids: ["S1"]
         })
       };
+    },
+    prepareSkill: async ({ skill_id, partial_arguments }) => {
+      assert.equal(skill_id, "nearcast.map_open");
+      return { kind: "ready", arguments: partial_arguments };
     },
     invokeSkill: async (command) => {
       invokedSkill = command;
@@ -237,6 +243,275 @@ assert.equal(searchedMemory, true);
 assert.match(agentResult.answer, /Liverpool/);
 assert.equal(agentResult.plan.skill_calls.length, 1);
 assert.equal(agentResult.sources[0].path, "skill://nearcast.map_open");
+
+const hourlySkillDescriptor = {
+  id: "nearcast.forecast_open_hourly",
+  description: "Open an hourly forecast. A partial call may reference the most recent typed forecast window.",
+  input_schema: {
+    type: "object",
+    properties: { place: { type: "string" }, day: { type: "string" } },
+    required: ["place", "day"],
+    additionalProperties: false
+  },
+  output_schema: {
+    type: "object",
+    properties: {
+      status: { type: "string", enum: ["opened", "unavailable"] },
+      message: { type: "string" },
+      place: { type: "string" },
+      day: { type: "string" }
+    },
+    required: ["status", "message", "place", "day"],
+    additionalProperties: false
+  },
+  requires_user_confirmation: false
+};
+const privateWindowArtifact = {
+  id: "nearcast-window-1",
+  kind: "nearcast.forecast-window",
+  summary: "Most recent forecast target: tomorrow evening in Nokomis, Illinois.",
+  value: {
+    place: { id: "nokomis-il", name: "Nokomis", admin1: "Illinois", latitude: 39.3, longitude: -89.3 },
+    place_label: "Nokomis, Illinois",
+    target_date: "2026-07-23",
+    period: "evening"
+  },
+  turn_id: "nearcast-turn-2"
+};
+let sessionLoaded = false;
+let preparedHourly = null;
+let invokedHourly = null;
+const followupResult = await operon.run(
+  "Show the hourly view for that.",
+  {
+    policy: {
+      local_only: true,
+      planning: "always",
+      verification: "adaptive",
+      max_repair_attempts: 1,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000,
+      max_replans: 0,
+      require_skill_or_clarification: false
+    },
+    has_grounding: false,
+    output_schema: null,
+    has_application_validator: false,
+    skills: [hourlySkillDescriptor],
+    session_id: "nearcast-thread-1",
+    max_session_artifacts: 4
+  },
+  {
+    loadSession: async ({ session_id, limit }) => {
+      assert.equal(session_id, "nearcast-thread-1");
+      assert.equal(limit, 4);
+      sessionLoaded = true;
+      return [privateWindowArtifact];
+    },
+    generate: async ({ stage, request }) => {
+      if (stage === "classify") {
+        assert.equal(sessionLoaded, true, "typed session artifacts load before planning");
+        assert.match(request.messages[1].content, /tomorrow evening in Nokomis/);
+        assert.doesNotMatch(request.messages[1].content, /latitude/);
+        return {
+          text: JSON.stringify({
+            intent: "open the referenced hourly forecast",
+            subquestions: [],
+            needs_grounding: false,
+            answer_requirements: ["confirm the canonical place and day"],
+            skill_calls: [{
+              skill_id: "nearcast.forecast_open_hourly",
+              arguments: { window_ref: "last_result" }
+            }]
+          })
+        };
+      }
+      return {
+        text: JSON.stringify({
+          answer: "Opening tomorrow's hourly details for Nokomis. [S1]",
+          confidence: 0.99,
+          used_source_ids: ["S1"]
+        })
+      };
+    },
+    prepareSkill: async ({ skill_id, partial_arguments, artifacts }) => {
+      assert.equal(skill_id, "nearcast.forecast_open_hourly");
+      assert.equal(partial_arguments.window_ref, "last_result");
+      assert.deepEqual(artifacts, [{
+        id: privateWindowArtifact.id,
+        kind: privateWindowArtifact.kind,
+        summary: privateWindowArtifact.summary
+      }]);
+      preparedHourly = {
+        place: privateWindowArtifact.value.place_label,
+        day: privateWindowArtifact.value.target_date
+      };
+      return { kind: "ready", arguments: preparedHourly };
+    },
+    invokeSkill: async (command) => {
+      invokedHourly = command;
+      return {
+        output: {
+          status: "opened",
+          message: "Opening tomorrow's hourly details for Nokomis.",
+          place: "Nokomis, Illinois",
+          day: "2026-07-23"
+        },
+        sources: [],
+        artifacts: []
+      };
+    }
+  }
+);
+assert.deepEqual(preparedHourly, { place: "Nokomis, Illinois", day: "2026-07-23" });
+assert.deepEqual(invokedHourly?.arguments, preparedHourly);
+assert.equal(followupResult.protocol_version, "0.2");
+assert.equal(followupResult.sources[0].path, "skill://nearcast.forecast_open_hourly");
+
+const weatherSkillDescriptor = {
+  id: "nearcast.weather_answer",
+  description: "Answer a deterministic weather question and publish its canonical forecast target.",
+  input_schema: {
+    type: "object",
+    properties: { request: { type: "string" } },
+    required: ["request"],
+    additionalProperties: false
+  },
+  output_schema: {
+    type: "object",
+    properties: {
+      status: { type: "string", enum: ["answered", "unavailable"] },
+      message: { type: "string" }
+    },
+    required: ["status", "message"],
+    additionalProperties: false
+  },
+  requires_user_confirmation: false
+};
+const chainedWindowArtifact = {
+  id: "chain-window-1",
+  kind: "nearcast.forecast-window",
+  summary: "Selected forecast target: tomorrow evening in Maryville, Illinois.",
+  value: {
+    place_label: "Maryville, Illinois",
+    target_date: "2026-07-23",
+    period: "evening"
+  },
+  turn_id: "nearcast-turn-chain"
+};
+const chainedStages = [];
+const chainedInvocations = [];
+let chainedArtifactStored = null;
+const chainedResult = await operon.run(
+  "Check tomorrow evening in Maryville and then open its hourly view.",
+  {
+    policy: {
+      local_only: true,
+      planning: "always",
+      verification: "adaptive",
+      max_repair_attempts: 1,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000,
+      max_replans: 1,
+      require_skill_or_clarification: false
+    },
+    has_grounding: false,
+    output_schema: null,
+    has_application_validator: false,
+    skills: [weatherSkillDescriptor, hourlySkillDescriptor]
+  },
+  {
+    generate: async ({ stage, request }) => {
+      chainedStages.push(stage);
+      if (stage === "classify") {
+        return {
+          text: JSON.stringify({
+            intent: "check the requested window, then show hourly details",
+            subquestions: [],
+            needs_grounding: false,
+            answer_requirements: [],
+            skill_calls: [{
+              skill_id: "nearcast.weather_answer",
+              arguments: { request: "tomorrow evening in Maryville" }
+            }]
+          })
+        };
+      }
+      if (stage === "replan") {
+        assert.match(request.messages[1].content, /tomorrow evening in Maryville/);
+        assert.match(request.messages[1].content, /skill:\/\/nearcast\.weather_answer/);
+        return {
+          text: JSON.stringify({
+            intent: "open the hourly view for the completed forecast target",
+            subquestions: [],
+            needs_grounding: false,
+            answer_requirements: [],
+            skill_calls: [{
+              skill_id: "nearcast.forecast_open_hourly",
+              arguments: { window_ref: chainedWindowArtifact.id }
+            }]
+          })
+        };
+      }
+      return {
+        text: JSON.stringify({
+          answer: "Checked Maryville tomorrow evening and opened its hourly details. [S1] [S2]",
+          confidence: 0.99,
+          used_source_ids: ["S1", "S2"]
+        })
+      };
+    },
+    prepareSkill: async ({ skill_id, partial_arguments, artifacts }) => {
+      if (skill_id === "nearcast.weather_answer") {
+        return { kind: "ready", arguments: { request: partial_arguments.request } };
+      }
+      assert.equal(skill_id, "nearcast.forecast_open_hourly");
+      assert.equal(partial_arguments.window_ref, chainedWindowArtifact.id);
+      assert.ok(artifacts.some((artifact) => artifact.id === chainedWindowArtifact.id));
+      assert.equal(chainedArtifactStored?.id, chainedWindowArtifact.id, "the host stores a skill artifact before dependent preparation");
+      return {
+        kind: "ready",
+        arguments: {
+          place: chainedArtifactStored.value.place_label,
+          day: chainedArtifactStored.value.target_date
+        }
+      };
+    },
+    invokeSkill: async ({ skill_id, arguments: skillArguments }) => {
+      chainedInvocations.push({ skill_id, arguments: skillArguments });
+      if (skill_id === "nearcast.weather_answer") {
+        chainedArtifactStored = chainedWindowArtifact;
+        return {
+          output: { status: "answered", message: "Tomorrow evening in Maryville is suitable." },
+          sources: [],
+          artifacts: [chainedWindowArtifact]
+        };
+      }
+      return {
+        output: {
+          status: "opened",
+          message: "Opening Maryville hourly details.",
+          place: "Maryville, Illinois",
+          day: "2026-07-23"
+        },
+        sources: [],
+        artifacts: []
+      };
+    }
+  }
+);
+assert.deepEqual(chainedStages, ["classify", "replan", "generate"]);
+assert.deepEqual(chainedInvocations.map((call) => call.skill_id), [
+  "nearcast.weather_answer",
+  "nearcast.forecast_open_hourly"
+]);
+assert.deepEqual(chainedInvocations[1].arguments, {
+  place: "Maryville, Illinois",
+  day: "2026-07-23"
+});
+assert.equal(chainedResult.sources.length, 2);
 
 const normalizedSkillPayload = JSON.parse(normalizeProviderCitations({
   text: JSON.stringify({

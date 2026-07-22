@@ -3404,9 +3404,15 @@ function plannerEditDistance(a, b) {
 // Resolve a target day (index into c.daily, 0=today … 9) from a question's
 // weekday names or relative phrases. Returns null when no day is referenced.
 function resolveDayIndex(s, c) {
+  const raw = String(s || "");
   s = plannerParseText(s);
   const days = c.daily;
   if (!days || !days.length) return null;
+  const isoDate = raw.match(/\b(\d{4}-\d{2}-\d{2})\b/)?.[1];
+  if (isoDate) {
+    const exactIndex = days.findIndex((day) => String(day?.date || "").slice(0, 10) === isoDate);
+    if (exactIndex >= 0) return exactIndex;
+  }
   if (/\bday after tomorrow\b/.test(s)) return Math.min(2, days.length - 1);
   if (/\btomorrow\b/.test(s)) return 1;
   const inN = s.match(/\bin (\d+) days?\b/);
@@ -3469,6 +3475,10 @@ let askThread = [];
 let askStreaming = false;
 let askError = "";
 let askAbort = null;
+let nearcastAgentSessionSequence = 1;
+let nearcastAgentSessionId = `nearcast-session-${Date.now().toString(36)}-1`;
+let nearcastAgentSessionArtifacts = [];
+let nearcastAgentArtifactSequence = 0;
 let nearcastAISurfaceMode = "entry";
 let nearcastAITranscriptScrollTop = null;
 let nearcastAILastAnnouncement = "";
@@ -3485,11 +3495,20 @@ let launchSummaryTargets = [];
 
 const NEARCAST_AGENT_MEMORY_NAMESPACE = "nearcast.local";
 const NEARCAST_AGENT_MEMORY_SUBJECT = "primary-profile";
+const NEARCAST_AGENT_ARTIFACT_LIMIT = 8;
+const NEARCAST_AGENT_PERIODS = new Set(["morning", "afternoon", "evening", "night", "day"]);
+const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
+  place: "nearcast.place",
+  window: "nearcast.forecast-window",
+  view: "nearcast.view",
+  plan: "nearcast.plan-draft",
+  recentTurn: "nearcast.recent-turn"
+});
 
 const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   {
     id: "nearcast.plan_check",
-    description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities.",
+    description: "Check whether an activity or outdoor plan works at a stated place, day, and time. Use for plans, events, sports, photos, travel, or other weather-dependent activities. Recent typed artifacts may supply the same place or forecast window.",
     input_schema: {
       type: "object",
       properties: { request: { type: "string" } },
@@ -3506,11 +3525,12 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastAnswerSkill,
     execute: executeNearcastAnswerSkill
   },
   {
     id: "nearcast.weather_answer",
-    description: "Answer a weather question for the currently selected Nearcast place using the app's deterministic forecast calculations.",
+    description: "Answer a weather question using Nearcast's deterministic forecast calculations. Never use this for a request to open, show, switch, or navigate to a map, forecast, or hourly view.",
     input_schema: {
       type: "object",
       properties: { request: { type: "string" } },
@@ -3527,6 +3547,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastAnswerSkill,
     execute: executeNearcastAnswerSkill
   },
   {
@@ -3549,6 +3570,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastForecastOpenSkill
   },
   {
@@ -3571,16 +3593,18 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastMapOpenSkill
   },
   {
     id: "nearcast.forecast_open_hourly",
-    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details.",
+    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details. For a follow-up like 'show hourly for that', pass window_ref as the referenced typed artifact ID or 'last_result'; the host prepares canonical place and day arguments.",
     input_schema: {
       type: "object",
       properties: {
         place: { type: "string" },
-        day: { type: "string" }
+        day: { type: "string" },
+        window_ref: { type: "string" }
       },
       required: ["place", "day"],
       additionalProperties: false
@@ -3597,6 +3621,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastHourlySkill,
     execute: executeNearcastHourlyOpenSkill
   },
   {
@@ -3626,6 +3651,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    prepare: prepareNearcastPlanSkill,
     execute: executeNearcastFindAndDraftSkill
   }
 ]);
@@ -3634,7 +3660,7 @@ const NEARCAST_AGENT_SKILL_REGISTRY = new Map(
   NEARCAST_AGENT_SKILL_DEFINITIONS.map((definition) => [definition.id, definition])
 );
 const NEARCAST_AGENT_SKILLS = Object.freeze(
-  NEARCAST_AGENT_SKILL_DEFINITIONS.map(({ execute, ...descriptor }) => Object.freeze(descriptor))
+  NEARCAST_AGENT_SKILL_DEFINITIONS.map(({ execute, prepare, ...descriptor }) => Object.freeze(descriptor))
 );
 
 function nearcastAgentMemoryScope() {
@@ -3708,6 +3734,488 @@ function nearcastAgentMemorySearch(query, scope, limit = 6) {
     .map(({ record }) => record);
 }
 
+function rotateNearcastAgentSession() {
+  nearcastAgentSessionSequence += 1;
+  nearcastAgentSessionId = `nearcast-session-${Date.now().toString(36)}-${nearcastAgentSessionSequence}`;
+  nearcastAgentSessionArtifacts = [];
+  nearcastAgentArtifactSequence = 0;
+}
+
+function createNearcastAgentArtifact(kind, summary, value, context = null) {
+  nearcastAgentArtifactSequence += 1;
+  return {
+    id: `nearcast-artifact-${nearcastAgentArtifactSequence}`,
+    kind,
+    summary: String(summary || "").slice(0, 220),
+    value: value && typeof value === "object" ? value : {},
+    turn_id: context?.turnId || null
+  };
+}
+
+function rememberNearcastAgentArtifacts(artifacts) {
+  for (const artifact of Array.isArray(artifacts) ? artifacts : []) {
+    if (!artifact?.id || !artifact?.kind || !artifact?.summary) continue;
+    if (artifact.kind === NEARCAST_AGENT_ARTIFACT_KINDS.place && artifact.value?.place) {
+      // A place switch changes conversational focus. Do not retain a forecast
+      // window or draft from another place and later combine its date with the
+      // newly selected place.
+      nearcastAgentSessionArtifacts = nearcastAgentSessionArtifacts.filter((item) => {
+        if (![NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan].includes(item.kind)) {
+          return true;
+        }
+        return item.value?.place && samePlanPlace(item.value.place, artifact.value.place);
+      });
+    }
+    // These values represent current conversational focus. A newer artifact of
+    // the same type supersedes the older focus without becoming durable memory.
+    nearcastAgentSessionArtifacts = nearcastAgentSessionArtifacts
+      .filter((item) => item.kind !== artifact.kind && item.id !== artifact.id);
+    nearcastAgentSessionArtifacts.push(artifact);
+  }
+  nearcastAgentSessionArtifacts = nearcastAgentSessionArtifacts.slice(-NEARCAST_AGENT_ARTIFACT_LIMIT);
+}
+
+function nearcastRecentTurnArtifacts(rowIndex) {
+  return askThread
+    .slice(0, Number.isInteger(rowIndex) ? rowIndex : askThread.length)
+    .filter((exchange) => exchange?.q && exchange?.a)
+    .slice(-2)
+    .map((exchange, index) => ({
+      id: `nearcast-recent-${Math.max(0, (Number(rowIndex) || askThread.length) - 2 + index)}`,
+      kind: NEARCAST_AGENT_ARTIFACT_KINDS.recentTurn,
+      summary: `Recent exchange — User: ${String(exchange.q).slice(0, 90)} Nearcast: ${String(exchange.a).slice(0, 120)}`,
+      value: {
+        question: String(exchange.q).slice(0, 240),
+        answer: String(exchange.a).slice(0, 320)
+      },
+      turn_id: `nearcast-turn-${Math.max(0, (Number(rowIndex) || askThread.length) - 2 + index)}`
+    }));
+}
+
+function nearcastAgentArtifactsForTurn(rowIndex, limit = NEARCAST_AGENT_ARTIFACT_LIMIT) {
+  const now = Date.now();
+  const stored = nearcastAgentSessionArtifacts.filter((artifact) => {
+    if (!artifact?.expires_at) return true;
+    const expiry = Date.parse(artifact.expires_at);
+    return !Number.isFinite(expiry) || expiry > now;
+  });
+  nearcastAgentSessionArtifacts = stored;
+  return [...stored, ...nearcastRecentTurnArtifacts(rowIndex)]
+    .slice(-Math.max(1, Math.min(16, Number(limit) || NEARCAST_AGENT_ARTIFACT_LIMIT)));
+}
+
+function loadNearcastAgentSession(sessionId, limit, rowIndex) {
+  if (String(sessionId || "") !== nearcastAgentSessionId) return [];
+  return nearcastAgentArtifactsForTurn(rowIndex, limit);
+}
+
+function nearcastPlaceArtifact(place, context = null) {
+  if (!place) return null;
+  const normalized = normalizePlace(place);
+  const label = placeLabel(normalized);
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.place,
+    `Current conversation place: ${label}. Use for “there” or “same place”.`,
+    { place: normalized, place_label: label },
+    context
+  );
+}
+
+function nearcastWindowArtifact(place, window, context = null, options = {}) {
+  const data = state.forecast;
+  const c = buildAIContext();
+  const dayIndex = Number(window?.dayIdx ?? window?.dayIndex);
+  const targetDate = String(options.targetDate || data?.daily?.time?.[dayIndex] || "").slice(0, 10);
+  if (!place || !targetDate || !Number.isInteger(dayIndex) || dayIndex < 0) return null;
+  const normalized = normalizePlace(place);
+  const label = placeLabel(normalized);
+  const startHour = Number.isFinite(Number(window?.startHour)) ? Number(window.startHour) : 8;
+  const endHour = Number.isFinite(Number(window?.endHour)) ? Number(window.endHour) : 20;
+  const requestedPeriod = String(window?.period || options.period || "day").toLowerCase();
+  const period = NEARCAST_AGENT_PERIODS.has(requestedPeriod) ? requestedPeriod : "day";
+  const windowLabel = c ? askWindowLabel(c, {
+    dayIdx: dayIndex,
+    startHour,
+    endHour,
+    period,
+    label: window?.label
+  }) : `${targetDate} ${period}`;
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.window,
+    `Most recent forecast target: ${windowLabel} in ${label}. Use for “that”, “same day”, or an hourly follow-up.`,
+    {
+      place: normalized,
+      place_label: label,
+      target_date: targetDate,
+      day_index: dayIndex,
+      day_text: options.dayText || targetDate,
+      period,
+      start_hour: startHour,
+      end_hour: endHour
+    },
+    context
+  );
+}
+
+function nearcastViewArtifact(view, place, context = null, windowArtifact = null) {
+  const label = place ? placeLabel(place) : "the selected place";
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.view,
+    `Most recent app view: ${view} for ${label}.`,
+    {
+      view,
+      place: place ? normalizePlace(place) : null,
+      target_date: windowArtifact?.value?.target_date || null
+    },
+    context
+  );
+}
+
+function nearcastPlanArtifact(event, context = null) {
+  if (!event?.place || !event?.data) return null;
+  const targetDate = event.data.daily?.time?.[event.dayIndex];
+  if (!targetDate) return null;
+  const label = placeLabel(event.place);
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.plan,
+    `Most recent plan draft: ${event.title || "outdoor plan"} in ${label} on ${targetDate}, ${hourText(event.startHour)}-${hourText(event.endHour)}.`,
+    {
+      place: normalizePlace(event.place),
+      place_label: label,
+      target_date: targetDate,
+      day_index: event.dayIndex,
+      start_hour: event.startHour,
+      end_hour: event.endHour,
+      title: event.title || "Outdoor plan"
+    },
+    context
+  );
+}
+
+function nearcastSemanticReference(value) {
+  return /^(?:that|there|it|this|same|same place|same day|last result|last_result|current|current place|selected place)$/i
+    .test(String(value || "").trim());
+}
+
+function nearcastReferencesWindow(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return /\b(?:same|those|last result|previous|earlier|then)\b/i.test(text) ||
+    /^(?:what|how)\s+about\b/i.test(text) ||
+    /^and\b/i.test(text) ||
+    /^(?:would|will|does|do|is|are|can|could|should)\s+that\b/i.test(text) ||
+    /\b(?:for|about|open|show|use|check|view|inspect|pull up)\s+(?:that|it|this)\b/i.test(text) ||
+    /\bthat\s+(?:one|result|forecast|window|day|time)\b/i.test(text);
+}
+
+function nearcastReferencesConversation(value) {
+  const text = String(value || "").trim();
+  if (nearcastReferencesWindow(text)) return true;
+  if (/\b(?:weather|forecast|conditions|map|radar|hourly|rain|wind|temperature)\s+(?:over\s+)?there\b/i.test(text) ||
+    /\b(?:over|from|for|in|at)\s+there\b/i.test(text) ||
+    /\bthere\s+(?:today|tomorrow|tonight|this|next|on\b)/i.test(text)) return true;
+  const withoutExistentialThere = text
+    .replace(/\b(?:is|are|was|were|will|would|could|can|might|may|has|have|had|if|whether)\s+there\b/gi, "")
+    .replace(/\bthere\s+(?:is|are|was|were|will|would|could|can|might|may|has|have|had|be)\b/gi, "");
+  return /\bthere\b/i.test(withoutExistentialThere);
+}
+
+function nearcastExplicitDayText(value) {
+  return String(value || "").match(
+    /\b(\d{4}-\d{2}-\d{2}|day after tomorrow|today|tomorrow|tonight|(?:(?:next|this|coming|following)\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend))\b/i
+  )?.[1] || "";
+}
+
+function nearcastExplicitPeriodText(value) {
+  const period = String(value || "").match(/\b(morning|afternoon|evening|night|daytime|day)\b/i)?.[1]?.toLowerCase() || "";
+  return period === "daytime" ? "day" : period;
+}
+
+function nearcastExplicitDurationHours(value) {
+  const match = String(value || "").match(/\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight)[-\s]*(?:hour|hours|hr|hrs)\b/i);
+  if (!match) return null;
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+  const parsed = words[match[1].toLowerCase()] ?? Number(match[1]);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(8, parsed)) : null;
+}
+
+function nearcastGroundedCandidate(candidate, question) {
+  const candidateKey = normalizeQualifierKey(candidate);
+  const questionKey = normalizeQualifierKey(question);
+  return Boolean(candidateKey && questionKey && (` ${questionKey} `).includes(` ${candidateKey} `));
+}
+
+function nearcastSkillRequestClauses(value) {
+  return String(value || "")
+    .split(/(?:,\s*(?=(?:open|show|find|create|draft|check|compare|watch|switch|tell)\b)|\s+(?:and\s+then|then|after that|followed by)\s+|(?:,\s*|\s+)and\s+(?=(?:open|show|find|create|draft|check|compare|watch|switch|tell)\b))/gi)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+}
+
+function nearcastClauseMatchesSkill(clause, skillId) {
+  if (!skillId) return true;
+  const direct = parseNearcastDirectNavigation(clause);
+  if (skillId === "nearcast.plan_find_and_draft") {
+    return direct?.skillId === skillId ||
+      Boolean((detectAskActivity(clause) || detectPlanActivity(clause)) &&
+        /\b(?:find|best|when|window|slot)\b/i.test(clause));
+  }
+  if (["nearcast.weather_answer", "nearcast.plan_check"].includes(skillId)) {
+    return !direct;
+  }
+  return !direct || direct.skillId === skillId;
+}
+
+function nearcastScopedSkillRequest(proposed, root, skillId = "") {
+  const candidate = String(proposed || "").trim();
+  const full = String(root || "").trim();
+  if (!candidate) return full;
+  if (!full) return candidate;
+  const clauses = nearcastSkillRequestClauses(full);
+  if (clauses.length <= 1) return full;
+  const eligible = clauses.filter((clause) => nearcastClauseMatchesSkill(clause, skillId));
+  const choices = eligible.length ? eligible : clauses;
+  const candidateWords = new Set(normalizeQualifierKey(candidate).split(/\s+/).filter((word) => word.length > 2));
+  return choices
+    .map((clause, index) => ({
+      clause,
+      index,
+      score: normalizeQualifierKey(clause).split(/\s+/).filter((word) => candidateWords.has(word)).length
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.clause || full;
+}
+
+function nearcastClarificationPlaceText(value) {
+  let candidate = String(value || "").trim();
+  const day = nearcastExplicitDayText(candidate);
+  if (day) {
+    const index = candidate.toLowerCase().indexOf(day.toLowerCase());
+    if (index >= 0) candidate = `${candidate.slice(0, index)} ${candidate.slice(index + day.length)}`;
+  }
+  candidate = candidate
+    .replace(/\b(?:morning|afternoon|evening|night|daytime)\b/gi, " ")
+    .replace(/^\s*(?:in|at|for|on)\s+/i, "")
+    .replace(/\s+(?:and|on|at|for|in)\s*$/i, "")
+    .replace(/^[,;:\s]+|[,;:\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return candidate;
+}
+
+function nearcastArtifactForPreparation(context, kind, requestedId = "") {
+  const allowedIds = new Set((context?.artifactReferences || []).map((item) => item?.id).filter(Boolean));
+  const artifacts = (context?.sessionArtifacts || [])
+    .filter((artifact) => artifact?.kind === kind && (!allowedIds.size || allowedIds.has(artifact.id)));
+  const requested = String(requestedId || "").trim();
+  if (requested && !nearcastSemanticReference(requested)) {
+    return artifacts.find((artifact) => artifact.id === requested) || null;
+  }
+  return artifacts[artifacts.length - 1] || null;
+}
+
+function nearcastPlaceArtifactForPreparation(context) {
+  const allowedIds = new Set((context?.artifactReferences || []).map((item) => item?.id).filter(Boolean));
+  const focusKinds = new Set([
+    NEARCAST_AGENT_ARTIFACT_KINDS.place,
+    NEARCAST_AGENT_ARTIFACT_KINDS.window,
+    NEARCAST_AGENT_ARTIFACT_KINDS.plan,
+    NEARCAST_AGENT_ARTIFACT_KINDS.view
+  ]);
+  return (context?.sessionArtifacts || [])
+    .filter((item) => focusKinds.has(item?.kind) && item?.value?.place && (!allowedIds.size || allowedIds.has(item.id)))
+    .slice(-1)[0] || null;
+}
+
+function nearcastPreparationNeedsInput(skillId, prompt, missingFields) {
+  return {
+    kind: "needs_input",
+    clarification: {
+      prompt,
+      missing_fields: missingFields,
+      skill_id: skillId
+    }
+  };
+}
+
+function nearcastPreparedPlace(context, requested = "", allowCurrent = true) {
+  if (requested && !nearcastSemanticReference(requested)) return requested;
+  const artifact = nearcastPlaceArtifactForPreparation(context);
+  const value = artifact?.value;
+  if (value?.place) {
+    context.lastPlace = value.place;
+    return value.place_label || placeLabel(value.place);
+  }
+  return allowCurrent && context.lastPlace ? placeLabel(context.lastPlace) : "";
+}
+
+function prepareNearcastPlaceSkill(args, context, definition) {
+  const source = args || {};
+  const question = String(context?.question || "");
+  const referencesContext = nearcastReferencesConversation(question);
+  const referencesWindow = nearcastReferencesWindow(question);
+  const explicitQuestionPlace = extractPlanLocationQuery(question);
+  const proposedPlace = String(source.place || source.place_ref || "").trim();
+  const groundedModelPlace = proposedPlace && !nearcastSemanticReference(proposedPlace) &&
+    nearcastGroundedCandidate(proposedPlace, question)
+    ? String(source.place || source.place_ref).trim()
+    : "";
+  const referencedPlace = referencesContext ? nearcastPreparedPlace(context, "", !referencesWindow) : "";
+  const prepared = {
+    place: explicitQuestionPlace && !nearcastSemanticReference(explicitQuestionPlace)
+      ? explicitQuestionPlace
+      : groundedModelPlace || (referencesContext
+        ? referencedPlace
+        : (context.lastPlace ? placeLabel(context.lastPlace) : ""))
+  };
+  if (!prepared.place) {
+    return nearcastPreparationNeedsInput(definition.id, "Which place should I open?", ["place"]);
+  }
+  return { kind: "ready", arguments: prepared };
+}
+
+function prepareNearcastHourlySkill(args, context, definition) {
+  const source = args || {};
+  const question = String(context?.question || "");
+  const referencesContext = nearcastReferencesConversation(question);
+  const referencesWindow = nearcastReferencesWindow(question);
+  const requestedWindowRef = referencesWindow ? source.window_ref : "";
+  const windowArtifact = referencesWindow
+    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
+    : null;
+  if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      "I can’t find that forecast window anymore. Which place and day should I open?",
+      ["place", "day"]
+    );
+  }
+  const value = windowArtifact?.value || {};
+  const explicitQuestionPlace = extractPlanLocationQuery(question);
+  const hasExplicitQuestionPlace = explicitQuestionPlace && !nearcastSemanticReference(explicitQuestionPlace);
+  const groundedModelPlace = source.place && !nearcastSemanticReference(source.place) &&
+    nearcastGroundedCandidate(source.place, question)
+    ? String(source.place).trim()
+    : "";
+  const supportedPlaceArtifact = windowArtifact || nearcastPlaceArtifactForPreparation(context);
+  const explicitQuestionDay = nearcastExplicitDayText(question);
+  const prepared = {
+    place: hasExplicitQuestionPlace
+      ? explicitQuestionPlace
+      : windowArtifact
+        ? (value.place_label || (value.place ? placeLabel(value.place) : ""))
+        : referencesContext
+          ? supportedPlaceArtifact?.value?.place_label ||
+            (supportedPlaceArtifact?.value?.place ? placeLabel(supportedPlaceArtifact.value.place) : "")
+          : groundedModelPlace || (context.lastPlace ? placeLabel(context.lastPlace) : ""),
+    day: explicitQuestionDay || (windowArtifact ? value.target_date || value.day_text || "" : "")
+  };
+  if (!prepared.place || !prepared.day) {
+    const missing = [!prepared.place ? "place" : "", !prepared.day ? "day" : ""].filter(Boolean);
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      missing.includes("day") ? "Which day should I open in hourly view?" : "Which place should I open?",
+      missing
+    );
+  }
+  context.preparedSkillState?.set(definition.id, { windowArtifact });
+  return { kind: "ready", arguments: prepared };
+}
+
+function prepareNearcastAnswerSkill(args, context, definition) {
+  let request = nearcastScopedSkillRequest(args?.request, context?.question, definition.id);
+  const referencesContext = nearcastReferencesConversation(request);
+  const referencesWindow = nearcastReferencesWindow(request);
+  const windowArtifact = referencesWindow
+    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan)
+    : null;
+  const placeArtifact = nearcastPlaceArtifactForPreparation(context);
+  const value = windowArtifact?.value || placeArtifact?.value || {};
+  const explicitQuestionPlace = extractPlanLocationQuery(request);
+  const hasExplicitQuestionPlace = explicitQuestionPlace && !nearcastSemanticReference(explicitQuestionPlace);
+  if (referencesContext && !value.place && !hasExplicitQuestionPlace) {
+    return nearcastPreparationNeedsInput(definition.id, "Which place do you mean?", ["place"]);
+  }
+  if (referencesContext && value.place) context.lastPlace = value.place;
+  const explicitDay = nearcastExplicitDayText(request);
+  if (referencesWindow && !windowArtifact && !explicitDay) {
+    return nearcastPreparationNeedsInput(definition.id, "Which day do you mean?", ["day"]);
+  }
+  if (referencesWindow && windowArtifact && !explicitDay && value.target_date) {
+    request += ` on ${value.target_date}`;
+  }
+  const hasPeriod = Boolean(nearcastExplicitPeriodText(request));
+  if (referencesWindow && windowArtifact && !hasPeriod && value.period && value.period !== "day") {
+    request += ` during ${value.period}`;
+  }
+  if (!request) {
+    return nearcastPreparationNeedsInput(definition.id, "What would you like me to check?", ["request"]);
+  }
+  return { kind: "ready", arguments: { request } };
+}
+
+function prepareNearcastPlanSkill(args, context, definition) {
+  const source = args || {};
+  const request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
+  const referencesContext = nearcastReferencesConversation(request);
+  const referencesWindow = nearcastReferencesWindow(request);
+  const requestedWindowRef = referencesWindow ? source.window_ref : "";
+  const windowArtifact = referencesWindow
+    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
+    : null;
+  if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      "I can’t find that forecast window anymore. Which place and day should I use?",
+      ["place", "day"]
+    );
+  }
+  const placeArtifact = nearcastPlaceArtifactForPreparation(context);
+  const focusValue = windowArtifact?.value || (referencesContext ? placeArtifact?.value : null) || {};
+  const explicitQuestionPlace = extractPlanLocationQuery(request);
+  const groundedModelPlace = source.place && !nearcastSemanticReference(source.place) && (
+    nearcastGroundedCandidate(source.place, request) ||
+    nearcastGroundedCandidate(source.place, context?.question)
+  )
+    ? String(source.place).trim()
+    : "";
+  const explicitDay = nearcastExplicitDayText(request);
+  const explicitPeriod = nearcastExplicitPeriodText(request);
+  const explicitDuration = nearcastExplicitDurationHours(request);
+  const prepared = {
+    request,
+    place: explicitQuestionPlace && !nearcastSemanticReference(explicitQuestionPlace)
+      ? explicitQuestionPlace
+      : groundedModelPlace || (referencesContext
+        ? focusValue.place_label || (focusValue.place ? placeLabel(focusValue.place) : "")
+        : (context.lastPlace ? placeLabel(context.lastPlace) : "")),
+    day: explicitDay || (windowArtifact?.value?.target_date || ""),
+    period: explicitPeriod || (windowArtifact?.value?.period || ""),
+    duration_hours: explicitDuration
+  };
+  const missing = [!prepared.place ? "place" : "", !prepared.day ? "day" : ""].filter(Boolean);
+  if (missing.length) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      missing.includes("place") ? "Which place should I use?" : "Which day should I use?",
+      missing
+    );
+  }
+  delete prepared.window_ref;
+  delete prepared.place_ref;
+  if (!prepared.place) delete prepared.place;
+  if (!prepared.day) delete prepared.day;
+  prepared.period = String(prepared.period || "").toLowerCase();
+  if (!NEARCAST_AGENT_PERIODS.has(prepared.period)) delete prepared.period;
+  if (!Number.isFinite(prepared.duration_hours)) delete prepared.duration_hours;
+  if (!prepared.request) {
+    return nearcastPreparationNeedsInput(definition.id, "What plan should I find a window for?", ["request"]);
+  }
+  return { kind: "ready", arguments: prepared };
+}
+
 async function resolveNearcastAgentPlace(rawPlace) {
   const requested = String(rawPlace || "").trim();
   if (!requested || /^(?:here|current|current place|selected place)$/i.test(requested)) {
@@ -3727,10 +4235,17 @@ async function resolveNearcastAgentPlace(rawPlace) {
 }
 
 function createNearcastAgentContext(question, rowIndex, signal = null) {
+  const turnId = `nearcast-turn-${Number.isInteger(rowIndex) ? rowIndex : askThread.length}`;
   return {
     question,
     rowIndex,
+    turnId,
+    sessionId: nearcastAgentSessionId,
     signal,
+    sessionArtifacts: nearcastAgentArtifactsForTurn(rowIndex),
+    artifactReferences: [],
+    preparedSkillState: new Map(),
+    completedSkillResults: new Map(),
     receipt: {
       answer: "",
       event: null,
@@ -3752,7 +4267,8 @@ function assertNearcastAgentRunActive(context) {
 async function ensureNearcastSkillPlace(rawPlace, context) {
   assertNearcastAgentRunActive(context);
   const requested = String(rawPlace || "").trim();
-  const useConversationPlace = !requested || /^(?:here|current|current place|selected place)$/i.test(requested);
+  const useConversationPlace = !requested || nearcastSemanticReference(requested) ||
+    /^(?:here|current|current place|selected place)$/i.test(requested);
   const place = useConversationPlace
     ? (context.lastPlace || state.activePlace || state.savedPlaces?.[0] || null)
     : await resolveNearcastAgentPlace(requested);
@@ -3765,17 +4281,27 @@ async function ensureNearcastSkillPlace(rawPlace, context) {
   return state.activePlace;
 }
 
-function nearcastSkillResult(output) {
-  return { output, sources: [] };
+function nearcastSkillResult(output, artifacts = []) {
+  return { output, sources: [], artifacts: Array.isArray(artifacts) ? artifacts.filter(Boolean) : [] };
 }
 
 async function executeNearcastAnswerSkill(args, context, definition) {
   const request = String(args?.request || context.question).trim();
-  // A closed chat may keep working while the user browses elsewhere. For an
-  // implicit-place follow-up, restore the place captured when this turn began
-  // before deterministic weather reasoning reads global forecast state.
-  if (!extractPlanLocationQuery(request)) {
-    await ensureNearcastSkillPlace("", context);
+  if (parseNearcastDirectNavigation(request)) {
+    return nearcastSkillResult({
+      status: "unavailable",
+      message: "This request requires a Nearcast navigation skill."
+    });
+  }
+  // A closed chat may keep working while the user browses elsewhere. Load the
+  // explicit place, or the place captured when this turn began, before any
+  // deterministic weather reasoning reads global forecast state.
+  const extractedPlace = extractPlanLocationQuery(request);
+  const requestedPlace = nearcastSemanticReference(extractedPlace) ? "" : extractedPlace;
+  const place = await ensureNearcastSkillPlace(requestedPlace, context);
+  if (!place) {
+    context.receipt.answer = `I could not load ${requestedPlace || "that place"}. Try city + state or country.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer });
   }
   assertNearcastAgentRunActive(context);
   const checked = await answerPlanRequest(request);
@@ -3787,10 +4313,19 @@ async function executeNearcastAnswerSkill(args, context, definition) {
   const fallback = checked?.answer || answerFreeform(request);
   context.receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
   context.receipt.event = checked?.event || null;
+  const artifacts = [];
+  if (fallback) {
+    const place = context.lastPlace || state.activePlace;
+    if (place) artifacts.push(nearcastPlaceArtifact(place, context));
+    const c = buildAIContext();
+    const window = c ? resolveAskWindow(request, c) : null;
+    if (place && window) artifacts.push(nearcastWindowArtifact(place, window, context, { dayText: request }));
+    if (checked?.event) artifacts.push(nearcastPlanArtifact(checked.event, context));
+  }
   return nearcastSkillResult({
     status: fallback ? (definition.id === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
     message: context.receipt.answer
-  });
+  }, artifacts);
 }
 
 async function executeNearcastPlaceNavigationSkill(args, context, type) {
@@ -3805,7 +4340,10 @@ async function executeNearcastPlaceNavigationSkill(args, context, type) {
     ? `Opening the weather map centered on ${label}.`
     : `Showing the forecast for ${label}.`;
   context.receipt.navigation = { type };
-  return nearcastSkillResult({ status: "opened", message: context.receipt.answer, place: label });
+  return nearcastSkillResult(
+    { status: "opened", message: context.receipt.answer, place: label },
+    [nearcastPlaceArtifact(place, context), nearcastViewArtifact(type, place, context)]
+  );
 }
 
 function executeNearcastForecastOpenSkill(args, context) {
@@ -3817,9 +4355,11 @@ function executeNearcastMapOpenSkill(args, context) {
 }
 
 async function executeNearcastHourlyOpenSkill(args, context) {
+  const preparedState = context.preparedSkillState?.get("nearcast.forecast_open_hourly");
+  context.preparedSkillState?.delete("nearcast.forecast_open_hourly");
   const place = await ensureNearcastSkillPlace(args?.place, context);
   const dayText = String(args?.day || "").trim();
-  const dayIndex = place ? resolveDayIndex(plannerParseText(dayText), buildAIContext()) : null;
+  const dayIndex = place ? resolveDayIndex(dayText, buildAIContext()) : null;
   if (!place || dayIndex == null || !state.forecast?.daily?.time?.[dayIndex]) {
     context.receipt.answer = `I could not open hourly details for ${dayText || "that day"}.`;
     return nearcastSkillResult({
@@ -3830,14 +4370,34 @@ async function executeNearcastHourlyOpenSkill(args, context) {
     });
   }
   const dayLabel = formatDay(state.forecast.daily.time[dayIndex], dayIndex);
+  const sourceWindow = preparedState?.windowArtifact ||
+    nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window) ||
+    nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan);
+  const sourceValue = sourceWindow?.value || {};
+  const matchesSourceDate = sourceValue.target_date === state.forecast.daily.time[dayIndex];
+  const window = {
+    dayIdx: dayIndex,
+    startHour: matchesSourceDate ? sourceValue.start_hour : 8,
+    endHour: matchesSourceDate ? sourceValue.end_hour : 20,
+    period: matchesSourceDate ? sourceValue.period : "day"
+  };
+  const windowArtifact = nearcastWindowArtifact(place, window, context, { dayText });
   context.receipt.answer = `Opening ${dayLabel} hourly details for ${placeLabel(place)}.`;
-  context.receipt.navigation = { type: "hourly", dayIndex };
+  context.receipt.navigation = {
+    type: "hourly",
+    dayIndex,
+    startHour: window.startHour,
+    endHour: window.endHour,
+    focusWindow: Boolean(matchesSourceDate && (
+      sourceValue.period !== "day" || sourceValue.start_hour !== 8 || sourceValue.end_hour !== 20
+    ))
+  };
   return nearcastSkillResult({
     status: "opened",
     message: context.receipt.answer,
     place: placeLabel(place),
     day: dayLabel
-  });
+  }, [nearcastPlaceArtifact(place, context), windowArtifact, nearcastViewArtifact("hourly", place, context, windowArtifact)]);
 }
 
 async function executeNearcastFindAndDraftSkill(args, context) {
@@ -3867,12 +4427,54 @@ async function executeNearcastFindAndDraftSkill(args, context) {
   context.lastWindow = result.event;
   context.receipt.event = result.event;
   context.receipt.answer = `${result.answer} I prepared it as a plan draft; you can choose Watch this plan to save it.`;
+  const windowArtifact = nearcastWindowArtifact(place, {
+    dayIdx: result.event.dayIndex,
+    startHour: result.event.startHour,
+    endHour: result.event.endHour,
+    period: args?.period || "day"
+  }, context, { dayText: args?.day || request });
   return nearcastSkillResult({
     status: "drafted",
     message: context.receipt.answer,
     place: placeLabel(place),
     window: result.event.label || `${hourText(result.event.startHour)}-${hourText(result.event.endHour)}`
-  });
+  }, [nearcastPlaceArtifact(place, context), windowArtifact, nearcastPlanArtifact(result.event, context)]);
+}
+
+function nearcastSkillSignature(skillId, args) {
+  const ordered = Object.keys(args || {}).sort().reduce((value, key) => {
+    value[key] = args[key];
+    return value;
+  }, {});
+  return `${skillId}:${JSON.stringify(ordered)}`;
+}
+
+async function prepareRegisteredNearcastSkill(context, command) {
+  assertNearcastAgentRunActive(context);
+  const definition = NEARCAST_AGENT_SKILL_REGISTRY.get(command?.skillId);
+  if (!definition) return { kind: "rejected", reason: `Unknown Nearcast skill ${command?.skillId || ""}` };
+  if (context.requiredSkillId && definition.id !== context.requiredSkillId) {
+    return { kind: "rejected", reason: `This request requires ${context.requiredSkillId}.` };
+  }
+  context.artifactReferences = Array.isArray(command?.artifacts) ? command.artifacts : [];
+  const outcome = typeof definition.prepare === "function"
+    ? await definition.prepare(command.partialArguments || {}, context, definition)
+    : { kind: "ready", arguments: command.partialArguments || {} };
+  assertNearcastAgentRunActive(context);
+  if (outcome?.kind === "needs_input" && outcome.clarification) {
+    context.receipt.clarification = {
+      ...outcome.clarification,
+      type: "agent-skill",
+      pendingSkill: {
+        skillId: definition.id,
+        arguments: { ...(command.partialArguments || {}) },
+        question: context.rootQuestion || context.question
+      },
+      sessionId: context.sessionId
+    };
+    context.receipt.answer = outcome.clarification.prompt;
+  }
+  return outcome;
 }
 
 async function invokeRegisteredNearcastSkill(context, command) {
@@ -3881,10 +4483,22 @@ async function invokeRegisteredNearcastSkill(context, command) {
   if (!definition || typeof definition.execute !== "function") {
     throw new Error(`Unknown Nearcast skill ${command?.skillId || ""}`);
   }
+  const skillArguments = command.arguments || {};
+  const signature = nearcastSkillSignature(definition.id, skillArguments);
   context.receipt.skillCalls += 1;
-  const result = await definition.execute(command.arguments || {}, context, definition);
+  let result = context.completedSkillResults.get(signature);
+  if (!result) {
+    result = await definition.execute(skillArguments, context, definition);
+    context.completedSkillResults.set(signature, result);
+  }
   assertNearcastAgentRunActive(context);
-  context.receipt.outputs.push({ skillId: definition.id, output: result?.output || null });
+  rememberNearcastAgentArtifacts(result?.artifacts);
+  context.sessionArtifacts = nearcastAgentArtifactsForTurn(context.rowIndex);
+  context.receipt.outputs.push({
+    skillId: definition.id,
+    arguments: skillArguments,
+    output: result?.output || null
+  });
   return result;
 }
 
@@ -3901,6 +4515,9 @@ function parseNearcastDirectNavigation(question) {
       day,
       period
     };
+    if (!args.place || nearcastSemanticReference(args.place)) delete args.place;
+    if (!args.day) delete args.day;
+    if (!args.period) delete args.period;
     if (Number.isFinite(durationHours)) args.duration_hours = durationHours;
     return { skillId: "nearcast.plan_find_and_draft", arguments: args };
   }
@@ -3915,32 +4532,52 @@ function parseNearcastDirectNavigation(question) {
   if (!type) return null;
   const targetMatches = [...raw.matchAll(/\b(?:in|for|at|near|around)\s+(.+?)(?=\s+\b(?:in|for|at|near|around)\s+|[.!?]*$)/gi)];
   const target = targetMatches[targetMatches.length - 1]?.[1] || "";
-  const place = target
+  let place = target
     .replace(/\b(?:weather\s+)?(?:map|radar|forecast)\b.*$/i, "")
     .replace(/[.!?]+$/g, "")
     .trim();
+  if (nearcastSemanticReference(place)) place = "";
   const day = raw.match(/\b((?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1] || "";
-  if (type === "hourly" && !day) return null;
-  const hourlyPlace = type === "hourly" ? (extractPlanLocationQuery(raw) || place) : place;
+  const extractedPlace = extractPlanLocationQuery(raw);
+  const hourlyPlace = type === "hourly"
+    ? (nearcastSemanticReference(extractedPlace) ? "" : extractedPlace) || place
+    : place;
+  const hourlyArguments = { place: hourlyPlace, day };
+  if (!hourlyArguments.place) delete hourlyArguments.place;
+  if (!hourlyArguments.day) hourlyArguments.window_ref = "last_result";
   return {
     skillId: type === "hourly"
       ? "nearcast.forecast_open_hourly"
       : type === "map"
         ? "nearcast.map_open"
         : "nearcast.forecast_open",
-    arguments: type === "hourly" ? { place: hourlyPlace, day } : { place }
+    arguments: type === "hourly" ? hourlyArguments : { place }
   };
 }
 
-async function runNearcastDirectNavigation(question, signal = null) {
+async function runNearcastDirectNavigation(question, signal = null, rowIndex = null) {
   const command = parseNearcastDirectNavigation(question);
   if (!command) return null;
-  const context = createNearcastAgentContext(question, null, signal);
-  await invokeRegisteredNearcastSkill(context, command);
+  const context = createNearcastAgentContext(question, rowIndex, signal);
+  const prepared = await prepareRegisteredNearcastSkill(context, {
+    skillId: command.skillId,
+    partialArguments: command.arguments,
+    artifacts: context.sessionArtifacts.map(({ id, kind, summary }) => ({ id, kind, summary }))
+  });
+  if (prepared?.kind === "ready") {
+    await invokeRegisteredNearcastSkill(context, {
+      skillId: command.skillId,
+      arguments: prepared.arguments
+    });
+  }
   const { receipt } = context;
+  if (!receipt.answer && prepared?.kind !== "ready") {
+    receipt.answer = prepared?.clarification?.prompt || prepared?.reason || "I need more information before I can do that.";
+  }
   return {
     answer: receipt.answer,
     event: receipt.event,
+    clarification: receipt.clarification,
     navigation: receipt.navigation,
     skillCalls: receipt.skillCalls
   };
@@ -3955,7 +4592,27 @@ async function scheduleNearcastAgentNavigation(navigation) {
     ensureInlineMapReady(true);
     await enterImmersiveMap();
   } else if (type === "hourly") {
-    openDayFromIndex(Number(navigation.dayIndex), { initialMode: "hourly", persistInitialMode: false });
+    const dayIndex = Number(navigation.dayIndex);
+    const focusEvent = navigation.focusWindow
+      ? plannerShowEvent({
+          title: "Nearcast AI forecast window",
+          place: state.activePlace,
+          data: state.forecast,
+          alerts: activeAlerts,
+          window: {
+            dayIdx: dayIndex,
+            startHour: Number(navigation.startHour),
+            endHour: Number(navigation.endHour)
+          },
+          label: "Nearcast AI"
+        })
+      : null;
+    openDayFromIndex(dayIndex, {
+      initialMode: "hourly",
+      persistInitialMode: false,
+      eventWindow: focusEvent,
+      contextLabel: focusEvent ? `${placeLabel(state.activePlace)} · Focused forecast window` : ""
+    });
   } else if (type === "forecast") {
     try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
   }
@@ -3968,20 +4625,14 @@ function cleanNearcastAgentAnswer(value) {
     .trim();
 }
 
-function nearcastAgentConversationQuery(question, rowIndex) {
-  const prior = askThread
-    .slice(0, Number.isInteger(rowIndex) ? rowIndex : askThread.length)
-    .filter((exchange) => exchange?.q && exchange?.a)
-    .slice(-3)
-    .map((exchange) =>
-      `User: ${String(exchange.q).slice(0, 120)}\nNearcast: ${String(exchange.a).slice(0, 180)}`
-    );
-  if (!prior.length) return question;
-  return [
-    "Use the recent conversation only to resolve follow-ups. The latest request is authoritative.",
-    ...prior,
-    `Latest user request: ${question}`
-  ].join("\n");
+function nearcastRequestMaxReplans(question) {
+  const raw = String(question || "");
+  const clauses = nearcastSkillRequestClauses(raw);
+  if (clauses.length > 1) return Math.min(3, clauses.length - 1);
+  const actionWords = raw.match(/\b(?:open|show|find|create|draft|check|compare|watch|switch)\b/gi) || [];
+  return actionWords.length > 1 && /\band\b/i.test(raw)
+    ? Math.min(3, actionWords.length - 1)
+    : 0;
 }
 
 async function runNearcastAgent(question, rowIndex, signal = null) {
@@ -3996,23 +4647,60 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
 
   const context = createNearcastAgentContext(question, rowIndex, signal);
   const { receipt } = context;
+  const maxReplans = nearcastRequestMaxReplans(question);
+  const directCommand = parseNearcastDirectNavigation(question);
+  context.requiredSkillId = directCommand && maxReplans === 0 ? directCommand.skillId : "";
 
   const result = await ai.runAgent({
-    query: nearcastAgentConversationQuery(question, rowIndex),
+    query: question,
     skills: NEARCAST_AGENT_SKILLS,
     invokeSkill: (command) => invokeRegisteredNearcastSkill(context, command),
+    sessionId: context.sessionId,
+    loadSession: (sessionId, limit) => {
+      const artifacts = loadNearcastAgentSession(sessionId, limit, rowIndex);
+      context.sessionArtifacts = artifacts;
+      return artifacts;
+    },
+    prepareSkill: (command) => prepareRegisteredNearcastSkill(context, command),
+    maxReplans,
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
     signal: signal || { aborted: false }
   });
   assertNearcastAgentRunActive(context);
-  if (receipt.clarification) setPlannerClarification(receipt.clarification, rowIndex);
-  const answer = receipt.answer || cleanNearcastAgentAnswer(result?.answer);
-  if (receipt.skillCalls === 0 && parseNearcastDirectNavigation(question)) return null;
+  const rawClarification = result?.clarification || null;
+  const rawSkillId = rawClarification?.skill_id || rawClarification?.skillId || "";
+  const resumableClarification = rawClarification && rawSkillId && NEARCAST_AGENT_SKILL_REGISTRY.has(rawSkillId)
+    ? {
+        ...rawClarification,
+        type: "agent-skill",
+        pendingSkill: {
+          skillId: rawSkillId,
+          arguments: {},
+          question: context.rootQuestion || context.question
+        },
+        sessionId: context.sessionId
+      }
+    : rawClarification;
+  const clarification = receipt.clarification || resumableClarification || null;
+  if (clarification?.type === "agent-skill" || clarification?.options?.length) {
+    setPlannerClarification(clarification, rowIndex);
+  }
+  const chainAnswer = receipt.skillCalls > 1
+    ? [...new Set(receipt.outputs.map((item) => item.output?.message).filter(Boolean))].join(" ")
+    : "";
+  const answer = chainAnswer || receipt.answer || clarification?.prompt || cleanNearcastAgentAnswer(result?.answer);
+  const clarificationSkillId = clarification?.pendingSkill?.skillId || clarification?.skill_id || clarification?.skillId || "";
+  const directCommandSatisfied = !directCommand ||
+    receipt.outputs.some((item) => item.skillId === directCommand.skillId) ||
+    clarificationSkillId === directCommand.skillId;
+  if (!directCommandSatisfied) return null;
+  if (receipt.skillCalls === 0 && !clarification) return null;
   if (!answer) return null;
   return {
     answer,
     event: receipt.event,
+    clarification,
     navigation: receipt.navigation,
     skillCalls: receipt.skillCalls
   };
@@ -4108,7 +4796,7 @@ async function runAsk(question, intent) {
       const agent = await runNearcastAgent(question, row, runSignal);
       if (!runIsCurrent()) return;
       if (agent) {
-        finishAskResponse(row, agent);
+        finishAskResponse(row, agent, { captureArtifacts: agent.skillCalls === 0 && !agent.clarification });
         await scheduleNearcastAgentNavigation(agent.navigation);
         return;
       }
@@ -4116,10 +4804,13 @@ async function runAsk(question, intent) {
       if (!runIsCurrent()) return;
       planIntentDiagnostics.agentError = cleanError(agentError);
     }
-    const directNavigation = await runNearcastDirectNavigation(question, runSignal);
+    const directNavigation = await runNearcastDirectNavigation(question, runSignal, row);
     if (!runIsCurrent()) return;
     if (directNavigation) {
-      finishAskResponse(row, directNavigation);
+      if (directNavigation.clarification) setPlannerClarification(directNavigation.clarification, row);
+      finishAskResponse(row, directNavigation, {
+        captureArtifacts: false
+      });
       await scheduleNearcastAgentNavigation(directNavigation.navigation);
       return;
     }
@@ -4178,15 +4869,52 @@ function shouldUseAsClarification(text) {
     if (hasAny(s, [" what ", " when ", " should ", " best ", " weather ", " forecast ", " rain ", " wind "])) return false;
     return true;
   }
+  if (pending.type === "agent-skill") {
+    const missing = new Set(pending.missing_fields || []);
+    const c = buildAIContext();
+    if (missing.has("day") && c && resolveDayIndex(raw, c) != null) return true;
+    if (missing.has("place")) {
+      return !hasAny(s, [" what ", " when ", " should ", " best ", " weather ", " forecast ", " rain ", " wind ", " open ", " show "]);
+    }
+    return true;
+  }
   return false;
 }
 
 function beginAskResponse(question) {
-  askThread.push({ q: question, a: "" });
+  askThread.push({
+    q: question,
+    a: "",
+    sessionId: nearcastAgentSessionId,
+    turnId: `nearcast-turn-${askThread.length}`
+  });
   askStreaming = true;
   renderAsk();
   scrollAskIntoView();
   return askThread.length - 1;
+}
+
+function captureNearcastTurnArtifacts(row, normalized) {
+  const exchange = askThread[row];
+  const place = normalized?.event?.place || state.activePlace;
+  const c = buildAIContext();
+  if (!exchange?.q || !place || !c) return;
+  const context = { turnId: exchange.turnId || `nearcast-turn-${row}` };
+  const artifacts = [nearcastPlaceArtifact(place, context)];
+  if (normalized?.event) artifacts.push(nearcastPlanArtifact(normalized.event, context));
+  let referenceText = exchange.q;
+  if (nearcastReferencesConversation(referenceText) && resolveDayIndex(referenceText, c) == null) {
+    const previousWindow = nearcastAgentSessionArtifacts
+      .filter((artifact) => artifact.kind === NEARCAST_AGENT_ARTIFACT_KINDS.window)
+      .slice(-1)[0];
+    if (previousWindow?.value?.target_date) referenceText += ` on ${previousWindow.value.target_date}`;
+  }
+  const hasWindowReference = resolveDayIndex(referenceText, c) != null ||
+    /\b(?:morning|afternoon|evening|night|overnight|today|tomorrow|tonight|after work|from|between)\b/i.test(referenceText);
+  if (hasWindowReference) {
+    artifacts.push(nearcastWindowArtifact(place, resolveAskWindow(referenceText, c), context, { dayText: referenceText }));
+  }
+  rememberNearcastAgentArtifacts(artifacts);
 }
 
 function finishAskResponse(row, result, options = {}) {
@@ -4195,6 +4923,7 @@ function finishAskResponse(row, result, options = {}) {
     askThread[row].a = normalized.answer;
     askThread[row].event = normalized.event || null;
   }
+  if (options.captureArtifacts !== false) captureNearcastTurnArtifacts(row, normalized);
   if (normalized.event && !options.updateMemoryId && typeof recordForYouSignal === "function") {
     recordForYouSignal("plan-check-completed");
   }
@@ -4294,6 +5023,65 @@ async function continuePlannerClarificationWithText(text, signal = null) {
   plannerClarification = null;
   const row = beginAskResponse(text);
   try {
+    if (pending.type === "agent-skill") {
+      if (pending.sessionId !== nearcastAgentSessionId || !pending.pendingSkill?.skillId) {
+        finishAskResponse(row, "That request is no longer active. Tell me what you want to open.", { captureArtifacts: false });
+        return;
+      }
+      const skillArguments = { ...(pending.pendingSkill.arguments || {}) };
+      const missing = new Set(pending.missing_fields || []);
+      const c = buildAIContext();
+      const suppliedDay = missing.has("day") && (
+        nearcastExplicitDayText(text) || ((c && resolveDayIndex(text, c) != null) ? text : "")
+      );
+      if (suppliedDay) skillArguments.day = suppliedDay;
+      if (missing.has("place")) {
+        const suppliedPlace = nearcastClarificationPlaceText(text);
+        if (suppliedPlace && !nearcastSemanticReference(suppliedPlace)) skillArguments.place = suppliedPlace;
+      }
+      if (suppliedDay || skillArguments.place) delete skillArguments.window_ref;
+      if (missing.has("request") && !skillArguments.request) skillArguments.request = text;
+
+      let resumedQuestion = String(pending.pendingSkill.question || "").trim() || text;
+      const resumedContext = buildAIContext();
+      if (skillArguments.day && (!resumedContext || resolveDayIndex(resumedQuestion, resumedContext) == null)) {
+        resumedQuestion += ` on ${skillArguments.day}`;
+      }
+      const resumedPlace = extractPlanLocationQuery(resumedQuestion);
+      if (skillArguments.place && (!resumedPlace || nearcastSemanticReference(resumedPlace))) {
+        resumedQuestion += ` in ${skillArguments.place}`;
+      }
+      if (["nearcast.weather_answer", "nearcast.plan_check", "nearcast.plan_find_and_draft"].includes(pending.pendingSkill.skillId)) {
+        skillArguments.request = resumedQuestion;
+      }
+      const context = createNearcastAgentContext(resumedQuestion, row, signal);
+      context.rootQuestion = resumedQuestion;
+      const prepared = await prepareRegisteredNearcastSkill(context, {
+        skillId: pending.pendingSkill.skillId,
+        partialArguments: skillArguments,
+        artifacts: context.sessionArtifacts.map(({ id, kind, summary }) => ({ id, kind, summary }))
+      });
+      if (prepared?.kind === "ready") {
+        await invokeRegisteredNearcastSkill(context, {
+          skillId: pending.pendingSkill.skillId,
+          arguments: prepared.arguments
+        });
+      }
+      if (signal?.aborted || (signal && askAbort !== signal)) return;
+      if (context.receipt.clarification) setPlannerClarification(context.receipt.clarification, row);
+      const result = {
+        answer: context.receipt.answer || prepared?.clarification?.prompt || prepared?.reason || "I need one more detail.",
+        event: context.receipt.event,
+        clarification: context.receipt.clarification,
+        navigation: context.receipt.navigation,
+        skillCalls: context.receipt.skillCalls
+      };
+      finishAskResponse(row, result, {
+        captureArtifacts: result.skillCalls === 0 && !result.clarification
+      });
+      await scheduleNearcastAgentNavigation(result.navigation);
+      return;
+    }
     const option = { label: text };
     if (pending.type === "location") {
       option.locationQuery = pending.replaceLocation
@@ -4365,6 +5153,7 @@ const ASK_PERIODS = {
 const PLAN_LOCATION_STOP_WORDS = [
   "today", "tomorrow", "tonight", "morning", "afternoon", "evening", "night",
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "next", "this", "coming", "following", "weekend",
   "on", "for", "at", "from", "between", "before", "after", "around", "about",
   "that", "which", "where", "would", "could", "should"
 ];
@@ -4964,15 +5753,21 @@ function planActivityLocationWords() {
 }
 
 function findPlanLocationStopIndex(text) {
+  const actionBoundary = text.search(
+    /\b(?:and then|then|after that|followed by)\b|(?:,\s*|\band\s+)(?=(?:open|show|find|create|draft|check|compare|watch|switch|tell)\b)/i
+  );
   const re = /\b[a-z]{2,}\b/gi;
   let match;
   while ((match = re.exec(text)) !== null) {
     const raw = match[0].toLowerCase();
     const token = plannerCanonicalTerm(raw) || raw;
-    if (PLAN_LOCATION_STOP_WORDS.includes(token)) return match.index;
+    if (PLAN_LOCATION_STOP_WORDS.includes(token)) {
+      return actionBoundary >= 0 ? Math.min(actionBoundary, match.index) : match.index;
+    }
   }
   const punct = text.search(/[?.!]/);
-  return punct >= 0 ? punct : -1;
+  if (actionBoundary >= 0 && punct >= 0) return Math.min(actionBoundary, punct);
+  return actionBoundary >= 0 ? actionBoundary : punct;
 }
 
 function mergeLocationClarification(original, detail) {
@@ -8873,6 +9668,7 @@ function answerFreeform(q) {
 function resetAsk() {
   if (askAbort) askAbort.aborted = true;
   askAbort = null;
+  rotateNearcastAgentSession();
   askThread = [];
   askStreaming = false;
   askError = "";
@@ -9005,6 +9801,7 @@ function bindAskSendButton() {
 function renderPlannerClarification(disabledAttr = "") {
   const pending = plannerClarification;
   if (!pending) return "";
+  if (!Array.isArray(pending.options) || !pending.options.length) return "";
   if (pending.type === "confirm") {
     const facts = pending.facts || {};
     const notes = (pending.notes || []).filter(Boolean);

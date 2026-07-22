@@ -17,6 +17,8 @@ run_portable_checks() {
     daygraph.js \
     boot.js \
     ai.js \
+    operon-runtime.js \
+    vendor/operon/driver.js \
     sw.js \
     raw-map-runtime.js \
     workers/radar-capability.mjs \
@@ -31,6 +33,7 @@ run_portable_checks() {
     weather-truth-fixtures.mjs \
     plan-watch-receipt-smoke.mjs \
     product-activation-smoke.mjs \
+    ai-operon-smoke.mjs \
     trust-loop-smoke.mjs \
     trust-loop-backend-smoke.mjs \
     trust-loop-report-smoke.mjs \
