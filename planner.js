@@ -3178,6 +3178,7 @@ function renderBriefing() {
     return;
   }
   const showSummarySurface = aiState.phase === "idle" ||
+    aiState.phase === "ready" ||
     aiState.phase === "unsupported" ||
     aiState.phase === "loading" ||
     aiState.phase === "generating" ||

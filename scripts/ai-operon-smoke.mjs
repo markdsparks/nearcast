@@ -11,6 +11,12 @@ import {
 } from "../ai-contracts.js";
 
 const wasmBytes = await readFile(new URL("../vendor/operon/operon_core_bg.wasm", import.meta.url));
+const plannerSource = await readFile(new URL("../planner.js", import.meta.url), "utf8");
+assert.match(
+  plannerSource,
+  /showSummarySurface\s*=\s*aiState\.phase === "idle"\s*\|\|\s*aiState\.phase === "ready"/,
+  "a previously enabled AI provider must keep the Generate summary control visible after reload"
+);
 await init({ module_or_path: wasmBytes });
 const operon = createBrowserDriver(wasm);
 
