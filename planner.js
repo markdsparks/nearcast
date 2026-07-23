@@ -4564,8 +4564,10 @@ async function invokeRegisteredNearcastSkill(context, command) {
 
 function parseNearcastDirectNavigation(question) {
   const raw = String(question || "").trim();
-  const switchMatch = raw.match(/\b(?:switch|change|set)\s+(?:(?:my|the)\s+)?(?:place|places|location)(?:\s+to)?\s+(.+?)[.!?]*$/i) ||
-    raw.match(/\bswitch\s+to\s+(.+?)[.!?]*$/i);
+  const switchMatch = raw.match(/\b(?:switch|change|set)\s+(?:(?:my|the)\s+)?(?:place|places|location|locations)(?:\s+(?:to|as))?\s+(.+?)[.!?]*$/i) ||
+    raw.match(/\bswitch\s+to\s+(.+?)[.!?]*$/i) ||
+    raw.match(/\bmove\s+to\s+(.+?)[.!?]*$/i) ||
+    raw.match(/\buse\s+(.+?)\s+as\s+(?:my\s+)?(?:place|location)[.!?]*$/i);
   if (switchMatch) {
     const place = String(switchMatch[1] || "").trim();
     if (place && !nearcastSemanticReference(place)) {
@@ -4751,11 +4753,11 @@ function cleanNearcastAgentAnswer(value) {
 function nearcastRequestMaxReplans(question) {
   const raw = String(question || "");
   const clauses = nearcastSkillRequestClauses(raw);
-  if (clauses.length > 1) return Math.min(3, clauses.length - 1);
+  if (clauses.length > 1) return Math.max(1, Math.min(3, clauses.length - 1));
   const actionWords = raw.match(/\b(?:open|show|find|create|draft|check|compare|watch|switch)\b/gi) || [];
   return actionWords.length > 1 && /\band\b/i.test(raw)
     ? Math.min(3, actionWords.length - 1)
-    : 0;
+    : 1;
 }
 
 async function runNearcastAgent(question, rowIndex, signal = null) {

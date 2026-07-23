@@ -228,8 +228,11 @@ export async function runAgent({
     maxSessionArtifacts: 8,
     loadSession,
     prepareSkill,
-    maxReplans,
-    requireSkillOrClarification: false,
+    // Agent turns must resolve to a typed Nearcast skill or an explicit
+    // clarification. This keeps the SLM free to interpret language while
+    // preventing an unplanned prose fallback from masquerading as action.
+    maxReplans: Math.max(1, Number(maxReplans) || 0),
+    requireSkillOrClarification: true,
     timeoutMs: 60000
   });
   lastRun = {

@@ -33,9 +33,11 @@ assert.match(plannerSource, /planIntent: planIntentDiagnostics/);
 assert.match(plannerSource, /NEARCAST_AGENT_SKILL_REGISTRY = new Map/);
 assert.match(plannerSource, /id: "nearcast\.place_switch"/);
 assert.match(plannerSource, /executeNearcastPlaceSwitchSkill/);
+assert.match(plannerSource, /place\|places\|location\|locations/);
 assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
 assert.match(plannerSource, /invokeRegisteredNearcastSkill\(context, command\)/);
+assert.match(await readFile(new URL("../ai.js", import.meta.url), "utf8"), /requireSkillOrClarification:\s*true/);
 assert.match(plannerSource, /openDayFromIndex\(dayIndex, \{[\s\S]*eventWindow: focusEvent/);
 assert.match(plannerSource, /options\.hours = Math\.max\(1, Math\.min\(8/);
 assert.match(
