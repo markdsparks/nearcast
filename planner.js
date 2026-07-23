@@ -4413,12 +4413,24 @@ function executeNearcastMapOpenSkill(args, context) {
   return executeNearcastPlaceNavigationSkill(args, context, "map");
 }
 
+function nearcastHourlyDayContext(place) {
+  const contextual = buildAIContext(state.forecast, place) || buildAIContext();
+  if (contextual?.daily?.length) return contextual;
+  const dates = state.forecast?.daily?.time || [];
+  return {
+    daily: dates.map((date) => ({
+      date,
+      dow: new Date(`${String(date).slice(0, 10)}T12:00:00`).getDay()
+    }))
+  };
+}
+
 async function executeNearcastHourlyOpenSkill(args, context) {
   const preparedState = context.preparedSkillState?.get("nearcast.forecast_open_hourly");
   context.preparedSkillState?.delete("nearcast.forecast_open_hourly");
   const place = await ensureNearcastSkillPlace(args?.place, context);
   const dayText = String(args?.day || "").trim();
-  const dayIndex = place ? resolveDayIndex(dayText, buildAIContext()) : null;
+  const dayIndex = place ? resolveDayIndex(dayText, nearcastHourlyDayContext(place)) : null;
   if (!place || dayIndex == null || !state.forecast?.daily?.time?.[dayIndex]) {
     context.receipt.answer = `I could not open hourly details for ${dayText || "that day"}.`;
     return nearcastSkillResult({
