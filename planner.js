@@ -3528,6 +3528,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
     prepare: prepareNearcastAnswerSkill,
     execute: executeNearcastAnswerSkill
   },
@@ -3553,6 +3554,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
     prepare: prepareNearcastAnswerSkill,
     execute: executeNearcastAnswerSkill
   },
@@ -3576,6 +3578,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    produces: ["nearcast.place"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastPlaceSwitchSkill
   },
@@ -3599,6 +3602,8 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.view"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastForecastOpenSkill
   },
@@ -3622,6 +3627,8 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.view"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastMapOpenSkill
   },
@@ -3635,7 +3642,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
         day: { type: "string" },
         window_ref: { type: "string" }
       },
-      required: ["place", "day"],
+      required: [],
       additionalProperties: false
     },
     output_schema: {
@@ -3650,6 +3657,8 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.view"],
     prepare: prepareNearcastHourlySkill,
     execute: executeNearcastHourlyOpenSkill
   },
@@ -3681,6 +3690,8 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
       additionalProperties: false
     },
     requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.plan-draft"],
     prepare: prepareNearcastPlanSkill,
     execute: executeNearcastFindAndDraftSkill
   }
@@ -3830,7 +3841,18 @@ function nearcastAgentArtifactsForTurn(rowIndex, limit = NEARCAST_AGENT_ARTIFACT
     return !Number.isFinite(expiry) || expiry > now;
   });
   nearcastAgentSessionArtifacts = stored;
-  return [...stored, ...nearcastRecentTurnArtifacts(rowIndex)]
+  // TaskGraph readiness is based on typed artifacts. Keep the currently
+  // selected place available even at the start of a fresh session, before the
+  // first place skill has produced a receipt.
+  const activePlace = state.activePlace ? normalizePlace(state.activePlace) : null;
+  const activePlaceArtifact = activePlace ? {
+    id: "nearcast-active-place",
+    kind: NEARCAST_AGENT_ARTIFACT_KINDS.place,
+    summary: `Current selected place: ${placeLabel(activePlace)}.`,
+    value: { place: activePlace, place_label: placeLabel(activePlace) },
+    turn_id: null
+  } : null;
+  return [...stored, ...(activePlaceArtifact ? [activePlaceArtifact] : []), ...nearcastRecentTurnArtifacts(rowIndex)]
     .slice(-Math.max(1, Math.min(16, Number(limit) || NEARCAST_AGENT_ARTIFACT_LIMIT)));
 }
 
@@ -4557,10 +4579,15 @@ async function invokeRegisteredNearcastSkill(context, command) {
   }
   const skillArguments = command.arguments || {};
   const signature = nearcastSkillSignature(definition.id, skillArguments);
-  context.receipt.skillCalls += 1;
-  let result = context.completedSkillResults.get(signature);
+  // Operon may replay an InvokeSkill after a checkpoint restore. Prefer its
+  // idempotency key when present so navigation and writes happen once.
+  const idempotencyKey = String(command?.idempotencyKey || "").trim();
+  const executionKey = idempotencyKey ? `idempotency:${idempotencyKey}` : signature;
+  let result = context.completedSkillResults.get(executionKey) || context.completedSkillResults.get(signature);
   if (!result) {
+    context.receipt.skillCalls += 1;
     result = await definition.execute(skillArguments, context, definition);
+    context.completedSkillResults.set(executionKey, result);
     context.completedSkillResults.set(signature, result);
   }
   assertNearcastAgentRunActive(context);
@@ -4772,6 +4799,21 @@ function nearcastRequestMaxReplans(question) {
     : 1;
 }
 
+function nearcastCompletionForQuestion(question) {
+  const direct = parseNearcastDirectNavigation(question);
+  if (direct?.skillId) return { required_skill_ids: [direct.skillId] };
+  if (detectAskActivity(question) || detectPlanActivity(question)) {
+    const target = /\b(?:find|best|window|slot|when should|when can)\b/i.test(String(question || ""))
+      ? "nearcast.plan_find_and_draft"
+      : "nearcast.plan_check";
+    return { required_skill_ids: [target] };
+  }
+  if (nearcastLooksLikeWeatherQuestion(question)) {
+    return { required_skill_ids: ["nearcast.weather_answer"] };
+  }
+  return null;
+}
+
 async function runNearcastAgent(question, rowIndex, signal = null) {
   if (aiState.phase !== "ready") return null;
   const ai = await loadAIModule();
@@ -4786,6 +4828,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
   const { receipt } = context;
   const maxReplans = nearcastRequestMaxReplans(question);
   const directCommand = parseNearcastDirectNavigation(question);
+  const completion = nearcastCompletionForQuestion(question);
   context.requiredSkillId = directCommand && maxReplans === 0 ? directCommand.skillId : "";
 
   const result = await ai.runAgent({
@@ -4802,6 +4845,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
     maxReplans,
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
+    completion,
     signal: signal || { aborted: false }
   });
   assertNearcastAgentRunActive(context);

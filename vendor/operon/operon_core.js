@@ -4,6 +4,12 @@
  * A single resumable Operon execution session for browser hosts.
  */
 export class OperonWasmSession {
+    static __wrap(ptr) {
+        const obj = Object.create(OperonWasmSession.prototype);
+        obj.__wbg_ptr = ptr;
+        OperonWasmSessionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -13,6 +19,21 @@ export class OperonWasmSession {
     free() {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_operonwasmsession_free(ptr, 0);
+    }
+    /**
+     * Restores a previously snapshotted session without replaying completed
+     * actions.
+     * @param {string} snapshot_json
+     * @returns {OperonWasmSession}
+     */
+    static fromSnapshot(snapshot_json) {
+        const ptr0 = passStringToWasm0(snapshot_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.operonwasmsession_fromSnapshot(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return OperonWasmSession.__wrap(ret[0]);
     }
     /**
      * `config_json` is an optional serialized `SessionConfig`.
@@ -55,6 +76,29 @@ export class OperonWasmSession {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Serializes deterministic execution state for app suspension or crash
+     * recovery. Treat the result as private application state.
+     * @returns {string}
+     */
+    snapshot() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.operonwasmsession_snapshot(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
     }
     /**

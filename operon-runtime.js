@@ -1,5 +1,5 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.308";
+const OPERON_ASSET_VERSION = "3.0.309";
 
 // Some guided model providers treat a source's display path as its identifier.
 // Operon's contract intentionally distinguishes the stable ID (S1) from the
@@ -67,7 +67,8 @@ function sessionConfig({
   sessionId = null,
   maxSessionArtifacts = 8,
   maxReplans = 0,
-  requireSkillOrClarification = false
+  requireSkillOrClarification = false,
+  completion = null
 }) {
   return {
     policy: {
@@ -86,6 +87,7 @@ function sessionConfig({
     has_application_validator: typeof validateOutput === "function",
     memory_scope: memoryScope,
     skills: Array.isArray(skills) ? skills : [],
+    completion: completion && typeof completion === "object" ? completion : null,
     session_id: sessionId ? String(sessionId) : null,
     max_session_artifacts: sessionId
       ? Math.max(1, Math.min(16, Number(maxSessionArtifacts) || 8))
@@ -110,6 +112,8 @@ export async function runOperon({
   prepareSkill = null,
   maxReplans = 0,
   requireSkillOrClarification = false,
+  completion = null,
+  checkpoint = null,
   timeoutMs = 60000
 }) {
   if (typeof generate !== "function") throw new TypeError("Operon requires a generation provider");
@@ -128,9 +132,13 @@ export async function runOperon({
       sessionId,
       maxSessionArtifacts,
       maxReplans,
-      requireSkillOrClarification
+      requireSkillOrClarification,
+      completion
     }),
     {
+      checkpoint: typeof checkpoint === "function"
+        ? async ({ snapshot, command }) => checkpoint({ snapshot, command })
+        : undefined,
       generate: async ({ request }) => normalizeProviderCitations(
         await generate(request),
         suppliedSources
@@ -166,14 +174,15 @@ export async function runOperon({
           artifacts: Array.isArray(artifacts) ? artifacts : []
         });
       },
-      invokeSkill: async ({ skill_id, arguments: skillArguments, requires_user_confirmation }) => {
+      invokeSkill: async ({ skill_id, arguments: skillArguments, requires_user_confirmation, idempotency_key }) => {
         if (typeof invokeSkill !== "function") {
           throw new Error(`No Nearcast handler is registered for ${skill_id}`);
         }
         const result = await invokeSkill({
           skillId: skill_id,
           arguments: skillArguments,
-          requiresUserConfirmation: requires_user_confirmation === true
+          requiresUserConfirmation: requires_user_confirmation === true,
+          idempotencyKey: String(idempotency_key || "")
         });
         const skillSources = Array.isArray(result?.sources) ? result.sources : [];
         const offset = suppliedSources.length;
