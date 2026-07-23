@@ -3502,6 +3502,7 @@ const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   window: "nearcast.forecast-window",
   view: "nearcast.view",
   plan: "nearcast.plan-draft",
+  watch: "nearcast.plan-watch",
   recentTurn: "nearcast.recent-turn"
 });
 
@@ -3581,6 +3582,134 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     produces: ["nearcast.place"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastPlaceSwitchSkill
+  },
+  {
+    id: "nearcast.place_save",
+    description: "Save a named place to Nearcast's saved places and make it the active place.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" } },
+      required: ["place"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["saved", "unavailable"] }, message: { type: "string" }, place: { type: "string" } },
+      required: ["status", "message", "place"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    produces: ["nearcast.place"],
+    prepare: prepareNearcastPlaceSkill,
+    execute: executeNearcastPlaceSaveSkill
+  },
+  {
+    id: "nearcast.place_remove",
+    description: "Remove a named place from Nearcast's saved places.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" } },
+      required: ["place"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["removed", "unavailable"] }, message: { type: "string" }, place: { type: "string" } },
+      required: ["status", "message", "place"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: true,
+    prepare: prepareNearcastPlaceSkill,
+    execute: executeNearcastPlaceRemoveSkill
+  },
+  {
+    id: "nearcast.places_list",
+    description: "Show Nearcast's saved places.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["opened", "empty"] }, message: { type: "string" } },
+      required: ["status", "message"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    execute: executeNearcastPlacesListSkill
+  },
+  {
+    id: "nearcast.plan_watch",
+    description: "Confirm and save the most recent plan draft so Nearcast can watch it for changes.",
+    input_schema: {
+      type: "object",
+      properties: { window_ref: { type: "string" } },
+      required: [],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["watched", "needs_input", "unavailable"] }, message: { type: "string" }, plan: { type: "string" } },
+      required: ["status", "message", "plan"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: true,
+    consumes: ["nearcast.forecast-window"],
+    produces: ["nearcast.plan-watch"],
+    prepare: prepareNearcastPlanWatchSkill,
+    execute: executeNearcastPlanWatchSkill
+  },
+  {
+    id: "nearcast.plan_unwatch",
+    description: "Stop watching a previously saved Nearcast plan.",
+    input_schema: {
+      type: "object",
+      properties: { plan_ref: { type: "string" } },
+      required: [],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["removed", "unavailable"] }, message: { type: "string" }, plan: { type: "string" } },
+      required: ["status", "message", "plan"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: true,
+    execute: executeNearcastPlanUnwatchSkill
+  },
+  {
+    id: "nearcast.settings_update",
+    description: "Change Nearcast preferences such as temperature units or light/dark theme.",
+    input_schema: {
+      type: "object",
+      properties: { unit: { type: "string", enum: ["fahrenheit", "celsius"] }, theme: { type: "string", enum: ["auto", "light", "dark"] } },
+      required: [],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["updated", "needs_input"] }, message: { type: "string" } },
+      required: ["status", "message"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    execute: executeNearcastSettingsUpdateSkill
+  },
+  {
+    id: "nearcast.navigate",
+    description: "Navigate to any primary Nearcast surface: forecast, hourly, map, saved places, watching, or settings.",
+    input_schema: {
+      type: "object",
+      properties: { destination: { type: "string", enum: ["forecast", "hourly", "map", "places", "watching", "settings"] }, place: { type: "string" }, day: { type: "string" } },
+      required: ["destination"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["opened", "needs_input", "unavailable"] }, message: { type: "string" } },
+      required: ["status", "message"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    produces: ["nearcast.view"],
+    execute: executeNearcastNavigateSkill
   },
   {
     id: "nearcast.forecast_open",
@@ -4427,6 +4556,166 @@ async function executeNearcastPlaceSwitchSkill(args, context) {
   );
 }
 
+async function executeNearcastPlaceSaveSkill(args, context) {
+  const place = await ensureNearcastSkillPlace(args?.place, context);
+  if (!place) {
+    context.receipt.answer = `I could not save ${args?.place || "that place"}.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "" });
+  }
+  if (typeof savePlace === "function") savePlace(place);
+  const label = placeLabel(place);
+  context.receipt.answer = `${label} is saved in Nearcast.`;
+  return nearcastSkillResult({ status: "saved", message: context.receipt.answer, place: label }, [nearcastPlaceArtifact(place, context)]);
+}
+
+async function executeNearcastPlaceRemoveSkill(args, context) {
+  const requested = String(args?.place || "").trim();
+  const place = await resolveNearcastAgentPlace(requested);
+  const saved = place && (state.savedPlaces || []).find((item) => samePlanPlace(item, place));
+  if (!saved) {
+    context.receipt.answer = `I could not find ${requested || "that place"} in saved places.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: requested });
+  }
+  if (typeof removeSavedPlace === "function") removeSavedPlace(saved.id);
+  const label = placeLabel(saved);
+  context.receipt.answer = `Removed ${label} from saved places.`;
+  return nearcastSkillResult({ status: "removed", message: context.receipt.answer, place: label });
+}
+
+function executeNearcastPlacesListSkill(args, context) {
+  const places = Array.isArray(state.savedPlaces) ? state.savedPlaces : [];
+  context.receipt.navigation = { type: "places" };
+  context.receipt.answer = places.length
+    ? `You have ${places.length} saved place${places.length === 1 ? "" : "s"}: ${places.map(placeLabel).join(", ")}.`
+    : "You do not have any saved places yet.";
+  return nearcastSkillResult({ status: places.length ? "opened" : "empty", message: context.receipt.answer });
+}
+
+function nearcastPlanEventFromArtifact(artifact) {
+  const value = artifact?.value || {};
+  const data = state.forecast;
+  const dayIndex = Number.isInteger(Number(value.day_index))
+    ? Number(value.day_index)
+    : data?.daily?.time?.findIndex((date) => String(date).slice(0, 10) === String(value.target_date || "").slice(0, 10));
+  if (!data || !value.place || !Number.isInteger(dayIndex) || dayIndex < 0) return null;
+  return {
+    title: value.title || "Outdoor plan",
+    label: value.title || "Plan window",
+    place: normalizePlace(value.place),
+    data,
+    dayIndex,
+    startHour: Number(value.start_hour),
+    endHour: Number(value.end_hour)
+  };
+}
+
+function prepareNearcastPlanWatchSkill(args, context, definition) {
+  const ref = String(args?.window_ref || "").trim();
+  const artifact = nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, ref) ||
+    nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, ref);
+  if (!artifact && !context.lastWindow) {
+    return nearcastPreparationNeedsInput(definition.id, "Which plan should I watch?", ["window_ref"]);
+  }
+  return { kind: "ready", arguments: artifact ? { window_ref: artifact.id } : {} };
+}
+
+function executeNearcastPlanWatchSkill(args, context) {
+  const ref = String(args?.window_ref || "").trim();
+  const artifact = nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, ref) ||
+    nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, ref);
+  const event = context.lastWindow || nearcastPlanEventFromArtifact(artifact);
+  if (!event) {
+    context.receipt.answer = "I could not find a complete plan draft to watch.";
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: "" });
+  }
+  const existing = rememberedPlanIdForEvent(event);
+  let memory = existing ? state.planMemories.find((item) => item.id === existing) : null;
+  if (!memory) {
+    memory = planMemoryFromEvent(event, { q: context.rootQuestion || context.question, a: context.receipt.answer || "" });
+    if (memory) {
+      state.planMemories = [memory, ...state.planMemories].slice(0, 60);
+      savePlanMemories();
+      savePlanWatchBaselineForMemory(memory.id, { replace: true });
+      syncPlanWatchNotificationSubscription({ force: true, reason: "plan-watched-by-agent" });
+      refreshPlanMemorySurfaces();
+    }
+  }
+  if (!memory) {
+    context.receipt.answer = "I could not save that plan draft.";
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: "" });
+  }
+  const label = planMemoryTitle(memory);
+  context.receipt.answer = `I’m watching ${label} in ${placeLabel(memory.place)}.`;
+  context.receipt.navigation = { type: "watching", focusMemoryId: memory.id };
+  return nearcastSkillResult({ status: "watched", message: context.receipt.answer, plan: label }, [{
+    id: `nearcast-watch-${memory.id}`,
+    kind: NEARCAST_AGENT_ARTIFACT_KINDS.watch,
+    summary: `Nearcast is watching ${label}.`,
+    value: { memory_id: memory.id, place: memory.place, target_date: memory.targetDate },
+    turn_id: context.turnId
+  }]);
+}
+
+function executeNearcastPlanUnwatchSkill(args, context) {
+  const ref = String(args?.plan_ref || "").trim();
+  const memory = state.planMemories.find((item) => item.id === ref) || state.planMemories[0];
+  if (!memory) {
+    context.receipt.answer = "I could not find a watched plan to remove.";
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: "" });
+  }
+  forgetPlanMemory(memory.id);
+  const label = planMemoryTitle(memory);
+  context.receipt.answer = `Stopped watching ${label}.`;
+  return nearcastSkillResult({ status: "removed", message: context.receipt.answer, plan: label });
+}
+
+async function executeNearcastSettingsUpdateSkill(args, context) {
+  const unit = args?.unit ? String(args.unit).toLowerCase() : "";
+  const theme = args?.theme ? String(args.theme).toLowerCase() : "";
+  if (!unit && !theme) {
+    context.receipt.navigation = { type: "settings" };
+    context.receipt.answer = "Open settings to change units, theme, and other preferences.";
+    return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer });
+  }
+  if (unit && ["fahrenheit", "celsius"].includes(unit) && state.unit !== unit) {
+    const oldUnit = state.unit;
+    state.unit = unit;
+    localStorage.setItem("weather-unit", state.unit);
+    updateUnitButton?.();
+    if (state.forecast && state.activePlace) {
+      state.forecast = convertForecastUnits(state.forecast, state.forecastUnit || oldUnit, state.unit);
+      renderForecast(state.forecast, state.activePlace, { refreshMap: false, refreshSky: false, saveContinuity: false, refreshTheme: false, reason: "agent-settings" });
+    }
+  }
+  if (theme && ["auto", "light", "dark"].includes(theme)) {
+    state.theme = theme;
+    localStorage.setItem("weather-theme", state.theme);
+    applyTheme();
+  }
+  const parts = [];
+  if (unit) parts.push(unit === "fahrenheit" ? "Fahrenheit" : "Celsius");
+  if (theme) parts.push(`${theme} theme`);
+  context.receipt.answer = `Updated Nearcast preferences: ${parts.join(" and ")}.`;
+  return nearcastSkillResult({ status: "updated", message: context.receipt.answer });
+}
+
+async function executeNearcastNavigateSkill(args, context) {
+  const destination = String(args?.destination || "").toLowerCase();
+  if (destination === "map" || destination === "forecast") {
+    return executeNearcastPlaceNavigationSkill({ place: args?.place || "" }, context, destination);
+  }
+  if (destination === "hourly") {
+    return executeNearcastHourlyOpenSkill({ place: args?.place || "", day: args?.day || "" }, context);
+  }
+  if (destination === "places" || destination === "watching" || destination === "settings") {
+    context.receipt.navigation = { type: destination };
+    context.receipt.answer = destination === "places" ? "Opening saved places." : destination === "watching" ? "Opening Watching." : "Opening settings.";
+    return nearcastSkillResult({ status: "opened", message: context.receipt.answer });
+  }
+  context.receipt.answer = "I do not recognize that Nearcast destination.";
+  return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer });
+}
+
 function executeNearcastForecastOpenSkill(args, context) {
   return executeNearcastPlaceNavigationSkill(args, context, "forecast");
 }
@@ -4779,6 +5068,13 @@ async function scheduleNearcastAgentNavigation(navigation) {
     });
   } else if (type === "forecast") {
     try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
+  } else if (type === "places") {
+    if (typeof openPlaceSheet === "function") openPlaceSheet();
+  } else if (type === "watching") {
+    if (typeof openGlobalMemorySheet === "function") openGlobalMemorySheet({ focusMemoryId: navigation.focusMemoryId || "", source: "agent" });
+  } else if (type === "settings") {
+    const toggle = document.querySelector("#appMenuToggle");
+    if (toggle) toggle.click();
   }
 }
 
@@ -4800,8 +5096,26 @@ function nearcastRequestMaxReplans(question) {
 }
 
 function nearcastCompletionForQuestion(question) {
+  const raw = String(question || "");
   const direct = parseNearcastDirectNavigation(question);
   if (direct?.skillId) return { required_skill_ids: [direct.skillId] };
+  if (/\b(?:watch|save|keep an eye on|monitor)\b/i.test(raw) && /\b(?:plan|that|this|window|forecast)\b/i.test(raw)) {
+    return { required_skill_ids: ["nearcast.plan_watch"] };
+  }
+  if (/\b(?:remove|delete|forget|unsave)\b/i.test(raw) && /\b(?:saved|place|location)\b/i.test(raw)) {
+    return { required_skill_ids: ["nearcast.place_remove"] };
+  }
+  if (/\b(?:save|bookmark|remember)\b/i.test(raw) && /\b(?:place|location|here|this)\b/i.test(raw)) {
+    return { required_skill_ids: ["nearcast.place_save"] };
+  }
+  if (/\b(?:saved places|my places|places list|locations)\b/i.test(raw)) {
+    return { required_skill_ids: ["nearcast.places_list"] };
+  }
+  if (/\b(?:settings|preferences|fahrenheit|celsius|dark mode|light mode|theme)\b/i.test(raw)) {
+    return { required_skill_ids: /\b(?:open|show|go to)\b/i.test(raw) && !/\b(?:fahrenheit|celsius|theme|mode)\b/i.test(raw)
+      ? ["nearcast.navigate"]
+      : ["nearcast.settings_update"] };
+  }
   if (detectAskActivity(question) || detectPlanActivity(question)) {
     const target = /\b(?:find|best|window|slot|when should|when can)\b/i.test(String(question || ""))
       ? "nearcast.plan_find_and_draft"
