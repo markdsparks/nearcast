@@ -7896,8 +7896,13 @@ function planMemoryEventsForPlace(data = state.forecast, place = state.activePla
   if (!data || !place) return [];
   const { upcomingOnly = true, limit = Infinity } = options || {};
   const now = forecastNowMs(data);
-  const items = state.planMemories
-    .map((memory) => ({ memory, event: planMemoryEvent(memory, data, place) }))
+  const items = state.planMemories.flatMap((memory) => {
+    const windows = Array.isArray(memory.windows) && memory.windows.length ? memory.windows : [memory];
+    return windows.map((window) => {
+      const scoped = windows.length > 1 ? { ...memory, targetDate: window.targetDate, startHour: window.startHour, endHour: window.endHour, label: window.label, windows: [window] } : memory;
+      return { memory: scoped, event: planMemoryEvent(scoped, data, place) };
+    });
+  })
     .filter(({ event }) => event && (!upcomingOnly || event.endMs >= now - 60 * 60 * 1000))
     .sort((a, b) => a.event.startMs - b.event.startMs);
   return Number.isFinite(limit) ? items.slice(0, Math.max(0, limit)) : items;
