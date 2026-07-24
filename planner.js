@@ -3585,7 +3585,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.place_save",
-    description: "Save a named place to Nearcast's saved places and make it the active place.",
+    description: "Save, add, bookmark, or remember a named place in Nearcast's saved places. Use contextual wording like 'add it', 'save this location', or 'keep here' for the current place.",
     input_schema: {
       type: "object",
       properties: { place: { type: "string" } },
@@ -4892,6 +4892,10 @@ async function invokeRegisteredNearcastSkill(context, command) {
 
 function parseNearcastDirectNavigation(question) {
   const raw = String(question || "").trim();
+  if (/\b(?:save|add|bookmark|remember|keep)\b/i.test(raw) && /\b(?:saved\s+place|place|location|here|this)\b/i.test(raw) &&
+    !/\b(?:plan|window|forecast|weather)\b/i.test(raw)) {
+    return { skillId: "nearcast.place_save", arguments: {} };
+  }
   const switchMatch = raw.match(/\b(?:switch|change|set)\s+(?:(?:my|the)\s+)?(?:place|places|location|locations)(?:\s+(?:to|as))?\s+(.+?)[.!?]*$/i) ||
     raw.match(/\bswitch\s+to\s+(.+?)[.!?]*$/i) ||
     raw.match(/\bmove\s+to\s+(.+?)[.!?]*$/i) ||
@@ -5105,7 +5109,7 @@ function nearcastCompletionForQuestion(question) {
   if (/\b(?:remove|delete|forget|unsave)\b/i.test(raw) && /\b(?:saved|place|location)\b/i.test(raw)) {
     return { required_skill_ids: ["nearcast.place_remove"] };
   }
-  if (/\b(?:save|bookmark|remember)\b/i.test(raw) && /\b(?:place|location|here|this)\b/i.test(raw)) {
+  if (/\b(?:save|add|bookmark|remember|keep)\b/i.test(raw) && /\b(?:place|location|here|this)\b/i.test(raw)) {
     return { required_skill_ids: ["nearcast.place_save"] };
   }
   if (/\b(?:saved places|my places|places list|locations)\b/i.test(raw)) {
