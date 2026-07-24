@@ -69,6 +69,10 @@ assert.match(styles, /\.focused-plan-receipt dd \{[\s\S]*font-size: 0\.86rem/, "
 assert.match(styles, /\.focused-plan-actions button,[\s\S]*min-height: 44px/, "focused actions meet a reliable touch target");
 assert.match(styles, /\.global-memory-actions button \{[\s\S]*min-height: 44px/, "overview actions also meet a reliable touch target");
 assert.match(styles, /\.focused-plan-change\.is-baseline \{/, "a first baseline remains visually neutral rather than implying stability");
+assert.match(styles, /--ai-card-muted: #bdd0d9/, "dark AI cards use a readable secondary text color");
+assert.match(styles, /--ai-card-inset: rgba\(7, 16, 22, 0\.58\)/, "dark AI cards avoid washed-out translucent white panels");
+assert.match(styles, /\.ask-decision \.plan-watch-signals b \{[\s\S]*color: var\(--ai-card-muted\)/, "decision signal labels inherit the accessible AI-card palette");
+assert.match(styles, /\.ask-watch-confirmation small,[\s\S]*color: var\(--ai-card-muted\)/, "saved-plan supporting copy remains readable in dark mode");
 
 assert.match(worker, /plans: mergePlanWatchPlansWithExisting\(/, "routine notification sync preserves the server comparison point");
 assert.match(worker, /function sameRegisteredPlanWindow\(/, "an edited time or place intentionally resets the server baseline");

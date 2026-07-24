@@ -7,6 +7,14 @@
   --line: rgba(54, 76, 98, 0.22);
   --panel: #ffffff;
   --panel-soft: #f7fafb;
+  --ai-card-muted: var(--muted);
+  --ai-card-accent: var(--blue);
+  --ai-card-success: var(--green);
+  --ai-card-inset: rgba(255, 255, 255, 0.22);
+  --ai-card-inset-strong: rgba(255, 255, 255, 0.24);
+  --ai-card-sheen: rgba(255, 255, 255, 0.18);
+  --ai-control-bg: rgba(53, 111, 183, 0.12);
+  --ai-composer-muted: var(--muted);
   --blue: #356fb7;
   --green: #347d62;
   --gold: #b36b1f;
@@ -130,6 +138,14 @@
     --line: #243540;
     --panel: #162028;
     --panel-soft: #1c2c36;
+    --ai-card-muted: #bdd0d9;
+    --ai-card-accent: #8fc4ff;
+    --ai-card-success: #72d6aa;
+    --ai-card-inset: rgba(7, 16, 22, 0.58);
+    --ai-card-inset-strong: rgba(8, 18, 25, 0.72);
+    --ai-card-sheen: rgba(7, 16, 22, 0.42);
+    --ai-control-bg: rgba(16, 38, 52, 0.88);
+    --ai-composer-muted: #abc0ca;
     --wx-cloud: #9fb3c1;
     --wx-cloud-soft: #c7d4dc;
     --wx-drizzle: #9cd7ff;
@@ -212,6 +228,14 @@
   --line: #243540;
   --panel: #162028;
   --panel-soft: #1c2c36;
+  --ai-card-muted: #bdd0d9;
+  --ai-card-accent: #8fc4ff;
+  --ai-card-success: #72d6aa;
+  --ai-card-inset: rgba(7, 16, 22, 0.58);
+  --ai-card-inset-strong: rgba(8, 18, 25, 0.72);
+  --ai-card-sheen: rgba(7, 16, 22, 0.42);
+  --ai-control-bg: rgba(16, 38, 52, 0.88);
+  --ai-composer-muted: #abc0ca;
   --wx-cloud: #9fb3c1;
   --wx-cloud-soft: #c7d4dc;
   --wx-drizzle: #9cd7ff;
@@ -6680,7 +6704,7 @@ h2 {
   letter-spacing: -0.018em;
 }
 .ask-form textarea::placeholder {
-  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  color: color-mix(in srgb, var(--ai-composer-muted) 84%, transparent);
   opacity: 1;
 }
 .ask-form textarea:disabled {
@@ -6699,7 +6723,7 @@ h2 {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  color: var(--muted);
+  color: var(--ai-composer-muted);
   font-size: 0.75rem;
   font-weight: 780;
   line-height: 1;
@@ -6873,25 +6897,25 @@ h2 {
   border: 1px solid rgba(91, 141, 220, 0.22);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(91, 141, 220, 0.10), rgba(255, 255, 255, 0.14)),
+    linear-gradient(135deg, rgba(91, 141, 220, 0.10), var(--ai-card-sheen)),
     var(--panel-soft);
 }
 .ask-decision.is-good {
   border-color: rgba(52, 125, 98, 0.24);
   background:
-    linear-gradient(135deg, rgba(52, 125, 98, 0.12), rgba(255, 255, 255, 0.18)),
+    linear-gradient(135deg, rgba(52, 125, 98, 0.12), var(--ai-card-sheen)),
     var(--panel-soft);
 }
 .ask-decision.is-caution {
   border-color: rgba(201, 152, 55, 0.30);
   background:
-    linear-gradient(135deg, rgba(201, 152, 55, 0.13), rgba(255, 255, 255, 0.18)),
+    linear-gradient(135deg, rgba(201, 152, 55, 0.13), var(--ai-card-sheen)),
     var(--panel-soft);
 }
 .ask-decision.is-watch {
   border-color: rgba(200, 85, 85, 0.34);
   background:
-    linear-gradient(135deg, rgba(200, 85, 85, 0.13), rgba(255, 255, 255, 0.18)),
+    linear-gradient(135deg, rgba(200, 85, 85, 0.13), var(--ai-card-sheen)),
     var(--panel-soft);
 }
 .ask-decision-head,
@@ -6901,7 +6925,7 @@ h2 {
   min-width: 0;
 }
 .ask-decision-head span {
-  color: var(--blue);
+  color: var(--ai-card-accent);
   font-size: 0.68rem;
   font-weight: 950;
   letter-spacing: 0.06em;
@@ -6926,7 +6950,7 @@ h2 {
 .ask-decision-reason,
 .ask-decision-action {
   margin: 0;
-  color: var(--muted);
+  color: var(--ai-card-muted);
   font-size: 0.82rem;
   font-weight: 780;
   line-height: 1.36;
@@ -6945,8 +6969,8 @@ h2 {
   padding: 7px 9px;
   border: 1px solid rgba(54, 76, 98, 0.11);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.22);
-  color: var(--muted);
+  background: var(--ai-card-inset);
+  color: var(--ai-card-muted);
   font-size: 0.76rem;
   font-weight: 800;
 }
@@ -6968,7 +6992,7 @@ h2 {
   padding: 10px;
   border: 1px solid rgba(54, 76, 98, 0.11);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--ai-card-inset);
 }
 .ask-decision-reason {
   color: var(--ink);
@@ -6976,11 +7000,11 @@ h2 {
   font-weight: 850;
 }
 .ask-decision-action {
-  background: rgba(255, 255, 255, 0.24);
+  background: var(--ai-card-inset-strong);
 }
 .ask-decision-reason span,
 .ask-decision-action span {
-  color: var(--blue);
+  color: var(--ai-card-accent);
   font-size: 0.64rem;
   font-weight: 950;
   letter-spacing: 0.05em;
@@ -6988,6 +7012,12 @@ h2 {
 }
 .ask-decision-signals {
   margin-top: 0;
+}
+.ask-decision .plan-watch-signals span {
+  background: var(--ai-card-inset);
+}
+.ask-decision .plan-watch-signals b {
+  color: var(--ai-card-muted);
 }
 .ask-decision-actions {
   display: grid;
@@ -7025,7 +7055,7 @@ h2 {
 }
 .ask-decision-action-note {
   min-width: 0;
-  color: var(--muted);
+  color: var(--ai-card-muted);
   font-size: 0.72rem;
   font-weight: 780;
   line-height: 1.25;
@@ -7096,7 +7126,7 @@ h2 {
   border: 1px solid rgba(52, 125, 98, 0.28);
   background:
     linear-gradient(135deg, rgba(52, 125, 98, 0.15), rgba(91, 141, 220, 0.06)),
-    rgba(255, 255, 255, 0.16);
+    var(--ai-card-inset);
 }
 .ask-watch-confirmation-mark {
   display: grid;
@@ -7105,7 +7135,7 @@ h2 {
   height: 34px;
   border-radius: 999px;
   background: rgba(52, 125, 98, 0.18);
-  color: var(--green);
+  color: var(--ai-card-success);
   font-size: 1.15rem;
   font-weight: 980;
 }
@@ -7124,7 +7154,7 @@ h2 {
 }
 .ask-watch-confirmation small,
 .ask-watch-next small {
-  color: var(--muted);
+  color: var(--ai-card-muted);
   font-size: 0.82rem;
   font-weight: 770;
   line-height: 1.32;
@@ -7150,7 +7180,7 @@ h2 {
   padding: 9px 14px;
   border: 1px solid rgba(53, 111, 183, 0.28);
   border-radius: 999px;
-  background: rgba(53, 111, 183, 0.12);
+  background: var(--ai-control-bg);
   color: var(--ink);
   cursor: pointer;
   font: inherit;
@@ -7167,7 +7197,7 @@ h2 {
 }
 .ask-watch-open {
   justify-self: start;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--ai-card-inset-strong);
 }
 @media (max-width: 420px) {
   .ask-watch-next {
@@ -7427,7 +7457,7 @@ body.map-immersive-active .nearcast-ai-fab {
 .ai-sheet-sub {
   margin: 2px 0 0;
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--ai-composer-muted);
 }
 .ai-trust-note {
   margin: 8px 0 10px;
