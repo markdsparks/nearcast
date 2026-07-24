@@ -5101,25 +5101,10 @@ function nearcastRequestMaxReplans(question) {
 
 function nearcastCompletionForQuestion(question) {
   const raw = String(question || "");
-  const direct = parseNearcastDirectNavigation(question);
-  if (direct?.skillId) return { required_skill_ids: [direct.skillId] };
-  if (/\b(?:watch|save|keep an eye on|monitor)\b/i.test(raw) && /\b(?:plan|that|this|window|forecast)\b/i.test(raw)) {
-    return { required_skill_ids: ["nearcast.plan_watch"] };
-  }
-  if (/\b(?:remove|delete|forget|unsave)\b/i.test(raw) && /\b(?:saved|place|location)\b/i.test(raw)) {
-    return { required_skill_ids: ["nearcast.place_remove"] };
-  }
-  if (/\b(?:save|add|bookmark|remember|keep)\b/i.test(raw) && /\b(?:place|location|here|this)\b/i.test(raw)) {
-    return { required_skill_ids: ["nearcast.place_save"] };
-  }
-  if (/\b(?:saved places|my places|places list|locations)\b/i.test(raw)) {
-    return { required_skill_ids: ["nearcast.places_list"] };
-  }
-  if (/\b(?:settings|preferences|fahrenheit|celsius|dark mode|light mode|theme)\b/i.test(raw)) {
-    return { required_skill_ids: /\b(?:open|show|go to)\b/i.test(raw) && !/\b(?:fahrenheit|celsius|theme|mode)\b/i.test(raw)
-      ? ["nearcast.navigate"]
-      : ["nearcast.settings_update"] };
-  }
+  // Operon owns intent interpretation and skill selection. Keep completion
+  // contracts only for workflows where Nearcast must guarantee a typed result
+  // (activity planning or a weather answer); management and navigation skills
+  // remain discoverable through the catalog instead of keyword routing.
   if (detectAskActivity(question) || detectPlanActivity(question)) {
     const target = /\b(?:find|best|window|slot|when should|when can)\b/i.test(String(question || ""))
       ? "nearcast.plan_find_and_draft"
