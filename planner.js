@@ -3824,6 +3824,40 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     prepare: prepareNearcastPlanSkill,
     execute: executeNearcastFindAndDraftSkill
   }
+  ,{
+    id: "nearcast.plan_find_multi_day",
+    description: "Find and draft a multi-day weather plan across a date range. Use for requests such as 'find two good evenings next week', 'which days are best for a three-day trip', or 'schedule walks between Tuesday and Friday'. Return one schedule containing dated windows; do not create separate unrelated plans.",
+    input_schema: {
+      type: "object",
+      properties: {
+        request: { type: "string" },
+        place: { type: "string" },
+        start_day: { type: "string" },
+        end_day: { type: "string" },
+        period: { type: "string", enum: ["morning", "afternoon", "evening", "night", "day"] },
+        duration_hours: { type: "number", minimum: 1, maximum: 8 },
+        count: { type: "integer", minimum: 1, maximum: 10 }
+      },
+      required: ["request"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["drafted", "needs_input", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" },
+        windows: { type: "integer", minimum: 0 }
+      },
+      required: ["status", "message", "place", "windows"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.plan-draft"],
+    prepare: prepareNearcastMultiDayPlanSkill,
+    execute: executeNearcastMultiDayPlanSkill
+  }
 ]);
 
 const NEARCAST_AGENT_SKILL_REGISTRY = new Map(
@@ -4068,6 +4102,22 @@ function nearcastPlanArtifact(event, context = null) {
       start_hour: event.startHour,
       end_hour: event.endHour,
       title: event.title || "Outdoor plan"
+    },
+    context
+  );
+}
+
+function nearcastScheduleArtifact(memory, context = null) {
+  if (!memory?.place || !Array.isArray(memory.windows) || !memory.windows.length) return null;
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.plan,
+    `Multi-day plan draft: ${memory.title || "outdoor plan"} in ${placeLabel(memory.place)} across ${memory.windows.length} windows.`,
+    {
+      place: normalizePlace(memory.place),
+      place_label: placeLabel(memory.place),
+      target_date: memory.targetDate,
+      title: memory.title || "Outdoor plan",
+      windows: memory.windows.map((window) => ({ ...window }))
     },
     context
   );
@@ -4411,6 +4461,33 @@ function prepareNearcastPlanSkill(args, context, definition) {
   return { kind: "ready", arguments: prepared };
 }
 
+function prepareNearcastMultiDayPlanSkill(args, context, definition) {
+  const source = args || {};
+  const request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
+  const explicitPlace = extractPlanLocationQuery(request);
+  const place = explicitPlace && !nearcastSemanticReference(explicitPlace)
+    ? explicitPlace
+    : (context.lastPlace ? placeLabel(context.lastPlace) : "");
+  const dayMatches = [...String(request).matchAll(/\b((?:next|this|coming|following)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi)]
+    .map((match) => `${match[1] || ""}${match[2]}`.trim());
+  const startDay = String(source.start_day || dayMatches[0] || "").trim();
+  const endDay = String(source.end_day || dayMatches[1] || startDay || "").trim();
+  if (!place) return nearcastPreparationNeedsInput(definition.id, "Which place should I use?", ["place"]);
+  if (!startDay) return nearcastPreparationNeedsInput(definition.id, "What date range should I search?", ["start_day", "end_day"]);
+  return {
+    kind: "ready",
+    arguments: {
+      request,
+      place,
+      start_day: startDay,
+      end_day: endDay,
+      ...(source.period ? { period: source.period } : {}),
+      ...(Number.isFinite(Number(source.duration_hours)) ? { duration_hours: Number(source.duration_hours) } : {}),
+      ...(Number.isFinite(Number(source.count)) ? { count: Number(source.count) } : {})
+    }
+  };
+}
+
 async function resolveNearcastAgentPlace(rawPlace) {
   const requested = String(rawPlace || "").trim();
   if (!requested || /^(?:here|current|current place|selected place)$/i.test(requested)) {
@@ -4450,7 +4527,8 @@ function createNearcastAgentContext(question, rowIndex, signal = null) {
       outputs: []
     },
     lastPlace: state.activePlace || null,
-    lastWindow: null
+    lastWindow: null,
+    lastSchedule: null
   };
 }
 
@@ -4624,14 +4702,26 @@ function executeNearcastPlanWatchSkill(args, context) {
   const artifact = nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, ref) ||
     nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, ref);
   const event = context.lastWindow || nearcastPlanEventFromArtifact(artifact);
+  const schedule = context.lastSchedule || (artifact?.value?.windows?.length ? normalizePlanMemory({
+    id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: "plan",
+    title: artifact.value.title || "Outdoor plan",
+    label: artifact.value.title || "Plan window",
+    original: context.rootQuestion || context.question,
+    answer: "",
+    place: artifact.value.place,
+    windows: artifact.value.windows,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }) : null);
   if (!event) {
     context.receipt.answer = "I could not find a complete plan draft to watch.";
     return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: "" });
   }
-  const existing = rememberedPlanIdForEvent(event);
+  const existing = schedule ? state.planMemories.find((item) => item.scheduleId === schedule.scheduleId)?.id : rememberedPlanIdForEvent(event);
   let memory = existing ? state.planMemories.find((item) => item.id === existing) : null;
   if (!memory) {
-    memory = planMemoryFromEvent(event, { q: context.rootQuestion || context.question, a: context.receipt.answer || "" });
+    memory = schedule || planMemoryFromEvent(event, { q: context.rootQuestion || context.question, a: context.receipt.answer || "" });
     if (memory) {
       state.planMemories = [memory, ...state.planMemories].slice(0, 60);
       savePlanMemories();
@@ -4822,6 +4912,56 @@ async function executeNearcastFindAndDraftSkill(args, context) {
     place: placeLabel(place),
     window: result.event.label || `${hourText(result.event.startHour)}-${hourText(result.event.endHour)}`
   }, [nearcastPlaceArtifact(place, context), windowArtifact, nearcastPlanArtifact(result.event, context)]);
+}
+
+async function executeNearcastMultiDayPlanSkill(args, context) {
+  const requestedPlace = String(args?.place || extractPlanLocationQuery(args?.request) || "").trim();
+  const place = await ensureNearcastSkillPlace(requestedPlace, context);
+  if (!place) {
+    context.receipt.answer = `I could not load ${requestedPlace || "the requested place"}.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "", windows: 0 });
+  }
+  const c = buildAIContext();
+  const startIdx = resolveDayIndex(String(args?.start_day || ""), c);
+  const endIdx = resolveDayIndex(String(args?.end_day || args?.start_day || ""), c);
+  if (startIdx == null || endIdx == null || endIdx < startIdx) {
+    context.receipt.answer = "I could not resolve that date range from the available forecast.";
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), windows: 0 });
+  }
+  const activityKey = detectAskActivity(args?.request) || detectPlanActivity(args?.request) || "walk";
+  const baseOptions = bestWindowOptionsFromText(`${args?.request || ""} ${args?.period || ""}`, c);
+  const duration = Number.isFinite(Number(args?.duration_hours)) ? Math.max(1, Math.min(8, Number(args.duration_hours))) : 2;
+  const candidates = [];
+  for (let dayIdx = startIdx; dayIdx <= endIdx; dayIdx += 1) {
+    const result = bestWindowResult(activityKey, { ...baseOptions, dayIdx, hours: duration, allowTomorrow: false });
+    if (result?.event) candidates.push({ event: result.event, answer: result.answer });
+  }
+  if (!candidates.length) {
+    context.receipt.answer = "I could not find a usable window in that date range.";
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), windows: 0 });
+  }
+  const count = Number.isFinite(Number(args?.count)) ? Math.max(1, Math.min(candidates.length, Number(args.count))) : candidates.length;
+  const selected = candidates.slice().sort((a, b) => (b.event.score || 0) - (a.event.score || 0)).slice(0, count)
+    .sort((a, b) => a.event.dayIndex - b.event.dayIndex);
+  const schedule = planMemoryFromEvents(selected.map(({ event }) => event), {
+    q: context.rootQuestion || context.question,
+    a: selected.map(({ answer }) => answer).join(" ")
+  });
+  context.receipt.answer = `I found ${selected.length} suitable window${selected.length === 1 ? "" : "s"} across ${formatDay(state.forecast.daily.time[selected[0].event.dayIndex], selected[0].event.dayIndex)} through ${formatDay(state.forecast.daily.time[selected[selected.length - 1].event.dayIndex], selected[selected.length - 1].event.dayIndex)}. I prepared one multi-day plan draft for review.`;
+  context.receipt.event = selected[0].event;
+  context.lastSchedule = schedule;
+  const artifacts = [nearcastPlaceArtifact(place, context)];
+  selected.forEach(({ event }) => {
+    artifacts.push(nearcastWindowArtifact(place, {
+      dayIdx: event.dayIndex,
+      startHour: event.startHour,
+      endHour: event.endHour,
+      period: args?.period || "day"
+    }, context));
+  });
+  if (schedule) artifacts.push(nearcastScheduleArtifact(schedule, context));
+  context.lastWindow = selected[0].event;
+  return nearcastSkillResult({ status: "drafted", message: context.receipt.answer, place: placeLabel(place), windows: selected.length }, artifacts);
 }
 
 function nearcastSkillSignature(skillId, args) {
@@ -5121,6 +5261,9 @@ function nearcastCompletionForQuestion(question) {
   // (activity planning or a weather answer); management and navigation skills
   // remain discoverable through the catalog instead of keyword routing.
   if (detectAskActivity(question) || detectPlanActivity(question)) {
+    if (/\b(?:next|this|coming)\s+week\b|\b(?:between|from)\b.+\b(?:and|through|to)\b|\b(?:each|every|multiple|several|two|three|four)\s+(?:day|days|evening|evenings|morning|mornings)\b/i.test(raw)) {
+      return { required_skill_ids: ["nearcast.plan_find_multi_day"] };
+    }
     const target = /\b(?:find|best|window|slot|when should|when can)\b/i.test(String(question || ""))
       ? "nearcast.plan_find_and_draft"
       : "nearcast.plan_check";
@@ -6434,10 +6577,25 @@ function normalizePlanMemory(memory) {
   if (!memory || memory.kind !== "plan") return null;
   const place = normalizePlace(memory.place || {});
   if (!Number.isFinite(Number(place?.latitude)) || !Number.isFinite(Number(place?.longitude))) return null;
-  const startHour = Number(memory.startHour);
-  const endHour = Number(memory.endHour);
+  const rawWindows = Array.isArray(memory.windows) ? memory.windows : [];
+  const windows = rawWindows.map((window) => {
+    const targetDate = String(window?.targetDate || "").slice(0, 10);
+    const startHour = Number(window?.startHour);
+    const endHour = Number(window?.endHour);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !Number.isFinite(startHour) || !Number.isFinite(endHour) || endHour <= startHour) return null;
+    return { targetDate, startHour, endHour, label: String(window?.label || "Plan window").slice(0, 80) };
+  }).filter(Boolean);
+  const firstWindow = windows[0] || {
+    targetDate: String(memory.targetDate || "").slice(0, 10),
+    startHour: Number(memory.startHour),
+    endHour: Number(memory.endHour),
+    label: String(memory.label || "Plan window").slice(0, 80)
+  };
+  if (!windows.length && /^\d{4}-\d{2}-\d{2}$/.test(firstWindow.targetDate) && Number.isFinite(firstWindow.startHour) && Number.isFinite(firstWindow.endHour) && firstWindow.endHour > firstWindow.startHour) windows.push(firstWindow);
+  const startHour = Number(firstWindow.startHour);
+  const endHour = Number(firstWindow.endHour);
   if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || endHour <= startHour) return null;
-  const targetDate = String(memory.targetDate || "").slice(0, 10);
+  const targetDate = String(firstWindow.targetDate || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return null;
   return {
     id: String(memory.id || `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
@@ -6450,12 +6608,48 @@ function normalizePlanMemory(memory) {
     targetDate,
     startHour,
     endHour,
+    windows,
+    scheduleId: String(memory.scheduleId || memory.id || ""),
     createdAt: Number(memory.createdAt) || Date.now(),
     updatedAt: Number(memory.updatedAt) || Date.now()
   };
 }
 
 function planMemoryFromEvent(event, exchange = {}) {
+  return planMemoryFromEvents(event ? [event] : [], exchange);
+}
+
+function planMemoryFromEvents(events, exchange = {}) {
+  const first = Array.isArray(events) ? events.find(Boolean) : null;
+  if (!first?.data || !first.place) return null;
+  const windows = (Array.isArray(events) ? events : [events]).filter(Boolean).map((event) => ({
+    targetDate: String(event.data?.daily?.time?.[event.dayIndex] || "").slice(0, 10),
+    startHour: Number(event.startHour),
+    endHour: Number(event.endHour),
+    label: event.label || event.title || "Plan window"
+  })).filter((window) => /^\d{4}-\d{2}-\d{2}$/.test(window.targetDate) && Number.isFinite(window.startHour) && Number.isFinite(window.endHour) && window.endHour > window.startHour);
+  if (!windows.length) return null;
+  const targetDate = windows[0].targetDate;
+  const normalized = normalizePlanMemory({
+    id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: "plan",
+    title: first.title || first.label || "Plan",
+    label: first.label || "Plan window",
+    original: exchange.q || "",
+    answer: exchange.a || "",
+    place: first.place,
+    targetDate,
+    startHour: windows[0].startHour,
+    endHour: windows[0].endHour,
+    windows,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  return normalized;
+}
+
+/* Legacy single-window constructor retained above through this wrapper. */
+function legacyPlanMemoryFromEvent(event, exchange = {}) {
   if (!event?.data || !event.place) return null;
   const targetDate = event.data.daily?.time?.[event.dayIndex];
   if (!targetDate) return null;
@@ -7662,15 +7856,18 @@ function memoryTimestamp(value) {
 
 function planMemoryEventForData(memory, data = state.forecast, place = state.activePlace, alerts = activeAlerts) {
   if (!memory || !data || !place || !samePlanPlace(memory.place, place)) return null;
-  const dayIdx = data.daily?.time?.indexOf(memory.targetDate);
+  const availableWindows = Array.isArray(memory.windows) && memory.windows.length ? memory.windows : [memory];
+  const today = forecastLocalDate(data) || "";
+  const selectedWindow = availableWindows.find((window) => data.daily?.time?.includes(window.targetDate) && window.targetDate >= today) || availableWindows.find((window) => data.daily?.time?.includes(window.targetDate)) || availableWindows[0];
+  const dayIdx = data.daily?.time?.indexOf(selectedWindow?.targetDate);
   if (dayIdx === undefined || dayIdx < 0) return null;
   const normalizedPlace = normalizePlace(place);
   const c = buildAIContext(data, normalizedPlace, alerts || []);
   if (!c) return null;
   const window = {
     dayIdx,
-    startHour: memory.startHour,
-    endHour: memory.endHour,
+    startHour: selectedWindow.startHour,
+    endHour: selectedWindow.endHour,
     label: "custom"
   };
   const stats = planWindowStats(data, c, window);
@@ -7682,7 +7879,7 @@ function planMemoryEventForData(memory, data = state.forecast, place = state.act
     alerts: alerts || [],
     window,
     stats,
-    label: memory.label
+    label: selectedWindow.label || memory.label
   });
   if (event) {
     event.memoryId = memory.id;
@@ -7797,7 +7994,8 @@ function planMemoryTitle(memory) {
 }
 
 function planMemoryTimeText(memory) {
-  return `${hourText(memory.startHour)}-${hourText(memory.endHour)}`;
+  const count = Array.isArray(memory?.windows) && memory.windows.length > 1 ? ` · ${memory.windows.length} days` : "";
+  return `${hourText(memory.startHour)}-${hourText(memory.endHour)}${count}`;
 }
 
 function planMemoryDayLabel(memory, data = state.forecast) {

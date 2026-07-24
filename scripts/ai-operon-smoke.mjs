@@ -37,6 +37,7 @@ assert.match(plannerSource, /place\|places\|location\|locations/);
 assert.match(plannerSource, /nearcastHourlyDayContext\(place\)/);
 assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
+assert.match(plannerSource, /id: "nearcast\.plan_find_multi_day"/);
 assert.match(plannerSource, /id: "nearcast\.place_save"/);
 assert.match(plannerSource, /id: "nearcast\.place_remove"/);
 assert.match(plannerSource, /id: "nearcast\.places_list"/);
