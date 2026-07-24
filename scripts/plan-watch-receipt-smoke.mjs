@@ -37,6 +37,13 @@ assert.match(planner, /planWatchFocusMemoryId !== focusMemoryId[\s\S]*markPlanWa
 assert.match(planner, /snapshot\.alertsReady === false/, "a baseline waits until official-alert context is ready");
 assert.match(planner, /source\.stale \? "stale"[\s\S]*reviewedChange \? "reviewed"/, "stale truth outranks an old reviewed receipt");
 assert.match(planner, /function capturePlanWatchRouteReceipt\(/, "a remote notification restores its exact structured receipt before opening Watching");
+assert.match(planner, /function planWindowsFromSpan\(/, "continuous multi-day plans are segmented into forecast windows");
+assert.match(planner, /\["single", "discrete", "continuous_span"\]\.includes\(memory\.scheduleType\)/, "plan storage migrates to the v2 schedule model");
+assert.match(planner, /data-memory-window-add/, "the structured editor can add schedule days");
+assert.match(planner, /memoryEditState\.scheduleType !== "single"/, "the structured editor saves complete schedules atomically");
+assert.match(planner, /askThread\[row\]\.schedule = normalized\.schedule/, "agent-created schedules survive into the conversation turn");
+assert.match(planner, /rememberedPlanIdForSchedule/, "watching a multi-day draft saves one schedule instead of its first day");
+assert.match(planner, /ask-decision-schedule-row/, "multi-day drafts expose every watched window before saving");
 
 assert.match(planner, /data-memory-show="\$\{escapeHtml\(memory\.id\)\}" aria-label="\$\{escapeHtml\(`Open/, "Watching cards open the focused receipt rather than the legacy facts sheet");
 for (const phrase of [
@@ -65,6 +72,7 @@ assert.match(styles, /\.focused-plan-change\.is-baseline \{/, "a first baseline 
 
 assert.match(worker, /plans: mergePlanWatchPlansWithExisting\(/, "routine notification sync preserves the server comparison point");
 assert.match(worker, /function sameRegisteredPlanWindow\(/, "an edited time or place intentionally resets the server baseline");
+assert.match(worker, /Array\.isArray\(plan\.windows\)/, "the edge watcher evaluates all registered schedule windows");
 assert.match(worker, /existingSnapshot\.tempUnit === incomingSnapshot\.tempUnit/, "server baselines also reset across unit changes");
 assert.match(worker, /return hasContent \? snapshot : null/, "blank incoming snapshots cannot erase a valid server baseline");
 assert.match(worker, /function planWatchPersistedEvaluationTargets\(/, "only the delivered candidate consumes its notification baseline");

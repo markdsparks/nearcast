@@ -10776,8 +10776,10 @@ function nextForYouElsewhereMemory(data, place) {
   const items = state.planMemories
     .filter((memory) => !forYouSamePlace(memory.place, place))
     .map((memory) => {
-      const startMs = forYouMemoryBoundaryMs(memory, data, memory.startHour);
-      const endMs = forYouMemoryBoundaryMs(memory, data, memory.endHour);
+      const window = typeof planMemoryDisplayWindow === "function" ? planMemoryDisplayWindow(memory, data) : memory;
+      const scoped = { ...memory, targetDate: window.targetDate, startHour: window.startHour, endHour: window.endHour };
+      const startMs = forYouMemoryBoundaryMs(scoped, data, scoped.startHour);
+      const endMs = forYouMemoryBoundaryMs(scoped, data, scoped.endHour);
       return { memory, startMs, endMs };
     })
     .filter((item) => item.endMs === null || item.endMs >= now - 60 * 60 * 1000)

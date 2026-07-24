@@ -3397,8 +3397,10 @@ function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}
 }
 
 function planWatchPlanIsPast(plan) {
-  if (!plan?.targetDate) return false;
-  const endOfDate = new Date(`${plan.targetDate}T23:59:59Z`);
+  const windows = Array.isArray(plan?.windows) && plan.windows.length ? plan.windows : [plan];
+  const last = windows.slice().sort((a, b) => String(a.targetDate).localeCompare(String(b.targetDate)) || Number(a.endHour) - Number(b.endHour)).at(-1);
+  if (!last?.targetDate) return false;
+  const endOfDate = new Date(`${last.targetDate}T23:59:59Z`);
   return Number.isFinite(endOfDate.getTime()) && endOfDate.getTime() < Date.now() - 12 * 60 * 60 * 1000;
 }
 
@@ -3508,12 +3510,11 @@ function planWatchWindowStats(plan, forecast, unit = "fahrenheit") {
   const hourly = forecast?.hourly || {};
   const times = Array.isArray(hourly.time) ? hourly.time : [];
   if (!times.length || !plan?.targetDate) return null;
-  const startHour = finiteNumber(plan.startHour, 0);
-  const endHour = finiteNumber(plan.endHour, 24);
+  const windows = Array.isArray(plan.windows) && plan.windows.length ? plan.windows : [plan];
   const indexes = times.reduce((result, time, index) => {
-    if (!String(time).startsWith(plan.targetDate)) return result;
     const hour = planWatchLocalHour(time);
-    if (hour >= startHour && hour < endHour) result.push(index);
+    const window = windows.find((item) => String(time).startsWith(item.targetDate));
+    if (window && hour >= finiteNumber(window.startHour, 0) && hour < finiteNumber(window.endHour, 24)) result.push(index);
     return result;
   }, []);
   const dailyIndex = Array.isArray(forecast?.daily?.time)
@@ -3558,14 +3559,20 @@ function planWatchLocalHour(value) {
 
 function planWatchWindowMs(plan, forecast = {}) {
   const offset = finiteNumber(forecast.utc_offset_seconds, 0) * 1000;
-  const start = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.startHour, 0), offset);
-  const end = planWatchLocalDateHourMs(plan.targetDate, finiteNumber(plan.endHour, 24), offset);
+  const windows = Array.isArray(plan?.windows) && plan.windows.length ? plan.windows : [plan];
+  const first = windows[0] || plan;
+  const last = windows[windows.length - 1] || plan;
+  const start = planWatchLocalDateHourMs(first.targetDate, finiteNumber(first.startHour, 0), offset);
+  const end = planWatchLocalDateHourMs(last.targetDate, finiteNumber(last.endHour, 24), offset);
   return { startMs: start, endMs: Math.max(end, start + 60 * 60 * 1000) };
 }
 
 function planWatchWindowMsForTimeZone(plan = {}, timezone = "") {
-  const startMs = planWatchZonedDateHourMs(plan.targetDate, finiteNumber(plan.startHour, 0), timezone);
-  const endMs = planWatchZonedDateHourMs(plan.targetDate, finiteNumber(plan.endHour, 24), timezone);
+  const windows = Array.isArray(plan.windows) && plan.windows.length ? plan.windows : [plan];
+  const first = windows[0] || plan;
+  const last = windows[windows.length - 1] || plan;
+  const startMs = planWatchZonedDateHourMs(first.targetDate, finiteNumber(first.startHour, 0), timezone);
+  const endMs = planWatchZonedDateHourMs(last.targetDate, finiteNumber(last.endHour, 24), timezone);
   return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs ? { startMs, endMs } : null;
 }
 
@@ -4057,6 +4064,7 @@ function sameRegisteredPlanWindow(a = {}, b = {}) {
     a.targetDate === b.targetDate &&
     a.startHour === b.startHour &&
     a.endHour === b.endHour &&
+    JSON.stringify(a.windows || []) === JSON.stringify(b.windows || []) &&
     samePlace
   );
 }
@@ -4122,12 +4130,21 @@ function normalizePlanWatchPlan(value) {
   if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || startHour < 0 || endHour > 24 || startHour >= endHour) {
     return null;
   }
+  const windows = (Array.isArray(value.windows) ? value.windows : []).slice(0, 14).map((window, index) => {
+    const targetDate = cleanText(window?.targetDate, 16);
+    const windowStart = finiteNumber(window?.startHour, null);
+    const windowEnd = finiteNumber(window?.endHour, null);
+    if (!validPlanWatchTargetDate(targetDate) || !Number.isFinite(windowStart) || !Number.isFinite(windowEnd) || windowStart < 0 || windowEnd > 24 || windowStart >= windowEnd) return null;
+    return { id: cleanText(window.id || `window-${index}`, 96), targetDate, startHour: windowStart, endHour: windowEnd };
+  }).filter(Boolean);
   return {
     id,
     title: cleanText(value.title, 120),
     targetDate,
     startHour,
     endHour,
+    scheduleType: ["single", "discrete", "continuous_span"].includes(value.scheduleType) ? value.scheduleType : (windows.length > 1 ? "discrete" : "single"),
+    windows: windows.length ? windows : [{ id: "window-0", targetDate, startHour, endHour }],
     place,
     lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
   };
