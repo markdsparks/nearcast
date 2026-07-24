@@ -7015,8 +7015,14 @@ function editPlanMemory(idOrRow) {
 }
 
 async function showPlanMemory(id, options = {}) {
-  const memory = state.planMemories.find((item) => item.id === id);
+  const [memoryId, rawIndex] = String(id || "").split("::");
+  const windowIndex = rawIndex === undefined ? null : Number(rawIndex);
+  const memory = state.planMemories.find((item) => item.id === memoryId);
   if (!memory) return;
+  const selectedWindow = Number.isInteger(windowIndex) ? memory.windows?.[windowIndex] : null;
+  const focusedMemory = selectedWindow
+    ? { ...memory, targetDate: selectedWindow.targetDate, startHour: selectedWindow.startHour, endHour: selectedWindow.endHour, label: selectedWindow.label, windows: [selectedWindow], scheduleType: "single", span: null }
+    : memory;
   const returnToPlanner = options.returnToPlanner ?? !els.aiSheet?.hidden;
   const chatLog = document.getElementById("askChatLog");
   plannerReturnAfterDayDetail = returnToPlanner
@@ -7034,7 +7040,7 @@ async function showPlanMemory(id, options = {}) {
       return;
     }
   }
-  const event = planMemoryEvent(memory);
+  const event = planMemoryEvent(focusedMemory);
   if (!event) {
     const returnState = plannerReturnAfterDayDetail;
     plannerReturnAfterDayDetail = null;
@@ -7060,6 +7066,10 @@ function openPlanMemoryWindowDetail(id) {
   const windowIndex = rawIndex === undefined ? null : Number(rawIndex);
   const memory = state.planMemories.find((item) => item.id === memoryId);
   if (!memory) return false;
+  if (windowIndex === null && Array.isArray(memory.windows) && memory.windows.length > 1) {
+    openMemoryDetail(memory.id, { mode: "facts" });
+    return true;
+  }
   openMemoryDetail(memory.id, { mode: "plan-window", windowIndex });
   if (!samePlanPlace(memory.place, state.activePlace)) {
     refreshPlanWatchForecasts([{ memory, isHere: false, isPast: planWatchMemoryIsPast(memory) }]);
@@ -7949,7 +7959,7 @@ function renderMemoryDetailPanel(memory) {
       ${scheduleWindows.map((window, index) => `
         <button type="button" data-memory-hourly="${escapeHtml(`${memory.id}::${index}`)}">
           <span>${escapeHtml(memoryEditDateLabel(window.targetDate, state.forecast))}</span>
-          <strong>${escapeHtml(hourText(window.startHour))}-${escapeHtml(hourText(window.endHour))}</strong>
+          <strong>${escapeHtml(hourText(window.startHour))}-${escapeHtml(hourText(window.endHour))} · Hourly</strong>
         </button>`).join("")}
     </section>` : "";
   return `
@@ -7968,7 +7978,7 @@ function renderMemoryDetailPanel(memory) {
       ${scheduleRows}
       <div class="memory-detail-actions">
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit plan</button>
-        <button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>
+        ${scheduleWindows.length > 1 ? "" : `<button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>`}
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
     </article>
@@ -8176,7 +8186,7 @@ function renderPlanWindowHourRow(row, event, peak, watch) {
 
 function renderPlanWindowDetailPanel(memory) {
   const selectedWindow = Number.isInteger(memoryDetailWindowIndex) ? memory.windows?.[memoryDetailWindowIndex] : null;
-  const focusedMemory = selectedWindow ? { ...memory, targetDate: selectedWindow.targetDate, startHour: selectedWindow.startHour, endHour: selectedWindow.endHour, label: selectedWindow.label, windows: [selectedWindow] } : memory;
+  const focusedMemory = selectedWindow ? { ...memory, targetDate: selectedWindow.targetDate, startHour: selectedWindow.startHour, endHour: selectedWindow.endHour, label: selectedWindow.label, windows: [selectedWindow], scheduleType: "single", span: null } : memory;
   const detail = planWindowDetailContext(focusedMemory);
   const watch = detail.watch;
   if (!detail.event || !watch?.stats) return renderPlanWindowPendingPanel(focusedMemory, watch);
@@ -8209,7 +8219,7 @@ function renderPlanWindowDetailPanel(memory) {
         ${rows.map((row) => renderPlanWindowHourRow(row, detail.event, peak, watch)).join("")}
       </section>
       <div class="memory-detail-actions">
-        <button type="button" data-memory-day-hourly="${escapeHtml(memory.id)}">Full day hourly</button>
+        <button type="button" data-memory-day-hourly="${escapeHtml(Number.isInteger(memoryDetailWindowIndex) ? `${memory.id}::${memoryDetailWindowIndex}` : memory.id)}">Full day hourly</button>
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Change plan</button>
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
@@ -8272,7 +8282,7 @@ function planMemoryEventsForPlace(data = state.forecast, place = state.activePla
   const items = state.planMemories.flatMap((memory) => {
     const windows = Array.isArray(memory.windows) && memory.windows.length ? memory.windows : [memory];
     return windows.map((window) => {
-      const scoped = windows.length > 1 ? { ...memory, targetDate: window.targetDate, startHour: window.startHour, endHour: window.endHour, label: window.label, windows: [window] } : memory;
+      const scoped = windows.length > 1 ? { ...memory, targetDate: window.targetDate, startHour: window.startHour, endHour: window.endHour, label: window.label, windows: [window], scheduleType: "single", span: null } : memory;
       return { memory: scoped, event: planMemoryEvent(scoped, data, place) };
     });
   })
@@ -11060,11 +11070,11 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
   ].filter(Boolean).join(" · ");
   const scheduleWindows = Array.isArray(memory.windows) ? memory.windows : [];
   const scheduleDetail = scheduleWindows.length > 1
-    ? `<div class="ask-decision-schedule" aria-label="Plan schedule">${scheduleWindows.map((window) => `
-        <div class="ask-decision-schedule-row">
+    ? `<div class="ask-decision-schedule" aria-label="Plan schedule">${scheduleWindows.map((window, windowIndex) => `
+        <button type="button" class="ask-decision-schedule-row" data-ask-schedule-window="${escapeHtml(`${index}::${windowIndex}`)}">
           <strong>${escapeHtml(memoryEditDateLabel(window.targetDate, event.data))}</strong>
-          <span>${escapeHtml(`${hourText(window.startHour)}-${hourText(window.endHour)}`)}</span>
-        </div>`).join("")}</div>`
+          <span>${escapeHtml(`${hourText(window.startHour)}-${hourText(window.endHour)}`)} · Hourly</span>
+        </button>`).join("")}</div>`
     : "";
   const reason = item.fullReason || item.primaryReason || exchange.a;
   const action = item.action || (item.tone === "good" ? "" : item.advice);
@@ -11098,7 +11108,7 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
           ${watchAction}
         </div>
         <div class="ask-decision-secondary-actions">
-          <button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>
+          ${scheduleWindows.length > 1 ? "" : `<button class="ask-show" type="button" data-ask-show="${index}">Hourly detail</button>`}
           <button class="ask-memory-btn" type="button" data-memory-edit="${escapeHtml(changeTarget)}">Change plan</button>
         </div>
       </div>
@@ -11310,6 +11320,38 @@ function showPlannerEvent(rowIndex) {
   }
 }
 
+function showPlannerScheduleWindow(value) {
+  const [rawRow, rawWindow] = String(value || "").split("::");
+  const rowIndex = Number(rawRow);
+  const windowIndex = Number(rawWindow);
+  const exchange = Number.isInteger(rowIndex) ? askThread[rowIndex] : null;
+  const schedule = exchange?.schedule ? normalizePlanMemory(exchange.schedule) : null;
+  const window = Number.isInteger(windowIndex) ? schedule?.windows?.[windowIndex] : null;
+  const sourceEvent = exchange?.event;
+  if (!schedule || !window || !sourceEvent?.data || !sourceEvent.place) return false;
+  const focusedMemory = {
+    ...schedule,
+    targetDate: window.targetDate,
+    startHour: window.startHour,
+    endHour: window.endHour,
+    label: window.label,
+    windows: [window],
+    scheduleType: "single",
+    span: null
+  };
+  const event = planMemoryEventForData(focusedMemory, sourceEvent.data, sourceEvent.place, sourceEvent.alerts || []);
+  if (!event) return false;
+  plannerReturnAfterDayDetail = {
+    scrollTop: document.getElementById("askChatLog")?.scrollTop || 0
+  };
+  closeAISheet();
+  if (openPlannerEventDetail(event)) return true;
+  const returnState = plannerReturnAfterDayDetail;
+  plannerReturnAfterDayDetail = null;
+  openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+  return false;
+}
+
 function openPlannerEventDetail(event) {
   const data = event.data;
   const dayIndex = event.dayIndex ?? 0;
@@ -11323,10 +11365,18 @@ function openPlannerEventDetail(event) {
 
   const code = representativeDailyCode(data, dayIndex);
   const memory = event.memoryId ? state.planMemories.find((item) => item.id === event.memoryId) : null;
+  const memoryWindow = memory?.windows?.find((window) =>
+    window.targetDate === dayStr &&
+    Number(window.startHour) === Number(event.startHour) &&
+    Number(window.endHour) === Number(event.endHour)
+  );
+  const contextMemory = memoryWindow
+    ? { ...memory, targetDate: memoryWindow.targetDate, startHour: memoryWindow.startHour, endHour: memoryWindow.endHour, label: memoryWindow.label, windows: [memoryWindow], scheduleType: "single", span: null }
+    : memory;
   openDayDetail({
     indices,
     title: plannerEventSheetTitle(event, dayStr, dayIndex),
-    contextLabel: memory ? planMemoryEventContextLabel(memory, event) : plannerEventContextLabel(event),
+    contextLabel: contextMemory ? planMemoryEventContextLabel(contextMemory, event) : plannerEventContextLabel(event),
     code,
     stormPotential: hasThunderPotentialForDay(data, dayIndex, code),
     isDay: true,
@@ -11354,6 +11404,7 @@ function scrollFocusedSheetHour() {
 }
 
 function plannerEventSheetTitle(event, dayStr, dayIndex) {
+  if (event?.memoryId && String(event.title || "").trim()) return String(event.title).trim();
   const label = String(event.label || "").trim();
   if (label && label !== "custom" && label.length <= 28) return capitalize(label);
   return formatDay(dayStr, dayIndex);

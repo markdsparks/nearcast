@@ -44,6 +44,11 @@ assert.match(planner, /memoryEditState\.scheduleType !== "single"/, "the structu
 assert.match(planner, /askThread\[row\]\.schedule = normalized\.schedule/, "agent-created schedules survive into the conversation turn");
 assert.match(planner, /rememberedPlanIdForSchedule/, "watching a multi-day draft saves one schedule instead of its first day");
 assert.match(planner, /ask-decision-schedule-row/, "multi-day drafts expose every watched window before saving");
+assert.match(planner, /data-ask-schedule-window/, "multi-day AI drafts expose an hourly action for each schedule segment");
+assert.match(planner, /function showPlannerScheduleWindow\(/, "AI schedule segments open their exact hourly day");
+assert.match(planner, /const \[memoryId, rawIndex\] = String\(id \|\| ""\)\.split\("::"\)/, "saved-plan hourly navigation preserves its schedule index");
+assert.match(planner, /windowIndex === null && Array\.isArray\(memory\.windows\) && memory\.windows\.length > 1/, "generic multi-day hourly actions open the schedule chooser");
+assert.match(planner, /data-memory-day-hourly="\$\{escapeHtml\(Number\.isInteger\(memoryDetailWindowIndex\)/, "full-day hourly retains the selected schedule date");
 
 assert.match(planner, /data-memory-show="\$\{escapeHtml\(memory\.id\)\}" aria-label="\$\{escapeHtml\(`Open/, "Watching cards open the focused receipt rather than the legacy facts sheet");
 for (const phrase of [

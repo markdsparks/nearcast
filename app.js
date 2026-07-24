@@ -1,4 +1,4 @@
-const VERSION = "3.0.316";
+const VERSION = "3.0.317";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -3973,7 +3973,7 @@ function bindEvents() {
   bindTapDelegate(els.launchShortcuts, "[data-launch-jump]", (event, target) => {
     handleLaunchShortcut(target.dataset.launchJump);
   }, { preventDefault: false });
-  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-watch-notify]", (event, target) => {
+  bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-schedule-window], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-watch-notify]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
     if (memoryOpen) {
       openGlobalMemorySheet();
@@ -4017,6 +4017,11 @@ function bindEvents() {
     const show = target.closest("[data-ask-show]");
     if (show) {
       showPlannerEvent(Number(show.dataset.askShow));
+      return;
+    }
+    const scheduleWindow = target.closest("[data-ask-schedule-window]");
+    if (scheduleWindow) {
+      showPlannerScheduleWindow(scheduleWindow.dataset.askScheduleWindow);
       return;
     }
     const clarify = target.closest("[data-ask-clarify]");

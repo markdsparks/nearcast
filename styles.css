@@ -6971,8 +6971,17 @@ h2 {
   border-radius: 8px;
   background: var(--ai-card-inset);
   color: var(--ai-card-muted);
+  width: 100%;
+  font: inherit;
   font-size: 0.76rem;
   font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+.ask-decision-schedule-row:hover,
+.ask-decision-schedule-row:focus-visible {
+  border-color: var(--ai-card-accent);
+  outline: none;
 }
 .ask-decision-schedule-row strong {
   color: var(--ink);
