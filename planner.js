@@ -3694,7 +3694,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.navigate",
-    description: "Navigate to any primary Nearcast surface: forecast, hourly, map, saved places, watching, or settings.",
+    description: "Navigate to any primary Nearcast surface: forecast, hourly, map, saved places, watching, or settings. Resolve contextual follow-ups such as 'show me', 'open it', or 'pull that up' from the most recent typed forecast window or view artifact.",
     input_schema: {
       type: "object",
       properties: { destination: { type: "string", enum: ["forecast", "hourly", "map", "places", "watching", "settings"] }, place: { type: "string" }, day: { type: "string" } },
@@ -4892,6 +4892,21 @@ async function invokeRegisteredNearcastSkill(context, command) {
 
 function parseNearcastDirectNavigation(question) {
   const raw = String(question || "").trim();
+  if (/^(?:show|open|pull|bring)\s+(?:me\s+)?(?:it|that|this)\s*(?:up)?[.!?]*$/i.test(raw) ||
+    /^(?:show me|open it|pull that up)[.!?]*$/i.test(raw)) {
+    const focused = nearcastAgentSessionArtifacts
+      .filter((artifact) => [NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan, NEARCAST_AGENT_ARTIFACT_KINDS.view].includes(artifact?.kind))
+      .slice(-1)[0];
+    if (focused?.kind === NEARCAST_AGENT_ARTIFACT_KINDS.window || focused?.kind === NEARCAST_AGENT_ARTIFACT_KINDS.plan) {
+      return { skillId: "nearcast.forecast_open_hourly", arguments: { window_ref: "last_result" } };
+    }
+    if (focused?.kind === NEARCAST_AGENT_ARTIFACT_KINDS.view && focused.value?.view) {
+      const view = String(focused.value.view).toLowerCase();
+      if (view === "map") return { skillId: "nearcast.map_open", arguments: {} };
+      if (view === "hourly") return { skillId: "nearcast.forecast_open_hourly", arguments: { window_ref: "last_result" } };
+      return { skillId: "nearcast.forecast_open", arguments: {} };
+    }
+  }
   if (/\b(?:save|add|bookmark|remember|keep)\b/i.test(raw) && /\b(?:saved\s+place|place|location|here|this)\b/i.test(raw) &&
     !/\b(?:plan|window|forecast|weather)\b/i.test(raw)) {
     return { skillId: "nearcast.place_save", arguments: {} };
