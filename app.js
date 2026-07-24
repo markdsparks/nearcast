@@ -1,4 +1,4 @@
-const VERSION = "3.0.317";
+const VERSION = "3.0.318";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -4134,13 +4134,21 @@ function bindEvents() {
   });
   bindTapAction(document.getElementById("memoryEditClose"), closeMemoryEditSheet);
   bindTapAction(els.memoryEditBackdrop, closeMemoryEditSheet);
-  bindTapAction(document.getElementById("memoryDetailClose"), closeMemoryDetail);
-  bindTapAction(document.getElementById("memoryDetailBackdrop"), closeMemoryDetail);
+  bindTapAction(document.getElementById("memoryDetailClose"), navigateBackFromMemoryDetail);
+  bindTapAction(document.getElementById("memoryDetailBackdrop"), navigateBackFromMemoryDetail);
   bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-day-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
     const memoryDayHourly = target.closest("[data-memory-day-hourly]");
     if (memoryDayHourly) {
+      const [memoryId, rawWindowIndex] = String(memoryDayHourly.dataset.memoryDayHourly || "").split("::");
+      const windowIndex = rawWindowIndex === undefined ? null : Number(rawWindowIndex);
       closeMemoryDetail();
-      showPlanMemory(memoryDayHourly.dataset.memoryDayHourly);
+      showPlanMemory(memoryDayHourly.dataset.memoryDayHourly, {
+        returnToPlanner: false,
+        returnToMemoryDetail: {
+          memoryId,
+          windowIndex: Number.isInteger(windowIndex) ? windowIndex : null
+        }
+      });
       return;
     }
     const memoryHourly = target.closest("[data-memory-hourly]");
@@ -4351,7 +4359,7 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.memoryDetailSheet.hidden) {
       event.stopImmediatePropagation();
-      closeMemoryDetail();
+      navigateBackFromMemoryDetail();
     }
   });
   document.addEventListener("keydown", (event) => {

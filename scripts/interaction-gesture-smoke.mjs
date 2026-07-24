@@ -42,7 +42,8 @@ assert.match(styles, /#alertBackdrop\s*\{[\s\S]*?z-index:\s*323[\s\S]*?\.day-she
 assert.match(styles, /body\.map-immersive-active #alertBackdrop\s*\{[\s\S]*?z-index:\s*1123[\s\S]*?body\.map-immersive-active \.day-sheet\.alert-sheet\s*\{[\s\S]*?z-index:\s*1124/, "alert detail remains topmost over immersive map sheets");
 assert.match(app, /showSheet\(els\.liveActivityBackdrop[\s\S]*?onPullDismiss: closeLiveActivityLab[\s\S]*?canPullDismiss/, "Live Activity protects in-flight native actions");
 assert.match(daygraph, /showSheet\(backdrop, sheet,[\s\S]*?onPullDismiss: closeDayDetail/, "day detail preserves its custom close cleanup");
-assert.match(planner, /showSheet\(els\.memoryDetailBackdrop[\s\S]*?onPullDismiss: closeMemoryDetail/, "plan detail preserves its custom close cleanup");
+assert.match(planner, /showSheet\(els\.memoryDetailBackdrop[\s\S]*?onPullDismiss: navigateBackFromMemoryDetail/, "plan detail pull gestures follow the nested navigation stack");
+assert.match(planner, /function navigateBackFromMemoryDetail\([\s\S]*?closeMemoryDetail\(\)/, "root plan detail still preserves its custom close cleanup");
 assert.match(planner, /showSheet\(els\.memoryBackdrop[\s\S]*?onPullDismiss: closeGlobalMemorySheet/, "Watching preserves its custom close cleanup");
 assert.match(planner, /showSheet\(els\.aiBackdrop[\s\S]*?onPullDismiss: closeAISheet[\s\S]*?canPullDismiss/, "Plan Check protects active generation");
 assert.match(map, /function openXweatherStormReceiptSheet[\s\S]*?showSheet\(backdrop, sheet, \{\s*onPullDismiss: closeXweatherStormReceiptSheet/, "StormScope receipts preserve receipt cleanup");

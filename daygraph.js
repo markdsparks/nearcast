@@ -682,9 +682,13 @@ function closeDayDetail() {
   setTimeout(() => {
     backdrop.hidden = true;
     sheet.hidden = true;
-    if (returnToPlanner) {
-      openAISheet({ restoreScroll: returnToPlanner.scrollTop, autoBrief: false });
+    const dayClose = document.getElementById("dayDetailClose");
+    if (dayClose) {
+      dayClose.textContent = "✕";
+      dayClose.setAttribute("aria-label", "Close detail");
     }
+    if (returnToPlanner && typeof restorePlanDayDetailTarget === "function") restorePlanDayDetailTarget(returnToPlanner);
+    else if (returnToPlanner) openAISheet({ restoreScroll: returnToPlanner.scrollTop, autoBrief: false });
   }, 260);
 }
 

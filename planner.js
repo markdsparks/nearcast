@@ -7025,9 +7025,11 @@ async function showPlanMemory(id, options = {}) {
     : memory;
   const returnToPlanner = options.returnToPlanner ?? !els.aiSheet?.hidden;
   const chatLog = document.getElementById("askChatLog");
-  plannerReturnAfterDayDetail = returnToPlanner
-    ? { scrollTop: chatLog?.scrollTop ?? 0 }
-    : null;
+  plannerReturnAfterDayDetail = options.returnToMemoryDetail
+    ? { type: "memory-detail", ...options.returnToMemoryDetail }
+    : returnToPlanner
+      ? { type: "planner", scrollTop: chatLog?.scrollTop ?? 0 }
+      : null;
   if (!els.aiSheet?.hidden) closeAISheet();
   const switchingPlaces = !samePlanPlace(memory.place, state.activePlace);
   const previousForecast = state.forecast;
@@ -7036,7 +7038,7 @@ async function showPlanMemory(id, options = {}) {
     if (state.forecast === previousForecast) {
       const returnState = plannerReturnAfterDayDetail;
       plannerReturnAfterDayDetail = null;
-      if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+      restorePlanDayDetailTarget(returnState);
       return;
     }
   }
@@ -7044,15 +7046,28 @@ async function showPlanMemory(id, options = {}) {
   if (!event) {
     const returnState = plannerReturnAfterDayDetail;
     plannerReturnAfterDayDetail = null;
-    if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+    restorePlanDayDetailTarget(returnState);
     return;
   }
   const opened = openPlannerEventDetail(event);
   if (!opened) {
     const returnState = plannerReturnAfterDayDetail;
     plannerReturnAfterDayDetail = null;
-    if (returnToPlanner) openAISheet({ restoreScroll: returnState?.scrollTop, autoBrief: false });
+    restorePlanDayDetailTarget(returnState);
   }
+}
+
+function restorePlanDayDetailTarget(target) {
+  if (!target) return false;
+  if (target.type === "memory-detail" && target.memoryId) {
+    openMemoryDetail(target.memoryId, {
+      mode: "plan-window",
+      windowIndex: Number.isInteger(target.windowIndex) ? target.windowIndex : null
+    });
+    return true;
+  }
+  openAISheet({ restoreScroll: target.scrollTop, autoBrief: false });
+  return true;
 }
 
 function openPlanWatchForMemory(id, options = {}) {
@@ -7094,6 +7109,12 @@ function openMemoryDetail(idsOrValue, options = {}) {
   memoryDetailMode = options.mode === "plan-window" && memories.length === 1 ? "plan-window" : "facts";
   memoryDetailWindowIndex = memoryDetailMode === "plan-window" && Number.isInteger(options.windowIndex) ? options.windowIndex : null;
   memoryDetailIds = memories.map((memory) => memory.id);
+  const returnsToSchedule = memoryDetailMode === "plan-window" && memories.length === 1 && memories[0].windows?.length > 1;
+  const detailClose = document.getElementById("memoryDetailClose");
+  if (detailClose) {
+    detailClose.textContent = returnsToSchedule ? "‹" : "✕";
+    detailClose.setAttribute("aria-label", returnsToSchedule ? "Back to plan schedule" : "Close plan details");
+  }
   document.getElementById("memoryDetailTitle").textContent = memoryDetailMode === "plan-window"
     ? "Hourly detail"
     : memories.length === 1
@@ -7111,10 +7132,22 @@ function openMemoryDetail(idsOrValue, options = {}) {
   els.memoryDetailSheet.hidden = false;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   showSheet(els.memoryDetailBackdrop, els.memoryDetailSheet, {
-    onPullDismiss: closeMemoryDetail,
+    onPullDismiss: navigateBackFromMemoryDetail,
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
+}
+
+function navigateBackFromMemoryDetail() {
+  const memory = memoryDetailIds.length === 1
+    ? state.planMemories.find((item) => item.id === memoryDetailIds[0])
+    : null;
+  if (memoryDetailMode === "plan-window" && memory?.windows?.length > 1) {
+    openMemoryDetail(memory.id, { mode: "facts" });
+    return true;
+  }
+  closeMemoryDetail();
+  return false;
 }
 
 function refreshOpenMemoryDetail() {
@@ -7143,6 +7176,11 @@ function closeMemoryDetail() {
     els.memoryDetailBackdrop.hidden = true;
     els.memoryDetailSheet.hidden = true;
     memoryDetailWindowIndex = null;
+    const detailClose = document.getElementById("memoryDetailClose");
+    if (detailClose) {
+      detailClose.textContent = "✕";
+      detailClose.setAttribute("aria-label", "Close plan details");
+    }
     if (typeof updateSheetNowJump === "function") updateSheetNowJump();
   }, 260);
 }
@@ -11309,6 +11347,7 @@ function showPlannerEvent(rowIndex) {
   const event = askThread[rowIndex]?.event;
   if (!event?.data || !event.place) return;
   plannerReturnAfterDayDetail = {
+    type: "planner",
     scrollTop: document.getElementById("askChatLog")?.scrollTop || 0
   };
   closeAISheet();
@@ -11342,6 +11381,7 @@ function showPlannerScheduleWindow(value) {
   const event = planMemoryEventForData(focusedMemory, sourceEvent.data, sourceEvent.place, sourceEvent.alerts || []);
   if (!event) return false;
   plannerReturnAfterDayDetail = {
+    type: "planner",
     scrollTop: document.getElementById("askChatLog")?.scrollTop || 0
   };
   closeAISheet();
@@ -11373,6 +11413,12 @@ function openPlannerEventDetail(event) {
   const contextMemory = memoryWindow
     ? { ...memory, targetDate: memoryWindow.targetDate, startHour: memoryWindow.startHour, endHour: memoryWindow.endHour, label: memoryWindow.label, windows: [memoryWindow], scheduleType: "single", span: null }
     : memory;
+  const dayClose = document.getElementById("dayDetailClose");
+  const returnsToPlanDetail = plannerReturnAfterDayDetail?.type === "memory-detail";
+  if (dayClose) {
+    dayClose.textContent = returnsToPlanDetail ? "‹" : "✕";
+    dayClose.setAttribute("aria-label", returnsToPlanDetail ? "Back to plan hourly detail" : "Close detail");
+  }
   openDayDetail({
     indices,
     title: plannerEventSheetTitle(event, dayStr, dayIndex),

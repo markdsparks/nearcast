@@ -4,9 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [app, planner, truth, styles, html, serviceWorker, worker] = await Promise.all([
+const [app, planner, daygraph, truth, styles, html, serviceWorker, worker] = await Promise.all([
   readFile(path.join(root, "app.js"), "utf8"),
   readFile(path.join(root, "planner.js"), "utf8"),
+  readFile(path.join(root, "daygraph.js"), "utf8"),
   readFile(path.join(root, "weather-truth.js"), "utf8"),
   readFile(path.join(root, "styles.css"), "utf8"),
   readFile(path.join(root, "index.html"), "utf8"),
@@ -49,6 +50,12 @@ assert.match(planner, /function showPlannerScheduleWindow\(/, "AI schedule segme
 assert.match(planner, /const \[memoryId, rawIndex\] = String\(id \|\| ""\)\.split\("::"\)/, "saved-plan hourly navigation preserves its schedule index");
 assert.match(planner, /windowIndex === null && Array\.isArray\(memory\.windows\) && memory\.windows\.length > 1/, "generic multi-day hourly actions open the schedule chooser");
 assert.match(planner, /data-memory-day-hourly="\$\{escapeHtml\(Number\.isInteger\(memoryDetailWindowIndex\)/, "full-day hourly retains the selected schedule date");
+assert.match(planner, /function navigateBackFromMemoryDetail\(\)/, "closing a selected multi-day window navigates back to its schedule");
+assert.match(planner, /mode: "plan-window",[\s\S]*windowIndex:/, "the schedule can restore the exact selected plan window");
+assert.match(planner, /function restorePlanDayDetailTarget\(target\)/, "closing full-day hourly restores its parent plan view");
+assert.match(planner, /type: "memory-detail"/, "full-day hourly records the nested plan-detail return target");
+assert.match(app, /returnToMemoryDetail: \{[\s\S]*memoryId,[\s\S]*windowIndex:/, "the full-day action carries its plan and window context");
+assert.match(daygraph, /restorePlanDayDetailTarget\(returnToPlanner\)/, "day-detail close follows the nested plan navigation stack");
 
 assert.match(planner, /data-memory-show="\$\{escapeHtml\(memory\.id\)\}" aria-label="\$\{escapeHtml\(`Open/, "Watching cards open the focused receipt rather than the legacy facts sheet");
 for (const phrase of [
