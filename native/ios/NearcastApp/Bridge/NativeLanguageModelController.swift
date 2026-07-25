@@ -100,11 +100,25 @@ enum NativeLanguageModelController {
 
 @available(iOS 26.0, *)
 private func generationSchema(from value: [String: Any]) throws -> GenerationSchema {
-    try GenerationSchema(root: dynamicSchema(from: value, path: "NearcastRoot"), dependencies: [])
+    let definitions = value["$defs"] as? [String: Any] ?? [:]
+    return try GenerationSchema(
+        root: dynamicSchema(from: value, path: "NearcastRoot"),
+        dependencies: definitions.keys.sorted().map { name in
+            guard let definition = definitions[name] as? [String: Any] else {
+                throw NativeLanguageModelSchemaError.invalidDefinition(name)
+            }
+            return try dynamicSchema(from: definition, path: name)
+        }
+    )
 }
 
 @available(iOS 26.0, *)
 private func dynamicSchema(from value: [String: Any], path: String) throws -> DynamicGenerationSchema {
+    if let reference = value["$ref"] as? String {
+        return DynamicGenerationSchema(
+            referenceTo: reference.components(separatedBy: "/").last ?? reference
+        )
+    }
     guard let type = value["type"] as? String else {
         throw NativeLanguageModelSchemaError.missingType(path)
     }
@@ -135,16 +149,26 @@ private func dynamicSchema(from value: [String: Any], path: String) throws -> Dy
         guard let items = value["items"] as? [String: Any] else {
             throw NativeLanguageModelSchemaError.invalidItems(path)
         }
-        return DynamicGenerationSchema(arrayOf: try dynamicSchema(from: items, path: "\(path)_Item"))
+        return DynamicGenerationSchema(
+            arrayOf: try dynamicSchema(from: items, path: "\(path)_Item"),
+            minimumElements: (value["minItems"] as? NSNumber)?.intValue,
+            maximumElements: (value["maxItems"] as? NSNumber)?.intValue
+        )
     case "string":
         if let choices = value["enum"] as? [String], !choices.isEmpty {
             return DynamicGenerationSchema(name: sanitizedSchemaName(path) + "Choice", anyOf: choices)
         }
         return DynamicGenerationSchema(type: String.self)
     case "number":
-        return DynamicGenerationSchema(type: Double.self)
+        var guides: [GenerationGuide<Double>] = []
+        if let minimum = (value["minimum"] as? NSNumber)?.doubleValue { guides.append(.minimum(minimum)) }
+        if let maximum = (value["maximum"] as? NSNumber)?.doubleValue { guides.append(.maximum(maximum)) }
+        return DynamicGenerationSchema(type: Double.self, guides: guides)
     case "integer":
-        return DynamicGenerationSchema(type: Int.self)
+        var guides: [GenerationGuide<Int>] = []
+        if let minimum = (value["minimum"] as? NSNumber)?.intValue { guides.append(.minimum(minimum)) }
+        if let maximum = (value["maximum"] as? NSNumber)?.intValue { guides.append(.maximum(maximum)) }
+        return DynamicGenerationSchema(type: Int.self, guides: guides)
     case "boolean":
         return DynamicGenerationSchema(type: Bool.self)
     default:
@@ -157,6 +181,7 @@ private enum NativeLanguageModelSchemaError: LocalizedError {
     case invalidProperties(String)
     case invalidProperty(String)
     case invalidItems(String)
+    case invalidDefinition(String)
     case unsupportedType(String, String)
 
     var errorDescription: String? {
@@ -165,6 +190,7 @@ private enum NativeLanguageModelSchemaError: LocalizedError {
         case .invalidProperties(let path): return "Schema \(path) has invalid properties."
         case .invalidProperty(let path): return "Schema property \(path) is invalid."
         case .invalidItems(let path): return "Schema array \(path) has invalid items."
+        case .invalidDefinition(let name): return "Schema definition \(name) is invalid."
         case .unsupportedType(let path, let type): return "Schema \(path) uses unsupported type \(type)."
         }
     }

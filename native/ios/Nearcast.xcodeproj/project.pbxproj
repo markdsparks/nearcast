@@ -21,6 +21,10 @@
 		A1000000000000000000000C /* NativeStormActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* NativeStormActivityController.swift */; };
 		A1000000000000000000000D /* NativeWatchSnapshotSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* NativeWatchSnapshotSync.swift */; };
 		A1000000000000000000000E /* NativeLanguageModelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* NativeLanguageModelController.swift */; };
+		A1000000000000000000000F /* NativeOperonController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* NativeOperonController.swift */; };
+		A10000000000000000000010 /* OperonCoreDriver in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000001 /* OperonCoreDriver */; };
+		A10000000000000000000011 /* OperonFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* OperonFoundationModels */; };
+		A10000000000000000000012 /* OperonSQLite in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000003 /* OperonSQLite */; };
 		B10000000000000000000001 /* NearcastWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* NearcastWidget.swift */; };
 		B10000000000000000000002 /* NearcastWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* NearcastWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C10000000000000000000001 /* NearcastStormActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* NearcastStormActivityAttributes.swift */; };
@@ -120,6 +124,7 @@
 		A20000000000000000000011 /* NativeStormActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStormActivityController.swift; sourceTree = "<group>"; };
 		A20000000000000000000012 /* NativeWatchSnapshotSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWatchSnapshotSync.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* NativeLanguageModelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLanguageModelController.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* NativeOperonController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeOperonController.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* NearcastWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWidget.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000003 /* NearcastWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NearcastWidget.entitlements; sourceTree = "<group>"; };
@@ -144,6 +149,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000010 /* OperonCoreDriver in Frameworks */,
+				A10000000000000000000011 /* OperonFoundationModels in Frameworks */,
+				A10000000000000000000012 /* OperonSQLite in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -235,6 +243,7 @@
 				A20000000000000000000011 /* NativeStormActivityController.swift */,
 				A20000000000000000000012 /* NativeWatchSnapshotSync.swift */,
 				A20000000000000000000013 /* NativeLanguageModelController.swift */,
+				A20000000000000000000014 /* NativeOperonController.swift */,
 				A20000000000000000000007 /* NativeRuntimeConfiguration.swift */,
 			);
 			path = Bridge;
@@ -313,6 +322,11 @@
 				D80000000000000000000002 /* PBXTargetDependency */,
 			);
 			name = Nearcast;
+			packageProductDependencies = (
+				F20000000000000000000001 /* OperonCoreDriver */,
+				F20000000000000000000002 /* OperonFoundationModels */,
+				F20000000000000000000003 /* OperonSQLite */,
+			);
 			productName = Nearcast;
 			productReference = A20000000000000000000009 /* Nearcast.app */;
 			productType = "com.apple.product-type.application";
@@ -426,6 +440,9 @@
 				Base,
 			);
 			mainGroup = A40000000000000000000001;
+			packageReferences = (
+				F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */,
+			);
 			productRefGroup = A40000000000000000000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -489,6 +506,7 @@
 				A1000000000000000000000C /* NativeStormActivityController.swift in Sources */,
 				A1000000000000000000000D /* NativeWatchSnapshotSync.swift in Sources */,
 				A1000000000000000000000E /* NativeLanguageModelController.swift in Sources */,
+				A1000000000000000000000F /* NativeOperonController.swift in Sources */,
 				C10000000000000000000001 /* NearcastStormActivityAttributes.swift in Sources */,
 				C10000000000000000000003 /* NearcastWidgetSnapshot.swift in Sources */,
 			);
@@ -955,6 +973,35 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/markdsparks/operon.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.3.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F20000000000000000000001 /* OperonCoreDriver */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */;
+			productName = OperonCoreDriver;
+		};
+		F20000000000000000000002 /* OperonFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */;
+			productName = OperonFoundationModels;
+		};
+		F20000000000000000000003 /* OperonSQLite */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */;
+			productName = OperonSQLite;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A80000000000000000000001 /* Project object */;
 }

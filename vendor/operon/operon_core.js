@@ -21,6 +21,32 @@ export class OperonWasmSession {
         wasm.__wbg_operonwasmsession_free(ptr, 0);
     }
     /**
+     * Cancels active work and returns a terminal result without accepting
+     * another host event.
+     * @param {string | null} [reason]
+     * @returns {string}
+     */
+    cancel(reason) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            var ptr0 = isLikeNone(reason) ? 0 : passStringToWasm0(reason, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len0 = WASM_VECTOR_LEN;
+            const ret = wasm.operonwasmsession_cancel(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * Restores a previously snapshotted session without replaying completed
      * actions.
      * @param {string} snapshot_json

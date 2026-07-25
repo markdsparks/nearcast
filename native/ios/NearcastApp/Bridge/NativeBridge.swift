@@ -7,6 +7,22 @@ import WidgetKit
 
 private let nearcastNativeResolvedWidgetLocationKey = "nearcast.widget.resolved-location.v1"
 
+private enum NativeBridgeOperonError: LocalizedError {
+    case cancelled
+    case timedOut
+    case invalidResult
+    case commandFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled: return "The native Operon request was cancelled."
+        case .timedOut: return "Nearcast timed out while completing an Operon capability."
+        case .invalidResult: return "Nearcast returned an invalid Operon capability result."
+        case .commandFailed(let message): return message
+        }
+    }
+}
+
 private struct NearcastNativeResolvedWidgetLocation: Decodable {
     let selectionIdentity: String
     let latitude: Double
@@ -24,6 +40,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionManager()
     private var pendingLocationRequests: [String: Task<Void, Never>] = [:]
+    private var pendingAIRequests: [String: Task<Void, Never>] = [:]
+    private var pendingOperonCommands: [String: CheckedContinuation<String, Error>] = [:]
+    private var pendingOperonTimeouts: [String: Task<Void, Never>] = [:]
+    private var operonCommandSequence = 0
     private var ambientMotionActive = false
     private var ambientMotionFrequencyHz = 8.0
     private var ambientMotionHeading: CLHeading?
@@ -44,6 +64,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         locationManager.stopUpdatingHeading()
         ambientMotionObservers.forEach(NotificationCenter.default.removeObserver)
         pendingLocationRequests.values.forEach { $0.cancel() }
+        pendingAIRequests.values.forEach { $0.cancel() }
+        pendingOperonTimeouts.values.forEach { $0.cancel() }
+        pendingOperonCommands.values.forEach {
+            $0.resume(throwing: NativeBridgeOperonError.cancelled)
+        }
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -257,13 +282,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           };
 
           const pendingAIRequests = new Map();
+          const pendingOperonRuns = new Map();
           let nativeAIRequestId = 0;
           window.NearcastNative.__resolveAIRequest = function(result) {
             const requestId = result && result.requestId ? String(result.requestId) : "";
             const pending = pendingAIRequests.get(requestId);
             if (!pending) return;
             pendingAIRequests.delete(requestId);
+            pendingOperonRuns.delete(requestId);
             if (pending.timer) window.clearTimeout(pending.timer);
+            if (pending.signal && pending.onAbort) pending.signal.removeEventListener("abort", pending.onAbort);
             pending.resolve(result || {
               ok: false,
               available: false,
@@ -271,12 +299,20 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             });
           };
 
-          function nativeAIRequest(type, options, timeoutMs) {
+          function nativeAIRequest(type, options, timeoutMs, signal, handlers) {
             const requestId = String(++nativeAIRequestId);
             return new Promise((resolve) => {
               const timer = window.setTimeout(() => {
-                if (!pendingAIRequests.has(requestId)) return;
+                const pending = pendingAIRequests.get(requestId);
+                if (!pending) return;
                 pendingAIRequests.delete(requestId);
+                pendingOperonRuns.delete(requestId);
+                if (pending.signal && pending.onAbort) pending.signal.removeEventListener("abort", pending.onAbort);
+                window.NearcastNative.postMessage({
+                  type: "ai.cancel",
+                  requestId: `timeout-${requestId}`,
+                  options: { targetRequestId: requestId }
+                });
                 resolve({
                   ok: false,
                   available: false,
@@ -284,7 +320,32 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
                   message: "The on-device model timed out."
                 });
               }, timeoutMs);
-              pendingAIRequests.set(requestId, { resolve, timer });
+              const onAbort = () => {
+                if (!pendingAIRequests.has(requestId)) return;
+                pendingAIRequests.delete(requestId);
+                pendingOperonRuns.delete(requestId);
+                window.clearTimeout(timer);
+                window.NearcastNative.postMessage({
+                  type: "ai.cancel",
+                  requestId: `cancel-${requestId}`,
+                  options: { targetRequestId: requestId }
+                });
+                resolve({
+                  ok: false,
+                  available: true,
+                  reason: "cancelled",
+                  message: "The on-device model request was cancelled."
+                });
+              };
+              pendingAIRequests.set(requestId, { resolve, timer, signal, onAbort });
+              if (handlers) pendingOperonRuns.set(requestId, handlers);
+              if (signal && typeof signal.addEventListener === "function") {
+                if (signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                signal.addEventListener("abort", onAbort, { once: true });
+              }
               window.NearcastNative.postMessage({
                 type,
                 requestId,
@@ -293,13 +354,53 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             });
           }
 
+          window.NearcastNative.__receiveOperonCommand = function(command) {
+            const runId = command && command.runId ? String(command.runId) : "";
+            const commandId = command && command.commandId ? String(command.commandId) : "";
+            const handlers = pendingOperonRuns.get(runId);
+            const kind = String(command && command.kind || "");
+            const handlerName = {
+              load_session: "loadSession",
+              search_memory: "searchMemory",
+              prepare_skill: "prepareSkill",
+              invoke_skill: "invokeSkill"
+            }[kind];
+            const handler = handlers && handlerName ? handlers[handlerName] : null;
+            handlers && handlers.onProgress && handlers.onProgress({
+              kind: "command_started",
+              command: { kind }
+            });
+            Promise.resolve()
+              .then(() => {
+                if (typeof handler !== "function") throw new Error(`Nearcast does not implement ${kind}.`);
+                return handler(command.payload || {});
+              })
+              .then((result) => {
+                window.NearcastNative.postMessage({
+                  type: "ai.operonEvent",
+                  requestId: `event-${commandId}`,
+                  options: { commandId, result }
+                });
+              })
+              .catch((error) => {
+                window.NearcastNative.postMessage({
+                  type: "ai.operonEvent",
+                  requestId: `event-${commandId}`,
+                  options: { commandId, error: String(error && error.message || error || "Nearcast command failed") }
+                });
+              });
+          };
+
           window.NearcastNative.ai = {
             supported: true,
             availability() {
               return nativeAIRequest("ai.availability", {}, 5000);
             },
-            generate(options) {
-              return nativeAIRequest("ai.generate", options || {}, 70000);
+            generate(options, signal) {
+              return nativeAIRequest("ai.generate", options || {}, 70000, signal);
+            },
+            runAgent(options, handlers, signal) {
+              return nativeAIRequest("ai.operonRun", options || {}, 120000, signal, handlers || {});
             }
           };
 
@@ -404,6 +505,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
                 sendNativeAIAvailability(payload)
             } else if type == "ai.generate" {
                 generateWithNativeAI(payload)
+            } else if type == "ai.cancel" {
+                cancelNativeAI(payload)
+            } else if type == "ai.operonRun" {
+                runWithNativeOperon(payload)
+            } else if type == "ai.operonEvent" {
+                receiveNativeOperonEvent(payload)
             } else {
                 rejectNativeAIRequest(payload, reason: "unsupported-request")
             }
@@ -740,6 +847,14 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         ambientMotionObservers.removeAll()
         pendingLocationRequests.values.forEach { $0.cancel() }
         pendingLocationRequests.removeAll()
+        pendingAIRequests.values.forEach { $0.cancel() }
+        pendingAIRequests.removeAll()
+        pendingOperonTimeouts.values.forEach { $0.cancel() }
+        pendingOperonTimeouts.removeAll()
+        pendingOperonCommands.values.forEach {
+            $0.resume(throwing: NativeBridgeOperonError.cancelled)
+        }
+        pendingOperonCommands.removeAll()
         webView = nil
     }
 
@@ -1025,6 +1140,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         #else
         result = nativeAIUnavailable(reason: "framework-unavailable")
         #endif
+        result["operon"] = true
+        result["operonVersion"] = "0.3.0"
+        result["protocolVersion"] = "0.3"
         result["requestId"] = requestId
         sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
     }
@@ -1034,10 +1152,13 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         let options = payload["options"] as? [String: Any] ?? [:]
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
-            Task { @MainActor in
+            pendingAIRequests[requestId]?.cancel()
+            pendingAIRequests[requestId] = Task { @MainActor [weak self] in
                 var result = await NativeLanguageModelController.generate(options: options)
+                guard !Task.isCancelled else { return }
                 result["requestId"] = requestId
-                sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+                self?.pendingAIRequests.removeValue(forKey: requestId)
+                self?.sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
             }
             return
         }
@@ -1045,6 +1166,84 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         var result = nativeAIUnavailable(reason: "os-not-supported")
         result["requestId"] = requestId
         sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+    }
+
+    private func cancelNativeAI(_ payload: [String: Any]) {
+        let options = payload["options"] as? [String: Any] ?? [:]
+        let targetRequestId = options["targetRequestId"] as? String ?? ""
+        pendingAIRequests.removeValue(forKey: targetRequestId)?.cancel()
+    }
+
+    private func runWithNativeOperon(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            pendingAIRequests[requestId]?.cancel()
+            pendingAIRequests[requestId] = Task { @MainActor [weak self] in
+                guard let self else { return }
+                var result = await NativeOperonController.runAgent(
+                    runID: requestId,
+                    options: options,
+                    bridge: { [weak self] command in
+                        guard let self else { throw NativeBridgeOperonError.cancelled }
+                        return try await self.requestNativeOperonCommand(command)
+                    }
+                )
+                guard !Task.isCancelled else { return }
+                result["requestId"] = requestId
+                self.pendingAIRequests.removeValue(forKey: requestId)
+                self.sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+            }
+            return
+        }
+        #endif
+        var result = nativeAIUnavailable(reason: "os-not-supported")
+        result["requestId"] = requestId
+        sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
+    }
+
+    private func requestNativeOperonCommand(_ command: NativeOperonBridgeCommand) async throws -> String {
+        guard !hasTornDown, webView != nil else { throw NativeBridgeOperonError.cancelled }
+        operonCommandSequence += 1
+        let commandId = "\(command.runID)-\(operonCommandSequence)"
+        let payload = (try? JSONSerialization.jsonObject(with: Data(command.payloadJSON.utf8))) ?? [:]
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingOperonCommands[commandId] = continuation
+            pendingOperonTimeouts[commandId]?.cancel()
+            pendingOperonTimeouts[commandId] = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(45))
+                guard !Task.isCancelled, let self,
+                      let pending = self.pendingOperonCommands.removeValue(forKey: commandId) else { return }
+                self.pendingOperonTimeouts.removeValue(forKey: commandId)
+                pending.resume(throwing: NativeBridgeOperonError.timedOut)
+            }
+            sendJavaScriptCallback([
+                "runId": command.runID,
+                "commandId": commandId,
+                "kind": command.kind,
+                "payload": payload
+            ], resolver: "__receiveOperonCommand")
+        }
+    }
+
+    private func receiveNativeOperonEvent(_ payload: [String: Any]) {
+        let options = payload["options"] as? [String: Any] ?? [:]
+        let commandId = options["commandId"] as? String ?? ""
+        guard let continuation = pendingOperonCommands.removeValue(forKey: commandId) else { return }
+        pendingOperonTimeouts.removeValue(forKey: commandId)?.cancel()
+        if let error = options["error"] as? String, !error.isEmpty {
+            continuation.resume(throwing: NativeBridgeOperonError.commandFailed(error))
+            return
+        }
+        let result: Any = options["result"] ?? [:]
+        guard JSONSerialization.isValidJSONObject(result),
+              let data = try? JSONSerialization.data(withJSONObject: result),
+              let json = String(data: data, encoding: .utf8) else {
+            continuation.resume(throwing: NativeBridgeOperonError.invalidResult)
+            return
+        }
+        continuation.resume(returning: json)
     }
 
     private func rejectNativeAIRequest(_ payload: [String: Any], reason: String) {

@@ -3485,6 +3485,7 @@ function plannerWeekdayMention(value) {
 // may be mid-stream (askStreaming). Cleared when the place changes.
 let askThread = [];
 let askStreaming = false;
+let nearcastAgentProgress = "";
 let askError = "";
 let askAbort = null;
 let nearcastAgentSessionSequence = 1;
@@ -3518,6 +3519,45 @@ const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   watch: "nearcast.plan-watch",
   recentTurn: "nearcast.recent-turn"
 });
+
+function startNearcastRun() {
+  askAbort?.abort?.("superseded by a newer Nearcast request");
+  const controller = new AbortController();
+  askAbort = controller;
+  return controller;
+}
+
+function nearcastRunIsCurrent(controller) {
+  return Boolean(controller && !controller.signal.aborted && askAbort === controller);
+}
+
+function nearcastProgressLabel(event) {
+  if (!event || typeof event !== "object") return "";
+  if (event.kind === "cancelled") return "Stopping…";
+  if (event.kind === "completed") return "Finishing answer…";
+  const command = event.command || {};
+  if (event.kind !== "command_started") return "";
+  if (command.kind === "load_session") return "Reading conversation context…";
+  if (command.kind === "search_memory") return "Checking your Nearcast memory…";
+  if (command.kind === "retrieve") return "Checking supporting weather evidence…";
+  if (command.kind === "prepare_skill") return "Resolving the requested place and time…";
+  if (command.kind === "invoke_skill") return "Using Nearcast app capabilities…";
+  if (command.kind === "validate_output") return "Verifying the result…";
+  if (command.kind === "generate") {
+    if (command.stage === "classify") return "Understanding your request…";
+    if (command.stage === "replan") return "Planning the next step…";
+    if (command.stage === "repair") return "Checking the answer…";
+    return "Preparing the answer…";
+  }
+  return "Working locally…";
+}
+
+function updateNearcastAgentProgress(event) {
+  const next = nearcastProgressLabel(event);
+  if (!next || next === nearcastAgentProgress) return;
+  nearcastAgentProgress = next;
+  if (askStreaming) renderAsk();
+}
 
 const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   {
@@ -3880,9 +3920,15 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
         status: { type: "string", enum: ["drafted", "needs_input", "unavailable"] },
         message: { type: "string" },
         place: { type: "string" },
-        windows: { type: "integer", minimum: 0 }
+        window_count: { type: "integer", minimum: 0, maximum: 10 },
+        windows: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 10
+        }
       },
-      required: ["status", "message", "place", "windows"],
+      required: ["status", "message", "place", "window_count"],
       additionalProperties: false
     },
     requires_user_confirmation: false,
@@ -3962,6 +4008,9 @@ function nearcastAgentMemoryRecords() {
 function nearcastAgentMemorySearch(query, scope, limit = 6) {
   if (scope?.namespace !== NEARCAST_AGENT_MEMORY_NAMESPACE) return [];
   const terms = String(query || "").toLowerCase().match(/[a-z0-9]{2,}/g) || [];
+  if (terms.length === 0) {
+    return nearcastAgentMemoryRecords().slice(0, Math.max(1, Number(limit) || 128));
+  }
   return nearcastAgentMemoryRecords()
     .map((record, index) => {
       const content = record.content.toLowerCase();
@@ -4975,14 +5024,14 @@ async function executeNearcastMultiDayPlanSkill(args, context) {
   const place = await ensureNearcastSkillPlace(requestedPlace, context);
   if (!place) {
     context.receipt.answer = `I could not load ${requestedPlace || "the requested place"}.`;
-    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "", windows: 0 });
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "", window_count: 0 });
   }
   const c = buildAIContext();
   const startIdx = resolveDayIndex(String(args?.start_day || ""), c);
   const endIdx = resolveDayIndex(String(args?.end_day || args?.start_day || ""), c);
   if (startIdx == null || endIdx == null || endIdx < startIdx) {
     context.receipt.answer = "I could not resolve that date range from the available forecast.";
-    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), windows: 0 });
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), window_count: 0 });
   }
   const activityKey = detectAskActivity(args?.request) || detectPlanActivity(args?.request) || "walk";
   const baseOptions = bestWindowOptionsFromText(`${args?.request || ""} ${args?.period || ""}`, c);
@@ -5002,7 +5051,7 @@ async function executeNearcastMultiDayPlanSkill(args, context) {
   }
   if (!candidates.length) {
     context.receipt.answer = "I could not find a usable window in that date range.";
-    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), windows: 0 });
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: placeLabel(place), window_count: 0 });
   }
   const count = continuous ? candidates.length : (Number.isFinite(Number(args?.count)) ? Math.max(1, Math.min(candidates.length, Number(args.count))) : candidates.length);
   const selected = candidates.slice().sort((a, b) => (b.event.score || 0) - (a.event.score || 0)).slice(0, count)
@@ -5046,7 +5095,17 @@ async function executeNearcastMultiDayPlanSkill(args, context) {
   });
   if (schedule) artifacts.push(nearcastScheduleArtifact(schedule, context));
   context.lastWindow = scheduleEvent;
-  return nearcastSkillResult({ status: "drafted", message: context.receipt.answer, place: placeLabel(place), windows: selected.length }, artifacts);
+  const windowLabels = selected.map(({ event }) => {
+    const date = state.forecast.daily.time[event.dayIndex];
+    return `${date} ${hourText(event.startHour)}-${hourText(event.endHour)}`;
+  });
+  return nearcastSkillResult({
+    status: "drafted",
+    message: context.receipt.answer,
+    place: placeLabel(place),
+    window_count: selected.length,
+    windows: windowLabels
+  }, artifacts);
 }
 
 function nearcastSkillSignature(skillId, args) {
@@ -5384,9 +5443,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
   const context = createNearcastAgentContext(question, rowIndex, signal);
   const { receipt } = context;
   const maxReplans = nearcastRequestMaxReplans(question);
-  const directCommand = parseNearcastDirectNavigation(question);
   const completion = nearcastCompletionForQuestion(question);
-  context.requiredSkillId = directCommand && maxReplans === 0 ? directCommand.skillId : "";
 
   const result = await ai.runAgent({
     query: question,
@@ -5403,9 +5460,16 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
     completion,
-    signal: signal || { aborted: false }
+    signal: signal || null,
+    onProgress: updateNearcastAgentProgress
   });
   assertNearcastAgentRunActive(context);
+  planIntentDiagnostics.operonStatus = result?.status || "unknown";
+  if (result?.status === "cancelled") return null;
+  if (result?.status === "abstained" && receipt.skillCalls === 0) {
+    planIntentDiagnostics.operonAbstention = result?.abstention?.reason || "validation-exhausted";
+    return null;
+  }
   const rawClarification = result?.clarification || null;
   const rawSkillId = rawClarification?.skill_id || rawClarification?.skillId || "";
   const resumableClarification = rawClarification && rawSkillId && NEARCAST_AGENT_SKILL_REGISTRY.has(rawSkillId)
@@ -5428,11 +5492,6 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
     ? [...new Set(receipt.outputs.map((item) => item.output?.message).filter(Boolean))].join(" ")
     : "";
   const answer = chainAnswer || receipt.answer || clarification?.prompt || cleanNearcastAgentAnswer(result?.answer);
-  const clarificationSkillId = clarification?.pendingSkill?.skillId || clarification?.skill_id || clarification?.skillId || "";
-  const directCommandSatisfied = !directCommand ||
-    receipt.outputs.some((item) => item.skillId === directCommand.skillId) ||
-    clarificationSkillId === directCommand.skillId;
-  if (!directCommandSatisfied) return null;
   if (receipt.skillCalls === 0 && !clarification) return null;
   if (!answer) return null;
   return {
@@ -5491,10 +5550,9 @@ async function runAsk(question, intent) {
   if (aiState.phase === "generating" || askStreaming) return;
   askError = "";
   setNearcastAISurfaceMode("conversation", { render: false });
-  const runSignal = { aborted: false };
-  if (askAbort) askAbort.aborted = true;
-  askAbort = runSignal;
-  const runIsCurrent = () => !runSignal.aborted && askAbort === runSignal;
+  const runController = startNearcastRun();
+  const runSignal = runController.signal;
+  const runIsCurrent = () => nearcastRunIsCurrent(runController);
 
   if (plannerClarification && !intent && shouldUseAsClarification(question)) {
     await continuePlannerClarificationWithText(question, runSignal);
@@ -5582,7 +5640,7 @@ async function runMemoryEdit(question, memoryId, signal = null) {
   const row = beginAskResponse(question);
   try {
     const result = await answerPlanRequest(question);
-    if (signal?.aborted || (signal && askAbort !== signal)) return;
+    if (signal?.aborted || (signal && askAbort?.signal !== signal)) return;
     if (result?.clarification) {
       setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
@@ -5593,7 +5651,7 @@ async function runMemoryEdit(question, memoryId, signal = null) {
       original: question
     });
   } catch {
-    if (!signal?.aborted && (!signal || askAbort === signal)) {
+    if (!signal?.aborted && (!signal || askAbort?.signal === signal)) {
       finishAskResponse(row, "I hit a snag updating that memory. Try a city, day, and time, like \"golf Saturday morning in Fillmore, IL.\"");
     }
   }
@@ -5638,6 +5696,7 @@ function beginAskResponse(question) {
     turnId: `nearcast-turn-${askThread.length}`
   });
   askStreaming = true;
+  nearcastAgentProgress = "Understanding your request…";
   renderAsk();
   scrollAskIntoView();
   return askThread.length - 1;
@@ -5687,6 +5746,7 @@ function finishAskResponse(row, result, options = {}) {
     }
   }
   askStreaming = false;
+  nearcastAgentProgress = "";
   renderAsk();
   scrollAskIntoView();
 }
@@ -5712,10 +5772,9 @@ async function runPlannerClarification(index) {
   if (!option) return;
   const pending = plannerClarification;
   const editingMemoryId = plannerEditingMemoryId;
-  const runSignal = { aborted: false };
-  if (askAbort) askAbort.aborted = true;
-  askAbort = runSignal;
-  const runIsCurrent = () => !runSignal.aborted && askAbort === runSignal;
+  const runController = startNearcastRun();
+  const runSignal = runController.signal;
+  const runIsCurrent = () => nearcastRunIsCurrent(runController);
   plannerClarification = null;
   let row = null;
   try {
@@ -5819,7 +5878,7 @@ async function continuePlannerClarificationWithText(text, signal = null) {
           arguments: prepared.arguments
         });
       }
-      if (signal?.aborted || (signal && askAbort !== signal)) return;
+      if (signal?.aborted || (signal && askAbort?.signal !== signal)) return;
       if (context.receipt.clarification) setPlannerClarification(context.receipt.clarification, row);
       const result = {
         answer: context.receipt.answer || prepared?.clarification?.prompt || prepared?.reason || "I need one more detail.",
@@ -5847,7 +5906,7 @@ async function continuePlannerClarificationWithText(text, signal = null) {
       option.replaceTime = Boolean(pending.replaceTime);
     }
     const result = await completePlanRequest(pending.plan, option);
-    if (signal?.aborted || (signal && askAbort !== signal)) return;
+    if (signal?.aborted || (signal && askAbort?.signal !== signal)) return;
     if (result?.clarification) {
       setPlannerClarification(result.clarification, row);
       finishAskResponse(row, result.clarification.prompt);
@@ -5858,7 +5917,7 @@ async function continuePlannerClarificationWithText(text, signal = null) {
       original: plannerEditingMemoryDraft || pending.plan?.original || text
     } : {});
   } catch {
-    if (!signal?.aborted && (!signal || askAbort === signal)) {
+    if (!signal?.aborted && (!signal || askAbort?.signal === signal)) {
       finishAskResponse(row, `I could not use that detail. Try something like "${formatClock(18, 0, false, false)}" or "Fillmore, IL."`);
     }
   }
@@ -10817,8 +10876,9 @@ function answerFreeform(q) {
 }
 
 function resetAsk() {
-  if (askAbort) askAbort.aborted = true;
+  askAbort?.abort?.("Nearcast conversation reset");
   askAbort = null;
+  nearcastAgentProgress = "";
   rotateNearcastAgentSession();
   askThread = [];
   askStreaming = false;
@@ -10843,9 +10903,10 @@ function startNewNearcastConversation() {
 }
 
 function stopNearcastResponse() {
-  if (askAbort) askAbort.aborted = true;
+  askAbort?.abort?.("Stopped by user");
   if (aiState.phase === "generating" && aiBriefAbort) aiBriefAbort.aborted = true;
   askAbort = null;
+  nearcastAgentProgress = "";
   const active = askThread[askThread.length - 1];
   if (askStreaming && active && !active.a) active.a = "Stopped.";
   askStreaming = false;
@@ -11180,7 +11241,7 @@ function renderNearcastConversationExchange(exchange, index) {
     `</article>`;
   }
   const answer = streaming
-    ? `<span class="ask-chat-thinking"><i></i><i></i><i></i><span>Working on that…</span></span>`
+    ? `<span class="ask-chat-thinking"><i></i><i></i><i></i><span>${escapeHtml(nearcastAgentProgress || "Working locally…")}</span></span>`
     : escapeHtml(exchange.a || AI_FALLBACK_MSG);
   return `<article class="ask-chat-turn" data-turn-index="${index}">` +
     userMessage +
@@ -11277,7 +11338,7 @@ function renderAsk() {
     : "Ask Nearcast anything…";
   const clarification = renderPlannerClarification(dis);
   const agentKicker = busy
-    ? "Working locally"
+    ? (nearcastAgentProgress || "Working locally")
     : aiState.phase === "ready"
       ? "On-device agent"
     : aiState.phase === "idle"
@@ -11333,7 +11394,7 @@ function renderAsk() {
   const nextAnnouncement = askError
     ? askError
     : busy
-      ? "Nearcast is working."
+      ? (nearcastAgentProgress || "Nearcast is working.")
       : latestAnswer;
   if (announcement && nextAnnouncement && nextAnnouncement !== nearcastAILastAnnouncement) {
     announcement.textContent = nextAnnouncement;

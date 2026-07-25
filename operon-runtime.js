@@ -1,5 +1,5 @@
 let driverPromise = null;
-const OPERON_ASSET_VERSION = "3.0.318";
+const OPERON_ASSET_VERSION = "3.0.319";
 
 // Some guided model providers treat a source's display path as its identifier.
 // Operon's contract intentionally distinguishes the stable ID (S1) from the
@@ -68,7 +68,10 @@ function sessionConfig({
   maxSessionArtifacts = 8,
   maxReplans = 0,
   requireSkillOrClarification = false,
-  completion = null
+  completion = null,
+  groundingMode = "citation",
+  validationFailure = "abstain",
+  minEvidenceQuoteChars = 12
 }) {
   return {
     policy: {
@@ -80,7 +83,10 @@ function sessionConfig({
       max_sources: 3,
       request_timeout_ms: timeoutMs || 60000,
       max_replans: Math.max(0, Math.min(3, Number(maxReplans) || 0)),
-      require_skill_or_clarification: requireSkillOrClarification === true
+      require_skill_or_clarification: requireSkillOrClarification === true,
+      grounding_mode: groundingMode === "extractive" ? "extractive" : "citation",
+      validation_failure: validationFailure === "error" ? "error" : "abstain",
+      min_evidence_quote_chars: Math.max(1, Math.min(240, Number(minEvidenceQuoteChars) || 12))
     },
     has_grounding: Boolean(grounding),
     output_schema: schema,
@@ -114,6 +120,11 @@ export async function runOperon({
   requireSkillOrClarification = false,
   completion = null,
   checkpoint = null,
+  groundingMode = "citation",
+  validationFailure = "abstain",
+  minEvidenceQuoteChars = 12,
+  signal = null,
+  onProgress = null,
   timeoutMs = 60000
 }) {
   if (typeof generate !== "function") throw new TypeError("Operon requires a generation provider");
@@ -133,14 +144,17 @@ export async function runOperon({
       maxSessionArtifacts,
       maxReplans,
       requireSkillOrClarification,
-      completion
+      completion,
+      groundingMode,
+      validationFailure,
+      minEvidenceQuoteChars
     }),
     {
       checkpoint: typeof checkpoint === "function"
         ? async ({ snapshot, command }) => checkpoint({ snapshot, command })
         : undefined,
-      generate: async ({ request }) => normalizeProviderCitations(
-        await generate(request),
+      generate: async ({ request }, context = {}) => normalizeProviderCitations(
+        await generate(request, context),
         suppliedSources
       ),
       retrieve: async ({ query: retrievalQuery, limit }) => {
@@ -200,6 +214,10 @@ export async function runOperon({
         if (typeof validateOutput !== "function") return [];
         return validateOutput(output);
       }
+    },
+    {
+      signal: signal && typeof signal.addEventListener === "function" ? signal : undefined,
+      onProgress: typeof onProgress === "function" ? onProgress : undefined
     }
   );
 }

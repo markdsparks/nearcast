@@ -2,7 +2,7 @@
 // verification, and bounded repair. Inference routes to Apple's system model
 // in the native app when available, otherwise to Qwen in a WebGPU worker.
 import { CreateWebWorkerMLCEngine } from "https://esm.run/@mlc-ai/web-llm@0.2.84";
-import { runOperon } from "./operon-runtime.js?v=3.0.318";
+import { runOperon } from "./operon-runtime.js?v=3.0.319";
 import {
   PLAN_INTENT_OUTPUT_SCHEMA,
   SUMMARY_OUTPUT_SCHEMA,
@@ -12,7 +12,7 @@ import {
   summarySource,
   validatePlanIntentOutput,
   validateSummaryOutput
-} from "./ai-contracts.js?v=3.0.318";
+} from "./ai-contracts.js?v=3.0.319";
 
 const WEB_MODEL = "Qwen3-0.6B-q4f16_1-MLC";
 const WEB_APP_CONFIG = {
@@ -116,7 +116,7 @@ async function generateWithApple(request, signal) {
     schema: request.schema,
     temperature: request.temperature,
     maximumResponseTokens: request.max_tokens || 280
-  });
+  }, signal);
   if (signal?.aborted) throw new Error("Generation cancelled");
   if (!result?.ok) throw new Error(result?.message || result?.reason || "Apple model generation failed");
   return generationResult(result.text, {
@@ -129,17 +129,24 @@ async function generateWithApple(request, signal) {
 async function generateWithWebLLM(request, signal) {
   if (signal?.aborted) throw new Error("Generation cancelled");
   const eng = await loadWebModel();
-  const completion = await eng.chat.completions.create({
-    stream: false,
-    temperature: request.temperature,
-    max_tokens: request.max_tokens || 280,
-    response_format: request.schema ? {
-      type: "json_object",
-      schema: JSON.stringify(request.schema)
-    } : undefined,
-    extra_body: { enable_thinking: false },
-    messages: request.messages
-  });
+  const interrupt = () => { try { eng.interruptGenerate(); } catch (_) {} };
+  signal?.addEventListener?.("abort", interrupt, { once: true });
+  let completion;
+  try {
+    completion = await eng.chat.completions.create({
+      stream: false,
+      temperature: request.temperature,
+      max_tokens: request.max_tokens || 280,
+      response_format: request.schema ? {
+        type: "json_object",
+        schema: JSON.stringify(request.schema)
+      } : undefined,
+      extra_body: { enable_thinking: false },
+      messages: request.messages
+    });
+  } finally {
+    signal?.removeEventListener?.("abort", interrupt);
+  }
   if (signal?.aborted) {
     try { await eng.interruptGenerate(); } catch (_) {}
     throw new Error("Generation cancelled");
@@ -167,7 +174,10 @@ export async function* brief(factSheet, signal) {
     schema: SUMMARY_OUTPUT_SCHEMA,
     generate: (request) => generate(request, signal),
     grounding: async () => [summarySource(factSheet)],
-    validateOutput: (output) => validateSummaryOutput(output, factSheet)
+    validateOutput: (output) => validateSummaryOutput(output, factSheet),
+    groundingMode: "extractive",
+    minEvidenceQuoteChars: 8,
+    signal
   });
   const output = outputFromOperonResult(result);
   if (!output?.summary) throw new Error("Operon returned no validated weather summary");
@@ -187,6 +197,7 @@ export async function extractPlanIntent(question, signal) {
     schema: PLAN_INTENT_OUTPUT_SCHEMA,
     generate: (request) => generate(request, signal),
     validateOutput: (output) => validatePlanIntentOutput(output, question),
+    signal,
     timeoutMs: 20000
   });
   const output = outputFromOperonResult(result);
@@ -215,9 +226,51 @@ export async function runAgent({
   maxReplans = 0,
   completion = null,
   checkpoint = null,
-  signal
+  signal,
+  onProgress = null
 }) {
   await load();
+  const native = nativeAI();
+  if (provider?.kind === "apple" && typeof native?.runAgent === "function") {
+    const nativeResult = await native.runAgent({
+      query: String(query || "").slice(0, 1800),
+      skills: Array.isArray(skills) ? skills : [],
+      sessionId: sessionId || null,
+      memoryScope: memoryScope || null,
+      maxReplans: Math.max(1, Number(maxReplans) || 0),
+      completion: completion || null
+    }, {
+      loadSession: ({ sessionId: requestedSessionId, limit }) =>
+        typeof loadSession === "function" ? loadSession(requestedSessionId, limit) : [],
+      searchMemory: ({ query: memoryQuery, scope, limit }) =>
+        typeof searchMemory === "function" ? searchMemory(memoryQuery, scope, limit) : [],
+      prepareSkill: (command) => typeof prepareSkill === "function"
+        ? prepareSkill(command)
+        : { kind: "ready", arguments: command.partialArguments || {} },
+      invokeSkill: (command) => {
+        if (typeof invokeSkill !== "function") throw new Error(`No Nearcast handler is registered for ${command.skillId || "this skill"}`);
+        return invokeSkill(command);
+      },
+      onProgress
+    }, signal);
+    if (!nativeResult?.ok) {
+      if (nativeResult?.reason === "cancelled" || signal?.aborted) {
+        return { status: "cancelled", cancellation: { reason: nativeResult?.message || "cancelled by caller" } };
+      }
+      throw new Error(nativeResult?.message || nativeResult?.reason || "Native Operon agent failed");
+    }
+    const result = nativeResult?.terminal?.result || null;
+    if (!result || typeof result !== "object") throw new Error("Native Operon returned no terminal result");
+    lastRun = {
+      task: "agent",
+      provider: provider?.kind,
+      runtime: "native-operon",
+      repaired: Boolean(result.was_repaired),
+      traceEvents: result.trace?.length || 0,
+      skillCalls: result.plan?.skill_calls?.length || 0
+    };
+    return result;
+  }
   const result = await runOperon({
     query: String(query || "").slice(0, 1800),
     generate: (request) => generate(request, signal),
@@ -237,6 +290,8 @@ export async function runAgent({
     requireSkillOrClarification: true,
     completion,
     checkpoint,
+    signal,
+    onProgress,
     timeoutMs: 60000
   });
   lastRun = {

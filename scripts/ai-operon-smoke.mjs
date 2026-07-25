@@ -107,7 +107,7 @@ const summaryResult = await operon.run(
 
 assert.equal(summaryResult.output.summary, summary);
 assert.equal(summaryResult.sources.length, 1);
-assert.equal(summaryResult.protocol_version, "0.2");
+assert.equal(summaryResult.protocol_version, "0.3");
 assert.deepEqual(validateSummaryOutput({ summary }, facts), []);
 assert.deepEqual(
   validateSummaryOutput({ summary: "Partly cloudy and dry through 8 p.m." }, "Partly cloudy and dry through 8 p.m."),
@@ -122,6 +122,43 @@ assert.match(
   validateSummaryOutput({ summary: summary.replace("88°", "99°") }, facts).join(" "),
   /99/
 );
+
+const extractiveSummaryResult = await operon.run(
+  "Write the validated summary with exact evidence.",
+  {
+    policy: {
+      local_only: true,
+      planning: "never",
+      verification: "adaptive",
+      max_repair_attempts: 0,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000,
+      grounding_mode: "extractive",
+      min_evidence_quote_chars: 8
+    },
+    has_grounding: true,
+    output_schema: SUMMARY_OUTPUT_SCHEMA,
+    has_application_validator: true
+  },
+  {
+    retrieve: async () => summarySources,
+    generate: async () => ({
+      text: JSON.stringify({
+        claims: [{
+          text: "It is partly cloudy and 58°F right now.",
+          evidence: [{ source_id: "S1", quote: "Right now: 58°F and partly cloudy." }]
+        }],
+        confidence: 0.95,
+        abstain_reason: "",
+        output: { summary }
+      })
+    }),
+    validateOutput: async ({ output }) => validateSummaryOutput(output, facts)
+  }
+);
+assert.equal(extractiveSummaryResult.status, "completed");
+assert.equal(extractiveSummaryResult.claims[0].evidence[0].source_id, "S1");
 
 const message = "Ballgame Saturday morning in Fairview Heights";
 const intent = {
@@ -388,7 +425,7 @@ const followupResult = await operon.run(
 );
 assert.deepEqual(preparedHourly, { place: "Nokomis, Illinois", day: "2026-07-23" });
 assert.deepEqual(invokedHourly?.arguments, preparedHourly);
-assert.equal(followupResult.protocol_version, "0.2");
+assert.equal(followupResult.protocol_version, "0.3");
 assert.equal(followupResult.sources[0].path, "skill://nearcast.forecast_open_hourly");
 
 const weatherSkillDescriptor = {
@@ -546,5 +583,67 @@ const normalizedSkillPayload = JSON.parse(normalizeProviderCitations({
 }, [{ id: "S1", path: "skill://nearcast.map_open" }]).text);
 assert.deepEqual(normalizedSkillPayload.used_source_ids, ["S1"]);
 assert.match(normalizedSkillPayload.answer, /\[S1\]$/);
+
+const abstainedResult = await operon.run(
+  "Return an invalid typed result.",
+  {
+    policy: {
+      local_only: true,
+      planning: "never",
+      verification: "adaptive",
+      max_repair_attempts: 0,
+      max_context_chars: 2000,
+      max_sources: 1,
+      request_timeout_ms: 12000,
+      validation_failure: "abstain"
+    },
+    has_grounding: false,
+    output_schema: {
+      type: "object",
+      properties: { decision: { type: "string", enum: ["yes", "no"] } },
+      required: ["decision"],
+      additionalProperties: false
+    },
+    has_application_validator: false
+  },
+  {
+    generate: async () => ({
+      text: JSON.stringify({ answer: "Maybe.", confidence: 0.2, used_source_ids: [], output: {} })
+    })
+  }
+);
+assert.equal(abstainedResult.status, "abstained", "validation exhaustion is a typed abstention");
+
+const cancellation = new AbortController();
+let generationStarted;
+const started = new Promise((resolve) => { generationStarted = resolve; });
+const cancelledRun = operon.run(
+  "Wait until cancelled.",
+  {
+    policy: {
+      local_only: true,
+      planning: "never",
+      verification: "adaptive",
+      max_repair_attempts: 0,
+      max_context_chars: 2000,
+      max_sources: 1,
+      request_timeout_ms: 12000
+    },
+    has_grounding: false,
+    output_schema: null,
+    has_application_validator: false
+  },
+  {
+    generate: async () => {
+      generationStarted();
+      return new Promise(() => {});
+    }
+  },
+  { signal: cancellation.signal }
+);
+await started;
+cancellation.abort("Nearcast test cancellation");
+const cancelledResult = await cancelledRun;
+assert.equal(cancelledResult.status, "cancelled", "AbortSignal produces a typed cancellation");
 
 console.log("AI Operon smoke passed");
