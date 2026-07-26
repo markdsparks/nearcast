@@ -45,6 +45,8 @@ assert.match(plannerSource, /executeNearcastPlaceSwitchSkill/);
 assert.match(plannerSource, /place\|places\|location\|locations/);
 assert.match(plannerSource, /nearcastHourlyDayContext\(place\)/);
 assert.match(plannerSource, /id: "nearcast\.forecast_open_hourly"/);
+assert.match(plannerSource, /id: "nearcast\.forecast_open_day"/);
+assert.match(plannerSource, /produces: \["nearcast\.place", "nearcast\.forecast-window", "nearcast\.view", "nearcast\.view\.day"\]/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_and_draft"/);
 assert.match(plannerSource, /id: "nearcast\.plan_find_multi_day"/);
 assert.match(plannerSource, /function nearcastLooksLikeMultiDayPlan/);

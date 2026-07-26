@@ -45,6 +45,30 @@ function extractFunction(source, name) {
   assert.fail(`Could not extract ${name}`);
 }
 
+const completionSandbox = {
+  NEARCAST_AGENT_ARTIFACT_KINDS: {
+    dayView: "nearcast.view.day",
+    forecastView: "nearcast.view.forecast",
+    hourlyView: "nearcast.view.hourly",
+    mapView: "nearcast.view.map"
+  },
+  detectAskActivity: () => null,
+  detectPlanActivity: () => null,
+  nearcastLooksLikeMultiDayPlan: () => false,
+  nearcastLooksLikeWeatherQuestion: () => false
+};
+vm.createContext(completionSandbox);
+vm.runInContext(`
+  ${extractFunction(planner, "nearcastExplicitDayText")}
+  ${extractFunction(planner, "nearcastCompletionForQuestion")}
+  globalThis.completionForQuestionTest = nearcastCompletionForQuestion;
+`, completionSandbox);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(completionSandbox.completionForQuestionTest("Switch to Maryville and show me the forecast for next Wednesday"))),
+  { required_artifact_kinds: ["nearcast.view.day"] },
+  "a named forecast day survives as a required Operon day-view outcome"
+);
+
 const invitationIndex = html.indexOf('id="planInvitation"');
 const alertIndex = html.indexOf('id="alertBar"');
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
@@ -136,6 +160,9 @@ assert.match(planner, /finishAskResponse\(row, directNavigation,[\s\S]*captureAr
 assert.match(planner, /planIntentDiagnostics\.operonStatus = result\?\.status \|\| "unknown"/, "Nearcast trusts Operon's typed terminal outcome instead of reparsing agent prose");
 assert.match(planner, /function nearcastOperonResourcePolicy[\s\S]*lowPowerModeEnabled[\s\S]*thermalState === "serious"/, "native Operon measurements adapt later runs without changing intent routing");
 assert.match(planner, /required_artifact_kinds: \[requestedView\]/, "navigation requests use an outcome contract instead of accepting a partial side effect");
+assert.match(planner, /nearcastExplicitDayText\(raw\)[\s\S]*NEARCAST_AGENT_ARTIFACT_KINDS\.dayView/, "a day-qualified forecast requires a day-detail outcome");
+assert.match(planner, /function executeNearcastDayOpenSkill[\s\S]*resolveDayIndex\(dayText,[\s\S]*navigation = \{ type: "day", dayIndex \}/, "the day forecast skill resolves and opens the requested forecast date");
+assert.match(planner, /else if \(type === "day"\)[\s\S]*openDayFromIndex\(Number\(navigation\.dayIndex\)/, "day navigation opens the resolved day sheet instead of the main forecast");
 assert.match(planner, /hourlyView: "nearcast\.view\.hourly"[\s\S]*mapView: "nearcast\.view\.map"/, "terminal app views have typed Operon artifacts");
 assert.match(planner, /function nearcastViewOutcomeArtifact[\s\S]*Completed requested \$\{view\} view/, "successful navigation publishes the typed outcome artifact");
 assert.match(planner, /id: "nearcast\.map_open"[\s\S]*produces: \["nearcast\.place", "nearcast\.view", "nearcast\.view\.map"\]/, "the map skill advertises its terminal outcome to Operon's graph planner");

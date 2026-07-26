@@ -3531,6 +3531,7 @@ const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   place: "nearcast.place",
   window: "nearcast.forecast-window",
   view: "nearcast.view",
+  dayView: "nearcast.view.day",
   forecastView: "nearcast.view.forecast",
   hourlyView: "nearcast.view.hourly",
   mapView: "nearcast.view.map",
@@ -3863,7 +3864,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.forecast_open",
-    description: "Select or switch to a place and pull up its Nearcast forecast as one atomic outcome. Use when the user asks to show, open, switch to, or look up a forecast in a place.",
+    description: "Select or switch to a place and pull up its main Nearcast forecast as one atomic outcome. Use when the user asks to show, open, switch to, or look up a forecast in a place without naming a specific day. For a named day, use nearcast.forecast_open_day instead.",
     input_schema: {
       type: "object",
       properties: { place: { type: "string" } },
@@ -3885,6 +3886,32 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     produces: ["nearcast.place", "nearcast.view", "nearcast.view.forecast"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastForecastOpenSkill
+  },
+  {
+    id: "nearcast.forecast_open_day",
+    description: "Select or switch to a place and open the forecast detail for a specific named day as one atomic outcome. Use when a forecast request includes today, tomorrow, a weekday, or a date. Preserve the user's complete day phrase, such as 'next Wednesday', in day.",
+    input_schema: {
+      type: "object",
+      properties: { place: { type: "string" }, day: { type: "string" } },
+      required: [],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["opened", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" },
+        day: { type: "string" }
+      },
+      required: ["status", "message", "place", "day"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.view", "nearcast.view.day"],
+    prepare: prepareNearcastHourlySkill,
+    execute: executeNearcastDayOpenSkill
   },
   {
     id: "nearcast.map_open",
@@ -4255,6 +4282,8 @@ function nearcastViewOutcomeArtifact(view, place, context = null, windowArtifact
     ? NEARCAST_AGENT_ARTIFACT_KINDS.mapView
     : view === "hourly"
       ? NEARCAST_AGENT_ARTIFACT_KINDS.hourlyView
+      : view === "day"
+        ? NEARCAST_AGENT_ARTIFACT_KINDS.dayView
       : NEARCAST_AGENT_ARTIFACT_KINDS.forecastView;
   const label = place ? placeLabel(place) : "the selected place";
   return createNearcastAgentArtifact(
@@ -5051,6 +5080,37 @@ function nearcastHourlyDayContext(place) {
   };
 }
 
+async function executeNearcastDayOpenSkill(args, context) {
+  context.preparedSkillState?.delete("nearcast.forecast_open_day");
+  const place = await ensureNearcastSkillPlace(args?.place, context);
+  const dayText = String(args?.day || "").trim();
+  const dayIndex = place ? resolveDayIndex(dayText, nearcastHourlyDayContext(place)) : null;
+  if (!place || dayIndex == null || !state.forecast?.daily?.time?.[dayIndex]) {
+    context.receipt.answer = `I could not open the forecast for ${dayText || "that day"}.`;
+    return nearcastSkillResult({
+      status: "unavailable",
+      message: context.receipt.answer,
+      place: place ? placeLabel(place) : "",
+      day: dayText
+    });
+  }
+  const dayLabel = formatDay(state.forecast.daily.time[dayIndex], dayIndex);
+  const windowArtifact = nearcastWindowArtifact(place, {
+    dayIdx: dayIndex,
+    startHour: 0,
+    endHour: 24,
+    period: "day"
+  }, context, { dayText });
+  context.receipt.answer = `Opening the ${dayLabel} forecast for ${placeLabel(place)}.`;
+  context.receipt.navigation = { type: "day", dayIndex };
+  return nearcastSkillResult({
+    status: "opened",
+    message: context.receipt.answer,
+    place: placeLabel(place),
+    day: dayLabel
+  }, [nearcastPlaceArtifact(place, context), windowArtifact, ...nearcastViewArtifacts("day", place, context, windowArtifact)]);
+}
+
 async function executeNearcastHourlyOpenSkill(args, context) {
   const preparedState = context.preparedSkillState?.get("nearcast.forecast_open_hourly");
   context.preparedSkillState?.delete("nearcast.forecast_open_hourly");
@@ -5333,7 +5393,11 @@ function parseNearcastDirectNavigation(question) {
         return { skillId: "nearcast.map_open", arguments: { place } };
       }
       if (/\b(?:open|show|pull up)\b[\s\S]*\bforecast\b/i.test(raw)) {
-        return { skillId: "nearcast.forecast_open", arguments: { place } };
+        const day = nearcastExplicitDayText(raw);
+        return {
+          skillId: day ? "nearcast.forecast_open_day" : "nearcast.forecast_open",
+          arguments: { place, ...(day ? { day } : {}) }
+        };
       }
       return { skillId: "nearcast.place_switch", arguments: { place } };
     }
@@ -5384,8 +5448,10 @@ function parseNearcastDirectNavigation(question) {
       ? "nearcast.forecast_open_hourly"
       : type === "map"
         ? "nearcast.map_open"
-        : "nearcast.forecast_open",
-    arguments: type === "hourly" ? hourlyArguments : { place }
+        : day
+          ? "nearcast.forecast_open_day"
+          : "nearcast.forecast_open",
+    arguments: type === "hourly" ? hourlyArguments : { place, ...(day ? { day } : {}) }
   };
 }
 
@@ -5504,6 +5570,8 @@ async function scheduleNearcastAgentNavigation(navigation) {
       eventWindow: focusEvent,
       contextLabel: focusEvent ? `${placeLabel(state.activePlace)} · Focused forecast window` : ""
     });
+  } else if (type === "day") {
+    openDayFromIndex(Number(navigation.dayIndex), { persistInitialMode: false });
   } else if (type === "forecast") {
     try { window.scrollTo({ top: 0, left: 0, behavior: "smooth" }); } catch {}
   } else if (type === "places") {
@@ -5553,7 +5621,9 @@ function nearcastCompletionForQuestion(question) {
         : /\bhourly\b/i.test(raw)
           ? NEARCAST_AGENT_ARTIFACT_KINDS.hourlyView
           : /\bforecast\b/i.test(raw)
-            ? NEARCAST_AGENT_ARTIFACT_KINDS.forecastView
+            ? (nearcastExplicitDayText(raw)
+                ? NEARCAST_AGENT_ARTIFACT_KINDS.dayView
+                : NEARCAST_AGENT_ARTIFACT_KINDS.forecastView)
             : "")
     : "";
   if (requestedView) return { required_artifact_kinds: [requestedView] };
