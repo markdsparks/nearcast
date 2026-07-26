@@ -69,6 +69,49 @@ assert.deepEqual(
   "a named forecast day survives as a required Operon day-view outcome"
 );
 
+const placeResolutionCalls = [];
+const placeResolutionSandbox = {
+  parseLocationQuery: () => ({
+    raw: "Harden, Kentucky",
+    primary: "Harden",
+    region: "Kentucky",
+    stateName: "Kentucky",
+    countryCode: "US",
+    countryName: "United States"
+  }),
+  normalizeQualifierKey: (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+  placeCountryCode: (place) => place.country_code || "",
+  normalizePlace: (place) => place,
+  buildPlaceSearchAttempts: (parsed) => [{ name: parsed.primary, countryCode: parsed.countryCode }],
+  fetchPlaceResults: async (name) => {
+    placeResolutionCalls.push(name);
+    if (name === "Harden") {
+      return [{ name: "Hardin", admin1: "Missouri", country_code: "US", latitude: 39.27, longitude: -93.83 }];
+    }
+    return [
+      { name: "Hardin", admin1: "Missouri", country_code: "US", latitude: 39.27, longitude: -93.83 },
+      { name: "Hardin", admin1: "Kentucky", country_code: "US", latitude: 36.76, longitude: -88.30 }
+    ];
+  },
+  plannerPlaceScore: (place, parsed) => place.admin1 === parsed.stateName ? 100 : 0
+};
+vm.createContext(placeResolutionSandbox);
+const placeOptionsFunctionStart = planner.indexOf("async function fetchPlannerPlaceOptions(");
+const placeOptionsFunctionEnd = planner.indexOf("\nfunction plannerPlaceMatchesQualifier", placeOptionsFunctionStart);
+assert.ok(placeOptionsFunctionStart >= 0 && placeOptionsFunctionEnd > placeOptionsFunctionStart, "Found fetchPlannerPlaceOptions");
+const placeOptionsFunction = planner.slice(placeOptionsFunctionStart, placeOptionsFunctionEnd);
+vm.runInContext(`
+  ${extractFunction(planner, "plannerPlaceMatchesQualifier")}
+  ${extractFunction(planner, "plannerPlaceNameDistance")}
+  ${extractFunction(planner, "plannerPlaceCorrectionNames")}
+  ${placeOptionsFunction}
+  globalThis.fetchPlannerPlaceOptionsTest = fetchPlannerPlaceOptions;
+`, placeResolutionSandbox);
+const correctedPlaceOptions = await placeResolutionSandbox.fetchPlannerPlaceOptionsTest("Harden, Kentucky");
+assert.deepEqual(placeResolutionCalls, ["Harden", "Hardin"], "a close spelling is retried within the explicit state constraint");
+assert.equal(correctedPlaceOptions.matches.length, 1);
+assert.equal(correctedPlaceOptions.matches[0].place.admin1, "Kentucky", "an explicit state mismatch is never accepted");
+
 const invitationIndex = html.indexOf('id="planInvitation"');
 const alertIndex = html.indexOf('id="alertBar"');
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
@@ -163,6 +206,8 @@ assert.match(planner, /required_artifact_kinds: \[requestedView\]/, "navigation 
 assert.match(planner, /nearcastExplicitDayText\(raw\)[\s\S]*NEARCAST_AGENT_ARTIFACT_KINDS\.dayView/, "a day-qualified forecast requires a day-detail outcome");
 assert.match(planner, /function executeNearcastDayOpenSkill[\s\S]*resolveDayIndex\(dayText,[\s\S]*navigation = \{ type: "day", dayIndex \}/, "the day forecast skill resolves and opens the requested forecast date");
 assert.match(planner, /else if \(type === "day"\)[\s\S]*openDayFromIndex\(Number\(navigation\.dayIndex\)/, "day navigation opens the resolved day sheet instead of the main forecast");
+assert.match(planner, /hasExplicitQualifier[\s\S]*plannerPlaceCorrectionNames[\s\S]*plannerPlaceMatchesQualifier/, "qualified place resolution retries close spellings without relaxing the state boundary");
+assert.match(planner, /function plannerPlaceMatchesQualifier[\s\S]*actual !== expected/, "an explicit state is a hard constraint, not a proximity preference");
 assert.match(planner, /hourlyView: "nearcast\.view\.hourly"[\s\S]*mapView: "nearcast\.view\.map"/, "terminal app views have typed Operon artifacts");
 assert.match(planner, /function nearcastViewOutcomeArtifact[\s\S]*Completed requested \$\{view\} view/, "successful navigation publishes the typed outcome artifact");
 assert.match(planner, /id: "nearcast\.map_open"[\s\S]*produces: \["nearcast\.place", "nearcast\.view", "nearcast\.view\.map"\]/, "the map skill advertises its terminal outcome to Operon's graph planner");

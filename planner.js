@@ -10105,8 +10105,7 @@ async function fetchPlannerPlaceOptions(query) {
   const parsed = parseLocationQuery(query);
   const seen = new Set();
   const results = [];
-  for (const attempt of buildPlaceSearchAttempts(parsed)) {
-    const places = await fetchPlaceResults(attempt.name, 8, attempt);
+  const addPlaces = (places) => {
     places.forEach((place) => {
       const normalized = normalizePlace(place);
       const key = `${normalized.latitude.toFixed(3)}:${normalized.longitude.toFixed(3)}`;
@@ -10114,11 +10113,82 @@ async function fetchPlannerPlaceOptions(query) {
       seen.add(key);
       results.push(place);
     });
+  };
+  for (const attempt of buildPlaceSearchAttempts(parsed)) {
+    const places = await fetchPlaceResults(attempt.name, 8, attempt);
+    addPlaces(places);
   }
-  const matches = results
+  const hasExplicitQualifier = Boolean(parsed.stateName || parsed.countryCode);
+  let qualified = hasExplicitQualifier
+    ? results.filter((place) => plannerPlaceMatchesQualifier(place, parsed))
+    : results;
+  // Speech recognition and casual typing commonly move one letter in a place
+  // name. If the geocoder suggests a close spelling in the wrong state, retry
+  // that spelling while retaining the user's explicit state/country boundary.
+  // A qualifier mismatch is never accepted as the final answer.
+  if (hasExplicitQualifier && qualified.length === 0) {
+    for (const correctedName of plannerPlaceCorrectionNames(results, parsed).slice(0, 3)) {
+      const corrected = { ...parsed, raw: correctedName, primary: correctedName };
+      for (const attempt of buildPlaceSearchAttempts(corrected)) {
+        addPlaces(await fetchPlaceResults(attempt.name, 12, attempt));
+      }
+    }
+    qualified = results.filter((place) => plannerPlaceMatchesQualifier(place, parsed));
+  }
+  const matches = qualified
     .map((place, index) => ({ place, index, score: plannerPlaceScore(place, parsed) }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
   return { parsed, matches };
+}
+
+function plannerPlaceMatchesQualifier(place, parsed) {
+  if (parsed.countryCode && placeCountryCode(place) !== String(parsed.countryCode).toUpperCase()) return false;
+  if (parsed.stateName) {
+    const expected = normalizeQualifierKey(parsed.stateName);
+    const actual = normalizeQualifierKey(place.admin1 || "");
+    if (!expected || actual !== expected) return false;
+  }
+  return true;
+}
+
+function plannerPlaceNameDistance(left, right) {
+  const a = normalizeQualifierKey(left).replace(/\s+/g, "");
+  const b = normalizeQualifierKey(right).replace(/\s+/g, "");
+  if (!a) return b.length;
+  if (!b) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const previous = row[j];
+      row[j] = Math.min(
+        row[j] + 1,
+        row[j - 1] + 1,
+        diagonal + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      diagonal = previous;
+    }
+  }
+  return row[b.length];
+}
+
+function plannerPlaceCorrectionNames(results, parsed) {
+  const primary = String(parsed.primary || "").trim();
+  const primaryKey = normalizeQualifierKey(primary).replace(/\s+/g, "");
+  const maximumDistance = primaryKey.length >= 8 ? 2 : 1;
+  const names = new Map();
+  for (const place of results) {
+    const name = String(place?.name || "").trim();
+    const key = normalizeQualifierKey(name);
+    const distance = plannerPlaceNameDistance(primary, name);
+    if (!key || distance > maximumDistance) continue;
+    const previous = names.get(key);
+    if (!previous || distance < previous.distance) names.set(key, { name, distance });
+  }
+  return [...names.values()]
+    .sort((left, right) => left.distance - right.distance || left.name.localeCompare(right.name))
+    .map((item) => item.name);
 }
 
 function plannerPlaceScore(place, parsed) {
