@@ -3896,7 +3896,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.forecast_open_hourly",
-    description: "Select a place and open its hourly forecast for a specific day, such as next Tuesday. Use when the user asks to pull up, show, or inspect hourly details. For a contextual follow-up such as 'show hourly for that' or the elliptical 'show me the hourly', pass window_ref as the referenced typed artifact ID or 'last_result'; the host validates the artifact and prepares canonical place and day arguments.",
+    description: "Select or switch to a place and open its hourly forecast. This is one atomic outcome: prefer this skill over chaining place_switch when the user's requested result is an hourly view. The day is optional and defaults to the current day/current hourly forecast. For a specific day such as next Tuesday, pass day. For a contextual follow-up such as 'show hourly for that' or the elliptical 'show me the hourly', pass window_ref as the referenced typed artifact ID or 'last_result'; the host validates the artifact and prepares canonical place and day arguments.",
     input_schema: {
       type: "object",
       properties: {
@@ -4306,6 +4306,10 @@ function nearcastExplicitDayText(value) {
   )?.[1] || "";
 }
 
+function nearcastCurrentDayReference(value) {
+  return /^(?:now|right now|currently|current|current day|today)[.!?]*$/i.test(String(value || "").trim());
+}
+
 function nearcastExplicitPeriodText(value) {
   const period = String(value || "").match(/\b(morning|afternoon|evening|night|daytime|day)\b/i)?.[1]?.toLowerCase() || "";
   return period === "daytime" ? "day" : period;
@@ -4428,12 +4432,23 @@ function nearcastPreparedPlace(context, requested = "", allowCurrent = true) {
   return allowCurrent && context.lastPlace ? placeLabel(context.lastPlace) : "";
 }
 
+function nearcastQuestionPlace(question) {
+  const explicit = extractPlanLocationQuery(question);
+  if (explicit && !nearcastSemanticReference(explicit)) return explicit;
+  for (const clause of nearcastSkillRequestClauses(question)) {
+    const direct = parseNearcastDirectNavigation(clause);
+    const place = String(direct?.arguments?.place || "").trim();
+    if (place && !nearcastSemanticReference(place)) return place;
+  }
+  return "";
+}
+
 function prepareNearcastPlaceSkill(args, context, definition) {
   const source = args || {};
   const question = String(context?.question || "");
   const referencesContext = nearcastReferencesConversation(question);
   const referencesWindow = nearcastReferencesWindow(question);
-  const explicitQuestionPlace = extractPlanLocationQuery(question);
+  const explicitQuestionPlace = nearcastQuestionPlace(question);
   const proposedPlace = String(source.place || source.place_ref || "").trim();
   const groundedModelPlace = proposedPlace && !nearcastSemanticReference(proposedPlace) &&
     nearcastGroundedCandidate(proposedPlace, question)
@@ -4476,7 +4491,7 @@ function prepareNearcastHourlySkill(args, context, definition) {
     );
   }
   const value = windowArtifact?.value || {};
-  const explicitQuestionPlace = extractPlanLocationQuery(question);
+  const explicitQuestionPlace = nearcastQuestionPlace(question);
   const hasExplicitQuestionPlace = explicitQuestionPlace && !nearcastSemanticReference(explicitQuestionPlace);
   const groundedModelPlace = source.place && !nearcastSemanticReference(source.place) &&
     nearcastGroundedCandidate(source.place, question)
@@ -4493,7 +4508,7 @@ function prepareNearcastHourlySkill(args, context, definition) {
           ? supportedPlaceArtifact?.value?.place_label ||
             (supportedPlaceArtifact?.value?.place ? placeLabel(supportedPlaceArtifact.value.place) : "")
           : groundedModelPlace || (context.lastPlace ? placeLabel(context.lastPlace) : ""),
-    day: explicitQuestionDay || (windowArtifact ? value.target_date || value.day_text || "" : "")
+    day: explicitQuestionDay || (windowArtifact ? value.target_date || value.day_text || "" : "") || "today"
   };
   if (!prepared.place || !prepared.day) {
     const missing = [!prepared.place ? "place" : "", !prepared.day ? "day" : ""].filter(Boolean);
@@ -5262,8 +5277,15 @@ function parseNearcastDirectNavigation(question) {
     raw.match(/\bmove\s+to\s+(.+?)[.!?]*$/i) ||
     raw.match(/\buse\s+(.+?)\s+as\s+(?:my\s+)?(?:place|location)[.!?]*$/i);
   if (switchMatch) {
-    const place = String(switchMatch[1] || "").trim();
+    const place = cleanPlanLocation(switchMatch[1]);
     if (place && !nearcastSemanticReference(place)) {
+      if (/\b(?:open|show|pull up)\b[\s\S]*\bhourly\b/i.test(raw)) {
+        const day = nearcastExplicitDayText(raw);
+        return {
+          skillId: "nearcast.forecast_open_hourly",
+          arguments: { place, ...(day ? { day } : {}) }
+        };
+      }
       return { skillId: "nearcast.place_switch", arguments: { place } };
     }
   }
@@ -5927,7 +5949,8 @@ async function continuePlannerClarificationWithText(text, signal = null) {
       const missing = new Set(pending.missing_fields || []);
       const c = buildAIContext();
       const suppliedDay = missing.has("day") && (
-        nearcastExplicitDayText(text) || ((c && resolveDayIndex(text, c) != null) ? text : "")
+        nearcastExplicitDayText(text) || (nearcastCurrentDayReference(text) ? "today" : "") ||
+        ((c && resolveDayIndex(text, c) != null) ? text : "")
       );
       if (suppliedDay) skillArguments.day = suppliedDay;
       if (missing.has("place")) {

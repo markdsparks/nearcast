@@ -233,9 +233,14 @@ const preparationSandbox = {
   extractPlanLocationQuery: (value) => String(value || "").match(
     /\bin\s+(.+?)(?=\s+(?:next|this|coming|following|today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|and then)\b|[.!?]|$)/i
   )?.[1]?.trim() || "",
-  parseNearcastDirectNavigation: (value) => /\b(?:open|show)\b[\s\S]*\bhourly\b/i.test(String(value || ""))
-    ? { skillId: "nearcast.forecast_open_hourly" }
-    : null,
+  parseNearcastDirectNavigation: (value) => {
+    const raw = String(value || "");
+    const switched = raw.match(/\bswitch\s+to\s+(.+?)[.!?]*$/i);
+    if (switched) return { skillId: "nearcast.place_switch", arguments: { place: switched[1].trim() } };
+    return /\b(?:open|show)\b[\s\S]*\bhourly\b/i.test(raw)
+      ? { skillId: "nearcast.forecast_open_hourly", arguments: {} }
+      : null;
+  },
   askText: (value) => ` ${String(value || "").toLowerCase().replace(/[^\w\s:]/g, " ").replace(/\s+/g, " ")} `,
   plannerParseText: (value) => ` ${String(value || "").toLowerCase().replace(/[^\w\s:]/g, " ").replace(/\s+/g, " ")} `,
   hasAny: (text, words) => words.some((word) => text.includes(word)),
@@ -251,6 +256,7 @@ vm.runInContext(`
   ${extractFunction(planner, "nearcastReferencesWindow")}
   ${extractFunction(planner, "nearcastReferencesConversation")}
   ${extractFunction(planner, "nearcastExplicitDayText")}
+  ${extractFunction(planner, "nearcastCurrentDayReference")}
   ${extractFunction(planner, "nearcastExplicitPeriodText")}
   ${extractFunction(planner, "nearcastExplicitDurationHours")}
   ${extractFunction(planner, "nearcastGroundedCandidate")}
@@ -262,6 +268,7 @@ vm.runInContext(`
   ${extractFunction(planner, "nearcastPlaceArtifactForPreparation")}
   ${extractFunction(planner, "nearcastPreparationNeedsInput")}
   ${extractFunction(planner, "nearcastPreparedPlace")}
+  ${extractFunction(planner, "nearcastQuestionPlace")}
   ${extractFunction(planner, "prepareNearcastHourlySkill")}
   ${extractFunction(planner, "prepareNearcastAnswerSkill")}
   ${extractFunction(planner, "prepareNearcastPlanSkill")}
@@ -389,8 +396,8 @@ const missingFollowup = preparationSandbox.prepareHourlyTest(
 assert.equal(missingFollowup.kind, "needs_input");
 assert.deepEqual(
   JSON.parse(JSON.stringify(missingFollowup.clarification.missing_fields)),
-  ["place", "day"],
-  "a missing referent asks for input instead of guessing"
+  ["place"],
+  "a missing referent asks only for the genuinely missing place and defaults hourly to today"
 );
 const hostileMissingFollowup = preparationSandbox.prepareHourlyTest(
   { place: "Invented Place", day: "tomorrow", invented: "ignore me" },
@@ -437,8 +444,26 @@ assert.equal(
     { question: "Show hourly.", sessionArtifacts: [], artifactReferences: [], lastPlace: liverpoolView.value.place },
     { id: "nearcast.forecast_open_hourly" }
   ).kind,
-  "needs_input",
-  "an unstated model day cannot bypass hourly clarification"
+  "ready",
+  "the current hourly view defaults to today instead of asking for a redundant day"
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(preparationSandbox.prepareHourlyTest(
+    {},
+    { question: "Now show me the hourly.", sessionArtifacts: [], artifactReferences: [], lastPlace: liverpoolView.value.place },
+    { id: "nearcast.forecast_open_hourly" }
+  ).arguments)),
+  { place: "Liverpool, England", day: "today" },
+  "a request for the current hourly forecast uses the active place and current day"
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(preparationSandbox.prepareHourlyTest(
+    { place: "Nokomis and show me the hourly weather" },
+    { question: "Switch to Nokomis and show me the hourly weather.", sessionArtifacts: [], artifactReferences: [], lastPlace: liverpoolView.value.place },
+    { id: "nearcast.forecast_open_hourly" }
+  ).arguments)),
+  { place: "Nokomis", day: "today" },
+  "compound navigation grounds the place from the user's action clauses and opens hourly atomically"
 );
 forecastTarget.value.period = "evening";
 const operonSelectedAnswer = preparationSandbox.prepareAnswerTest(
