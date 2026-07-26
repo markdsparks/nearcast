@@ -583,6 +583,123 @@ assert.deepEqual(chainedInvocations[1].arguments, {
 });
 assert.equal(chainedResult.sources.length, 2);
 
+const outcomeStages = [];
+const outcomeInvocations = [];
+const mapOutcomeArtifact = {
+  id: "map-outcome-1",
+  kind: "nearcast.view.map",
+  summary: "Completed requested map view for Nokomis, Illinois.",
+  value: { view: "map", place_label: "Nokomis, Illinois" },
+  turn_id: "nearcast-turn-map"
+};
+const outcomeContractResult = await operon.run(
+  "Switch to Nokomis and show me the map view.",
+  {
+    policy: {
+      local_only: true,
+      planning: "always",
+      verification: "adaptive",
+      max_repair_attempts: 1,
+      max_context_chars: 6000,
+      max_sources: 3,
+      request_timeout_ms: 12000,
+      max_replans: 1,
+      require_skill_or_clarification: true
+    },
+    has_grounding: false,
+    output_schema: null,
+    has_application_validator: false,
+    completion: { required_artifact_kinds: ["nearcast.view.map"] },
+    skills: [{
+      ...skillDescriptor,
+      consumes: ["nearcast.place"],
+      produces: ["nearcast.place", "nearcast.view", "nearcast.view.map"]
+    }, {
+      id: "nearcast.place_switch",
+      description: "Change only the selected place without opening a view.",
+      input_schema: skillDescriptor.input_schema,
+      output_schema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["switched", "unavailable"] },
+          message: { type: "string" },
+          place: { type: "string" }
+        },
+        required: ["status", "message", "place"],
+        additionalProperties: false
+      },
+      requires_user_confirmation: false,
+      produces: ["nearcast.place"]
+    }]
+  },
+  {
+    generate: async ({ stage }) => {
+      outcomeStages.push(stage);
+      if (stage === "classify") {
+        return { text: JSON.stringify({
+          intent: "switch the selected place and complete the requested map destination",
+          subquestions: [],
+          needs_grounding: false,
+          answer_requirements: [],
+          skill_calls: [
+            { skill_id: "nearcast.place_switch", arguments: { place: "Nokomis" } },
+            { skill_id: "nearcast.map_open", arguments: { place: "Nokomis" } }
+          ]
+        }) };
+      }
+      if (stage === "replan") {
+        return { text: JSON.stringify({
+          intent: "complete the requested map destination",
+          subquestions: [],
+          needs_grounding: false,
+          answer_requirements: [],
+          skill_calls: [{ skill_id: "nearcast.map_open", arguments: { place: "Nokomis" } }]
+        }) };
+      }
+      return { text: JSON.stringify({
+        answer: "Switched to Nokomis and opened its weather map. [S1] [S2]",
+        confidence: 0.99,
+        used_source_ids: ["S1", "S2"]
+      }) };
+    },
+    prepareSkill: async ({ partial_arguments }) => ({ kind: "ready", arguments: partial_arguments }),
+    invokeSkill: async ({ skill_id, arguments: skillArguments }) => {
+      outcomeInvocations.push({ skill_id, arguments: skillArguments });
+      if (skill_id === "nearcast.place_switch") {
+        return {
+          output: { status: "switched", message: "Switched Nearcast to Nokomis, Illinois.", place: "Nokomis, Illinois" },
+          sources: [],
+          artifacts: [{
+            id: "place-outcome-1",
+            kind: "nearcast.place",
+            summary: "Current place: Nokomis, Illinois.",
+            value: { place_label: "Nokomis, Illinois" }
+          }]
+        };
+      }
+      return {
+        output: { status: "opened", message: "Opening the weather map centered on Nokomis, Illinois.", place: "Nokomis, Illinois" },
+        sources: [],
+        artifacts: [{
+          id: "map-place-outcome-1",
+          kind: "nearcast.place",
+          summary: "Current place: Nokomis, Illinois.",
+          value: { place_label: "Nokomis, Illinois" }
+        }, {
+          id: "map-view-outcome-1",
+          kind: "nearcast.view",
+          summary: "Most recent app view: map for Nokomis, Illinois.",
+          value: { view: "map", place_label: "Nokomis, Illinois" }
+        }, mapOutcomeArtifact]
+      };
+    }
+  }
+);
+assert.deepEqual(outcomeStages, ["classify", "replan", "generate"]);
+assert.deepEqual(outcomeInvocations.map((call) => call.skill_id), ["nearcast.place_switch", "nearcast.map_open"]);
+assert.equal(outcomeContractResult.status, "completed");
+assert.equal(outcomeContractResult.skill_receipts.length, 2);
+
 const normalizedSkillPayload = JSON.parse(normalizeProviderCitations({
   text: JSON.stringify({
     answer: "Opening the weather map centered on Liverpool. [skill://nearcast.map_open]",

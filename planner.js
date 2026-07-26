@@ -3531,6 +3531,9 @@ const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   place: "nearcast.place",
   window: "nearcast.forecast-window",
   view: "nearcast.view",
+  forecastView: "nearcast.view.forecast",
+  hourlyView: "nearcast.view.hourly",
+  mapView: "nearcast.view.map",
   plan: "nearcast.plan-draft",
   watch: "nearcast.plan-watch",
   recentTurn: "nearcast.recent-turn"
@@ -3690,7 +3693,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.place_switch",
-    description: "Change Nearcast's active place to a named location. Use for direct requests such as 'switch places to Maryville' or 'change my location to Basel'. This updates the app's selected place and forecast without opening a separate view.",
+    description: "Change Nearcast's active place to a named location only. Use for direct requests such as 'switch places to Maryville' or 'change my location to Basel'. This updates the app's selected place and forecast without opening a separate view. If the request also asks to open or show a forecast, hourly view, map, or radar, do not stop with this skill; prefer the matching atomic open skill.",
     input_schema: {
       type: "object",
       properties: { place: { type: "string" } },
@@ -3860,7 +3863,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.forecast_open",
-    description: "Select a place and pull up its Nearcast forecast. Use when the user asks to show, open, switch to, or look up a forecast in a place.",
+    description: "Select or switch to a place and pull up its Nearcast forecast as one atomic outcome. Use when the user asks to show, open, switch to, or look up a forecast in a place.",
     input_schema: {
       type: "object",
       properties: { place: { type: "string" } },
@@ -3879,13 +3882,13 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     },
     requires_user_confirmation: false,
     consumes: ["nearcast.place"],
-    produces: ["nearcast.place", "nearcast.view"],
+    produces: ["nearcast.place", "nearcast.view", "nearcast.view.forecast"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastForecastOpenSkill
   },
   {
     id: "nearcast.map_open",
-    description: "Open Nearcast's full-screen weather map centered on a place. Use for map, radar, precipitation map, or weather-layer requests.",
+    description: "Select or switch to a place and open Nearcast's full-screen weather map centered there as one atomic outcome. Use for map, radar, precipitation map, or weather-layer requests; do not call place_switch alone when this is the requested destination.",
     input_schema: {
       type: "object",
       properties: { place: { type: "string" } },
@@ -3904,7 +3907,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     },
     requires_user_confirmation: false,
     consumes: ["nearcast.place"],
-    produces: ["nearcast.place", "nearcast.view"],
+    produces: ["nearcast.place", "nearcast.view", "nearcast.view.map"],
     prepare: prepareNearcastPlaceSkill,
     execute: executeNearcastMapOpenSkill
   },
@@ -3934,7 +3937,7 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     },
     requires_user_confirmation: false,
     consumes: ["nearcast.place"],
-    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.view"],
+    produces: ["nearcast.place", "nearcast.forecast-window", "nearcast.view", "nearcast.view.hourly"],
     prepare: prepareNearcastHourlySkill,
     execute: executeNearcastHourlyOpenSkill
   },
@@ -4245,6 +4248,32 @@ function nearcastViewArtifact(view, place, context = null, windowArtifact = null
     },
     context
   );
+}
+
+function nearcastViewOutcomeArtifact(view, place, context = null, windowArtifact = null) {
+  const kind = view === "map"
+    ? NEARCAST_AGENT_ARTIFACT_KINDS.mapView
+    : view === "hourly"
+      ? NEARCAST_AGENT_ARTIFACT_KINDS.hourlyView
+      : NEARCAST_AGENT_ARTIFACT_KINDS.forecastView;
+  const label = place ? placeLabel(place) : "the selected place";
+  return createNearcastAgentArtifact(
+    kind,
+    `Completed requested ${view} view for ${label}.`,
+    {
+      view,
+      place: place ? normalizePlace(place) : null,
+      target_date: windowArtifact?.value?.target_date || null
+    },
+    context
+  );
+}
+
+function nearcastViewArtifacts(view, place, context = null, windowArtifact = null) {
+  return [
+    nearcastViewArtifact(view, place, context, windowArtifact),
+    nearcastViewOutcomeArtifact(view, place, context, windowArtifact)
+  ];
 }
 
 function nearcastPlanArtifact(event, context = null) {
@@ -4796,7 +4825,7 @@ async function executeNearcastPlaceNavigationSkill(args, context, type) {
   context.receipt.navigation = { type };
   return nearcastSkillResult(
     { status: "opened", message: context.receipt.answer, place: label },
-    [nearcastPlaceArtifact(place, context), nearcastViewArtifact(type, place, context)]
+    [nearcastPlaceArtifact(place, context), ...nearcastViewArtifacts(type, place, context)]
   );
 }
 
@@ -5066,7 +5095,7 @@ async function executeNearcastHourlyOpenSkill(args, context) {
     message: context.receipt.answer,
     place: placeLabel(place),
     day: dayLabel
-  }, [nearcastPlaceArtifact(place, context), windowArtifact, nearcastViewArtifact("hourly", place, context, windowArtifact)]);
+  }, [nearcastPlaceArtifact(place, context), windowArtifact, ...nearcastViewArtifacts("hourly", place, context, windowArtifact)]);
 }
 
 async function executeNearcastFindAndDraftSkill(args, context) {
@@ -5300,6 +5329,12 @@ function parseNearcastDirectNavigation(question) {
           arguments: { place, ...(day ? { day } : {}) }
         };
       }
+      if (/\b(?:open|show|pull up)\b[\s\S]*\b(?:map|radar)\b/i.test(raw)) {
+        return { skillId: "nearcast.map_open", arguments: { place } };
+      }
+      if (/\b(?:open|show|pull up)\b[\s\S]*\bforecast\b/i.test(raw)) {
+        return { skillId: "nearcast.forecast_open", arguments: { place } };
+      }
       return { skillId: "nearcast.place_switch", arguments: { place } };
     }
   }
@@ -5509,6 +5544,19 @@ function nearcastLooksLikeMultiDayPlan(question) {
 
 function nearcastCompletionForQuestion(question) {
   const raw = String(question || "");
+  // Completion contracts describe the user-visible outcome, not the route.
+  // Operon remains free to choose an atomic skill or a valid multi-step graph,
+  // but a location-only side effect cannot complete a requested destination.
+  const requestedView = /\b(?:open|show|pull up|take me to|go to)\b/i.test(raw)
+    ? (/\b(?:map|radar)\b/i.test(raw)
+        ? NEARCAST_AGENT_ARTIFACT_KINDS.mapView
+        : /\bhourly\b/i.test(raw)
+          ? NEARCAST_AGENT_ARTIFACT_KINDS.hourlyView
+          : /\bforecast\b/i.test(raw)
+            ? NEARCAST_AGENT_ARTIFACT_KINDS.forecastView
+            : "")
+    : "";
+  if (requestedView) return { required_artifact_kinds: [requestedView] };
   // Operon owns intent interpretation and skill selection. Keep completion
   // contracts only for workflows where Nearcast must guarantee a typed result
   // (activity planning or a weather answer); management and navigation skills

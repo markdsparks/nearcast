@@ -135,6 +135,10 @@ assert.match(planner, /captureArtifacts: agent\.skillCalls === 0 && !agent\.clar
 assert.match(planner, /finishAskResponse\(row, directNavigation,[\s\S]*captureArtifacts: false/, "failed deterministic skills cannot fabricate focus artifacts from stale global state");
 assert.match(planner, /planIntentDiagnostics\.operonStatus = result\?\.status \|\| "unknown"/, "Nearcast trusts Operon's typed terminal outcome instead of reparsing agent prose");
 assert.match(planner, /function nearcastOperonResourcePolicy[\s\S]*lowPowerModeEnabled[\s\S]*thermalState === "serious"/, "native Operon measurements adapt later runs without changing intent routing");
+assert.match(planner, /required_artifact_kinds: \[requestedView\]/, "navigation requests use an outcome contract instead of accepting a partial side effect");
+assert.match(planner, /hourlyView: "nearcast\.view\.hourly"[\s\S]*mapView: "nearcast\.view\.map"/, "terminal app views have typed Operon artifacts");
+assert.match(planner, /function nearcastViewOutcomeArtifact[\s\S]*Completed requested \$\{view\} view/, "successful navigation publishes the typed outcome artifact");
+assert.match(planner, /id: "nearcast\.map_open"[\s\S]*produces: \["nearcast\.place", "nearcast\.view", "nearcast\.view\.map"\]/, "the map skill advertises its terminal outcome to Operon's graph planner");
 assert.match(planner, /result\?\.status === "abstained"[\s\S]*sources\.length[\s\S]*sourceLabels/, "typed abstention distinguishes missing context from considered evidence");
 assert.doesNotMatch(planner, /directCommandSatisfied/, "post-hoc phrase routing cannot veto a valid Operon skill graph");
 assert.match(planner, /rawSkillId[\s\S]*type: "agent-skill"[\s\S]*sessionId: context\.sessionId/, "raw Operon skill clarifications become resumable host continuations");
