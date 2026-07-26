@@ -29,7 +29,8 @@ jobs:
 
   native-models:
     name: Native shared models and unsigned app build
-    runs-on: macos-15
+    # Operon 0.4 requires Swift tools 6.2, available on the macOS 26 image.
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
