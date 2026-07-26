@@ -6712,11 +6712,40 @@ h2 {
 }
 .ask-composer-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 46px;
+  grid-template-columns: minmax(0, 1fr) auto 46px 46px;
   align-items: center;
   gap: 10px;
   min-height: 46px;
   margin-top: auto;
+}
+.ask-form.voice-unavailable .ask-composer-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto 46px;
+}
+.ask-voice-feedback {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  overflow: hidden;
+  color: var(--blue);
+}
+.ask-voice-feedback[hidden] {
+  display: none;
+}
+.ask-voice-label {
+  flex: 0 0 auto;
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 880;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.ask-voice-waveform {
+  display: block;
+  width: var(--ask-wave-width, 38px);
+  max-width: min(220px, 52vw);
+  height: 34px;
+  transition: width 120ms ease-out;
 }
 .ask-composer-place,
 .ask-composer-status {
@@ -6732,6 +6761,65 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ask-voice {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel-soft) 82%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+.ask-voice[hidden] {
+  display: none;
+}
+.ask-voice svg {
+  width: 21px;
+  height: 21px;
+  pointer-events: none;
+}
+.ask-voice:hover:not(:disabled),
+.ask-voice:focus-visible {
+  border-color: color-mix(in srgb, var(--blue) 58%, transparent);
+  color: var(--blue);
+  outline: none;
+}
+.ask-voice:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.ask-voice:disabled {
+  cursor: default;
+  opacity: 0.28;
+}
+.ask-form.is-listening .ask-voice {
+  border-color: rgba(70, 139, 226, 0.72);
+  background: linear-gradient(145deg, #5d9bea, #3274ca);
+  color: white;
+  box-shadow: 0 0 0 5px rgba(66, 132, 218, 0.13), 0 8px 22px rgba(35, 94, 163, 0.28);
+  animation: ask-voice-breathe 1.15s ease-in-out infinite alternate;
+}
+.ask-form.is-voice-processing .ask-voice {
+  color: var(--blue);
+}
+.ask-form.is-voice-processing .ask-voice::after {
+  position: absolute;
+  inset: 7px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: ask-composer-spin 700ms linear infinite;
+}
+.ask-form.is-voice-processing .ask-voice svg {
+  opacity: 0;
 }
 .ask-composer-place > span,
 .ask-composer-status > span {
@@ -6812,6 +6900,9 @@ h2 {
 @keyframes ask-composer-pulse {
   to { opacity: 0.42; transform: scale(0.88); }
 }
+@keyframes ask-voice-breathe {
+  to { transform: scale(1.055); box-shadow: 0 0 0 8px rgba(66, 132, 218, 0.08), 0 10px 26px rgba(35, 94, 163, 0.32); }
+}
 .ai-sheet.sheet-keyboard-active .ask-plan-check {
   position: sticky;
   bottom: 0;
@@ -6834,6 +6925,9 @@ h2 {
     font-size: 1.17rem;
   }
   .ask-composer-toolbar {
+    grid-template-columns: minmax(0, 1fr) 46px 46px;
+  }
+  .ask-form.voice-unavailable .ask-composer-toolbar {
     grid-template-columns: minmax(0, 1fr) 46px;
   }
   .ask-composer-status {
@@ -6861,12 +6955,17 @@ h2 {
 }
 @media (prefers-reduced-motion: reduce) {
   .ask-plan-check,
-  .ask-send {
+  .ask-send,
+  .ask-voice,
+  .ask-voice-waveform {
     transition: none;
   }
   .ask-plan-check.is-busy .ask-send::after,
   .ask-plan-check.is-busy .ask-composer-status > span {
     animation-duration: 1.8s;
+  }
+  .ask-form.is-listening .ask-voice {
+    animation: none;
   }
 }
 .ask-exchange {
@@ -7671,13 +7770,24 @@ body.map-immersive-active .nearcast-ai-fab {
 }
 .ai-sheet.is-conversation .ask-composer-toolbar {
   min-height: 40px;
-  grid-template-columns: minmax(0, 1fr) auto 40px;
+  grid-template-columns: minmax(0, 1fr) auto 40px 40px;
   gap: 8px;
+}
+.ai-sheet.is-conversation .ask-form.voice-unavailable .ask-composer-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto 40px;
 }
 .ai-sheet.is-conversation .ask-send {
   width: 40px;
   height: 40px;
   font-size: 1.2rem;
+}
+.ai-sheet.is-conversation .ask-voice {
+  width: 40px;
+  height: 40px;
+}
+.ai-sheet.is-conversation .ask-voice svg {
+  width: 19px;
+  height: 19px;
 }
 .ai-sheet.is-conversation.sheet-keyboard-active .ask-plan-check {
   position: static;

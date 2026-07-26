@@ -148,7 +148,7 @@ assert.match(operonRuntime, /signal: signal && typeof signal\.addEventListener =
 assert.match(planner, /matches\[0\] === 0 \? \(matches\[1\] \?\? null\) : \(matches\[0\] \?\? null\)/, "next-weekday requests use the upcoming occurrence unless today has that weekday");
 assert.match(planner, /useConversationPlace[\s\S]*context\.lastPlace \|\| state\.activePlace[\s\S]*function executeNearcastAnswerSkill[\s\S]*ensureNearcastSkillPlace\(requestedPlace, context\)/, "weather answers load an explicit grounded place or the conversation's captured place");
 assert.match(planner, /input\.disabled = false;[\s\S]*syncAskComposerState\(\)/, "users can draft a follow-up while local AI is working");
-assert.match(planner, /send\.disabled = input\.disabled \|\| busy \|\| !hasValue/, "follow-up drafts cannot submit until the active local run finishes");
+assert.match(planner, /send\.disabled = input\.disabled \|\| busy \|\| voiceActive \|\| !hasValue/, "follow-up drafts and active dictation cannot submit until they are ready");
 assert.match(planner, /const runIsCurrent = \(\)[\s\S]*if \(!runIsCurrent\(\)\) return;/, "stale agent runs cannot complete or navigate a replacement conversation");
 assert.match(planner, /function stopNearcastResponse\([\s\S]*askAbort\?\.abort\?\.\("Stopped by user"\)[\s\S]*active\.a = "Stopped\."/, "the conversation cancels the active Operon graph without discarding prior turns");
 assert.match(planner, /function trapNearcastAIFocus\([\s\S]*event\.key !== "Tab"[\s\S]*last\.focus\(\)/, "the modal conversation keeps keyboard focus inside its visible controls");
@@ -156,6 +156,9 @@ assert.match(planner, /function openAISheet\([\s\S]*clearTimeout\(nearcastAIClos
 assert.match(styles, /\.ask-plan-check \{[\s\S]*border-radius: 26px;[\s\S]*backdrop-filter: blur\(24px\)/, "the Nearcast composer uses the intended floating glass treatment");
 assert.match(styles, /\.ask-chat-evidence \{[\s\S]*border-top:/, "source-aware abstention has an inspectable evidence disclosure");
 assert.match(styles, /\.ask-composer-toolbar \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto 46px/, "the composer toolbar reserves a stable submit target");
+assert.match(html, /id="askVoice"[\s\S]*id="askVoiceWaveform"|id="askVoiceWaveform"[\s\S]*id="askVoice"/, "the Nearcast composer exposes voice input with waveform feedback");
+assert.match(planner, /function bindAskVoiceButton[\s\S]*setTimeout\([\s\S]*startNearcastVoice\("hold"\)[\s\S]*toggleNearcastTapVoice/, "voice input distinguishes hold-to-send from tap-to-dictate");
+assert.match(planner, /const maxBars[\s\S]*samples\.length \/ barCount[\s\S]*compressed\.push/, "the voice timeline compresses older samples after reaching its visual maximum");
 assert.match(styles, /\.ai-sheet\.is-entry \{[\s\S]*height: 174px/, "first open is a compact floating prompt rather than a full sheet");
 assert.match(styles, /\.ai-sheet\[hidden\] \{[\s\S]*display: none !important;/, "closed conversations leave the visual and accessibility trees during app handoffs");
 assert.match(styles, /\.ai-sheet\.is-conversation \{[\s\S]*height: min\(92dvh, 840px\)/, "submitted prompts expand into a full conversation workspace");

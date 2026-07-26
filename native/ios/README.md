@@ -39,6 +39,12 @@ the trusted main Nearcast page; requests from subframes or arbitrary origins
 are rejected. Apple's model availability must be tested on an eligible
 physical device because it is unavailable in Simulator.
 
+The bridge also exposes `NearcastNative.speech.start()`, `.stop()`, and
+`.cancel()` for the Nearcast AI composer. Recognition is required to run on
+device. Partial transcripts and throttled microphone levels arrive as
+`nearcast-native-speech` events, so the web surface can show editable live
+dictation and an audio-reactive waveform without receiving or storing audio.
+
 ## Recommended loops
 
 Use three loops, from fastest to slowest.

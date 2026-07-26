@@ -1,6 +1,8 @@
 import Foundation
+import AVFoundation
 import CoreMotion
 import CoreLocation
+import Speech
 import UIKit
 import WebKit
 import WidgetKit
@@ -44,6 +46,17 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     private var pendingOperonCommands: [String: CheckedContinuation<String, Error>] = [:]
     private var pendingOperonTimeouts: [String: Task<Void, Never>] = [:]
     private var operonCommandSequence = 0
+    private let speechAudioEngine = AVAudioEngine()
+    private var speechRecognizer: SFSpeechRecognizer?
+    private var speechRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var speechRecognitionTask: SFSpeechRecognitionTask?
+    private var speechPermissionTask: Task<Void, Never>?
+    private var speechFinishTask: Task<Void, Never>?
+    private var speechRequestId = ""
+    private var speechTranscript = ""
+    private var speechTapInstalled = false
+    private var speechStopRequested = false
+    private var speechLastLevelDelivery = Date.distantPast
     private var ambientMotionActive = false
     private var ambientMotionFrequencyHz = 8.0
     private var ambientMotionHeading: CLHeading?
@@ -60,6 +73,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     }
 
     deinit {
+        speechPermissionTask?.cancel()
+        speechFinishTask?.cancel()
+        speechRecognitionTask?.cancel()
+        speechAudioEngine.stop()
         motionManager.stopDeviceMotionUpdates()
         locationManager.stopUpdatingHeading()
         ambientMotionObservers.forEach(NotificationCenter.default.removeObserver)
@@ -413,6 +430,37 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             }
           };
 
+          let nativeSpeechRequestId = 0;
+          window.NearcastNative.__receiveSpeechEvent = function(payload) {
+            window.dispatchEvent(new CustomEvent("nearcast-native-speech", {
+              detail: payload && typeof payload === "object" ? payload : {}
+            }));
+          };
+          window.NearcastNative.speech = {
+            supported: true,
+            start(options) {
+              const requestId = `speech-${++nativeSpeechRequestId}`;
+              window.NearcastNative.postMessage({
+                type: "speech.start",
+                requestId,
+                options: options || {}
+              });
+              return requestId;
+            },
+            stop(requestId) {
+              window.NearcastNative.postMessage({
+                type: "speech.stop",
+                requestId: String(requestId || "")
+              });
+            },
+            cancel(requestId) {
+              window.NearcastNative.postMessage({
+                type: "speech.cancel",
+                requestId: String(requestId || "")
+              });
+            }
+          };
+
           if (window.self === window.top) {
             const pendingAmbientMotionRequests = new Map();
             let nativeAmbientMotionRequestId = 0;
@@ -544,6 +592,23 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             return
         }
 
+        if type.hasPrefix("speech.") {
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame) else {
+                sendSpeechEvent(requestId: payload["requestId"] as? String ?? "", state: "error", reason: "untrusted-frame")
+                return
+            }
+            if type == "speech.start" {
+                startNativeSpeech(payload)
+            } else if type == "speech.stop" {
+                stopNativeSpeech(payload)
+            } else if type == "speech.cancel" {
+                cancelNativeSpeech(payload)
+            } else {
+                sendSpeechEvent(requestId: payload["requestId"] as? String ?? "", state: "error", reason: "unsupported-request")
+            }
+            return
+        }
+
         if type == "geolocation.getCurrentPosition" {
             requestCurrentLocation(payload)
         } else if type == "notifications.request" {
@@ -604,6 +669,231 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         default:
             return nil
         }
+    }
+
+    private func startNativeSpeech(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        let options = payload["options"] as? [String: Any] ?? [:]
+        let localeIdentifier = options["locale"] as? String ?? Locale.current.identifier
+        guard !requestId.isEmpty, !hasTornDown else { return }
+        guard UIApplication.shared.applicationState == .active else {
+            sendSpeechEvent(requestId: requestId, state: "unavailable", reason: "app-not-active")
+            return
+        }
+
+        endSpeechSession(notify: false, finalState: "cancelled")
+        speechRequestId = requestId
+        speechTranscript = ""
+        speechStopRequested = false
+        speechLastLevelDelivery = .distantPast
+        sendSpeechEvent(requestId: requestId, state: "starting")
+
+        speechPermissionTask = Task { [weak self] in
+            guard let self else { return }
+            let speechAuthorization = await Self.requestSpeechAuthorization()
+            guard !Task.isCancelled, self.speechRequestId == requestId else { return }
+            guard speechAuthorization == .authorized else {
+                self.endSpeechSession(notify: true, finalState: "denied", reason: "speech-permission-denied")
+                return
+            }
+            let microphoneAllowed = await Self.requestMicrophoneAuthorization()
+            guard !Task.isCancelled, self.speechRequestId == requestId else { return }
+            guard microphoneAllowed else {
+                self.endSpeechSession(notify: true, finalState: "denied", reason: "microphone-permission-denied")
+                return
+            }
+            if self.speechStopRequested {
+                self.endSpeechSession(notify: true, finalState: "finished")
+                return
+            }
+            self.beginSpeechRecognition(requestId: requestId, localeIdentifier: localeIdentifier)
+        }
+    }
+
+    private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    private static func requestMicrophoneAuthorization() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    private func beginSpeechRecognition(requestId: String, localeIdentifier: String) {
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) ?? SFSpeechRecognizer()
+        guard let recognizer, recognizer.isAvailable else {
+            endSpeechSession(notify: true, finalState: "unavailable", reason: "speech-recognizer-unavailable")
+            return
+        }
+        guard recognizer.supportsOnDeviceRecognition else {
+            endSpeechSession(notify: true, finalState: "unavailable", reason: "on-device-speech-unavailable")
+            return
+        }
+
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
+            let request = SFSpeechAudioBufferRecognitionRequest()
+            request.shouldReportPartialResults = true
+            request.requiresOnDeviceRecognition = true
+            request.addsPunctuation = true
+            let inputNode = speechAudioEngine.inputNode
+            let format = inputNode.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw NSError(domain: "NearcastSpeech", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone audio format is available."])
+            }
+
+            speechRecognizer = recognizer
+            speechRecognitionRequest = request
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self, weak request] buffer, _ in
+                request?.append(buffer)
+                let level = Self.normalizedSpeechLevel(buffer)
+                Task { @MainActor in
+                    self?.deliverSpeechLevel(level, requestId: requestId)
+                }
+            }
+            speechTapInstalled = true
+            speechAudioEngine.prepare()
+            try speechAudioEngine.start()
+
+            speechRecognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                Task { @MainActor in
+                    self?.receiveSpeechRecognition(result: result, error: error, requestId: requestId)
+                }
+            }
+            sendSpeechEvent(requestId: requestId, state: "listening")
+        } catch {
+            endSpeechSession(notify: true, finalState: "error", reason: error.localizedDescription)
+        }
+    }
+
+    private static func normalizedSpeechLevel(_ buffer: AVAudioPCMBuffer) -> Double {
+        guard let channel = buffer.floatChannelData?.pointee else { return 0 }
+        let count = Int(buffer.frameLength)
+        guard count > 0 else { return 0 }
+        var sum: Float = 0
+        for index in 0..<count {
+            let sample = channel[index]
+            sum += sample * sample
+        }
+        let rms = sqrt(Double(sum) / Double(count))
+        let decibels = 20 * log10(max(rms, 0.000_01))
+        return min(1, max(0, (decibels + 55) / 45))
+    }
+
+    private func deliverSpeechLevel(_ level: Double, requestId: String) {
+        guard speechRequestId == requestId, speechAudioEngine.isRunning else { return }
+        let now = Date()
+        guard now.timeIntervalSince(speechLastLevelDelivery) >= 1.0 / 18.0 else { return }
+        speechLastLevelDelivery = now
+        sendSpeechEvent(requestId: requestId, state: "listening", kind: "level", level: level)
+    }
+
+    private func receiveSpeechRecognition(result: SFSpeechRecognitionResult?, error: Error?, requestId: String) {
+        guard speechRequestId == requestId else { return }
+        if let result {
+            speechTranscript = result.bestTranscription.formattedString
+            sendSpeechEvent(
+                requestId: requestId,
+                state: speechStopRequested ? "processing" : "listening",
+                kind: "transcript",
+                transcript: speechTranscript
+            )
+            if result.isFinal {
+                endSpeechSession(notify: true, finalState: "finished")
+                return
+            }
+        }
+        if let error {
+            if speechStopRequested, !speechTranscript.isEmpty {
+                endSpeechSession(notify: true, finalState: "finished")
+            } else {
+                endSpeechSession(notify: true, finalState: "error", reason: error.localizedDescription)
+            }
+        }
+    }
+
+    private func stopNativeSpeech(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        guard !requestId.isEmpty, requestId == speechRequestId else { return }
+        speechStopRequested = true
+        stopSpeechAudioCapture()
+        speechRecognitionRequest?.endAudio()
+        sendSpeechEvent(requestId: requestId, state: "processing", transcript: speechTranscript)
+        speechFinishTask?.cancel()
+        speechFinishTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self?.speechRequestId == requestId else { return }
+                self?.endSpeechSession(notify: true, finalState: "finished")
+            }
+        }
+    }
+
+    private func cancelNativeSpeech(_ payload: [String: Any]) {
+        let requestId = payload["requestId"] as? String ?? ""
+        guard requestId.isEmpty || requestId == speechRequestId else { return }
+        endSpeechSession(notify: true, finalState: "cancelled")
+    }
+
+    private func stopSpeechAudioCapture() {
+        if speechAudioEngine.isRunning { speechAudioEngine.stop() }
+        if speechTapInstalled {
+            speechAudioEngine.inputNode.removeTap(onBus: 0)
+            speechTapInstalled = false
+        }
+    }
+
+    private func endSpeechSession(notify: Bool, finalState: String, reason: String? = nil) {
+        let requestId = speechRequestId
+        let transcript = speechTranscript
+        speechPermissionTask?.cancel()
+        speechPermissionTask = nil
+        speechFinishTask?.cancel()
+        speechFinishTask = nil
+        stopSpeechAudioCapture()
+        speechRecognitionRequest?.endAudio()
+        speechRecognitionTask?.cancel()
+        speechRecognitionTask = nil
+        speechRecognitionRequest = nil
+        speechRecognizer = nil
+        speechRequestId = ""
+        speechTranscript = ""
+        speechStopRequested = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        guard notify, !requestId.isEmpty else { return }
+        sendSpeechEvent(requestId: requestId, state: finalState, transcript: transcript, reason: reason)
+    }
+
+    private func sendSpeechEvent(
+        requestId: String,
+        state: String,
+        kind: String = "state",
+        transcript: String? = nil,
+        level: Double? = nil,
+        reason: String? = nil
+    ) {
+        var result: [String: Any] = [
+            "requestId": requestId,
+            "kind": kind,
+            "state": state,
+            "onDevice": true,
+            "timestamp": Self.currentTimestampMilliseconds()
+        ]
+        if let transcript { result["transcript"] = transcript }
+        if let level { result["level"] = level }
+        if let reason { result["reason"] = reason }
+        sendJavaScriptCallback(result, resolver: "__receiveSpeechEvent")
     }
 
     private func startAmbientMotion(_ payload: [String: Any]) {
@@ -851,6 +1141,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     func tearDown() {
         guard !hasTornDown else { return }
         hasTornDown = true
+        endSpeechSession(notify: false, finalState: "cancelled")
         stopAmbientMotion(reason: "teardown", notifyJavaScript: false)
         ambientMotionObservers.forEach(NotificationCenter.default.removeObserver)
         ambientMotionObservers.removeAll()

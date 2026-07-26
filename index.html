@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.321">
-    <link rel="manifest" href="manifest.json?v=3.0.321">
+    <link rel="stylesheet" href="styles.css?v=3.0.322">
+    <link rel="manifest" href="manifest.json?v=3.0.322">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.321">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.321">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.322">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.322">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -756,9 +756,19 @@
           <section class="ask-plan-check" aria-label="Ask Nearcast">
             <form class="ask-form" id="askForm">
               <textarea id="askInput" rows="1" maxlength="500" autocomplete="off" aria-label="Ask Nearcast" placeholder="Ask Nearcast anything…"></textarea>
+              <div class="ask-voice-feedback" id="askVoiceFeedback" hidden aria-live="polite">
+                <span class="ask-voice-label" id="askVoiceLabel">Listening…</span>
+                <canvas class="ask-voice-waveform" id="askVoiceWaveform" width="220" height="34" aria-hidden="true"></canvas>
+              </div>
               <div class="ask-composer-toolbar">
                 <span class="ask-composer-place" id="askComposerPlace"></span>
                 <span class="ask-composer-status" id="askComposerStatus" role="status"></span>
+                <button type="button" class="ask-voice" id="askVoice" aria-label="Tap to dictate. Hold to speak and send." aria-pressed="false">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="8.25" y="3" width="7.5" height="12" rx="3.75" stroke="currentColor" stroke-width="1.8"/>
+                    <path d="M5.75 11.25v.5a6.25 6.25 0 0 0 12.5 0v-.5M12 18v3M8.75 21h6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  </svg>
+                </button>
                 <button type="submit" class="ask-send" aria-label="Ask Nearcast" disabled>
                   <span class="ask-send-glyph" aria-hidden="true">↑</span>
                 </button>
@@ -969,16 +979,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.321"></script>
-    <script src="planner.js?v=3.0.321"></script>
-    <script src="app.js?v=3.0.321"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.321"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.321"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.321"></script>
-    <script src="raw-map-runtime.js?v=3.0.321"></script>
-    <script src="map.js?v=3.0.321"></script>
-    <script src="sky.js?v=3.0.321"></script>
-    <script src="daygraph.js?v=3.0.321"></script>
-    <script src="boot.js?v=3.0.321"></script>
+    <script src="weather-truth.js?v=3.0.322"></script>
+    <script src="planner.js?v=3.0.322"></script>
+    <script src="app.js?v=3.0.322"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.322"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.322"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.322"></script>
+    <script src="raw-map-runtime.js?v=3.0.322"></script>
+    <script src="map.js?v=3.0.322"></script>
+    <script src="sky.js?v=3.0.322"></script>
+    <script src="daygraph.js?v=3.0.322"></script>
+    <script src="boot.js?v=3.0.322"></script>
   </body>
 </html>

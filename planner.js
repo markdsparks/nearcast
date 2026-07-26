@@ -3497,6 +3497,20 @@ let nearcastAITranscriptScrollTop = null;
 let nearcastAILastAnnouncement = "";
 let nearcastAICloseTimer = 0;
 let nearcastAIFocusReturn = null;
+const nearcastVoice = {
+  phase: "idle",
+  mode: "tap",
+  requestId: "",
+  draft: "",
+  transcript: "",
+  levels: [],
+  pointerId: null,
+  holdTimer: 0,
+  holdStarted: false,
+  holdReleased: false,
+  autoSubmit: false,
+  feedbackTimer: 0
+};
 let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
@@ -10983,6 +10997,7 @@ function answerFreeform(q) {
 }
 
 function resetAsk() {
+  cancelNearcastVoice({ restoreDraft: false });
   askAbort?.abort?.("Nearcast conversation reset");
   askAbort = null;
   nearcastAgentProgress = "";
@@ -11072,6 +11087,7 @@ function scrollAskIntoView() {
 function submitAskForm() {
   const input = document.getElementById("askInput");
   if (!input || input.disabled) return;
+  if (nearcastVoice.phase !== "idle") return;
   if (aiState.phase === "generating" || askStreaming) return;
   const question = input.value.trim();
   if (!question) return;
@@ -11079,6 +11095,260 @@ function submitAskForm() {
   syncAskComposerState();
   if (window.matchMedia?.("(pointer: coarse)")?.matches) input.blur();
   runAsk(question);
+}
+
+function nearcastSpeechBridge() {
+  const bridge = window.NearcastNative?.speech;
+  return bridge?.supported === true && typeof bridge.start === "function" ? bridge : null;
+}
+
+function nearcastVoiceListening() {
+  return nearcastVoice.phase === "starting" || nearcastVoice.phase === "listening";
+}
+
+function nearcastVoiceText() {
+  const draft = String(nearcastVoice.draft || "").trimEnd();
+  const transcript = String(nearcastVoice.transcript || "").trim();
+  return [draft, transcript].filter(Boolean).join(draft && transcript ? " " : "").slice(0, 500);
+}
+
+function applyNearcastVoiceTranscript() {
+  const input = document.getElementById("askInput");
+  if (!input) return;
+  input.value = nearcastVoiceText();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function drawNearcastVoiceWaveform() {
+  const canvas = document.getElementById("askVoiceWaveform");
+  if (!canvas) return;
+  const samples = nearcastVoice.levels;
+  const cssWidth = Math.min(220, Math.max(38, 38 + samples.length * 3));
+  canvas.style.setProperty("--ask-wave-width", `${cssWidth}px`);
+  const ratio = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  const width = Math.max(1, Math.round(cssWidth * ratio));
+  const height = Math.round(34 * ratio);
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.clearRect(0, 0, width, height);
+  const maxBars = Math.max(1, Math.floor(cssWidth / 4));
+  const barCount = Math.min(samples.length, maxBars);
+  if (!barCount) return;
+  const compressed = [];
+  for (let index = 0; index < barCount; index += 1) {
+    const start = Math.floor(index * samples.length / barCount);
+    const end = Math.max(start + 1, Math.floor((index + 1) * samples.length / barCount));
+    compressed.push(Math.max(...samples.slice(start, end)));
+  }
+  const gap = 2 * ratio;
+  const barWidth = Math.max(1.5 * ratio, (width - gap * (barCount - 1)) / barCount);
+  const center = height / 2;
+  const color = getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#3d82d2";
+  context.fillStyle = color;
+  compressed.forEach((sample, index) => {
+    const amplitude = Math.max(3 * ratio, Math.min(center - ratio, (3 + sample * 27) * ratio / 2));
+    const x = index * (barWidth + gap);
+    context.beginPath();
+    context.roundRect(x, center - amplitude, barWidth, amplitude * 2, barWidth / 2);
+    context.fill();
+  });
+}
+
+function updateNearcastVoiceUI(message = "") {
+  const form = document.getElementById("askForm");
+  const button = document.getElementById("askVoice");
+  const feedback = document.getElementById("askVoiceFeedback");
+  const label = document.getElementById("askVoiceLabel");
+  const supported = Boolean(nearcastSpeechBridge());
+  const listening = nearcastVoiceListening();
+  const processing = nearcastVoice.phase === "processing";
+  form?.classList.toggle("voice-unavailable", !supported);
+  form?.classList.toggle("is-listening", listening);
+  form?.classList.toggle("is-voice-processing", processing);
+  if (button) {
+    button.hidden = !supported;
+    button.disabled = !supported || aiState.phase === "generating" || askStreaming || processing;
+    button.setAttribute("aria-pressed", listening ? "true" : "false");
+    button.setAttribute("aria-label", listening
+      ? (nearcastVoice.mode === "hold" ? "Release to send" : "Stop dictation")
+      : "Tap to dictate. Hold to speak and send.");
+  }
+  if (feedback) feedback.hidden = !(listening || processing || message);
+  if (label) {
+    label.textContent = message || (processing
+      ? "Finishing…"
+      : nearcastVoice.mode === "hold"
+        ? "Release to send"
+        : "Listening… tap mic to stop");
+  }
+  drawNearcastVoiceWaveform();
+}
+
+function clearNearcastVoiceState(options = {}) {
+  if (nearcastVoice.holdTimer) clearTimeout(nearcastVoice.holdTimer);
+  if (nearcastVoice.feedbackTimer) clearTimeout(nearcastVoice.feedbackTimer);
+  const keepTranscript = options.keepTranscript === true;
+  nearcastVoice.phase = "idle";
+  nearcastVoice.requestId = "";
+  nearcastVoice.pointerId = null;
+  nearcastVoice.holdTimer = 0;
+  nearcastVoice.holdStarted = false;
+  nearcastVoice.holdReleased = false;
+  nearcastVoice.autoSubmit = false;
+  nearcastVoice.levels = [];
+  if (!keepTranscript) nearcastVoice.transcript = "";
+  updateNearcastVoiceUI();
+  syncAskComposerState();
+}
+
+function cancelNearcastVoice(options = {}) {
+  const bridge = nearcastSpeechBridge();
+  const requestId = nearcastVoice.requestId;
+  const wasActive = nearcastVoice.phase !== "idle";
+  if (wasActive && requestId && typeof bridge?.cancel === "function") bridge.cancel(requestId);
+  if (options.restoreDraft === true) {
+    const input = document.getElementById("askInput");
+    if (input) input.value = nearcastVoice.draft;
+  } else if (options.keepTranscript === true) {
+    applyNearcastVoiceTranscript();
+  }
+  clearNearcastVoiceState({ keepTranscript: options.keepTranscript });
+}
+
+function startNearcastVoice(mode) {
+  const bridge = nearcastSpeechBridge();
+  const input = document.getElementById("askInput");
+  if (!bridge || !input || aiState.phase === "generating" || askStreaming) return;
+  if (nearcastVoice.feedbackTimer) clearTimeout(nearcastVoice.feedbackTimer);
+  nearcastVoice.mode = mode === "hold" ? "hold" : "tap";
+  nearcastVoice.phase = "starting";
+  nearcastVoice.draft = input.value;
+  nearcastVoice.transcript = "";
+  nearcastVoice.levels = [];
+  nearcastVoice.autoSubmit = nearcastVoice.mode === "hold";
+  nearcastVoice.requestId = String(bridge.start({ mode: nearcastVoice.mode, locale: navigator.language || "en-US" }) || "");
+  updateNearcastVoiceUI(nearcastVoice.mode === "hold" ? "Starting… hold to speak" : "Starting…");
+  syncAskComposerState();
+}
+
+function stopNearcastVoice() {
+  if (!nearcastVoiceListening()) return;
+  nearcastVoice.phase = "processing";
+  nearcastSpeechBridge()?.stop?.(nearcastVoice.requestId);
+  updateNearcastVoiceUI();
+  syncAskComposerState();
+}
+
+function finishNearcastVoice(detail) {
+  if (typeof detail?.transcript === "string") nearcastVoice.transcript = detail.transcript;
+  applyNearcastVoiceTranscript();
+  const shouldSubmit = nearcastVoice.autoSubmit && Boolean(document.getElementById("askInput")?.value.trim());
+  clearNearcastVoiceState({ keepTranscript: true });
+  if (shouldSubmit && aiState.phase !== "generating" && !askStreaming) {
+    requestAnimationFrame(submitAskForm);
+  } else {
+    try { document.getElementById("askInput")?.focus({ preventScroll: true }); } catch {}
+  }
+}
+
+function handleNearcastSpeechEvent(event) {
+  const detail = event?.detail || {};
+  if (!nearcastVoice.requestId || String(detail.requestId || "") !== nearcastVoice.requestId) return;
+  if (detail.kind === "level") {
+    const level = Math.max(0, Math.min(1, Number(detail.level) || 0));
+    nearcastVoice.levels.push(level);
+    if (nearcastVoice.levels.length > 900) nearcastVoice.levels.splice(0, nearcastVoice.levels.length - 900);
+    drawNearcastVoiceWaveform();
+    return;
+  }
+  if (typeof detail.transcript === "string") {
+    nearcastVoice.transcript = detail.transcript;
+    applyNearcastVoiceTranscript();
+  }
+  if (detail.state === "listening") {
+    nearcastVoice.phase = "listening";
+    updateNearcastVoiceUI();
+    if (nearcastVoice.mode === "hold" && nearcastVoice.holdReleased) stopNearcastVoice();
+    return;
+  }
+  if (detail.state === "processing") {
+    nearcastVoice.phase = "processing";
+    updateNearcastVoiceUI();
+    return;
+  }
+  if (detail.state === "finished") {
+    finishNearcastVoice(detail);
+    return;
+  }
+  if (detail.state === "error" || detail.state === "unavailable" || detail.state === "denied") {
+    const message = detail.state === "denied" ? "Microphone access is off" : "Voice input unavailable";
+    if (!nearcastVoice.transcript) {
+      const input = document.getElementById("askInput");
+      if (input) input.value = nearcastVoice.draft;
+    }
+    clearNearcastVoiceState({ keepTranscript: Boolean(nearcastVoice.transcript) });
+    updateNearcastVoiceUI(message);
+    nearcastVoice.feedbackTimer = setTimeout(() => updateNearcastVoiceUI(), 2200);
+  }
+}
+
+function toggleNearcastTapVoice() {
+  if (nearcastVoice.mode === "tap" && nearcastVoiceListening()) stopNearcastVoice();
+  else if (nearcastVoice.phase === "idle") startNearcastVoice("tap");
+}
+
+function bindAskVoiceButton() {
+  const button = document.getElementById("askVoice");
+  if (!button || button.dataset.voiceBound === "1") return;
+  button.dataset.voiceBound = "1";
+  if (window.__nearcastSpeechEventBound !== true) {
+    window.__nearcastSpeechEventBound = true;
+    window.addEventListener("nearcast-native-speech", handleNearcastSpeechEvent);
+  }
+  button.addEventListener("contextmenu", (event) => event.preventDefault());
+  button.addEventListener("pointerdown", (event) => {
+    if (button.disabled || event.button > 0) return;
+    event.preventDefault();
+    nearcastVoice.pointerId = event.pointerId;
+    nearcastVoice.holdStarted = false;
+    nearcastVoice.holdReleased = false;
+    try { button.setPointerCapture(event.pointerId); } catch {}
+    if (nearcastVoice.mode === "tap" && nearcastVoiceListening()) return;
+    if (nearcastVoice.phase !== "idle") return;
+    nearcastVoice.holdTimer = setTimeout(() => {
+      nearcastVoice.holdTimer = 0;
+      nearcastVoice.holdStarted = true;
+      startNearcastVoice("hold");
+    }, 340);
+  });
+  button.addEventListener("pointerup", (event) => {
+    if (nearcastVoice.pointerId !== null && event.pointerId !== nearcastVoice.pointerId) return;
+    event.preventDefault();
+    if (nearcastVoice.holdTimer) {
+      clearTimeout(nearcastVoice.holdTimer);
+      nearcastVoice.holdTimer = 0;
+    }
+    if (nearcastVoice.holdStarted || nearcastVoice.mode === "hold" && nearcastVoiceListening()) {
+      nearcastVoice.holdReleased = true;
+      if (nearcastVoice.phase === "listening") stopNearcastVoice();
+    } else {
+      toggleNearcastTapVoice();
+    }
+    nearcastVoice.pointerId = null;
+  });
+  button.addEventListener("pointercancel", () => {
+    if (nearcastVoice.holdTimer) clearTimeout(nearcastVoice.holdTimer);
+    nearcastVoice.holdTimer = 0;
+    if (nearcastVoice.mode === "hold" && nearcastVoiceListening()) cancelNearcastVoice({ keepTranscript: false });
+    nearcastVoice.pointerId = null;
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (event.detail === 0) toggleNearcastTapVoice();
+  });
+  updateNearcastVoiceUI();
 }
 
 function syncAskComposerState() {
@@ -11089,7 +11359,9 @@ function syncAskComposerState() {
   const hasValue = Boolean(input.value.trim());
   const busy = aiState.phase === "generating" || askStreaming;
   form.classList.toggle("has-value", hasValue);
-  send.disabled = input.disabled || busy || !hasValue;
+  const voiceActive = nearcastVoice.phase !== "idle";
+  send.disabled = input.disabled || busy || voiceActive || !hasValue;
+  updateNearcastVoiceUI();
   if (input.tagName === "TEXTAREA") {
     input.style.height = "auto";
     const maxComposerHeight = nearcastAISurfaceMode === "entry" ? 132 : 96;
@@ -11115,6 +11387,7 @@ function bindAskSendButton() {
   const send = document.querySelector("#askForm .ask-send");
   if (!send) return;
   bindTapAction(send, submitAskForm);
+  bindAskVoiceButton();
 }
 
 function renderPlannerClarification(disabledAttr = "") {
@@ -11695,6 +11968,7 @@ function openAISheet(options = {}) {
 }
 
 function closeAISheet(options = {}) {
+  if (nearcastVoice.phase !== "idle") cancelNearcastVoice({ keepTranscript: nearcastVoice.mode === "tap" });
   const log = document.getElementById("askChatLog");
   if (log) nearcastAITranscriptScrollTop = log.scrollTop;
   els.aiBackdrop.classList.remove("show");
