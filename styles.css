@@ -7747,6 +7747,24 @@ body.map-immersive-active .nearcast-ai-fab {
   border-color: rgba(200, 85, 85, 0.26);
   background: rgba(200, 85, 85, 0.09);
 }
+.ask-chat-evidence {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.ask-chat-evidence summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--blue);
+  font-weight: 780;
+}
+.ask-chat-evidence p {
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
 .ask-chat-followup {
   margin: -10px 0 22px 36px;
 }

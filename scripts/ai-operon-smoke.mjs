@@ -14,6 +14,15 @@ import {
 
 const wasmBytes = await readFile(new URL("../vendor/operon/operon_core_bg.wasm", import.meta.url));
 const plannerSource = await readFile(new URL("../planner.js", import.meta.url), "utf8");
+const nativeOperonSource = await readFile(new URL("../native/ios/NearcastApp/Bridge/NativeOperonController.swift", import.meta.url), "utf8");
+const nativeBridgeSource = await readFile(new URL("../native/ios/NearcastApp/Bridge/NativeBridge.swift", import.meta.url), "utf8");
+const packageResolution = JSON.parse(await readFile(new URL("../native/ios/Nearcast.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved", import.meta.url), "utf8"));
+assert.equal(packageResolution.pins.find((pin) => pin.identity === "operon")?.state?.version, "0.4.0");
+assert.match(nativeOperonSource, /for try await event in driver\.stream/);
+assert.match(nativeOperonSource, /case \.finished\(let completion\)[\s\S]*terminalJSON = completion\.json/);
+assert.match(nativeOperonSource, /case \.measurement\(let sample\)/);
+assert.doesNotMatch(nativeOperonSource, /"text": text/, "unvalidated provisional text must not cross into the web UI");
+assert.match(nativeBridgeSource, /__receiveOperonProgress/);
 assert.deepEqual(
   summaryQuery().replaceAll("S1", "").match(/\d+(?:\.\d+)?/g) || [],
   [],
@@ -613,6 +622,38 @@ const abstainedResult = await operon.run(
   }
 );
 assert.equal(abstainedResult.status, "abstained", "validation exhaustion is a typed abstention");
+
+const groundedAbstention = await operon.run(
+  "What is the unsupported override code?",
+  {
+    policy: {
+      local_only: true,
+      planning: "never",
+      verification: "adaptive",
+      max_repair_attempts: 0,
+      max_context_chars: 2000,
+      max_sources: 1,
+      request_timeout_ms: 12000,
+      grounding_mode: "extractive",
+      validation_failure: "abstain"
+    },
+    has_grounding: true,
+    output_schema: null,
+    has_application_validator: false
+  },
+  {
+    retrieve: async () => summarySources,
+    generate: async () => ({
+      text: JSON.stringify({
+        claims: [],
+        confidence: 0,
+        abstain_reason: "The local source does not state an override code."
+      })
+    })
+  }
+);
+assert.equal(groundedAbstention.status, "abstained");
+assert.equal(groundedAbstention.sources.length, 1, "Operon 0.4 abstention retains considered sources");
 
 const cancellation = new AbortController();
 let generationStarted;

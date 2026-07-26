@@ -134,6 +134,8 @@ assert.match(planner, /pending\.type === "agent-skill"[\s\S]*prepareRegisteredNe
 assert.match(planner, /captureArtifacts: agent\.skillCalls === 0 && !agent\.clarification/, "agent skill results rely only on host-issued typed artifacts");
 assert.match(planner, /finishAskResponse\(row, directNavigation,[\s\S]*captureArtifacts: false/, "failed deterministic skills cannot fabricate focus artifacts from stale global state");
 assert.match(planner, /planIntentDiagnostics\.operonStatus = result\?\.status \|\| "unknown"/, "Nearcast trusts Operon's typed terminal outcome instead of reparsing agent prose");
+assert.match(planner, /function nearcastOperonResourcePolicy[\s\S]*lowPowerModeEnabled[\s\S]*thermalState === "serious"/, "native Operon measurements adapt later runs without changing intent routing");
+assert.match(planner, /result\?\.status === "abstained"[\s\S]*sources\.length[\s\S]*sourceLabels/, "typed abstention distinguishes missing context from considered evidence");
 assert.doesNotMatch(planner, /directCommandSatisfied/, "post-hoc phrase routing cannot veto a valid Operon skill graph");
 assert.match(planner, /rawSkillId[\s\S]*type: "agent-skill"[\s\S]*sessionId: context\.sessionId/, "raw Operon skill clarifications become resumable host continuations");
 assert.match(planner, /preparedSkillState[\s\S]*preparedState\?\.windowArtifact/, "hourly execution retains the exact artifact selected during preparation");
@@ -152,6 +154,7 @@ assert.match(planner, /function stopNearcastResponse\([\s\S]*askAbort\?\.abort\?
 assert.match(planner, /function trapNearcastAIFocus\([\s\S]*event\.key !== "Tab"[\s\S]*last\.focus\(\)/, "the modal conversation keeps keyboard focus inside its visible controls");
 assert.match(planner, /function openAISheet\([\s\S]*clearTimeout\(nearcastAICloseTimer\)/, "a quick reopen cancels the stale sheet-close timer");
 assert.match(styles, /\.ask-plan-check \{[\s\S]*border-radius: 26px;[\s\S]*backdrop-filter: blur\(24px\)/, "the Nearcast composer uses the intended floating glass treatment");
+assert.match(styles, /\.ask-chat-evidence \{[\s\S]*border-top:/, "source-aware abstention has an inspectable evidence disclosure");
 assert.match(styles, /\.ask-composer-toolbar \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto 46px/, "the composer toolbar reserves a stable submit target");
 assert.match(styles, /\.ai-sheet\.is-entry \{[\s\S]*height: 174px/, "first open is a compact floating prompt rather than a full sheet");
 assert.match(styles, /\.ai-sheet\[hidden\] \{[\s\S]*display: none !important;/, "closed conversations leave the visual and accessibility trees during app handoffs");

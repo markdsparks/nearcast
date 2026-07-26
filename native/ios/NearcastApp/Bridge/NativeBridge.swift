@@ -391,6 +391,15 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
               });
           };
 
+          window.NearcastNative.__receiveOperonProgress = function(payload) {
+            const runId = payload && payload.runId ? String(payload.runId) : "";
+            const handlers = pendingOperonRuns.get(runId);
+            if (!handlers || typeof handlers.onProgress !== "function") return;
+            handlers.onProgress(payload && payload.event && typeof payload.event === "object"
+              ? payload.event
+              : {});
+          };
+
           window.NearcastNative.ai = {
             supported: true,
             availability() {
@@ -482,7 +491,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           }
 
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
-            detail: { platform: "ios", version: "0.3.0" }
+            detail: { platform: "ios", version: "0.4.0" }
           }));
         })();
         """
@@ -1141,7 +1150,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         result = nativeAIUnavailable(reason: "framework-unavailable")
         #endif
         result["operon"] = true
-        result["operonVersion"] = "0.3.0"
+        result["operonVersion"] = "0.4.0"
         result["protocolVersion"] = "0.3"
         result["requestId"] = requestId
         sendJavaScriptCallback(result, resolver: "__resolveAIRequest")
@@ -1188,6 +1197,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
                     bridge: { [weak self] command in
                         guard let self else { throw NativeBridgeOperonError.cancelled }
                         return try await self.requestNativeOperonCommand(command)
+                    },
+                    progress: { [weak self] event in
+                        self?.sendNativeOperonProgress(event)
                     }
                 )
                 guard !Task.isCancelled else { return }
@@ -1225,6 +1237,14 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
                 "payload": payload
             ], resolver: "__receiveOperonCommand")
         }
+    }
+
+    private func sendNativeOperonProgress(_ progress: NativeOperonProgressEvent) {
+        guard let event = try? JSONSerialization.jsonObject(with: Data(progress.eventJSON.utf8)) else { return }
+        sendJavaScriptCallback([
+            "runId": progress.runID,
+            "event": event
+        ], resolver: "__receiveOperonProgress")
     }
 
     private func receiveNativeOperonEvent(_ payload: [String: Any]) {

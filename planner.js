@@ -3510,6 +3510,8 @@ let launchSummaryTargets = [];
 const NEARCAST_AGENT_MEMORY_NAMESPACE = "nearcast.local";
 const NEARCAST_AGENT_MEMORY_SUBJECT = "primary-profile";
 const NEARCAST_AGENT_ARTIFACT_LIMIT = 8;
+const NEARCAST_OPERON_PERFORMANCE_KEY = "nearcast.operon.performance.v1";
+const NEARCAST_OPERON_PERFORMANCE_LIMIT = 24;
 const NEARCAST_AGENT_PERIODS = new Set(["morning", "afternoon", "evening", "night", "day"]);
 const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   place: "nearcast.place",
@@ -3535,6 +3537,9 @@ function nearcastProgressLabel(event) {
   if (!event || typeof event !== "object") return "";
   if (event.kind === "cancelled") return "Stopping…";
   if (event.kind === "completed") return "Finishing answer…";
+  if (event.kind === "provisional") return "Checking the local model’s draft…";
+  if (event.kind === "skill_started") return "Using Nearcast app capabilities…";
+  if (event.kind === "skill_completed") return "Checking the capability result…";
   const command = event.command || {};
   if (event.kind !== "command_started") return "";
   if (command.kind === "load_session") return "Reading conversation context…";
@@ -3552,7 +3557,64 @@ function nearcastProgressLabel(event) {
   return "Working locally…";
 }
 
+function cleanNearcastPerformanceSample(sample) {
+  if (!sample || typeof sample !== "object") return null;
+  const elapsedMilliseconds = Number(sample.elapsedMilliseconds);
+  if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) return null;
+  const thermalState = ["nominal", "fair", "serious", "critical", "unknown"].includes(sample.thermalState)
+    ? sample.thermalState
+    : "unknown";
+  const optionalNumber = (value) => value == null || value === "" || !Number.isFinite(Number(value))
+    ? null
+    : Number(value);
+  return {
+    recordedAt: Number.isFinite(Number(sample.recordedAt)) ? Number(sample.recordedAt) : Date.now(),
+    kind: sample.kind === "modelCall" ? "modelCall" : "run",
+    stage: String(sample.stage || "").slice(0, 24),
+    elapsedMilliseconds: Math.round(elapsedMilliseconds),
+    promptTokens: optionalNumber(sample.promptTokens),
+    completionTokens: optionalNumber(sample.completionTokens),
+    thermalState,
+    lowPowerModeEnabled: sample.lowPowerModeEnabled === true
+  };
+}
+
+function readNearcastPerformanceSamples() {
+  try {
+    const value = JSON.parse(localStorage.getItem(NEARCAST_OPERON_PERFORMANCE_KEY) || "[]");
+    return Array.isArray(value)
+      ? value.map(cleanNearcastPerformanceSample).filter(Boolean).slice(-NEARCAST_OPERON_PERFORMANCE_LIMIT)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberNearcastPerformanceSample(sample) {
+  const clean = cleanNearcastPerformanceSample(sample);
+  if (!clean) return;
+  try {
+    const samples = [...readNearcastPerformanceSamples(), clean].slice(-NEARCAST_OPERON_PERFORMANCE_LIMIT);
+    localStorage.setItem(NEARCAST_OPERON_PERFORMANCE_KEY, JSON.stringify(samples));
+  } catch {}
+}
+
+function nearcastOperonResourcePolicy(requestedReplans) {
+  const latest = readNearcastPerformanceSamples().slice(-6);
+  const constrained = latest.some((sample) =>
+    sample.lowPowerModeEnabled || sample.thermalState === "serious" || sample.thermalState === "critical"
+  );
+  return {
+    mode: constrained ? "constrained" : "standard",
+    maxReplans: constrained ? Math.min(1, requestedReplans) : requestedReplans
+  };
+}
+
 function updateNearcastAgentProgress(event) {
+  if (event?.kind === "measurement") {
+    rememberNearcastPerformanceSample(event.sample);
+    return;
+  }
   const next = nearcastProgressLabel(event);
   if (!next || next === nearcastAgentProgress) return;
   nearcastAgentProgress = next;
@@ -5443,6 +5505,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
   const context = createNearcastAgentContext(question, rowIndex, signal);
   const { receipt } = context;
   const maxReplans = nearcastRequestMaxReplans(question);
+  const resourcePolicy = nearcastOperonResourcePolicy(maxReplans);
   const completion = nearcastCompletionForQuestion(question);
 
   const result = await ai.runAgent({
@@ -5456,7 +5519,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
       return artifacts;
     },
     prepareSkill: (command) => prepareRegisteredNearcastSkill(context, command),
-    maxReplans,
+    maxReplans: resourcePolicy.maxReplans,
     searchMemory: nearcastAgentMemorySearch,
     memoryScope: nearcastAgentMemoryScope(),
     completion,
@@ -5465,10 +5528,28 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
   });
   assertNearcastAgentRunActive(context);
   planIntentDiagnostics.operonStatus = result?.status || "unknown";
+  planIntentDiagnostics.operonResourcePolicy = resourcePolicy.mode;
   if (result?.status === "cancelled") return null;
   if (result?.status === "abstained" && receipt.skillCalls === 0) {
     planIntentDiagnostics.operonAbstention = result?.abstention?.reason || "validation-exhausted";
-    return null;
+    const sources = Array.isArray(result?.sources) ? result.sources : [];
+    const sourceLabels = [...new Set(sources.map((source) => {
+      const path = String(source?.path || source?.id || "");
+      if (path.startsWith("skill://")) return "Nearcast capability result";
+      if (path.includes("current-weather-facts")) return "Current Nearcast forecast facts";
+      return path ? "Local Nearcast evidence" : "";
+    }).filter(Boolean))].slice(0, 3);
+    const answer = sources.length
+      ? "I checked the available Nearcast evidence, but it wasn’t enough to support a reliable answer. Try changing the place or time."
+      : "I couldn’t find enough local forecast context to answer reliably. Try naming a place and time.";
+    return {
+      answer,
+      abstention: {
+        sourceCount: sources.length,
+        sourceLabels
+      },
+      skillCalls: 0
+    };
   }
   const rawClarification = result?.clarification || null;
   const rawSkillId = rawClarification?.skill_id || rawClarification?.skillId || "";
@@ -5731,6 +5812,7 @@ function finishAskResponse(row, result, options = {}) {
     askThread[row].a = normalized.answer;
     askThread[row].event = normalized.event || null;
     askThread[row].schedule = normalized.schedule || null;
+    askThread[row].abstention = normalized.abstention || null;
   }
   if (options.captureArtifacts !== false) captureNearcastTurnArtifacts(row, normalized);
   if (normalized.event && !options.updateMemoryId && typeof recordForYouSignal === "function") {
@@ -5756,13 +5838,15 @@ function normalizeAskResult(result) {
     return {
       answer: result.answer || AI_FALLBACK_MSG,
       event: result.event || null,
-      schedule: result.schedule ? normalizePlanMemory(result.schedule) : null
+      schedule: result.schedule ? normalizePlanMemory(result.schedule) : null,
+      abstention: result.abstention || null
     };
   }
   return {
     answer: result || AI_FALLBACK_MSG,
     event: null,
-    schedule: null
+    schedule: null,
+    abstention: null
   };
 }
 
@@ -11243,11 +11327,18 @@ function renderNearcastConversationExchange(exchange, index) {
   const answer = streaming
     ? `<span class="ask-chat-thinking"><i></i><i></i><i></i><span>${escapeHtml(nearcastAgentProgress || "Working locally…")}</span></span>`
     : escapeHtml(exchange.a || AI_FALLBACK_MSG);
+  const abstentionEvidence = !streaming && exchange.abstention
+    ? `<details class="ask-chat-evidence"><summary>What I checked</summary><p>${
+        exchange.abstention.sourceCount > 0
+          ? escapeHtml(`${exchange.abstention.sourceCount} local source${exchange.abstention.sourceCount === 1 ? "" : "s"}: ${(exchange.abstention.sourceLabels || []).join(", ") || "Nearcast evidence"}.`)
+          : "No matching local forecast evidence was available."
+      }</p></details>`
+    : "";
   return `<article class="ask-chat-turn" data-turn-index="${index}">` +
     userMessage +
     `<div class="ask-chat-message is-assistant">` +
       `<div class="ask-chat-avatar" aria-hidden="true">✦</div>` +
-      `<div class="ask-chat-bubble">${answer}</div>` +
+      `<div class="ask-chat-bubble">${answer}${abstentionEvidence}</div>` +
     `</div>` +
   `</article>`;
 }

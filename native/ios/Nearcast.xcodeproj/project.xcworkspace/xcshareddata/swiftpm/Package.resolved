@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/markdsparks/operon.git",
       "state" : {
-        "revision" : "d6c64e3ac8257f0a5231f04160fd6e133ee82fa8",
-        "version" : "0.3.0"
+        "revision" : "1b6c69e5ec85cfda1172b71cb41cbc66e6f91e2b",
+        "version" : "0.4.0"
       }
     }
   ],

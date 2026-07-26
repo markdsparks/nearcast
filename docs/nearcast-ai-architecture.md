@@ -1,6 +1,6 @@
 # Nearcast AI architecture
 
-Nearcast AI uses Operon 0.3 as the local agent runtime. Nearcast supplies the
+Nearcast AI uses Operon 0.4 as the local agent runtime. Nearcast supplies the
 weather data, typed app skills, session artifacts, memory authority, validation,
 and side-effect boundaries; Operon lets the on-device model interpret language,
 select and chain skills, request clarification, replan, and return a typed
@@ -9,12 +9,18 @@ terminal outcome.
 ## Runtime paths
 
 - Eligible Apple devices run the complete Operon Swift driver with Apple's
-  System Language Model. Swift Package Manager pins Operon 0.3.0.
+  System Language Model. Swift Package Manager pins Operon 0.4.0.
 - Other supported devices use the vendored Operon 0.3 WebAssembly driver with
   the local WebLLM provider.
 - Both paths receive the same skill descriptors and completion contracts.
 - Browser `AbortSignal` cancellation propagates into Swift tasks or WebLLM
   generation. Operon graph commands feed progress into the Nearcast AI UI.
+- Apple agent turns consume Operon's native stream exactly once. Stage and
+  skill events drive progress, provisional model text remains non-authoritative,
+  and only the validated envelope carried by the finished event is rendered.
+- Operon performance samples are retained only as a small private local ring
+  buffer. Thermal pressure or Low Power Mode can reduce the next turn's replan
+  budget without changing semantic skill selection or sending device data away.
 
 ## Context and memory
 
@@ -37,6 +43,9 @@ terminal outcome.
   remain open to Operon's skill selection and graph chaining.
 - A completed, clarification, abstained, or cancelled Operon result is trusted as
   the terminal state. Nearcast does not reparse agent prose to veto valid graphs.
+- Abstentions remain first-class outcomes. Nearcast distinguishes no available
+  context from evidence that was considered but could not support the request,
+  and exposes a compact local-source disclosure instead of a generic help reply.
 
 ## Grounding
 

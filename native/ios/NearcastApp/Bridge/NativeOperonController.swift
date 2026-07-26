@@ -10,7 +10,13 @@ struct NativeOperonBridgeCommand: Sendable {
     let payloadJSON: String
 }
 
+struct NativeOperonProgressEvent: Sendable {
+    let runID: String
+    let eventJSON: String
+}
+
 typealias NativeOperonBridgeHandler = @MainActor @Sendable (NativeOperonBridgeCommand) async throws -> String
+typealias NativeOperonProgressHandler = @MainActor @Sendable (NativeOperonProgressEvent) async -> Void
 
 @available(iOS 26.0, *)
 enum NativeOperonController {
@@ -23,7 +29,7 @@ enum NativeOperonController {
                 "available": true,
                 "model": "apple-system-language-model",
                 "operon": true,
-                "operonVersion": "0.3.0",
+                "operonVersion": "0.4.0",
                 "protocolVersion": "0.3"
             ]
         case .unavailable(let reason):
@@ -33,7 +39,7 @@ enum NativeOperonController {
                 "reason": reason,
                 "model": "apple-system-language-model",
                 "operon": true,
-                "operonVersion": "0.3.0",
+                "operonVersion": "0.4.0",
                 "protocolVersion": "0.3"
             ]
         }
@@ -42,7 +48,8 @@ enum NativeOperonController {
     static func runAgent(
         runID: String,
         options: [String: Any],
-        bridge: @escaping NativeOperonBridgeHandler
+        bridge: @escaping NativeOperonBridgeHandler,
+        progress: @escaping NativeOperonProgressHandler
     ) async -> [String: Any] {
         guard let query = options["query"] as? String, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return failure("invalid-request", "The native Operon request is missing a query.")
@@ -80,8 +87,19 @@ enum NativeOperonController {
                 sessionID: sessionID,
                 completion: completion
             )
-            let terminal = try await driver.run(String(query.prefix(1_800)))
-            guard let result = try JSONSerialization.jsonObject(with: Data(terminal.json.utf8)) as? [String: Any] else {
+            var terminalJSON: String?
+            for try await event in driver.stream(String(query.prefix(1_800))) {
+                try Task.checkCancellation()
+                if case .finished(let completion) = event {
+                    terminalJSON = completion.json
+                    continue
+                }
+                if let eventJSON = try progressJSON(event) {
+                    await progress(.init(runID: runID, eventJSON: eventJSON))
+                }
+            }
+            guard let terminalJSON,
+                  let result = try JSONSerialization.jsonObject(with: Data(terminalJSON.utf8)) as? [String: Any] else {
                 return failure("invalid-result", "Operon returned an invalid terminal result.")
             }
             return [
@@ -89,7 +107,7 @@ enum NativeOperonController {
                 "available": true,
                 "model": "apple-system-language-model",
                 "operon": true,
-                "operonVersion": "0.3.0",
+                "operonVersion": "0.4.0",
                 "protocolVersion": "0.3",
                 "terminal": result
             ]
@@ -108,9 +126,49 @@ enum NativeOperonController {
             "message": message,
             "model": "apple-system-language-model",
             "operon": true,
-            "operonVersion": "0.3.0",
+            "operonVersion": "0.4.0",
             "protocolVersion": "0.3"
         ]
+    }
+}
+
+@available(iOS 26.0, *)
+private func progressJSON(_ event: OperonRunEvent) throws -> String? {
+    switch event {
+    case .stageStarted(let stage):
+        let kind: String
+        switch stage {
+        case .ground: kind = "retrieve"
+        case .validate: kind = "validate_output"
+        case .skill: kind = "invoke_skill"
+        default: kind = "generate"
+        }
+        return try jsonString([
+            "kind": "command_started",
+            "command": ["kind": kind, "stage": stage.rawValue],
+            "native": true
+        ])
+    case .provisionalModelOutput(let stage, let text):
+        // Provisional text has not passed Operon's validation. Expose only
+        // progress metadata so it can never be mistaken for an answer.
+        return try jsonString([
+            "kind": "provisional",
+            "stage": stage.rawValue,
+            "characterCount": text.count,
+            "native": true
+        ])
+    case .skillStarted(let id):
+        return try jsonString(["kind": "skill_started", "skillId": id, "native": true])
+    case .skillCompleted(let id):
+        return try jsonString(["kind": "skill_completed", "skillId": id, "native": true])
+    case .measurement(let sample):
+        return try jsonString([
+            "kind": "measurement",
+            "sample": try jsonObject(sample),
+            "native": true
+        ])
+    case .finished:
+        return nil
     }
 }
 
