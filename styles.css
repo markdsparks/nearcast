@@ -4066,7 +4066,144 @@ h2 {
 .plan-pulse {
   display: grid;
   gap: 10px;
-  margin-bottom: 12px;
+  margin: 0 2px 14px;
+}
+
+.home-plan-decision {
+  --home-plan-accent: var(--blue);
+  position: relative;
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  overflow: hidden;
+  padding: 15px 16px 14px 19px;
+  border: 1px solid color-mix(in srgb, var(--home-plan-accent) 34%, var(--border-glass));
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--home-plan-accent) 13%, transparent), transparent 62%),
+    color-mix(in srgb, var(--glass-heavy) 91%, transparent);
+  color: var(--ink);
+  box-shadow: 0 14px 34px rgba(18, 39, 59, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.home-plan-decision::before {
+  content: "";
+  position: absolute;
+  inset: 14px auto 14px 0;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: var(--home-plan-accent);
+}
+
+.home-plan-decision.is-good { --home-plan-accent: var(--green); }
+.home-plan-decision.is-caution { --home-plan-accent: var(--gold); }
+.home-plan-decision.is-watch,
+.home-plan-decision.is-changed { --home-plan-accent: var(--red); }
+
+.home-plan-decision:hover,
+.home-plan-decision:focus-visible {
+  border-color: var(--home-plan-accent);
+  outline: none;
+}
+
+.home-plan-kicker,
+.home-plan-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.home-plan-kicker {
+  color: var(--home-plan-accent);
+  font-size: 0.7rem;
+  font-weight: 920;
+  letter-spacing: 0.045em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.home-plan-kicker em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-plan-place {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.home-plan-decision > strong {
+  color: var(--ink);
+  font-size: clamp(1.05rem, 3.2vw, 1.25rem);
+  font-weight: 900;
+  line-height: 1.14;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+
+.home-plan-evidence {
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 690;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.home-plan-advice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  padding-top: 2px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 720;
+  line-height: 1.3;
+}
+
+.home-plan-advice b {
+  color: var(--home-plan-accent);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.home-plan-footer {
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-glass);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 760;
+}
+
+.home-plan-footer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-plan-footer em {
+  flex: 0 0 auto;
+  color: var(--home-plan-accent);
+  font-style: normal;
+  font-weight: 900;
 }
 .next-plan-card,
 .main-plan-briefing {
@@ -4343,6 +4480,15 @@ h2 {
   color: var(--blue);
 }
 @media (max-width: 480px) {
+  .home-plan-kicker {
+    display: grid;
+    justify-content: stretch;
+    gap: 3px;
+  }
+  .home-plan-kicker em {
+    overflow: visible;
+    white-space: normal;
+  }
   .next-plan-title {
     display: grid;
     gap: 3px;

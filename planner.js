@@ -3016,8 +3016,90 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
 function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   const slot = els.planPulse;
   if (!slot) return;
-  slot.hidden = true;
-  slot.innerHTML = "";
+  const decision = homePlanDecisionCandidate(data, place);
+  if (!decision) {
+    slot.hidden = true;
+    slot.innerHTML = "";
+    return;
+  }
+
+  const { watch, activeCount, active, hoursUntil } = decision;
+  const memory = watch.memory;
+  const title = planMemoryTitle(memory);
+  const changed = Boolean(watch.change);
+  const alertAffectsPlan = Boolean(watch.alert || watch.change?.type === "plan-alert");
+  const label = String(watch.label || "Checking forecast").trim();
+  const outcome = changed
+    ? `${title}: ${watch.change?.title || label}`
+    : label === "Looks good"
+      ? `${title} ${active ? "looks good right now" : "still looks good"}`
+      : `${title}: ${label}`;
+  const evidence = changed
+    ? planWatchChangeEvidence(watch.change) || watch.change?.body || watch.reason
+    : watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
+  const advice = String(watch.action || watch.advice || "").trim();
+  const checkedWhen = formatPlanWatchRelativeTimestamp(watch.checkedAt);
+  const when = planWatchWhenText(memory, watch.data || data);
+  const where = placeLabel(memory.place);
+  const kicker = alertAffectsPlan
+    ? "Alert affects this plan"
+    : changed ? "Forecast changed"
+      : active ? "Happening now"
+        : hoursUntil <= 24 ? "Next decision" : "Weather to watch";
+  const moreCount = Math.max(0, activeCount - 1);
+  const compact = (value, limit) => typeof compactForYouText === "function"
+    ? compactForYouText(value, limit)
+    : String(value || "").slice(0, limit);
+
+  slot.hidden = false;
+  slot.innerHTML = `
+    <button class="home-plan-decision is-${escapeHtml(watch.tone || "pending")}${changed ? " is-changed" : ""}" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${evidence}. View plan.`)}">
+      <span class="home-plan-kicker"><span>${escapeHtml(kicker)}</span><em>${escapeHtml(when)}</em></span>
+      <span class="home-plan-place">${escapeHtml(where)}</span>
+      <strong>${escapeHtml(outcome)}</strong>
+      <span class="home-plan-evidence">${escapeHtml(compact(evidence, 150))}</span>
+      ${advice ? `<span class="home-plan-advice"><b>Plan for this</b>${escapeHtml(compact(advice, 120))}</span>` : ""}
+      <span class="home-plan-footer">
+        <span>${escapeHtml([moreCount ? `${moreCount} more watched` : "", checkedWhen ? `Checked ${checkedWhen}` : "Watching for changes"].filter(Boolean).join(" · "))}</span>
+        <em>View plan <span aria-hidden="true">›</span></em>
+      </span>
+    </button>
+  `;
+}
+
+function homePlanDecisionCandidate(data = state.forecast, place = state.activePlace) {
+  if (!data || !place || !Array.isArray(state.planMemories) || !state.planMemories.length) return null;
+  const now = forecastNowMs(data);
+  const hourMs = 60 * 60 * 1000;
+  const watches = planMemoryListItems(data, place, { includePast: false })
+    .map(planWatchItemForMemoryItem)
+    .filter((watch) => watch && !watch.isPast && Number.isFinite(watch.event?.startMs) && Number.isFinite(watch.event?.endMs));
+  if (!watches.length) return null;
+
+  const candidates = watches.map((watch) => {
+    const active = watch.event.startMs <= now && watch.event.endMs >= now;
+    const hoursUntil = (watch.event.startMs - now) / hourMs;
+    const changed = Boolean(watch.change);
+    const alertAffectsPlan = Boolean(watch.alert || watch.change?.type === "plan-alert");
+    const needsAttention = ["watch", "caution"].includes(watch.tone);
+    const imminent = hoursUntil <= 24 && watch.event.endMs >= now;
+    const nearRisk = needsAttention && hoursUntil <= 72;
+    const earned = changed || alertAffectsPlan || active || imminent || nearRisk;
+    const attention = planWatchAttentionRank(watch);
+    const score =
+      (alertAffectsPlan ? 1000 : 0) +
+      (changed ? 800 : 0) +
+      (active ? 500 : 0) +
+      (imminent ? 300 : 0) +
+      (nearRisk ? 180 : 0) +
+      attention * 20 -
+      Math.max(0, hoursUntil) / 24;
+    return { watch, active, hoursUntil, earned, score };
+  }).filter((candidate) => candidate.earned);
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => b.score - a.score || a.watch.event.startMs - b.watch.event.startMs);
+  return { ...candidates[0], activeCount: watches.length };
 }
 
 function renderPlanAwareBriefing() {

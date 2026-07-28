@@ -1,4 +1,4 @@
-const VERSION = "3.0.332";
+const VERSION = "3.0.334";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation"]);
@@ -3296,7 +3296,7 @@ function arrangeForecastHierarchy() {
   // The outlook and its hourly evidence are one hero. Keeping them in a single
   // surface makes the prose explain the trend instead of competing with it.
   hourlyPanel.prepend(hero);
-  launch.after(hourlyPanel, nowcast, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
+  launch.after(els.planPulse, hourlyPanel, nowcast, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -10358,6 +10358,11 @@ function forYouWatchingCard(data, place) {
 
   const items = planMemoryListItems(data, place, { includePast: false });
   if (!items.length) return { html: "", memoryId: "", count: 0, unreviewedCount: 0 };
+  if (typeof homePlanDecisionCandidate === "function" && homePlanDecisionCandidate(data, place)) {
+    // A plan that has earned homepage attention is already represented near
+    // current conditions. Do not repeat a lower-value Watching card below.
+    return { html: "", memoryId: "", count: items.length, unreviewedCount: 0 };
+  }
 
   const watches = typeof planWatchItemForMemoryItem === "function"
     ? items.map(planWatchItemForMemoryItem).filter(Boolean)
