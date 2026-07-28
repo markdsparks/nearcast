@@ -119,9 +119,13 @@ for (const destination of ["forecast", "hourly", "map", "plans"]) {
   assert.ok(html.includes(`data-app-dock="${destination}"`), `${destination} is available from the app dock`);
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(hourlyPanel, hero, nowcast, dailyPanel, map/, "the primary scroll story is now, hourly, narrative, daily, then map");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(hourlyPanel, nowcast, dailyPanel, map/, "the primary scroll story is now, hourly outlook, daily, then map");
+assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"[\s\S]*data-hourly-metric="feels"[\s\S]*data-hourly-metric="precipitation"/, "the hourly hero exposes three explicit trend lenses");
+assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");
+assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");
 assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
-assert.match(extractFunction(app, "buildForecastStory"), /This morning[\s\S]*Rest of today[\s\S]*Tonight/, "the forecast narrative changes with the local time of day");
+assert.match(extractFunction(app, "buildForecastStory"), /This morning's outlook[\s\S]*This afternoon's outlook[\s\S]*Tonight's outlook/, "the forecast narrative changes with the local time of day");
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
 assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
 assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");

@@ -8425,6 +8425,41 @@ body.map-immersive-active .app-dock {
   -webkit-backdrop-filter: blur(18px);
 }
 
+.hourly-panel > .hero {
+  overflow: visible;
+  margin: 0;
+  padding: 3px 4px 17px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.hourly-panel > .hero::before {
+  display: none;
+}
+
+.hourly-panel .glance-kicker {
+  margin: 0 0 7px;
+  color: var(--ink);
+  font-size: clamp(1.3rem, 4vw, 1.7rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  text-transform: none;
+}
+
+.hourly-panel .glance-title {
+  max-width: 780px;
+  color: var(--muted);
+  font-size: clamp(0.98rem, 2.7vw, 1.15rem);
+  font-weight: 680;
+  line-height: 1.38;
+  text-wrap: pretty;
+}
+
 .daily-panel {
   padding: 0 8px 12px;
   border: 0;
@@ -8466,18 +8501,54 @@ body.map-immersive-active .app-dock {
 }
 
 .hourly {
+  position: relative;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 78px;
+  grid-auto-columns: 76px;
   gap: 4px;
   overflow-x: auto;
-  padding: 13px 2px 10px;
+  padding: 13px 2px 8px;
   scroll-padding-inline: 2px;
   scroll-snap-type: x proximity;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
   touch-action: pan-x;
   -webkit-tap-highlight-color: transparent;
+}
+
+.hourly-trend {
+  position: absolute;
+  z-index: 1;
+  top: 80px;
+  left: 2px;
+  height: 50px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.hourly-trend polyline {
+  fill: none;
+  stroke: color-mix(in srgb, var(--blue) 72%, var(--ink));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.hourly-trend circle {
+  fill: var(--glass-heavy);
+  stroke: color-mix(in srgb, var(--blue) 78%, var(--ink));
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.hourly-trend.metric-precipitation polyline,
+.hourly-trend.metric-precipitation circle {
+  stroke: var(--blue);
+}
+
+.hourly-trend-area {
+  fill: color-mix(in srgb, var(--blue) 15%, transparent);
 }
 
 .hourly::-webkit-scrollbar {
@@ -8500,7 +8571,8 @@ body.map-immersive-active .app-dock {
 
 .hour-card {
   position: relative;
-  min-height: 137px;
+  z-index: 0;
+  min-height: 190px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -8590,6 +8662,23 @@ body.map-immersive-active .app-dock {
   color: oklch(var(--temp-text-l) 0.13 var(--t-h, 230));
 }
 
+.hour-card .hour-trend-value {
+  position: absolute;
+  z-index: 2;
+  top: calc(80px + var(--trend-y));
+  left: 50%;
+  min-width: 44px;
+  padding: 1px 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--glass-heavy) 88%, transparent);
+  font-size: 1rem;
+}
+
+.hour-card.metric-precipitation .hour-trend-value {
+  color: var(--blue);
+}
+
 .hour-card .hour-condition {
   display: -webkit-box;
   overflow: hidden;
@@ -8602,6 +8691,58 @@ body.map-immersive-active .app-dock {
   text-wrap: balance;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  margin-top: 62px;
+}
+
+.hour-secondary {
+  min-height: 0.95em;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hour-secondary.has-rain {
+  color: color-mix(in srgb, var(--blue) 76%, var(--muted));
+}
+
+.hourly-metric-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 4px 2px 5px;
+  scrollbar-width: none;
+}
+
+.hourly-metric-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.hourly-metric-tabs button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid var(--border-glass);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-heavy) 70%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.hourly-metric-tabs button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--border-glass));
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(18, 39, 59, 0.15);
+}
+
+.hourly-metric-tabs button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--blue) 42%, transparent);
+  outline-offset: 2px;
 }
 
 .hour-card .hour-rain {
