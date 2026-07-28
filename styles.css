@@ -1987,7 +1987,6 @@ h2 {
 .launch-place-row,
 .launch-current,
 .launch-alert,
-.next-four,
 .plan-invitation,
 .launch-stage .summary,
 .for-you-today {
@@ -2119,165 +2118,6 @@ h2 {
   outline: none;
 }
 
-.next-four[hidden] {
-  display: none;
-}
-
-.next-four {
-  isolation: isolate;
-  overflow: hidden;
-  width: min(720px, 100%);
-  margin-top: 14px;
-  padding: 14px 14px 10px;
-  border: 1px solid var(--border-glass);
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at 12% -20%, rgba(94, 156, 239, 0.20), transparent 48%),
-    color-mix(in srgb, var(--glass-heavy) 88%, transparent);
-  box-shadow: 0 18px 48px rgba(16, 35, 54, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.24);
-  backdrop-filter: blur(22px) saturate(1.15);
-  -webkit-backdrop-filter: blur(22px) saturate(1.15);
-  text-align: left;
-}
-
-.next-four-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  min-height: 42px;
-  padding: 0 4px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.next-four-heading > span:first-child {
-  display: grid;
-  gap: 2px;
-}
-
-.next-four-heading small {
-  color: var(--blue);
-  font-size: 0.68rem;
-  font-weight: 950;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.next-four-heading strong {
-  font-size: clamp(1.02rem, 2.5vw, 1.2rem);
-  font-weight: 920;
-  letter-spacing: -0.015em;
-}
-
-.next-four-heading-action {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 880;
-}
-
-.next-four-heading-action b {
-  margin-left: 3px;
-  font-size: 1.15em;
-}
-
-.next-four-chart {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  min-height: 142px;
-  border-top: 1px solid color-mix(in srgb, var(--border-glass) 70%, transparent);
-}
-
-.next-four-line {
-  position: absolute;
-  z-index: 0;
-  top: 37px;
-  left: 0;
-  width: 100%;
-  height: 66px;
-  overflow: visible;
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.next-four-line polyline {
-  stroke: color-mix(in srgb, var(--blue) 72%, var(--ink));
-  stroke-width: 2.25;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.next-four-hour {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: 3px;
-  min-width: 0;
-  min-height: 138px;
-  padding: 10px 2px 6px;
-  border: 0;
-  border-radius: 15px;
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  touch-action: manipulation;
-}
-
-.next-four-hour:hover,
-.next-four-hour:focus-visible {
-  background: color-mix(in srgb, var(--summary-chip-bg) 84%, transparent);
-  outline: none;
-}
-
-.next-four-hour > span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 900;
-}
-
-.next-four-hour i {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  margin: 3px 0 6px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--glass-heavy) 86%, transparent);
-  box-shadow: 0 5px 18px rgba(18, 43, 70, 0.10);
-}
-
-.next-four-hour i svg {
-  width: 28px;
-  height: 28px;
-}
-
-.next-four-hour strong {
-  color: oklch(var(--hour-temp-lightness) 0.15 var(--t-h));
-  font-size: clamp(1.3rem, 4vw, 1.7rem);
-  font-weight: 940;
-  letter-spacing: -0.04em;
-}
-
-.next-four-hour small {
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 850;
-}
-
-.next-four-hour small.is-wet {
-  color: var(--blue);
-}
-
 .hero {
   position: relative;
   overflow: hidden;
@@ -2286,8 +2126,8 @@ h2 {
   gap: 16px;
   align-items: stretch;
   min-height: 0;
-  margin-bottom: 20px;
-  padding: clamp(20px, 3vw, 30px);
+  margin: 2px 0 14px;
+  padding: clamp(18px, 3vw, 26px);
   border: 1px solid var(--border-glass);
   border-radius: 18px;
   background: var(--hero-card-bg);
@@ -2855,7 +2695,7 @@ h2 {
 
 .today-glance {
   display: grid;
-  gap: 18px;
+  gap: 0;
 }
 
 .glance-kicker {
@@ -2870,10 +2710,30 @@ h2 {
 .glance-title {
   max-width: 900px;
   color: var(--ink);
-  font-size: clamp(1.35rem, 3vw, 2rem);
+  font-size: clamp(1.34rem, 3vw, 1.9rem);
   font-weight: 850;
   line-height: 1.08;
   text-wrap: balance;
+}
+
+/* These drill-down metrics remain available to detail surfaces, but no longer
+   interrupt the primary forecast story on the home screen. */
+#hero .glance-signals,
+#hero .daylight-card {
+  display: none;
+}
+
+#aiLauncher,
+#insightCards {
+  display: none !important;
+}
+
+#insights {
+  display: none;
+}
+
+#insights:has(#planPulse:not([hidden])) {
+  display: block;
 }
 
 .glance-signals {
@@ -8555,10 +8415,14 @@ body.map-immersive-active .app-dock {
 }
 
 .hourly-panel {
-  padding: 0 8px 10px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+  margin-bottom: 14px;
+  padding: 15px 12px 8px;
+  border: 1px solid var(--border-glass);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--glass-heavy) 88%, transparent);
+  box-shadow: 0 16px 42px rgba(18, 39, 59, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .daily-panel {
@@ -8586,7 +8450,7 @@ body.map-immersive-active .app-dock {
 
 .hourly-panel .section-head {
   margin-bottom: 0;
-  padding: 0 0 11px;
+  padding: 0 4px 11px;
   border-bottom: 1px solid var(--border-glass);
 }
 
@@ -8604,13 +8468,15 @@ body.map-immersive-active .app-dock {
 .hourly {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 56px;
-  gap: 0;
+  grid-auto-columns: 78px;
+  gap: 4px;
   overflow-x: auto;
-  padding: 12px 0 14px;
+  padding: 13px 2px 10px;
+  scroll-padding-inline: 2px;
+  scroll-snap-type: x proximity;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
-  touch-action: manipulation;
+  touch-action: pan-x;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -8634,19 +8500,20 @@ body.map-immersive-active .app-dock {
 
 .hour-card {
   position: relative;
-  min-height: 86px;
+  min-height: 137px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 8px 4px;
+  gap: 4px;
+  padding: 9px 5px 8px;
   border: 0;
   border-radius: 12px;
   background: transparent;
   box-shadow: none;
   text-align: center;
   cursor: pointer;
-  touch-action: manipulation;
+  scroll-snap-align: start;
+  touch-action: pan-x;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.14s ease;
 }
@@ -8657,8 +8524,8 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-card .rain-bar {
-  width: 30px;
-  margin-top: 4px;
+  width: 38px;
+  margin-top: 2px;
 }
 
 .hour-card:not(:last-child)::after {
@@ -8685,8 +8552,8 @@ body.map-immersive-active .app-dock {
 
 .hour-card .hour-label {
   color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 750;
+  font-size: 0.78rem;
+  font-weight: 850;
 }
 
 .hour-card.current .hour-label {
@@ -8716,11 +8583,25 @@ body.map-immersive-active .app-dock {
 :root[data-theme="dark"] { --temp-text-l: 0.80; }
 
 .hour-card .hour-temp {
-  font-size: 1.1rem;
-  font-weight: 850;
+  font-size: 1.34rem;
+  font-weight: 900;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
   color: oklch(var(--temp-text-l) 0.13 var(--t-h, 230));
+}
+
+.hour-card .hour-condition {
+  display: -webkit-box;
+  overflow: hidden;
+  width: 100%;
+  min-height: 2.2em;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-weight: 780;
+  line-height: 1.1;
+  text-wrap: balance;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .hour-card .hour-rain {
@@ -8745,9 +8626,9 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-icon {
-  width: 24px;
-  height: 24px;
-  margin: 1px 0;
+  width: 34px;
+  height: 34px;
+  margin: 2px 0 1px;
 }
 
 .hour-icon svg {
@@ -11613,18 +11494,6 @@ body.map-immersive-active #mapLegend {
     padding: 6px 10px;
     font-size: 0.72rem;
   }
-  .next-four {
-    width: min(100%, calc(100vw - 20px));
-    margin-top: 12px;
-    padding: 12px 10px 8px;
-    border-radius: 20px;
-  }
-  .next-four-chart {
-    min-height: 132px;
-  }
-  .next-four-hour {
-    min-height: 128px;
-  }
   .app-dock {
     width: calc(100vw - 20px);
     min-height: 64px;
@@ -11760,11 +11629,12 @@ body.map-immersive-active #mapLegend {
   }
 
   .hourly-panel {
-    padding-inline: 4px;
+    margin-inline: 2px;
+    padding: 14px 9px 7px;
   }
 
   .hourly {
-    grid-auto-columns: 54px;
+    grid-auto-columns: 76px;
   }
 
   /* Keep the 10-day rows on a single tight line (no wrapping the temp track

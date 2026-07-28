@@ -118,8 +118,12 @@ assert.match(html, /id="appDock"[^>]*aria-label="Nearcast navigation"/, "the pri
 for (const destination of ["forecast", "hourly", "map", "plans"]) {
   assert.ok(html.includes(`data-app-dock="${destination}"`), `${destination} is available from the app dock`);
 }
-assert.match(html, /id="nextFour"[^>]*aria-label="Next four hours"/, "the opening forecast promotes the next four hours");
-assert.match(extractFunction(app, "renderNextFour"), /slice\(0, 4\)/, "the launch visualization stays focused on four hourly moments");
+assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(hourlyPanel, hero, nowcast, dailyPanel, map/, "the primary scroll story is now, hourly, narrative, daily, then map");
+assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
+assert.match(extractFunction(app, "buildForecastStory"), /This morning[\s\S]*Rest of today[\s\S]*Tonight/, "the forecast narrative changes with the local time of day");
+assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
+assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
 assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
 assert.match(html, /id="planInvitation"[^>]*aria-live="off"[^>]*hidden/, "forecast refreshes do not repeatedly announce the invitation");

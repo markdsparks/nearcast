@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.327">
-    <link rel="manifest" href="manifest.json?v=3.0.327">
+    <link rel="stylesheet" href="styles.css?v=3.0.329">
+    <link rel="manifest" href="manifest.json?v=3.0.329">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.327">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.327">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.329">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.329">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -303,16 +303,6 @@
             </span>
             <span class="alert-bar-chevron" aria-hidden="true">›</span>
           </button>
-          <section class="next-four" id="nextFour" aria-label="Next four hours" hidden>
-            <button class="next-four-heading" type="button" data-next-four-all aria-label="Open the full hourly forecast">
-              <span>
-                <small>Next 4 hours</small>
-                <strong id="nextFourTakeaway">Hourly forecast</strong>
-              </span>
-              <span class="next-four-heading-action">Hourly <b aria-hidden="true">›</b></span>
-            </button>
-            <div class="next-four-chart" id="nextFourChart"></div>
-          </section>
           <section class="plan-invitation" id="planInvitation" aria-label="Check an upcoming plan" aria-live="off" hidden>
             <button class="plan-invitation-dismiss" id="planInvitationDismiss" type="button" aria-label="Dismiss plan suggestion">×</button>
             <button class="plan-invitation-main" id="planInvitationOpen" type="button">
@@ -341,11 +331,11 @@
         <section class="hero" id="hero" aria-label="Today at a glance">
           <div class="today-glance" aria-label="Today at a glance">
             <div class="glance-head">
-              <p class="glance-kicker">Today at a glance</p>
+              <p class="glance-kicker" id="glanceKicker">Coming up</p>
               <p class="glance-title" id="glanceTitle">Forecast is loading.</p>
             </div>
 
-            <div class="glance-signals">
+            <div class="glance-signals" hidden>
               <div class="glance-signal" id="feelsSignal">
                 <span>
                   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="7" y="2" width="2" height="7" rx="1" fill="currentColor"/><circle cx="8" cy="11.5" r="2.5" fill="currentColor"/><line x1="10" y1="4" x2="12" y2="4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="10" y1="6.5" x2="12" y2="6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
@@ -380,7 +370,7 @@
               </div>
             </div>
 
-            <div class="daylight-card" id="daylightCard">
+            <div class="daylight-card" id="daylightCard" hidden>
               <div class="daylight-head">
                 <span>Light &amp; Sun</span>
                 <strong id="daylightSummary">--</strong>
@@ -429,23 +419,16 @@
         </section>
 
         <section class="insights-section" id="insights" aria-label="Weather insights">
-          <button class="ai-launcher" id="aiLauncher" type="button" hidden>
-            <span class="ai-launcher-spark" aria-hidden="true">✦</span>
-            <span class="ai-launcher-copy">
-              <strong>Nearcast AI</strong>
-              <small id="aiLauncherSub">Ask about weather, plans, maps, or places.</small>
-            </span>
-            <span class="ai-launcher-chev" aria-hidden="true">›</span>
-          </button>
           <div class="plan-pulse" id="planPulse" hidden></div>
-          <div class="insight-band" id="insightCards"></div>
+          <div class="insight-band" id="insightCards" hidden></div>
         </section>
 
         <section class="panel hourly-panel">
           <div class="section-head">
-            <h2>Next 24 Hours</h2>
+            <h2>Hourly</h2>
             <div class="section-meta">
-              <span id="updatedAt">Not loaded</span>
+              <span>Next 24 hours</span>
+              <span id="updatedAt" hidden>Not loaded</span>
             </div>
           </div>
           <div class="hourly" id="hourly"></div>
@@ -1001,16 +984,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.327"></script>
-    <script src="planner.js?v=3.0.327"></script>
-    <script src="app.js?v=3.0.327"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.327"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.327"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.327"></script>
-    <script src="raw-map-runtime.js?v=3.0.327"></script>
-    <script src="map.js?v=3.0.327"></script>
-    <script src="sky.js?v=3.0.327"></script>
-    <script src="daygraph.js?v=3.0.327"></script>
-    <script src="boot.js?v=3.0.327"></script>
+    <script src="weather-truth.js?v=3.0.329"></script>
+    <script src="planner.js?v=3.0.329"></script>
+    <script src="app.js?v=3.0.329"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.329"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.329"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.329"></script>
+    <script src="raw-map-runtime.js?v=3.0.329"></script>
+    <script src="map.js?v=3.0.329"></script>
+    <script src="sky.js?v=3.0.329"></script>
+    <script src="daygraph.js?v=3.0.329"></script>
+    <script src="boot.js?v=3.0.329"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-const VERSION = "3.0.327";
+const VERSION = "3.0.329";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -1362,13 +1362,11 @@ const els = {
   nowSummary: document.querySelector("#nowSummary"),
   forYouToday: document.querySelector("#forYouToday"),
   appDock: document.querySelector("#appDock"),
-  nextFour: document.querySelector("#nextFour"),
-  nextFourChart: document.querySelector("#nextFourChart"),
-  nextFourTakeaway: document.querySelector("#nextFourTakeaway"),
   planInvitation: document.querySelector("#planInvitation"),
   planInvitationOpen: document.querySelector("#planInvitationOpen"),
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
   glanceTitle: document.querySelector("#glanceTitle"),
+  glanceKicker: document.querySelector("#glanceKicker"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
   feelsContext: document.querySelector("#feelsContext"),
@@ -3283,6 +3281,20 @@ function updateFloatingChrome(options = {}) {
   floatingChromeScrollY = y;
 }
 
+function arrangeForecastHierarchy() {
+  const launch = document.querySelector(".launch-stage");
+  const hourlyPanel = document.querySelector(".hourly-panel");
+  const hero = document.querySelector("#hero");
+  const nowcast = document.querySelector("#nowcast");
+  const dailyPanel = document.querySelector(".daily-panel");
+  const map = document.querySelector("#mapView");
+  if (!launch || !hourlyPanel || !hero || !dailyPanel || !map) return;
+
+  // The default scroll story is intentionally weather-first: now, hours,
+  // what changes next, days, then exploratory and contextual surfaces.
+  launch.after(hourlyPanel, hero, nowcast, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
+}
+
 function init() {
   initPerfDiagnostics();
   initViewportGeometrySync();
@@ -3293,9 +3305,7 @@ function init() {
     markPlanWatchMemoryInventoryReady();
   }
   document.getElementById("appVersion").textContent = `v${VERSION}`;
-  // Keep the first screen focused on the forecast. Contextual prompts still
-  // exist, but live below Today's glance instead of competing with "now."
-  document.querySelector("#hero")?.after(els.forYouToday, els.planInvitation);
+  arrangeForecastHierarchy();
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
@@ -4021,11 +4031,6 @@ function bindEvents() {
   }, { preventDefault: false });
   bindTapDelegate(els.appDock, "[data-app-dock]", (event, target) => {
     handleAppDockAction(target.dataset.appDock);
-  }, { preventDefault: false });
-  bindTapDelegate(els.nextFour, "[data-next-four-index], [data-next-four-all]", (event, target) => {
-    const hour = target.closest("[data-next-four-index]");
-    if (hour) openHourlyStripDetail(Number(hour.dataset.nextFourIndex));
-    else handleLaunchShortcut("hourly");
   }, { preventDefault: false });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-schedule-window], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-watch-notify]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
@@ -6257,7 +6262,6 @@ function setForecastLaunchLoading(place) {
   if (els.glanceTitle) els.glanceTitle.textContent = "Building your local weather read.";
   if (els.forYouToday) els.forYouToday.hidden = true;
   if (els.appDock) els.appDock.hidden = true;
-  if (els.nextFour) els.nextFour.hidden = true;
   if (els.planInvitation) els.planInvitation.hidden = true;
   clearPlanInvitationImpressionObserver();
   const alertBar = document.getElementById("alertBar");
@@ -7913,7 +7917,6 @@ function renderForecastHero(ctx) {
 
 function renderForecastLaunch(ctx) {
   renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
-  renderNextFour(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderAppDock(ctx.data, ctx.place);
   renderWatchingSwitcher();
@@ -7968,12 +7971,11 @@ function renderForecast(data, place, options = {}) {
   if (lanes.launch) renderForecastLaunch(ctx);
   if (lanes.glance) renderForecastGlance(ctx);
   if (lanes.nowcast) renderNowcast(ctx.data, ctx.truth);
-  if (lanes.insights) renderInsights(ctx.data, ctx.windUnit);
+  if (els.insightCards) els.insightCards.hidden = true;
   if (lanes.plan) renderForecastPlan(ctx);
   if (lanes.briefing) resetBriefing();
   renderForecastLists(ctx, lanes);
   if (lanes.map) renderForecastMap();
-  if (lanes.metricTips) bindMetricTips(ctx.data, ctx.tempUnit, ctx.windUnit);
   if (lanes.sky) updateSkyCanvas(ctx.sceneCode, ctx.truth.isDay, ctx.data, ctx.displayCondition);
   if (lanes.continuity) saveContinuitySnapshot(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   syncNativeWidgetSnapshot(ctx.data, ctx.place, ctx.truth);
@@ -7982,6 +7984,58 @@ function renderForecast(data, place, options = {}) {
     lanes: activeForecastRenderLanes(lanes)
   });
   scheduleReactiveSkyMotionSync();
+}
+
+function forecastStoryRain(chance, period) {
+  const value = Math.max(0, Math.min(100, Math.round(Number(chance) || 0)));
+  if (value >= 60) return `Rain is likely ${period} (${value}%).`;
+  if (value >= 35) return `Rain is possible ${period} (${value}%).`;
+  if (value >= 16) return `There is a slight rain chance ${period} (${value}%).`;
+  return `Rain looks unlikely ${period}.`;
+}
+
+function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)) {
+  const now = forecastNowMs(data);
+  const timeParts = localDateTimeParts(data.current?.time);
+  const hour = Number.isFinite(timeParts?.hour) ? timeParts.hour : new Date(now).getHours();
+  const todayIndex = forecastDailyIndex(data);
+  const tomorrowIndex = forecastDailyIndex(data, 1);
+  const noonMs = forecastLocalBoundaryMs(data, 12) ?? now + 4 * 60 * 60 * 1000;
+  const sixPmMs = forecastLocalBoundaryMs(data, 18) ?? now + 8 * 60 * 60 * 1000;
+  const midnightMs = forecastLocalBoundaryMs(data, 24) ?? now + 12 * 60 * 60 * 1000;
+  const tomorrowNoonMs = forecastLocalBoundaryMs(data, 12, 1) ?? midnightMs + 12 * 60 * 60 * 1000;
+  const currentCode = truth.display?.nowCode ?? truth.code ?? data.current?.weather_code;
+  const currentSky = weatherCodes[currentCode] || "Steady conditions";
+  const todaySky = weatherCodes[representativeDailyCode(data, todayIndex)] || currentSky;
+  const tomorrowSky = weatherCodes[representativeDailyCode(data, tomorrowIndex)] || "Mixed conditions";
+  const todayHigh = Math.round(data.daily.temperature_2m_max?.[todayIndex] ?? data.current.temperature_2m);
+  const overnightLow = Math.round(data.daily.temperature_2m_min?.[tomorrowIndex] ?? data.daily.temperature_2m_min?.[todayIndex] ?? data.current.temperature_2m);
+  const tomorrowHigh = Math.round(data.daily.temperature_2m_max?.[tomorrowIndex] ?? todayHigh);
+  const sunset = data.daily.sunset?.[todayIndex] ? formatTime(data.daily.sunset[todayIndex]) : "";
+  let kicker = "Coming up";
+  let text = "";
+
+  if (hour < 12) {
+    const chance = Math.max(maxRainInRange(data, now, noonMs), maxRainInRange(data, noonMs, sixPmMs));
+    kicker = "This morning";
+    text = `${currentSky} through the morning, then warming to near ${todayHigh}° this afternoon. ${forecastStoryRain(chance, "through the afternoon")}`;
+  } else if (hour < 18) {
+    const chance = maxRainInRange(data, now, midnightMs);
+    kicker = "Rest of today";
+    text = `${todaySky} for the rest of the day${sunset ? `, with sunset at ${sunset}` : ""}. Cooling to near ${overnightLow}° overnight; ${forecastStoryRain(chance, "before morning").replace(/^Rain/, "rain")}`;
+  } else {
+    const overnightChance = maxRainInRange(data, now, tomorrowNoonMs);
+    const tomorrowChance = Math.round(data.daily.precipitation_probability_max?.[tomorrowIndex] || 0);
+    kicker = hour >= 21 || !truth.isDay ? "Tonight" : "This evening";
+    text = `${currentSky} tonight, cooling to near ${overnightLow}°. Tomorrow reaches ${tomorrowHigh}° with ${tomorrowSky.toLowerCase()}; ${forecastStoryRain(Math.max(overnightChance, tomorrowChance), "by tomorrow").replace(/^Rain/, "rain")}`;
+  }
+
+  const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 12);
+  const gust = gustIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m?.[gustIndex] || 0) : 0;
+  const gustThreshold = windUnit === "mph" ? 25 : 40;
+  if (gust >= gustThreshold) text += ` Gusts may reach ${gust} ${windUnit}.`;
+
+  return { kicker, text };
 }
 
 function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyIndex(data), truth = weatherTruth(data)) {
@@ -8001,9 +8055,11 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     ? `, ${air.summary.headline.toLowerCase()}`
     : "";
 
-  if (els.glanceTitle) {
-    els.glanceTitle.textContent = `${comfort.headline}, ${rain.headline.toLowerCase()}, ${wind.headline.toLowerCase()}${airHeadline}.`;
-  }
+  const story = buildForecastStory(data, tempUnit, windUnit, truth);
+  if (els.glanceKicker) els.glanceKicker.textContent = story.kicker;
+  if (els.glanceTitle) els.glanceTitle.textContent = story.text;
+  document.querySelector("#hero")?.setAttribute("aria-label", `${story.kicker} forecast`);
+  document.querySelector(".today-glance")?.setAttribute("aria-label", `${story.kicker} forecast`);
   if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
   if (els.rainContext) els.rainContext.textContent = rain.context;
   if (els.rainSignal) {
@@ -9232,67 +9288,6 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
   els.nowSummary.setAttribute("aria-label", current ? summaryItemAria(current) : value);
 }
 
-function nextFourTakeaway(rows, data, windUnit, truth) {
-  if (!rows.length) return "Hourly forecast";
-  const temperatures = rows.map(({ index }, position) => Number(
-    position === 0 ? data.current?.temperature_2m : data.hourly.temperature_2m?.[index]
-  )).filter(Number.isFinite);
-  const rain = rows.map(({ index }, position) => Number(
-    position === 0 ? (truth?.display?.pop ?? data.hourly.precipitation_probability?.[index]) : data.hourly.precipitation_probability?.[index]
-  ) || 0);
-  const gusts = rows.map(({ index }) => Number(data.hourly.wind_gusts_10m?.[index]) || 0);
-  const maxRain = Math.max(...rain, 0);
-  const maxRainPosition = rain.indexOf(maxRain);
-  const maxGust = Math.round(Math.max(...gusts, 0));
-  const gustThreshold = windUnit === "mph" ? 25 : 40;
-  if (maxRain >= 35) return `${Math.round(maxRain)}% rain near ${formatHour(rows[maxRainPosition].time)}`;
-  if (maxGust >= gustThreshold) return `Gusts reach ${maxGust} ${windUnit}`;
-  if (temperatures.length > 1) {
-    const change = Math.round(temperatures[temperatures.length - 1] - temperatures[0]);
-    if (change >= 4) return `Warming ${change}° through ${formatHour(rows[rows.length - 1].time)}`;
-    if (change <= -4) return `Cooling ${Math.abs(change)}° through ${formatHour(rows[rows.length - 1].time)}`;
-  }
-  return maxRain < 20 ? `Steady and dry through ${formatHour(rows[rows.length - 1].time)}` : "Conditions stay fairly steady";
-}
-
-function renderNextFour(data, tempUnit, windUnit, truth = weatherTruth(data)) {
-  if (!els.nextFour || !els.nextFourChart) return;
-  const now = forecastNowMs(data);
-  const rows = (data?.hourly?.time || [])
-    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
-    .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
-    .slice(0, 4);
-  if (!rows.length) {
-    els.nextFour.hidden = true;
-    return;
-  }
-  const temps = rows.map(({ index }, position) => Number(
-    position === 0 ? data.current?.temperature_2m : data.hourly.temperature_2m?.[index]
-  ) || 0);
-  const min = Math.min(...temps);
-  const max = Math.max(...temps);
-  const span = Math.max(1, max - min);
-  const points = rows.map((row, position) => {
-    const x = 12.5 + position * 25;
-    const y = 55 - ((temps[position] - min) / span) * 26;
-    return `${x},${y}`;
-  }).join(" ");
-  const curve = rows.length > 1
-    ? `<svg class="next-four-line" viewBox="0 0 100 66" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" vector-effect="non-scaling-stroke"/></svg>`
-    : "";
-  els.nextFourChart.innerHTML = curve + rows.map(({ time, index }, position) => {
-    const code = position === 0 ? (truth.display?.nowCode ?? truth.code) : data.hourly.weather_code?.[index];
-    const isDay = position === 0 ? truth.isDay : Boolean(data.hourly.is_day?.[index] ?? 1);
-    const rain = Math.round(Number(position === 0
-      ? (truth.display?.pop ?? data.hourly.precipitation_probability?.[index])
-      : data.hourly.precipitation_probability?.[index]) || 0);
-    const label = position === 0 ? "Now" : formatHour(time);
-    return `<button class="next-four-hour" type="button" data-next-four-index="${index}" aria-label="${escapeHtml(`${label}, ${Math.round(temps[position])} degrees, ${rain}% chance of precipitation. Open hourly detail.`)}"><span>${escapeHtml(label)}</span><i aria-hidden="true">${weatherIcon(code, isDay, { density: "dense" })}</i><strong style="--t-h:${tempOklchHue(temps[position]).toFixed(0)}">${Math.round(temps[position])}°</strong><small class="${rain >= 20 ? "is-wet" : ""}">${rain}%</small></button>`;
-  }).join("");
-  if (els.nextFourTakeaway) els.nextFourTakeaway.textContent = nextFourTakeaway(rows, data, windUnit, truth);
-  els.nextFour.hidden = false;
-}
-
 function renderAppDock(data, place) {
   if (!els.appDock) return;
   els.appDock.hidden = !(data && place) || welcomeIsActive();
@@ -9305,7 +9300,6 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
-  renderNextFour(data, tempUnit, windUnit, truth);
   renderAppDock(data, place);
   renderWatchingSwitcher();
   renderPlanInvitation();
@@ -11786,6 +11780,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp" style="--t-h:${tempOklchHue(temp).toFixed(0)}">${temp}°</strong>
+        <span class="hour-condition">${escapeHtml(code)}</span>
         <span class="hour-rain${rainClass}">${rainLabel}</span>
         <div class="rain-bar" aria-hidden="true"><i style="width:${rainBarWidth}%"></i></div>
       </article>
