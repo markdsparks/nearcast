@@ -114,6 +114,13 @@ assert.equal(correctedPlaceOptions.matches[0].place.admin1, "Kentucky", "an expl
 
 const invitationIndex = html.indexOf('id="planInvitation"');
 const alertIndex = html.indexOf('id="alertBar"');
+assert.match(html, /id="appDock"[^>]*aria-label="Nearcast navigation"/, "the primary forecast destinations live in one floating app dock");
+for (const destination of ["forecast", "hourly", "map", "plans"]) {
+  assert.ok(html.includes(`data-app-dock="${destination}"`), `${destination} is available from the app dock`);
+}
+assert.match(html, /id="nextFour"[^>]*aria-label="Next four hours"/, "the opening forecast promotes the next four hours");
+assert.match(extractFunction(app, "renderNextFour"), /slice\(0, 4\)/, "the launch visualization stays focused on four hourly moments");
+assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
 assert.match(html, /id="planInvitation"[^>]*aria-live="off"[^>]*hidden/, "forecast refreshes do not repeatedly announce the invitation");
 assert.match(html, /id="planInvitationDismiss"[^>]*aria-label="Dismiss plan suggestion"/, "the invitation is explicitly dismissible");

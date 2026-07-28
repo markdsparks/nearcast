@@ -1,4 +1,4 @@
-const VERSION = "3.0.325";
+const VERSION = "3.0.326";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -1360,7 +1360,10 @@ const els = {
   heroRange: document.querySelector("#heroRange"),
   nowSummary: document.querySelector("#nowSummary"),
   forYouToday: document.querySelector("#forYouToday"),
-  launchShortcuts: document.querySelector("#launchShortcuts"),
+  appDock: document.querySelector("#appDock"),
+  nextFour: document.querySelector("#nextFour"),
+  nextFourChart: document.querySelector("#nextFourChart"),
+  nextFourTakeaway: document.querySelector("#nextFourTakeaway"),
   planInvitation: document.querySelector("#planInvitation"),
   planInvitationOpen: document.querySelector("#planInvitationOpen"),
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
@@ -3260,7 +3263,7 @@ function updateFloatingChrome(options = {}) {
   else if (delta > 0) floatingChromeUpTravel = 0;
   else if (nearBottom) floatingChromeUpTravel = 0;
 
-  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || y < 220 || (!nearBottom && floatingChromeUpTravel > 24);
+  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || nearBottom || y < 220 || floatingChromeUpTravel > 24;
   if (shouldReveal) {
     els.shell.classList.remove("chrome-tucked");
     floatingChromeUpTravel = 0;
@@ -3280,6 +3283,9 @@ function init() {
     markPlanWatchMemoryInventoryReady();
   }
   document.getElementById("appVersion").textContent = `v${VERSION}`;
+  // Keep the first screen focused on the forecast. Contextual prompts still
+  // exist, but live below Today's glance instead of competing with "now."
+  document.querySelector("#hero")?.after(els.forYouToday, els.planInvitation);
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
@@ -3753,6 +3759,39 @@ function handleLaunchShortcut(action) {
   target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
 }
 
+function setAppDockCurrent(action = "forecast") {
+  if (!els.appDock) return;
+  els.appDock.querySelectorAll("[data-app-dock]").forEach((button) => {
+    const current = button.dataset.appDock === action;
+    button.classList.toggle("is-current", current);
+    if (current) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
+function handleAppDockAction(action) {
+  if (action === "forecast") {
+    setAppDockCurrent("forecast");
+    resetTransientViewToForecastTop();
+    return;
+  }
+  if (action === "hourly") {
+    setAppDockCurrent("hourly");
+    handleLaunchShortcut("hourly");
+    return;
+  }
+  if (action === "map") {
+    setAppDockCurrent("map");
+    if (typeof ensureInlineMapReady === "function") ensureInlineMapReady(true);
+    enterImmersiveMap();
+    return;
+  }
+  if (action === "plans") {
+    setAppDockCurrent("plans");
+    openGlobalMemorySheet();
+  }
+}
+
 function stopStormImpactControlEvent(event) {
   if (!event) return;
   if (event.cancelable && event.type === "click") event.preventDefault();
@@ -3970,8 +4009,13 @@ function bindEvents() {
       openPlanWatchForMemory(planShow.dataset.planBriefShow);
     }
   }, { preventDefault: false });
-  bindTapDelegate(els.launchShortcuts, "[data-launch-jump]", (event, target) => {
-    handleLaunchShortcut(target.dataset.launchJump);
+  bindTapDelegate(els.appDock, "[data-app-dock]", (event, target) => {
+    handleAppDockAction(target.dataset.appDock);
+  }, { preventDefault: false });
+  bindTapDelegate(els.nextFour, "[data-next-four-index], [data-next-four-all]", (event, target) => {
+    const hour = target.closest("[data-next-four-index]");
+    if (hour) openHourlyStripDetail(Number(hour.dataset.nextFourIndex));
+    else handleLaunchShortcut("hourly");
   }, { preventDefault: false });
   bindTapDelegate(els.aiAsk, "[data-ask-show], [data-ask-schedule-window], [data-ask-clarify], [data-ask-template], [data-ask-q], [data-memory-open], [data-memory-remember], [data-memory-detail], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-watch-notify]", (event, target) => {
     const memoryOpen = target.closest("[data-memory-open]");
@@ -6202,7 +6246,8 @@ function setForecastLaunchLoading(place) {
   }
   if (els.glanceTitle) els.glanceTitle.textContent = "Building your local weather read.";
   if (els.forYouToday) els.forYouToday.hidden = true;
-  if (els.launchShortcuts) els.launchShortcuts.hidden = true;
+  if (els.appDock) els.appDock.hidden = true;
+  if (els.nextFour) els.nextFour.hidden = true;
   if (els.planInvitation) els.planInvitation.hidden = true;
   clearPlanInvitationImpressionObserver();
   const alertBar = document.getElementById("alertBar");
@@ -7858,8 +7903,9 @@ function renderForecastHero(ctx) {
 
 function renderForecastLaunch(ctx) {
   renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
+  renderNextFour(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
-  renderLaunchShortcuts(ctx.data, ctx.place);
+  renderAppDock(ctx.data, ctx.place);
   renderWatchingSwitcher();
   renderPlanInvitation();
 }
@@ -9167,21 +9213,80 @@ function uvRisk(value) {
 function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth(data)) {
   if (!els.nowSummary) return;
   const items = launchSummaryItems(data, tempUnit, windUnit, truth);
-  launchSummaryTargets = items.map((item) => item.target || null);
-  els.nowSummary.classList.add("summary-strip");
-  els.nowSummary.innerHTML = items.map((item, index) => (
-    `<button class="summary-strip-item is-${escapeHtml(item.tone || "neutral")}" type="button" data-summary-index="${index}" aria-label="${escapeHtml(summaryItemAria(item))}" title="${escapeHtml(item.receipt || item.value)}">` +
-      `<b>${escapeHtml(item.label)}</b>` +
-      `<strong>${escapeHtml(item.value)}</strong>` +
-      `<span class="summary-strip-cue" aria-hidden="true">›</span>` +
-    `</button>`
-  )).join("");
-  els.nowSummary.setAttribute("aria-label", `${items.map((item) => `${item.label}: ${item.value}`).join(". ")}. Tap a chip for hourly details.`);
+  const current = items[0];
+  launchSummaryTargets = current ? [current.target || null] : [];
+  els.nowSummary.classList.remove("summary-strip");
+  const value = String(current?.value || "Forecast ready")
+    .replace(/\s+-\s+feels\s+/i, " · Feels ");
+  els.nowSummary.innerHTML = `<button class="launch-condition-button is-${escapeHtml(current?.tone || "neutral")}" type="button" data-summary-index="0" aria-label="${escapeHtml(current ? summaryItemAria(current) : value)}"><strong>${escapeHtml(value)}</strong><span aria-hidden="true">›</span></button>`;
+  els.nowSummary.setAttribute("aria-label", current ? summaryItemAria(current) : value);
 }
 
-function renderLaunchShortcuts(data, place) {
-  if (!els.launchShortcuts) return;
-  els.launchShortcuts.hidden = !(data && place);
+function nextFourTakeaway(rows, data, windUnit, truth) {
+  if (!rows.length) return "Hourly forecast";
+  const temperatures = rows.map(({ index }, position) => Number(
+    position === 0 ? data.current?.temperature_2m : data.hourly.temperature_2m?.[index]
+  )).filter(Number.isFinite);
+  const rain = rows.map(({ index }, position) => Number(
+    position === 0 ? (truth?.display?.pop ?? data.hourly.precipitation_probability?.[index]) : data.hourly.precipitation_probability?.[index]
+  ) || 0);
+  const gusts = rows.map(({ index }) => Number(data.hourly.wind_gusts_10m?.[index]) || 0);
+  const maxRain = Math.max(...rain, 0);
+  const maxRainPosition = rain.indexOf(maxRain);
+  const maxGust = Math.round(Math.max(...gusts, 0));
+  const gustThreshold = windUnit === "mph" ? 25 : 40;
+  if (maxRain >= 35) return `${Math.round(maxRain)}% rain near ${formatHour(rows[maxRainPosition].time)}`;
+  if (maxGust >= gustThreshold) return `Gusts reach ${maxGust} ${windUnit}`;
+  if (temperatures.length > 1) {
+    const change = Math.round(temperatures[temperatures.length - 1] - temperatures[0]);
+    if (change >= 4) return `Warming ${change}° through ${formatHour(rows[rows.length - 1].time)}`;
+    if (change <= -4) return `Cooling ${Math.abs(change)}° through ${formatHour(rows[rows.length - 1].time)}`;
+  }
+  return maxRain < 20 ? `Steady and dry through ${formatHour(rows[rows.length - 1].time)}` : "Conditions stay fairly steady";
+}
+
+function renderNextFour(data, tempUnit, windUnit, truth = weatherTruth(data)) {
+  if (!els.nextFour || !els.nextFourChart) return;
+  const now = forecastNowMs(data);
+  const rows = (data?.hourly?.time || [])
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.ms >= now - 60 * 60 * 1000)
+    .slice(0, 4);
+  if (!rows.length) {
+    els.nextFour.hidden = true;
+    return;
+  }
+  const temps = rows.map(({ index }, position) => Number(
+    position === 0 ? data.current?.temperature_2m : data.hourly.temperature_2m?.[index]
+  ) || 0);
+  const min = Math.min(...temps);
+  const max = Math.max(...temps);
+  const span = Math.max(1, max - min);
+  const points = rows.map((row, position) => {
+    const x = 12.5 + position * 25;
+    const y = 55 - ((temps[position] - min) / span) * 26;
+    return `${x},${y}`;
+  }).join(" ");
+  const curve = rows.length > 1
+    ? `<svg class="next-four-line" viewBox="0 0 100 66" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" vector-effect="non-scaling-stroke"/></svg>`
+    : "";
+  els.nextFourChart.innerHTML = curve + rows.map(({ time, index }, position) => {
+    const code = position === 0 ? (truth.display?.nowCode ?? truth.code) : data.hourly.weather_code?.[index];
+    const isDay = position === 0 ? truth.isDay : Boolean(data.hourly.is_day?.[index] ?? 1);
+    const rain = Math.round(Number(position === 0
+      ? (truth.display?.pop ?? data.hourly.precipitation_probability?.[index])
+      : data.hourly.precipitation_probability?.[index]) || 0);
+    const label = position === 0 ? "Now" : formatHour(time);
+    return `<button class="next-four-hour" type="button" data-next-four-index="${index}" aria-label="${escapeHtml(`${label}, ${Math.round(temps[position])} degrees, ${rain}% chance of precipitation. Open hourly detail.`)}"><span>${escapeHtml(label)}</span><i aria-hidden="true">${weatherIcon(code, isDay, { density: "dense" })}</i><strong style="--t-h:${tempOklchHue(temps[position]).toFixed(0)}">${Math.round(temps[position])}°</strong><small class="${rain >= 20 ? "is-wet" : ""}">${rain}%</small></button>`;
+  }).join("");
+  if (els.nextFourTakeaway) els.nextFourTakeaway.textContent = nextFourTakeaway(rows, data, windUnit, truth);
+  els.nextFour.hidden = false;
+}
+
+function renderAppDock(data, place) {
+  if (!els.appDock) return;
+  els.appDock.hidden = !(data && place) || welcomeIsActive();
+  if (!els.appDock.hidden) setAppDockCurrent("forecast");
 }
 
 function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.activePlace) {
@@ -9190,7 +9295,8 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
-  renderLaunchShortcuts(data, place);
+  renderNextFour(data, tempUnit, windUnit, truth);
+  renderAppDock(data, place);
   renderWatchingSwitcher();
   renderPlanInvitation();
   syncNativeStormActivity(data, place, truth);

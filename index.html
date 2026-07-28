@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.325">
-    <link rel="manifest" href="manifest.json?v=3.0.325">
+    <link rel="stylesheet" href="styles.css?v=3.0.326">
+    <link rel="manifest" href="manifest.json?v=3.0.326">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.325">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.325">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.326">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.326">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -20,10 +20,28 @@
       <span class="pull-refresh-spinner" aria-hidden="true"></span>
       <strong data-pull-refresh-label>Pull to update</strong>
     </div>
-    <button class="nearcast-ai-fab" id="aiAgentButton" type="button" hidden aria-label="Open Nearcast AI">
-      <span aria-hidden="true">✦</span>
-      <strong>Ask Nearcast</strong>
-    </button>
+    <nav class="app-dock" id="appDock" aria-label="Nearcast navigation" hidden>
+      <button class="app-dock-item is-current" type="button" data-app-dock="forecast" aria-label="Forecast" aria-current="page">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Forecast</span>
+      </button>
+      <button class="app-dock-item" type="button" data-app-dock="hourly" aria-label="Hourly forecast">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.2v5.1l3.4 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Hourly</span>
+      </button>
+      <button class="app-dock-item app-dock-ai" id="aiAgentButton" type="button" hidden aria-label="Open Nearcast AI">
+        <span class="app-dock-ai-mark" aria-hidden="true">✦</span>
+        <span>Ask</span>
+      </button>
+      <button class="app-dock-item" type="button" data-app-dock="map" aria-label="Weather map">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3.5 5.5 5-2 7 2 5-2v15l-5 2-7-2-5 2v-15Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8.5 3.5v15M15.5 5.5v15" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>Map</span>
+      </button>
+      <button class="app-dock-item" type="button" data-app-dock="plans" aria-label="Watched plans">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5.5" width="16" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h3M8 17h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span>Plans</span>
+      </button>
+    </nav>
     <main class="shell mode-boot">
       <section class="boot-screen" id="bootScreen" aria-live="polite" aria-label="Nearcast is loading">
         <div class="boot-mark" aria-hidden="true">
@@ -265,14 +283,8 @@
             </div>
             <p class="hero-range" id="heroRange" hidden>H -- · L --</p>
           </div>
-          <p class="summary" id="nowSummary">Search for a city to load a clean forecast.</p>
+          <p class="summary launch-condition" id="nowSummary">Search for a city to load a clean forecast.</p>
           <section class="for-you-today" id="forYouToday" aria-label="For You / Today" hidden></section>
-          <nav class="launch-shortcuts" id="launchShortcuts" aria-label="Forecast views" hidden>
-            <button type="button" data-launch-jump="hourly">Hourly</button>
-            <button type="button" data-launch-jump="daily">10 Day</button>
-            <button type="button" data-launch-jump="map">Map</button>
-            <button type="button" data-launch-jump="plan">Plan</button>
-          </nav>
           <div class="loading-chip launch-loading" data-loading-status hidden role="status" aria-live="polite" aria-atomic="true">
             <span class="loading-chip-dot" aria-hidden="true"></span>
             <span class="loading-chip-text" data-loading-message></span>
@@ -291,6 +303,16 @@
             </span>
             <span class="alert-bar-chevron" aria-hidden="true">›</span>
           </button>
+          <section class="next-four" id="nextFour" aria-label="Next four hours" hidden>
+            <button class="next-four-heading" type="button" data-next-four-all aria-label="Open the full hourly forecast">
+              <span>
+                <small>Next 4 hours</small>
+                <strong id="nextFourTakeaway">Hourly forecast</strong>
+              </span>
+              <span class="next-four-heading-action">Hourly <b aria-hidden="true">›</b></span>
+            </button>
+            <div class="next-four-chart" id="nextFourChart"></div>
+          </section>
           <section class="plan-invitation" id="planInvitation" aria-label="Check an upcoming plan" aria-live="off" hidden>
             <button class="plan-invitation-dismiss" id="planInvitationDismiss" type="button" aria-label="Dismiss plan suggestion">×</button>
             <button class="plan-invitation-main" id="planInvitationOpen" type="button">
@@ -979,16 +1001,16 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.325"></script>
-    <script src="planner.js?v=3.0.325"></script>
-    <script src="app.js?v=3.0.325"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.325"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.325"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.325"></script>
-    <script src="raw-map-runtime.js?v=3.0.325"></script>
-    <script src="map.js?v=3.0.325"></script>
-    <script src="sky.js?v=3.0.325"></script>
-    <script src="daygraph.js?v=3.0.325"></script>
-    <script src="boot.js?v=3.0.325"></script>
+    <script src="weather-truth.js?v=3.0.326"></script>
+    <script src="planner.js?v=3.0.326"></script>
+    <script src="app.js?v=3.0.326"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.326"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.326"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.326"></script>
+    <script src="raw-map-runtime.js?v=3.0.326"></script>
+    <script src="map.js?v=3.0.326"></script>
+    <script src="sky.js?v=3.0.326"></script>
+    <script src="daygraph.js?v=3.0.326"></script>
+    <script src="boot.js?v=3.0.326"></script>
   </body>
 </html>

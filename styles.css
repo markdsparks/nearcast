@@ -1960,14 +1960,14 @@ h2 {
 }
 
 .launch-stage {
-  --launch-top-clearance: clamp(72px, 11vh, 120px);
+  --launch-top-clearance: clamp(72px, 9vh, 104px);
   position: relative;
   display: grid;
   justify-items: center;
-  align-content: center;
-  min-height: clamp(360px, 58svh, 620px);
-  padding: var(--launch-top-clearance) 12px clamp(40px, 7vh, 82px);
-  margin-bottom: 8px;
+  align-content: start;
+  min-height: 0;
+  padding: var(--launch-top-clearance) 12px 18px;
+  margin-bottom: 12px;
   text-align: center;
 }
 
@@ -1987,6 +1987,7 @@ h2 {
 .launch-place-row,
 .launch-current,
 .launch-alert,
+.next-four,
 .plan-invitation,
 .launch-stage .summary,
 .for-you-today {
@@ -2051,7 +2052,7 @@ h2 {
   justify-items: center;
   align-items: center;
   gap: clamp(4px, 0.8vw, 8px);
-  margin-top: 14px;
+  margin-top: 7px;
 }
 
 .launch-main-weather {
@@ -2063,6 +2064,7 @@ h2 {
 
 .launch-stage .now-temp {
   margin: 0;
+  font-size: clamp(4.6rem, 14vw, 8.4rem);
   text-shadow: 0 20px 60px rgba(12, 24, 36, 0.18);
 }
 
@@ -2079,9 +2081,201 @@ h2 {
 
 .launch-stage .summary {
   max-width: 840px;
-  margin-top: 20px;
+  margin-top: 9px;
   color: var(--ink);
   text-shadow: 0 2px 18px rgba(255, 255, 255, 0.28);
+}
+
+.launch-condition-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: clamp(0.92rem, 2vw, 1.08rem);
+  text-align: center;
+  touch-action: manipulation;
+}
+
+.launch-condition-button strong {
+  font-weight: 820;
+}
+
+.launch-condition-button > span {
+  color: var(--muted);
+  font-size: 1.08em;
+  font-weight: 900;
+}
+
+.launch-condition-button:hover,
+.launch-condition-button:focus-visible {
+  background: var(--summary-chip-bg);
+  outline: none;
+}
+
+.next-four[hidden] {
+  display: none;
+}
+
+.next-four {
+  isolation: isolate;
+  overflow: hidden;
+  width: min(720px, 100%);
+  margin-top: 14px;
+  padding: 14px 14px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 12% -20%, rgba(94, 156, 239, 0.20), transparent 48%),
+    color-mix(in srgb, var(--glass-heavy) 88%, transparent);
+  box-shadow: 0 18px 48px rgba(16, 35, 54, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  text-align: left;
+}
+
+.next-four-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.next-four-heading > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.next-four-heading small {
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.next-four-heading strong {
+  font-size: clamp(1.02rem, 2.5vw, 1.2rem);
+  font-weight: 920;
+  letter-spacing: -0.015em;
+}
+
+.next-four-heading-action {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 880;
+}
+
+.next-four-heading-action b {
+  margin-left: 3px;
+  font-size: 1.15em;
+}
+
+.next-four-chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-height: 142px;
+  border-top: 1px solid color-mix(in srgb, var(--border-glass) 70%, transparent);
+}
+
+.next-four-line {
+  position: absolute;
+  z-index: 0;
+  top: 37px;
+  left: 0;
+  width: 100%;
+  height: 66px;
+  overflow: visible;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.next-four-line polyline {
+  stroke: color-mix(in srgb, var(--blue) 72%, var(--ink));
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.next-four-hour {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  min-height: 138px;
+  padding: 10px 2px 6px;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  touch-action: manipulation;
+}
+
+.next-four-hour:hover,
+.next-four-hour:focus-visible {
+  background: color-mix(in srgb, var(--summary-chip-bg) 84%, transparent);
+  outline: none;
+}
+
+.next-four-hour > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.next-four-hour i {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 3px 0 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--glass-heavy) 86%, transparent);
+  box-shadow: 0 5px 18px rgba(18, 43, 70, 0.10);
+}
+
+.next-four-hour i svg {
+  width: 28px;
+  height: 28px;
+}
+
+.next-four-hour strong {
+  color: oklch(var(--hour-temp-lightness) 0.15 var(--t-h));
+  font-size: clamp(1.3rem, 4vw, 1.7rem);
+  font-weight: 940;
+  letter-spacing: -0.04em;
+}
+
+.next-four-hour small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.next-four-hour small.is-wet {
+  color: var(--blue);
 }
 
 .hero {
@@ -7449,55 +7643,138 @@ h2 {
   }
 }
 
-/* ---------- Planner launcher (main view) + sheet ---------- */
-.nearcast-ai-fab[hidden],
-html[data-boot] .nearcast-ai-fab {
+/* ---------- Floating app dock + planner sheet ---------- */
+.app-dock[hidden],
+html[data-boot] .app-dock,
+html[data-welcome] .app-dock {
   display: none;
 }
 
-.nearcast-ai-fab {
+.app-dock {
   position: fixed;
-  right: max(16px, calc((100vw - 1120px) / 2));
-  bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 12px));
+  left: 50%;
+  bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 8px));
   z-index: 76;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
-  gap: 8px;
-  min-height: 46px;
-  padding: 0 17px;
-  border: 1px solid rgba(118, 174, 255, 0.30);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--glass-heavy) 88%, rgba(53, 111, 183, 0.24));
+  width: min(520px, calc(100vw - 24px));
+  min-height: 66px;
+  padding: 5px 6px;
+  border: 1px solid color-mix(in srgb, var(--border-glass) 84%, rgba(118, 174, 255, 0.20));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--glass-heavy) 91%, rgba(53, 111, 183, 0.10));
   color: var(--ink);
-  box-shadow: 0 14px 38px rgba(5, 16, 28, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 18px 46px rgba(5, 16, 28, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  transform: translateX(-50%);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.8,.2,1);
+}
+
+.app-dock-item {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 5px 2px;
+  border: 0;
+  border-radius: 17px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
+  font: inherit;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
-.nearcast-ai-fab span {
-  color: var(--blue);
-  font-size: 1rem;
+.app-dock-item svg {
+  width: 21px;
+  height: 21px;
 }
 
-.nearcast-ai-fab strong {
-  font-size: 0.82rem;
+.app-dock-item > span:last-child {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 0.62rem;
   font-weight: 880;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.nearcast-ai-fab:hover,
-.nearcast-ai-fab:focus-visible {
-  border-color: var(--blue);
+.app-dock-item.is-current {
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  color: var(--blue);
+}
+
+.app-dock-item:hover,
+.app-dock-item:focus-visible {
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
+  color: var(--blue);
   outline: none;
-  transform: translateY(-1px);
 }
 
-body:has(.ai-sheet.show) .nearcast-ai-fab,
-body.map-immersive-active .nearcast-ai-fab {
+.app-dock-ai {
+  align-self: center;
+  min-height: 56px;
+  margin: -13px 3px 0;
+  border: 1px solid rgba(131, 185, 255, 0.34);
+  border-radius: 20px;
+  background: linear-gradient(145deg, #5b9aed, #3474ca);
+  color: white;
+  box-shadow: 0 10px 24px rgba(35, 91, 164, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.30);
+}
+
+.app-dock-ai:hover,
+.app-dock-ai:focus-visible {
+  background: linear-gradient(145deg, #67a6f5, #397bd2);
+  color: white;
+}
+
+.app-dock-ai-mark {
+  font-size: 1.18rem;
+  line-height: 1;
+}
+
+body:has(.shell.chrome-tucked) .app-dock {
   opacity: 0;
   pointer-events: none;
+  transform: translate(-50%, calc(100% + 34px));
+}
+
+body:has(.ai-sheet.show) .app-dock,
+body:has(.memory-sheet.show) .app-dock,
+body:has(.memory-detail-sheet.show) .app-dock,
+body:has(.memory-edit-sheet.show) .app-dock,
+body:has(.place-sheet.show) .app-dock,
+body:has(.day-detail.show) .app-dock,
+body:has(#aiSheet.show) .app-dock,
+body:has(#memorySheet.show) .app-dock,
+body:has(#memoryDetailSheet.show) .app-dock,
+body:has(#memoryEditSheet.show) .app-dock,
+body:has(#placeSheet.show) .app-dock,
+body:has(#dayDetail.show) .app-dock,
+body.map-immersive-active .app-dock {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, calc(100% + 34px));
+}
+
+.shell:not(.mode-welcome) {
+  padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-dock {
+    transition: none;
+  }
+}
+
+/* Legacy launch controls are retained only for old cached markup. */
+.nearcast-ai-fab {
+  display: none !important;
 }
 
 .ai-launcher[hidden] {
@@ -11269,9 +11546,9 @@ body.map-immersive-active #mapLegend {
   }
 
   .launch-stage {
-    --launch-top-clearance: clamp(96px, calc(env(safe-area-inset-top, 0px) + 72px), 132px);
-    min-height: clamp(360px, 58svh, 560px);
-    padding: var(--launch-top-clearance) 8px 38px;
+    --launch-top-clearance: clamp(86px, calc(env(safe-area-inset-top, 0px) + 66px), 116px);
+    min-height: 0;
+    padding: var(--launch-top-clearance) 8px 16px;
   }
 
   .launch-place-row {
@@ -11292,8 +11569,8 @@ body.map-immersive-active #mapLegend {
   }
 
   .launch-stage .summary {
-    margin-top: 14px;
-    font-size: clamp(1.03rem, 5vw, 1.28rem);
+    margin-top: 7px;
+    font-size: 1rem;
   }
   .launch-loading {
     margin-top: 10px;
@@ -11318,6 +11595,23 @@ body.map-immersive-active #mapLegend {
     min-height: 31px;
     padding: 6px 10px;
     font-size: 0.72rem;
+  }
+  .next-four {
+    width: min(100%, calc(100vw - 20px));
+    margin-top: 12px;
+    padding: 12px 10px 8px;
+    border-radius: 20px;
+  }
+  .next-four-chart {
+    min-height: 132px;
+  }
+  .next-four-hour {
+    min-height: 128px;
+  }
+  .app-dock {
+    width: calc(100vw - 20px);
+    min-height: 64px;
+    border-radius: 22px;
   }
   .for-you-today {
     width: min(100%, 94vw);
