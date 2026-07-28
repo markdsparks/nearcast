@@ -1,4 +1,4 @@
-const VERSION = "3.0.326";
+const VERSION = "3.0.327";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -994,6 +994,7 @@ const perfState = {
 let floatingChromeScrollY = 0;
 let floatingChromeRaf = 0;
 let floatingChromeUpTravel = 0;
+let floatingChromeDownTravel = 0;
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 18; // street-level basemap zoom; weather sources stay capped separately.
@@ -3259,16 +3260,25 @@ function updateFloatingChrome(options = {}) {
   const searchOpen = els.shell.classList.contains("search-open");
   const welcome = els.shell.classList.contains("mode-welcome");
   const nearBottom = maxPageScrollY() - y < 96;
-  if (delta < 0 && !nearBottom) floatingChromeUpTravel += Math.abs(delta);
-  else if (delta > 0) floatingChromeUpTravel = 0;
-  else if (nearBottom) floatingChromeUpTravel = 0;
+  if (delta < -0.5 && !nearBottom) {
+    floatingChromeUpTravel += Math.abs(delta);
+    floatingChromeDownTravel = 0;
+  } else if (delta > 0.5 && !nearBottom) {
+    floatingChromeDownTravel += delta;
+    floatingChromeUpTravel = 0;
+  } else if (nearBottom) {
+    floatingChromeUpTravel = 0;
+    floatingChromeDownTravel = 0;
+  }
 
-  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || nearBottom || y < 220 || floatingChromeUpTravel > 24;
+  const shouldReveal = options.forceReveal || welcome || menuOpen || searchOpen || nearBottom || y < 220 || floatingChromeUpTravel > 34;
   if (shouldReveal) {
     els.shell.classList.remove("chrome-tucked");
     floatingChromeUpTravel = 0;
-  } else if (y > 320 && delta > 2) {
+    floatingChromeDownTravel = 0;
+  } else if (y > 320 && floatingChromeDownTravel > 52) {
     els.shell.classList.add("chrome-tucked");
+    floatingChromeDownTravel = 0;
   }
   floatingChromeScrollY = y;
 }
