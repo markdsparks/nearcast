@@ -672,6 +672,7 @@ function closeDayDetail() {
   const backdrop = document.getElementById("dayDetailBackdrop");
   const sheet = document.getElementById("dayDetail");
   const returnToPlanner = plannerReturnAfterDayDetail;
+  if (!returnToPlanner && typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   plannerReturnAfterDayDetail = null;
   dayDetailNavState = null;
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");

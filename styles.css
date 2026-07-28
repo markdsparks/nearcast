@@ -8512,7 +8512,7 @@ body.map-immersive-active .app-dock {
   scroll-snap-type: x proximity;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -8585,7 +8585,7 @@ body.map-immersive-active .app-dock {
   text-align: center;
   cursor: pointer;
   scroll-snap-align: start;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.14s ease;
 }

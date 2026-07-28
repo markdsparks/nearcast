@@ -11122,7 +11122,7 @@ async function enterImmersiveMap() {
 }
 
 function exitImmersiveMap() {
-  if (typeof setAppDockCurrent === "function") setAppDockCurrent("forecast");
+  if (typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   if (!mapState.immersive || !mapState._normalEls) return;
 
   cancelStandardTimelineScrub();

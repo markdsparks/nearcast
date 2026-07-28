@@ -9878,7 +9878,7 @@ function refreshPlanMemorySurfaces() {
 
 function closeGlobalMemorySheet() {
   if (!els.memorySheet || !els.memoryBackdrop || els.memorySheet.hidden) return;
-  if (typeof setAppDockCurrent === "function") setAppDockCurrent("forecast");
+  if (typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   if (planWatchFocusMemoryId) {
     markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId, planWatchVisibleReceiptSignature);
   }

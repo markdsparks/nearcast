@@ -1,4 +1,4 @@
-const VERSION = "3.0.331";
+const VERSION = "3.0.332";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation"]);
@@ -3783,7 +3783,7 @@ function handleLaunchShortcut(action) {
   target.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
 }
 
-function setAppDockCurrent(action = "forecast") {
+function setAppDockCurrent(action = "today") {
   if (!els.appDock) return;
   els.appDock.querySelectorAll("[data-app-dock]").forEach((button) => {
     const current = button.dataset.appDock === action;
@@ -3794,14 +3794,14 @@ function setAppDockCurrent(action = "forecast") {
 }
 
 function handleAppDockAction(action) {
-  if (action === "forecast") {
-    setAppDockCurrent("forecast");
+  if (action === "today") {
+    setAppDockCurrent("today");
     resetTransientViewToForecastTop();
     return;
   }
   if (action === "hourly") {
     setAppDockCurrent("hourly");
-    handleLaunchShortcut("hourly");
+    if (typeof openNext24Detail === "function") openNext24Detail();
     return;
   }
   if (action === "map") {
@@ -9298,7 +9298,7 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
 function renderAppDock(data, place) {
   if (!els.appDock) return;
   els.appDock.hidden = !(data && place) || welcomeIsActive();
-  if (!els.appDock.hidden) setAppDockCurrent("forecast");
+  if (!els.appDock.hidden) setAppDockCurrent("today");
 }
 
 function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.activePlace) {

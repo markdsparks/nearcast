@@ -115,7 +115,7 @@ assert.equal(correctedPlaceOptions.matches[0].place.admin1, "Kentucky", "an expl
 const invitationIndex = html.indexOf('id="planInvitation"');
 const alertIndex = html.indexOf('id="alertBar"');
 assert.match(html, /id="appDock"[^>]*aria-label="Nearcast navigation"/, "the primary forecast destinations live in one floating app dock");
-for (const destination of ["forecast", "hourly", "map", "plans"]) {
+for (const destination of ["today", "hourly", "map", "plans"]) {
   assert.ok(html.includes(`data-app-dock="${destination}"`), `${destination} is available from the app dock`);
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
@@ -129,6 +129,8 @@ assert.match(extractFunction(app, "buildForecastStory"), /This morning's outlook
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
 assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
 assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");
+assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
+assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
 assert.match(html, /id="planInvitation"[^>]*aria-live="off"[^>]*hidden/, "forecast refreshes do not repeatedly announce the invitation");
 assert.match(html, /id="planInvitationDismiss"[^>]*aria-label="Dismiss plan suggestion"/, "the invitation is explicitly dismissible");
