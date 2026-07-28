@@ -790,7 +790,7 @@ function planWatchRecentUpdateFromRoute(route = {}) {
     targetType: "watching",
     targetId: "",
     tone: "neutral",
-    title: "Watching update",
+    title: "Plan update",
     body: "Nearcast opened your watched weather.",
     at: Date.now()
   };
@@ -1950,7 +1950,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
   }
   if (planId && planCopy?.action === "limit") {
     if (typeof setStatus === "function") {
-      setStatus("Notifications are already on for 3 plans. Turn one off in Watching first.", true);
+      setStatus("Notifications are already on for 3 plans. Turn one off in Plans first.", true);
     }
     refreshPlanWatchDeliveryUI();
     return;
@@ -1984,7 +1984,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
   if (permission === "granted" && planId) {
     const selected = setPlanWatchNotificationPlan(planId, true);
     if (!selected && typeof setStatus === "function") {
-      setStatus("Notifications are already on for 3 plans. Turn one off in Watching first.", true);
+      setStatus("Notifications are already on for 3 plans. Turn one off in Plans first.", true);
     }
     if (selected && !wasSelected && typeof recordForYouSignal === "function") {
       recordForYouSignal("notification-opt-in");
@@ -2921,8 +2921,146 @@ function planPulseMetricRows(item) {
   return planContextSignalRows(item).map(renderPlanSignalChip).join("");
 }
 
+function homePlanToneRank(tone) {
+  return { pending: 0, good: 1, caution: 2, changed: 3, watch: 4 }[tone] || 0;
+}
+
+function homePlanExplicitlyExcludesExposure(watch) {
+  const memory = watch?.memory || {};
+  // Only user-authored plan text can exempt a plan from exposure checks.
+  // Generated answers often mention an "indoor option" as advice and must
+  // never be mistaken for evidence that the plan itself is indoors.
+  const text = [memory.title, memory.original]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (!text || /\b(?:outside|outdoors?|open[- ]air)\b/.test(text)) return false;
+  return /\b(?:inside|indoors?|indoor[- ]only)\b/.test(text);
+}
+
+function homePlanSafetyAssessment(watch) {
+  const originalTone = String(watch?.tone || "good");
+  const initialRiskKind = typeof planWatchRiskKind === "function" ? planWatchRiskKind(watch) : "good";
+  const result = {
+    tone: originalTone,
+    riskKind: initialRiskKind,
+    overridden: false,
+    label: String(watch?.label || "Checking forecast"),
+    evidence: "",
+    action: ""
+  };
+  if (!watch || watch.isPast || homePlanExplicitlyExcludesExposure(watch)) return result;
+
+  const stats = watch.stats || {};
+  const preference = typeof planWeatherUnitFromItem === "function"
+    ? planWeatherUnitFromItem(watch)
+    : String(watch.units?.temp || "").toUpperCase().includes("C") ? "celsius" : "fahrenheit";
+  const celsius = preference === "celsius";
+  const feelsMax = Number(stats.feelsMax ?? stats.feelsAvg);
+  const feelsMin = Number(stats.feelsMin ?? stats.feelsAvg);
+  const feelsMaxF = celsius ? feelsMax * 9 / 5 + 32 : feelsMax;
+  const feelsMinF = celsius ? feelsMin * 9 / 5 + 32 : feelsMin;
+  const gustMax = Number(stats.gustMax ?? stats.windMax);
+  const gustMph = celsius ? gustMax / 1.609344 : gustMax;
+  const uvMax = Number(stats.uvMax || 0);
+  const aqiMax = Number(stats.aqiMax || 0);
+  const tempUnit = watch.units?.temp || (celsius ? "°C" : "°F");
+  const windUnit = watch.units?.wind || (celsius ? "km/h" : "mph");
+  const valueWithUnit = (value, unit) => Number.isFinite(value) ? `${Math.round(value)}${unit}` : "";
+  const candidates = [];
+  const consider = (tone, riskKind, priority) => {
+    if (!tone || !riskKind) return;
+    candidates.push({ tone, riskKind, priority });
+  };
+  if (watch.alertTone === "warning" || watch.alertTone === "watch") {
+    consider("watch", initialRiskKind, 100);
+  } else if (watch.alert) {
+    consider("caution", initialRiskKind, 100);
+  }
+  if (stats.stormPotential) consider("watch", "storm", 90);
+  if (feelsMaxF >= 100 || uvMax >= 11) consider("watch", "heat", 80);
+  else if (feelsMaxF >= 90 || uvMax >= 8) consider("caution", "heat", 80);
+  if (aqiMax >= 151) consider("watch", "air", 70);
+  else if (aqiMax >= 101) consider("caution", "air", 70);
+  if (gustMph >= 40) consider("watch", "wind", 60);
+  else if (gustMph >= 25) consider("caution", "wind", 60);
+  if (feelsMinF <= 20) consider("watch", "cold", 50);
+  else if (feelsMinF <= 35) consider("caution", "cold", 50);
+
+  candidates.sort((a, b) => homePlanToneRank(b.tone) - homePlanToneRank(a.tone) || b.priority - a.priority);
+  const safety = candidates[0] || null;
+  if (!safety) return result;
+  const safetyRank = homePlanToneRank(safety.tone);
+  const originalRank = homePlanToneRank(originalTone);
+  const replacesFirstMatch = safety.riskKind !== initialRiskKind && safetyRank >= originalRank;
+  if (safetyRank <= originalRank && !replacesFirstMatch) return result;
+
+  const riskKind = safety.riskKind;
+  result.tone = safetyRank > originalRank ? safety.tone : originalTone;
+  result.riskKind = riskKind;
+  result.overridden = true;
+  if (riskKind === "heat") {
+    result.label = result.tone === "watch" ? "Heat needs attention" : "Heat may affect this plan";
+    result.evidence = Number.isFinite(feelsMax)
+      ? `Feels-like temperatures reach ${valueWithUnit(feelsMax, tempUnit)} during this plan.`
+      : `UV reaches ${Math.round(uvMax)} during this plan.`;
+    result.action = result.tone === "watch"
+      ? "Plan shade, water, cooling breaks, and an indoor option if needed."
+      : "Bring water and plan shade during the hottest part.";
+  } else if (riskKind === "storm") {
+    result.label = "Storms may affect this plan";
+    result.evidence = "Thunderstorms are possible during this plan window.";
+    result.action = "Keep an indoor or delay option if thunder gets close.";
+  } else if (riskKind === "air") {
+    result.label = "Air quality may affect this plan";
+    result.evidence = aqiMax ? `AQI reaches ${Math.round(aqiMax)} during this plan.` : "Air quality may be unhealthy during this plan.";
+    result.action = "Limit strenuous outdoor time, especially for sensitive people.";
+  } else if (riskKind === "wind") {
+    result.label = "Wind may affect this plan";
+    result.evidence = Number.isFinite(gustMax) ? `Gusts reach ${valueWithUnit(gustMax, ` ${windUnit}`)}.` : "Strong wind is possible.";
+    result.action = "Secure loose items and choose a less exposed setup.";
+  } else if (riskKind === "cold") {
+    result.label = "Cold may affect this plan";
+    result.evidence = Number.isFinite(feelsMin) ? `It may feel as cold as ${valueWithUnit(feelsMin, tempUnit)}.` : "Cold conditions overlap this plan.";
+    result.action = "Add layers and keep the outdoor window flexible.";
+  } else if (watch.alert) {
+    result.label = "A weather alert affects this plan";
+    result.evidence = `${watch.alert.event || watch.alert.headline || "A weather alert"} overlaps this plan window.`;
+    result.action = "Check local guidance and keep the plan flexible.";
+  }
+  return result;
+}
+
+function homePlanDecisionPriority({ active, hoursUntil, changed, changeDirection, alertAffectsPlan, tone, riskKind }) {
+  const futureHours = Number.isFinite(hoursUntil) ? hoursUntil : Infinity;
+  const needsAttention = ["watch", "caution", "changed"].includes(tone) && riskKind !== "good";
+  const changedNeedsAction = changed && changeDirection !== "better";
+  const actionNow = (active || futureHours >= 0 && futureHours <= 6) && (alertAffectsPlan || changedNeedsAction || needsAttention);
+  if (actionNow) return 5;
+  if (active) return 4;
+  if (futureHours >= 0 && futureHours <= 24) return 3;
+  if (changed || alertAffectsPlan) return 2;
+  if (needsAttention && futureHours <= 72) return 1;
+  return 0;
+}
+
 function planPulseWhenText(memory, data = state.forecast) {
-  return `${planMemoryDayLabel(memory, data)} · ${planMemoryTimeText(memory)}`;
+  if (memory?.scheduleType === "continuous_span" && memory.span) {
+    const startIndex = data?.daily?.time?.indexOf(memory.span.startDate) ?? -1;
+    const endIndex = data?.daily?.time?.indexOf(memory.span.endDate) ?? -1;
+    const startDay = formatDay(memory.span.startDate, startIndex);
+    const endDay = formatDay(memory.span.endDate, endIndex);
+    if (memory.span.startDate === memory.span.endDate) {
+      return `${startDay} · ${formatClock(memory.span.startHour, 0, false, false)}–${formatClock(memory.span.endHour, 0, false, false)}`;
+    }
+    return `${startDay} at ${formatClock(memory.span.startHour, 0, false, false)}–${endDay} at ${formatClock(memory.span.endHour, 0, false, false)}`;
+  }
+  const window = planMemoryDisplayWindow(memory, data);
+  const day = planMemoryDayLabel(memory, data);
+  const windowCount = Array.isArray(memory?.windows) && memory.windows.length > 1
+    ? ` · ${memory.windows.length} windows`
+    : "";
+  return `${day} · ${formatClock(window.startHour, 0, false, false)}–${formatClock(window.endHour, 0, false, false)}${windowCount}`;
 }
 
 function renderNextPlanCard(item, data = state.forecast) {
@@ -3023,12 +3161,14 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
     return;
   }
 
-  const { watch, activeCount, active, hoursUntil } = decision;
+  const { watch, activeCount, active, hoursUntil, safety, priorityBand } = decision;
   const memory = watch.memory;
   const title = planMemoryTitle(memory);
   const changed = Boolean(watch.change);
   const alertAffectsPlan = Boolean(watch.alert || watch.change?.type === "plan-alert");
-  const label = String(watch.label || "Checking forecast").trim();
+  const decisionTone = safety?.tone || watch.tone || "pending";
+  const riskKind = safety?.riskKind || (typeof planWatchRiskKind === "function" ? planWatchRiskKind(watch) : "good");
+  const label = String(safety?.overridden ? safety.label : watch.label || "Checking forecast").trim();
   const outcome = changed
     ? `${title}: ${watch.change?.title || label}`
     : label === "Looks good"
@@ -3036,26 +3176,39 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
       : `${title}: ${label}`;
   const evidence = changed
     ? planWatchChangeEvidence(watch.change) || watch.change?.body || watch.reason
-    : watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
-  const advice = String(watch.action || watch.advice || "").trim();
+    : safety?.overridden && safety.evidence
+      ? safety.evidence
+      : watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
+  const advice = String(safety?.overridden ? safety.action : watch.action || watch.advice || "").trim();
   const checkedWhen = formatPlanWatchRelativeTimestamp(watch.checkedAt);
-  const when = planWatchWhenText(memory, watch.data || data);
+  const when = planPulseWhenText(memory, watch.data || data);
   const where = placeLabel(memory.place);
-  const kicker = alertAffectsPlan
-    ? "Alert affects this plan"
-    : changed ? "Forecast changed"
-      : active ? "Happening now"
-        : hoursUntil <= 24 ? "Next decision" : "Weather to watch";
+  const showPlace = !(typeof samePlanPlace === "function" && samePlanPlace(memory.place, place));
+  let kicker = "Weather to watch";
+  if (priorityBand === 5) kicker = "Action now";
+  else if (active) kicker = "Happening now";
+  else if (hoursUntil >= 0 && hoursUntil <= 24) kicker = "Next decision";
+  else if (alertAffectsPlan) kicker = "Alert affects this plan";
+  else if (changed) kicker = "Forecast changed";
   const moreCount = Math.max(0, activeCount - 1);
   const compact = (value, limit) => typeof compactForYouText === "function"
     ? compactForYouText(value, limit)
     : String(value || "").slice(0, limit);
+  const changeDirection = changed && ["better", "worse", "changed"].includes(watch.change?.receipt?.direction)
+    ? watch.change.receipt.direction
+    : changed ? "changed" : "";
+  const stateClasses = [
+    `is-${decisionTone}`,
+    riskKind && riskKind !== "good" ? `is-risk-${riskKind}` : "",
+    changed ? "is-changed" : "",
+    changeDirection ? `is-change-${changeDirection}` : ""
+  ].filter(Boolean).join(" ");
 
   slot.hidden = false;
   slot.innerHTML = `
-    <button class="home-plan-decision is-${escapeHtml(watch.tone || "pending")}${changed ? " is-changed" : ""}" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${evidence}. View plan.`)}">
+    <button class="home-plan-decision ${escapeHtml(stateClasses)}" type="button" data-memory-show="${escapeHtml(memory.id)}" data-plan-state="${escapeHtml(changeDirection || decisionTone)}" data-plan-risk="${escapeHtml(riskKind)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${evidence}. View plan.`)}">
       <span class="home-plan-kicker"><span>${escapeHtml(kicker)}</span><em>${escapeHtml(when)}</em></span>
-      <span class="home-plan-place">${escapeHtml(where)}</span>
+      ${showPlace ? `<span class="home-plan-place">${escapeHtml(where)}</span>` : ""}
       <strong>${escapeHtml(outcome)}</strong>
       <span class="home-plan-evidence">${escapeHtml(compact(evidence, 150))}</span>
       ${advice ? `<span class="home-plan-advice"><b>Plan for this</b>${escapeHtml(compact(advice, 120))}</span>` : ""}
@@ -3080,21 +3233,33 @@ function homePlanDecisionCandidate(data = state.forecast, place = state.activePl
     const active = watch.event.startMs <= now && watch.event.endMs >= now;
     const hoursUntil = (watch.event.startMs - now) / hourMs;
     const changed = Boolean(watch.change);
+    const changeDirection = changed ? String(watch.change?.receipt?.direction || "changed") : "";
     const alertAffectsPlan = Boolean(watch.alert || watch.change?.type === "plan-alert");
-    const needsAttention = ["watch", "caution"].includes(watch.tone);
-    const imminent = hoursUntil <= 24 && watch.event.endMs >= now;
+    const safety = homePlanSafetyAssessment(watch);
+    const decisionTone = safety.tone || watch.tone || "pending";
+    const riskKind = safety.riskKind || "good";
+    const needsAttention = ["watch", "caution", "changed"].includes(decisionTone) && riskKind !== "good";
     const nearRisk = needsAttention && hoursUntil <= 72;
-    const earned = changed || alertAffectsPlan || active || imminent || nearRisk;
+    const priorityBand = homePlanDecisionPriority({
+      active,
+      hoursUntil,
+      changed,
+      changeDirection,
+      alertAffectsPlan,
+      tone: decisionTone,
+      riskKind
+    });
+    const earned = priorityBand > 0;
     const attention = planWatchAttentionRank(watch);
     const score =
-      (alertAffectsPlan ? 1000 : 0) +
-      (changed ? 800 : 0) +
-      (active ? 500 : 0) +
-      (imminent ? 300 : 0) +
-      (nearRisk ? 180 : 0) +
+      priorityBand * 10000 +
+      (alertAffectsPlan ? 900 : 0) +
+      (safety.overridden ? 700 : 0) +
+      (changed ? 500 : 0) +
+      (nearRisk ? 200 : 0) +
       attention * 20 -
       Math.max(0, hoursUntil) / 24;
-    return { watch, active, hoursUntil, earned, score };
+    return { watch, active, hoursUntil, earned, score, safety, priorityBand };
   }).filter((candidate) => candidate.earned);
 
   if (!candidates.length) return null;
@@ -5135,7 +5300,7 @@ async function executeNearcastNavigateSkill(args, context) {
   }
   if (destination === "places" || destination === "watching" || destination === "settings") {
     context.receipt.navigation = { type: destination };
-    context.receipt.answer = destination === "places" ? "Opening saved places." : destination === "watching" ? "Opening Watching." : "Opening settings.";
+    context.receipt.answer = destination === "places" ? "Opening saved places." : destination === "watching" ? "Opening Plans." : "Opening settings.";
     return nearcastSkillResult({ status: "opened", message: context.receipt.answer });
   }
   context.receipt.answer = "I do not recognize that Nearcast destination.";
@@ -9047,37 +9212,13 @@ function renderPlanMemorySection() {
   const upcoming = allItems.filter((item) => !item.isPast);
   if (!upcoming.length) return "";
   const summary = upcoming.length === 1 ? "1 watched plan" : `${upcoming.length} watched plans`;
-  return `<section class="memory-section ask-watch-summary" aria-label="Watched plans">` +
+  return `<section class="memory-section ask-watch-summary" aria-label="Plans">` +
     `<div class="ai-section-title memory-section-title">` +
-      `<strong>Watching</strong>` +
+      `<strong>Plans</strong>` +
       `<span>${escapeHtml(summary)}</span>` +
       `<button class="memory-manage-btn" type="button" data-memory-open>Open</button>` +
     `</div>` +
   `</section>`;
-}
-
-function planMemoryPlaceKey(memory) {
-  const place = memory?.place || {};
-  return [
-    placeLabel(place),
-    Number(place.latitude || 0).toFixed(3),
-    Number(place.longitude || 0).toFixed(3)
-  ].join("|");
-}
-
-function groupPlanMemoryItemsByPlace(items) {
-  const groups = new Map();
-  items.forEach((item) => {
-    const key = planMemoryPlaceKey(item.memory);
-    if (!groups.has(key)) {
-      groups.set(key, {
-        label: placeLabel(item.memory.place),
-        items: []
-      });
-    }
-    groups.get(key).items.push(item);
-  });
-  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function planWatchPlaceKey(place) {
@@ -9360,7 +9501,7 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
         : reviewedChange ? "reviewed"
           : comparison.previous ? (baselineIsCurrent ? "baseline" : "stable")
             : "baseline";
-  return {
+  const watch = {
     ...item,
     ...truth,
     source,
@@ -9383,6 +9524,21 @@ function planWatchItemForMemoryItem({ memory, event = null, isHere = false, isPa
     changeDetectedAt: Number(storedReceipt?.detectedAt || change?.receipt?.checkedAt || 0) || 0,
     isPast: past
   };
+  const safety = homePlanSafetyAssessment(watch);
+  if (!safety.overridden) return watch;
+  const resolvedWatch = {
+    ...watch,
+    tone: safety.tone,
+    riskKind: safety.riskKind,
+    label: safety.label,
+    fullReason: safety.evidence || watch.fullReason,
+    reason: safety.evidence || watch.reason,
+    action: safety.action || watch.action,
+    advice: safety.action || watch.advice,
+    safetyOverride: safety
+  };
+  resolvedWatch.notification = planWeatherNotificationState(resolvedWatch);
+  return resolvedWatch;
 }
 
 function planWatchWhenText(memory, data = state.forecast) {
@@ -9390,7 +9546,12 @@ function planWatchWhenText(memory, data = state.forecast) {
 }
 
 function planWatchMetaText(memory, watch) {
-  return `${planWatchWhenText(memory, watch?.data || state.forecast)} · ${placeLabel(memory.place)}`;
+  const when = planPulseWhenText(memory, watch?.data || state.forecast);
+  const samePlace = Boolean(
+    watch?.isHere ||
+    (state.activePlace && typeof samePlanPlace === "function" && samePlanPlace(memory.place, state.activePlace))
+  );
+  return [when, samePlace ? "" : placeLabel(memory.place)].filter(Boolean).join(" · ");
 }
 
 function renderPlanWatchStatus(watch) {
@@ -9421,34 +9582,6 @@ function planWatchChangeEvidence(change) {
   const metric = change?.receipt?.metric;
   if (!metric?.before || !metric?.after) return change?.body || "";
   return `${metric.label}: ${metric.before} → ${metric.after}`;
-}
-
-function planWatchOverviewFactRows(watchItems) {
-  const upcoming = (watchItems || []).filter((watch) => !watch?.isPast);
-  const savedPlaces = placeWatchSavedPlaces().length;
-  const selectedPlaces = placeWatchNotificationSelectedCount();
-  const enabledPlans = planWatchNotificationEnabledCount(upcoming);
-  const notificationsOn = planWatchNotificationsEnabled();
-  const allowedCount = enabledPlans + (placeWatchNotificationsRequested() ? selectedPlaces : 0);
-  const facts = [
-    {
-      value: String(upcoming.length),
-      label: upcoming.length === 1 ? "active plan" : "active plans"
-    },
-    {
-      value: selectedPlaces ? String(selectedPlaces) : String(savedPlaces),
-      label: selectedPlaces
-        ? selectedPlaces === 1 ? "place can notify" : "places can notify"
-        : savedPlaces === 1 ? "saved place" : "saved places"
-    },
-    {
-      value: notificationsOn ? String(allowedCount) : planWatchNotificationPermission() === "denied" ? "Blocked" : "In app",
-      label: notificationsOn
-        ? allowedCount === 1 ? "can notify you" : "can notify you"
-        : "notifications"
-    }
-  ];
-  return facts.filter((fact) => fact.value !== "0");
 }
 
 function renderPlanWatchOverview(watchItems) {
@@ -9499,19 +9632,11 @@ function renderPlanWatchOverview(watchItems) {
     title = "Your places are ready to watch";
     body = "Choose which saved places are worth notifications for meaningful today or tomorrow changes.";
   }
-  const facts = planWatchOverviewFactRows(upcoming);
   return `
     <section class="plan-watch-overview is-${escapeHtml(tone)}">
       <span>${escapeHtml(kicker)}</span>
       <h3>${escapeHtml(title)}</h3>
       <small>${escapeHtml(planWatchCompactText(body, 136))}</small>
-      ${facts.length ? `
-        <div class="plan-watch-overview-facts">
-          ${facts.map((fact) => `
-            <em><b>${escapeHtml(fact.value)}</b>${escapeHtml(fact.label)}</em>
-          `).join("")}
-        </div>
-      ` : ""}
     </section>
   `;
 }
@@ -9568,7 +9693,7 @@ function setGlobalMemorySheetFocusedMode(focused) {
   if (sub) {
     sub.textContent = focused
       ? "Your plan, checked against the forecast"
-      : "Plans Nearcast is keeping an eye on";
+      : "Upcoming plans and meaningful changes";
   }
   els.memorySheet?.classList.toggle("is-focused-plan", Boolean(focused));
 }
@@ -9587,7 +9712,7 @@ function renderFocusedPlanNotifyLimit(watch, effectivePast) {
   if (effectivePast || !watch?.memory?.id) return "";
   const copy = planWatchNotificationPlanCopy(watch.memory.id);
   if (copy.action !== "limit") return "";
-  return `<p class="focused-plan-notify-limit">Notifications are already on for 3 plans. Turn one off in Watching before choosing this plan.</p>`;
+  return `<p class="focused-plan-notify-limit">Notifications are already on for 3 plans. Turn one off in Plans before choosing this plan.</p>`;
 }
 
 function renderFocusedPlanChangeBlock(watch) {
@@ -9741,6 +9866,36 @@ function renderPastPlanDisclosure(past, watchById) {
   `;
 }
 
+function renderPlanWatchSecondaryDisclosure(watchItems) {
+  const management = renderPlanWatchNotificationManagementSurface(watchItems, { compact: true });
+  const updates = renderPlanWatchRecentUpdates();
+  if (!management && !updates) return "";
+
+  const updateCount = readPlanWatchRecentUpdates().length;
+  const permission = planWatchNotificationPermission();
+  const delivery = planWatchRegistrationHealth();
+  const notificationState = planWatchNotificationsEnabled()
+    ? delivery.ready ? "Notifications on" : "Delivery needs attention"
+    : permission === "denied" ? "Notifications blocked" : "Notifications optional";
+  const meta = [
+    notificationState,
+    updateCount ? `${updateCount} recent ${updateCount === 1 ? "update" : "updates"}` : ""
+  ].filter(Boolean).join(" · ");
+
+  return `
+    <details class="past-plan-disclosure plan-tools-disclosure">
+      <summary>
+        <span>Notifications &amp; activity</span>
+        <small>${escapeHtml(meta)}</small>
+      </summary>
+      <div class="memory-list global-memory-list">
+        ${management}
+        ${updates}
+      </div>
+    </details>
+  `;
+}
+
 function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past, watchById }) {
   const otherUpcoming = upcoming.filter((item) => item.memory.id !== focusedItem.memory.id);
   return `
@@ -9763,9 +9918,6 @@ function renderGlobalMemorySheet() {
     b.memory.startHour - a.memory.startHour ||
     b.memory.updatedAt - a.memory.updatedAt
   );
-  const here = upcoming.filter((item) => item.isHere);
-  const elsewhere = upcoming.filter((item) => !item.isHere);
-  const otherGroups = groupPlanMemoryItemsByPlace(elsewhere);
   const allWatchItems = items.map(planWatchItemForMemoryItem);
   const watchItems = allWatchItems.filter((watch) => !watch.isPast);
   const watchById = new Map(allWatchItems.map((watch) => [watch.memory.id, watch]));
@@ -9797,29 +9949,46 @@ function renderGlobalMemorySheet() {
 
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
-      ${renderPlanWatchNotificationManagementSurface(watchItems)}
-      ${renderPlanWatchRecentUpdates()}
       <section class="memory-empty-state">
-        <strong>Nothing being watched yet</strong>
-        <p>Use Plan Check for a real plan, then watch it when the forecast matters.</p>
+        <strong>No plans yet</strong>
+        <p>Add something you care about and Nearcast will keep its exact time and place checked against the forecast.</p>
         <button type="button" data-memory-new>Create a plan</button>
       </section>
+      ${renderPlanWatchSecondaryDisclosure(watchItems)}
     `;
     return;
   }
 
+  const sortedUpcoming = [...upcoming].sort((a, b) =>
+    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity) ||
+    b.memory.updatedAt - a.memory.updatedAt
+  );
+  const needsAttention = sortedUpcoming.filter((item) => {
+    const watch = watchById.get(item.memory.id);
+    return Boolean(
+      watch?.change ||
+      watch?.comparisonState === "stale" ||
+      ["watch", "caution"].includes(watch?.tone)
+    );
+  }).sort((a, b) =>
+    planWatchAttentionRank(watchById.get(b.memory.id)) - planWatchAttentionRank(watchById.get(a.memory.id)) ||
+    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
+  );
+  const attentionIds = new Set(needsAttention.map((item) => item.memory.id));
+  const upcomingSteady = sortedUpcoming.filter((item) => !attentionIds.has(item.memory.id));
+
   els.memorySheetBody.innerHTML =
-    renderPlanWatchNotificationManagementSurface(watchItems) +
-    renderPlanWatchRecentUpdates() +
-    renderGlobalMemoryGroup("This place", here, {
-      sub: state.activePlace ? placeLabel(state.activePlace) : "",
+    renderGlobalMemoryGroup("Needs attention", needsAttention, {
+      sub: needsAttention.length === 1 ? "1 plan" : `${needsAttention.length} plans`,
       watchById
     }) +
-    otherGroups.map((group) =>
-      renderGlobalMemoryGroup(group.label, group.items, { sub: `${group.items.length} upcoming`, watchById })
-    ).join("") +
-    renderGlobalMemoryGroup("Past plans", past, { sub: "kept locally until you forget them", watchById }) +
-    `<button class="memory-new-btn" type="button" data-memory-new>Add a plan</button>`;
+    renderGlobalMemoryGroup("Upcoming plans", upcomingSteady, {
+      sub: upcomingSteady.length === 1 ? "1 upcoming" : `${upcomingSteady.length} upcoming`,
+      watchById
+    }) +
+    `<button class="memory-new-btn" type="button" data-memory-new>Add a plan</button>` +
+    renderPastPlanDisclosure(past, watchById) +
+    renderPlanWatchSecondaryDisclosure(watchItems);
 }
 
 function scrollFocusedPlanWatchCard() {

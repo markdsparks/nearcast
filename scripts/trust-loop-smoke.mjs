@@ -86,6 +86,65 @@ assert.match(app, /New forecast change[\s\S]*unreviewed/, "Today labels an unsee
 assert.match(app, /Last checked \$\{checkedWhen\}/, "Today shows when the watched plan was last checked");
 assert.match(app, /watchingOwnsPlanChange/, "the canonical watched-plan receipt wins over a duplicate continuity card");
 assert.match(styles, /\.for-you-watch-check \{[\s\S]*font-size: 0\.78rem/, "watch freshness remains readable on Today");
+assert.match(planner, /function homePlanExplicitlyExcludesExposure\([\s\S]*inside\|indoors/, "explicit indoor plans can opt out of outdoor exposure escalation");
+assert.match(planner, /function homePlanSafetyAssessment\([\s\S]*feelsMaxF >= 100[\s\S]*uvMax >= 8/, "the home plan verdict escalates dangerous heat and UV instead of saying looks good");
+assert.match(planner, /function planWatchItemForMemoryItem\([\s\S]*homePlanSafetyAssessment\(watch\)[\s\S]*resolvedWatch\.notification = planWeatherNotificationState\(resolvedWatch\)/, "all plan surfaces and notifications share the same safety-resolved decision");
+assert.match(planner, /const resolvedWatch = \{[\s\S]*riskKind: safety\.riskKind,[\s\S]*label: safety\.label/, "the selected hazard kind propagates with the safety-resolved watch");
+assert.match(planner, /function homePlanDecisionPriority\([\s\S]*changeDirection !== "better"[\s\S]*if \(actionNow\) return 5;[\s\S]*if \(active\) return 4;[\s\S]*futureHours >= 0 && futureHours <= 24[\s\S]*if \(changed \|\| alertAffectsPlan\) return 2;/, "plan promotion ranks action-now, active, next-day, then distant changes without treating an improvement as urgent");
+assert.match(planner, /data-plan-state=[\s\S]*data-plan-risk=/, "the promoted plan exposes change and resulting-risk semantics to its styling layer");
+assert.match(planner, /showPlace[\s\S]*samePlanPlace\(memory\.place, place\)[\s\S]*home-plan-place/, "the promoted plan omits a location that repeats the active place");
+assert.match(planner, /scheduleType === "continuous_span"[\s\S]*startDay\} at[\s\S]*endDay\} at/, "continuous plan timing reads as a human date-and-time range");
+assert.match(planner, /const when = planPulseWhenText\(memory, watch\.data \|\| data\)/, "the promoted plan renders the human timing text");
+assert.match(planner, /function planWatchMetaText\([\s\S]*planPulseWhenText\([\s\S]*samePlace[\s\S]*filter\(Boolean\)\.join/, "the Plans destination shares human timing and omits a repeated active place");
+
+const homeDecisionStart = planner.indexOf("function homePlanToneRank(");
+const homeDecisionEnd = planner.indexOf("function planPulseWhenText(", homeDecisionStart);
+assert.ok(homeDecisionStart >= 0 && homeDecisionEnd > homeDecisionStart, "home plan safety helpers can be isolated for runtime testing");
+const homeDecisionSandbox = {
+  planWeatherUnitFromItem(item) {
+    return String(item?.units?.temp || "").includes("C") ? "celsius" : "fahrenheit";
+  },
+  planWatchRiskKind(item) {
+    const stats = item?.stats || {};
+    if ((stats.rainChance || 0) >= 35) return "rain";
+    if ((stats.feelsMax ?? stats.feelsAvg ?? 0) >= 88 || (stats.uvMax || 0) >= 8) return "heat";
+    return "good";
+  }
+};
+vm.createContext(homeDecisionSandbox);
+vm.runInContext(planner.slice(homeDecisionStart, homeDecisionEnd), homeDecisionSandbox);
+const hotOutdoorPlan = vm.runInContext(`homePlanSafetyAssessment(${JSON.stringify({
+  tone: "good",
+  label: "Looks good",
+  memory: { title: "Community event" },
+  units: { temp: "°F", wind: "mph" },
+  stats: { feelsMax: 97, uvMax: 8 }
+})})`, homeDecisionSandbox);
+assert.equal(hotOutdoorPlan.tone, "caution", "a hot outdoor plan cannot remain good");
+assert.equal(hotOutdoorPlan.overridden, true);
+assert.doesNotMatch(hotOutdoorPlan.label, /looks good/i);
+const hotIndoorPlan = vm.runInContext(`homePlanSafetyAssessment(${JSON.stringify({
+  tone: "good",
+  label: "Looks good",
+  memory: { title: "Indoor community event" },
+  units: { temp: "°F", wind: "mph" },
+  stats: { feelsMax: 97, uvMax: 8 }
+})})`, homeDecisionSandbox);
+assert.equal(hotIndoorPlan.tone, "good", "an explicitly indoor plan does not inherit outdoor exposure risk");
+const mixedRainAndDangerousHeat = vm.runInContext(`homePlanSafetyAssessment(${JSON.stringify({
+  tone: "caution",
+  label: "Keep an eye on rain",
+  memory: { title: "Community event" },
+  units: { temp: "°F", wind: "mph" },
+  stats: { rainChance: 40, feelsMax: 105, uvMax: 7 }
+})})`, homeDecisionSandbox);
+assert.equal(mixedRainAndDangerousHeat.riskKind, "heat", "a first-match rain classification cannot hide dangerous heat");
+assert.equal(mixedRainAndDangerousHeat.tone, "watch");
+assert.equal(mixedRainAndDangerousHeat.label, "Heat needs attention");
+assert.equal(vm.runInContext("homePlanDecisionPriority({ active: true, hoursUntil: -1, changed: false, changeDirection: '', alertAffectsPlan: false, tone: 'good', riskKind: 'good' })", homeDecisionSandbox), 4);
+assert.equal(vm.runInContext("homePlanDecisionPriority({ active: false, hoursUntil: 12, changed: false, changeDirection: '', alertAffectsPlan: false, tone: 'good', riskKind: 'good' })", homeDecisionSandbox), 3);
+assert.equal(vm.runInContext("homePlanDecisionPriority({ active: false, hoursUntil: 48, changed: true, changeDirection: 'worse', alertAffectsPlan: false, tone: 'good', riskKind: 'good' })", homeDecisionSandbox), 2);
+assert.equal(vm.runInContext("homePlanDecisionPriority({ active: false, hoursUntil: 2, changed: true, changeDirection: 'better', alertAffectsPlan: false, tone: 'good', riskKind: 'good' })", homeDecisionSandbox), 3, "a better forecast remains a next-day item, not an action-now warning");
 
 assert.match(planner, /const PLAN_WATCH_PUSH_HEALTH_KEY/, "notification delivery health persists locally");
 assert.match(planner, /pushLastAttemptAt:[\s\S]*pushLastAttemptState:[\s\S]*pushLastSuccessAt:/, "attempt and success are distinct delivery facts");

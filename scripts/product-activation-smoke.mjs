@@ -120,14 +120,16 @@ for (const destination of ["today", "hourly", "map", "plans"]) {
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(els\.planPulse, hourlyPanel/, "an earned plan decision sits between current conditions and the hourly outlook");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(els\.planPulse, hourlyPanel, nowcast, dailyPanel, map/, "the primary scroll story is now, earned plan, hourly outlook, daily, then map");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, dailyPanel, map/, "imminent precipitation can lead the earned plan, hourly outlook, daily, and conditional map story");
+assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /meaningfulChange[\s\S]*launch-next-change-button/, "the hero exposes one concise next meaningful weather change");
+assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
+assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEarned[\s\S]*mapView\.hidden = !earned/, "the Today map preview appears only when precipitation makes it useful");
 assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"[\s\S]*data-hourly-metric="feels"[\s\S]*data-hourly-metric="precipitation"/, "the hourly hero exposes three explicit trend lenses");
 assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");
 assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");
 assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
 assert.match(extractFunction(app, "buildForecastStory"), /This morning's outlook[\s\S]*This afternoon's outlook[\s\S]*Tonight's outlook/, "the forecast narrative changes with the local time of day");
-assert.match(planner, /function homePlanDecisionCandidate[\s\S]*?changed \|\| alertAffectsPlan \|\| active \|\| imminent \|\| nearRisk/, "homepage plans must earn promotion through timing, change, alert overlap, or risk");
+assert.match(planner, /function homePlanDecisionCandidate[\s\S]*?homePlanDecisionPriority[\s\S]*?const earned = priorityBand > 0/, "homepage plans earn promotion through the shared action, timing, change, alert, and risk priority");
 assert.match(extractFunction(planner, "renderPlanPulse"), /home-plan-decision[\s\S]*?data-memory-show/, "the promoted decision opens the exact watched plan");
 assert.match(extractFunction(app, "forYouWatchingCard"), /homePlanDecisionCandidate[\s\S]*?Do not repeat a lower-value Watching card below/, "promoted plans are not duplicated later on the homepage");
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
@@ -135,7 +137,12 @@ assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later ins
 assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
 assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
+assert.match(extractFunction(app, "noteSheetShown"), /prepareSheetAccessibility\(sheet\)/, "every shared modal sheet enters the common focus lifecycle");
+assert.match(extractFunction(app, "trapTopmostSheetFocus"), /event\.key !== "Tab"[\s\S]*topmostShownSheet\(\)[\s\S]*focus\(/, "non-AI modal sheets keep keyboard focus inside the active surface");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
+assert.match(html, /id="alertAnnouncement"[^>]*role="alert"[^>]*aria-live="assertive"[^>]*aria-atomic="true"/, "urgent asynchronous alerts have a dedicated assertive announcement");
+assert.match(extractFunction(app, "syncLaunchAlertReadingOrder"), /urgent[\s\S]*?placeRow\.after\(bar\)[\s\S]*?invitation\.before\(bar\)/, "urgent alerts move into the visible and assistive-tech reading order");
+assert.match(extractFunction(app, "renderAlerts"), /const urgent = alertTone\(top\) === "warning"[\s\S]*?syncLaunchAlertReadingOrder\(urgent\)[\s\S]*?announceUrgentLaunchAlert/, "new urgent alerts are reordered and announced through one shared render path");
 assert.match(html, /id="planInvitation"[^>]*aria-live="off"[^>]*hidden/, "forecast refreshes do not repeatedly announce the invitation");
 assert.match(html, /id="planInvitationDismiss"[^>]*aria-label="Dismiss plan suggestion"/, "the invitation is explicitly dismissible");
 assert.equal((html.match(/data-plan-invitation-template=/g) || []).length, 3, "three concrete plan starters are offered");
@@ -143,10 +150,8 @@ for (const label of ["Evening walk", "Practice", "Patio dinner"]) {
   assert.ok(html.includes(`>${label}</button>`), `${label} stays concise enough for the phone-width shortcut row`);
 }
 
-const placesIndex = html.indexOf('id="placeSwitcher"');
-const watchingIndex = html.indexOf('id="watchingSwitcher"');
-assert.ok(placesIndex >= 0 && watchingIndex > placesIndex, "Watching is a stable destination directly below Places");
-assert.match(html, /id="watchingSwitcher"[^>]*aria-label="Open Watching"/, "the Watching destination has a useful accessible name");
+assert.doesNotMatch(html, /id="watchingSwitcher"/, "the app menu does not duplicate the permanent Plans destination");
+assert.match(html, /id="appDockPlansBadge"[^>]*hidden/, "Plans reserves a quiet attention-only dock badge");
 
 assert.match(app, /const PLAN_INVITATION_DISMISS_MS = 30 \* 24 \* 60 \* 60 \* 1000/, "dismissal is persisted for a calm 30-day interval");
 assert.match(app, /const PLAN_INVITATION_MAX_IMPRESSIONS = 3/, "ignored invitations stop after a small number of sessions");
@@ -191,20 +196,19 @@ assert.match(app, /if \(planInvitationIsUnresolved\(\)\) return false/, "the ins
 assert.match(app, /function retirePlanInvitationForPlanCheckEntry\([\s\S]*recordForYouSignal\("plan"\)[\s\S]*renderPlanInvitation\(\)[\s\S]*updateInstallPromptUI\(\)/, "the shared Plan Check entry transition retires the invitation and yields the next earned prompt");
 assert.match(app, /function retirePlanInvitationForPlanCheckEntry\([\s\S]*forYouSignalState\("plan"\)\.count === 0/, "a deliberate first Plan Check visit persists even while the invitation is ineligible or snoozed");
 assert.match(planner, /function openAISheet\([\s\S]*retirePlanInvitationForPlanCheckEntry\(\)/, "every Plan Check entry path shares the invitation retirement transition");
-assert.match(app, /bindTapAction\(els\.watchingSwitcher,[\s\S]*closeAppMenu\(\);[\s\S]*openGlobalMemorySheet\(\)/, "Watching opens the overview and closes the menu");
-assert.match(app, /const hasWeatherContext = !welcomeIsActive\(\)/, "Watching stays out of the no-place welcome state");
+assert.match(extractFunction(app, "handleAppDockAction"), /action === "plans"[\s\S]*openGlobalMemorySheet\(\)/, "Plans opens its overview from the permanent dock destination");
 
 assert.match(planner, /if \(option\.confirmPlan\) \{[\s\S]*recordForYouSignal\("plan-check-confirmed"\)/, "confirmation is measured at the actual Looks right transition");
 assert.match(planner, /normalized\.event[\s\S]*recordForYouSignal\("plan-check-completed"\)/, "only a valid plan result completes the check funnel");
 assert.match(planner, /savePlanMemories\(\);[\s\S]*recordForYouSignal\("plan-watched"\)/, "watch creation is measured only after local persistence succeeds");
-assert.match(planner, /function openGlobalMemorySheet\([\s\S]*recordForYouSignal\("watching-open"\)/, "all Watching entry points share one local open signal");
-assert.match(planner, /Nothing being watched yet[\s\S]*data-memory-new>Create a plan/, "the persistent destination has a useful zero-plan state");
+assert.match(planner, /function openGlobalMemorySheet\([\s\S]*recordForYouSignal\("watching-open"\)/, "all Plans entry points share one local open signal");
+assert.match(planner, /No plans yet[\s\S]*data-memory-new>Create a plan/, "the persistent destination has a useful zero-plan state");
 
 assert.match(styles, /\.plan-invitation-copy strong[\s\S]*font-size: 1\.03rem/, "the invitation headline is readable rather than micro text");
 assert.match(styles, /\.plan-invitation-examples[\s\S]*grid-template-columns: repeat\(3/, "example actions share a stable row");
 assert.match(styles, /\.plan-invitation-dismiss \{[\s\S]*width: 44px;[\s\S]*height: 44px;/, "dismissal has a reliable touch target");
 assert.match(styles, /\.plan-invitation-examples button \{[\s\S]*min-height: 44px;/, "plan starters have reliable touch targets");
-assert.match(styles, /\.watching-switcher-count\[hidden\]/, "a zero Watching count does not leave an empty badge");
+assert.match(styles, /\.app-dock-badge\[hidden\]/, "a zero Plans attention count does not leave an empty dock badge");
 assert.doesNotMatch(html, /class="ai-trust-note"/, "the AI sheet no longer leads with an explanatory card");
 assert.match(html, /class="day-sheet ai-sheet is-entry"[\s\S]*id="askChatLog"[\s\S]*<textarea id="askInput"[\s\S]*aria-label="Ask Nearcast"/, "Nearcast keeps a persistent prompt and conversation shell");
 assert.match(planner, /setNearcastAISurfaceMode\("conversation", \{ render: false \}\)[\s\S]*beginAskResponse\(question\)/, "every submitted prompt promotes into the conversation workspace");

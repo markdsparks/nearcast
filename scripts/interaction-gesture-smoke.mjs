@@ -25,6 +25,7 @@ assert.match(styles, /\.hour-card\s*\{[\s\S]*?touch-action: pan-x pan-y;/, "hour
 
 assert.match(app, /function bindSheetPullToDismiss\(sheet, dismiss, canDismiss = null\)/, "sheets share one configurable pull-dismiss gesture");
 assert.match(app, /function showSheet\(backdrop, sheet, options = \{\}\)[\s\S]*?onPullDismiss[\s\S]*?bindSheetPullToDismiss/, "the shared show contract registers pull dismissal");
+assert.match(app, /function restoreFocusAfterSheet\(sheet\)[\s\S]*?const returnFocus = state\.returnFocus[\s\S]*?canRestoreSheetFocus\(returnFocus, topSheet\)[\s\S]*?returnFocus\.focus/, "closing a nested sheet restores its initiating control inside the still-open parent");
 assert.match(app, /distanceThreshold[\s\S]*recentVelocity >= 0\.65/, "sheet dismissal supports deliberate pulls and recent downward flicks");
 assert.match(app, /pointercancel[\s\S]*finish\(cancelEvent, true\)/, "cancelled sheet gestures snap back instead of dismissing");
 assert.match(app, /isTopmostShownSheet\(sheet\)/, "only the top visible sheet can claim the pull gesture");

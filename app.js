@@ -1,4 +1,4 @@
-const VERSION = "3.0.334";
+const VERSION = "3.0.337";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation"]);
@@ -869,6 +869,22 @@ function activeWatchingPlanCount() {
   return memories.filter((memory) => !planWatchMemoryIsPast(memory)).length;
 }
 
+function actionableWatchingPlanCount() {
+  if (
+    !state.forecast ||
+    !state.activePlace ||
+    typeof planMemoryListItems !== "function" ||
+    typeof planWatchItemForMemoryItem !== "function"
+  ) return 0;
+  return planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+    .map(planWatchItemForMemoryItem)
+    .filter((watch) => watch && !watch.isPast && Boolean(
+      watch.change ||
+      watch.comparisonState === "stale" ||
+      ["watch", "caution"].includes(watch.tone)
+    )).length;
+}
+
 function renderWatchingSwitcher() {
   if (!els.watchingSwitcher) return;
   const row = els.watchingSwitcher.closest(".watching-menu-row");
@@ -880,7 +896,7 @@ function renderWatchingSwitcher() {
   const placeCount = typeof placeWatchNotificationSelectedCount === "function"
     ? Math.max(0, Number(placeWatchNotificationSelectedCount()) || 0)
     : 0;
-  const total = planCount + placeCount;
+  const attentionCount = actionableWatchingPlanCount();
   let meta = "Plans and saved places";
   if (planCount && placeCount) {
     meta = `${planCount} ${planCount === 1 ? "plan" : "plans"} · ${placeCount} ${placeCount === 1 ? "place" : "places"}`;
@@ -892,10 +908,13 @@ function renderWatchingSwitcher() {
 
   if (els.watchingSwitcherMeta) els.watchingSwitcherMeta.textContent = meta;
   if (els.watchingSwitcherCount) {
-    els.watchingSwitcherCount.hidden = total === 0;
-    els.watchingSwitcherCount.textContent = total ? String(total) : "";
+    els.watchingSwitcherCount.hidden = attentionCount === 0;
+    els.watchingSwitcherCount.textContent = attentionCount ? String(attentionCount) : "";
   }
-  els.watchingSwitcher.setAttribute("aria-label", `Open Watching. ${meta}.`);
+  els.watchingSwitcher.setAttribute(
+    "aria-label",
+    `Open Plans. ${meta}.${attentionCount ? ` ${attentionCount} ${attentionCount === 1 ? "plan needs" : "plans need"} attention.` : ""}`
+  );
 }
 
 const mapState = {
@@ -1364,6 +1383,7 @@ const els = {
   nowSummary: document.querySelector("#nowSummary"),
   forYouToday: document.querySelector("#forYouToday"),
   appDock: document.querySelector("#appDock"),
+  appDockPlansBadge: document.querySelector("#appDockPlansBadge"),
   planInvitation: document.querySelector("#planInvitation"),
   planInvitationOpen: document.querySelector("#planInvitationOpen"),
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
@@ -3296,7 +3316,10 @@ function arrangeForecastHierarchy() {
   // The outlook and its hourly evidence are one hero. Keeping them in a single
   // surface makes the prose explain the trend instead of competing with it.
   hourlyPanel.prepend(hero);
-  launch.after(els.planPulse, hourlyPanel, nowcast, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
+  // An active 15-minute nowcast is the most time-sensitive forecast on the
+  // page. It stays hidden when dry, but when rain or snow is imminent it must
+  // appear before the plan and broad hourly outlook.
+  launch.after(nowcast, els.planPulse, hourlyPanel, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -3880,6 +3903,7 @@ function bindEvents() {
       toggleSearch(false);
     }
   });
+  document.addEventListener("keydown", trapTopmostSheetFocus, true);
 
   bindTapAction(els.unitToggle, () => {
     const oldUnit = state.unit;
@@ -6273,6 +6297,7 @@ function setForecastLaunchLoading(place) {
   clearPlanInvitationImpressionObserver();
   const alertBar = document.getElementById("alertBar");
   if (alertBar) alertBar.hidden = true;
+  document.querySelector(".launch-stage")?.classList.remove("has-urgent-alert");
 }
 
 function clearForecastLaunchLoading() {
@@ -6821,7 +6846,10 @@ function updatePlaceSwitcher() {
   const place = state.activePlace || state.savedPlaces[0];
   const count = state.savedPlaces.length;
   const g = place ? glanceData[place.id] : null;
-  els.launchPlaceButton.setAttribute("aria-label", `Open saved places for ${place ? place.name : "current place"}`);
+  els.launchPlaceButton.setAttribute(
+    "aria-label",
+    `${place ? placeLabel(place) : "Current place"}, change place`
+  );
   els.placeSwitcherName.textContent = place ? place.name : "Places";
   els.placeSwitcherMeta.textContent =
     `${count} saved${g ? ` · ${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}`;
@@ -6854,21 +6882,127 @@ function updatePlaceGlance(placeId) {
 
 const sheetPullDismissStates = new WeakMap();
 const shownSheetStack = [];
+const sheetAccessibilityStates = new WeakMap();
+const SHEET_FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
 
-function noteSheetShown(sheet) {
-  const priorIndex = shownSheetStack.indexOf(sheet);
-  if (priorIndex >= 0) shownSheetStack.splice(priorIndex, 1);
-  shownSheetStack.push(sheet);
+function visibleSheetFocusables(sheet) {
+  return [...sheet.querySelectorAll(SHEET_FOCUSABLE_SELECTOR)].filter((element) => {
+    if (!(element instanceof HTMLElement) || element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+  });
 }
 
-function isTopmostShownSheet(sheet) {
+function topmostShownSheet() {
   for (let index = shownSheetStack.length - 1; index >= 0; index -= 1) {
     const candidate = shownSheetStack[index];
     if (!candidate?.isConnected || candidate.hidden || !candidate.classList.contains("show")) {
       shownSheetStack.splice(index, 1);
     }
   }
-  return shownSheetStack[shownSheetStack.length - 1] === sheet;
+  return shownSheetStack[shownSheetStack.length - 1] || null;
+}
+
+function focusShownSheet(sheet) {
+  if (!sheet || sheet.hidden || !sheet.classList.contains("show")) return;
+  if (sheet.contains(document.activeElement)) return;
+  const target = sheet.querySelector("[autofocus], .sheet-close") || visibleSheetFocusables(sheet)[0] || sheet;
+  if (!sheet.hasAttribute("tabindex")) sheet.setAttribute("tabindex", "-1");
+  target.focus?.({ preventScroll: true });
+}
+
+function canRestoreSheetFocus(element, containingSheet = null) {
+  if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+  if (containingSheet && !containingSheet.contains(element)) return false;
+  if (element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+}
+
+function restoreFocusAfterSheet(sheet) {
+  const state = sheetAccessibilityStates.get(sheet);
+  if (!state?.active) return;
+  state.active = false;
+  const returnFocus = state.returnFocus;
+  setTimeout(() => {
+    // A quick reopen starts a new focus lifecycle; the stale close must not
+    // pull focus out of the newly opened sheet.
+    if (state.active) return;
+    const topSheet = topmostShownSheet();
+    if (topSheet) {
+      if (canRestoreSheetFocus(returnFocus, topSheet)) {
+        returnFocus.focus({ preventScroll: true });
+        return;
+      }
+      focusShownSheet(topSheet);
+      return;
+    }
+    if (canRestoreSheetFocus(returnFocus)) returnFocus.focus({ preventScroll: true });
+  }, 280);
+}
+
+function prepareSheetAccessibility(sheet) {
+  let state = sheetAccessibilityStates.get(sheet);
+  if (!state) {
+    state = { active: false, returnFocus: null, observer: null };
+    state.observer = new MutationObserver(() => {
+      if (state.active && (sheet.hidden || !sheet.classList.contains("show"))) {
+        restoreFocusAfterSheet(sheet);
+      }
+    });
+    state.observer.observe(sheet, { attributes: true, attributeFilter: ["class", "hidden"] });
+    sheetAccessibilityStates.set(sheet, state);
+  }
+  if (!state.active) {
+    state.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+  state.active = true;
+  if (sheet.getAttribute("role") === "dialog") sheet.setAttribute("aria-modal", "true");
+  if (sheet.id !== "aiSheet") requestAnimationFrame(() => focusShownSheet(sheet));
+}
+
+function trapTopmostSheetFocus(event) {
+  if (event.key !== "Tab" || event.defaultPrevented) return;
+  const sheet = topmostShownSheet();
+  // Nearcast AI has composer-specific focus behavior of its own.
+  if (!sheet || sheet.id === "aiSheet") return;
+  const focusables = visibleSheetFocusables(sheet);
+  if (!focusables.length) {
+    event.preventDefault();
+    focusShownSheet(sheet);
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+  if (!sheet.contains(active)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus({ preventScroll: true });
+  } else if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus({ preventScroll: true });
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus({ preventScroll: true });
+  }
+}
+
+function noteSheetShown(sheet) {
+  const priorIndex = shownSheetStack.indexOf(sheet);
+  if (priorIndex >= 0) shownSheetStack.splice(priorIndex, 1);
+  shownSheetStack.push(sheet);
+  prepareSheetAccessibility(sheet);
+}
+
+function isTopmostShownSheet(sheet) {
+  return topmostShownSheet() === sheet;
 }
 
 function resetSheetPullDismiss(sheet) {
@@ -7926,6 +8060,7 @@ function renderForecastLaunch(ctx) {
   renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderAppDock(ctx.data, ctx.place);
+  renderInlineMapPreviewVisibility(ctx.data, ctx.truth);
   renderWatchingSwitcher();
   renderPlanInvitation();
 }
@@ -9287,18 +9422,59 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
   if (!els.nowSummary) return;
   const items = launchSummaryItems(data, tempUnit, windUnit, truth);
   const current = items[0];
-  launchSummaryTargets = current ? [current.target || null] : [];
+  const meaningfulChange = items.slice(1).find((item) =>
+    item?.meaningful || item?.rainSoon || item?.tone === "rain" || item?.tone === "snow" || item?.tone === "wind"
+  ) || items.find((item, index) => index > 0 && item?.tone === "sun") || null;
+  const meaningfulIndex = meaningfulChange ? items.indexOf(meaningfulChange) : -1;
+  launchSummaryTargets = items.map((item) => item?.target || null);
   els.nowSummary.classList.remove("summary-strip");
+  els.nowSummary.classList.toggle("has-next-change", Boolean(meaningfulChange));
   const value = String(current?.value || "Forecast ready")
     .replace(/\s+-\s+feels\s+/i, " · Feels ");
-  els.nowSummary.innerHTML = `<button class="launch-condition-button is-${escapeHtml(current?.tone || "neutral")}" type="button" data-summary-index="0" aria-label="${escapeHtml(current ? summaryItemAria(current) : value)}"><strong>${escapeHtml(value)}</strong><span aria-hidden="true">›</span></button>`;
-  els.nowSummary.setAttribute("aria-label", current ? summaryItemAria(current) : value);
+  const currentButton = `<button class="launch-condition-button is-${escapeHtml(current?.tone || "neutral")}" type="button" data-summary-index="0" aria-label="${escapeHtml(current ? summaryItemAria(current) : value)}"><strong>${escapeHtml(value)}</strong><span aria-hidden="true">›</span></button>`;
+  const changeButton = meaningfulChange ? `
+    <button class="launch-next-change-button is-${escapeHtml(meaningfulChange.tone || "neutral")}" type="button" data-summary-index="${meaningfulIndex}" aria-label="${escapeHtml(summaryItemAria(meaningfulChange))}">
+      <span>Next</span><strong>${escapeHtml(meaningfulChange.value)}</strong><i aria-hidden="true">›</i>
+    </button>
+  ` : "";
+  els.nowSummary.innerHTML = `${currentButton}${changeButton}`;
+  els.nowSummary.removeAttribute("aria-label");
 }
 
 function renderAppDock(data, place) {
   if (!els.appDock) return;
   els.appDock.hidden = !(data && place) || welcomeIsActive();
-  if (!els.appDock.hidden) setAppDockCurrent("today");
+  if (!els.appDock.hidden) {
+    setAppDockCurrent("today");
+    const attentionCount = actionableWatchingPlanCount();
+    if (els.appDockPlansBadge) {
+      els.appDockPlansBadge.hidden = attentionCount === 0;
+      els.appDockPlansBadge.textContent = attentionCount ? String(attentionCount) : "";
+    }
+    const plansButton = els.appDock.querySelector('[data-app-dock="plans"]');
+    plansButton?.setAttribute(
+      "aria-label",
+      attentionCount
+        ? `Plans, ${attentionCount} ${attentionCount === 1 ? "plan needs" : "plans need"} attention`
+        : "Plans"
+    );
+  }
+}
+
+function inlineMapPreviewEarned(data, truth = weatherTruth(data)) {
+  const phase = truth?.precip?.phase;
+  if (phase === "active" || phase === "imminent") return true;
+  if (nextRainChance(data, 12, 40)) return true;
+  return activeAlerts.some((alert) =>
+    /flood|rain|storm|thunder|tornado|snow|squall|hurricane|tropical/i.test(alert?.event || "")
+  );
+}
+
+function renderInlineMapPreviewVisibility(data, truth = weatherTruth(data)) {
+  if (!els.mapView) return;
+  const earned = inlineMapPreviewEarned(data, truth);
+  els.mapView.hidden = !earned;
+  els.mapView.classList.toggle("is-earned-preview", earned);
 }
 
 function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.activePlace) {
@@ -9308,6 +9484,7 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
   renderAppDock(data, place);
+  renderInlineMapPreviewVisibility(data, truth);
   renderWatchingSwitcher();
   renderPlanInvitation();
   syncNativeStormActivity(data, place, truth);
@@ -11141,6 +11318,35 @@ function launchLaterItem(data, tempUnit, windUnit, rainAlreadyCovered = false) {
     };
   }
 
+  const currentFeels = Number(data.current?.apparent_temperature);
+  const apparent = data.hourly?.apparent_temperature || data.hourly?.temperature_2m || [];
+  const futureIndexes = futureHourlyIndexes(data, 18);
+  let comfortShiftIndex = -1;
+  let comfortShiftValue = "";
+  if (Number.isFinite(currentFeels) && currentFeels >= (tempUnit === "F" ? 90 : 32)) {
+    const coolerBy = tempUnit === "F" ? 7 : 4;
+    const comfortableAt = tempUnit === "F" ? 88 : 31;
+    comfortShiftIndex = futureIndexes.find((index) =>
+      Number.isFinite(apparent[index]) && apparent[index] <= Math.min(currentFeels - coolerBy, comfortableAt)
+    ) ?? -1;
+    if (comfortShiftIndex >= 0) comfortShiftValue = `Cooling near ${formatTime(data.hourly.time[comfortShiftIndex])}`;
+  } else if (Number.isFinite(currentFeels) && currentFeels <= (tempUnit === "F" ? 35 : 2)) {
+    const warmerBy = tempUnit === "F" ? 7 : 4;
+    comfortShiftIndex = futureIndexes.find((index) =>
+      Number.isFinite(apparent[index]) && apparent[index] >= currentFeels + warmerBy
+    ) ?? -1;
+    if (comfortShiftIndex >= 0) comfortShiftValue = `Warming near ${formatTime(data.hourly.time[comfortShiftIndex])}`;
+  }
+  if (comfortShiftIndex >= 0 && comfortShiftValue) {
+    return {
+      label: "Later",
+      value: comfortShiftValue,
+      tone: "temp",
+      meaningful: true,
+      target: forecastHourWindowTarget(data, "Later", comfortShiftValue, comfortShiftIndex, 1)
+    };
+  }
+
   const now = forecastNowMs(data);
   const sunMode = todaySunMode(data);
   const sunsetISO = daily.sunset?.[todayIndex];
@@ -11947,7 +12153,17 @@ function renderDaily(data, tempUnit, precipUnit) {
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
     const precipNote = precipProfile.note;
-    const dayAria = `${formatDay(time, index)} detail${stormPotential ? ", thunder possible" : ""}${precipNote ? `, ${precipNote}` : ""}${memoryCue ? `, watched plan ${memoryCue}` : ""}`;
+    const dayAria = [
+      formatDay(time, index),
+      code,
+      `low ${low} degrees`,
+      `high ${high} degrees`,
+      `${rain}% chance of rain${precip > 0 ? ` with ${formatAmount(precip)} ${precipUnit} precipitation` : ""}`,
+      stormPotential ? "thunder possible" : "",
+      precipNote,
+      memoryCue ? `watched plan ${memoryCue}` : "",
+      "Open day details"
+    ].filter(Boolean).join(", ");
     return `
       <article class="day-row${index === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${memoryCue ? " has-plan-memory" : ""}" data-index="${index}" role="button" tabindex="0" aria-label="${escapeHtml(dayAria)}">
         <div class="day-label">
@@ -12978,6 +13194,8 @@ let alertSheetReturnFocus = null;
 let alertSheetUnderlyingDayDetail = null;
 let alertSheetUnderlyingAriaHidden = null;
 let alertSheetUnderlyingWasInert = false;
+let launchAlertAnnouncementSignature = "";
+let launchAlertAnnouncementTimer = null;
 
 async function fetchAlerts(place) {
   const cacheKey = `alerts:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
@@ -12990,7 +13208,7 @@ async function fetchAlerts(place) {
   });
   const alerts = (json.features || [])
     .map((f) => f.properties)
-    .sort((a, b) => (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0));
+    .sort((a, b) => alertPriority(b) - alertPriority(a));
   sessionStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: alerts }));
   return alerts;
 }
@@ -13063,11 +13281,60 @@ function alertsForAlertSheet(selectedAlert = null) {
   ];
 }
 
+function syncLaunchAlertReadingOrder(urgent = false) {
+  const launch = document.querySelector(".launch-stage");
+  const bar = document.getElementById("alertBar");
+  if (!launch || !bar) return;
+  const placeRow = launch.querySelector(".launch-place-row");
+  const invitation = document.getElementById("planInvitation");
+  if (urgent && placeRow) {
+    placeRow.after(bar);
+  } else if (invitation?.parentElement === launch) {
+    invitation.before(bar);
+  } else {
+    launch.append(bar);
+  }
+}
+
+function clearLaunchAlertAnnouncement(resetSignature = false) {
+  if (launchAlertAnnouncementTimer) clearTimeout(launchAlertAnnouncementTimer);
+  launchAlertAnnouncementTimer = null;
+  const announcement = document.getElementById("alertAnnouncement");
+  if (announcement) announcement.textContent = "";
+  if (resetSignature) launchAlertAnnouncementSignature = "";
+}
+
+function announceUrgentLaunchAlert(alert, count) {
+  const announcement = document.getElementById("alertAnnouncement");
+  if (!announcement || !alert) return;
+  const placeKey = state.activePlace?.id || placeLabel(state.activePlace);
+  const signature = [placeKey, alertIdentityKey(alert), alert.severity, count].join("|");
+  if (signature === launchAlertAnnouncementSignature) return;
+  launchAlertAnnouncementSignature = signature;
+  clearLaunchAlertAnnouncement(false);
+  const timing = alert.ends || alert.expires
+    ? `Until ${formatAlertTime(alert.ends || alert.expires)}`
+    : "";
+  const message = [
+    alertSeverityLabel(alert.severity),
+    alert.event,
+    timing,
+    alertCountLabel(count)
+  ].filter(Boolean).join(". ");
+  launchAlertAnnouncementTimer = setTimeout(() => {
+    launchAlertAnnouncementTimer = null;
+    announcement.textContent = message;
+  }, 40);
+}
+
 function setAlertsLoading() {
   activeAlerts = [];
   activeAlertsReady = false;
   const bar = document.getElementById("alertBar");
   if (bar) bar.hidden = true;
+  syncLaunchAlertReadingOrder(false);
+  clearLaunchAlertAnnouncement(false);
+  document.querySelector(".launch-stage")?.classList.remove("has-urgent-alert");
   window.nearcastSyncRadarView?.();
 }
 
@@ -13086,16 +13353,23 @@ function syncLaunchAfterAlertsReady() {
 }
 
 function renderAlerts(alerts) {
-  activeAlerts = alerts || [];
+  activeAlerts = [...(alerts || [])].sort((a, b) => alertPriority(b) - alertPriority(a));
   activeAlertsReady = true;
   window.nearcastSyncRadarView?.();
   const bar = document.getElementById("alertBar");
+  const launch = document.querySelector(".launch-stage");
   if (!activeAlerts.length) {
     bar.hidden = true;
+    syncLaunchAlertReadingOrder(false);
+    clearLaunchAlertAnnouncement(true);
+    launch?.classList.remove("has-urgent-alert");
     syncLaunchAfterAlertsReady();
     return;
   }
   const top = activeAlerts[0];
+  const urgent = alertTone(top) === "warning";
+  syncLaunchAlertReadingOrder(urgent);
+  launch?.classList.toggle("has-urgent-alert", urgent);
   bar.className = `alert-bar launch-alert ${alertSeverityClass(top.severity)}`;
   document.getElementById("alertBarSeverity").textContent = alertSeverityLabel(top.severity);
   document.getElementById("alertBarEvent").textContent = top.event;
@@ -13105,6 +13379,8 @@ function renderAlerts(alerts) {
     activeAlerts.length > 1 ? `+${activeAlerts.length - 1} more` : "";
   bar.setAttribute("aria-label", `${top.event}${top.ends || top.expires ? ` until ${formatAlertTime(top.ends || top.expires)}` : ""}. ${alertCountLabel(activeAlerts.length)}. Open alert details.`);
   bar.hidden = false;
+  if (urgent) announceUrgentLaunchAlert(top, activeAlerts.length);
+  else clearLaunchAlertAnnouncement(true);
   syncLaunchAfterAlertsReady();
 }
 

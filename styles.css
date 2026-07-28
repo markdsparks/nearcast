@@ -19,6 +19,11 @@
   --green: #347d62;
   --gold: #b36b1f;
   --red: #b6463f;
+  --semantic-blue: #356fb7;
+  --semantic-green: #347d62;
+  --semantic-gold: #925a16;
+  --semantic-red: #b6463f;
+  --semantic-muted: var(--muted);
   --wx-cloud: #5f7383;
   --wx-cloud-soft: #7f92a0;
   --wx-drizzle: #2f79a8;
@@ -146,6 +151,11 @@
     --ai-card-sheen: rgba(7, 16, 22, 0.42);
     --ai-control-bg: rgba(16, 38, 52, 0.88);
     --ai-composer-muted: #abc0ca;
+    --semantic-blue: #8fc4ff;
+    --semantic-green: #72d6aa;
+    --semantic-gold: #f0bd68;
+    --semantic-red: #ff9187;
+    --semantic-muted: #b9cdd6;
     --wx-cloud: #9fb3c1;
     --wx-cloud-soft: #c7d4dc;
     --wx-drizzle: #9cd7ff;
@@ -236,6 +246,11 @@
   --ai-card-sheen: rgba(7, 16, 22, 0.42);
   --ai-control-bg: rgba(16, 38, 52, 0.88);
   --ai-composer-muted: #abc0ca;
+  --semantic-blue: #8fc4ff;
+  --semantic-green: #72d6aa;
+  --semantic-gold: #f0bd68;
+  --semantic-red: #ff9187;
+  --semantic-muted: #b9cdd6;
   --wx-cloud: #9fb3c1;
   --wx-cloud-soft: #c7d4dc;
   --wx-drizzle: #9cd7ff;
@@ -1221,6 +1236,10 @@ button {
   backdrop-filter: blur(18px);
 }
 
+.map-panel[hidden] {
+  display: none;
+}
+
 .topbar {
   position: fixed;
   top: max(14px, env(safe-area-inset-top, 0px));
@@ -2007,7 +2026,7 @@ h2 {
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 36px;
+  min-height: 44px;
   max-width: min(520px, 88vw);
   overflow: hidden;
   padding: 0;
@@ -2089,8 +2108,8 @@ h2 {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
-  padding: 5px 10px;
+  min-height: 44px;
+  padding: 7px 11px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -2116,6 +2135,97 @@ h2 {
 .launch-condition-button:focus-visible {
   background: var(--summary-chip-bg);
   outline: none;
+}
+
+/* Severe alerts temporarily become the second item in the launch story:
+   place -> alert -> current conditions. Lower-severity alerts keep their
+   ordinary source order below the current condition. */
+.launch-stage.has-urgent-alert > .launch-place-row { order: 1; }
+.launch-stage.has-urgent-alert > .launch-alert {
+  order: 2;
+  margin-top: 9px;
+  margin-bottom: 3px;
+}
+.launch-stage.has-urgent-alert > .launch-current { order: 3; }
+.launch-stage.has-urgent-alert > .launch-condition { order: 4; }
+.launch-stage.has-urgent-alert > .launch-next-change-button { order: 5; }
+.launch-stage.has-urgent-alert > .for-you-today { order: 6; }
+.launch-stage.has-urgent-alert > .launch-loading { order: 7; }
+.launch-stage.has-urgent-alert > .plan-invitation { order: 8; }
+
+.launch-next-change-button[hidden] {
+  display: none;
+}
+
+.launch-condition.has-next-change {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.launch-next-change-button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: min(100%, 430px);
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--semantic-blue) 28%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-light) 72%, transparent);
+  color: var(--ink);
+  box-shadow: 0 8px 22px rgba(18, 39, 59, 0.07);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 790;
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.launch-condition.has-next-change .launch-next-change-button {
+  margin-top: 0;
+}
+
+.launch-next-change-button > span {
+  color: var(--semantic-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.launch-next-change-button > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.launch-next-change-button > i {
+  color: var(--semantic-blue);
+  font-size: 1rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.launch-next-change-button:hover,
+.launch-next-change-button:focus-visible {
+  border-color: color-mix(in srgb, var(--semantic-blue) 60%, var(--border-glass));
+  background: color-mix(in srgb, var(--semantic-blue) 10%, var(--glass-light));
+  outline: none;
+}
+
+.launch-next-change-button:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-blue) 28%, transparent);
 }
 
 .hero {
@@ -2190,7 +2300,7 @@ h2 {
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
-  min-height: 38px;
+  min-height: 44px;
   max-width: min(100%, 330px);
   padding: 8px 12px;
   border: 1px solid var(--summary-chip-border);
@@ -4050,8 +4160,11 @@ h2 {
   line-height: 1.3;
 }
 .plan-briefing-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   justify-self: start;
-  padding: 5px 9px;
+  padding: 8px 12px;
   border: 1px solid rgba(53, 111, 183, 0.24);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.38);
@@ -4070,7 +4183,7 @@ h2 {
 }
 
 .home-plan-decision {
-  --home-plan-accent: var(--blue);
+  --home-plan-accent: var(--semantic-blue);
   position: relative;
   display: grid;
   gap: 7px;
@@ -4102,15 +4215,23 @@ h2 {
   background: var(--home-plan-accent);
 }
 
-.home-plan-decision.is-good { --home-plan-accent: var(--green); }
-.home-plan-decision.is-caution { --home-plan-accent: var(--gold); }
+.home-plan-decision.is-good { --home-plan-accent: var(--semantic-green); }
+.home-plan-decision.is-changed,
+.home-plan-decision.is-change-changed { --home-plan-accent: var(--semantic-blue); }
+.home-plan-decision.is-change-better { --home-plan-accent: var(--semantic-green); }
+.home-plan-decision.is-caution { --home-plan-accent: var(--semantic-gold); }
 .home-plan-decision.is-watch,
-.home-plan-decision.is-changed { --home-plan-accent: var(--red); }
+.home-plan-decision.is-change-worse { --home-plan-accent: var(--semantic-red); }
 
 .home-plan-decision:hover,
 .home-plan-decision:focus-visible {
   border-color: var(--home-plan-accent);
   outline: none;
+}
+
+.home-plan-decision:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--home-plan-accent) 44%, transparent);
+  outline-offset: 2px;
 }
 
 .home-plan-kicker,
@@ -4124,7 +4245,7 @@ h2 {
 
 .home-plan-kicker {
   color: var(--home-plan-accent);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 920;
   letter-spacing: 0.045em;
   line-height: 1.1;
@@ -4134,15 +4255,15 @@ h2 {
 .home-plan-kicker em {
   min-width: 0;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--semantic-muted);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .home-plan-place {
-  color: var(--muted);
-  font-size: 0.72rem;
+  color: var(--semantic-muted);
+  font-size: 0.78rem;
   font-weight: 760;
   line-height: 1.2;
 }
@@ -4169,15 +4290,15 @@ h2 {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 7px;
   padding-top: 2px;
-  color: var(--muted);
-  font-size: 0.76rem;
+  color: var(--semantic-muted);
+  font-size: 0.8rem;
   font-weight: 720;
   line-height: 1.3;
 }
 
 .home-plan-advice b {
   color: var(--home-plan-accent);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -4187,8 +4308,8 @@ h2 {
   margin-top: 2px;
   padding-top: 9px;
   border-top: 1px solid var(--border-glass);
-  color: var(--muted);
-  font-size: 0.7rem;
+  color: var(--semantic-muted);
+  font-size: 0.76rem;
   font-weight: 760;
 }
 
@@ -4204,6 +4325,42 @@ h2 {
   color: var(--home-plan-accent);
   font-style: normal;
   font-weight: 900;
+}
+
+/* A reassuring plan should be glanceable, not compete with the hourly story.
+   Attention states retain the full evidence card. Explicit density classes are
+   supported so the renderer can override the automatic good-state behavior. */
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) {
+  gap: 5px;
+  padding-block: 12px;
+}
+
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) .home-plan-place {
+  display: none;
+}
+
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) .home-plan-evidence {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) .home-plan-advice {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding-top: 0;
+}
+
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) .home-plan-footer {
+  justify-content: flex-end;
+  margin-top: 0;
+  padding-top: 1px;
+  border-top: 0;
+}
+
+.home-plan-decision:is(.is-good:not(.is-changed), .is-compact):not(.is-expanded) .home-plan-footer > span {
+  display: none;
 }
 .next-plan-card,
 .main-plan-briefing {
@@ -4359,7 +4516,7 @@ h2 {
 }
 .next-plan-actions button,
 .plan-pulse-more {
-  min-height: 31px;
+  min-height: 44px;
   border-radius: 999px;
   font: inherit;
   font-size: 0.74rem;
@@ -4474,7 +4631,7 @@ h2 {
 }
 .plan-pulse-more {
   justify-self: start;
-  padding: 5px 10px;
+  padding: 8px 12px;
   border: 1px solid rgba(53, 111, 183, 0.24);
   background: rgba(53, 111, 183, 0.10);
   color: var(--blue);
@@ -7686,6 +7843,7 @@ html[data-welcome] .app-dock {
 }
 
 .app-dock-item {
+  position: relative;
   display: grid;
   place-items: center;
   align-content: center;
@@ -7696,7 +7854,7 @@ html[data-welcome] .app-dock {
   border: 0;
   border-radius: 17px;
   background: transparent;
-  color: var(--muted);
+  color: var(--semantic-muted);
   cursor: pointer;
   font: inherit;
   touch-action: manipulation;
@@ -7708,46 +7866,76 @@ html[data-welcome] .app-dock {
   height: 21px;
 }
 
-.app-dock-item > span:last-child {
+.app-dock-item > span:not(.app-dock-ai-mark):not(.app-dock-badge) {
   overflow: hidden;
   max-width: 100%;
-  font-size: 0.62rem;
+  font-size: 0.69rem;
   font-weight: 880;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.app-dock-badge[hidden] {
+  display: none;
+}
+
+.app-dock-badge {
+  position: absolute;
+  top: 3px;
+  right: max(8px, calc(50% - 24px));
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 3px;
+  border: 2px solid color-mix(in srgb, var(--glass-heavy) 92%, transparent);
+  border-radius: 999px;
+  background: var(--semantic-red);
+  color: #fff;
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--semantic-red) 34%, transparent);
+  font-size: 0.58rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .app-dock-item.is-current {
-  background: color-mix(in srgb, var(--blue) 12%, transparent);
-  color: var(--blue);
+  background: color-mix(in srgb, var(--semantic-blue) 12%, transparent);
+  color: var(--semantic-blue);
 }
 
 .app-dock-item:hover,
 .app-dock-item:focus-visible {
-  background: color-mix(in srgb, var(--blue) 13%, transparent);
-  color: var(--blue);
+  background: color-mix(in srgb, var(--semantic-blue) 13%, transparent);
+  color: var(--semantic-blue);
   outline: none;
+}
+
+.app-dock-item:focus-visible {
+  outline: 2px solid var(--semantic-blue);
+  outline-offset: -2px;
 }
 
 .app-dock-ai {
   align-self: center;
-  min-height: 56px;
-  margin: -13px 3px 0;
-  border: 1px solid rgba(131, 185, 255, 0.34);
-  border-radius: 20px;
-  background: linear-gradient(145deg, #5b9aed, #3474ca);
+  min-height: 54px;
+  margin: -7px 3px 0;
+  border: 1px solid rgba(131, 185, 255, 0.30);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #518fdf, #356fb7);
   color: white;
-  box-shadow: 0 10px 24px rgba(35, 91, 164, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.30);
+  box-shadow: 0 7px 18px rgba(35, 91, 164, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
 .app-dock-ai:hover,
 .app-dock-ai:focus-visible {
-  background: linear-gradient(145deg, #67a6f5, #397bd2);
+  background: linear-gradient(145deg, #5b99e7, #3978c5);
   color: white;
 }
 
 .app-dock-ai-mark {
-  font-size: 1.18rem;
+  font-size: 1.08rem;
   line-height: 1;
 }
 
@@ -8690,11 +8878,11 @@ body.map-immersive-active .app-dock {
 
 .hourly-trend.metric-precipitation polyline,
 .hourly-trend.metric-precipitation circle {
-  stroke: var(--blue);
+  stroke: var(--semantic-blue);
 }
 
 .hourly-trend-area {
-  fill: color-mix(in srgb, var(--blue) 15%, transparent);
+  fill: color-mix(in srgb, var(--semantic-blue) 15%, transparent);
 }
 
 .hourly::-webkit-scrollbar {
@@ -8775,7 +8963,7 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-card.current .hour-label {
-  color: var(--blue);
+  color: var(--semantic-blue);
 }
 
 .hour-memory {
@@ -8785,7 +8973,7 @@ body.map-immersive-active .app-dock {
   border-radius: 999px;
   background: rgba(91, 141, 220, 0.16);
   color: var(--ink);
-  font-size: 0.58rem;
+  font-size: 0.68rem;
   font-weight: 900;
   line-height: 1.05;
   overflow: hidden;
@@ -8822,7 +9010,7 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-card.metric-precipitation .hour-trend-value {
-  color: var(--blue);
+  color: var(--semantic-blue);
 }
 
 .hour-card .hour-condition {
@@ -8831,7 +9019,7 @@ body.map-immersive-active .app-dock {
   width: 100%;
   min-height: 2.2em;
   color: var(--ink);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-weight: 780;
   line-height: 1.1;
   text-wrap: balance;
@@ -8843,7 +9031,7 @@ body.map-immersive-active .app-dock {
 .hour-secondary {
   min-height: 0.95em;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -8851,7 +9039,7 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-secondary.has-rain {
-  color: color-mix(in srgb, var(--blue) 76%, var(--muted));
+  color: color-mix(in srgb, var(--semantic-blue) 78%, var(--semantic-muted));
 }
 
 .hourly-metric-tabs {
@@ -8868,7 +9056,7 @@ body.map-immersive-active .app-dock {
 
 .hourly-metric-tabs button {
   flex: 0 0 auto;
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 15px;
   border: 1px solid var(--border-glass);
   border-radius: 999px;
@@ -8901,11 +9089,11 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-card .hour-rain.has-rain {
-  color: color-mix(in srgb, var(--blue) 76%, var(--muted));
+  color: color-mix(in srgb, var(--semantic-blue) 78%, var(--semantic-muted));
 }
 
 .hour-card .hour-rain.wet {
-  color: var(--blue);
+  color: var(--semantic-blue);
 }
 
 .hour-card .hour-rain.is-low {
@@ -14322,7 +14510,7 @@ button.sheet-plan-badge:focus-visible {
 }
 
 .alert-bar {
-  --alert-accent: #d98324;
+  --alert-accent: var(--semantic-gold);
   --alert-glow: rgba(217, 131, 36, 0.20);
   --alert-wash: rgba(217, 131, 36, 0.12);
   position: relative;
@@ -14362,18 +14550,23 @@ button.sheet-plan-badge:focus-visible {
   border-color: var(--alert-accent);
   transform: translateY(-1px);
 }
+.alert-bar:focus-visible {
+  border-color: var(--alert-accent);
+  outline: 3px solid color-mix(in srgb, var(--alert-accent) 42%, transparent);
+  outline-offset: 3px;
+}
 .alert-bar.alert-severe {
-  --alert-accent: #d45845;
+  --alert-accent: var(--semantic-red);
   --alert-glow: rgba(212, 88, 69, 0.24);
   --alert-wash: rgba(212, 88, 69, 0.15);
 }
 .alert-bar.alert-moderate {
-  --alert-accent: #d98324;
+  --alert-accent: var(--semantic-gold);
   --alert-glow: rgba(217, 131, 36, 0.22);
   --alert-wash: rgba(217, 131, 36, 0.13);
 }
 .alert-bar.alert-minor {
-  --alert-accent: #c6a332;
+  --alert-accent: var(--semantic-gold);
   --alert-glow: rgba(198, 163, 50, 0.20);
   --alert-wash: rgba(198, 163, 50, 0.12);
 }
@@ -15348,5 +15541,106 @@ body.map-immersive-active .day-sheet.alert-sheet {
 
   .sheet-hour-row {
     min-height: 64px;
+  }
+}
+
+/* Accessibility modes keep the weather hierarchy intact while replacing
+   translucent distinctions with explicit edges and system colors. */
+@media (prefers-contrast: more) {
+  :root {
+    --border-glass: rgba(22, 36, 50, 0.36);
+    --border-glass-md: rgba(22, 36, 50, 0.44);
+    --semantic-muted: #2d4356;
+  }
+
+  :root[data-theme="dark"] {
+    --border-glass: rgba(255, 255, 255, 0.28);
+    --border-glass-md: rgba(255, 255, 255, 0.38);
+    --semantic-muted: #d3e0e6;
+  }
+
+  .home-plan-decision,
+  .app-dock,
+  .hourly-metric-tabs button,
+  .launch-next-change-button,
+  .alert-bar {
+    border-width: 2px;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .app-dock-item.is-current,
+  .hourly-metric-tabs button[aria-pressed="true"] {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+}
+
+@media (prefers-color-scheme: dark) and (prefers-contrast: more) {
+  :root:not([data-theme="light"]) {
+    --border-glass: rgba(255, 255, 255, 0.28);
+    --border-glass-md: rgba(255, 255, 255, 0.38);
+    --semantic-muted: #d3e0e6;
+  }
+}
+
+@media (forced-colors: active) {
+  .home-plan-decision,
+  .app-dock,
+  .launch-next-change-button,
+  .alert-bar,
+  .hourly-metric-tabs button {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+    text-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .app-dock-item {
+    border: 1px solid transparent;
+    color: CanvasText;
+  }
+
+  .app-dock-item.is-current,
+  .app-dock-ai,
+  .hourly-metric-tabs button[aria-pressed="true"] {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .home-plan-decision::before,
+  .app-dock-badge {
+    border-color: Canvas;
+    background: Highlight;
+    box-shadow: none;
+  }
+
+  .app-dock-badge {
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .home-plan-kicker,
+  .home-plan-advice b,
+  .home-plan-footer em,
+  .alert-bar-icon,
+  .alert-bar-chevron {
+    color: LinkText;
+  }
+
+  :where(
+    .home-plan-decision,
+    .app-dock-item,
+    .hourly-metric-tabs button,
+    .launch-next-change-button,
+    .alert-bar
+  ):focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 3px;
   }
 }
