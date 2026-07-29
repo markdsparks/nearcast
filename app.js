@@ -1,4 +1,4 @@
-const VERSION = "3.0.337";
+const VERSION = "3.0.338";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation"]);
@@ -9461,20 +9461,35 @@ function renderAppDock(data, place) {
   }
 }
 
-function inlineMapPreviewEarned(data, truth = weatherTruth(data)) {
+function inlineMapPreviewEmphasis(data, truth = weatherTruth(data)) {
   const phase = truth?.precip?.phase;
-  if (phase === "active" || phase === "imminent") return true;
-  if (nextRainChance(data, 12, 40)) return true;
-  return activeAlerts.some((alert) =>
+  if (phase === "active" || phase === "imminent") return "active";
+  if (activeAlerts.some((alert) =>
     /flood|rain|storm|thunder|tornado|snow|squall|hurricane|tropical/i.test(alert?.event || "")
-  );
+  )) return "alert";
+  if (nextRainChance(data, 12, 40)) return "forecast";
+  return "calm";
 }
 
 function renderInlineMapPreviewVisibility(data, truth = weatherTruth(data)) {
   if (!els.mapView) return;
-  const earned = inlineMapPreviewEarned(data, truth);
-  els.mapView.hidden = !earned;
-  els.mapView.classList.toggle("is-earned-preview", earned);
+  const emphasis = inlineMapPreviewEmphasis(data, truth);
+  const weatherRelevant = emphasis !== "calm";
+  const context = document.getElementById("mapPreviewContext");
+  const contextCopy = {
+    active: "Precipitation nearby",
+    alert: "Weather alert area",
+    forecast: "Rain possible soon",
+    calm: "Weather map"
+  }[emphasis];
+
+  // Geographic context is useful even on a quiet day. Weather conditions
+  // change the preview emphasis, never whether the map is available.
+  els.mapView.hidden = false;
+  els.mapView.dataset.weatherEmphasis = emphasis;
+  els.mapView.classList.toggle("is-weather-relevant", weatherRelevant);
+  els.mapView.setAttribute("aria-label", `${contextCopy} for ${placeLabel(state.activePlace)}`);
+  if (context) context.textContent = contextCopy;
 }
 
 function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.activePlace) {

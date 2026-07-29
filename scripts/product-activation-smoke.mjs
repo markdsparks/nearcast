@@ -120,10 +120,11 @@ for (const destination of ["today", "hourly", "map", "plans"]) {
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, dailyPanel, map/, "imminent precipitation can lead the earned plan, hourly outlook, daily, and conditional map story");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, dailyPanel, map/, "the forecast story keeps the map directly after the daily outlook");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /meaningfulChange[\s\S]*launch-next-change-button/, "the hero exposes one concise next meaningful weather change");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
-assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEarned[\s\S]*mapView\.hidden = !earned/, "the Today map preview appears only when precipitation makes it useful");
+assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEmphasis[\s\S]*mapView\.hidden = false[\s\S]*is-weather-relevant/, "the Today map remains available in calm weather and uses weather only for emphasis");
+assert.match(html, /id="mapPreviewContext">Weather map</, "the inline map explains its calm-weather role before dynamic forecast emphasis");
 assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"[\s\S]*data-hourly-metric="feels"[\s\S]*data-hourly-metric="precipitation"/, "the hourly hero exposes three explicit trend lenses");
 assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");
 assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");

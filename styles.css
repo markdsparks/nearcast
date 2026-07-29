@@ -9389,6 +9389,42 @@ body.map-immersive-active .app-dock {
   display: none;
 }
 
+.map-preview-context {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  max-width: calc(100% - 64px);
+  padding: 6px 11px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.56);
+  color: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 18px rgba(2, 6, 12, 0.24);
+  font-size: 0.75rem;
+  font-weight: 850;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.map-panel.is-weather-relevant .map-wrap {
+  border-color: color-mix(in srgb, var(--semantic-blue) 62%, var(--border-glass-md));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.14), 0 0 0 3px color-mix(in srgb, var(--semantic-blue) 14%, transparent);
+}
+
+.map-panel.is-weather-relevant .map-preview-context {
+  border-color: color-mix(in srgb, var(--semantic-blue) 50%, rgba(255, 255, 255, 0.3));
+  background: color-mix(in srgb, #143b65 84%, transparent);
+}
+
 /* Subtle affordance that the preview opens the full-screen map on tap. */
 .map-expand-hint {
   position: absolute;
