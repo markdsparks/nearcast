@@ -1,4 +1,4 @@
-const VERSION = "3.0.342";
+const VERSION = "3.0.343";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -9428,9 +9428,14 @@ function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth
   if (!els.nowSummary) return;
   const items = launchSummaryItems(data, tempUnit, windUnit, truth);
   const current = items[0];
-  const meaningfulChange = items.slice(1).find((item) =>
+  // The precipitation timeline is more precise than the generic "Next" chip.
+  // When it is on screen, do not announce the same imminent rain or snow twice.
+  const visibleNowcast = analyzeNowcast(data);
+  const nowcastOwnsNextChange = Boolean(visibleNowcast && !nowcastConflictsWithActivePrecip(visibleNowcast, truth));
+  const nextMeaningfulChange = items.slice(1).find((item) =>
     item?.meaningful || item?.rainSoon || item?.tone === "rain" || item?.tone === "snow" || item?.tone === "wind"
   ) || items.find((item, index) => index > 0 && item?.tone === "sun") || null;
+  const meaningfulChange = nowcastOwnsNextChange ? null : nextMeaningfulChange;
   const meaningfulIndex = meaningfulChange ? items.indexOf(meaningfulChange) : -1;
   launchSummaryTargets = items.map((item) => item?.target || null);
   els.nowSummary.classList.remove("summary-strip");

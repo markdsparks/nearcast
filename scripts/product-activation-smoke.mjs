@@ -121,7 +121,7 @@ for (const destination of ["today", "hourly", "map", "plans"]) {
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, els\.goodWindow, dailyPanel, map/, "the best outdoor window sits between hourly evidence and the daily outlook");
-assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /meaningfulChange[\s\S]*launch-next-change-button/, "the hero exposes one concise next meaningful weather change");
+assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /nowcastOwnsNextChange[\s\S]*meaningfulChange = nowcastOwnsNextChange \? null[\s\S]*launch-next-change-button/, "a precise precipitation timeline replaces the duplicate generic next-change chip");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
 assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEmphasis[\s\S]*mapView\.hidden = false[\s\S]*is-weather-relevant/, "the Today map remains available in calm weather and uses weather only for emphasis");
 assert.match(html, /id="mapPreviewContext">Weather map</, "the inline map explains its calm-weather role before dynamic forecast emphasis");
