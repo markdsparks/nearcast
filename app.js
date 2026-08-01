@@ -1,4 +1,4 @@
-const VERSION = "3.0.339";
+const VERSION = "3.0.340";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1455,6 +1455,7 @@ const els = {
   placeBackdrop: document.querySelector("#placeBackdrop"),
   hourly: document.querySelector("#hourly"),
   hourlyMetricTabs: document.querySelector("#hourlyMetricTabs"),
+  uvForecastExplainer: document.querySelector("#uvForecastExplainer"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
@@ -12058,6 +12059,48 @@ function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windU
   };
 }
 
+function renderUvForecastExplainer(data, metric) {
+  const explainer = els.uvForecastExplainer;
+  if (!explainer) return;
+  const isUvLens = metric === "uv";
+  explainer.hidden = !isUvLens;
+  if (!isUvLens) {
+    explainer.textContent = "";
+    return;
+  }
+
+  const todayIndex = forecastDailyIndex(data);
+  const forecastPeak = Number(data?.daily?.uv_index_max?.[todayIndex]);
+  const clearSkyPeak = Number(data?.daily?.uv_index_clear_sky_max?.[todayIndex]);
+  if (!Number.isFinite(forecastPeak)) {
+    explainer.textContent = "UV is a forecast of sunlight at the surface. Clouds can reduce it, but do not eliminate it.";
+    return;
+  }
+
+  const displayedPeak = Math.max(0, Math.round(forecastPeak));
+  const hasClearSkyReference = Number.isFinite(clearSkyPeak) && clearSkyPeak > 0;
+  const cloudReduction = hasClearSkyReference
+    ? Math.max(0, Math.round((1 - forecastPeak / clearSkyPeak) * 100))
+    : null;
+  const isCloudSensitive = cloudReduction !== null && cloudReduction >= 30;
+  const confidence = isCloudSensitive ? "Cloud-sensitive" : "More steady";
+  const detail = isCloudSensitive
+    ? `Forecast clouds may reduce the peak by about ${cloudReduction}%. They do not block UV completely, and breaks can briefly raise it—so today’s exact peak is less certain than on a clear day.`
+    : "Clouds are expected to have a smaller effect today, so the UV peak should be more steady. Clouds can still reduce UV, but they do not block it completely.";
+  const reference = hasClearSkyReference
+    ? `<span class="uv-forecast-reference">Clear-sky potential <strong>${Math.max(0, Math.round(clearSkyPeak))}</strong></span>`
+    : "";
+
+  explainer.innerHTML = `
+    <div class="uv-forecast-heading">
+      <span>UV forecast</span>
+      <span class="uv-forecast-confidence${isCloudSensitive ? " is-variable" : ""}">${confidence}</span>
+    </div>
+    <p><strong>Peak around ${displayedPeak} today.</strong> ${detail}</p>
+    ${reference}
+  `;
+}
+
 function setHourlyHeroMetric(metric) {
   if (!HOURLY_HERO_METRICS.has(metric) || !state.forecast) return;
   localStorage.setItem(HOURLY_HERO_METRIC_KEY, metric);
@@ -12157,6 +12200,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     </svg>
     ${cards}
   `;
+  renderUvForecastExplainer(data, metric);
   perfEnd("renderHourly", perf);
 }
 

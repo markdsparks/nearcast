@@ -129,6 +129,8 @@ assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"
 assert.match(app, /HOURLY_HERO_METRICS = new Set\(\["temperature", "feels", "precipitation", "wind", "uv"\]\)/, "Wind and UV are valid persisted hourly metrics");
 assert.match(extractFunction(app, "hourlyMetricValue"), /metric === "uv"[\s\S]*uv_index[\s\S]*metric === "wind"[\s\S]*wind_speed_10m/, "UV and wind use their hourly forecast series");
 assert.match(extractFunction(app, "hourlyMetricPresentation"), /UV index[\s\S]*gusts up to/, "UV risk and wind gust context are included in accessible hourly cards");
+assert.match(extractFunction(app, "renderUvForecastExplainer"), /Cloud-sensitive[\s\S]*Forecast clouds may reduce[\s\S]*do not block UV completely/, "the UV lens explains cloud-sensitive confidence without presenting cloud cover as a UV shield");
+assert.match(extractFunction(app, "renderHourly"), /renderUvForecastExplainer\(data, metric\)/, "the UV confidence explainer is rendered with the primary hourly lens");
 assert.doesNotMatch(extractFunction(app, "renderHourly"), /tempOklchHue\(metric ===/, "UV and wind values are not routed through temperature color semantics");
 assert.match(styles, /@media \(max-width: 520px\)[\s\S]*hourly-metric-label-full[\s\S]*hourly-metric-label-short/, "phone-sized metric chips use concise visible labels while preserving full accessible names");
 assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");

@@ -9112,6 +9112,70 @@ body.map-immersive-active .app-dock {
   outline-offset: 2px;
 }
 
+.uv-forecast-explainer {
+  display: grid;
+  gap: 6px;
+  margin: 7px 2px 4px;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--semantic-gold) 34%, var(--border-glass));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--semantic-gold) 8%, var(--glass-heavy));
+  color: var(--ink);
+}
+
+.uv-forecast-explainer[hidden] {
+  display: none;
+}
+
+.uv-forecast-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.77rem;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.uv-forecast-confidence {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--semantic-green) 16%, transparent);
+  color: color-mix(in srgb, var(--semantic-green) 75%, var(--ink));
+  font-size: 0.68rem;
+  letter-spacing: 0.025em;
+}
+
+.uv-forecast-confidence.is-variable {
+  background: color-mix(in srgb, var(--semantic-gold) 20%, transparent);
+  color: color-mix(in srgb, var(--semantic-gold) 72%, var(--ink));
+}
+
+.uv-forecast-explainer p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 650;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.uv-forecast-explainer p strong {
+  color: var(--ink);
+}
+
+.uv-forecast-reference {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 720;
+}
+
+.uv-forecast-reference strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 520px) {
   .hourly-metric-tabs {
     gap: 6px;
