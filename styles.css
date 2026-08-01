@@ -9176,6 +9176,10 @@ body.map-immersive-active .app-dock {
   font-variant-numeric: tabular-nums;
 }
 
+.sheet-uv-forecast-explainer {
+  margin: -6px 0 18px;
+}
+
 @media (max-width: 520px) {
   .hourly-metric-tabs {
     gap: 6px;

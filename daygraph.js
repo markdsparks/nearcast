@@ -299,6 +299,7 @@ function setDayDetailMode(mode, persist = true) {
   const hourlyBtn = document.getElementById("sheetHourlyMode");
   const graphWrap = document.getElementById("sheetGraphWrap");
   const hourlyList = document.getElementById("sheetHourlyList");
+  const uvExplainer = document.getElementById("sheetUvForecastExplainer");
   const isHourly = normalized === "hourly";
 
   graphBtn.classList.toggle("active", !isHourly);
@@ -307,6 +308,7 @@ function setDayDetailMode(mode, persist = true) {
   hourlyBtn.setAttribute("aria-pressed", String(isHourly));
   graphWrap.hidden = isHourly;
   hourlyList.hidden = !isHourly;
+  if (uvExplainer) uvExplainer.hidden = isHourly || graphMetric !== "sun";
   const metricToggle = document.getElementById("graphMetricToggle");
   if (metricToggle) metricToggle.hidden = isHourly; // Temp/Wind only applies to the graph
   updateSheetDayNav(normalized);
@@ -1199,6 +1201,7 @@ function drawHourlyGraph() {
   const isPrecip = graphMetric === "precip";
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
+  renderSheetUvForecastExplainer(data, graphCtx.dayIndex, isSun && !isSheetHourlyModeActive());
 
   // Reflect the active metric in the toggle + hint.
   const tempBtn = document.getElementById("graphTempBtn");
@@ -1447,6 +1450,17 @@ function drawHourlyGraph() {
   graphActiveIndex = def;
   scheduleGraphCalloutReflow();
   perfEnd("drawHourlyGraph", perf);
+}
+
+function renderSheetUvForecastExplainer(data, dayIndex, visible) {
+  const explainer = document.getElementById("sheetUvForecastExplainer");
+  if (!explainer) return;
+  explainer.hidden = !visible;
+  if (!visible) {
+    explainer.textContent = "";
+    return;
+  }
+  explainer.innerHTML = uvForecastExplainerHtml(uvForecastInsight(data, dayIndex));
 }
 
 function precipGraphChance(hour) {
