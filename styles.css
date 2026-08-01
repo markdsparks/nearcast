@@ -8775,6 +8775,116 @@ body.map-immersive-active .app-dock {
   display: none;
 }
 
+.outdoor-window {
+  margin: -2px 2px 16px;
+}
+
+.outdoor-window[hidden] {
+  display: none;
+}
+
+.outdoor-window-card {
+  --outdoor-window-accent: var(--semantic-green);
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 15px 16px 14px;
+  border: 1px solid color-mix(in srgb, var(--outdoor-window-accent) 32%, var(--border-glass));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--outdoor-window-accent) 16%, transparent), transparent 47%),
+    color-mix(in srgb, var(--glass-heavy) 88%, transparent);
+  color: var(--ink);
+  box-shadow: 0 12px 30px rgba(18, 39, 59, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.outdoor-window-card.is-caution {
+  --outdoor-window-accent: var(--semantic-gold);
+}
+
+.outdoor-window-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--outdoor-window-accent) 46%, transparent);
+  outline-offset: 3px;
+}
+
+.outdoor-window-head,
+.outdoor-window-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.outdoor-window-kicker {
+  color: color-mix(in srgb, var(--outdoor-window-accent) 76%, var(--ink));
+  font-size: 0.72rem;
+  font-weight: 930;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.outdoor-window-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 820;
+  white-space: nowrap;
+}
+
+.outdoor-window-card h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.08rem, 3.7vw, 1.32rem);
+  font-weight: 900;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+.outdoor-window-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.outdoor-window-signals span {
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--outdoor-window-accent) 22%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--outdoor-window-accent) 8%, transparent);
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+}
+
+.outdoor-window-copy {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 680;
+  line-height: 1.32;
+}
+
+.outdoor-window-open {
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--outdoor-window-accent) 82%, var(--ink));
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.outdoor-window-arrow {
+  color: var(--outdoor-window-accent);
+  font-size: 1.12rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .hourly-panel .glance-kicker {
   margin: 0 0 7px;
   color: var(--ink);

@@ -1,4 +1,4 @@
-const VERSION = "3.0.341";
+const VERSION = "3.0.342";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1456,6 +1456,7 @@ const els = {
   hourly: document.querySelector("#hourly"),
   hourlyMetricTabs: document.querySelector("#hourlyMetricTabs"),
   uvForecastExplainer: document.querySelector("#uvForecastExplainer"),
+  goodWindow: document.querySelector("#goodWindow"),
   daily: document.querySelector("#daily"),
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
@@ -3312,7 +3313,7 @@ function arrangeForecastHierarchy() {
   const nowcast = document.querySelector("#nowcast");
   const dailyPanel = document.querySelector(".daily-panel");
   const map = document.querySelector("#mapView");
-  if (!launch || !hourlyPanel || !hero || !dailyPanel || !map) return;
+  if (!launch || !hourlyPanel || !hero || !dailyPanel || !map || !els.goodWindow) return;
 
   // The outlook and its hourly evidence are one hero. Keeping them in a single
   // surface makes the prose explain the trend instead of competing with it.
@@ -3320,7 +3321,7 @@ function arrangeForecastHierarchy() {
   // An active 15-minute nowcast is the most time-sensitive forecast on the
   // page. It stays hidden when dry, but when rain or snow is imminent it must
   // appear before the plan and broad hourly outlook.
-  launch.after(nowcast, els.planPulse, hourlyPanel, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
+  launch.after(nowcast, els.planPulse, hourlyPanel, els.goodWindow, dailyPanel, map, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -4356,6 +4357,9 @@ function bindEvents() {
   bindTapDelegate(els.hourly, ".hour-card", (event, card) => {
     openHourlyStripDetail(Number(card.dataset.hourIndex));
   }, { moveTolerance: 14 });
+  bindTapDelegate(els.goodWindow, "[data-good-window-start]", (event, button) => {
+    openGoodOutdoorWindowDetail(button);
+  });
   bindTapDelegate(els.hourlyMetricTabs, "[data-hourly-metric]", (event, button) => {
     setHourlyHeroMetric(button.dataset.hourlyMetric);
   });
@@ -8087,6 +8091,7 @@ function renderForecastGlance(ctx) {
 
 function renderForecastPlan(ctx) {
   renderPlanPulse(ctx.data, ctx.place);
+  renderGoodOutdoorWindow(ctx.data);
   if (typeof refreshPlanWatchForecasts === "function") refreshPlanWatchForecasts();
   if (typeof maybeSyncPlanWatchNotifications === "function") maybeSyncPlanWatchNotifications();
   if (typeof syncPlanWatchNotificationSubscription === "function") {
@@ -9499,6 +9504,7 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const truth = state.weatherTruth || weatherTruth(data);
   renderForYouToday(data, place, tempUnit, windUnit, truth);
+  renderGoodOutdoorWindow(data);
   renderAppDock(data, place);
   renderInlineMapPreviewVisibility(data, truth);
   renderWatchingSwitcher();
@@ -12212,6 +12218,179 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
   `;
   renderUvForecastExplainer(data, metric);
   perfEnd("renderHourly", perf);
+}
+
+function outdoorWindowTime(ms, data) {
+  return formatForecastMs(ms, data);
+}
+
+function outdoorWindowDayIndex(data, ms) {
+  const date = forecastLocalDateFromMs(ms, data);
+  const index = data?.daily?.time?.findIndex((value) => value === date) ?? -1;
+  return index >= 0 ? index : forecastDailyIndex(data);
+}
+
+function outdoorWindowCandidate(data) {
+  const now = forecastNowMs(data);
+  const horizon = now + 24 * 60 * 60 * 1000;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const rows = (data?.hourly?.time || [])
+    .map((time, index) => ({
+      index,
+      time,
+      ms: parseForecastTimestamp(time, data),
+      feels: Number(data.hourly.apparent_temperature?.[index] ?? data.hourly.temperature_2m?.[index]),
+      rain: Math.max(0, Math.min(100, Number(data.hourly.precipitation_probability?.[index]) || 0)),
+      wind: Math.max(0, Number(data.hourly.wind_speed_10m?.[index]) || 0),
+      gust: Math.max(0, Number(data.hourly.wind_gusts_10m?.[index]) || 0),
+      uv: Math.max(0, Number(data.hourly.uv_index?.[index]) || 0),
+      isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true
+    }))
+    .filter((row) => row.ms !== null && row.ms >= now - 10 * 60 * 1000 && row.ms <= horizon);
+  if (rows.length < 2) return null;
+
+  const candidates = rows.slice(0, -1).map((first, index) => {
+    const second = rows[index + 1];
+    if (!second || second.ms - first.ms > 75 * 60 * 1000) return null;
+    const feels = (first.feels + second.feels) / 2;
+    const wind = (first.wind + second.wind) / 2;
+    const gust = Math.max(first.gust, second.gust);
+    const rain = Math.round((first.rain + second.rain) / 2);
+    const uv = Math.round(Math.max(first.uv, second.uv));
+    const feelsF = tempUnit === "F" ? feels : feels * 9 / 5 + 32;
+    const windMph = windUnit === "mph" ? wind : wind / 1.60934;
+    const gustMph = windUnit === "mph" ? gust : gust / 1.60934;
+    const localStart = new Date(first.ms + forecastOffsetMs(data));
+    const hour = localStart.getUTCHours();
+    const lateNightPenalty = hour < 6 ? 28 : hour >= 23 ? 18 : hour >= 21 ? 6 : 0;
+    const temperaturePenalty = Math.max(0, Math.abs(feelsF - 70) - 8) * 1.25;
+    const windPenalty = Math.max(0, gustMph - 11) * 2.1 + Math.max(0, windMph - 14) * 0.8;
+    const uvPenalty = Math.max(0, uv - 5) * 7;
+    const score = rain * 1.15 + temperaturePenalty + windPenalty + uvPenalty + lateNightPenalty;
+    // A window can be the best available without being unreservedly pleasant.
+    // Keep those two ideas separate so our language stays as honest as the data.
+    const good = rain < 30 && gustMph < 24 && feelsF >= 42 && feelsF <= 96 && score < 48;
+    const standout = good && rain < 15 && gustMph < 18 && feelsF >= 50 && feelsF <= 88 && uv <= 6 && score < 34;
+    return {
+      startMs: first.ms,
+      endMs: second.ms + 60 * 60 * 1000,
+      dayIndex: outdoorWindowDayIndex(data, first.ms),
+      feels: Math.round(feels),
+      rain,
+      wind: Math.round(wind),
+      gust: Math.round(gust),
+      uv,
+      isDay: first.isDay || second.isDay,
+      score,
+      good,
+      standout,
+      tempUnit,
+      windUnit
+    };
+  }).filter(Boolean);
+  if (!candidates.length) return null;
+  const best = candidates.reduce((winner, candidate) => candidate.score < winner.score ? candidate : winner, candidates[0]);
+  return best;
+}
+
+function outdoorWindowTimeRange(window, data) {
+  const startDay = forecastLocalDateFromMs(window.startMs, data);
+  const endDay = forecastLocalDateFromMs(window.endMs, data);
+  const day = data?.daily?.time?.findIndex((value) => value === startDay) ?? -1;
+  const prefix = day >= 0 ? `${formatDay(startDay, day)} · ` : "";
+  const endPrefix = startDay === endDay ? "" : `${formatDay(endDay, day + 1)} `;
+  return `${prefix}${outdoorWindowTime(window.startMs, data)}–${endPrefix}${outdoorWindowTime(window.endMs, data)}`;
+}
+
+function outdoorWindowWindCopy(window) {
+  const unit = window.windUnit;
+  const wind = window.wind;
+  const gust = window.gust;
+  const gentleThreshold = unit === "mph" ? 6 : 10;
+  const breezeThreshold = unit === "mph" ? 11 : 18;
+  if (gust > (unit === "mph" ? 20 : 32)) return `gusts ${gust} ${unit}`;
+  if (wind <= gentleThreshold) return "calm wind";
+  if (wind <= breezeThreshold) return "light breeze";
+  return `wind ${wind} ${unit}`;
+}
+
+function outdoorWindowCopy(window) {
+  const rain = window.rain < 15 ? "dry" : window.rain < 30 ? "a slight rain chance" : `${window.rain}% rain chance`;
+  const wind = outdoorWindowWindCopy(window);
+  const uv = window.uv < 3 ? "low UV" : `UV ${window.uv}`;
+  return `${capitalize(rain)}, ${wind}, and ${uv}.`;
+}
+
+function renderGoodOutdoorWindow(data) {
+  const slot = els.goodWindow;
+  if (!slot) return;
+  const watchedPlanIsPrimary = Boolean(els.planPulse && !els.planPulse.hidden);
+  const window = watchedPlanIsPrimary ? null : outdoorWindowCandidate(data);
+  if (!window) {
+    slot.hidden = true;
+    slot.innerHTML = "";
+    return;
+  }
+
+  const time = outdoorWindowTimeRange(window, data);
+  const signals = [
+    `${window.feels}° feels`,
+    window.rain < 15 ? "Dry" : `${window.rain}% rain`,
+    outdoorWindowWindCopy(window),
+    window.uv < 3 ? "UV low" : `UV ${window.uv}`
+  ];
+  const heading = window.standout
+    ? "A good two-hour stretch to get outside"
+    : window.good
+      ? "The best outdoor stretch in the next day"
+      : "No especially good outdoor window in the next 24 hours";
+  const kicker = window.standout
+    ? "Best outdoor window"
+    : window.good
+      ? "Best available outdoor window"
+      : "Outdoor outlook";
+  const copy = window.standout
+    ? outdoorWindowCopy(window)
+    : window.good
+      ? `Best available option: ${outdoorWindowCopy(window)}`
+      : `Least rough option: ${outdoorWindowCopy(window)}`;
+  const aria = `${kicker}: ${heading}. ${time}. ${signals.join(", ")}. Open hourly details.`;
+  slot.hidden = false;
+  slot.innerHTML = `
+    <button class="outdoor-window-card${window.good ? "" : " is-caution"}" type="button" data-good-window-start="${window.startMs}" data-good-window-end="${window.endMs}" data-good-window-day="${window.dayIndex}" aria-label="${escapeHtml(aria)}">
+      <div class="outdoor-window-head">
+        <span class="outdoor-window-kicker">${escapeHtml(kicker)}</span>
+        <span class="outdoor-window-time">${escapeHtml(time)}</span>
+      </div>
+      <h2>${escapeHtml(heading)}</h2>
+      <div class="outdoor-window-signals" aria-hidden="true">${signals.map((signal) => `<span>${escapeHtml(signal)}</span>`).join("")}</div>
+      <div class="outdoor-window-foot">
+        <p class="outdoor-window-copy">${escapeHtml(copy)}</p>
+        <span class="outdoor-window-open">Hourly <i class="outdoor-window-arrow" aria-hidden="true">›</i></span>
+      </div>
+    </button>
+  `;
+}
+
+function openGoodOutdoorWindowDetail(button) {
+  const data = state.forecast;
+  if (!data || !button) return;
+  const startMs = Number(button.dataset.goodWindowStart);
+  const endMs = Number(button.dataset.goodWindowEnd);
+  const dayIndex = Number(button.dataset.goodWindowDay);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isInteger(dayIndex)) return;
+  openDayFromIndex(dayIndex, {
+    initialMode: "hourly",
+    persistInitialMode: false,
+    eventWindow: {
+      startMs,
+      endMs,
+      badgeLabel: "Best window",
+      label: "Suggested outdoor window"
+    },
+    contextLabel: "Suggested outdoor window"
+  });
 }
 
 // Absolute temperature → color, anchored to real-world warm/cold norms (°F).

@@ -120,7 +120,7 @@ for (const destination of ["today", "hourly", "map", "plans"]) {
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, dailyPanel, map/, "the forecast story keeps the map directly after the daily outlook");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.planPulse, hourlyPanel, els\.goodWindow, dailyPanel, map/, "the best outdoor window sits between hourly evidence and the daily outlook");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /meaningfulChange[\s\S]*launch-next-change-button/, "the hero exposes one concise next meaningful weather change");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
 assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEmphasis[\s\S]*mapView\.hidden = false[\s\S]*is-weather-relevant/, "the Today map remains available in calm weather and uses weather only for emphasis");
@@ -131,6 +131,10 @@ assert.match(extractFunction(app, "hourlyMetricValue"), /metric === "uv"[\s\S]*u
 assert.match(extractFunction(app, "hourlyMetricPresentation"), /UV index[\s\S]*gusts up to/, "UV risk and wind gust context are included in accessible hourly cards");
 assert.match(extractFunction(app, "uvForecastInsight"), /Cloud-sensitive[\s\S]*Forecast clouds may reduce[\s\S]*do not block UV completely/, "the UV lens explains cloud-sensitive confidence without presenting cloud cover as a UV shield");
 assert.match(extractFunction(app, "renderHourly"), /renderUvForecastExplainer\(data, metric\)/, "the UV confidence explainer is rendered with the primary hourly lens");
+assert.match(extractFunction(app, "outdoorWindowCandidate"), /precipitation_probability[\s\S]*wind_gusts_10m[\s\S]*uv_index/, "the outdoor-window recommendation weighs rain, gusts, and UV together");
+assert.match(extractFunction(app, "renderGoodOutdoorWindow"), /watchedPlanIsPrimary[\s\S]*window = watchedPlanIsPrimary \? null[\s\S]*Best outdoor window/, "a watched plan takes precedence over a useful best-window recommendation");
+assert.match(extractFunction(app, "openGoodOutdoorWindowDetail"), /openDayFromIndex[\s\S]*Suggested outdoor window/, "the recommendation opens its exact hours in day detail");
+assert.match(html, /id="goodWindow"/, "the home surface has one dedicated best-outdoor-window slot");
 assert.match(html, /id="sheetUvForecastExplainer"/, "the day-detail sun graph has a UV confidence surface");
 assert.match(extractFunction(daygraph, "renderSheetUvForecastExplainer"), /uvForecastInsight\(data, dayIndex\)/, "day-detail UV context uses the selected day's forecast");
 assert.match(extractFunction(daygraph, "drawHourlyGraph"), /renderSheetUvForecastExplainer\(data, graphCtx\.dayIndex, isSun/, "the day-detail explainer only appears with the Sun graph");
