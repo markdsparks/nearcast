@@ -8881,8 +8881,22 @@ body.map-immersive-active .app-dock {
   stroke: var(--semantic-blue);
 }
 
+.hourly-trend.metric-uv polyline,
+.hourly-trend.metric-uv circle {
+  stroke: var(--semantic-gold);
+}
+
+.hourly-trend.metric-wind polyline,
+.hourly-trend.metric-wind circle {
+  stroke: color-mix(in srgb, var(--semantic-blue) 58%, var(--semantic-green));
+}
+
 .hourly-trend-area {
   fill: color-mix(in srgb, var(--semantic-blue) 15%, transparent);
+}
+
+.hourly-trend.metric-uv .hourly-trend-area {
+  fill: color-mix(in srgb, var(--semantic-gold) 14%, transparent);
 }
 
 .hourly::-webkit-scrollbar {
@@ -9013,6 +9027,18 @@ body.map-immersive-active .app-dock {
   color: var(--semantic-blue);
 }
 
+.hour-card.metric-uv .hour-trend-value {
+  min-width: 48px;
+  color: var(--semantic-gold);
+  font-size: 0.88rem;
+}
+
+.hour-card.metric-wind .hour-trend-value {
+  min-width: 58px;
+  color: color-mix(in srgb, var(--semantic-blue) 58%, var(--semantic-green));
+  font-size: 0.78rem;
+}
+
 .hour-card .hour-condition {
   display: -webkit-box;
   overflow: hidden;
@@ -9047,7 +9073,9 @@ body.map-immersive-active .app-dock {
   gap: 7px;
   overflow-x: auto;
   padding: 4px 2px 5px;
+  scroll-padding-inline: 2px;
   scrollbar-width: none;
+  touch-action: pan-x pan-y;
 }
 
 .hourly-metric-tabs::-webkit-scrollbar {
@@ -9065,6 +9093,11 @@ body.map-immersive-active .app-dock {
   font: inherit;
   font-size: 0.82rem;
   font-weight: 820;
+  touch-action: pan-x pan-y;
+}
+
+.hourly-metric-label-short {
+  display: none;
 }
 
 .hourly-metric-tabs button[aria-pressed="true"] {
@@ -9077,6 +9110,24 @@ body.map-immersive-active .app-dock {
 .hourly-metric-tabs button:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--blue) 42%, transparent);
   outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .hourly-metric-tabs {
+    gap: 6px;
+  }
+
+  .hourly-metric-tabs button {
+    padding-inline: 12px;
+  }
+
+  .hourly-metric-label-full {
+    display: none;
+  }
+
+  .hourly-metric-label-short {
+    display: inline;
+  }
 }
 
 .hour-card .hour-rain {

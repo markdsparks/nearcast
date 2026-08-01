@@ -1,7 +1,7 @@
-const VERSION = "3.0.338";
+const VERSION = "3.0.339";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
-const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation"]);
+const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
@@ -11966,9 +11966,18 @@ function savedHourlyHeroMetric() {
   return HOURLY_HERO_METRICS.has(saved) ? saved : "temperature";
 }
 
-function hourlyMetricValue(data, index, metric) {
+function hourlyMetricValue(data, index, metric, isCurrent = false) {
   if (metric === "precipitation") {
     return Math.max(0, Math.min(100, Math.round(Number(data.hourly.precipitation_probability?.[index]) || 0)));
+  }
+  if (metric === "uv") {
+    return Math.max(0, Math.round(Number(data.hourly.uv_index?.[index]) || 0));
+  }
+  if (metric === "wind") {
+    const value = isCurrent
+      ? data.current?.wind_speed_10m ?? data.hourly.wind_speed_10m?.[index]
+      : data.hourly.wind_speed_10m?.[index];
+    return Math.max(0, Math.round(Number(value) || 0));
   }
   if (metric === "feels") {
     return Math.round(Number(data.hourly.apparent_temperature?.[index] ?? data.hourly.temperature_2m?.[index]) || 0);
@@ -11981,9 +11990,18 @@ function hourlyTrendGeometry(values, metric) {
   const width = Math.max(pitch, values.length * pitch - 4);
   const top = 8;
   const bottom = 42;
-  let min = metric === "precipitation" ? 0 : Math.min(...values);
-  let max = metric === "precipitation" ? 100 : Math.max(...values);
-  if (metric !== "precipitation" && max - min < 5) {
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (metric === "precipitation") {
+    min = 0;
+    max = 100;
+  } else if (metric === "uv") {
+    min = 0;
+    max = Math.max(11, max);
+  } else if (metric === "wind") {
+    min = 0;
+    max = Math.max(state.unit === "fahrenheit" ? 15 : 24, max);
+  } else if (max - min < 5) {
     const midpoint = (min + max) / 2;
     min = midpoint - 2.5;
     max = midpoint + 2.5;
@@ -11991,6 +12009,53 @@ function hourlyTrendGeometry(values, metric) {
   const y = (value) => bottom - ((value - min) / Math.max(1, max - min)) * (bottom - top);
   const points = values.map((value, position) => ({ x: 39 + pitch * position, y: y(value) }));
   return { width, points };
+}
+
+function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windUnit }) {
+  if (metric === "precipitation") {
+    return {
+      trendLabel: `${value}%`,
+      aria: `${value}% precipitation`,
+      secondary: `${temp}° temp`,
+      contextAria: "",
+      temperatureColor: false
+    };
+  }
+  if (metric === "uv") {
+    const risk = uvRisk(value);
+    return {
+      trendLabel: `UV ${value}`,
+      aria: `UV index ${value}, ${risk.label.toLowerCase()} risk`,
+      secondary: risk.label,
+      contextAria: "",
+      temperatureColor: false
+    };
+  }
+  if (metric === "wind") {
+    return {
+      trendLabel: `${value} ${windUnit}`,
+      aria: `wind ${value} ${windUnit}`,
+      secondary: `Gust ${gust}`,
+      contextAria: gust > value ? `, gusts up to ${gust} ${windUnit}` : "",
+      temperatureColor: false
+    };
+  }
+  if (metric === "feels") {
+    return {
+      trendLabel: `${value}°`,
+      aria: `feels like ${value} degrees`,
+      secondary: `${temp}° actual`,
+      contextAria: "",
+      temperatureColor: true
+    };
+  }
+  return {
+    trendLabel: `${value}°`,
+    aria: `${value} degrees`,
+    secondary: `${rainChance}% rain`,
+    contextAria: "",
+    temperatureColor: true
+  };
 }
 
 function setHourlyHeroMetric(metric) {
@@ -12010,10 +12075,11 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     .slice(0, 24);
   const planMemory = hourlyPlanMemoryContext(rows, data);
   const metric = savedHourlyHeroMetric();
-  const metricValues = rows.map(({ index }) => hourlyMetricValue(data, index, metric));
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const metricValues = rows.map(({ index }, position) => hourlyMetricValue(data, index, metric, position === 0));
   const trend = hourlyTrendGeometry(metricValues, metric);
   const pointString = trend.points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-  const areaPath = metric === "precipitation" && trend.points.length
+  const areaPath = ["precipitation", "uv"].includes(metric) && trend.points.length
     ? `M ${trend.points[0].x.toFixed(1)} 48 L ${trend.points.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${trend.points.at(-1).x.toFixed(1)} 48 Z`
     : "";
 
@@ -12045,31 +12111,41 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data)) {
     const isHourDay = position === 0 ? truth.isDay : (data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true);
     const temp = Math.round(data.hourly.temperature_2m[index]);
     const metricValue = metricValues[position];
-    const trendLabel = metric === "precipitation" ? `${metricValue}%` : `${metricValue}°`;
-    const metricAria = metric === "feels"
-      ? `feels like ${metricValue} degrees`
-      : metric === "precipitation" ? `${metricValue}% precipitation` : `${metricValue} degrees`;
+    const gustSource = position === 0
+      ? data.current?.wind_gusts_10m ?? data.hourly.wind_gusts_10m?.[index]
+      : data.hourly.wind_gusts_10m?.[index];
+    const gust = Math.max(0, Math.round(Number(gustSource) || 0));
     const label = position === 0 ? "Now" : formatHour(time);
     const title = stormPotential ? `${code}; thunder possible` : code;
     const rainChance = Math.max(0, Math.min(100, Math.round(Number(rain) || 0)));
     const hasRainChance = rainChance > 0;
     const rainIsEmphasized = measuredWet || nowPrecipPhase === "imminent" || rainChance >= 20;
     const rainClass = ` has-rain${rainIsEmphasized ? " wet" : " is-low"}`;
-    const secondary = metric === "temperature" ? `${rainChance}% rain` : metric === "feels" ? `${temp}° actual` : `${temp}° temp`;
+    const presentation = hourlyMetricPresentation({
+      metric,
+      value: metricValue,
+      temp,
+      rainChance,
+      gust,
+      windUnit
+    });
+    const temperatureColorStyle = presentation.temperatureColor
+      ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
+      : "";
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
     const memoryItems = planMemory.markers.get(index) || [];
     const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
     const hasPlanMemory = planMemory.overlaps.has(index);
     const rainAria = metric === "precipitation" ? "" : measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : hasRainChance ? `, ${rainChance}% rain` : "";
-    const cardLabel = `${label}: ${code}, ${metricAria}${rainAria}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
+    const cardLabel = `${label}: ${code}, ${presentation.aria}${presentation.contextAria}${rainAria}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
     return `
       <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${stormPotential ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
-        <strong class="hour-temp hour-trend-value" style="--t-h:${tempOklchHue(metric === "precipitation" ? temp : metricValue).toFixed(0)}">${trendLabel}</strong>
+        <strong class="hour-temp hour-trend-value"${temperatureColorStyle}>${presentation.trendLabel}</strong>
         <span class="hour-condition">${escapeHtml(code)}</span>
-        <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${secondary}</span>
+        <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${presentation.secondary}</span>
       </article>
     `;
   }).join("");

@@ -125,7 +125,12 @@ assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /meaningfulChange
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
 assert.match(extractFunction(app, "renderInlineMapPreviewVisibility"), /inlineMapPreviewEmphasis[\s\S]*mapView\.hidden = false[\s\S]*is-weather-relevant/, "the Today map remains available in calm weather and uses weather only for emphasis");
 assert.match(html, /id="mapPreviewContext">Weather map</, "the inline map explains its calm-weather role before dynamic forecast emphasis");
-assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"[\s\S]*data-hourly-metric="feels"[\s\S]*data-hourly-metric="precipitation"/, "the hourly hero exposes three explicit trend lenses");
+assert.match(html, /id="hourlyMetricTabs"[\s\S]*data-hourly-metric="temperature"[\s\S]*data-hourly-metric="feels"[\s\S]*data-hourly-metric="precipitation"[\s\S]*data-hourly-metric="wind"[\s\S]*data-hourly-metric="uv"/, "the hourly hero exposes temperature, comfort, precipitation, wind, and UV trend lenses");
+assert.match(app, /HOURLY_HERO_METRICS = new Set\(\["temperature", "feels", "precipitation", "wind", "uv"\]\)/, "Wind and UV are valid persisted hourly metrics");
+assert.match(extractFunction(app, "hourlyMetricValue"), /metric === "uv"[\s\S]*uv_index[\s\S]*metric === "wind"[\s\S]*wind_speed_10m/, "UV and wind use their hourly forecast series");
+assert.match(extractFunction(app, "hourlyMetricPresentation"), /UV index[\s\S]*gusts up to/, "UV risk and wind gust context are included in accessible hourly cards");
+assert.doesNotMatch(extractFunction(app, "renderHourly"), /tempOklchHue\(metric ===/, "UV and wind values are not routed through temperature color semantics");
+assert.match(styles, /@media \(max-width: 520px\)[\s\S]*hourly-metric-label-full[\s\S]*hourly-metric-label-short/, "phone-sized metric chips use concise visible labels while preserving full accessible names");
 assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");
 assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");
 assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
