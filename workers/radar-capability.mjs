@@ -2636,6 +2636,17 @@ async function evaluatePlanWatchNotifications(env = {}, options = {}) {
     summary.results.push(result);
   }
   summary.ok = summary.failed === 0 && summary.errors === 0;
+  // `selection.scan` is measured before the work begins. For a successful
+  // scheduled pass, every selected subscription has been persisted with its
+  // new scope-specific evaluatedAt timestamp, so retain the real queue/cycle
+  // measurements but report the post-evaluation lag instead of a stale value.
+  const selectedRecordsAreFresh = !options.dryRun &&
+    records.length > 0 &&
+    summary.results.length === records.length &&
+    summary.results.every((result) => result.evaluated === true);
+  if (selectedRecordsAreFresh && summary.scan) {
+    summary.scan = { ...summary.scan, oldestEvaluationLagMs: 0 };
+  }
   summary.state = summary.ok ? "evaluated" : "degraded";
   summary.externalRequests = Math.max(0, Number(options.context?.externalRequests || 0) - externalRequestsAtStart);
   return summary;
@@ -2661,6 +2672,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     alertUnsupported: 0,
     alertErrors: 0,
     updated: 0,
+    evaluated: false,
     errors: 0,
     reasons: []
   };
@@ -2776,6 +2788,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
         : { evaluatedAt: new Date().toISOString() })
     };
     await store.putJson(planWatchSubscriptionStorageName(record.subscriptionId), nextRecord);
+    result.evaluated = true;
   }
   return result;
 }

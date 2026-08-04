@@ -474,12 +474,27 @@ try {
   const backlogHealthResponse = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/health", {
     headers: { Authorization: "Bearer smoke-token" }
   }), backlogEnv, {});
-  assert.equal(backlogHealthResponse.status, 503, "oldest evaluation lag is a production health gate");
+  assert.equal(backlogHealthResponse.status, 200, "a successful current pass does not report a stale pre-evaluation timestamp as backlog");
   const backlogHealth = await backlogHealthResponse.json();
-  assert.equal(backlogHealth.checks.urgentBacklog, false);
-  assert.equal(backlogHealth.checks.standardBacklog, false);
-  assert.ok(backlogHealth.evaluator.urgent.scan.oldestEvaluationLagMs >= 2 * 60 * 60 * 1000 - 5000);
-  assert.ok(backlogHealth.evaluator.standard.scan.oldestEvaluationLagMs >= 2 * 60 * 60 * 1000 - 5000);
+  assert.equal(backlogHealth.checks.urgentBacklog, true);
+  assert.equal(backlogHealth.checks.standardBacklog, true);
+  assert.equal(backlogHealth.evaluator.urgent.scan.oldestEvaluationLagMs, 0);
+  assert.equal(backlogHealth.evaluator.standard.scan.oldestEvaluationLagMs, 0);
+
+  // A genuinely stale health record must still fail the operational gate.
+  for (const scope of ["urgent", "standard"]) {
+    const healthKey = `plan-watch/health/evaluator-latest-${scope}.json`;
+    const staleSummary = JSON.parse(backlogBucket.objects.get(healthKey).body);
+    staleSummary.scan.oldestEvaluationLagMs = 2 * 60 * 60 * 1000;
+    backlogBucket.objects.set(healthKey, { body: JSON.stringify(staleSummary) });
+  }
+  const staleHealthResponse = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/health", {
+    headers: { Authorization: "Bearer smoke-token" }
+  }), backlogEnv, {});
+  assert.equal(staleHealthResponse.status, 503, "oldest evaluation lag remains a production health gate");
+  const staleHealth = await staleHealthResponse.json();
+  assert.equal(staleHealth.checks.urgentBacklog, false);
+  assert.equal(staleHealth.checks.standardBacklog, false);
 
   await runScheduledPlanWatchEvaluations(backlogEnv, { includeStandard: true });
   const recoveredBacklogHealth = await worker.fetch(new Request("https://getnearcast.app/api/watch/notifications/health", {
