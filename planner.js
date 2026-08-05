@@ -1591,6 +1591,9 @@ async function ensurePlanWatchPushSubscription() {
 }
 
 function planWatchNotificationSyncPlans() {
+  // This can run before any plan card renders on a cold launch. Keep a weekly
+  // routine on its next occurrence before deriving the push-notification set.
+  refreshPlanRoutineOccurrences(state.forecast);
   const watchById = new Map(currentPlanWatchItems().map((watch) => [watch.memory.id, watch]));
   return (state.planMemories || [])
     .filter((memory) => planWatchNotificationPlanEnabled(memory.id))
@@ -3187,7 +3190,7 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   let kicker = "Weather to watch";
   if (priorityBand === 5) kicker = "Action now";
   else if (active) kicker = "Happening now";
-  else if (hoursUntil >= 0 && hoursUntil <= 24) kicker = "Next decision";
+  else if (hoursUntil >= 0 && hoursUntil <= 24) kicker = planMemoryRoutineText(memory) ? "Next routine" : "Next decision";
   else if (alertAffectsPlan) kicker = "Alert affects this plan";
   else if (changed) kicker = "Forecast changed";
   const moreCount = Math.max(0, activeCount - 1);
@@ -4071,6 +4074,26 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     },
     requires_user_confirmation: false,
     execute: executeNearcastPlanEditSkill
+  },
+  {
+    id: "nearcast.plan_make_weekly",
+    description: "Turn a saved one-window plan into a weekly Nearcast routine. Use for requests like 'make that weekly', 'watch this every Tuesday', or 'repeat this plan each week'.",
+    input_schema: {
+      type: "object",
+      properties: { plan_ref: { type: "string" } },
+      required: [],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: { status: { type: "string", enum: ["scheduled", "needs_input", "unavailable"] }, message: { type: "string" }, plan: { type: "string" } },
+      required: ["status", "message", "plan"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: true,
+    consumes: ["nearcast.plan-watch"],
+    produces: ["nearcast.plan-watch"],
+    execute: executeNearcastPlanMakeWeeklySkill
   },
   {
     id: "nearcast.settings_update",
@@ -5258,6 +5281,35 @@ function executeNearcastPlanEditSkill(args, context) {
   context.receipt.answer = `Opening the schedule editor for ${label}.`;
   context.receipt.navigation = { type: "plan_edit", memoryId: memory.id };
   return nearcastSkillResult({ status: "opened", message: context.receipt.answer, plan: label });
+}
+
+function executeNearcastPlanMakeWeeklySkill(args, context) {
+  const ref = String(args?.plan_ref || "").trim();
+  const artifact = nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.watch, ref);
+  const memoryId = ref || artifact?.value?.memory_id || context.lastWindow?.memoryId || "";
+  const memory = memoryId
+    ? state.planMemories.find((item) => item.id === memoryId)
+    : state.planMemories.length === 1 ? state.planMemories[0] : null;
+  if (!memory) {
+    context.receipt.answer = "Which watched plan should repeat each week?";
+    return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer, plan: "" });
+  }
+  if (!setPlanMemoryRoutine(memory.id, true)) {
+    context.receipt.answer = `${planMemoryTitle(memory)} has multiple windows, so choose one window before making it a weekly routine.`;
+    return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: planMemoryTitle(memory) });
+  }
+  const updated = state.planMemories.find((item) => item.id === memory.id) || memory;
+  const label = planMemoryTitle(updated);
+  const cadence = planMemoryRoutineText(updated) || "Weekly";
+  context.receipt.answer = `${label} is now a weekly routine: ${cadence} at ${planMemoryTimeText(updated)} in ${placeLabel(updated.place)}.`;
+  context.receipt.navigation = { type: "watching", focusMemoryId: updated.id };
+  return nearcastSkillResult({ status: "scheduled", message: context.receipt.answer, plan: label }, [{
+    id: `nearcast-weekly-routine-${updated.id}`,
+    kind: NEARCAST_AGENT_ARTIFACT_KINDS.watch,
+    summary: `${cadence} ${label} routine.`,
+    value: { memory_id: updated.id, place: updated.place, target_date: updated.targetDate, recurrence: "weekly" },
+    turn_id: context.turnId
+  }]);
 }
 
 async function executeNearcastSettingsUpdateSkill(args, context) {
@@ -7240,6 +7292,75 @@ function normalizePlanWindow(window, index = 0) {
   };
 }
 
+function normalizePlanRoutine(value) {
+  if (!value || value.frequency !== "weekly") return null;
+  const weekday = Number(value.weekday);
+  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) return null;
+  return { frequency: "weekly", weekday };
+}
+
+function planRoutineWeekday(date) {
+  const parsed = new Date(`${String(date || "").slice(0, 10)}T12:00:00Z`);
+  return Number.isFinite(parsed.getTime()) ? parsed.getUTCDay() : null;
+}
+
+function planRoutineWeekdayLabel(routine) {
+  const weekday = normalizePlanRoutine(routine)?.weekday;
+  if (!Number.isInteger(weekday)) return "";
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday] || "";
+}
+
+function planMemoryRoutineText(memory) {
+  const day = planRoutineWeekdayLabel(memory?.routine);
+  return day ? `Every ${day}` : "";
+}
+
+function planRoutineNextDate(memory, data = state.forecast) {
+  const routine = normalizePlanRoutine(memory?.routine);
+  const today = forecastLocalDate(data) || new Date().toISOString().slice(0, 10);
+  if (!routine || !today) return "";
+  const todayWeekday = planRoutineWeekday(today);
+  if (!Number.isInteger(todayWeekday)) return "";
+  let offset = (routine.weekday - todayWeekday + 7) % 7;
+  // Once today's window has ended, the next meaningful occurrence is next week.
+  if (offset === 0 && forecastCurrentHour(data) >= Number(memory.endHour || 0)) offset = 7;
+  return planIsoDateOffset(today, offset);
+}
+
+function refreshPlanRoutineOccurrences(data = state.forecast) {
+  if (!data || !Array.isArray(state.planMemories)) return false;
+  let changed = false;
+  const nextMemories = state.planMemories.map((memory) => {
+    const routine = normalizePlanRoutine(memory?.routine);
+    if (!routine) return memory;
+    const targetDate = planRoutineNextDate(memory, data);
+    if (!targetDate || targetDate === memory.targetDate) return memory;
+    const window = normalizePlanWindow({
+      ...(memory.windows?.[0] || memory),
+      id: memory.windows?.[0]?.id || `routine-${memory.id}`,
+      targetDate,
+      startHour: memory.startHour,
+      endHour: memory.endHour,
+      label: memory.label || "Plan window"
+    });
+    if (!window) return memory;
+    changed = true;
+    return normalizePlanMemory({
+      ...memory,
+      targetDate,
+      windows: [window],
+      scheduleType: "single",
+      span: null,
+      updatedAt: Date.now()
+    }) || memory;
+  });
+  if (changed) {
+    state.planMemories = nextMemories;
+    savePlanMemories();
+  }
+  return changed;
+}
+
 function planWindowsFromSpan(span) {
   const startDate = String(span?.startDate || "").slice(0, 10);
   const endDate = String(span?.endDate || "").slice(0, 10);
@@ -7276,6 +7397,7 @@ function normalizePlanMemory(memory) {
     endDate: String(memory.span?.endDate || memory.targetDate || "").slice(0, 10),
     endHour: Number(memory.span?.endHour ?? memory.endHour)
   } : null;
+  const routine = scheduleType === "single" ? normalizePlanRoutine(memory.routine) : null;
   const rawWindows = scheduleType === "continuous_span" ? planWindowsFromSpan(span) : (Array.isArray(memory.windows) ? memory.windows : []);
   const windows = rawWindows.map(normalizePlanWindow).filter(Boolean);
   const firstWindow = windows[0] || {
@@ -7304,6 +7426,7 @@ function normalizePlanMemory(memory) {
     windows,
     scheduleType,
     span,
+    routine,
     schemaVersion: 2,
     scheduleId: String(memory.scheduleId || memory.id || ""),
     createdAt: Number(memory.createdAt) || Date.now(),
@@ -7487,6 +7610,32 @@ function forgetPlanMemory(id) {
   renderAsk();
   refreshPlanMemorySurfaces();
   syncPlanWatchNotificationSubscription({ force: true, reason: "plan-forgotten" });
+}
+
+function setPlanMemoryRoutine(id, enabled) {
+  const existing = state.planMemories.find((memory) => memory.id === id);
+  if (!existing) return false;
+  const isSingleWindow = existing.scheduleType === "single" && (existing.windows?.length || 1) === 1;
+  if (enabled && !isSingleWindow) return false;
+  const weekday = planRoutineWeekday(existing.targetDate);
+  if (enabled && !Number.isInteger(weekday)) return false;
+  const updated = normalizePlanMemory({
+    ...existing,
+    routine: enabled ? { frequency: "weekly", weekday } : null,
+    updatedAt: Date.now()
+  });
+  if (!updated) return false;
+  state.planMemories = state.planMemories.map((memory) => memory.id === id ? updated : memory);
+  if (enabled) refreshPlanRoutineOccurrences(state.forecast);
+  savePlanMemories();
+  clearPlanWatchTracking(id);
+  refreshPlanMemorySurfaces();
+  if (!savePlanWatchBaselineForMemory(id, { replace: true })) {
+    refreshPlanWatchForecasts(planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+      .filter((item) => item.memory.id === id));
+  }
+  syncPlanWatchNotificationSubscription({ force: true, reason: enabled ? "routine-enabled" : "routine-disabled" });
+  return true;
 }
 
 function startPlanMemoryEdit(idOrRow) {
@@ -7764,7 +7913,8 @@ function memoryEditTimeOptions(selected, min, max) {
 
 function memoryEditWindowText(state = memoryEditState) {
   if (!state) return "";
-  return `${memoryEditDateLabel(state.targetDate, state.data)} · ${hourText(state.startHour)}-${hourText(state.endHour)}`;
+  const routine = planMemoryRoutineText(state);
+  return `${routine ? `${routine} · ` : ""}${memoryEditDateLabel(state.targetDate, state.data)} · ${hourText(state.startHour)}-${hourText(state.endHour)}`;
 }
 
 function openStructuredMemoryEdit(id) {
@@ -7825,6 +7975,7 @@ function openStructuredPlanEdit(memory, options = {}) {
     startHour: Math.max(0, Math.min(23, Math.floor(Number(memory.startHour) || 0))),
     endHour: Math.max(1, Math.min(24, Math.ceil(Number(memory.endHour) || 1))),
     scheduleType: memory.scheduleType || (memory.windows?.length > 1 ? "discrete" : "single"),
+    routine: normalizePlanRoutine(memory.routine),
     span: memory.span ? { ...memory.span } : null,
     windows: (memory.windows?.length ? memory.windows : [{
       id: `window-${memory.targetDate}`,
@@ -7905,7 +8056,8 @@ function renderMemoryEditSheet() {
   const placeValue = memoryEditState.placeQuery || placeLabel(memoryEditState.place);
   const editingSavedPlan = memoryEditState.source === "memory";
   const saveLabel = editingSavedPlan ? "Save changes" : "Apply changes";
-  const textEditAction = editingSavedPlan && memoryEditState.scheduleType === "single"
+  const visibleScheduleType = memoryEditState.routine ? "weekly" : memoryEditState.scheduleType;
+  const textEditAction = editingSavedPlan && memoryEditState.scheduleType === "single" && !memoryEditState.routine
     ? `<button type="button" data-memory-edit-text>Edit with text</button>`
     : "";
   els.memoryEditBody.innerHTML = `
@@ -7925,9 +8077,10 @@ function renderMemoryEditSheet() {
       <label class="memory-edit-field">
         <span>Schedule</span>
         <select id="memoryEditScheduleType">
-          <option value="single"${memoryEditState.scheduleType === "single" ? " selected" : ""}>One window</option>
-          <option value="discrete"${memoryEditState.scheduleType === "discrete" ? " selected" : ""}>Several dates</option>
-          <option value="continuous_span"${memoryEditState.scheduleType === "continuous_span" ? " selected" : ""}>Continuous span</option>
+          <option value="single"${visibleScheduleType === "single" ? " selected" : ""}>One window</option>
+          <option value="weekly"${visibleScheduleType === "weekly" ? " selected" : ""}>Weekly routine</option>
+          <option value="discrete"${visibleScheduleType === "discrete" ? " selected" : ""}>Several dates</option>
+          <option value="continuous_span"${visibleScheduleType === "continuous_span" ? " selected" : ""}>Continuous span</option>
         </select>
       </label>
       ${renderMemoryEditScheduleFields()}
@@ -7948,7 +8101,17 @@ function wireMemoryEditForm() {
   form.addEventListener("submit", saveStructuredMemoryEdit);
   document.getElementById("memoryEditScheduleType")?.addEventListener("change", (event) => {
     syncMemoryEditStateFromForm();
-    memoryEditState.scheduleType = event.target.value;
+    const selected = event.target.value;
+    if (selected === "weekly") {
+      memoryEditState.scheduleType = "single";
+      memoryEditState.routine = {
+        frequency: "weekly",
+        weekday: planRoutineWeekday(memoryEditState.targetDate) ?? 0
+      };
+    } else {
+      memoryEditState.scheduleType = selected;
+      memoryEditState.routine = null;
+    }
     if (memoryEditState.scheduleType === "continuous_span" && !memoryEditState.span) {
       const first = memoryEditState.windows[0] || memoryEditState;
       const last = memoryEditState.windows[memoryEditState.windows.length - 1] || first;
@@ -8025,7 +8188,16 @@ function syncMemoryEditStateFromForm() {
   let end = Number(document.getElementById("memoryEditEnd")?.value);
   memoryEditState.title = title.trim();
   const scheduleType = document.getElementById("memoryEditScheduleType")?.value;
-  if (scheduleType) memoryEditState.scheduleType = scheduleType;
+  if (scheduleType === "weekly") {
+    memoryEditState.scheduleType = "single";
+    memoryEditState.routine = {
+      frequency: "weekly",
+      weekday: planRoutineWeekday(date) ?? planRoutineWeekday(memoryEditState.targetDate) ?? 0
+    };
+  } else if (scheduleType) {
+    memoryEditState.scheduleType = scheduleType;
+    memoryEditState.routine = null;
+  }
   if (memoryEditState.scheduleType === "continuous_span") {
     memoryEditState.span = {
       startDate: document.getElementById("memoryEditSpanStartDate")?.value || memoryEditState.span?.startDate || memoryEditState.targetDate,
@@ -8378,6 +8550,7 @@ async function saveStructuredMemoryEdit(event) {
         place: memoryEditState.place,
         scheduleType: memoryEditState.scheduleType,
         span: memoryEditState.scheduleType === "continuous_span" ? memoryEditState.span : null,
+        routine: null,
         windows,
         targetDate: windows[0].targetDate,
         startHour: windows[0].startHour,
@@ -8461,6 +8634,7 @@ async function saveStructuredMemoryEdit(event) {
       endHour: draft.endHour,
       scheduleType: "single",
       span: null,
+      routine: memoryEditState.routine,
       windows: [{
         id: existing.windows?.[0]?.id || `window-${draft.targetDate}`,
         targetDate: draft.targetDate,
@@ -8534,9 +8708,11 @@ function renderMemoryDetailPanel(memory) {
     : "";
   const weatherLine = event ? planMemoryMeta(memory, event) : `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
   const scheduleWindows = Array.isArray(memory.windows) ? memory.windows : [];
+  const routine = planMemoryRoutineText(memory);
   const scheduleSummary = memory.scheduleType === "continuous_span" && memory.span
     ? `${memoryEditDateLabel(memory.span.startDate, state.forecast)} ${hourText(memory.span.startHour)} through ${memoryEditDateLabel(memory.span.endDate, state.forecast)} ${hourText(memory.span.endHour)}`
     : scheduleWindows.length > 1 ? `${scheduleWindows.length} scheduled windows` : interpreted;
+  const canMakeRoutine = memory.scheduleType === "single" && scheduleWindows.length <= 1;
   const scheduleRows = scheduleWindows.length > 1 ? `
     <section class="memory-detail-schedule" aria-label="Plan schedule">
       ${scheduleWindows.map((window, index) => `
@@ -8554,6 +8730,7 @@ function renderMemoryDetailPanel(memory) {
       <dl class="memory-detail-facts">
         <div><dt>You asked</dt><dd>${escapeHtml(original || planMemoryDraft(memory))}</dd></div>
         <div><dt>${memory.scheduleType === "continuous_span" ? "Plan span" : "Plan schedule"}</dt><dd>${escapeHtml(scheduleSummary)}</dd></div>
+        ${routine ? `<div><dt>Routine</dt><dd>${escapeHtml(routine)} · next ${escapeHtml(planMemoryDayLabel(memory))}</dd></div>` : ""}
         <div><dt>Forecast read</dt><dd>${escapeHtml(weatherLine)}</dd></div>
         ${answer ? `<div><dt>Last answer</dt><dd>${escapeHtml(answer)}</dd></div>` : ""}
         <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
@@ -8562,6 +8739,11 @@ function renderMemoryDetailPanel(memory) {
       <div class="memory-detail-actions">
         <button type="button" data-memory-edit="${escapeHtml(memory.id)}">Edit plan</button>
         ${scheduleWindows.length > 1 ? "" : `<button type="button" data-memory-hourly="${escapeHtml(memory.id)}">Hourly detail</button>`}
+        ${routine
+          ? `<button type="button" data-memory-routine="${escapeHtml(memory.id)}" data-memory-routine-enabled="false">Stop weekly routine</button>`
+          : canMakeRoutine
+            ? `<button type="button" data-memory-routine="${escapeHtml(memory.id)}" data-memory-routine-enabled="true">Make weekly routine</button>`
+            : ""}
         <button type="button" data-memory-forget="${escapeHtml(memory.id)}">Forget</button>
       </div>
     </article>
@@ -8995,7 +9177,8 @@ function planMemoryDayLabel(memory, data = state.forecast) {
 
 function planMemoryMeta(memory, event = null) {
   const where = placeLabel(memory.place);
-  const when = `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
+  const routine = planMemoryRoutineText(memory);
+  const when = [routine, planMemoryDayLabel(memory), planMemoryTimeText(memory)].filter(Boolean).join(" · ");
   if (!event) return `${when} · ${where}`;
   const c = buildAIContext(event.data, event.place, event.alerts);
   if (!c) return `${when} · ${where}`;
@@ -9010,6 +9193,7 @@ function planMemoryMeta(memory, event = null) {
 }
 
 function planMemoryListItems(data = state.forecast, place = state.activePlace, options = {}) {
+  refreshPlanRoutineOccurrences(data);
   const { includePast = false } = options || {};
   const today = forecastLocalDate(data) || new Date().toISOString().slice(0, 10);
   const now = forecastNowMs(data);

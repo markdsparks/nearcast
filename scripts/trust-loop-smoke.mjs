@@ -24,6 +24,36 @@ assert.match(planner, /function cleanPlanWatchNotificationPlans\([\s\S]*!planWat
 assert.match(app, /function init\(\) \{[\s\S]{0,500}markPlanWatchMemoryInventoryReady\(\)/, "notification-plan migration waits until app state has hydrated plan memories");
 assert.match(planner, /function setPlanWatchNotificationPlan\([\s\S]*Object\.keys\(prefs\.plans\)\.length >= PLAN_WATCH_MAX_NOTIFICATION_PLANS[\s\S]*return false/, "a fourth notifying plan cannot be persisted");
 assert.match(planner, /function planWatchNotificationSyncPlans\([\s\S]*slice\(0, PLAN_WATCH_MAX_NOTIFICATION_PLANS\)/, "subscription sync never sends more than three plans");
+assert.match(planner, /function normalizePlanRoutine\([\s\S]*frequency !== "weekly"[\s\S]*weekday < 0 \|\| weekday > 6/, "a routine is a constrained weekly schedule rather than a second plan type");
+assert.match(planner, /function planRoutineNextDate\([\s\S]*offset === 0[\s\S]*endHour[\s\S]*offset = 7/, "a completed same-day routine advances to its next weekly occurrence");
+assert.match(planner, /function refreshPlanRoutineOccurrences\([\s\S]*windows: \[window\][\s\S]*savePlanMemories\(\)/, "the next routine occurrence is persisted into the existing plan model");
+assert.match(planner, /function setPlanMemoryRoutine\([\s\S]*scheduleType === "single"[\s\S]*syncPlanWatchNotificationSubscription/, "routines reuse the existing one-window plan and notification pipeline");
+assert.match(planner, /Make weekly routine/, "plan details offer a control to start a weekly routine");
+assert.match(planner, /Stop weekly routine/, "plan details offer a clear reversible weekly-routine control");
+assert.match(app, /data-memory-routine[\s\S]*setPlanMemoryRoutine/, "the plan detail control can enable or stop a routine");
+
+const routineStart = planner.indexOf("function planIsoDateOffset(");
+const routineEnd = planner.indexOf("function planWindowsFromSpan(", routineStart);
+assert.ok(routineStart >= 0 && routineEnd > routineStart, "routine helpers can be isolated for timing tests");
+const routineSandbox = {
+  forecastLocalDate() { return "2026-08-03"; }, // Monday
+  forecastCurrentHour() { return 10; }
+};
+vm.createContext(routineSandbox);
+vm.runInContext(planner.slice(routineStart, routineEnd), routineSandbox);
+const weeklyTuesday = { routine: { frequency: "weekly", weekday: 2 }, endHour: 18 };
+assert.equal(
+  routineSandbox.planRoutineNextDate(weeklyTuesday, {}),
+  "2026-08-04",
+  "a future same-week routine resolves to its next weekday"
+);
+routineSandbox.forecastCurrentHour = () => 19;
+const weeklyMonday = { routine: { frequency: "weekly", weekday: 1 }, endHour: 18 };
+assert.equal(
+  routineSandbox.planRoutineNextDate(weeklyMonday, {}),
+  "2026-08-10",
+  "a completed routine advances by one week rather than appearing as past"
+);
 assert.match(planner, /label: "3-plan limit"[\s\S]*Up to three active plans can notify this device/, "a fourth plan explains the limit instead of offering a broken toggle");
 assert.match(planner, /Three plans already notify you[\s\S]*Turn notifications off for another plan/, "post-save confirmation explains why a fourth plan remains in-app only");
 assert.match(styles, /\.watch-notify-limit,[\s\S]*font-size: 0\.82rem/, "the plan limit is readable rather than micro copy");

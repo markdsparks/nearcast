@@ -1,4 +1,4 @@
-const VERSION = "3.0.343";
+const VERSION = "3.0.344";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -4225,7 +4225,7 @@ function bindEvents() {
   bindTapAction(els.memoryEditBackdrop, closeMemoryEditSheet);
   bindTapAction(document.getElementById("memoryDetailClose"), navigateBackFromMemoryDetail);
   bindTapAction(document.getElementById("memoryDetailBackdrop"), navigateBackFromMemoryDetail);
-  bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-day-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit]", (event, target) => {
+  bindTapDelegate(els.memoryDetailBody, "[data-memory-hourly], [data-memory-day-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-routine]", (event, target) => {
     const memoryDayHourly = target.closest("[data-memory-day-hourly]");
     if (memoryDayHourly) {
       const [memoryId, rawWindowIndex] = String(memoryDayHourly.dataset.memoryDayHourly || "").split("::");
@@ -4257,6 +4257,14 @@ function bindEvents() {
     if (memoryForget) {
       forgetPlanMemory(memoryForget.dataset.memoryForget);
       refreshOpenMemoryDetail();
+      return;
+    }
+    const memoryRoutine = target.closest("[data-memory-routine]");
+    if (memoryRoutine) {
+      const enabled = memoryRoutine.dataset.memoryRoutineEnabled === "true";
+      if (typeof setPlanMemoryRoutine === "function" && setPlanMemoryRoutine(memoryRoutine.dataset.memoryRoutine, enabled)) {
+        refreshOpenMemoryDetail();
+      }
       return;
     }
     const memoryEdit = target.closest("[data-memory-edit]");
