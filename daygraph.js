@@ -499,9 +499,9 @@ function openDayDetail({
   document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay) + (stormPotential ? thunderBadgeHtml() : "");
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
-  document.getElementById("sheetSummary").textContent = buildDaySummary(hrs, windUnit);
+  renderDayFocus(hrs, { tempUnit, windUnit, source, showNow });
 
-  graphMetric = "temp"; // each open defaults to Temp (with the Feels-like overlay)
+  graphMetric = "temp"; // each focused day starts with the most legible trend.
   dayDetailNavState = { source, dayIndex, data, eventWindow, showNow, sunriseISO, sunsetISO, contextLabel, ...(navState || {}) };
   if (dayDetailNavState.timeline) {
     dayDetailNavState.timeline.lastDay = null;
@@ -636,6 +636,13 @@ function refreshOpenDayDetailMemorySurfaces() {
     showNow: Boolean(dayDetailNavState.showNow)
   });
 
+  renderDayFocus(hrs, {
+    tempUnit,
+    windUnit,
+    source: dayDetailNavState.source,
+    showNow: Boolean(dayDetailNavState.showNow)
+  });
+
   buildHourlyGraph(hrs, tempUnit, windUnit, Boolean(dayDetailNavState.showNow), {
     dayIndex: dayDetailNavState.dayIndex,
     sunriseISO: dayDetailNavState.sunriseISO,
@@ -715,6 +722,105 @@ function buildDaySummary(hrs, windUnit) {
   else if (hasMissingPop && availablePops.length) parts.push("some rain data unavailable");
   if (maxGust >= 25) parts.push(`gusts to ${maxGust} ${windUnit}`);
   return parts.join(", ") + ".";
+}
+
+function dayFocusCondition(hours) {
+  const counts = new Map();
+  (hours || []).forEach((hour) => {
+    const code = Number(hour?.code);
+    if (!Number.isFinite(code)) return;
+    counts.set(code, (counts.get(code) || 0) + 1);
+  });
+  const [code] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
+  return weatherCodes[code] || "Mixed skies";
+}
+
+function dayFocusHourLabel(hour) {
+  if (!hour?.time) return "later";
+  try {
+    return formatHour(hour.time);
+  } catch {
+    return "later";
+  }
+}
+
+function dayFocusPeriodHours(hrs, start, end) {
+  return hrs.filter((hour) => {
+    const hourOfDay = forecastLocalHour(hour.time);
+    return hourOfDay >= start && hourOfDay < end;
+  });
+}
+
+function dayFocusStory(hrs, tempUnit, windUnit) {
+  const safeHours = Array.isArray(hrs) ? hrs.filter(Boolean) : [];
+  if (!safeHours.length) return { text: "Hourly detail is unavailable for this day.", signal: null };
+  const temps = safeHours.map((hour) => Number(hour.temp)).filter(Number.isFinite);
+  const high = temps.length ? Math.round(Math.max(...temps)) : null;
+  const low = temps.length ? Math.round(Math.min(...temps)) : null;
+  const morning = dayFocusPeriodHours(safeHours, 5, 12);
+  const afternoon = dayFocusPeriodHours(safeHours, 12, 18);
+  const evening = dayFocusPeriodHours(safeHours, 18, 24);
+  const early = dayFocusCondition(morning.length ? morning : safeHours.slice(0, Math.ceil(safeHours.length / 2)));
+  const late = dayFocusCondition(afternoon.length ? afternoon : evening.length ? evening : safeHours.slice(Math.floor(safeHours.length / 2)));
+  const earlyText = String(early).toLowerCase();
+  const lateText = String(late).toLowerCase();
+  const changeText = earlyText === lateText
+    ? `${early} through most of the day.`
+    : `${early} early, then ${lateText} later.`;
+
+  const wetHour = safeHours.find((hour) => Number(hour.pop) >= 20 || hour.stormPotential || isPrecipCode(hour.code));
+  const likelyWetHour = safeHours.find((hour) => Number(hour.pop) >= 50 || hour.stormPotential);
+  const windyHour = safeHours.reduce((best, hour) => Number(hour.gust) > Number(best?.gust || 0) ? hour : best, null);
+  const uvHour = safeHours.reduce((best, hour) => Number(hour.uv) > Number(best?.uv || 0) ? hour : best, null);
+  const rangeText = high !== null && low !== null ? `High ${high}${degree(tempUnit)}, low ${low}${degree(tempUnit)}.` : "";
+  const wetText = likelyWetHour
+    ? `${likelyWetHour.stormPotential ? "Thunderstorms" : "Rain"} ${Number(likelyWetHour.pop) >= 50 ? "is likely" : "is possible"} near ${dayFocusHourLabel(likelyWetHour)}.`
+    : wetHour
+      ? `A shower is possible near ${dayFocusHourLabel(wetHour)}.`
+      : "";
+  const windThreshold = windUnit === "mph" ? 25 : 40;
+  const windText = !wetText && Number(windyHour?.gust) >= windThreshold
+    ? `Gusts may reach ${Math.round(windyHour.gust)} ${windUnit} near ${dayFocusHourLabel(windyHour)}.`
+    : "";
+
+  let signal = null;
+  if (likelyWetHour) {
+    signal = {
+      label: likelyWetHour.stormPotential ? "Storm timing" : "Rain timing",
+      value: `${likelyWetHour.stormPotential ? "Thunderstorms" : "Rain"} ${Number(likelyWetHour.pop) >= 50 ? "likely" : "possible"} near ${dayFocusHourLabel(likelyWetHour)}`,
+      tone: "wet"
+    };
+  } else if (Number(windyHour?.gust) >= windThreshold) {
+    signal = { label: "Wind peak", value: `Gusts near ${Math.round(windyHour.gust)} ${windUnit} around ${dayFocusHourLabel(windyHour)}`, tone: "wind" };
+  } else if (Number(uvHour?.uv) >= 6) {
+    signal = { label: "Sun exposure", value: `UV ${Math.round(uvHour.uv)} peaks around ${dayFocusHourLabel(uvHour)}`, tone: "sun" };
+  }
+
+  return {
+    text: [changeText, rangeText, wetText || windText].filter(Boolean).join(" "),
+    signal
+  };
+}
+
+function renderDayFocus(hrs, { tempUnit, windUnit, source = "day", showNow = false } = {}) {
+  const kicker = document.getElementById("sheetKicker");
+  const summary = document.getElementById("sheetSummary");
+  const signal = document.getElementById("sheetFocusSignal");
+  const focus = dayFocusStory(hrs, tempUnit, windUnit);
+  if (kicker) kicker.textContent = source === "rolling" ? "Hourly outlook" : showNow ? "Today's outlook" : "Day outlook";
+  if (summary) summary.textContent = focus.text || buildDaySummary(hrs, windUnit);
+  if (!signal) return;
+  if (!focus.signal) {
+    signal.hidden = true;
+    signal.innerHTML = "";
+    signal.removeAttribute("data-tone");
+    signal.removeAttribute("aria-label");
+    return;
+  }
+  signal.hidden = false;
+  signal.dataset.tone = focus.signal.tone;
+  signal.innerHTML = `<span>${escapeHtml(focus.signal.label)}</span><strong>${escapeHtml(focus.signal.value)}</strong>`;
+  signal.setAttribute("aria-label", `${focus.signal.label}: ${focus.signal.value}`);
 }
 
 function hourlyRowRainText(hour) {
@@ -1185,7 +1291,7 @@ let graphCtx = null;
 const GRAPH_WIND_COLOR = "#8479ff";
 
 function setGraphMetric(metric) {
-  graphMetric = metric === "precip" || metric === "wind" || metric === "sun" ? metric : "temp";
+  graphMetric = metric === "feels" || metric === "precip" || metric === "wind" || metric === "sun" ? metric : "temp";
   if (graphCtx) drawHourlyGraph();
 }
 
@@ -1201,21 +1307,25 @@ function drawHourlyGraph() {
   const isPrecip = graphMetric === "precip";
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
+  const isFeels = graphMetric === "feels";
   renderSheetUvForecastExplainer(data, graphCtx.dayIndex, isSun && !isSheetHourlyModeActive());
 
   // Reflect the active metric in the toggle + hint.
   const tempBtn = document.getElementById("graphTempBtn");
+  const feelsBtn = document.getElementById("graphFeelsBtn");
   const precipBtn = document.getElementById("graphPrecipBtn");
   const windBtn = document.getElementById("graphWindBtn");
   const sunBtn = document.getElementById("graphSunBtn");
   const metricToggle = document.getElementById("graphMetricToggle");
   const hint = document.getElementById("graphMetricHint");
-  if (tempBtn && precipBtn && windBtn && sunBtn) {
-    tempBtn.classList.toggle("active", !isPrecip && !isWind && !isSun);
+  if (tempBtn && feelsBtn && precipBtn && windBtn && sunBtn) {
+    tempBtn.classList.toggle("active", !isFeels && !isPrecip && !isWind && !isSun);
+    feelsBtn.classList.toggle("active", isFeels);
     precipBtn.classList.toggle("active", isPrecip);
     windBtn.classList.toggle("active", isWind);
     sunBtn.classList.toggle("active", isSun);
-    tempBtn.setAttribute("aria-pressed", String(!isPrecip && !isWind && !isSun));
+    tempBtn.setAttribute("aria-pressed", String(!isFeels && !isPrecip && !isWind && !isSun));
+    feelsBtn.setAttribute("aria-pressed", String(isFeels));
     precipBtn.setAttribute("aria-pressed", String(isPrecip));
     windBtn.setAttribute("aria-pressed", String(isWind));
     sunBtn.setAttribute("aria-pressed", String(isSun));
@@ -1226,7 +1336,7 @@ function drawHourlyGraph() {
     hint.classList.toggle("is-precip", isPrecip);
     hint.textContent = isPrecip
       ? "area = chance · bars = amount"
-      : isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : "dashed = feels like";
+      : isSun ? "orange = higher UV" : isWind ? "dashed = gusts" : isFeels ? "dashed = actual temp" : "dashed = feels like";
   }
   document.getElementById("sheetReadout")?.setAttribute("aria-live", isPrecip ? "off" : "polite");
   if (isPrecip) {
@@ -1250,8 +1360,8 @@ function drawHourlyGraph() {
   const labelY = 152;
   const n = hrs.length;
 
-  const primaryKey = isWind ? "wind" : "temp";
-  const secondaryKey = isWind ? "gust" : "feels";
+  const primaryKey = isWind ? "wind" : isFeels ? "feels" : "temp";
+  const secondaryKey = isWind ? "gust" : isFeels ? "temp" : "feels";
   const unitSuffix = isWind ? ` ${windUnit}` : degree(tempUnit);
   const fmt = (v) => `${Math.round(v)}${unitSuffix}`;
 
@@ -1297,7 +1407,7 @@ function drawHourlyGraph() {
     areaOpacity = 0.10;
   } else {
     const gradStops = pPts.map((p, i) =>
-      `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p.temp)}"/>`
+      `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${tempColor(p[primaryKey])}"/>`
     ).join("");
     defs = `<linearGradient id="tempGrad" x1="0" y1="0" x2="1" y2="0">${gradStops}</linearGradient>`;
     primaryStroke = areaFill = "url(#tempGrad)";
@@ -1399,10 +1509,12 @@ function drawHourlyGraph() {
     const long = formatHour(p.time);
     const main = isWind
       ? `${long} · ${Math.round(p.wind)} ${windUnit}`
-      : `${long} · ${Math.round(p.temp)}${degree(tempUnit)}`;
+      : `${long} · ${Math.round(p[primaryKey])}${degree(tempUnit)}`;
     const sub = isWind
       ? `gust ${Math.round(p.gust)} ${windUnit} · ${p.pop}% rain`
-      : `feels ${Math.round(p.feels)}${degree(tempUnit)} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}`;
+      : isFeels
+        ? `actual ${Math.round(p.temp)}${degree(tempUnit)} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}`
+        : `feels ${Math.round(p.feels)}${degree(tempUnit)} · ${p.pop}% · ${Math.round(p.wind)} ${windUnit}`;
     const activeMemory = graphMemoryAtMs(p.ms ?? parseForecastTimestamp(p.time, data), memoryWindows);
     const subText = activeMemory ? `During ${activeMemory.label} · ${sub}` : sub;
     callout.innerHTML =

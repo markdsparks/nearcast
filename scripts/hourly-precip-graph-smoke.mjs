@@ -154,12 +154,16 @@ const gapped = graph.paths([
 assert.equal(gapped.length, 2, "missing probability leaves a visible gap");
 
 const tempIndex = html.indexOf('id="graphTempBtn"');
+const feelsIndex = html.indexOf('id="graphFeelsBtn"');
 const precipIndex = html.indexOf('id="graphPrecipBtn"');
 const windIndex = html.indexOf('id="graphWindBtn"');
 const sunIndex = html.indexOf('id="graphSunBtn"');
-assert.ok(tempIndex < precipIndex && precipIndex < windIndex && windIndex < sunIndex, "tabs read Temp, Precip, Wind, Sun");
+assert.ok(tempIndex < feelsIndex && feelsIndex < precipIndex && precipIndex < windIndex && windIndex < sunIndex, "tabs read Temp, Feels, Precip, Wind, Sun");
+assert.match(app, /graphFeelsBtn"\), \(\) => setGraphMetric\("feels"\)/, "Feels tab has a tap binding");
 assert.match(app, /graphPrecipBtn"\), \(\) => setGraphMetric\("precip"\)/, "Precip tab has a tap binding");
-assert.match(daygraph, /metric === "precip" \|\| metric === "wind" \|\| metric === "sun"/, "metric state accepts Precip");
+assert.match(daygraph, /metric === "feels" \|\| metric === "precip" \|\| metric === "wind" \|\| metric === "sun"/, "metric state accepts Feels and Precip");
+assert.match(daygraph, /function dayFocusStory\(/, "selected days get a decision-oriented Day Focus story");
+assert.match(daygraph, /function renderDayFocus\(/, "Day Focus renders the relevant weather signal separately from detail stats");
 assert.match(daygraph, /precipBtn\.setAttribute\("aria-pressed", String\(isPrecip\)\)/, "Precip participates in exclusive pressed state");
 assert.match(daygraph, /if \(isPrecip\) \{\s*drawPrecipGraph\(\)/, "Precip uses its dedicated renderer");
 assert.doesNotMatch(daygraph, /const precipBars|\$\{precipBars\}/, "Temp and Wind no longer carry the ambiguous mini probability strip");

@@ -1,4 +1,4 @@
-const VERSION = "3.0.344";
+const VERSION = "3.0.345";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -4425,6 +4425,7 @@ function bindEvents() {
     openMemoryDetail(memoryDetail.dataset.memoryDetail);
   });
   bindTapAction(document.getElementById("graphTempBtn"), () => setGraphMetric("temp"));
+  bindTapAction(document.getElementById("graphFeelsBtn"), () => setGraphMetric("feels"));
   bindTapAction(document.getElementById("graphPrecipBtn"), () => setGraphMetric("precip"));
   bindTapAction(document.getElementById("graphWindBtn"), () => setGraphMetric("wind"));
   bindTapAction(document.getElementById("graphSunBtn"), () => setGraphMetric("sun"));
