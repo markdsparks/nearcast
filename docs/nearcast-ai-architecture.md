@@ -42,7 +42,11 @@ terminal outcome.
   product result, such as a plan check. General management and navigation turns
   remain open to Operon's skill selection and graph chaining.
 - A completed, clarification, abstained, or cancelled Operon result is trusted as
-  the terminal state. Nearcast does not reparse agent prose to veto valid graphs.
+  the terminal state. The sole recovery guard is a zero-call generic
+  clarification for an explicit host-parseable direct action: Nearcast reruns
+  that same typed skill once through the host, rather than leaving the user in a
+  false “need more information” dead end. Nearcast never reparses agent prose to
+  veto a graph that invoked a skill.
 - Abstentions remain first-class outcomes. Nearcast distinguishes no available
   context from evidence that was considered but could not support the request,
   and exposes a compact local-source disclosure instead of a generic help reply.

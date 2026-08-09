@@ -5926,6 +5926,13 @@ function nearcastCompletionForQuestion(question) {
             : "")
     : "";
   if (requestedView) return { required_artifact_kinds: [requestedView] };
+  // A plain place switch is itself a complete, observable app outcome. Give
+  // Operon that declarative target so a small model does not mistake a fully
+  // named place for a clarification turn.
+  const directCommand = parseNearcastDirectNavigation(raw);
+  if (directCommand?.skillId === "nearcast.place_switch" && directCommand.arguments?.place) {
+    return { required_skill_ids: ["nearcast.place_switch"] };
+  }
   // Operon owns intent interpretation and skill selection. Keep completion
   // contracts only for workflows where Nearcast must guarantee a typed result
   // (activity planning or a weather answer); management and navigation skills
@@ -5943,6 +5950,18 @@ function nearcastCompletionForQuestion(question) {
     return { required_skill_ids: ["nearcast.weather_answer"] };
   }
   return null;
+}
+
+function nearcastRecoverableDirectCommand(question, skillCalls = 0) {
+  // This is deliberately a recovery guard, not the normal routing path: the
+  // model gets first choice of graph and skill. If it made no call at all and
+  // asked a generic clarification for a request the host can already prepare,
+  // retry the same typed Operon skill through the host. That preserves model
+  // latitude while refusing a false "need more information" dead end.
+  if (skillCalls > 0) return null;
+  const command = parseNearcastDirectNavigation(question);
+  if (!command?.skillId || !NEARCAST_AGENT_SKILL_REGISTRY.has(command.skillId)) return null;
+  return command;
 }
 
 async function runNearcastAgent(question, rowIndex, signal = null) {
@@ -6019,6 +6038,15 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
       }
     : rawClarification;
   const clarification = receipt.clarification || resumableClarification || null;
+  const directRecovery = clarification
+    ? nearcastRecoverableDirectCommand(question, receipt.skillCalls)
+    : null;
+  if (directRecovery) {
+    planIntentDiagnostics.operonRecovery = directRecovery.skillId;
+    const recovered = await runNearcastDirectNavigation(question, signal, rowIndex);
+    if (recovered?.clarification) setPlannerClarification(recovered.clarification, rowIndex);
+    if (recovered?.answer || recovered?.skillCalls || recovered?.clarification) return recovered;
+  }
   if (clarification?.type === "agent-skill" || clarification?.options?.length) {
     setPlannerClarification(clarification, rowIndex);
   }

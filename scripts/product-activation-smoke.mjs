@@ -55,7 +55,10 @@ const completionSandbox = {
   detectAskActivity: () => null,
   detectPlanActivity: () => null,
   nearcastLooksLikeMultiDayPlan: () => false,
-  nearcastLooksLikeWeatherQuestion: () => false
+  nearcastLooksLikeWeatherQuestion: () => false,
+  parseNearcastDirectNavigation: (question) => /switch to maryville,? illinois/i.test(question)
+    ? { skillId: "nearcast.place_switch", arguments: { place: "Maryville, Illinois" } }
+    : null
 };
 vm.createContext(completionSandbox);
 vm.runInContext(`
@@ -67,6 +70,33 @@ assert.deepEqual(
   JSON.parse(JSON.stringify(completionSandbox.completionForQuestionTest("Switch to Maryville and show me the forecast for next Wednesday"))),
   { required_artifact_kinds: ["nearcast.view.day"] },
   "a named forecast day survives as a required Operon day-view outcome"
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(completionSandbox.completionForQuestionTest("Switch to Maryville, Illinois"))),
+  { required_skill_ids: ["nearcast.place_switch"] },
+  "an unambiguous place switch is a declared Operon completion, not a clarification turn"
+);
+
+const recoverySandbox = {
+  NEARCAST_AGENT_SKILL_REGISTRY: new Map([["nearcast.place_switch", {}]]),
+  parseNearcastDirectNavigation: (question) => /switch to maryville,? illinois/i.test(question)
+    ? { skillId: "nearcast.place_switch", arguments: { place: "Maryville, Illinois" } }
+    : null
+};
+vm.createContext(recoverySandbox);
+vm.runInContext(`
+  ${extractFunction(planner, "nearcastRecoverableDirectCommand")}
+  globalThis.recoverDirectTest = nearcastRecoverableDirectCommand;
+`, recoverySandbox);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(recoverySandbox.recoverDirectTest("Switch to Maryville, Illinois", 0))),
+  { skillId: "nearcast.place_switch", arguments: { place: "Maryville, Illinois" } },
+  "a zero-call false clarification can resume through the host's typed place-switch skill"
+);
+assert.equal(
+  recoverySandbox.recoverDirectTest("Switch to Maryville, Illinois", 1),
+  null,
+  "a graph that already invoked a skill remains the authoritative terminal path"
 );
 
 const placeResolutionCalls = [];
