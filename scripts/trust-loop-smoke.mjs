@@ -122,7 +122,7 @@ assert.match(planner, /function planWatchItemForMemoryItem\([\s\S]*homePlanSafet
 assert.match(planner, /const resolvedWatch = \{[\s\S]*riskKind: safety\.riskKind,[\s\S]*label: safety\.label/, "the selected hazard kind propagates with the safety-resolved watch");
 assert.match(planner, /function homePlanDecisionPriority\([\s\S]*changeDirection !== "better"[\s\S]*if \(actionNow\) return 5;[\s\S]*if \(active\) return 4;[\s\S]*futureHours >= 0 && futureHours <= 24[\s\S]*if \(changed \|\| alertAffectsPlan\) return 2;/, "plan promotion ranks action-now, active, next-day, then distant changes without treating an improvement as urgent");
 assert.match(planner, /data-plan-state=[\s\S]*data-plan-risk=/, "the promoted plan exposes change and resulting-risk semantics to its styling layer");
-assert.match(planner, /showPlace[\s\S]*samePlanPlace\(memory\.place, place\)[\s\S]*home-plan-place/, "the promoted plan omits a location that repeats the active place");
+assert.match(planner, /function renderPlanPulse\([\s\S]*?const where = placeLabel\(memory\.place\)[\s\S]*?home-plan-place/, "the Agenda peek always includes the plan place for a complete at-a-glance commitment");
 assert.match(planner, /scheduleType === "continuous_span"[\s\S]*startDay\} at[\s\S]*endDay\} at/, "continuous plan timing reads as a human date-and-time range");
 assert.match(planner, /const when = planPulseWhenText\(memory, watch\.data \|\| data\)/, "the promoted plan renders the human timing text");
 assert.match(planner, /function planWatchMetaText\([\s\S]*planPulseWhenText\([\s\S]*samePlace[\s\S]*filter\(Boolean\)\.join/, "the Plans destination shares human timing and omits a repeated active place");

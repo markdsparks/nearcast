@@ -1,4 +1,4 @@
-const VERSION = "3.0.346";
+const VERSION = "3.0.347";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -103,6 +103,9 @@ const FOR_YOU_SIGNAL_IDS = [
   "plan-check-completed",
   "plan-watched",
   "watching-open",
+  "agenda-open",
+  "agenda-plan-open",
+  "agenda-plan-created",
   "notification-opt-in",
   "notification-registration-ready",
   "notification-registration-failed",
@@ -3978,7 +3981,12 @@ function bindEvents() {
     else if (action === "stop" && aiBriefAbort) aiBriefAbort.aborted = true;
     else if (action === "copy-report") copySupportReport();
   });
-  bindTapDelegate(els.planPulse, "[data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+  bindTapDelegate(els.planPulse, "[data-agenda-open], [data-memory-show], [data-memory-edit], [data-memory-open], [data-plan-brief-show]", (event, target) => {
+    const agendaOpen = target.closest("[data-agenda-open]");
+    if (agendaOpen) {
+      openGlobalMemorySheet({ source: "agenda" });
+      return;
+    }
     const memoryOpen = target.closest("[data-memory-open]");
     if (memoryOpen) {
       openGlobalMemorySheet();
@@ -4148,7 +4156,7 @@ function bindEvents() {
   els.aiSheet?.addEventListener("keydown", trapNearcastAIFocus);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-watch-notify], [data-watch-notify-retry], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-agenda-create], [data-watch-notify], [data-watch-notify-retry], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
     const notificationPlace = target.closest("[data-notification-place]");
     if (notificationPlace) {
       const place = state.savedPlaces.find((item) => item.id === notificationPlace.dataset.notificationPlace);
@@ -4186,6 +4194,14 @@ function bindEvents() {
       }
       return;
     }
+    const agendaCreate = target.closest("[data-agenda-create]");
+    if (agendaCreate) {
+      if (typeof setPlanMemoryCreateSource === "function") setPlanMemoryCreateSource("agenda");
+      closeGlobalMemorySheet();
+      openAISheet({ autoBrief: false });
+      requestAnimationFrame(() => fillPlannerTemplate(""));
+      return;
+    }
     const memoryNew = target.closest("[data-memory-new]");
     if (memoryNew) {
       closeGlobalMemorySheet();
@@ -4207,6 +4223,7 @@ function bindEvents() {
     }
     const memoryShow = target.closest("[data-memory-show]");
     if (memoryShow) {
+      if (memoryShow.matches("[data-agenda-plan]")) recordForYouSignal("agenda-plan-open");
       openPlanWatchForMemory(memoryShow.dataset.memoryShow);
       return;
     }

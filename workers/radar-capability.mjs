@@ -132,6 +132,7 @@ const PRODUCT_EVENT_NAMES = new Set([
   "memory-open", "memory-show", "memory-edit", "plan-invite-shown", "plan-invite-open",
   "plan-invite-dismiss", "plan-template", "plan-check-started", "plan-check-confirmed",
   "plan-check-completed", "plan-watched", "watching-open", "notification-opt-in",
+  "agenda-open", "agenda-plan-open", "agenda-plan-created",
   "notification-registration-ready", "notification-registration-failed", "notification-open",
   "watch-change-reviewed"
 ]);

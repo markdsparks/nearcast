@@ -57,7 +57,7 @@ assert.match(planner, /type: "memory-detail"/, "full-day hourly records the nest
 assert.match(app, /returnToMemoryDetail: \{[\s\S]*memoryId,[\s\S]*windowIndex:/, "the full-day action carries its plan and window context");
 assert.match(daygraph, /restorePlanDayDetailTarget\(returnToPlanner\)/, "day-detail close follows the nested plan navigation stack");
 
-assert.match(planner, /data-memory-show="\$\{escapeHtml\(memory\.id\)\}" aria-label="\$\{escapeHtml\(`Open/, "Watching cards open the focused receipt rather than the legacy facts sheet");
+assert.match(planner, /data-memory-show="\$\{escapeHtml\(memory\.id\)\}"[\s\S]*?aria-label="\$\{escapeHtml\(`Open/, "Watching cards open the focused receipt rather than the legacy facts sheet");
 for (const phrase of [
   "Forecast changed",
   "Before",

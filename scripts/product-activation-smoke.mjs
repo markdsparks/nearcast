@@ -174,8 +174,8 @@ assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_
 assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");
 assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
 assert.match(extractFunction(app, "buildForecastStory"), /This morning's outlook[\s\S]*This afternoon's outlook[\s\S]*Tonight's outlook/, "the forecast narrative changes with the local time of day");
-assert.match(planner, /function homePlanDecisionCandidate[\s\S]*?homePlanDecisionPriority[\s\S]*?const earned = priorityBand > 0/, "homepage plans earn promotion through the shared action, timing, change, alert, and risk priority");
-assert.match(extractFunction(planner, "renderPlanPulse"), /home-plan-decision[\s\S]*?data-memory-show/, "the promoted decision opens the exact watched plan");
+assert.match(extractFunction(planner, "agendaPlanItems"), /refreshPlanRoutineOccurrences[\s\S]*?startDate <= lastDate[\s\S]*?Number\(b\.active\) - Number\(a\.active\)/, "Agenda rolls routines forward, stays within seven days, and prioritizes an active plan before chronological order");
+assert.match(extractFunction(planner, "renderPlanPulse"), /home-plan-decision[\s\S]*?data-agenda-open[\s\S]*?agenda-upcoming-change/, "the home Agenda peek opens Plans while keeping later forecast changes secondary");
 assert.match(extractFunction(app, "forYouWatchingCard"), /homePlanDecisionCandidate[\s\S]*?Do not repeat a lower-value Watching card below/, "promoted plans are not duplicated later on the homepage");
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
 assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
@@ -209,6 +209,9 @@ for (const signal of [
   "plan-check-completed",
   "plan-watched",
   "watching-open",
+  "agenda-open",
+  "agenda-plan-open",
+  "agenda-plan-created",
   "notification-opt-in",
   "notification-registration-ready",
   "notification-registration-failed",
@@ -247,7 +250,9 @@ assert.match(planner, /if \(option\.confirmPlan\) \{[\s\S]*recordForYouSignal\("
 assert.match(planner, /normalized\.event[\s\S]*recordForYouSignal\("plan-check-completed"\)/, "only a valid plan result completes the check funnel");
 assert.match(planner, /savePlanMemories\(\);[\s\S]*recordForYouSignal\("plan-watched"\)/, "watch creation is measured only after local persistence succeeds");
 assert.match(planner, /function openGlobalMemorySheet\([\s\S]*recordForYouSignal\("watching-open"\)/, "all Plans entry points share one local open signal");
-assert.match(planner, /No plans yet[\s\S]*data-memory-new>Create a plan/, "the persistent destination has a useful zero-plan state");
+assert.match(planner, /No plans yet[\s\S]*data-agenda-create>Create a plan/, "the persistent destination has a useful zero-plan state");
+assert.match(extractFunction(planner, "renderGlobalMemorySheet"), /agendaPlanItems[\s\S]*?agendaGroupLabel[\s\S]*?groups\.get\(label\)\.push/, "Plans is organized as a chronological seven-day agenda rather than a risk-priority inbox");
+assert.match(extractFunction(planner, "openGlobalMemorySheet"), /options\.source === "agenda"[\s\S]*recordForYouSignal\("agenda-open"\)/, "Agenda opening is measured without sending plan details");
 
 assert.match(styles, /\.plan-invitation-copy strong[\s\S]*font-size: 1\.03rem/, "the invitation headline is readable rather than micro text");
 assert.match(styles, /\.plan-invitation-examples[\s\S]*grid-template-columns: repeat\(3/, "example actions share a stable row");

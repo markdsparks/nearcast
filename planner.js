@@ -3157,70 +3157,104 @@ function renderMainPlanBriefing(items, data = state.forecast, options = {}) {
 function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   const slot = els.planPulse;
   if (!slot) return;
-  const decision = homePlanDecisionCandidate(data, place);
-  if (!decision) {
+  const agenda = agendaPlanItems(data, place);
+  const next = agenda[0];
+  if (!next) {
     slot.hidden = true;
     slot.innerHTML = "";
     return;
   }
 
-  const { watch, activeCount, active, hoursUntil, safety, priorityBand } = decision;
-  const memory = watch.memory;
+  const { memory, watch, active, startMs } = next;
   const title = planMemoryTitle(memory);
   const changed = Boolean(watch.change);
-  const alertAffectsPlan = Boolean(watch.alert || watch.change?.type === "plan-alert");
-  const decisionTone = safety?.tone || watch.tone || "pending";
-  const riskKind = safety?.riskKind || (typeof planWatchRiskKind === "function" ? planWatchRiskKind(watch) : "good");
-  const label = String(safety?.overridden ? safety.label : watch.label || "Checking forecast").trim();
-  const outcome = changed
-    ? `${title}: ${watch.change?.title || label}`
-    : label === "Looks good"
-      ? `${title} ${active ? "looks good right now" : "still looks good"}`
-      : `${title}: ${label}`;
+  const tone = watch.tone || "pending";
+  const riskKind = watch.riskKind || (typeof planWatchRiskKind === "function" ? planWatchRiskKind(watch) : "good");
+  const label = String(changed ? watch.change?.title || "Forecast changed" : watch.label || "Checking forecast").trim();
+  const outcome = changed ? `${title}: ${label}` : `${title}: ${label}`;
   const evidence = changed
     ? planWatchChangeEvidence(watch.change) || watch.change?.body || watch.reason
-    : safety?.overridden && safety.evidence
-      ? safety.evidence
-      : watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
-  const advice = String(safety?.overridden ? safety.action : watch.action || watch.advice || "").trim();
-  const checkedWhen = formatPlanWatchRelativeTimestamp(watch.checkedAt);
+    : watch.primaryReason || watch.reason || watch.fullReason || "Nearcast checked this plan against the forecast.";
   const when = planPulseWhenText(memory, watch.data || data);
   const where = placeLabel(memory.place);
-  const showPlace = !(typeof samePlanPlace === "function" && samePlanPlace(memory.place, place));
-  let kicker = "Weather to watch";
-  if (priorityBand === 5) kicker = "Action now";
-  else if (active) kicker = "Happening now";
-  else if (hoursUntil >= 0 && hoursUntil <= 24) kicker = planMemoryRoutineText(memory) ? "Next routine" : "Next decision";
-  else if (alertAffectsPlan) kicker = "Alert affects this plan";
-  else if (changed) kicker = "Forecast changed";
-  const moreCount = Math.max(0, activeCount - 1);
+  const kicker = active ? "In progress" : "Next up";
   const compact = (value, limit) => typeof compactForYouText === "function"
     ? compactForYouText(value, limit)
     : String(value || "").slice(0, limit);
-  const changeDirection = changed && ["better", "worse", "changed"].includes(watch.change?.receipt?.direction)
-    ? watch.change.receipt.direction
-    : changed ? "changed" : "";
-  const stateClasses = [
-    `is-${decisionTone}`,
-    riskKind && riskKind !== "good" ? `is-risk-${riskKind}` : "",
-    changed ? "is-changed" : "",
-    changeDirection ? `is-change-${changeDirection}` : ""
-  ].filter(Boolean).join(" ");
+  const laterChanged = agenda.slice(1).find((item) => item.watch?.change);
+  const laterChangeText = laterChanged
+    ? `${planMemoryTitle(laterChanged.memory)} changed`
+    : "";
 
   slot.hidden = false;
   slot.innerHTML = `
-    <button class="home-plan-decision ${escapeHtml(stateClasses)}" type="button" data-memory-show="${escapeHtml(memory.id)}" data-plan-state="${escapeHtml(changeDirection || decisionTone)}" data-plan-risk="${escapeHtml(riskKind)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${evidence}. View plan.`)}">
+    <button class="home-plan-decision is-agenda is-expanded is-${escapeHtml(tone)}${changed ? " is-changed" : ""}" type="button" data-agenda-open data-memory-show="${escapeHtml(memory.id)}" data-plan-state="${escapeHtml(tone)}" data-plan-risk="${escapeHtml(riskKind)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${where}. ${when}. ${evidence}. Open plans.`)}">
       <span class="home-plan-kicker"><span>${escapeHtml(kicker)}</span><em>${escapeHtml(when)}</em></span>
-      ${showPlace ? `<span class="home-plan-place">${escapeHtml(where)}</span>` : ""}
+      <span class="home-plan-place">${escapeHtml(where)}</span>
       <strong>${escapeHtml(outcome)}</strong>
       <span class="home-plan-evidence">${escapeHtml(compact(evidence, 150))}</span>
-      ${advice ? `<span class="home-plan-advice"><b>Plan for this</b>${escapeHtml(compact(advice, 120))}</span>` : ""}
       <span class="home-plan-footer">
-        <span>${escapeHtml([moreCount ? `${moreCount} more watched` : "", checkedWhen ? `Checked ${checkedWhen}` : "Watching for changes"].filter(Boolean).join(" · "))}</span>
-        <em>View plan <span aria-hidden="true">›</span></em>
+        <span>${escapeHtml(active ? "Nearcast is watching this window" : `Starts ${formatForecastMs(startMs, watch.data || data)}`)}</span>
+        <em>Open plans <span aria-hidden="true">›</span></em>
       </span>
     </button>
+    ${laterChanged ? `<button class="agenda-upcoming-change" type="button" data-agenda-open aria-label="${escapeHtml(`Open plans. Upcoming forecast change: ${laterChangeText}.`)}"><span>Upcoming change</span><strong>${escapeHtml(laterChangeText)}</strong><em aria-hidden="true">›</em></button>` : ""}
   `;
+}
+
+function agendaPlanWindow(memory, data = state.forecast) {
+  if (memory?.scheduleType === "continuous_span" && memory.span) {
+    return {
+      startDate: memory.span.startDate,
+      startHour: Number(memory.span.startHour),
+      endDate: memory.span.endDate,
+      endHour: Number(memory.span.endHour)
+    };
+  }
+  const window = planMemoryDisplayWindow(memory, data);
+  return {
+    startDate: window?.targetDate || memory?.targetDate,
+    startHour: Number(window?.startHour ?? memory?.startHour),
+    endDate: window?.targetDate || memory?.targetDate,
+    endHour: Number(window?.endHour ?? memory?.endHour)
+  };
+}
+
+function agendaPlanBounds(memory, data = state.forecast, event = null) {
+  const window = agendaPlanWindow(memory, data);
+  const startMs = Number.isFinite(event?.startMs)
+    ? event.startMs
+    : parseForecastTimestamp(`${window.startDate}T${String(Math.max(0, Math.min(23, window.startHour || 0))).padStart(2, "0")}:00`, data);
+  const endDate = window.endDate || window.startDate;
+  const endHour = Number.isFinite(window.endHour) ? window.endHour : 24;
+  const endClockHour = Math.max(0, Math.min(23, endHour === 24 ? 23 : endHour));
+  const endMs = Number.isFinite(event?.endMs) && memory?.scheduleType !== "continuous_span"
+    ? event.endMs
+    : parseForecastTimestamp(`${endDate}T${String(endClockHour).padStart(2, "0")}:${endHour === 24 ? "59" : "00"}`, data);
+  return { ...window, startMs, endMs };
+}
+
+function agendaPlanItems(data = state.forecast, place = state.activePlace) {
+  if (!data || !Array.isArray(state.planMemories) || !state.planMemories.length) return [];
+  refreshPlanRoutineOccurrences(data);
+  const now = forecastNowMs(data);
+  const today = forecastLocalDate(data);
+  const lastDate = planIsoDateOffset(today, 7);
+  return planMemoryListItems(data, place, { includePast: true })
+    .map((entry) => {
+      const bounds = agendaPlanBounds(entry.memory, data, entry.event);
+      const active = Number.isFinite(bounds.startMs) && Number.isFinite(bounds.endMs) && bounds.startMs <= now && bounds.endMs >= now;
+      const isPast = Number.isFinite(bounds.endMs) ? bounds.endMs < now - 60 * 60 * 1000 : entry.isPast;
+      const inWindow = active || Boolean(bounds.startDate && bounds.startDate >= today && bounds.startDate <= lastDate);
+      const watch = planWatchItemForMemoryItem({ ...entry, isPast });
+      return { ...entry, ...bounds, watch, active, isPast, inWindow };
+    })
+    .filter((item) => !item.isPast && item.inWindow)
+    .sort((a, b) =>
+      Number(b.active) - Number(a.active) ||
+      (a.startMs ?? Infinity) - (b.startMs ?? Infinity) ||
+      a.memory.createdAt - b.memory.createdAt
+    );
 }
 
 function homePlanDecisionCandidate(data = state.forecast, place = state.activePlace) {
@@ -3765,6 +3799,18 @@ let plannerClarification = null;
 let plannerReturnAfterDayDetail = null;
 let plannerEditingMemoryId = "";
 let plannerEditingMemoryDraft = "";
+let planMemoryCreateSource = "";
+
+function setPlanMemoryCreateSource(source = "") {
+  planMemoryCreateSource = source === "agenda" ? "agenda" : "";
+}
+
+function recordPlanMemoryCreated() {
+  if (planMemoryCreateSource === "agenda" && typeof recordForYouSignal === "function") {
+    recordForYouSignal("agenda-plan-created");
+  }
+  planMemoryCreateSource = "";
+}
 let memoryDetailIds = [];
 let memoryDetailMode = "facts";
 let memoryDetailWindowIndex = null;
@@ -5236,11 +5282,13 @@ function executeNearcastPlanWatchSkill(args, context) {
     if (memory) {
       state.planMemories = [memory, ...state.planMemories].slice(0, 60);
       savePlanMemories();
+      recordPlanMemoryCreated();
       savePlanWatchBaselineForMemory(memory.id, { replace: true });
       syncPlanWatchNotificationSubscription({ force: true, reason: "plan-watched-by-agent" });
       refreshPlanMemorySurfaces();
     }
   }
+  if (existing) setPlanMemoryCreateSource("");
   if (!memory) {
     context.receipt.answer = "I could not save that plan draft.";
     return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: "" });
@@ -7554,6 +7602,7 @@ function rememberPlanFromThread(rowIndex) {
   const existing = schedule ? rememberedPlanIdForSchedule(schedule) : rememberedPlanIdForEvent(exchange.event);
   if (existing) {
     exchange.memoryId = existing;
+    setPlanMemoryCreateSource("");
     renderAsk();
     return;
   }
@@ -7569,6 +7618,7 @@ function rememberPlanFromThread(rowIndex) {
   state.planMemories = [memory, ...state.planMemories].slice(0, 60);
   exchange.memoryId = memory.id;
   savePlanMemories();
+  recordPlanMemoryCreated();
   if (typeof recordForYouSignal === "function") recordForYouSignal("plan-watched");
   renderAsk();
   refreshPlanMemorySurfaces();
@@ -9853,19 +9903,21 @@ function renderPlanWatchOverview(watchItems) {
   `;
 }
 
-function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null }) {
+function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null, agenda = false }) {
   const watched = watch || planWatchItemForMemoryItem({ memory, event, isHere, isPast });
   const meta = planWatchMetaText(memory, watched);
   const effectivePast = Boolean(isPast || watched?.isPast);
-  const kicker = effectivePast ? "Past" : isHere ? "This place" : "Away";
+  const kicker = agenda
+    ? effectivePast ? "Past" : watched?.change ? "Forecast changed" : watched?.label || "Checking forecast"
+    : effectivePast ? "Past" : isHere ? "This place" : "Away";
   const focused = memory.id === planWatchFocusMemoryId;
   const statusAria = watched?.change
     ? `Forecast changed. ${planWatchChangeEvidence(watched.change) || watched.change.body}`
     : `${watched?.label || "Waiting on forecast"}. ${watched?.reason || ""}`;
   const accessibleMeta = meta ? `${meta}. ` : "";
   return `
-    <article class="memory-card global-memory-card${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""}${focused ? " is-focused" : ""} is-${escapeHtml(watched?.tone || "pending")}" data-memory-card="${escapeHtml(memory.id)}">
-      <button class="memory-main global-memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}" aria-label="${escapeHtml(`Open ${planMemoryTitle(memory)}. ${accessibleMeta}${statusAria}`)}">
+    <article class="memory-card global-memory-card${agenda ? " is-agenda" : ""}${effectivePast ? " is-past" : ""}${isHere ? " is-here" : ""}${focused ? " is-focused" : ""} is-${escapeHtml(watched?.tone || "pending")}" data-memory-card="${escapeHtml(memory.id)}">
+      <button class="memory-main global-memory-main" type="button" data-memory-show="${escapeHtml(memory.id)}"${agenda ? " data-agenda-plan" : ""} aria-label="${escapeHtml(`Open ${planMemoryTitle(memory)}. ${accessibleMeta}${statusAria}`)}">
         <span class="global-memory-kicker">${escapeHtml(kicker)}</span>
         <strong>${escapeHtml(planMemoryTitle(memory))}</strong>
         <span>${escapeHtml(meta)}</span>
@@ -9880,13 +9932,17 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null })
   `;
 }
 
-function renderGlobalMemoryCards(items, watchById) {
-  return items.map((item) => renderGlobalMemoryCard({ ...item, watch: watchById?.get(item.memory.id) })).join("");
+function renderGlobalMemoryCards(items, watchById, options = {}) {
+  return items.map((item) => renderGlobalMemoryCard({
+    ...item,
+    watch: watchById?.get(item.memory.id),
+    agenda: options.agenda === true
+  })).join("");
 }
 
 function renderGlobalMemoryGroup(label, items, options = {}) {
   if (!items.length) return "";
-  const { sub = "", watchById = null } = options;
+  const { sub = "", watchById = null, agenda = false } = options;
   return `
     <section class="global-memory-group">
       <div class="memory-group-title global-memory-group-title">
@@ -9894,8 +9950,37 @@ function renderGlobalMemoryGroup(label, items, options = {}) {
         ${sub ? `<small>${escapeHtml(sub)}</small>` : ""}
       </div>
       <div class="memory-list global-memory-list">
-        ${renderGlobalMemoryCards(items, watchById)}
+        ${renderGlobalMemoryCards(items, watchById, { agenda })}
       </div>
+    </section>
+  `;
+}
+
+function agendaGroupLabel(item, data = state.forecast) {
+  if (item.active) return "In progress";
+  const date = item.startDate || item.memory?.targetDate || "";
+  const today = forecastLocalDate(data);
+  if (date === today) return "Today";
+  if (date === planIsoDateOffset(today, 1)) return "Tomorrow";
+  const index = data?.daily?.time?.indexOf(date) ?? -1;
+  return formatDay(date, index);
+}
+
+function renderAgendaOverview(items) {
+  const next = items[0];
+  if (!next) return "";
+  const changedCount = items.filter((item) => item.watch?.change).length;
+  const title = next.active ? "Happening now" : "Next up";
+  const body = [
+    planMemoryTitle(next.memory),
+    planPulseWhenText(next.memory, next.watch?.data || state.forecast),
+    placeLabel(next.memory.place)
+  ].filter(Boolean).join(" · ");
+  return `
+    <section class="plan-watch-overview is-${escapeHtml(next.watch?.tone || "pending")} agenda-overview">
+      <span>${escapeHtml(title)}</span>
+      <h3>${escapeHtml(planMemoryTitle(next.memory))}</h3>
+      <small>${escapeHtml(`${body}${changedCount ? ` · ${changedCount} forecast ${changedCount === 1 ? "change" : "changes"} in this agenda` : ""}`)}</small>
     </section>
   `;
 }
@@ -9905,7 +9990,7 @@ function setGlobalMemorySheetFocusedMode(focused) {
   if (sub) {
     sub.textContent = focused
       ? "Your plan, checked against the forecast"
-      : "Upcoming plans and meaningful changes";
+      : "Your upcoming agenda, checked against the forecast";
   }
   els.memorySheet?.classList.toggle("is-focused-plan", Boolean(focused));
 }
@@ -10124,15 +10209,21 @@ function renderFocusedPlanWatchSheet({ focusedItem, focusedWatch, upcoming, past
 function renderGlobalMemorySheet() {
   if (!els.memorySheetBody || !els.memorySheetSummary) return;
   const items = planMemoryListItems(state.forecast, state.activePlace, { includePast: true });
-  const upcoming = items.filter((item) => !item.isPast);
-  const past = items.filter((item) => item.isPast).sort((a, b) =>
+  const agenda = agendaPlanItems(state.forecast, state.activePlace);
+  const agendaIds = new Set(agenda.map((item) => item.memory.id));
+  const upcoming = items.filter((item) => !planWatchMemoryIsPast(item.memory));
+  const past = items.filter((item) => planWatchMemoryIsPast(item.memory)).sort((a, b) =>
     b.memory.targetDate.localeCompare(a.memory.targetDate) ||
     b.memory.startHour - a.memory.startHour ||
     b.memory.updatedAt - a.memory.updatedAt
   );
-  const allWatchItems = items.map(planWatchItemForMemoryItem);
+  const allWatchItems = items.map((item) => planWatchItemForMemoryItem({
+    ...item,
+    isPast: planWatchMemoryIsPast(item.memory)
+  }));
   const watchItems = allWatchItems.filter((watch) => !watch.isPast);
   const watchById = new Map(allWatchItems.map((watch) => [watch.memory.id, watch]));
+  agenda.forEach((item) => watchById.set(item.memory.id, item.watch));
   const focusedItem = planWatchFocusMemoryId
     ? items.find((item) => item.memory.id === planWatchFocusMemoryId)
     : null;
@@ -10157,48 +10248,39 @@ function renderGlobalMemorySheet() {
   planWatchFocusMemoryId = "";
   planWatchVisibleReceiptSignature = "";
   setGlobalMemorySheetFocusedMode(false);
-  els.memorySheetSummary.innerHTML = renderPlanWatchOverview(watchItems);
+  els.memorySheetSummary.innerHTML = renderAgendaOverview(agenda);
 
   if (!state.planMemories.length) {
     els.memorySheetBody.innerHTML = `
       <section class="memory-empty-state">
         <strong>No plans yet</strong>
         <p>Add something you care about and Nearcast will keep its exact time and place checked against the forecast.</p>
-        <button type="button" data-memory-new>Create a plan</button>
+        <button type="button" data-agenda-create>Create a plan</button>
       </section>
       ${renderPlanWatchSecondaryDisclosure(watchItems)}
     `;
     return;
   }
 
-  const sortedUpcoming = [...upcoming].sort((a, b) =>
-    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity) ||
-    b.memory.updatedAt - a.memory.updatedAt
-  );
-  const needsAttention = sortedUpcoming.filter((item) => {
-    const watch = watchById.get(item.memory.id);
-    return Boolean(
-      watch?.change ||
-      watch?.comparisonState === "stale" ||
-      ["watch", "caution"].includes(watch?.tone)
-    );
-  }).sort((a, b) =>
-    planWatchAttentionRank(watchById.get(b.memory.id)) - planWatchAttentionRank(watchById.get(a.memory.id)) ||
-    (a.event?.startMs ?? Infinity) - (b.event?.startMs ?? Infinity)
-  );
-  const attentionIds = new Set(needsAttention.map((item) => item.memory.id));
-  const upcomingSteady = sortedUpcoming.filter((item) => !attentionIds.has(item.memory.id));
+  const groups = new Map();
+  agenda.forEach((item) => {
+    const label = agendaGroupLabel(item, state.forecast);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(item);
+  });
+  const later = upcoming
+    .filter((item) => !agendaIds.has(item.memory.id))
+    .sort((a, b) => a.memory.targetDate.localeCompare(b.memory.targetDate) || a.memory.startHour - b.memory.startHour);
 
   els.memorySheetBody.innerHTML =
-    renderGlobalMemoryGroup("Needs attention", needsAttention, {
-      sub: needsAttention.length === 1 ? "1 plan" : `${needsAttention.length} plans`,
-      watchById
-    }) +
-    renderGlobalMemoryGroup("Upcoming plans", upcomingSteady, {
-      sub: upcomingSteady.length === 1 ? "1 upcoming" : `${upcomingSteady.length} upcoming`,
-      watchById
-    }) +
-    `<button class="memory-new-btn" type="button" data-memory-new>Add a plan</button>` +
+    [...groups.entries()].map(([label, group]) => renderGlobalMemoryGroup(label, group, {
+      sub: group.length === 1 ? "1 plan" : `${group.length} plans`,
+      watchById,
+      agenda: true
+    })).join("") +
+    (!agenda.length ? `<section class="memory-empty-state agenda-empty-window"><strong>Nothing scheduled this week</strong><p>Your saved plans are still here. Add something when you want Nearcast to watch it.</p></section>` : "") +
+    (later.length ? `<details class="past-plan-disclosure agenda-later-disclosure"><summary><span>Later plans</span><small>${later.length} saved</small></summary><div class="memory-list global-memory-list">${renderGlobalMemoryCards(later, watchById)}</div></details>` : "") +
+    `<button class="memory-new-btn" type="button" data-agenda-create>Add a plan</button>` +
     renderPastPlanDisclosure(past, watchById) +
     renderPlanWatchSecondaryDisclosure(watchItems);
 }
@@ -10295,6 +10377,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
 function openGlobalMemorySheet(options = {}) {
   if (!els.memorySheet || !els.memoryBackdrop) return;
   if (typeof recordForYouSignal === "function") recordForYouSignal("watching-open");
+  if (options.source === "agenda" && typeof recordForYouSignal === "function") recordForYouSignal("agenda-open");
   const focusMemoryId = String(options.focusMemoryId || "").trim();
   if (focusMemoryId && state.planMemories.some((memory) => memory.id === focusMemoryId)) {
     if (planWatchFocusMemoryId && planWatchFocusMemoryId !== focusMemoryId) {
