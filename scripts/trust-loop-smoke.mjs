@@ -24,7 +24,7 @@ assert.match(planner, /function cleanPlanWatchNotificationPlans\([\s\S]*!planWat
 assert.match(app, /function init\(\) \{[\s\S]{0,500}markPlanWatchMemoryInventoryReady\(\)/, "notification-plan migration waits until app state has hydrated plan memories");
 assert.match(planner, /function setPlanWatchNotificationPlan\([\s\S]*Object\.keys\(prefs\.plans\)\.length >= PLAN_WATCH_MAX_NOTIFICATION_PLANS[\s\S]*return false/, "a fourth notifying plan cannot be persisted");
 assert.match(planner, /function planWatchNotificationSyncPlans\([\s\S]*slice\(0, PLAN_WATCH_MAX_NOTIFICATION_PLANS\)/, "subscription sync never sends more than three plans");
-assert.match(planner, /function normalizePlanRoutine\([\s\S]*frequency !== "weekly"[\s\S]*weekday < 0 \|\| weekday > 6/, "a routine is a constrained weekly schedule rather than a second plan type");
+assert.match(planner, /function normalizePlanRoutine\([\s\S]*frequency !== "weekly"[\s\S]*rawDays[\s\S]*weekdays[\s\S]*day >= 0 && day <= 6/, "a routine remains a constrained weekly schedule while accepting multiple valid days");
 assert.match(planner, /function planRoutineNextDate\([\s\S]*offset === 0[\s\S]*endHour[\s\S]*offset = 7/, "a completed same-day routine advances to its next weekly occurrence");
 assert.match(planner, /function refreshPlanRoutineOccurrences\([\s\S]*windows: \[window\][\s\S]*savePlanMemories\(\)/, "the next routine occurrence is persisted into the existing plan model");
 assert.match(planner, /function setPlanMemoryRoutine\([\s\S]*scheduleType === "single"[\s\S]*syncPlanWatchNotificationSubscription/, "routines reuse the existing one-window plan and notification pipeline");
@@ -54,6 +54,15 @@ assert.equal(
   "2026-08-10",
   "a completed routine advances by one week rather than appearing as past"
 );
+const weeklyMondayWednesday = { routine: { frequency: "weekly", weekdays: [1, 3] }, endHour: 18 };
+assert.equal(
+  routineSandbox.planRoutineNextDate(weeklyMondayWednesday, {}),
+  "2026-08-05",
+  "a multi-day routine resolves to the nearest selected weekday"
+);
+assert.match(planner, /function agendaRoutineOccurrences\([\s\S]*routine\.weekdays\.includes\(planRoutineWeekday\(targetDate\)\)/, "Agenda expands a multi-day routine into the upcoming weekly occurrences");
+assert.match(planner, /data-memory-routine-day[\s\S]*data-memory-routine-focus/, "routine editing offers chosen days and weather considerations without a separate plan type");
+assert.match(planner, /function openNewRoutineEditor\([\s\S]*routine:\s*\{\s*frequency: "weekly"/, "Agenda can create a structured routine directly");
 assert.match(planner, /label: "3-plan limit"[\s\S]*Up to three active plans can notify this device/, "a fourth plan explains the limit instead of offering a broken toggle");
 assert.match(planner, /Three plans already notify you[\s\S]*Turn notifications off for another plan/, "post-save confirmation explains why a fourth plan remains in-app only");
 assert.match(styles, /\.watch-notify-limit,[\s\S]*font-size: 0\.82rem/, "the plan limit is readable rather than micro copy");

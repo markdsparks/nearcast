@@ -3234,6 +3234,29 @@ function agendaPlanBounds(memory, data = state.forecast, event = null) {
   return { ...window, startMs, endMs };
 }
 
+function agendaRoutineOccurrences(entry, data = state.forecast, place = state.activePlace) {
+  const routine = normalizePlanRoutine(entry?.memory?.routine);
+  if (!routine) return [entry];
+  const today = forecastLocalDate(data);
+  const baseWindow = entry.memory.windows?.[0] || entry.memory;
+  const occurrences = [];
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const targetDate = planIsoDateOffset(today, offset);
+    if (!targetDate || !routine.weekdays.includes(planRoutineWeekday(targetDate))) continue;
+    const window = {
+      ...baseWindow,
+      id: `${baseWindow.id || `routine-${entry.memory.id}`}-${targetDate}`,
+      targetDate,
+      startHour: entry.memory.startHour,
+      endHour: entry.memory.endHour
+    };
+    const memory = { ...entry.memory, targetDate, windows: [window] };
+    const event = entry.isHere ? planMemoryEventForData(memory, data, place) : null;
+    occurrences.push({ ...entry, memory, event });
+  }
+  return occurrences;
+}
+
 function agendaPlanItems(data = state.forecast, place = state.activePlace) {
   if (!data || !Array.isArray(state.planMemories) || !state.planMemories.length) return [];
   refreshPlanRoutineOccurrences(data);
@@ -3241,6 +3264,7 @@ function agendaPlanItems(data = state.forecast, place = state.activePlace) {
   const today = forecastLocalDate(data);
   const lastDate = planIsoDateOffset(today, 7);
   return planMemoryListItems(data, place, { includePast: true })
+    .flatMap((entry) => agendaRoutineOccurrences(entry, data, place))
     .map((entry) => {
       const bounds = agendaPlanBounds(entry.memory, data, entry.event);
       const active = Number.isFinite(bounds.startMs) && Number.isFinite(bounds.endMs) && bounds.startMs <= now && bounds.endMs >= now;
@@ -4123,10 +4147,14 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
   },
   {
     id: "nearcast.plan_make_weekly",
-    description: "Turn a saved one-window plan into a weekly Nearcast routine. Use for requests like 'make that weekly', 'watch this every Tuesday', or 'repeat this plan each week'.",
+    description: "Turn a saved one-window plan into a weekly Nearcast routine. It can repeat on one or more days and remember which weather factors matter. Use for requests like 'make that weekly', 'watch this every Tuesday and Thursday', or 'repeat this plan each week and prioritize rain and wind'.",
     input_schema: {
       type: "object",
-      properties: { plan_ref: { type: "string" } },
+      properties: {
+        plan_ref: { type: "string" },
+        weekdays: { type: "array", items: { type: "integer", minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7 },
+        focus: { type: "array", items: { type: "string", enum: ["rain", "wind", "heat"] }, maxItems: 3 }
+      },
       required: [],
       additionalProperties: false
     },
@@ -5342,7 +5370,7 @@ function executeNearcastPlanMakeWeeklySkill(args, context) {
     context.receipt.answer = "Which watched plan should repeat each week?";
     return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer, plan: "" });
   }
-  if (!setPlanMemoryRoutine(memory.id, true)) {
+  if (!setPlanMemoryRoutine(memory.id, true, { weekdays: args?.weekdays, focus: args?.focus })) {
     context.receipt.answer = `${planMemoryTitle(memory)} has multiple windows, so choose one window before making it a weekly routine.`;
     return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, plan: planMemoryTitle(memory) });
   }
@@ -7370,9 +7398,12 @@ function normalizePlanWindow(window, index = 0) {
 
 function normalizePlanRoutine(value) {
   if (!value || value.frequency !== "weekly") return null;
-  const weekday = Number(value.weekday);
-  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) return null;
-  return { frequency: "weekly", weekday };
+  const rawDays = Array.isArray(value.weekdays) ? value.weekdays : [value.weekday];
+  const weekdays = [...new Set(rawDays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b);
+  if (!weekdays.length) return null;
+  const focus = [...new Set((Array.isArray(value.focus) ? value.focus : []).map((item) => String(item).toLowerCase()))]
+    .filter((item) => ["rain", "wind", "heat"].includes(item));
+  return { frequency: "weekly", weekdays, weekday: weekdays[0], focus };
 }
 
 function planRoutineWeekday(date) {
@@ -7381,14 +7412,25 @@ function planRoutineWeekday(date) {
 }
 
 function planRoutineWeekdayLabel(routine) {
-  const weekday = normalizePlanRoutine(routine)?.weekday;
-  if (!Number.isInteger(weekday)) return "";
-  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday] || "";
+  const weekdays = normalizePlanRoutine(routine)?.weekdays || [];
+  const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  if (!weekdays.length) return "";
+  if (weekdays.length === 7) return "Every day";
+  const days = weekdays.map((weekday) => labels[weekday]).filter(Boolean);
+  return `Every ${days.length === 1 ? days[0] : `${days.slice(0, -1).join(", ")} & ${days.at(-1)}`}`;
 }
 
 function planMemoryRoutineText(memory) {
   const day = planRoutineWeekdayLabel(memory?.routine);
-  return day ? `Every ${day}` : "";
+  return day || "";
+}
+
+function planRoutineFocusText(memoryOrRoutine) {
+  const routine = normalizePlanRoutine(memoryOrRoutine?.routine || memoryOrRoutine);
+  const labels = { rain: "rain", wind: "wind", heat: "heat/UV" };
+  const focus = (routine?.focus || []).map((item) => labels[item]).filter(Boolean);
+  if (!focus.length) return "";
+  return `${focus.join(" + ")} matter${focus.length === 1 ? "s" : ""}`;
 }
 
 function planRoutineNextDate(memory, data = state.forecast) {
@@ -7397,10 +7439,15 @@ function planRoutineNextDate(memory, data = state.forecast) {
   if (!routine || !today) return "";
   const todayWeekday = planRoutineWeekday(today);
   if (!Number.isInteger(todayWeekday)) return "";
-  let offset = (routine.weekday - todayWeekday + 7) % 7;
-  // Once today's window has ended, the next meaningful occurrence is next week.
-  if (offset === 0 && forecastCurrentHour(data) >= Number(memory.endHour || 0)) offset = 7;
-  return planIsoDateOffset(today, offset);
+  const currentHour = forecastCurrentHour(data);
+  const offsets = routine.weekdays.map((weekday) => {
+    let offset = (weekday - todayWeekday + 7) % 7;
+    // Once today's window has ended, move that weekday to its next weekly turn.
+    if (offset === 0 && currentHour >= Number(memory.endHour || 0)) offset = 7;
+    return offset;
+  });
+  const offset = Math.min(...offsets);
+  return Number.isFinite(offset) ? planIsoDateOffset(today, offset) : "";
 }
 
 function refreshPlanRoutineOccurrences(data = state.forecast) {
@@ -7690,16 +7737,19 @@ function forgetPlanMemory(id) {
   syncPlanWatchNotificationSubscription({ force: true, reason: "plan-forgotten" });
 }
 
-function setPlanMemoryRoutine(id, enabled) {
+function setPlanMemoryRoutine(id, enabled, options = {}) {
   const existing = state.planMemories.find((memory) => memory.id === id);
   if (!existing) return false;
   const isSingleWindow = existing.scheduleType === "single" && (existing.windows?.length || 1) === 1;
   if (enabled && !isSingleWindow) return false;
-  const weekday = planRoutineWeekday(existing.targetDate);
-  if (enabled && !Number.isInteger(weekday)) return false;
+  const defaultWeekday = planRoutineWeekday(existing.targetDate);
+  const weekdays = [...new Set((Array.isArray(options.weekdays) ? options.weekdays : [defaultWeekday])
+    .map(Number)
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b);
+  if (enabled && !weekdays.length) return false;
   const updated = normalizePlanMemory({
     ...existing,
-    routine: enabled ? { frequency: "weekly", weekday } : null,
+    routine: enabled ? { frequency: "weekly", weekdays, focus: options.focus || existing.routine?.focus || [] } : null,
     updatedAt: Date.now()
   });
   if (!updated) return false;
@@ -8004,6 +8054,37 @@ function openStructuredMemoryEdit(id) {
   openStructuredPlanEdit(memory, { source: "memory" });
 }
 
+function openNewRoutineEditor() {
+  const place = normalizePlace(state.activePlace || {});
+  const data = state.forecast;
+  const targetDate = forecastLocalDate(data);
+  if (!data || !targetDate || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) {
+    openAISheet({ autoBrief: false });
+    requestAnimationFrame(() => fillPlannerTemplate("Watch [routine] every [day] at [time] in [place]"));
+    return;
+  }
+  const weekday = planRoutineWeekday(targetDate);
+  const memory = normalizePlanMemory({
+    id: `routine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: "plan",
+    title: "New routine",
+    label: "Routine window",
+    original: "",
+    answer: "",
+    place,
+    targetDate,
+    startHour: 8,
+    endHour: 9,
+    scheduleType: "single",
+    routine: { frequency: "weekly", weekdays: [weekday], focus: [] },
+    windows: [{ id: `routine-window-${targetDate}`, targetDate, startHour: 8, endHour: 9, label: "Routine window" }],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  if (!memory) return;
+  openStructuredPlanEdit(memory, { source: "new-routine", data, alerts: activeAlerts || [] });
+}
+
 function startPlanConfirmationEdit(pending, options = {}) {
   const event = pending?.result?.event;
   if (!event) return;
@@ -8089,6 +8170,30 @@ function openStructuredPlanEdit(memory, options = {}) {
 function renderMemoryEditScheduleFields() {
   const editor = memoryEditState;
   if (!editor) return "";
+  if (editor.routine) {
+    const routine = normalizePlanRoutine(editor.routine) || { weekdays: [planRoutineWeekday(editor.targetDate) ?? 0], focus: [] };
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const focuses = [
+      ["rain", "Rain"],
+      ["wind", "Wind"],
+      ["heat", "Heat/UV"]
+    ];
+    return `
+      <div class="memory-edit-schedule is-routine">
+        <h4>Repeat each week</h4>
+        <div class="routine-day-picker" role="group" aria-label="Routine days">
+          ${days.map((day, index) => `<button type="button" class="${routine.weekdays.includes(index) ? "is-selected" : ""}" data-memory-routine-day="${index}" aria-pressed="${routine.weekdays.includes(index) ? "true" : "false"}">${day}</button>`).join("")}
+        </div>
+        <div class="memory-edit-grid is-routine-time">
+          <label class="memory-edit-field"><span>Start</span><select id="memoryEditStart" name="startHour">${memoryEditTimeOptions(editor.startHour, 0, 23)}</select></label>
+          <label class="memory-edit-field"><span>End</span><select id="memoryEditEnd" name="endHour">${memoryEditTimeOptions(editor.endHour, 1, 24)}</select></label>
+        </div>
+        <div class="routine-focus-picker" role="group" aria-label="Weather that matters for this routine">
+          <span>What matters</span>
+          <div>${focuses.map(([value, label]) => `<button type="button" class="${routine.focus.includes(value) ? "is-selected" : ""}" data-memory-routine-focus="${value}" aria-pressed="${routine.focus.includes(value) ? "true" : "false"}">${label}</button>`).join("")}</div>
+        </div>
+      </div>`;
+  }
   if (editor.scheduleType === "continuous_span") {
     const span = editor.span || {
       startDate: editor.targetDate,
@@ -8133,7 +8238,7 @@ function renderMemoryEditSheet() {
   if (!memoryEditState || !els.memoryEditBody) return;
   const placeValue = memoryEditState.placeQuery || placeLabel(memoryEditState.place);
   const editingSavedPlan = memoryEditState.source === "memory";
-  const saveLabel = editingSavedPlan ? "Save changes" : "Apply changes";
+  const saveLabel = memoryEditState.source === "new-routine" ? "Create routine" : editingSavedPlan ? "Save changes" : "Apply changes";
   const visibleScheduleType = memoryEditState.routine ? "weekly" : memoryEditState.scheduleType;
   const textEditAction = editingSavedPlan && memoryEditState.scheduleType === "single" && !memoryEditState.routine
     ? `<button type="button" data-memory-edit-text>Edit with text</button>`
@@ -8184,7 +8289,8 @@ function wireMemoryEditForm() {
       memoryEditState.scheduleType = "single";
       memoryEditState.routine = {
         frequency: "weekly",
-        weekday: planRoutineWeekday(memoryEditState.targetDate) ?? 0
+        weekdays: [planRoutineWeekday(memoryEditState.targetDate) ?? 0],
+        focus: []
       };
     } else {
       memoryEditState.scheduleType = selected;
@@ -8256,6 +8362,33 @@ function wireMemoryEditForm() {
       updateMemoryEditPreview({ fetchIfNeeded: true });
     });
   });
+  form.querySelectorAll("[data-memory-routine-day]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const day = Number(button.dataset.memoryRoutineDay);
+      const routine = normalizePlanRoutine(memoryEditState.routine) || { frequency: "weekly", weekdays: [], focus: [] };
+      const weekdays = routine.weekdays.includes(day)
+        ? routine.weekdays.filter((item) => item !== day)
+        : routine.weekdays.concat(day).sort((a, b) => a - b);
+      if (!weekdays.length) return;
+      memoryEditState.routine = { ...routine, weekdays };
+      const nextDate = planRoutineNextDate({ ...memoryEditState, routine: memoryEditState.routine }, memoryEditState.data || state.forecast);
+      if (nextDate) memoryEditState.targetDate = nextDate;
+      renderMemoryEditSheet();
+      updateMemoryEditPreview({ fetchIfNeeded: true });
+    });
+  });
+  form.querySelectorAll("[data-memory-routine-focus]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const focus = String(button.dataset.memoryRoutineFocus || "");
+      const routine = normalizePlanRoutine(memoryEditState.routine) || { frequency: "weekly", weekdays: [planRoutineWeekday(memoryEditState.targetDate) ?? 0], focus: [] };
+      const nextFocus = routine.focus.includes(focus)
+        ? routine.focus.filter((item) => item !== focus)
+        : routine.focus.concat(focus);
+      memoryEditState.routine = { ...routine, focus: nextFocus };
+      renderMemoryEditSheet();
+      updateMemoryEditPreview({ fetchIfNeeded: true });
+    });
+  });
 }
 
 function syncMemoryEditStateFromForm() {
@@ -8268,9 +8401,14 @@ function syncMemoryEditStateFromForm() {
   const scheduleType = document.getElementById("memoryEditScheduleType")?.value;
   if (scheduleType === "weekly") {
     memoryEditState.scheduleType = "single";
+    const current = normalizePlanRoutine(memoryEditState.routine);
+    const selectedDays = [...document.querySelectorAll("[data-memory-routine-day][aria-pressed=\"true\"]")]
+      .map((button) => Number(button.dataset.memoryRoutineDay))
+      .filter((day) => Number.isInteger(day));
     memoryEditState.routine = {
       frequency: "weekly",
-      weekday: planRoutineWeekday(date) ?? planRoutineWeekday(memoryEditState.targetDate) ?? 0
+      weekdays: selectedDays.length ? selectedDays : current?.weekdays || [planRoutineWeekday(date) ?? planRoutineWeekday(memoryEditState.targetDate) ?? 0],
+      focus: current?.focus || []
     };
   } else if (scheduleType) {
     memoryEditState.scheduleType = scheduleType;
@@ -8304,6 +8442,10 @@ function syncMemoryEditStateFromForm() {
   if (!Number.isFinite(end)) end = memoryEditState.endHour;
   if (end <= memoryEditState.startHour) end = Math.min(24, memoryEditState.startHour + 1);
   memoryEditState.endHour = end;
+  if (memoryEditState.routine) {
+    const nextDate = planRoutineNextDate(memoryEditState, memoryEditState.data || state.forecast);
+    if (nextDate) memoryEditState.targetDate = nextDate;
+  }
   const endSelect = document.getElementById("memoryEditEnd");
   if (endSelect && Number(endSelect.value) !== end) endSelect.value = String(end);
 }
@@ -8698,6 +8840,47 @@ async function saveStructuredMemoryEdit(event) {
       return;
     }
 
+    if (memoryEditState.source === "new-routine") {
+      const created = normalizePlanMemory({
+        id: `routine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        kind: "plan",
+        title: draft.title,
+        label: draft.label,
+        original: `${draft.title} ${planMemoryRoutineText(draft)} ${hourText(draft.startHour)}-${hourText(draft.endHour)} in ${placeLabel(draft.place)}`,
+        answer: result.answer,
+        place: draft.place,
+        targetDate: draft.targetDate,
+        startHour: draft.startHour,
+        endHour: draft.endHour,
+        scheduleType: "single",
+        span: null,
+        routine: draft.routine,
+        windows: [{
+          id: `routine-window-${draft.targetDate}`,
+          targetDate: draft.targetDate,
+          startHour: draft.startHour,
+          endHour: draft.endHour,
+          label: draft.label
+        }],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      if (!created) throw new Error("Invalid routine.");
+      state.planMemories = [created, ...state.planMemories].slice(0, 60);
+      refreshPlanRoutineOccurrences(data);
+      savePlanMemories();
+      recordPlanMemoryCreated();
+      renderAsk();
+      refreshPlanMemorySurfaces();
+      if (!savePlanWatchBaselineForMemory(created.id, { replace: true })) {
+        refreshPlanWatchForecasts(planMemoryListItems(state.forecast, state.activePlace, { includePast: false })
+          .filter((item) => item.memory.id === created.id));
+      }
+      syncPlanWatchNotificationSubscription({ force: true, reason: "routine-created" });
+      closeMemoryEditSheet();
+      return;
+    }
+
     const existing = state.planMemories.find((memory) => memory.id === memoryEditState.memoryId);
     if (!existing) throw new Error("Plan missing.");
     const updated = normalizePlanMemory({
@@ -8787,6 +8970,7 @@ function renderMemoryDetailPanel(memory) {
   const weatherLine = event ? planMemoryMeta(memory, event) : `${planMemoryDayLabel(memory)} · ${planMemoryTimeText(memory)}`;
   const scheduleWindows = Array.isArray(memory.windows) ? memory.windows : [];
   const routine = planMemoryRoutineText(memory);
+  const routineFocus = planRoutineFocusText(memory);
   const scheduleSummary = memory.scheduleType === "continuous_span" && memory.span
     ? `${memoryEditDateLabel(memory.span.startDate, state.forecast)} ${hourText(memory.span.startHour)} through ${memoryEditDateLabel(memory.span.endDate, state.forecast)} ${hourText(memory.span.endHour)}`
     : scheduleWindows.length > 1 ? `${scheduleWindows.length} scheduled windows` : interpreted;
@@ -8808,7 +8992,7 @@ function renderMemoryDetailPanel(memory) {
       <dl class="memory-detail-facts">
         <div><dt>You asked</dt><dd>${escapeHtml(original || planMemoryDraft(memory))}</dd></div>
         <div><dt>${memory.scheduleType === "continuous_span" ? "Plan span" : "Plan schedule"}</dt><dd>${escapeHtml(scheduleSummary)}</dd></div>
-        ${routine ? `<div><dt>Routine</dt><dd>${escapeHtml(routine)} · next ${escapeHtml(planMemoryDayLabel(memory))}</dd></div>` : ""}
+        ${routine ? `<div><dt>Routine</dt><dd>${escapeHtml([routine, `next ${planMemoryDayLabel(memory)}`, routineFocus].filter(Boolean).join(" · "))}</dd></div>` : ""}
         <div><dt>Forecast read</dt><dd>${escapeHtml(weatherLine)}</dd></div>
         ${answer ? `<div><dt>Last answer</dt><dd>${escapeHtml(answer)}</dd></div>` : ""}
         <div><dt>Saved</dt><dd>${escapeHtml(saved)}${updated ? ` · updated ${escapeHtml(updated)}` : ""}</dd></div>
@@ -9809,11 +9993,13 @@ function planWatchWhenText(memory, data = state.forecast) {
 
 function planWatchMetaText(memory, watch) {
   const when = planPulseWhenText(memory, watch?.data || state.forecast);
+  const routine = planMemoryRoutineText(memory);
+  const focus = planRoutineFocusText(memory);
   const samePlace = Boolean(
     watch?.isHere ||
     (state.activePlace && typeof samePlanPlace === "function" && samePlanPlace(memory.place, state.activePlace))
   );
-  return [when, samePlace ? "" : placeLabel(memory.place)].filter(Boolean).join(" · ");
+  return [routine, when, samePlace ? "" : placeLabel(memory.place), focus].filter(Boolean).join(" · ");
 }
 
 function renderPlanWatchStatus(watch) {
@@ -9935,7 +10121,7 @@ function renderGlobalMemoryCard({ memory, event, isHere, isPast, watch = null, a
 function renderGlobalMemoryCards(items, watchById, options = {}) {
   return items.map((item) => renderGlobalMemoryCard({
     ...item,
-    watch: watchById?.get(item.memory.id),
+    watch: item.watch || watchById?.get(item.memory.id),
     agenda: options.agenda === true
   })).join("");
 }
@@ -10255,7 +10441,7 @@ function renderGlobalMemorySheet() {
       <section class="memory-empty-state">
         <strong>No plans yet</strong>
         <p>Add something you care about and Nearcast will keep its exact time and place checked against the forecast.</p>
-        <button type="button" data-agenda-create>Create a plan</button>
+        <div class="agenda-create-actions"><button type="button" data-agenda-routine-create>Create a routine</button><button type="button" data-agenda-create>Create a plan</button></div>
       </section>
       ${renderPlanWatchSecondaryDisclosure(watchItems)}
     `;
@@ -10280,7 +10466,7 @@ function renderGlobalMemorySheet() {
     })).join("") +
     (!agenda.length ? `<section class="memory-empty-state agenda-empty-window"><strong>Nothing scheduled this week</strong><p>Your saved plans are still here. Add something when you want Nearcast to watch it.</p></section>` : "") +
     (later.length ? `<details class="past-plan-disclosure agenda-later-disclosure"><summary><span>Later plans</span><small>${later.length} saved</small></summary><div class="memory-list global-memory-list">${renderGlobalMemoryCards(later, watchById)}</div></details>` : "") +
-    `<button class="memory-new-btn" type="button" data-agenda-create>Add a plan</button>` +
+    `<div class="agenda-create-actions"><button class="memory-new-btn" type="button" data-agenda-routine-create>Add routine</button><button class="memory-new-btn" type="button" data-agenda-create>Add a plan</button></div>` +
     renderPastPlanDisclosure(past, watchById) +
     renderPlanWatchSecondaryDisclosure(watchItems);
 }

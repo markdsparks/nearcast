@@ -6386,6 +6386,19 @@ h2 {
   font-weight: 900;
   cursor: pointer;
 }
+.agenda-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agenda-create-actions .memory-new-btn {
+  margin-top: 0;
+}
+.agenda-create-actions button:first-child {
+  border-color: rgba(53, 111, 183, 0.34);
+  background: rgba(91, 141, 220, 0.13);
+  color: var(--ink);
+}
 .memory-new-btn {
   margin-top: 2px;
 }
@@ -6534,6 +6547,55 @@ h2 {
   color: var(--ink);
   font-size: 0.9rem;
   font-weight: 950;
+}
+.memory-edit-schedule.is-routine {
+  gap: 12px;
+}
+.routine-day-picker,
+.routine-focus-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.routine-day-picker button,
+.routine-focus-picker button {
+  min-width: 42px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 880;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.routine-day-picker button.is-selected,
+.routine-focus-picker button.is-selected {
+  border-color: rgba(53, 111, 183, 0.44);
+  background: rgba(91, 141, 220, 0.17);
+  color: var(--ink);
+}
+.routine-day-picker button:focus-visible,
+.routine-focus-picker button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.memory-edit-grid.is-routine-time {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.routine-focus-picker {
+  display: grid;
+  gap: 7px;
+}
+.routine-focus-picker > span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .memory-edit-window {
   display: grid;

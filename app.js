@@ -1,4 +1,4 @@
-const VERSION = "3.0.347";
+const VERSION = "3.0.348";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -4156,7 +4156,7 @@ function bindEvents() {
   els.aiSheet?.addEventListener("keydown", trapNearcastAIFocus);
   bindTapAction(document.getElementById("memorySheetClose"), closeGlobalMemorySheet);
   bindTapAction(els.memoryBackdrop, closeGlobalMemorySheet);
-  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-agenda-create], [data-watch-notify], [data-watch-notify-retry], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
+  bindTapDelegate(els.memorySheetBody, "[data-memory-detail], [data-memory-hourly], [data-memory-show], [data-memory-forget], [data-memory-edit], [data-memory-new], [data-agenda-create], [data-agenda-routine-create], [data-watch-notify], [data-watch-notify-retry], [data-place-watch-notify], [data-place-watch-toggle], [data-notification-place]", (event, target) => {
     const notificationPlace = target.closest("[data-notification-place]");
     if (notificationPlace) {
       const place = state.savedPlaces.find((item) => item.id === notificationPlace.dataset.notificationPlace);
@@ -4200,6 +4200,13 @@ function bindEvents() {
       closeGlobalMemorySheet();
       openAISheet({ autoBrief: false });
       requestAnimationFrame(() => fillPlannerTemplate(""));
+      return;
+    }
+    const agendaRoutineCreate = target.closest("[data-agenda-routine-create]");
+    if (agendaRoutineCreate) {
+      if (typeof setPlanMemoryCreateSource === "function") setPlanMemoryCreateSource("agenda");
+      closeGlobalMemorySheet();
+      if (typeof openNewRoutineEditor === "function") openNewRoutineEditor();
       return;
     }
     const memoryNew = target.closest("[data-memory-new]");
