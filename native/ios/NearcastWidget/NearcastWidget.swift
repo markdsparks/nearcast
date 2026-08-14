@@ -736,11 +736,12 @@ enum NearcastWidgetForecastClient {
         components?.queryItems = [
             URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)),
             URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
-            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
-            URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
+            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,precipitation,cloud_cover,weather_code,wind_speed_10m,wind_direction_10m,is_day"),
+            URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,cloud_cover,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
             URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"),
             URLQueryItem(name: "temperature_unit", value: usesMetricUnits ? "celsius" : "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: usesMetricUnits ? "kmh" : "mph"),
+            URLQueryItem(name: "precipitation_unit", value: "mm"),
             URLQueryItem(name: "timezone", value: "auto"),
             URLQueryItem(name: "forecast_days", value: "4")
         ]
@@ -770,7 +771,12 @@ enum NearcastWidgetForecastClient {
         let feels = roundedValue(current.apparentTemperature) ?? fallback.feelsLike
         let temp = roundedValue(current.temperature) ?? fallback.temperature
         let isDay = current.isDay.map { $0 == 1 } ?? fallback.isDay
-        let conditionCode = current.weatherCode ?? fallback.conditionCode
+        let conditionCode = NearcastForecastSemantics.currentConditionCode(
+            rawCode: current.weatherCode,
+            precipitationAmount: current.precipitation,
+            intervalSeconds: current.interval,
+            cloudCover: current.cloudCover
+        ) ?? fallback.conditionCode
         let nextRainChance = nextTwoHourRainChance(hourly: forecast.hourly, currentIndex: currentIndex)
         let sunriseAt = forecast.daily?.sunrise?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunriseAt
         let sunsetAt = forecast.daily?.sunset?.first.flatMap { forecastDate($0, timezone: forecast.timezone) }?.timeIntervalSince1970 ?? fallback.sunsetAt
@@ -817,7 +823,7 @@ enum NearcastWidgetForecastClient {
             alertSavedAt: fallback.alertSavedAt,
             alertStateReady: fallback.alertStateReady,
             timeline: buildTimeline(from: forecast, currentIndex: currentIndex),
-            daily: buildDaily(from: forecast),
+            daily: buildDaily(from: forecast, currentIndex: currentIndex),
             sunriseAt: sunriseAt,
             sunsetAt: sunsetAt,
             isAvailable: true,
@@ -840,7 +846,8 @@ enum NearcastWidgetForecastClient {
         let end = min(times.count - 1, start + 24)
         guard start <= end else { return [] }
         return (start...end).map { index in
-            NearcastWidgetHour(
+            let semanticHour = semanticHour(hourly, index: index)
+            return NearcastWidgetHour(
                 offsetHours: max(0, index - start),
                 timeLabel: shortClockTime(times[index]) ?? "\(max(0, index - start))h",
                 temperature: roundedValue(flatValue(hourly.temperature?[safe: index])),
@@ -850,27 +857,53 @@ enum NearcastWidgetForecastClient {
                 windGust: roundedValue(flatValue(hourly.windGusts?[safe: index])),
                 windDirection: roundedValue(flatValue(hourly.windDirection?[safe: index])),
                 uv: roundedValue(flatValue(hourly.uvIndex?[safe: index])),
-                conditionCode: hourly.weatherCode?[safe: index].flatMap { $0 },
+                conditionCode: NearcastForecastSemantics.hourlyConditionCode(for: semanticHour),
                 isDay: hourly.isDay?[safe: index].flatMap { $0 }.map { $0 == 1 },
                 startsAt: forecastDate(times[index], timezone: forecast.timezone)?.timeIntervalSince1970
             )
         }
     }
 
-    private static func buildDaily(from forecast: WidgetForecastResponse) -> [NearcastWidgetDay] {
+    private static func buildDaily(from forecast: WidgetForecastResponse, currentIndex: Int) -> [NearcastWidgetDay] {
         guard let daily = forecast.daily, let dates = daily.time else { return [] }
+        let currentDate = forecast.current.time.map { String($0.prefix(10)) }
         return (0..<min(4, dates.count)).compactMap { index -> NearcastWidgetDay? in
             guard let high = roundedValue(flatValue(daily.temperatureMax?[safe: index])),
                   let low = roundedValue(flatValue(daily.temperatureMin?[safe: index])) else { return nil }
+            let semanticHours: [NearcastForecastSemanticHour]
+            if let hourly = forecast.hourly, let times = hourly.time {
+                semanticHours = times.indices.compactMap { hourIndex in
+                    let isCurrentDate = currentDate == dates[index]
+                    guard times[hourIndex].hasPrefix(dates[index]),
+                          !isCurrentDate || hourIndex >= currentIndex else { return nil }
+                    return semanticHour(hourly, index: hourIndex)
+                }
+            } else {
+                semanticHours = []
+            }
             return NearcastWidgetDay(
                 date: dates[index],
                 label: widgetDayLabel(dates[index], index: index),
                 high: high,
                 low: low,
                 rainChance: roundedValue(flatValue(daily.precipitationProbabilityMax?[safe: index])) ?? 0,
-                conditionCode: (daily.weatherCode?[safe: index] ?? nil) ?? 0
+                conditionCode: NearcastForecastSemantics.dailyConditionCode(
+                    hours: semanticHours,
+                    fallbackCode: daily.weatherCode?[safe: index] ?? nil
+                )
             )
         }
+    }
+
+    private static func semanticHour(_ hourly: WidgetForecastResponse.Hourly, index: Int) -> NearcastForecastSemanticHour {
+        NearcastForecastSemanticHour(
+            time: hourly.time?[safe: index] ?? "",
+            rawCode: hourly.weatherCode?[safe: index] ?? nil,
+            precipitationChance: flatValue(hourly.precipitationProbability?[safe: index]) ?? 0,
+            precipitationAmount: flatValue(hourly.precipitation?[safe: index]) ?? 0,
+            cloudCover: flatValue(hourly.cloudCover?[safe: index]),
+            isDay: (hourly.isDay?[safe: index] ?? nil).map { $0 == 1 }
+        )
     }
 
     private static func hourlyIndex(hourlyTimes: [String]?, currentTime: String?) -> Int {
@@ -996,6 +1029,9 @@ struct WidgetForecastResponse: Decodable {
         let temperature: Double?
         let apparentTemperature: Double?
         let weatherCode: Int?
+        let precipitation: Double?
+        let cloudCover: Double?
+        let interval: Double?
         let windSpeed: Double?
         let windDirection: Double?
         let isDay: Int?
@@ -1005,6 +1041,9 @@ struct WidgetForecastResponse: Decodable {
             case temperature = "temperature_2m"
             case apparentTemperature = "apparent_temperature"
             case weatherCode = "weather_code"
+            case precipitation
+            case cloudCover = "cloud_cover"
+            case interval
             case windSpeed = "wind_speed_10m"
             case windDirection = "wind_direction_10m"
             case isDay = "is_day"
@@ -1016,6 +1055,8 @@ struct WidgetForecastResponse: Decodable {
         let temperature: [Double?]?
         let apparentTemperature: [Double?]?
         let precipitationProbability: [Double?]?
+        let precipitation: [Double?]?
+        let cloudCover: [Double?]?
         let weatherCode: [Int?]?
         let windSpeed: [Double?]?
         let windGusts: [Double?]?
@@ -1028,6 +1069,8 @@ struct WidgetForecastResponse: Decodable {
             case temperature = "temperature_2m"
             case apparentTemperature = "apparent_temperature"
             case precipitationProbability = "precipitation_probability"
+            case precipitation
+            case cloudCover = "cloud_cover"
             case weatherCode = "weather_code"
             case windSpeed = "wind_speed_10m"
             case windGusts = "wind_gusts_10m"

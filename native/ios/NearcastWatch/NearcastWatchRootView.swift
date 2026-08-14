@@ -2582,12 +2582,13 @@ enum NearcastWatchWeatherClient {
         components?.queryItems = [
             URLQueryItem(name: "latitude", value: String(format: "%.5f", place.latitude)),
             URLQueryItem(name: "longitude", value: String(format: "%.5f", place.longitude)),
-            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m,wind_direction_10m"),
-            URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
+            URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,precipitation,cloud_cover,weather_code,is_day,wind_speed_10m,wind_direction_10m"),
+            URLQueryItem(name: "hourly", value: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,cloud_cover,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index,is_day"),
             URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
             URLQueryItem(name: "temperature_unit", value: metric ? "celsius" : "fahrenheit"),
             URLQueryItem(name: "wind_speed_unit", value: metric ? "kmh" : "mph"),
-            URLQueryItem(name: "forecast_hours", value: "24"),
+            URLQueryItem(name: "precipitation_unit", value: "mm"),
+            URLQueryItem(name: "forecast_hours", value: "96"),
             URLQueryItem(name: "forecast_days", value: "4"),
             URLQueryItem(name: "timezone", value: "auto")
         ]
@@ -2617,13 +2618,19 @@ enum NearcastWatchWeatherClient {
             // A phone sync may have landed while the request was in flight. Merge
             // weather into the newest stored snapshot so its plan is not replaced.
             var updated = NearcastWidgetSnapshot.stored() ?? fallback
+            let conditionCode = NearcastForecastSemantics.currentConditionCode(
+                rawCode: current.weatherCode,
+                precipitationAmount: current.precipitation,
+                intervalSeconds: current.interval,
+                cloudCover: current.cloudCover
+            ) ?? current.weatherCode
             updated.version = max(6, max(updated.version, fallback.version))
             updated.placeName = place.displayLabel
             updated.placeTimezone = forecast.timezone ?? updated.placeTimezone
             updated.temperature = Int(current.temperature.rounded())
             updated.feelsLike = Int(current.feelsLike.rounded())
-            updated.conditionCode = current.weatherCode
-            updated.condition = conditionLabel(current.weatherCode)
+            updated.conditionCode = conditionCode
+            updated.condition = conditionLabel(conditionCode)
             updated.isDay = current.isDay == 1
             updated.wind = Int(current.windSpeed.rounded())
             updated.windDirection = Int(current.windDirection.rounded())
@@ -2631,6 +2638,7 @@ enum NearcastWatchWeatherClient {
             updated.isAvailable = true
             updated.weatherSavedAt = refreshedAt
 
+            let semanticHours = forecast.hourly?.semanticHours ?? []
             if let hourly = forecast.hourly {
                 let rows = hourly.rows(limit: 24, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
                 updated.timeline = rows
@@ -2640,7 +2648,7 @@ enum NearcastWatchWeatherClient {
             if let daily = forecast.daily {
                 // Keep one rollover day beyond the three visible rows so a
                 // deferred refresh can still show three days after midnight.
-                updated.daily = daily.rows(limit: 4)
+                updated.daily = daily.rows(limit: 4, semanticHours: semanticHours)
                 updated.high = updated.daily?.first?.high
                 updated.low = updated.daily?.first?.low
             }
@@ -2714,6 +2722,9 @@ private struct WatchForecast: Decodable {
         let temperature: Double
         let feelsLike: Double
         let weatherCode: Int
+        let precipitation: Double?
+        let cloudCover: Double?
+        let interval: Double?
         let isDay: Int
         let windSpeed: Double
         let windDirection: Double
@@ -2722,6 +2733,9 @@ private struct WatchForecast: Decodable {
             case temperature = "temperature_2m"
             case feelsLike = "apparent_temperature"
             case weatherCode = "weather_code"
+            case precipitation
+            case cloudCover = "cloud_cover"
+            case interval
             case isDay = "is_day"
             case windSpeed = "wind_speed_10m"
             case windDirection = "wind_direction_10m"
@@ -2733,6 +2747,8 @@ private struct WatchForecast: Decodable {
         let temperature: [Double?]?
         let feelsLike: [Double?]?
         let rainChance: [Int?]?
+        let precipitation: [Double?]?
+        let cloudCover: [Double?]?
         let weatherCode: [Int?]?
         let wind: [Double?]?
         let gust: [Double?]?
@@ -2745,6 +2761,8 @@ private struct WatchForecast: Decodable {
             case temperature = "temperature_2m"
             case feelsLike = "apparent_temperature"
             case rainChance = "precipitation_probability"
+            case precipitation
+            case cloudCover = "cloud_cover"
             case weatherCode = "weather_code"
             case wind = "wind_speed_10m"
             case gust = "wind_gusts_10m"
@@ -2755,7 +2773,8 @@ private struct WatchForecast: Decodable {
 
         func rows(limit: Int, utcOffsetSeconds: Int) -> [NearcastWidgetHour] {
             (0..<min(time.count, limit)).map { index in
-                NearcastWidgetHour(
+                let semanticHour = semanticHour(at: index)
+                return NearcastWidgetHour(
                     offsetHours: index,
                     timeLabel: shortHour(time[index]),
                     temperature: rounded(temperature?[safe: index] ?? nil),
@@ -2765,11 +2784,26 @@ private struct WatchForecast: Decodable {
                     windGust: rounded(gust?[safe: index] ?? nil),
                     windDirection: rounded(windDirection?[safe: index] ?? nil),
                     uv: rounded(uv?[safe: index] ?? nil),
-                    conditionCode: weatherCode?[safe: index] ?? nil,
+                    conditionCode: NearcastForecastSemantics.hourlyConditionCode(for: semanticHour),
                     isDay: (isDay?[safe: index] ?? nil).map { $0 == 1 },
                     startsAt: hourStart(time[index], utcOffsetSeconds: utcOffsetSeconds)
                 )
             }
+        }
+
+        var semanticHours: [NearcastForecastSemanticHour] {
+            time.indices.map { semanticHour(at: $0) }
+        }
+
+        private func semanticHour(at index: Int) -> NearcastForecastSemanticHour {
+            NearcastForecastSemanticHour(
+                time: time[index],
+                rawCode: weatherCode?[safe: index] ?? nil,
+                precipitationChance: Double((rainChance?[safe: index] ?? nil) ?? 0),
+                precipitationAmount: (precipitation?[safe: index] ?? nil) ?? 0,
+                cloudCover: cloudCover?[safe: index] ?? nil,
+                isDay: (isDay?[safe: index] ?? nil).map { $0 == 1 }
+            )
         }
     }
 
@@ -2788,7 +2822,7 @@ private struct WatchForecast: Decodable {
             case rainChance = "precipitation_probability_max"
         }
 
-        func rows(limit: Int) -> [NearcastWidgetDay] {
+        func rows(limit: Int, semanticHours: [NearcastForecastSemanticHour]) -> [NearcastWidgetDay] {
             (0..<min(time.count, limit)).compactMap { index -> NearcastWidgetDay? in
                 guard let high = rounded(high?[safe: index] ?? nil),
                       let low = rounded(low?[safe: index] ?? nil) else { return nil }
@@ -2798,7 +2832,10 @@ private struct WatchForecast: Decodable {
                     high: high,
                     low: low,
                     rainChance: (rainChance?[safe: index] ?? nil) ?? 0,
-                    conditionCode: (weatherCode?[safe: index] ?? nil) ?? 0
+                    conditionCode: NearcastForecastSemantics.dailyConditionCode(
+                        hours: semanticHours.filter { $0.dateKey == time[index] },
+                        fallbackCode: weatherCode?[safe: index] ?? nil
+                    )
                 )
             }
         }

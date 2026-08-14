@@ -69,6 +69,94 @@ let currentPlaceData = Data(#"{"id":"gps-maryville","name":"Maryville","displayN
 let currentPlace = try decoder.decode(NearcastWidgetPlace.self, from: currentPlaceData)
 require(currentPlace.tracksCurrentLocation, "widget places explicitly identify Current Location")
 
+func semanticHour(
+    _ hour: Int,
+    code: Int,
+    chance: Double,
+    amount: Double = 0,
+    cloud: Double = 20,
+    isDay: Bool = true,
+    date: String = "2026-08-14"
+) -> NearcastForecastSemanticHour {
+    NearcastForecastSemanticHour(
+        time: String(format: "%@T%02d:00", date, hour),
+        rawCode: code,
+        precipitationChance: chance,
+        precipitationAmount: amount,
+        cloudCover: cloud,
+        isDay: isDay
+    )
+}
+
+let lowChanceStorm = semanticHour(14, code: 95, chance: 8, cloud: 18)
+require(
+    NearcastForecastSemantics.hourlyConditionCode(for: lowChanceStorm) == 1,
+    "a low-chance provider storm code falls back to the likely sky"
+)
+let unsupportedRain = semanticHour(15, code: 61, chance: 35, amount: 0.2, cloud: 55)
+require(
+    NearcastForecastSemantics.hourlyConditionCode(for: unsupportedRain) == 2,
+    "a chance hour needs meaningful modeled precipitation to own its icon"
+)
+let supportedRain = semanticHour(16, code: 61, chance: 35, amount: 0.8, cloud: 55)
+require(
+    NearcastForecastSemantics.hourlyConditionCode(for: supportedRain) == 61,
+    "a chance hour with meaningful modeled precipitation keeps a rain icon"
+)
+require(
+    NearcastForecastSemantics.currentConditionCode(
+        rawCode: 61,
+        precipitationAmount: 0,
+        intervalSeconds: 900,
+        cloudCover: 90
+    ) == 3,
+    "a dry current observation does not repeat a stale provider rain code"
+)
+require(
+    NearcastForecastSemantics.currentConditionCode(
+        rawCode: 61,
+        precipitationAmount: 0.1,
+        intervalSeconds: 900,
+        cloudCover: 90
+    ) == 61,
+    "measurable current precipitation keeps the wet condition"
+)
+
+var isolatedWetHour = (8..<20).map {
+    semanticHour($0, code: 0, chance: 0, cloud: 5)
+}
+isolatedWetHour[4] = semanticHour(12, code: 61, chance: 60, cloud: 70)
+require(
+    NearcastForecastSemantics.dailyConditionCode(hours: isolatedWetHour, fallbackCode: 61) == 0,
+    "one isolated wet hour does not turn the whole day into rain"
+)
+
+var sustainedWetWindow = (8..<20).map {
+    semanticHour($0, code: 2, chance: 10, cloud: 60)
+}
+for index in 4...6 {
+    sustainedWetWindow[index] = semanticHour(8 + index, code: 61, chance: 40, amount: 0.8, cloud: 85)
+}
+require(
+    NearcastForecastSemantics.dailyConditionCode(hours: sustainedWetWindow, fallbackCode: 61) == 61,
+    "a sustained supported rain window can own the daily condition"
+)
+
+let nighttimeStorms = (0..<6).map {
+    semanticHour($0, code: 95, chance: 80, amount: 1, cloud: 90, isDay: false)
+}
+let daylightClear = (8..<18).map {
+    semanticHour($0, code: 0, chance: 0, cloud: 5, isDay: true)
+}
+require(
+    NearcastForecastSemantics.dailyConditionCode(hours: nighttimeStorms + daylightClear, fallbackCode: 95) == 0,
+    "a daily card represents daylight instead of an isolated overnight hazard window"
+)
+require(
+    NearcastForecastSemantics.dailyConditionCode(hours: [], fallbackCode: 95) == 2,
+    "a raw daily storm code is not trusted without supporting hourly evidence"
+)
+
 func hour(
     _ offset: Int,
     _ label: String,

@@ -52,16 +52,16 @@ assert.match(planner, /showSheet\(els\.aiBackdrop[\s\S]*?onPullDismiss: closeAIS
 assert.match(map, /function openXweatherStormReceiptSheet[\s\S]*?showSheet\(backdrop, sheet, \{\s*onPullDismiss: closeXweatherStormReceiptSheet/, "StormScope receipts preserve receipt cleanup");
 assert.match(map, /function openXweatherStormSheet[\s\S]*?showSheet\(backdrop, sheet, \{\s*onPullDismiss: closeXweatherStormSheet/, "StormScope preserves map cleanup");
 
-const classifiedSheets = [...html.matchAll(/<aside class="[^"]*\bday-sheet\b[^"]*" id="([^"]+)"[^>]*data-pull-dismiss="(enabled|disabled)"/g)]
+const classifiedSheets = [...html.matchAll(/<aside\b(?=[^>]*class="[^"]*\bday-sheet\b[^"]*")(?=[^>]*id="([^"]+)")(?=[^>]*data-pull-dismiss="(enabled|disabled)")[^>]*>/g)]
   .map(([, id, mode]) => ({ id, mode }));
-assert.equal(classifiedSheets.length, 12, "every sheet explicitly declares its pull-dismiss policy");
-assert.equal(classifiedSheets.filter(({ mode }) => mode === "enabled").length, 11, "all informational sheets expose pull dismissal");
+assert.equal(classifiedSheets.length, 13, "every sheet explicitly declares its pull-dismiss policy");
+assert.equal(classifiedSheets.filter(({ mode }) => mode === "enabled").length, 12, "all informational sheets expose pull dismissal");
 assert.deepEqual(
   classifiedSheets.filter(({ mode }) => mode === "disabled").map(({ id }) => id),
   ["memoryEditSheet"],
   "the unsaved structured editor is the only non-dismissible sheet"
 );
-assert.equal((html.match(/class="sheet-grabber"/g) || []).length, 11, "only pull-enabled sheets render a grabber");
+assert.equal((html.match(/class="sheet-grabber"/g) || []).length, 12, "only pull-enabled sheets render a grabber");
 assert.match(styles, /\.day-sheet\.show\s*\{[\s\S]*?--sheet-drag-y/, "the sheet follows the pull distance");
 assert.match(styles, /\.day-sheet\.is-dragging\s*\{[\s\S]*?transition: none;/, "the sheet tracks the finger without transition lag");
 assert.match(styles, /body\.map-immersive-active \.day-sheet\.show\s*\{[\s\S]*?--sheet-drag-y/, "immersive-map sheets visibly follow the pull");

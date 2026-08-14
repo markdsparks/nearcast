@@ -94,8 +94,8 @@ assert.match(watchApp, /updated\.windLabel = nil/, "watch refresh cannot retain 
 assert.match(watchApp, /safeWatchSurface/, "conditionally absent Plan pages cannot leave the pager on a blank selection");
 assert.match(watchApp, /-nearcastPreviewWeather/, "populated Watch layouts can be exercised in the simulator");
 assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");
-assert.match(watchApp, /forecast_hours", value: "24"/, "watch app caches a full day of hourly values");
-assert.match(complications, /forecast_hours", value: "24"/, "complications can project a full day without a fresh wake-up");
+assert.match(watchApp, /forecast_hours", value: "96"/, "watch app fetches enough hourly context to derive four honest daily conditions");
+assert.match(complications, /forecast_hours", value: "96"/, "complications fetch enough hourly context to derive four honest daily conditions");
 assert.match(complications, /complicationTimelineDates[\s\S]*24 \* 60 \* 60[\s\S]*compactMap\(\\\.startsAt\)/, "complications advance on cached forecast boundaries across the available day");
 assert.match(complications, /let staleDate = complicationWeatherValidUntil\(snapshot\)[\s\S]*dates\.append\(staleDate\)/, "the complication timeline ends with an explicit stale state");
 assert.match(complications, /timeoutInterval: 8/, "complication networking leaves time for a cached fallback");

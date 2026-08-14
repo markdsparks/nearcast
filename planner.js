@@ -9069,7 +9069,8 @@ function planWindowDetailRows(event, data) {
     .map((time, index) => {
       const ms = parseForecastTimestamp(time, data);
       if (ms === null) return null;
-      const code = Number(data.hourly.weather_code?.[index]);
+      const presentation = forecastHourPresentation(data, index, { isCurrent: index === currentHourlyIndex(data) });
+      const code = Number(presentation.code);
       const precip = Number(data.hourly.precipitation?.[index] || 0);
       const pop = Math.round(Number(data.hourly.precipitation_probability?.[index] || 0));
       const wind = Math.round(Number(data.hourly.wind_speed_10m?.[index] || 0));
@@ -9084,7 +9085,7 @@ function planWindowDetailRows(event, data) {
         hour: forecastLocalHour(time),
         inWindow: ms >= event.startMs && ms < event.endMs,
         code,
-        label: weatherCodes[code] || "Weather",
+        label: presentation.label,
         temp,
         feels,
         pop,
@@ -9092,8 +9093,8 @@ function planWindowDetailRows(event, data) {
         wind,
         gust,
         uv,
-        isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true,
-        storm: [95, 96, 99].includes(code)
+        isDay: presentation.isDay,
+        storm: presentation.stormPotential || isThunderCode(code)
       };
     })
     .filter((row) => row && row.ms >= startMs && row.ms < endMs);
@@ -10989,7 +10990,8 @@ function planWindowStats(data, c, w) {
   const wind = values("wind_speed_10m", c.now.wind);
   const gust = values("wind_gusts_10m", c.now.gust);
   const uv = values("uv_index", 0);
-  const codes = idxs.map((i) => data.hourly.weather_code[i]);
+  const presentations = idxs.map((i) => forecastHourPresentation(data, i, { isCurrent: i === currentHourlyIndex(data) }));
+  const codes = presentations.map((hour) => hour.code);
   const air = airStatsForHours(data, hours, c.air);
 
   return {
@@ -11016,7 +11018,7 @@ function planWindowStats(data, c, w) {
     pollenLabel: air.pollenLabel,
     pollenLevel: air.pollenLevel,
     sky: weatherCodes[mostCommon(codes)] || day.sky || "Weather",
-    stormPotential: codes.some((code) => [95, 96, 99].includes(Number(code)))
+    stormPotential: presentations.some((hour) => hour.stormPotential || isThunderCode(hour.code))
   };
 }
 
@@ -11272,7 +11274,10 @@ function askWindowStats(w) {
   const wind = idxs.length ? values("wind_speed_10m", c.now.wind) : [c.now.wind];
   const gust = idxs.length ? values("wind_gusts_10m", c.now.gust) : [c.now.gust];
   const uv = idxs.length ? values("uv_index", 0) : [w.dayIdx === 0 ? c.today.uvPeak : 0];
-  const codes = idxs.length ? idxs.map((i) => data.hourly.weather_code[i]) : [data.daily.weather_code[w.dayIdx] || data.current.weather_code];
+  const presentations = idxs.map((i) => forecastHourPresentation(data, i, { isCurrent: i === currentHourlyIndex(data) }));
+  const codes = presentations.length
+    ? presentations.map((hour) => hour.code)
+    : [forecastDayPresentation(data, w.dayIdx).code || canonicalCurrentSnapshot(data).weather_code];
   const air = airStatsForHours(data, hours, c.air);
 
   return {

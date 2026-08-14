@@ -59,6 +59,8 @@ run_portable_checks() {
     node "$ROOT/scripts/$smoke"
   done
 
+  node "$ROOT/scripts/forecast-truth-regression-smoke.mjs" --strict
+
   printf 'PASS  Portable Nearcast production checks\n'
 }
 

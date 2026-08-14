@@ -8891,6 +8891,9 @@ async function startRadarPrecipProbe(place, data, force = false) {
       timestamp: null,
       checkedAt: Date.now()
     };
+    if (state.forecast === data && typeof renderForecastTrust === "function") {
+      renderForecastTrust(data, state.weatherTruth || weatherTruth(data));
+    }
     window.nearcastSyncRadarView?.();
   }
 }
