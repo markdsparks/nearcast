@@ -8936,16 +8936,14 @@ body.map-immersive-active .app-dock {
   box-shadow: 0 12px 30px rgba(18, 39, 59, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.14);
   font: inherit;
   text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
 }
 
 .outdoor-window-card.is-caution {
   --outdoor-window-accent: var(--semantic-gold);
 }
 
-.outdoor-window-card:focus-visible {
+.outdoor-window-detail:focus-visible,
+.outdoor-window-lenses button:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--outdoor-window-accent) 46%, transparent);
   outline-offset: 3px;
 }
@@ -8983,6 +8981,40 @@ body.map-immersive-active .app-dock {
   text-wrap: balance;
 }
 
+.outdoor-window-lenses {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 3px;
+  scrollbar-width: none;
+}
+
+.outdoor-window-lenses::-webkit-scrollbar {
+  display: none;
+}
+
+.outdoor-window-lenses button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--outdoor-window-accent) 22%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--outdoor-window-accent) 7%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.outdoor-window-lenses button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--outdoor-window-accent) 56%, var(--border-glass));
+  background: color-mix(in srgb, var(--outdoor-window-accent) 20%, transparent);
+  color: var(--ink);
+}
+
 .outdoor-window-signals {
   display: flex;
   flex-wrap: wrap;
@@ -9007,6 +9039,23 @@ body.map-immersive-active .app-dock {
   font-size: 0.86rem;
   font-weight: 680;
   line-height: 1.32;
+}
+
+.outdoor-window-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .outdoor-window-open {
