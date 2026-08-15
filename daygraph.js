@@ -501,6 +501,7 @@ function openDayDetail({
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
   renderDayFocus(hrs, { tempUnit, windUnit, source, showNow });
+  renderDayForecastPulse(data, dayIndex, source);
 
   graphMetric = "temp"; // each focused day starts with the most legible trend.
   dayDetailNavState = { source, dayIndex, data, eventWindow, showNow, sunriseISO, sunsetISO, contextLabel, ...(navState || {}) };
@@ -643,6 +644,7 @@ function refreshOpenDayDetailMemorySurfaces() {
     source: dayDetailNavState.source,
     showNow: Boolean(dayDetailNavState.showNow)
   });
+  renderDayForecastPulse(data, dayDetailNavState.dayIndex, dayDetailNavState.source);
 
   buildHourlyGraph(hrs, tempUnit, windUnit, Boolean(dayDetailNavState.showNow), {
     dayIndex: dayDetailNavState.dayIndex,
@@ -837,6 +839,27 @@ function renderDayFocus(hrs, { tempUnit, windUnit, source = "day", showNow = fal
   signal.dataset.tone = focus.signal.tone;
   signal.innerHTML = `<span>${escapeHtml(focus.signal.label)}</span><strong>${escapeHtml(focus.signal.value)}</strong>`;
   signal.setAttribute("aria-label", `${focus.signal.label}: ${focus.signal.value}`);
+}
+
+function renderDayForecastPulse(data, dayIndex, source = "day") {
+  const element = document.getElementById("sheetForecastPulse");
+  if (!element) return;
+  if (source !== "day" || typeof forecastPulseDayPresentation !== "function") {
+    element.hidden = true;
+    element.innerHTML = "";
+    return;
+  }
+  const pulse = forecastPulseDayPresentation(data, dayIndex);
+  if (!pulse || pulse.status === "learning") {
+    element.hidden = true;
+    element.innerHTML = "";
+    return;
+  }
+  element.hidden = false;
+  element.dataset.tone = pulse.tone;
+  const kicker = pulse.status === "settled" ? "Forecast trend" : pulse.status === "uncertain" ? "Confidence note" : "Changed forecast";
+  element.innerHTML = `<span>${escapeHtml(kicker)}</span><strong>${escapeHtml(pulse.label)}</strong><p>${escapeHtml(pulse.detail)}</p>`;
+  element.setAttribute("aria-label", `${kicker}. ${pulse.label}. ${pulse.detail}`);
 }
 
 function hourlyRowRainText(hour) {
@@ -1374,7 +1397,18 @@ function drawHourlyGraph() {
 
   const primaryVals = hrs.map((h) => h[primaryKey]);
   const secondaryVals = hrs.map((h) => h[secondaryKey]);
-  const all = primaryVals.concat(secondaryVals);
+  const previousForecast = !isWind && typeof forecastPulsePreviousHourly === "function"
+    ? forecastPulsePreviousHourly(data, graphCtx.dayIndex)
+    : null;
+  const previousKey = isFeels ? "feels" : "temp";
+  const previousVals = previousForecast?.tempUnit === tempUnit
+    ? hrs.map((hour) => Number(previousForecast.values?.[hour.time]?.[previousKey]))
+    : [];
+  const hasPreviousCurve = previousVals.length === hrs.length && previousVals.length >= 2 && previousVals.every(Number.isFinite);
+  if (hint && hasPreviousCurve && !isWind && !isSun && !isPrecip) {
+    hint.textContent += " · dotted = previous update";
+  }
+  const all = primaryVals.concat(secondaryVals, hasPreviousCurve ? previousVals.filter(Number.isFinite) : []);
   let vMin = Math.min(...all), vMax = Math.max(...all);
   if (isWind) vMin = Math.min(vMin, 0); // wind reads naturally from a 0 baseline
   const range = Math.max(vMax - vMin, 1);
@@ -1386,6 +1420,7 @@ function drawHourlyGraph() {
 
   const pPts = hrs.map((h, i) => ({ ...h, x: x(i), y: yv(h[primaryKey]) }));
   const sPts = hrs.map((h, i) => ({ x: x(i), y: yv(h[secondaryKey]) }));
+  const previousPts = hasPreviousCurve ? previousVals.map((value, i) => ({ x: x(i), y: yv(value) })) : [];
   const firstMs = parseForecastTimestamp(hrs[0].time, data);
   const lastMs = parseForecastTimestamp(hrs[n - 1].time, data);
   const graphEndMs = firstMs !== null && lastMs !== null && lastMs > firstMs
@@ -1424,6 +1459,7 @@ function drawHourlyGraph() {
 
   const primaryPath = smoothPath(pPts);
   const secondaryPath = smoothPath(sPts);
+  const previousPath = previousPts.length ? smoothPath(previousPts) : "";
   const areaPath = `${primaryPath} L ${pPts[n - 1].x.toFixed(1)} ${tempBottom} L ${pPts[0].x.toFixed(1)} ${tempBottom} Z`;
 
   // Keep marker labels inside the chart even when a peak lands at an edge.
@@ -1483,6 +1519,7 @@ function drawHourlyGraph() {
     <svg viewBox="0 0 ${VW} 162" class="hourly-graph">
       <defs>${defs}</defs>
       <path d="${areaPath}" fill="${areaFill}" fill-opacity="${areaOpacity}"/>
+      ${previousPath ? `<path d="${previousPath}" class="graph-previous-forecast" aria-hidden="true"/>` : ""}
       <path d="${secondaryPath}" fill="none" stroke="${secondaryStroke}" stroke-width="1.6" stroke-dasharray="4 3" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
       <path d="${primaryPath}" fill="none" stroke="${primaryStroke}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       ${dayLines}

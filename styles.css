@@ -2932,6 +2932,73 @@ h2 {
   text-wrap: balance;
 }
 
+.forecast-pulse {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 14px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--semantic-green) 24%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--semantic-green) 7%, var(--glass-light));
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.forecast-pulse[hidden] { display: none; }
+.forecast-pulse:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 42%, transparent); outline-offset: 3px; }
+
+.forecast-pulse-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--semantic-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-green) 12%, transparent);
+}
+
+.forecast-pulse-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.forecast-pulse-copy strong {
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.forecast-pulse-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forecast-pulse-chevron { color: var(--muted); font-size: 1rem; line-height: 1; }
+.forecast-pulse[data-tone="change"],
+.forecast-pulse[data-tone="watch"] {
+  border-color: color-mix(in srgb, var(--semantic-gold) 34%, var(--border-glass));
+  background: color-mix(in srgb, var(--semantic-gold) 9%, var(--glass-light));
+}
+.forecast-pulse[data-tone="change"] .forecast-pulse-mark,
+.forecast-pulse[data-tone="watch"] .forecast-pulse-mark {
+  background: var(--semantic-gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-gold) 14%, transparent);
+}
+
 /* These drill-down metrics remain available to detail surfaces, but no longer
    interrupt the primary forecast story on the home screen. */
 #hero .glance-signals,
@@ -9806,6 +9873,40 @@ body.map-immersive-active .app-dock {
   opacity: var(--daily-precip-note-opacity);
 }
 
+.day-pulse {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--semantic-gold);
+  font-size: 0.67rem;
+  font-weight: 900;
+}
+
+.day-pulse i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.home-plan-stability {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  color: var(--semantic-gold);
+  font-size: 0.69rem;
+  font-weight: 900;
+}
+.home-plan-stability i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
 .day-temps {
   display: flex;
   align-items: center;
@@ -13822,6 +13923,45 @@ body.map-immersive-active .day-sheet.show {
   background: color-mix(in srgb, #f5a742 9%, transparent);
 }
 .sheet-focus-signal[data-tone="sun"] span { color: #c77c12; }
+
+.sheet-forecast-pulse {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 9px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--semantic-green) 25%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--semantic-green) 7%, transparent);
+}
+.sheet-forecast-pulse[hidden] { display: none; }
+.sheet-forecast-pulse > span {
+  grid-column: 1 / -1;
+  color: var(--semantic-green);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sheet-forecast-pulse strong { grid-column: 1 / -1; color: var(--ink); font-size: 0.88rem; font-weight: 900; }
+.sheet-forecast-pulse p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.76rem; font-weight: 700; line-height: 1.35; }
+.sheet-forecast-pulse[data-tone="change"],
+.sheet-forecast-pulse[data-tone="watch"] {
+  border-color: color-mix(in srgb, var(--semantic-gold) 34%, var(--line));
+  background: color-mix(in srgb, var(--semantic-gold) 8%, transparent);
+}
+.sheet-forecast-pulse[data-tone="change"] > span,
+.sheet-forecast-pulse[data-tone="watch"] > span { color: var(--semantic-gold); }
+
+.graph-previous-forecast {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.24;
+}
 }
 
 /* Forecast receipt: factual freshness, evidence, and uncertainty. The compact

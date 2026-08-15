@@ -54,6 +54,7 @@ run_portable_checks() {
     raw-map-canonical-timeline-smoke.mjs \
     raw-map-timeline-controls-smoke.mjs \
     watch-basics-smoke.mjs \
+    forecast-pulse-smoke.mjs \
     nearcast-place-label-test.mjs
   do
     node "$ROOT/scripts/$smoke"

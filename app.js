@@ -1,4 +1,4 @@
-const VERSION = "3.0.351";
+const VERSION = "3.0.352";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -11,6 +11,9 @@ const OUTDOOR_WINDOW_LENSES = Object.freeze({
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
 const CONTINUITY_KEY = "nearcast-continuity-v1";
+const FORECAST_PULSE_KEY = "nearcast-forecast-pulse-v1";
+const FORECAST_PULSE_MAX_RUNS = 6;
+const FORECAST_PULSE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TIME_FORMAT_KEY = "nearcast-time-format";
 const MAP_RENDERER_KEY = "nearcast-map-renderer";
 const MAP_RENDERER_CHOICE_KEY = "nearcast-map-renderer-choice";
@@ -562,6 +565,7 @@ const state = {
   skyState: null,
   weatherTruth: null,
   forecastPresentation: null,
+  forecastPulseCache: { key: "", runs: [] },
   forecastPlaceId: null,
   radarPrecipSignal: null,
   radarPrecipPlaceId: null,
@@ -1414,6 +1418,9 @@ const els = {
   forecastReceiptSourceMeta: document.querySelector("#forecastReceiptSourceMeta"),
   forecastReceiptEvidence: document.querySelector("#forecastReceiptEvidence"),
   forecastReceiptEvidenceMeta: document.querySelector("#forecastReceiptEvidenceMeta"),
+  forecastReceiptMovementRow: document.querySelector("#forecastReceiptMovementRow"),
+  forecastReceiptMovement: document.querySelector("#forecastReceiptMovement"),
+  forecastReceiptMovementMeta: document.querySelector("#forecastReceiptMovementMeta"),
   forecastReceiptAlerts: document.querySelector("#forecastReceiptAlerts"),
   forecastReceiptAlertsMeta: document.querySelector("#forecastReceiptAlertsMeta"),
   forecastReceiptUncertainty: document.querySelector("#forecastReceiptUncertainty"),
@@ -1428,6 +1435,9 @@ const els = {
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceKicker: document.querySelector("#glanceKicker"),
+  forecastPulse: document.querySelector("#forecastPulse"),
+  forecastPulseLabel: document.querySelector("#forecastPulseLabel"),
+  forecastPulseMeta: document.querySelector("#forecastPulseMeta"),
   glanceSignals: document.querySelector(".glance-signals"),
   feelsLike: document.querySelector("#feelsLike"),
   feelsContext: document.querySelector("#feelsContext"),
@@ -4238,6 +4248,7 @@ function bindEvents() {
 
   bindTapAction(els.themeToggle, toggleTheme);
   bindTapAction(els.forecastReceiptTrigger, openForecastReceipt);
+  bindTapAction(els.forecastPulse, openForecastReceipt);
   bindTapAction(els.forecastReceiptBackdrop, closeForecastReceipt);
   bindTapAction(els.forecastReceiptClose, closeForecastReceipt);
   bindTapAction(els.reactiveSkyToggle, toggleReactiveSky);
@@ -8192,6 +8203,242 @@ function forecastAgeLabel(ageMs) {
   return `${hours} hr${hours === 1 ? "" : "s"} ago`;
 }
 
+function defaultForecastPulseStore() {
+  return { places: {}, updatedAt: 0 };
+}
+
+function loadForecastPulseStore() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FORECAST_PULSE_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return defaultForecastPulseStore();
+    return {
+      places: parsed.places && typeof parsed.places === "object" ? parsed.places : {},
+      updatedAt: Math.max(0, Number(parsed.updatedAt) || 0)
+    };
+  } catch {
+    return defaultForecastPulseStore();
+  }
+}
+
+function saveForecastPulseStore(store) {
+  try {
+    localStorage.setItem(FORECAST_PULSE_KEY, JSON.stringify(store));
+  } catch {
+    // Forecast history is a trust enhancement; storage can never block weather.
+  }
+}
+
+function forecastPulseDaySnapshot(data, dayIndex) {
+  const date = data?.daily?.time?.[dayIndex] || "";
+  if (!date) return null;
+  const day = forecastDayPresentation(data, dayIndex);
+  const indices = dailyRelevantHourlyIndices(data, dayIndex);
+  const precipWindow = dailyPrecipitationWindow(data, dayIndex);
+  const hourly = indices.map((index) => ({
+    time: data.hourly?.time?.[index] || "",
+    temp: continuityNumber(data.hourly?.temperature_2m?.[index]),
+    feels: continuityNumber(data.hourly?.apparent_temperature?.[index])
+  })).filter((hour) => hour.time);
+  const maxOf = (field) => {
+    const values = indices.map((index) => Number(data.hourly?.[field]?.[index])).filter(Number.isFinite);
+    return values.length ? Math.round(Math.max(...values)) : null;
+  };
+  return {
+    date,
+    high: continuityNumber(data.daily?.temperature_2m_max?.[dayIndex]),
+    low: continuityNumber(data.daily?.temperature_2m_min?.[dayIndex]),
+    rainMax: maxOf("precipitation_probability"),
+    gustMax: maxOf("wind_gusts_10m"),
+    family: day.family,
+    label: day.storyLabel,
+    timing: day.timing || "",
+    precipStartMs: precipWindow?.startTime ? parseForecastTimestamp(precipWindow.startTime, data) : null,
+    precipEndMs: precipWindow?.endTime ? parseForecastTimestamp(precipWindow.endTime, data) : null,
+    hourly
+  };
+}
+
+function forecastPulseRunSnapshot(data, place = state.activePlace) {
+  if (!data || !place) return null;
+  const provenance = forecastProvenance(data);
+  const checkedAt = Number(provenance.savedAt);
+  if (!Number.isFinite(checkedAt) || checkedAt <= 0) return null;
+  const todayIndex = forecastDailyIndex(data);
+  const days = [];
+  for (let dayIndex = todayIndex; dayIndex < Math.min(data.daily?.time?.length || 0, todayIndex + 7); dayIndex += 1) {
+    const day = forecastPulseDaySnapshot(data, dayIndex);
+    if (day) days.push(day);
+  }
+  return {
+    checkedAt,
+    placeKey: continuityPlaceKey(place),
+    tempUnit: state.unit === "fahrenheit" ? "F" : "C",
+    windUnit: state.unit === "fahrenheit" ? "mph" : "km/h",
+    days
+  };
+}
+
+function forecastPulseRuns(data = state.forecast, place = state.activePlace) {
+  const provenance = forecastProvenance(data);
+  const cacheKey = [
+    continuityPlaceKey(place),
+    Number(provenance.savedAt) || 0,
+    state.unit,
+    Math.floor(forecastNowMs(data) / (60 * 60 * 1000))
+  ].join("|");
+  if (state.forecastPulseCache?.key === cacheKey) return state.forecastPulseCache.runs;
+  const current = forecastPulseRunSnapshot(data, place);
+  if (!current?.placeKey) return [];
+  const stored = loadForecastPulseStore().places?.[current.placeKey]?.runs || [];
+  const byCheckedAt = new Map();
+  stored.concat(current).forEach((run) => {
+    const checkedAt = Number(run?.checkedAt);
+    if (Number.isFinite(checkedAt) && run?.days?.length) byCheckedAt.set(checkedAt, run);
+  });
+  const runs = [...byCheckedAt.values()]
+    .filter((run) => Date.now() - Number(run.checkedAt) <= FORECAST_PULSE_MAX_AGE_MS)
+    .sort((a, b) => Number(a.checkedAt) - Number(b.checkedAt))
+    .slice(-FORECAST_PULSE_MAX_RUNS);
+  state.forecastPulseCache = { key: cacheKey, runs };
+  return runs;
+}
+
+function saveForecastPulseSnapshot(data = state.forecast, place = state.activePlace) {
+  const provenance = forecastProvenance(data);
+  if (provenance.cacheFallback) return;
+  const snapshot = forecastPulseRunSnapshot(data, place);
+  if (!snapshot?.placeKey) return;
+  const store = loadForecastPulseStore();
+  const existing = store.places[snapshot.placeKey]?.runs || [];
+  const byCheckedAt = new Map();
+  existing.concat(snapshot).forEach((run) => {
+    const checkedAt = Number(run?.checkedAt);
+    if (Number.isFinite(checkedAt) && run?.days?.length) byCheckedAt.set(checkedAt, run);
+  });
+  const runs = [...byCheckedAt.values()]
+    .filter((run) => Date.now() - Number(run.checkedAt) <= FORECAST_PULSE_MAX_AGE_MS)
+    .sort((a, b) => Number(a.checkedAt) - Number(b.checkedAt))
+    .slice(-FORECAST_PULSE_MAX_RUNS);
+  store.places[snapshot.placeKey] = { runs, updatedAt: Date.now() };
+  store.updatedAt = Date.now();
+  const entries = Object.entries(store.places)
+    .sort((a, b) => Number(b[1]?.updatedAt || 0) - Number(a[1]?.updatedAt || 0))
+    .slice(0, 24);
+  store.places = Object.fromEntries(entries);
+  saveForecastPulseStore(store);
+}
+
+function forecastPulseChange(current, previous, tempUnit, windUnit) {
+  if (!current || !previous || current.date !== previous.date) return null;
+  const changes = [];
+  const add = (priority, kind, title, detail) => changes.push({ priority, kind, title, detail });
+  const currentWet = ["rain", "snow", "storm"].includes(current.family);
+  const previousWet = ["rain", "snow", "storm"].includes(previous.family);
+  if (current.family !== previous.family && (currentWet || previousWet)) {
+    if (currentWet && !previousWet) add(110, "condition", `${current.label} is now in the forecast`, `${current.timing || current.label} replaced ${String(previous.label || "drier weather").toLowerCase()}.`);
+    else if (!currentWet && previousWet) add(108, "condition", `${previous.label} backed off`, `${current.label}${current.timing ? ` · ${current.timing}` : ""}.`);
+    else add(106, "condition", `Precipitation type changed`, `${previous.label} shifted to ${current.label.toLowerCase()}.`);
+  }
+  const timingDelta = continuityDelta(current.precipStartMs, previous.precipStartMs);
+  if (timingDelta !== null && Math.abs(timingDelta) >= 90 * 60 * 1000 && Math.min(current.rainMax || 0, previous.rainMax || 0) >= 25) {
+    const later = timingDelta > 0;
+    add(100 + Math.round(Math.abs(timingDelta) / 3600000), "timing", `${current.label || "Rain"} moved ${later ? "later" : "earlier"}`, `Now near ${formatTime(current.precipStartMs)}, previously near ${formatTime(previous.precipStartMs)}.`);
+  }
+  const rainDelta = continuityDelta(current.rainMax, previous.rainMax);
+  if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainMax || 0, previous.rainMax || 0) >= 30) {
+    add(85 + Math.abs(rainDelta), "rain", `Rain chance ${rainDelta > 0 ? "increased" : "eased"}`, `Peak chance is now ${current.rainMax}%, ${rainDelta > 0 ? "up" : "down"} from ${previous.rainMax}%.`);
+  }
+  const highDelta = continuityDelta(current.high, previous.high);
+  if (highDelta !== null && Math.abs(highDelta) >= continuityTempDeltaThreshold(tempUnit)) {
+    add(65 + Math.abs(highDelta), "temperature", `The high moved ${highDelta > 0 ? "warmer" : "cooler"}`, `High is now ${current.high}${degree(tempUnit)}, ${highDelta > 0 ? "up" : "down"} from ${previous.high}${degree(tempUnit)}.`);
+  }
+  const gustDelta = continuityDelta(current.gustMax, previous.gustMax);
+  if (gustDelta !== null && Math.abs(gustDelta) >= continuityWindDeltaThreshold(windUnit) && Math.max(current.gustMax || 0, previous.gustMax || 0) >= continuityWindNotableThreshold(windUnit)) {
+    add(60 + Math.abs(gustDelta), "wind", `Wind ${gustDelta > 0 ? "picked up" : "eased"}`, `Peak gusts are now ${current.gustMax} ${windUnit}, ${gustDelta > 0 ? "up" : "down"} from ${previous.gustMax} ${windUnit}.`);
+  }
+  return changes.sort((a, b) => b.priority - a.priority)[0] || null;
+}
+
+function forecastPulseDayPresentation(data = state.forecast, dayIndex = forecastDailyIndex(data), place = state.activePlace) {
+  const date = data?.daily?.time?.[dayIndex] || "";
+  const runs = forecastPulseRuns(data, place);
+  const targetTempUnit = runs.at(-1)?.tempUnit;
+  const targetWindUnit = runs.at(-1)?.windUnit;
+  const series = runs
+    .filter((run) => run.tempUnit === targetTempUnit && run.windUnit === targetWindUnit)
+    .map((run) => ({ run, day: run.days?.find((item) => item.date === date) }))
+    .filter((item) => item.day);
+  const latest = series.at(-1);
+  const previous = series.at(-2);
+  if (!latest || !previous) return { status: "learning", tone: "neutral", label: "", meta: "", detail: "", runs: series.length };
+  const change = forecastPulseChange(latest.day, previous.day, latest.run.tempUnit, latest.run.windUnit);
+  const recent = series.slice(-4);
+  const range = (field) => {
+    const values = recent.map((item) => Number(item.day?.[field])).filter(Number.isFinite);
+    return values.length ? Math.max(...values) - Math.min(...values) : 0;
+  };
+  const timingValues = recent.map((item) => Number(item.day?.precipStartMs)).filter(Number.isFinite);
+  const timingSpread = timingValues.length >= 2 ? Math.max(...timingValues) - Math.min(...timingValues) : 0;
+  const broadSpread = recent.length >= 3 && (
+    range("high") >= (latest.run.tempUnit === "F" ? 8 : 5) ||
+    range("rainMax") >= 30 ||
+    (timingValues.length >= 2 && timingSpread >= 3 * 60 * 60 * 1000)
+  );
+  const since = forecastAgeLabel(Math.max(0, Number(latest.run.checkedAt) - Number(previous.run.checkedAt)));
+  const previousTime = new Date(Number(previous.run.checkedAt)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (broadSpread) {
+    return {
+      status: "uncertain",
+      tone: "watch",
+      label: "Still shifting",
+      meta: change?.title || "Recent updates show a wider range",
+      detail: change?.detail || "Recent forecast updates have not converged on the same temperature or precipitation timing.",
+      previousCheckedAt: previous.run.checkedAt,
+      previousTempUnit: previous.run.tempUnit,
+      current: latest.day,
+      previous: previous.day,
+      runs: series.length
+    };
+  }
+  if (change) {
+    return {
+      status: "shifting",
+      tone: "change",
+      label: change.title,
+      meta: `Changed since ${previousTime}`,
+      detail: change.detail,
+      previousCheckedAt: previous.run.checkedAt,
+      previousTempUnit: previous.run.tempUnit,
+      current: latest.day,
+      previous: previous.day,
+      runs: series.length
+    };
+  }
+  return {
+    status: "settled",
+    tone: "steady",
+    label: "Holding steady",
+    meta: `Little changed since ${previousTime}`,
+    detail: `The main temperature, precipitation, and wind signals have held across the last ${Math.min(series.length, 4)} updates.`,
+    previousCheckedAt: previous.run.checkedAt,
+    previousTempUnit: previous.run.tempUnit,
+    current: latest.day,
+    previous: previous.day,
+    runs: series.length,
+    since
+  };
+}
+
+function forecastPulsePreviousHourly(data = state.forecast, dayIndex = forecastDailyIndex(data), place = state.activePlace) {
+  const pulse = forecastPulseDayPresentation(data, dayIndex, place);
+  if (!pulse.previous?.hourly?.length) return null;
+  return {
+    checkedAt: pulse.previousCheckedAt,
+    tempUnit: pulse.previousTempUnit || null,
+    values: Object.fromEntries(pulse.previous.hourly.map((hour) => [hour.time, hour]))
+  };
+}
+
 function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(data)) {
   const provenance = forecastProvenance(data);
   const savedAt = provenance.savedAt;
@@ -8208,6 +8455,9 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   const alerts = typeof alertTrustState === "undefined"
     ? { state: "unknown", checkedAt: null, reason: "" }
     : alertTrustState;
+  const pulse = typeof forecastPulseDayPresentation === "function"
+    ? forecastPulseDayPresentation(data, forecastDailyIndex(data), state.activePlace)
+    : { status: "learning", tone: "neutral", label: "", detail: "" };
 
   let tone = radarObserved ? "observed" : "fresh";
   let headline = radarObserved ? "Radar confirms what is happening now" : "Latest forecast is ready";
@@ -8294,6 +8544,9 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     sourceMeta: "Nearcast turns the selected local models into one consistent current, hourly, and daily story.",
     evidence,
     evidenceMeta,
+    movement: pulse.status === "learning" ? "" : pulse.label,
+    movementMeta: pulse.status === "learning" ? "" : pulse.detail,
+    movementTone: pulse.tone,
     alertLabel,
     alertMeta,
     uncertaintyTitle,
@@ -8328,6 +8581,12 @@ function renderForecastTrust(data = state.forecast, truth = state.weatherTruth |
   els.forecastReceiptSourceMeta.textContent = receipt.sourceMeta;
   els.forecastReceiptEvidence.textContent = receipt.evidence;
   els.forecastReceiptEvidenceMeta.textContent = receipt.evidenceMeta;
+  if (els.forecastReceiptMovementRow) {
+    els.forecastReceiptMovementRow.hidden = !receipt.movement;
+    els.forecastReceiptMovementRow.dataset.tone = receipt.movementTone || "steady";
+  }
+  if (els.forecastReceiptMovement) els.forecastReceiptMovement.textContent = receipt.movement || "";
+  if (els.forecastReceiptMovementMeta) els.forecastReceiptMovementMeta.textContent = receipt.movementMeta || "";
   els.forecastReceiptAlerts.textContent = receipt.alertLabel;
   els.forecastReceiptAlertsMeta.textContent = receipt.alertMeta;
   els.forecastReceiptUncertainty.dataset.tone = receipt.uncertaintyTone;
@@ -8814,6 +9073,7 @@ function renderForecast(data, place, options = {}) {
   renderForecastLists(ctx, lanes);
   if (lanes.map) renderForecastMap();
   if (lanes.sky) updateSkyCanvas(ctx.sceneCode, ctx.truth.isDay, ctx.data, ctx.displayCondition);
+  if (lanes.continuity) saveForecastPulseSnapshot(ctx.data, ctx.place);
   if (lanes.continuity) saveContinuitySnapshot(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   syncNativeWidgetSnapshot(ctx.data, ctx.place, ctx.truth);
   perfEnd("renderForecast", perf, PERF_RENDER_WARN_MS, {
@@ -9012,6 +9272,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   const story = presentation?.story || buildForecastStory(data, tempUnit, windUnit, truth);
   if (els.glanceKicker) els.glanceKicker.textContent = story.kicker;
   if (els.glanceTitle) els.glanceTitle.textContent = story.text;
+  renderForecastPulse(data, todayIndex);
   document.querySelector("#hero")?.setAttribute("aria-label", `${story.kicker} forecast`);
   document.querySelector(".today-glance")?.setAttribute("aria-label", `${story.kicker} forecast`);
   if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
@@ -9041,6 +9302,18 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
   if (els.glanceSignals) els.glanceSignals.classList.toggle("has-humidity", air.visible);
 
   renderDaylightGlance(data, uvVal, todayIndex);
+}
+
+function renderForecastPulse(data = state.forecast, dayIndex = forecastDailyIndex(data)) {
+  if (!els.forecastPulse) return;
+  const pulse = forecastPulseDayPresentation(data, dayIndex, state.activePlace);
+  const visible = pulse.status !== "learning";
+  els.forecastPulse.hidden = !visible;
+  if (!visible) return;
+  els.forecastPulse.dataset.tone = pulse.tone;
+  els.forecastPulseLabel.textContent = pulse.label;
+  els.forecastPulseMeta.textContent = pulse.meta;
+  els.forecastPulse.setAttribute("aria-label", `${pulse.label}. ${pulse.detail} Open forecast evidence.`);
 }
 
 function comfortGlance(actual, feels, humidity, tempUnit) {
@@ -13388,6 +13661,8 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
     const stormPotential = day.stormPotential;
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
+    const pulse = forecastPulseDayPresentation(data, index, state.activePlace);
+    const pulseCue = pulse.status === "uncertain" ? "Wide range" : pulse.status === "shifting" ? "Still shifting" : "";
     const precipNote = day.timing || precipProfile.note;
     const dayAria = [
       formatDay(time, index),
@@ -13398,6 +13673,7 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
       stormPotential ? "thunder possible" : "",
       precipNote,
       memoryCue ? `watched plan ${memoryCue}` : "",
+      pulseCue ? `${pulseCue}: ${pulse.detail}` : "",
       "Open day details"
     ].filter(Boolean).join(", ");
     return `
@@ -13409,6 +13685,7 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
             <div class="day-meta">
               <span class="day-condition">${escapeHtml(code)}</span>
               ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
+              ${pulseCue ? `<span class="day-pulse is-${escapeHtml(pulse.tone)}"><i aria-hidden="true"></i>${escapeHtml(pulseCue)}</span>` : ""}
               ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
             </div>
           </div>

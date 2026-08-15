@@ -3185,6 +3185,14 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   const laterChangeText = laterChanged
     ? `${planMemoryTitle(laterChanged.memory)} changed`
     : "";
+  const targetDate = String(memory.targetDate || memory.windows?.[0]?.targetDate || "").slice(0, 10);
+  const planDayIndex = (data?.daily?.time || []).findIndex((date) => String(date).slice(0, 10) === targetDate);
+  const forecastPulse = planDayIndex >= 0 && typeof forecastPulseDayPresentation === "function"
+    ? forecastPulseDayPresentation(data, planDayIndex, place)
+    : null;
+  const stabilityCue = forecastPulse?.status === "uncertain"
+    ? "Forecast still shifting"
+    : forecastPulse?.status === "shifting" ? "Forecast changed recently" : "";
 
   slot.hidden = false;
   slot.innerHTML = `
@@ -3193,6 +3201,7 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
       <span class="home-plan-place">${escapeHtml(where)}</span>
       <strong>${escapeHtml(outcome)}</strong>
       <span class="home-plan-evidence">${escapeHtml(compact(evidence, 150))}</span>
+      ${stabilityCue ? `<span class="home-plan-stability is-${escapeHtml(forecastPulse.tone)}"><i aria-hidden="true"></i>${escapeHtml(stabilityCue)}</span>` : ""}
       <span class="home-plan-footer">
         <span>${escapeHtml(active ? "Nearcast is watching this window" : `Starts ${formatForecastMs(startMs, watch.data || data)}`)}</span>
         <em>Open plans <span aria-hidden="true">›</span></em>
