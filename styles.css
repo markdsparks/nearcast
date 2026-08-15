@@ -9115,8 +9115,7 @@ body.map-immersive-active .app-dock {
   --outdoor-window-accent: var(--semantic-gold);
 }
 
-.outdoor-window-detail:focus-visible,
-.outdoor-window-lenses button:focus-visible {
+.outdoor-window-detail:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--outdoor-window-accent) 46%, transparent);
   outline-offset: 3px;
 }
@@ -9152,40 +9151,6 @@ body.map-immersive-active .app-dock {
   line-height: 1.12;
   letter-spacing: -0.025em;
   text-wrap: balance;
-}
-
-.outdoor-window-lenses {
-  display: flex;
-  gap: 7px;
-  overflow-x: auto;
-  padding: 1px 1px 3px;
-  scrollbar-width: none;
-}
-
-.outdoor-window-lenses::-webkit-scrollbar {
-  display: none;
-}
-
-.outdoor-window-lenses button {
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--outdoor-window-accent) 22%, var(--border-glass));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--outdoor-window-accent) 7%, transparent);
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 850;
-  white-space: nowrap;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.outdoor-window-lenses button[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--outdoor-window-accent) 56%, var(--border-glass));
-  background: color-mix(in srgb, var(--outdoor-window-accent) 20%, transparent);
-  color: var(--ink);
 }
 
 .outdoor-window-signals {

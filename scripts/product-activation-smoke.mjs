@@ -162,9 +162,9 @@ assert.match(extractFunction(app, "hourlyMetricPresentation"), /UV index[\s\S]*g
 assert.match(extractFunction(app, "uvForecastInsight"), /Cloud-sensitive[\s\S]*Forecast clouds may reduce[\s\S]*do not block UV completely/, "the UV lens explains cloud-sensitive confidence without presenting cloud cover as a UV shield");
 assert.match(extractFunction(app, "renderHourly"), /renderUvForecastExplainer\(data, metric\)/, "the UV confidence explainer is rendered with the primary hourly lens");
 assert.match(extractFunction(app, "outdoorWindowCandidate"), /precipitation_probability[\s\S]*wind_gusts_10m[\s\S]*uv_index/, "the outdoor-window recommendation weighs rain, gusts, and UV together");
-assert.match(extractFunction(app, "outdoorWindowCandidate"), /lens\.duration[\s\S]*lens\.windWeight[\s\S]*lens\.uvWeight[\s\S]*lens\.rainWeight/, "When to go uses activity-specific duration and weather tradeoffs rather than a generic best hour");
-assert.match(extractFunction(app, "renderGoodOutdoorWindow"), /OUTDOOR_WINDOW_LENSES[\s\S]*data-outdoor-window-lens[\s\S]*outdoor-window-detail/, "the lower-priority When to go card offers a compact activity choice while the plan pulse remains first");
-assert.match(extractFunction(app, "setOutdoorWindowLens"), /localStorage\.setItem\(OUTDOOR_WINDOW_LENS_KEY, lens\.key\)/, "the chosen activity lens stays on-device for the next visit");
+assert.match(extractFunction(app, "outdoorWindowCandidate"), /OUTDOOR_WINDOW_PROFILE[\s\S]*profile\.duration[\s\S]*profile\.windWeight[\s\S]*profile\.uvWeight[\s\S]*profile\.rainWeight/, "When to go finds one general-purpose window using duration and weather tradeoffs");
+assert.doesNotMatch(extractFunction(app, "renderGoodOutdoorWindow"), /data-outdoor-window-lens|OUTDOOR_WINDOW_LENSES/, "the home recommendation does not offer activity tabs that usually repeat the same answer");
+assert.match(extractFunction(app, "renderGoodOutdoorWindow"), /Best across[\s\S]*temperature, rain, wind, and UV[\s\S]*least difficult option/, "the card distinguishes a genuinely good balance from the least difficult poor-weather option");
 assert.match(extractFunction(app, "openGoodOutdoorWindowDetail"), /openDayFromIndex[\s\S]*Suggested outdoor window/, "the recommendation opens its exact hours in day detail");
 assert.match(html, /id="goodWindow"/, "the home surface has one dedicated best-outdoor-window slot");
 assert.match(html, /id="sheetUvForecastExplainer"/, "the day-detail sun graph has a UV confidence surface");

@@ -1,12 +1,15 @@
-const VERSION = "3.0.352";
+const VERSION = "3.0.353";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
-const OUTDOOR_WINDOW_LENS_KEY = "nearcast-when-to-go-lens-v1";
-const OUTDOOR_WINDOW_LENSES = Object.freeze({
-  outside: { label: "Outside", duration: 2, idealFeelsF: 70, temperatureMarginF: 8, rainWeight: 1.15, windWeight: 1, uvWeight: 1, daytime: false },
-  walk: { label: "Walk", duration: 1, idealFeelsF: 66, temperatureMarginF: 10, rainWeight: 1.35, windWeight: 1.2, uvWeight: 1, daytime: false },
-  yard: { label: "Yard work", duration: 2, idealFeelsF: 68, temperatureMarginF: 8, rainWeight: 1.45, windWeight: 1.1, uvWeight: 1.25, daytime: true }
+const OUTDOOR_WINDOW_PROFILE = Object.freeze({
+  duration: 2,
+  idealFeelsF: 70,
+  temperatureMarginF: 8,
+  rainWeight: 1.25,
+  windWeight: 1.05,
+  uvWeight: 1.05,
+  daytime: false
 });
 const PLAN_MEMORY_KEY = "nearcast-plan-memory-v1";
 const FOR_YOU_CONTEXT_KEY = "nearcast-for-you-context-v1";
@@ -539,9 +542,6 @@ const featureFlags = {
 
 const state = {
   unit: localStorage.getItem("weather-unit") || "fahrenheit",
-  outdoorWindowLens: Object.hasOwn(OUTDOOR_WINDOW_LENSES, localStorage.getItem(OUTDOOR_WINDOW_LENS_KEY))
-    ? localStorage.getItem(OUTDOOR_WINDOW_LENS_KEY)
-    : "outside",
   theme: localStorage.getItem("weather-theme") || "auto",
   timeFormat: sanitizeTimeFormatPreference(localStorage.getItem(TIME_FORMAT_KEY)),
   mapRenderer: storedMapRendererPreference(),
@@ -4706,12 +4706,7 @@ function bindEvents() {
   bindTapDelegate(els.hourly, ".hour-card", (event, card) => {
     openHourlyStripDetail(Number(card.dataset.hourIndex));
   }, { moveTolerance: 14 });
-  bindTapDelegate(els.goodWindow, "[data-good-window-start], [data-outdoor-window-lens]", (event, target) => {
-    const lens = target.closest("[data-outdoor-window-lens]");
-    if (lens) {
-      setOutdoorWindowLens(lens.dataset.outdoorWindowLens);
-      return;
-    }
+  bindTapDelegate(els.goodWindow, "[data-good-window-start]", (event, target) => {
     const windowButton = target.closest("[data-good-window-start]");
     if (windowButton) openGoodOutdoorWindowDetail(windowButton);
   });
@@ -13377,14 +13372,8 @@ function outdoorWindowDayIndex(data, ms) {
   return index >= 0 ? index : forecastDailyIndex(data);
 }
 
-function outdoorWindowLens(value = state.outdoorWindowLens) {
-  const key = String(value || "").toLowerCase();
-  const safeKey = Object.hasOwn(OUTDOOR_WINDOW_LENSES, key) ? key : "outside";
-  return { key: safeKey, ...OUTDOOR_WINDOW_LENSES[safeKey] };
-}
-
-function outdoorWindowCandidate(data, lensValue = state.outdoorWindowLens) {
-  const lens = outdoorWindowLens(lensValue);
+function outdoorWindowCandidate(data) {
+  const profile = OUTDOOR_WINDOW_PROFILE;
   const now = forecastNowMs(data);
   const horizon = now + 24 * 60 * 60 * 1000;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
@@ -13402,13 +13391,13 @@ function outdoorWindowCandidate(data, lensValue = state.outdoorWindowLens) {
       isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true
     }))
     .filter((row) => row.ms !== null && row.ms >= now - 10 * 60 * 1000 && row.ms <= horizon);
-  if (rows.length < lens.duration) return null;
+  if (rows.length < profile.duration) return null;
 
   const candidates = rows.map((first, index) => {
-    const windowRows = rows.slice(index, index + lens.duration);
-    if (windowRows.length < lens.duration) return null;
+    const windowRows = rows.slice(index, index + profile.duration);
+    if (windowRows.length < profile.duration) return null;
     if (windowRows.some((row, rowIndex) => rowIndex > 0 && row.ms - windowRows[rowIndex - 1].ms > 75 * 60 * 1000)) return null;
-    if (lens.daytime && windowRows.some((row) => !row.isDay)) return null;
+    if (profile.daytime && windowRows.some((row) => !row.isDay)) return null;
     const feels = windowRows.reduce((total, row) => total + row.feels, 0) / windowRows.length;
     const wind = windowRows.reduce((total, row) => total + row.wind, 0) / windowRows.length;
     const gust = Math.max(...windowRows.map((row) => row.gust));
@@ -13420,10 +13409,10 @@ function outdoorWindowCandidate(data, lensValue = state.outdoorWindowLens) {
     const localStart = new Date(first.ms + forecastOffsetMs(data));
     const hour = localStart.getUTCHours();
     const lateNightPenalty = hour < 6 ? 28 : hour >= 23 ? 18 : hour >= 21 ? 6 : 0;
-    const temperaturePenalty = Math.max(0, Math.abs(feelsF - lens.idealFeelsF) - lens.temperatureMarginF) * 1.25;
-    const windPenalty = (Math.max(0, gustMph - 11) * 2.1 + Math.max(0, windMph - 14) * 0.8) * lens.windWeight;
-    const uvPenalty = Math.max(0, uv - 5) * 7 * lens.uvWeight;
-    const score = rain * lens.rainWeight + temperaturePenalty + windPenalty + uvPenalty + lateNightPenalty;
+    const temperaturePenalty = Math.max(0, Math.abs(feelsF - profile.idealFeelsF) - profile.temperatureMarginF) * 1.25;
+    const windPenalty = (Math.max(0, gustMph - 11) * 2.1 + Math.max(0, windMph - 14) * 0.8) * profile.windWeight;
+    const uvPenalty = Math.max(0, uv - 5) * 7 * profile.uvWeight;
+    const score = rain * profile.rainWeight + temperaturePenalty + windPenalty + uvPenalty + lateNightPenalty;
     // A window can be the best available without being unreservedly pleasant.
     // Keep those two ideas separate so our language stays as honest as the data.
     const startMs = first.ms;
@@ -13449,12 +13438,16 @@ function outdoorWindowCandidate(data, lensValue = state.outdoorWindowLens) {
       alertBlocksRecommendation,
       tempUnit,
       windUnit,
-      lens
+      profile
     };
   }).filter(Boolean);
   if (!candidates.length) return null;
   const best = candidates.reduce((winner, candidate) => candidate.score < winner.score ? candidate : winner, candidates[0]);
-  return best;
+  return {
+    ...best,
+    allAlertBlocked: candidates.every((candidate) => candidate.alertBlocksRecommendation),
+    noGoodWindow: !candidates.some((candidate) => candidate.good)
+  };
 }
 
 function outdoorWindowTimeRange(window, data) {
@@ -13489,29 +13482,18 @@ function outdoorWindowCopy(window) {
 }
 
 function outdoorWindowHeadline(window) {
-  const activity = window.lens.key === "walk" ? "for a walk" : window.lens.key === "yard" ? "for yard work" : "to get outside";
-  if (window.alertBlocksRecommendation) return `An official alert affects this ${window.lens.label.toLowerCase()} window`;
-  if (window.standout) return `A good ${window.lens.duration}-hour stretch ${activity}`;
-  if (window.good) return `The best ${window.lens.label.toLowerCase()} window in the next day`;
-  return `No especially good ${window.lens.label.toLowerCase()} window in the next 24 hours`;
+  if (window.alertBlocksRecommendation || window.noGoodWindow) return "No clearly good outdoor window";
+  return "Best time to be outside";
 }
 
 function outdoorWindowKicker() {
   return "When to go";
 }
 
-function setOutdoorWindowLens(value) {
-  const lens = outdoorWindowLens(value);
-  state.outdoorWindowLens = lens.key;
-  try { localStorage.setItem(OUTDOOR_WINDOW_LENS_KEY, lens.key); } catch {}
-  renderGoodOutdoorWindow(state.forecast);
-}
-
 function renderGoodOutdoorWindow(data) {
   const slot = els.goodWindow;
   if (!slot) return;
-  const lens = outdoorWindowLens();
-  const window = outdoorWindowCandidate(data, lens.key);
+  const window = outdoorWindowCandidate(data);
   if (!window) {
     slot.hidden = true;
     slot.innerHTML = "";
@@ -13527,11 +13509,11 @@ function renderGoodOutdoorWindow(data) {
   ];
   const heading = outdoorWindowHeadline(window);
   const kicker = outdoorWindowKicker(window);
-  const copy = window.standout
-    ? outdoorWindowCopy(window)
+  const copy = window.alertBlocksRecommendation
+    ? `${window.officialAlert?.event || "An official weather alert"} ${window.allAlertBlocked ? "affects the available periods" : "overlaps this time"}. If you need to go, this is the least difficult option.`
     : window.good
-      ? `Best available option: ${outdoorWindowCopy(window)}`
-      : `Least rough option: ${outdoorWindowCopy(window)}`;
+      ? `${window.standout ? "Best across" : "Best balance of"} temperature, rain, wind, and UV. ${outdoorWindowCopy(window)}`
+      : `If you need to go, this is the least difficult option. ${outdoorWindowCopy(window)}`;
   const aria = `${kicker}: ${heading}. ${time}. ${signals.join(", ")}. Open hourly details.`;
   slot.hidden = false;
   slot.innerHTML = `
@@ -13541,9 +13523,6 @@ function renderGoodOutdoorWindow(data) {
         <span class="outdoor-window-time">${escapeHtml(time)}</span>
       </div>
       <h2>${escapeHtml(heading)}</h2>
-      <div class="outdoor-window-lenses" role="group" aria-label="What are you planning to do outside?">
-        ${Object.entries(OUTDOOR_WINDOW_LENSES).map(([key, item]) => `<button type="button" data-outdoor-window-lens="${key}" aria-pressed="${key === lens.key ? "true" : "false"}">${escapeHtml(item.label)}</button>`).join("")}
-      </div>
       <div class="outdoor-window-signals" aria-hidden="true">${signals.map((signal) => `<span>${escapeHtml(signal)}</span>`).join("")}</div>
       <button class="outdoor-window-detail" type="button" data-good-window-start="${window.startMs}" data-good-window-end="${window.endMs}" data-good-window-day="${window.dayIndex}" aria-label="${escapeHtml(aria)}">
         <p class="outdoor-window-copy">${escapeHtml(copy)}</p>
