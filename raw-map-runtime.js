@@ -55,6 +55,7 @@
     const hrrr = dependencies.hrrr || root.NearcastHrrrZarr;
     const hrrrSubhourly = dependencies.hrrrSubhourly || root.NearcastHrrrSubhourly;
     const mrms = dependencies.mrms || root.NearcastMrms;
+    const seam = dependencies.seam || root.NearcastRadarSeam;
     const urlApi = dependencies.urlApi || root.URL;
     const BlobCtor = dependencies.Blob || root.Blob;
     return Object.freeze({
@@ -64,6 +65,7 @@
       hrrrSubhourly: Boolean(hrrrSubhourly?.createClient),
       hrrrHourly: Boolean(hrrr?.createClient && hrrr?.projectLonLat),
       mrms: Boolean(mrms?.createClient),
+      seam: Boolean(seam?.buildSeam),
       abortController: typeof root.AbortController === "function"
     });
   }
@@ -73,6 +75,7 @@
       hrrr: options.hrrr || root.NearcastHrrrZarr,
       hrrrSubhourly: options.hrrrSubhourly || root.NearcastHrrrSubhourly,
       mrms: options.mrms || root.NearcastMrms,
+      seam: options.seam || root.NearcastRadarSeam,
       urlApi: options.urlApi || root.URL,
       Blob: options.Blob || root.Blob
     };
@@ -179,9 +182,16 @@
         throwIfAborted(signal);
         if (disposed || sequence !== prepareSequence) throw abortError();
 
-        const frames = providerResults
+        const providerCandidates = providerResults
           .flatMap((result) => result.frames || [])
           .sort((left, right) => Date.parse(left.validTime) - Date.parse(right.validTime));
+        const seamComposition = composeRadarForecastSeam(
+          context,
+          providerCandidates,
+          dependencies.seam
+        );
+        const candidates = seamComposition.candidates;
+        const frames = candidates.map((candidate) => packageTexture(context, candidate));
         const errors = providerResults.flatMap((result) => result.error ? [result.error] : []);
         const observed = frames.filter((frame) => frame.kind === "observed");
         const forecast = frames.filter((frame) => frame.kind === "forecast");
@@ -204,6 +214,7 @@
           byValidTime: Object.freeze(byValidTime),
           observedByValidTime: Object.freeze(observedByValidTime),
           forecastByValidTime: Object.freeze(forecastByValidTime),
+          seam: seamComposition.summary,
           errors: Object.freeze(errors),
           preparedAt: new Date().toISOString(),
           elapsedMs: Math.round(nowMs() - startedAt),
@@ -222,6 +233,7 @@
           status: result.status,
           observedFrames: observed.length,
           forecastFrames: forecast.length,
+          seam: seamComposition.summary,
           errors,
           elapsedMs: result.elapsedMs
         });
@@ -277,7 +289,7 @@
           }
         });
         throwIfAborted(context.signal);
-        return history.frames.map((frame) => packageTexture(context, {
+        return history.frames.map((frame) => ({
           kind: "observed",
           provider: "noaa-mrms-direct",
           attribution: history.attribution || "NOAA/NWS MRMS",
@@ -356,7 +368,7 @@
         cycleTime: forecast.cycleTime,
         frames: forecast.frames.length
       });
-      return forecast.frames.map((frame) => packageTexture(context, {
+      return forecast.frames.map((frame) => ({
         kind: "forecast",
         provider: frame.provider || forecast.provider || "noaa-hrrr-subhourly",
         attribution: forecast.attribution || "NOAA/NWS HRRR",
@@ -373,6 +385,10 @@
         source: {
           product: "wrfsubhf/REFC",
           cycleTime: frame.cycleTime || forecast.cycleTime,
+          cycleAgeMinutes: frame.cycleAgeMinutes,
+          cycleSegment: frame.cycleSegment,
+          cycleSegmentFrameIndex: frame.cycleSegmentFrameIndex,
+          cycleSegmentFrameCount: frame.cycleSegmentFrameCount,
           forecastHour: Number(frame.forecastMinutes) / 60,
           forecastMinutes: frame.forecastMinutes,
           url: frame.sourceUrl || frame.url || null,
@@ -454,7 +470,7 @@
           });
         }
       });
-      return textures.map((item) => packageTexture(context, {
+      return textures.map((item) => ({
         kind: "forecast",
         provider: "noaa-hrrr-zarr",
         attribution: "NOAA/NWS HRRR",
@@ -509,6 +525,202 @@
       dispose,
       support: () => support(dependencies)
     });
+  }
+
+  function composeRadarForecastSeam(context, candidates, seamApi) {
+    const original = Array.isArray(candidates) ? candidates : [];
+    const skipped = (reason, details = null) => {
+      const summary = Object.freeze({
+        status: "unavailable",
+        reason,
+        ...(details ? { details: Object.freeze({ ...details }) } : {})
+      });
+      emit(context, { stage: "seam-skipped", seam: summary });
+      return { candidates: original, summary };
+    };
+
+    if (context.mode !== "both") return skipped("combined-timeline-required");
+    if (typeof seamApi?.buildSeam !== "function") return skipped("seam-engine-unavailable");
+
+    const observed = original
+      .filter((frame) => frame?.kind === "observed")
+      .sort(compareCandidateTime);
+    const forecast = original
+      .filter((frame) => frame?.kind === "forecast")
+      .sort(compareCandidateTime);
+    if (observed.length < 2 || !forecast.length) {
+      return skipped("observed-and-forecast-frames-required", {
+        observedFrames: observed.length,
+        forecastFrames: forecast.length
+      });
+    }
+
+    const latestObservedAt = Date.parse(observed[observed.length - 1].validTime);
+    const requestedAt = Date.parse(context.observedSelection?.now || "")
+      || new Date(context.forecastSelection?.now || nowMs()).getTime();
+    const observedAgeMinutes = (requestedAt - latestObservedAt) / 60_000;
+    if (!Number.isFinite(observedAgeMinutes) || observedAgeMinutes < -2 || observedAgeMinutes > 8) {
+      return skipped("observed-frame-too-old", { observedAgeMinutes: finiteOrNull(observedAgeMinutes) });
+    }
+
+    const firstForecastAt = Date.parse(forecast[0].validTime);
+    const firstForecastLeadMinutes = (firstForecastAt - latestObservedAt) / 60_000;
+    if (!Number.isFinite(firstForecastLeadMinutes) || firstForecastLeadMinutes <= 0 || firstForecastLeadMinutes > 30) {
+      return skipped("forecast-boundary-outside-safe-window", {
+        firstForecastLeadMinutes: finiteOrNull(firstForecastLeadMinutes)
+      });
+    }
+
+    const cycleTime = forecast.find((frame) => frame?.source?.cycleTime)?.source?.cycleTime || null;
+    const explicitCycleAge = Number(forecast.find((frame) =>
+      Number.isFinite(Number(frame?.source?.cycleAgeMinutes)))?.source?.cycleAgeMinutes);
+    const derivedCycleAge = cycleTime ? (requestedAt - Date.parse(cycleTime)) / 60_000 : NaN;
+    const cycleAgeMinutes = Number.isFinite(explicitCycleAge) ? explicitCycleAge : derivedCycleAge;
+    if (!Number.isFinite(cycleAgeMinutes) || cycleAgeMinutes < -5 || cycleAgeMinutes > 150) {
+      return skipped("forecast-cycle-too-old", { cycleAgeMinutes: finiteOrNull(cycleAgeMinutes) });
+    }
+
+    const targetValidTimes = forecast
+      .filter((frame) => {
+        const lead = (Date.parse(frame.validTime) - latestObservedAt) / 60_000;
+        return lead > 0 && lead <= 70;
+      })
+      .slice(0, 6)
+      .map((frame) => frame.validTime);
+    if (!targetValidTimes.length) return skipped("no-safe-handoff-targets");
+
+    const toEngineFrame = (frame) => ({
+      data: frame.texture,
+      width: context.width,
+      height: context.height,
+      validTime: frame.validTime
+    });
+    let seam;
+    try {
+      seam = seamApi.buildSeam({
+        observedFrames: observed.map(toEngineFrame),
+        forecastFrames: forecast.map(toEngineFrame),
+        targetValidTimes
+      }, {
+        width: context.width,
+        height: context.height,
+        signalThreshold: encodeDbz(context.encoding.threshold, context.encoding),
+        motionLagMinutes: [10, 20, 30],
+        pairCount: 3,
+        minimumPairs: 2,
+        maximumAlignmentLeadMinutes: 70,
+        correctionDecayMinutes: 75,
+        forecastBlendStartMinutes: 15,
+        forecastBlendCompleteMinutes: 75
+      });
+    } catch (error) {
+      return skipped("seam-engine-error", { message: String(error?.message || error) });
+    }
+    if (seam?.status !== "ready" || !Array.isArray(seam.preferredFrames)) {
+      return skipped(seam?.reason || "seam-quality-insufficient", seam?.details || null);
+    }
+
+    const preferredByTime = new Map(seam.preferredFrames.map((frame) => [
+      Date.parse(frame.validTime || frame.targetValidTime || ""),
+      frame
+    ]));
+    const motion = Object.freeze({
+      velocityX: finiteOrNull(seam.motion?.velocityX),
+      velocityY: finiteOrNull(seam.motion?.velocityY),
+      speedPixelsPerMinute: finiteOrNull(seam.motion?.speedPixelsPerMinute),
+      directionDegrees: finiteOrNull(seam.motion?.directionDegrees),
+      consistency: finiteOrNull(seam.motion?.consistency)
+    });
+    let replacedFrames = 0;
+    let nowcastFrames = 0;
+    let blendedFrames = 0;
+    let alignedFrames = 0;
+    const composedForecast = forecast.map((frame) => {
+      const replacement = preferredByTime.get(Date.parse(frame.validTime));
+      if (!replacement) return frame;
+      if (replacement.kind === "forecast-phase-corrected" && Number(replacement.correctionFactor) <= 0.01) {
+        return frame;
+      }
+
+      const blend = replacement.blend || null;
+      const forecastWeight = Number(blend?.forecastWeight);
+      const guidanceType = replacement.kind === "observed-nowcast"
+        || (replacement.kind === "radar-seam-blend" && (!Number.isFinite(forecastWeight) || forecastWeight < 0.08))
+        ? "radar-nowcast"
+        : replacement.kind === "radar-seam-blend"
+          ? "blended-forecast"
+          : "hrrr-aligned";
+      if (guidanceType === "radar-nowcast") nowcastFrames += 1;
+      else if (guidanceType === "blended-forecast") blendedFrames += 1;
+      else alignedFrames += 1;
+      replacedFrames += 1;
+
+      return {
+        ...frame,
+        provider: guidanceType === "radar-nowcast"
+          ? "nearcast-radar-nowcast"
+          : guidanceType === "blended-forecast"
+            ? "nearcast-blended-guidance"
+            : "nearcast-hrrr-aligned",
+        attribution: guidanceType === "radar-nowcast"
+          ? "NOAA/NWS MRMS · Nearcast"
+          : "NOAA/NWS MRMS + HRRR · Nearcast",
+        visualMetric: guidanceType === "radar-nowcast"
+          ? "reflectivity-nowcast"
+          : "simulated-reflectivity",
+        texture: replacement.data,
+        stats: undefined,
+        source: {
+          ...(frame.source || {}),
+          guidanceType,
+          originalProvider: frame.provider,
+          baseObservedAt: seam.anchorValidTime,
+          leadMinutes: finiteOrNull(replacement.leadMinutes),
+          modelLeadMinutes: finiteOrNull(frame.source?.forecastMinutes),
+          method: "mrms-motion-hrrr-phase-alignment",
+          confidence: finiteOrNull(replacement.confidence ?? seam.confidence),
+          confidenceLevel: replacement.confidenceLevel || seam.confidenceLevel || null,
+          correctionFactor: finiteOrNull(replacement.correctionFactor ?? blend?.correctionFactor),
+          blend: blend ? {
+            observedWeight: finiteOrNull(blend.observedWeight),
+            forecastWeight: finiteOrNull(blend.forecastWeight)
+          } : null,
+          motion
+        }
+      };
+    });
+
+    const summary = Object.freeze({
+      status: replacedFrames ? "ready" : "unavailable",
+      reason: replacedFrames ? null : "no-frames-replaced",
+      anchorValidTime: seam.anchorValidTime,
+      observedAgeMinutes: Number(observedAgeMinutes.toFixed(2)),
+      cycleTime,
+      cycleAgeMinutes: Number(cycleAgeMinutes.toFixed(2)),
+      firstForecastLeadMinutes: Number(firstForecastLeadMinutes.toFixed(2)),
+      confidence: finiteOrNull(seam.confidence),
+      confidenceLevel: seam.confidenceLevel || null,
+      correctionStatus: seam.forecastCorrection?.status || "unavailable",
+      correctionReason: seam.forecastCorrection?.reason || null,
+      replacedFrames,
+      nowcastFrames,
+      blendedFrames,
+      alignedFrames,
+      motion
+    });
+    emit(context, { stage: "seam-ready", seam: summary });
+    if (!replacedFrames) return { candidates: original, summary };
+
+    const forecastTimes = new Set(forecast.map((frame) => frame.validTime));
+    const candidatesWithSeam = original
+      .filter((frame) => frame.kind !== "forecast" || !forecastTimes.has(frame.validTime))
+      .concat(composedForecast)
+      .sort(compareCandidateTime);
+    return { candidates: candidatesWithSeam, summary };
+  }
+
+  function compareCandidateTime(left, right) {
+    return Date.parse(left?.validTime || "") - Date.parse(right?.validTime || "");
   }
 
   async function settleProvider(kind, operation, context) {
@@ -726,7 +938,20 @@
         timestamp: validTime,
         observedAt: input.kind === "observed" ? validTime : null,
         forecastHour: Number.isFinite(Number(source.forecastHour)) ? Number(source.forecastHour) : null,
+        forecastMinutes: Number.isFinite(Number(source.forecastMinutes)) ? Number(source.forecastMinutes) : null,
         cycleTime: source.cycleTime || null,
+        cycleAgeMinutes: Number.isFinite(Number(source.cycleAgeMinutes)) ? Number(source.cycleAgeMinutes) : null,
+        guidanceType: source.guidanceType || null,
+        originalProvider: source.originalProvider || null,
+        baseObservedAt: source.baseObservedAt || null,
+        leadMinutes: Number.isFinite(Number(source.leadMinutes)) ? Number(source.leadMinutes) : null,
+        modelLeadMinutes: Number.isFinite(Number(source.modelLeadMinutes)) ? Number(source.modelLeadMinutes) : null,
+        method: source.method || null,
+        confidence: Number.isFinite(Number(source.confidence)) ? Number(source.confidence) : null,
+        confidenceLevel: source.confidenceLevel || null,
+        correctionFactor: Number.isFinite(Number(source.correctionFactor)) ? Number(source.correctionFactor) : null,
+        blend: source.blend || null,
+        motion: source.motion || null,
         stats
       },
       renderIntent: {

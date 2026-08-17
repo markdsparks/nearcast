@@ -288,8 +288,13 @@ assert.equal(matched, observedSourceTimes.length + forecastSourceTimes.length);
 assert.equal(canonicalObserved.length, observedTargets.length);
 assert.equal(
   canonicalObserved.at(-1).timestamp,
+  Date.parse(observedSourceTimes.at(-1)),
+  "the latest observed frame keeps its real MRMS valid time"
+);
+assert.equal(
+  mapHarness.standardTimelineNowTimestamp(),
   nowMs,
-  "the Now divider stays anchored to the request clock even when raw preparation crosses a forecast boundary"
+  "the Now divider remains a separate wall-clock boundary"
 );
 assert.ok(
   canonicalForecast[0].timestamp > canonicalObserved.at(-1).timestamp,
@@ -305,10 +310,10 @@ assert.deepEqual(
   "observed slider slots remain explicitly tied to real MRMS valid times"
 );
 assert.ok(
-  canonicalObserved.filter((frame) => !frame.isNow).every((frame) => (
+  canonicalObserved.every((frame) => (
     frame.timestamp === Date.parse(frame.rawMapValidTime)
   )),
-  "non-Now observed slider positions use actual MRMS source times"
+  "every observed slider position uses its actual MRMS source time"
 );
 assert.ok(
   canonicalObserved.slice(0, 5).every((frame) => !frame.url && !frame.layers),
@@ -892,11 +897,14 @@ function createMapHarness() {
     ${extractFunction(source, "clearRawMapFrameDecoration")}
     ${extractFunction(source, "rawMapCanonicalFrames")}
     ${extractFunction(source, "rawMapNearestFallbackFrame")}
+    ${extractFunction(source, "rawMapForecastGuidanceLabel")}
+    ${extractFunction(source, "rawMapForecastContinuityLabel")}
     ${extractFunction(source, "rawMapCanonicalFrame")}
     ${extractFunction(source, "rawMapTimelineTimestamp")}
     ${extractFunction(source, "rawMapClosestFrameIndex")}
     ${extractFunction(source, "applyRawMapEnhancement")}
     ${extractFunction(source, "standardTimelineTimeRange")}
+    ${extractFunction(source, "standardTimelineNowTimestamp")}
     ${extractFunction(source, "standardTimelineSliderValueForFrame")}
     ${extractFunction(source, "standardTimelineFrameIndexForSliderValue")}
     ${extractFunction(source, "rawMapObservedTargetTimes")}
@@ -927,6 +935,7 @@ function createMapHarness() {
     ${extractFunction(source, "shouldRefreshGeneratedRadarForViewport")}
     globalThis.api = {
       applyRawMapEnhancement,
+      standardTimelineNowTimestamp,
       standardTimelineSliderValueForFrame,
       standardTimelineFrameIndexForSliderValue,
       rawMapObservedTargetTimes,

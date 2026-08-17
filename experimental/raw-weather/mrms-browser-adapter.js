@@ -1,7 +1,7 @@
 (function installNearcastMrms(global) {
   "use strict";
 
-  const VERSION = "0.3.0";
+  const VERSION = "0.3.1";
   const BUCKET_URL = "https://noaa-mrms-pds.s3.amazonaws.com/";
   const DEFAULT_REGION = "CONUS";
   const DEFAULT_PRODUCT = "MergedReflectivityQCComposite_00.50";
@@ -489,6 +489,12 @@
       }
       if (nearest && nearestDelta <= toleranceMs) selectedByKey.set(nearest.key, nearest);
     }
+    // Explicit cadence targets describe the desired history, but the last
+    // object in the listing is the freshest observation we actually have.
+    // Always retain it so a target grid (or a slightly stale wall-clock Now)
+    // cannot hide the newest MRMS scan at the radar/forecast handoff.
+    const newest = values[values.length - 1];
+    if (newest?.key) selectedByKey.set(newest.key, newest);
     const selected = [...selectedByKey.values()]
       .sort((left, right) => left.observedAtMs - right.observedAtMs);
     return selected.length > limit ? evenlySample(selected, limit) : selected;

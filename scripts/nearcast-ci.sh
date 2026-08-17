@@ -21,6 +21,7 @@ run_portable_checks() {
     vendor/operon/driver.js \
     sw.js \
     raw-map-runtime.js \
+    radar-seam-engine.js \
     workers/radar-capability.mjs \
     workers/radar-generation-consumer.mjs
   do
@@ -51,6 +52,8 @@ run_portable_checks() {
     radar-generation-consumer-smoke.mjs \
     radar-generation-plan-queue-smoke.mjs \
     raw-map-runtime-smoke.mjs \
+    radar-seam-engine-smoke.mjs \
+    raw-map-seam-integration-smoke.mjs \
     raw-map-canonical-timeline-smoke.mjs \
     raw-map-timeline-controls-smoke.mjs \
     watch-basics-smoke.mjs \

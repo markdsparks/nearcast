@@ -6504,6 +6504,11 @@ function canonicalRawTimelineActive(frames = mapState.frames) {
 }
 
 function standardTimelineNowTimestamp(frames = mapState.frames, nowIndex = mapState.nowIndex) {
+  const range = standardTimelineTimeRange(frames);
+  const requestedAt = Number(mapState.rawMap?.requestedAt);
+  if (range && Number.isFinite(requestedAt) && requestedAt >= range.start && requestedAt <= range.end) {
+    return requestedAt;
+  }
   if (!frames.length) return 0;
   const index = Number.isFinite(Number(nowIndex))
     ? clamp(Number(nowIndex), 0, frames.length - 1)
@@ -6644,9 +6649,13 @@ function standardTimelineAriaValueText(frame = mapState.frames[mapState.frameInd
     showMinutes: true,
     dayStyle: "compact"
   });
-  if (frame.isNow) return `Now, ${time}`;
-  const source = activeMapSource(frame) === "forecast" ? "Forecast guidance" : "Observed radar";
-  return `${source}, ${time}, ${formatTimelineRelative(rawMapTimelineTimestamp(frame))}`;
+  const relative = formatTimelineRelative(rawMapTimelineTimestamp(frame));
+  if (frame.isNow) return `Latest observed radar, ${time}, ${relative}`;
+  const source = activeMapSource(frame) === "forecast"
+    ? rawMapForecastGuidanceLabel(frame)
+    : "Observed radar";
+  const continuity = rawMapForecastContinuityLabel(frame);
+  return `${source}, ${time}, ${relative}${continuity ? `, ${continuity}` : ""}`;
 }
 
 function setStandardTimelineSliderValue(slider, value, frameIndex = null) {
@@ -6962,7 +6971,6 @@ function applyRawMapEnhancement(result) {
   const selectedFrame = fallbackFrames[mapState.frameIndex] || null;
   const selectedTimestamp = rawMapTimelineTimestamp(selectedFrame);
   const selectedWasNow = Boolean(selectedFrame?.isNow || mapState.frameIndex === mapState.nowIndex);
-  const canonicalNowTimestamp = Number(mapState.rawMap.requestedAt) || Date.now();
   const timelineKind = mapState.timelineKind;
   const rawObserved = rawMapCanonicalFrames(result.observed, "radar", fallbackFrames);
   const rawForecast = rawMapCanonicalFrames(result.forecast, "forecast", fallbackFrames);
@@ -6985,8 +6993,8 @@ function applyRawMapEnhancement(result) {
       const isNow = index === nowIndex;
       return {
         ...frame,
-        timestamp: isNow ? canonicalNowTimestamp : rawMapTimelineTimestamp(frame),
-        label: isNow ? "Now" : radarTimelineLabel(rawMapTimelineTimestamp(frame)),
+        timestamp: rawMapTimelineTimestamp(frame),
+        label: isNow ? "Latest" : radarTimelineLabel(rawMapTimelineTimestamp(frame)),
         isNow
       };
     });
@@ -7057,12 +7065,19 @@ function rawMapCanonicalFrame(descriptor, source, timestamp, fallbackFrame) {
   const attribution = String(descriptor?.attribution || "NOAA/NWS").trim();
   const fallbackHadVisualMetric = Object.prototype.hasOwnProperty.call(frame, "visualMetric");
   const fallbackVisualMetric = frame.visualMetric;
+  const provenance = descriptor?.source && typeof descriptor.source === "object"
+    ? descriptor.source
+    : {};
+  const guidanceType = String(provenance.guidanceType || "").trim();
+  const sourceLabel = source === "forecast"
+    ? rawMapForecastGuidanceLabel({ rawMapGuidanceType: guidanceType, rawMapProvider: descriptor.provider })
+    : "Radar";
   return {
     ...frame,
     timestamp,
     ...(source === "radar" ? { observedTimestamp: timestamp } : {}),
     source,
-    sourceLabel: source === "forecast" ? "Forecast guidance" : "Radar",
+    sourceLabel,
     label: source === "forecast" ? forecastTimelineLabel(timestamp) : radarTimelineLabel(timestamp),
     isNow: false,
     rawMapCanonical: true,
@@ -7074,12 +7089,45 @@ function rawMapCanonicalFrame(descriptor, source, timestamp, fallbackFrame) {
     rawMapVisualMetric: "reflectivity",
     rawMapSourceVisualMetric: descriptor.visualMetric || "reflectivity",
     rawMapStats: descriptor.stats || null,
+    rawMapProvenance: provenance,
+    rawMapGuidanceType: guidanceType,
+    rawMapCycleTime: provenance.cycleTime || null,
+    rawMapCycleAgeMinutes: Number.isFinite(Number(provenance.cycleAgeMinutes))
+      ? Number(provenance.cycleAgeMinutes)
+      : null,
+    rawMapLeadMinutes: Number.isFinite(Number(provenance.leadMinutes))
+      ? Number(provenance.leadMinutes)
+      : null,
+    rawMapSeamConfidence: Number.isFinite(Number(provenance.confidence))
+      ? Number(provenance.confidence)
+      : null,
+    rawMapSeamConfidenceLevel: String(provenance.confidenceLevel || "").trim(),
+    rawMapBlend: provenance.blend || null,
     rawMapBounds: descriptor.bounds || null,
     rawMapFallbackHadVisualMetric: noRasterFallback ? false : fallbackHadVisualMetric,
     rawMapFallbackVisualMetric: noRasterFallback ? "" : fallbackVisualMetric,
     visualMetric: "reflectivity",
     coverageBounds: descriptor.bounds || frame.coverageBounds
   };
+}
+
+function rawMapForecastGuidanceLabel(frame) {
+  const type = String(frame?.rawMapGuidanceType || frame?.guidanceType || "").trim();
+  if (type === "radar-nowcast") return "Radar nowcast";
+  if (type === "blended-forecast") return "Blended forecast";
+  if (type === "hrrr-aligned") return "HRRR forecast";
+  if (String(frame?.rawMapProvider || "").startsWith("noaa-hrrr")) return "HRRR forecast";
+  return "Forecast guidance";
+}
+
+function rawMapForecastContinuityLabel(frame) {
+  if (activeMapSource(frame) !== "forecast") return "";
+  const type = String(frame?.rawMapGuidanceType || "");
+  if (!type) return "";
+  const level = String(frame?.rawMapSeamConfidenceLevel || "").toLowerCase();
+  if (level === "high") return "strong radar continuity";
+  if (level === "moderate") return "radar-aligned";
+  return type === "radar-nowcast" ? "radar motion estimate" : "model guidance";
 }
 
 function rawMapTimelineTimestamp(frame) {
@@ -7156,6 +7204,14 @@ function clearRawMapFrameDecoration(frame) {
   delete next.rawMapVisualMetric;
   delete next.rawMapSourceVisualMetric;
   delete next.rawMapStats;
+  delete next.rawMapProvenance;
+  delete next.rawMapGuidanceType;
+  delete next.rawMapCycleTime;
+  delete next.rawMapCycleAgeMinutes;
+  delete next.rawMapLeadMinutes;
+  delete next.rawMapSeamConfidence;
+  delete next.rawMapSeamConfidenceLevel;
+  delete next.rawMapBlend;
   delete next.rawMapBounds;
   delete next.rawMapCanonical;
   delete next.rawMapNoRasterFallback;
@@ -9505,6 +9561,12 @@ function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
 
 function mapCreditText(frame) {
   const rawMapVisible = rawMapFrameLayerVisible(frame);
+  if ((rawMapVisible || frame?.rawMapNoRasterFallback) && frame?.rawMapGuidanceType === "radar-nowcast") {
+    return `Radar nowcast ${frame.rawMapAttribution || "NOAA/NWS MRMS · Nearcast"}`;
+  }
+  if ((rawMapVisible || frame?.rawMapNoRasterFallback) && ["blended-forecast", "hrrr-aligned"].includes(frame?.rawMapGuidanceType)) {
+    return `${rawMapForecastGuidanceLabel(frame)} ${frame.rawMapAttribution || "NOAA/NWS MRMS + HRRR · Nearcast"}`;
+  }
   if ((rawMapVisible || frame?.rawMapNoRasterFallback) && String(frame?.rawMapProvider || "").startsWith("noaa-hrrr")) {
     return `Forecast guidance ${frame.rawMapAttribution || "NOAA HRRR · Nearcast"}`;
   }
@@ -9555,12 +9617,14 @@ function timelineReadoutCopy(frame = mapState.frames[mapState.frameIndex]) {
   return {
     source,
     sourceLabel: source === "forecast"
-      ? "Forecast guidance"
+      ? rawMapForecastGuidanceLabel(frame)
       : isNow ? "Latest radar" : "Observed radar",
-    readoutTitle: isNow ? `Now · ${clock}` : clock,
-    readoutMeta: isNow && observedTimestamp && observedTimestamp !== timestamp
-      ? formatTimelineRelative(observedTimestamp)
-      : isNow ? "Latest frame" : formatTimelineRelative(timestamp),
+    readoutTitle: isNow ? `Latest · ${clock}` : clock,
+    readoutMeta: source === "forecast"
+      ? [formatTimelineRelative(timestamp), rawMapForecastContinuityLabel(frame)].filter(Boolean).join(" · ")
+      : isNow
+        ? formatTimelineRelative(observedTimestamp)
+        : formatTimelineRelative(timestamp),
     isNow,
     canReturnToNow,
     storm: false
@@ -9607,7 +9671,12 @@ function renderImmersiveTimelineReadout(copy = timelineReadoutCopy()) {
   root.classList.toggle("has-timeline-eras", showEras);
   if (eras) eras.hidden = !showEras;
   if (radarEra) radarEra.textContent = "Radar";
-  if (forecastEra) forecastEra.textContent = copy.storm ? "Forecast motion" : "Forecast";
+  if (forecastEra) {
+    const seamAware = mapState.frames.some((frame) => Boolean(frame?.rawMapGuidanceType));
+    forecastEra.textContent = copy.storm
+      ? "Forecast motion"
+      : seamAware ? "Nowcast + forecast" : "Forecast";
+  }
 }
 
 function setImmersiveTimelineScrubbing(active) {
@@ -9643,7 +9712,7 @@ function updateTimelineEraVisuals() {
   const max = Math.max(0, mapState.frames.length - 1);
   const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, max) : max;
   const timeRange = standardTimelineTimeRange();
-  const nowTimestamp = rawMapTimelineTimestamp(mapState.frames[nowIndex]);
+  const nowTimestamp = standardTimelineNowTimestamp(mapState.frames, nowIndex);
   const nowProgress = timeRange
     ? ((nowTimestamp - timeRange.start) / (timeRange.end - timeRange.start)) * 100
     : max > 0 ? (nowIndex / max) * 100 : 100;
@@ -9725,17 +9794,18 @@ function clearTimelineBubbleTimer() {
 function timelineBubbleCopy(frame) {
   if (frame?.isNow) {
     return {
-      title: "Now",
-      meta: formatTimelineTime(frame.timestamp, { showMinutes: true, dayStyle: "none" })
+      title: "Latest radar",
+      meta: `${formatTimelineTime(frame.timestamp, { showMinutes: true, dayStyle: "none" })} · ${formatTimelineRelative(frame.timestamp)}`
     };
   }
 
+  const forecast = activeMapSource(frame) === "forecast";
   return {
-    title: formatTimelineTime(frame.timestamp, {
-      showMinutes: activeMapSource(frame) !== "forecast",
+    title: `${forecast ? `${rawMapForecastGuidanceLabel(frame)} · ` : ""}${formatTimelineTime(frame.timestamp, {
+      showMinutes: !forecast,
       dayStyle: "compact"
-    }),
-    meta: formatTimelineRelative(frame.timestamp)
+    })}`,
+    meta: [formatTimelineRelative(frame.timestamp), rawMapForecastContinuityLabel(frame)].filter(Boolean).join(" · ")
   };
 }
 

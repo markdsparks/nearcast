@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30356";
-const ASSET_VERSION = "3.0.356";
+const CACHE = "nearcast-v30357";
+const ASSET_VERSION = "3.0.357";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -16,6 +16,7 @@ const SHELL = [
   `${BASE}experimental/raw-weather/hrrr-subhourly-worker.js?v=${ASSET_VERSION}`,
   `${BASE}experimental/raw-weather/mrms-browser-adapter.js?v=${ASSET_VERSION}`,
   `${BASE}experimental/raw-weather/mrms-browser-worker.js?v=${ASSET_VERSION}`,
+  `${BASE}radar-seam-engine.js?v=${ASSET_VERSION}`,
   `${BASE}raw-map-runtime.js?v=${ASSET_VERSION}`,
   `${BASE}map.js?v=${ASSET_VERSION}`,
   `${BASE}sky.js?v=${ASSET_VERSION}`,

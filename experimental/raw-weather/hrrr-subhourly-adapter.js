@@ -7,7 +7,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createNearcastHrrrSubhourlyApi() {
   "use strict";
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.2.0";
   const BUCKET = "https://noaa-hrrr-bdp-pds.s3.amazonaws.com";
   const PROVIDER = "noaa-hrrr-subhourly";
   const MAX_FORECAST_MINUTES = 18 * 60;
@@ -149,6 +149,8 @@
     async function loadForecast(input = {}) {
       assertActive();
       const descriptors = await discoverFrames(input);
+      const cycleSegments = summarizeCycleSegments(descriptors);
+      const coverage = summarizeCoverage(descriptors);
       const retainTextures = input.retainTextures !== false;
       const decoded = [];
 
@@ -174,6 +176,10 @@
         provider: PROVIDER,
         attribution: "NOAA/NWS HRRR",
         cycleTime: descriptors[0]?.cycleTime || null,
+        cycleTimes: cycleSegments.map((segment) => segment.cycleTime),
+        cycleSegments,
+        mixedCycles: false,
+        coverage,
         frames: retainTextures ? decoded : descriptors,
         retainedTextures: retainTextures,
         bounds: normalizeBounds(input.bounds),
@@ -226,11 +232,16 @@
     const bucket = trimTrailingSlash(input.bucket || BUCKET);
     const fetchIndex = input.fetchIndex || ((url, signal) => fetchText(input.fetch || fetch, url, signal));
     const failures = [];
+    const candidates = cycleCandidates(now, lookbackHours);
 
-    for (const cycleTime of cycleCandidates(now, lookbackHours)) {
+    for (const cycleTime of candidates) {
       const selections = selectCanonicalTimes(cycleTime, validTimes);
       if (!selections.length || selections.length !== validTimes.length) {
-        failures.push({ cycleTime: cycleTime.toISOString(), reason: "targets outside the 15-minute FH18 product" });
+        failures.push({
+          cycleTime: cycleTime.toISOString(),
+          targetValidTime: validTimes[0]?.toISOString() || null,
+          reason: "targets outside the 15-minute FH18 product"
+        });
         continue;
       }
 
@@ -242,7 +253,11 @@
           const text = await fetchIndex(urls.indexUrl, input.signal);
           return [fileForecastHour, parseHrrrIndex(text, urls.dataUrl)];
         })));
-        const descriptors = selections.map((selection) => {
+        const cycleTimeIso = cycleTime.toISOString();
+        const cycleAgeMinutes = Math.max(0, Math.round((now.getTime() - cycleTime.getTime()) / 60_000));
+        const coverageThrough = selections[selections.length - 1].validTime.toISOString();
+        const requestedThrough = validTimes[validTimes.length - 1].toISOString();
+        const descriptors = selections.map((selection, frameIndex) => {
           const entries = indexes.get(selection.fileForecastHour) || [];
           const match = entries.find((entry) => entry.parameter === "REFC"
             && entry.level === "entire atmosphere"
@@ -250,22 +265,29 @@
           if (!match) {
             throw codedError(
               "HRRR_SUBHOURLY_FRAME_MISSING",
-              `REFC ${selection.forecastMinutes}-minute frame is missing from the ${cycleTime.toISOString()} run.`
+              `REFC ${selection.forecastMinutes}-minute frame is missing from the ${cycleTimeIso} run.`
             );
           }
           return Object.freeze({
             ...match,
             provider: PROVIDER,
-            cycleTime: cycleTime.toISOString(),
+            cycleTime: cycleTimeIso,
+            cycleAgeMinutes,
+            cycleSegment: 0,
+            cycleSegmentFrameIndex: frameIndex,
+            cycleSegmentFrameCount: selections.length,
             validTime: selection.validTime.toISOString(),
             targetValidTime: selection.targetValidTime.toISOString(),
             forecastMinutes: selection.forecastMinutes,
             forecastHour: selection.forecastMinutes / 60,
-            fileForecastHour: selection.fileForecastHour
+            fileForecastHour: selection.fileForecastHour,
+            requestedFrameCount: validTimes.length,
+            coverageComplete: true,
+            coverageThrough,
+            requestedThrough
           });
         });
-        return Object.freeze(uniqueBy(descriptors, (frame) => frame.validTime)
-          .sort((left, right) => Date.parse(left.validTime) - Date.parse(right.validTime)));
+        return Object.freeze(descriptors);
       } catch (error) {
         if (isAbortError(error)) throw error;
         failures.push({ cycleTime: cycleTime.toISOString(), reason: error.message || String(error) });
@@ -275,8 +297,55 @@
     throw codedError(
       "HRRR_SUBHOURLY_RUN_UNAVAILABLE",
       "No complete HRRR sub-hourly run covered the requested valid times.",
-      { failures }
+      {
+        failures,
+        requestedFrameCount: validTimes.length,
+        requestedThrough: validTimes[validTimes.length - 1].toISOString()
+      }
     );
+  }
+
+  function summarizeCycleSegments(frames) {
+    const summaries = [];
+    for (const frame of frames || []) {
+      const previous = summaries[summaries.length - 1];
+      if (previous && previous.cycleTime === frame.cycleTime) {
+        previous.lastValidTime = frame.validTime;
+        previous.frameCount += 1;
+        continue;
+      }
+      summaries.push({
+        index: Number.isFinite(frame.cycleSegment) ? frame.cycleSegment : summaries.length,
+        cycleTime: frame.cycleTime || null,
+        cycleAgeMinutes: Number.isFinite(frame.cycleAgeMinutes) ? frame.cycleAgeMinutes : null,
+        firstValidTime: frame.validTime || null,
+        lastValidTime: frame.validTime || null,
+        frameCount: 1,
+        requestedFrameCount: Number.isFinite(frame.requestedFrameCount) ? frame.requestedFrameCount : null,
+        coverageComplete: frame.coverageComplete !== false,
+        coverageThrough: frame.coverageThrough || frame.validTime || null,
+        requestedThrough: frame.requestedThrough || frame.validTime || null
+      });
+    }
+    return Object.freeze(summaries.map((summary) => Object.freeze(summary)));
+  }
+
+  function summarizeCoverage(frames) {
+    const values = frames || [];
+    const first = values[0] || null;
+    const last = values[values.length - 1] || null;
+    return Object.freeze({
+      complete: first?.coverageComplete !== false,
+      frameCount: values.length,
+      requestedFrameCount: Number.isFinite(first?.requestedFrameCount)
+        ? first.requestedFrameCount
+        : values.length,
+      firstValidTime: first?.validTime || null,
+      availableThrough: first?.coverageThrough || last?.validTime || null,
+      requestedThrough: first?.requestedThrough || last?.validTime || null,
+      cycleTime: first?.cycleTime || null,
+      cycleAgeMinutes: Number.isFinite(first?.cycleAgeMinutes) ? first.cycleAgeMinutes : null
+    });
   }
 
   function selectCanonicalTimes(cycleTime, validTimes) {
@@ -447,6 +516,8 @@
     support,
     createClient,
     discoverSubhourlyFrames,
+    summarizeCycleSegments,
+    summarizeCoverage,
     selectCanonicalTimes,
     parseHrrrIndex,
     hrrrSubhourlyUrls

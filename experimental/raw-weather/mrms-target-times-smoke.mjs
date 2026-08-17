@@ -48,6 +48,40 @@ try {
     targets.length,
     "duplicate target times do not duplicate source downloads"
   );
+
+  const deliberatelyStaleTargets = targets.slice(0, -3);
+  const freshestScan = sourceFrames[sourceFrames.length - 1].toISOString();
+  const freshnessBounded = await globalThis.NearcastMrms.listRecentFrames({
+    now,
+    minutes: 90,
+    maxFrames: 5,
+    targetTimes: deliberatelyStaleTargets,
+    targetToleranceMinutes: 3
+  });
+  assert.ok(freshnessBounded.length <= 5, "freshness retention respects the requested frame budget");
+  assert.equal(
+    freshnessBounded[freshnessBounded.length - 1]?.observedAt,
+    freshestScan,
+    "explicit targets always retain the newest available MRMS scan"
+  );
+  assert.deepEqual(
+    freshnessBounded.map((frame) => frame.observedAt),
+    [...freshnessBounded].map((frame) => frame.observedAt).sort(),
+    "freshness retention preserves chronological frame order"
+  );
+
+  const freshnessOnly = await globalThis.NearcastMrms.listRecentFrames({
+    now,
+    minutes: 90,
+    maxFrames: 1,
+    targetTimes: deliberatelyStaleTargets,
+    targetToleranceMinutes: 3
+  });
+  assert.deepEqual(
+    freshnessOnly.map((frame) => frame.observedAt),
+    [freshestScan],
+    "a one-frame explicit selection resolves to the freshest scan"
+  );
 } finally {
   globalThis.fetch = originalFetch;
 }
@@ -141,6 +175,7 @@ console.log(JSON.stringify({
   ok: true,
   canonicalTargets: targets.length,
   uniqueSourceFrames: targets.length,
+  newestScanRetained: true,
   runtimeGeneratedCadence: true,
   legacyNumericFrames: true
 }, null, 2));

@@ -304,7 +304,11 @@ assert.match(
 const readoutSource = extractFunction(map, "timelineReadoutCopy");
 assert.match(readoutSource, /"Latest radar"/, "Now is identified as the latest radar frame");
 assert.match(readoutSource, /"Observed radar"/, "past frames are explicitly observed radar");
-assert.match(readoutSource, /"Forecast guidance"/, "future frames are explicitly guidance");
+assert.match(readoutSource, /rawMapForecastGuidanceLabel/, "future frames use their explicit guidance provenance");
+const guidanceLabelSource = extractFunction(map, "rawMapForecastGuidanceLabel");
+assert.match(guidanceLabelSource, /"Radar nowcast"/, "observation-derived future frames are identified as a nowcast");
+assert.match(guidanceLabelSource, /"Blended forecast"/, "the radar-to-model handoff is identified as blended guidance");
+assert.match(guidanceLabelSource, /"HRRR forecast"/, "pure model frames retain their model identity");
 assert.match(readoutSource, /rawMapValidTime/, "the Now readout can distinguish radar evidence time from the present boundary");
 const readoutRenderSource = extractFunction(map, "renderImmersiveTimelineReadout");
 assert.match(readoutRenderSource, /is-away-from-now/, "the shell exposes a stable away-from-Now state");
