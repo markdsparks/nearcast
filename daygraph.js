@@ -14,7 +14,8 @@ function openDayFromIndex(i, options = {}) {
   const dayStr = data.daily.time[i];
   const indices = [];
   data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
-  const code = representativeDailyCode(data, i);
+  const day = forecastDayPresentation(data, i);
+  const code = day.code;
   const memoryItems = activePlanMemoryEventsForDay(i, data);
   const memoryEvent = planMemoryDetailEventForDay(memoryItems, data);
   const focusedEvent = options.eventWindow || memoryEvent;
@@ -23,7 +24,7 @@ function openDayFromIndex(i, options = {}) {
     title: formatDay(data.daily.time[i], i),
     contextLabel: options.contextLabel || planMemoryDayContextLabel(memoryItems, memoryEvent),
     code,
-    stormPotential: hasThunderPotentialForDay(data, i, code),
+    stormPotential: day.stormPotential,
     isDay: true,
     sunriseISO: data.daily.sunrise[i],
     sunsetISO: data.daily.sunset[i],
@@ -400,7 +401,6 @@ function detailHoursForIndices(indices, {
     const forecastPop = popAvailable ? Math.max(0, Math.min(100, rawForecastPop)) : null;
     const forecastPrecip = precipAvailable ? Math.max(0, rawForecastPrecip) : null;
     const precip = forecastPrecip ?? 0;
-    const code = profile.code;
     // Live radar/current-condition truth belongs only to the active forecast.
     // Planner details can carry a retained forecast for another place, where
     // borrowing the active place's truth would create a false "happening now."
@@ -416,7 +416,6 @@ function detailHoursForIndices(indices, {
     const isNowHour = showNow && isCurrentHour(data.hourly.time[h], data);
     const presentation = forecastHourPresentation(data, h, { isCurrent: isNowHour, truth });
     const activePrecip = Boolean(isNowHour && truth?.precip?.phase === "active");
-    const truthCode = presentation.code;
     const truthPrecip = truth?.display?.precip ?? truth?.nowPrecip?.amount ?? precip;
     const precipSource = truth?.precip?.source || truth?.source || "";
     return {
@@ -436,7 +435,7 @@ function detailHoursForIndices(indices, {
       windDirection: data.hourly.wind_direction_10m?.[h] ?? (isNowHour ? data.current?.wind_direction_10m : null),
       uv: data.hourly.uv_index[h] || 0,
       rawCode,
-      code: isNowHour ? truthCode : code,
+      code: presentation.code,
       activePrecip,
       rainText: activePrecip ? "Now" : "",
       precipText: activePrecip
@@ -444,10 +443,11 @@ function detailHoursForIndices(indices, {
         : "",
       precipSource,
       precipDetail: activePrecip ? (truth?.surfaceDetail || truth?.receiptDetail || truth?.receipt || "") : "",
-      precipPrimary: isNowHour ? activePrecip || isPrecipCode(truthCode) : profile.primary,
+      precipPrimary: isNowHour ? activePrecip || isPrecipCode(presentation.code) : profile.primary,
       precipChance: profile.chance,
       precipAmountSupported: profile.amountSupported,
-      stormPotential: hasThunderPotential(rawCode, pop, isNowHour ? truthCode : code, activePrecip ? Math.max(precip, truthPrecip || 0) : precip, data),
+      stormPotential: presentation.stormPotential,
+      convective: presentation.convective || null,
       alert: ms !== null && nextMs !== null ? topAlertForRange(ms, nextMs, alerts) : null,
       inEvent,
       eventLabel: inEvent ? detailEventBadgeLabel(matchedEventWindows, eventWindow) : "",
@@ -790,8 +790,11 @@ function dayFocusStory(hrs, tempUnit, windUnit) {
   const wetKind = (hour) => hour?.stormPotential || isThunderCode(hour?.code)
     ? "Storms"
     : isSnowCode(hour?.code) ? "Snow" : "Rain";
+  const wetLikelihood = (hour) => hour?.convective?.level === "likely" || Number(hour?.pop) >= 50
+    ? "likely"
+    : "possible";
   const wetText = likelyWetHour
-    ? `${wetKind(likelyWetHour)} ${Number(likelyWetHour.pop) >= 50 ? "is likely" : "is possible"} near ${dayFocusHourLabel(likelyWetHour)}.`
+    ? `${wetKind(likelyWetHour)} is ${wetLikelihood(likelyWetHour)} near ${dayFocusHourLabel(likelyWetHour)}.`
     : wetHour
       ? `${wetKind(wetHour)} is possible near ${dayFocusHourLabel(wetHour)}.`
       : "";
@@ -805,7 +808,7 @@ function dayFocusStory(hrs, tempUnit, windUnit) {
     const noun = wetKind(likelyWetHour);
     signal = {
       label: noun === "Snow" ? "Snow timing" : noun === "Storms" ? "Storm timing" : "Rain timing",
-      value: `${noun} ${Number(likelyWetHour.pop) >= 50 ? "likely" : "possible"} near ${dayFocusHourLabel(likelyWetHour)}`,
+      value: `${noun} ${wetLikelihood(likelyWetHour)} near ${dayFocusHourLabel(likelyWetHour)}`,
       tone: "wet"
     };
   } else if (Number(windyHour?.gust) >= windThreshold) {
@@ -926,8 +929,8 @@ function hourlyRowBadges(hour, tempUnit, windUnit, precipUnit) {
     badges.push({ label: alertToneLabel(alertTone(hour.alert)), tone: ` is-alert is-alert-${alertTone(hour.alert)}` });
   }
 
-  if (hour.stormPotential) {
-    badges.push({ label: "Thunder", tone: " is-storm" });
+  if (hour.stormPotential && !isThunderCode(hour.code)) {
+    badges.push({ label: hour.convective?.level === "likely" ? "Storms likely" : "Thunder possible", tone: " is-storm" });
   }
 
   if (hour.activePrecip) {
@@ -963,9 +966,17 @@ function hourlyDetailNote(hour, tempUnit, windUnit) {
   } else if (isThunderCode(hour.code) || hour.stormPotential) {
     const stormCode = hour.rawCode || hour.code;
     const hail = stormCode === 96 || stormCode === 99 ? " Hail is also possible." : "";
-    weatherNote = isThunderCode(hour.code)
-      ? `Watch for lightning and quick downpours.${hail}`
-      : `Thunder possible. Watch for lightning and quick downpours.${hail}`;
+    if (hour.convective?.source === "nws-hourly-radar") {
+      weatherNote = `The NWS forecast calls for thunderstorms and radar shows precipitation over this place. Watch for lightning and quick downpours.${hail}`;
+    } else if (hour.convective?.source === "nws-hourly-model") {
+      weatherNote = `The NWS forecast and forecast guidance both point to thunderstorms this hour. Watch for lightning and quick downpours.${hail}`;
+    } else if (hour.convective?.source === "nws-hourly") {
+      weatherNote = `The NWS forecast calls for thunderstorms this hour. Watch for lightning and quick downpours.${hail}`;
+    } else {
+      weatherNote = isThunderCode(hour.code)
+        ? `Watch for lightning and quick downpours.${hail}`
+        : `Thunder possible. Watch for lightning and quick downpours.${hail}`;
+    }
   } else if (isPrecipCode(hour.code)) {
     const likelihood = hour.pop >= 50 ? "Likely" : "Possible";
     const burst = hour.code === 65 || hour.code === 67 || hour.code === 82 || hour.code === 86

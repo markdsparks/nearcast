@@ -8,6 +8,7 @@ import {
   sourceTaxonomyFixtures,
   remainingDayFixture,
   dailyPresentationFixtures,
+  nwsFutureConvectiveFixtures,
   pmStormFixture,
   snowLanguageFixture,
   staleCacheFixture,
@@ -208,10 +209,12 @@ check("NWS convective parsing accepts TSRA wording and ignores ordinary rain", (
 
 const story = contextWith(`
   const state = { forecast: null, weatherTruth: null, unit: "fahrenheit" };
+  const nwsConvectiveEvidenceByForecast = new WeakMap();
   const FORECAST_CACHE_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
   const FORECAST_CURRENT_FRESH_MS = 75 * 60 * 1000;
   const RAIN_LIKELY_CODE = 10001;
   const RAIN_LIKELY_POP = 60;
+  const PRECIP_FEATURE_POP = 30;
   const THUNDER_POTENTIAL_POP = 20;
   const HOURLY_PRECIP_PRIMARY_POP = 60;
   const HOURLY_PRECIP_SUPPORTED_POP = 30;
@@ -272,6 +275,10 @@ const story = contextWith(`
   ${extractFunction(app, "hourlyPrecipProfile")}
   ${extractFunction(app, "dailyPrecipProfile")}
   ${extractFunction(app, "hasThunderPotential")}
+  ${extractFunction(app, "nwsConvectivePeriodForHour")}
+  ${extractFunction(app, "convectiveEvidenceForFutureHour")}
+  ${extractFunction(app, "nwsConvectiveWindowForIndices")}
+  ${extractFunction(app, "nwsConvectiveTimingPhrase")}
   ${extractFunction(app, "dailyConditionLabel")}
   ${extractFunction(app, "precipRank")}
   ${extractFunction(app, "forecastConditionFamily")}
@@ -295,7 +302,8 @@ const story = contextWith(`
     state.forecast = data;
     state.weatherTruth = truth;
   }
-  globalThis.subject = { buildForecastStory, dailyPrecipProfile, forecastDayPresentation, setFixtureNow, setActiveForecastTruth };
+  function setNwsEvidence(data, evidence) { nwsConvectiveEvidenceByForecast.set(data, evidence); }
+  globalThis.subject = { buildForecastStory, dailyPrecipProfile, forecastHourPresentation, forecastDayPresentation, setFixtureNow, setActiveForecastTruth, setNwsEvidence };
 `).subject;
 
 check("the outlook uses the selected place's remaining local day", () => {
@@ -336,6 +344,23 @@ dailyPresentationFixtures.forEach((fixture) => {
     (fixture.elapsedIndices || []).forEach((index) => {
       assert.ok(!value.primaryIndices.includes(index), `elapsed hourly index ${index} is excluded`);
     });
+  });
+});
+
+nwsFutureConvectiveFixtures.forEach((fixture) => {
+  check(fixture.name, () => {
+    const data = structuredClone(fixture.data);
+    story.setFixtureNow(fixture.now, data);
+    story.setNwsEvidence(data, structuredClone(fixture.evidence));
+    const hour = story.forecastHourPresentation(data, fixture.hourIndex, { isCurrent: false });
+    const day = story.forecastDayPresentation(data, fixture.dayIndex);
+    assert.equal(hour.code, fixture.expected.hourCode);
+    assert.equal(hour.label, fixture.expected.hourLabel);
+    assert.equal(hour.convective?.level, fixture.expected.level);
+    assert.equal(hour.stormPotential, true);
+    assert.equal(day.code, fixture.expected.dailyCode);
+    assert.match(day.timing, fixture.expected.dailyTiming);
+    assert.equal(day.stormPotential, true);
   });
 });
 

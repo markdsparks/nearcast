@@ -12786,7 +12786,8 @@ function openPlannerEventDetail(event) {
   });
   if (!indices.length) return false;
 
-  const code = representativeDailyCode(data, dayIndex);
+  const day = forecastDayPresentation(data, dayIndex);
+  const code = day.code;
   const memory = event.memoryId ? state.planMemories.find((item) => item.id === event.memoryId) : null;
   const memoryWindow = memory?.windows?.find((window) =>
     window.targetDate === dayStr &&
@@ -12807,7 +12808,7 @@ function openPlannerEventDetail(event) {
     title: plannerEventSheetTitle(event, dayStr, dayIndex),
     contextLabel: contextMemory ? planMemoryEventContextLabel(contextMemory, event) : plannerEventContextLabel(event),
     code,
-    stormPotential: hasThunderPotentialForDay(data, dayIndex, code),
+    stormPotential: day.stormPotential,
     isDay: true,
     sunriseISO: data.daily.sunrise?.[dayIndex],
     sunsetISO: data.daily.sunset?.[dayIndex],

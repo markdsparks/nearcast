@@ -278,6 +278,91 @@ export const dailyPresentationFixtures = [
   }
 ];
 
+// NWS wording is a second forecast source, not an observed-lightning feed.
+// These fixtures pin the deliberate distinction: NWS-only affects the hour
+// badge/timing; NWS plus a supported model thunder hour earns the stronger
+// forecast label without making the entire day a storms icon.
+const nwsFutureBase = {
+  utc_offset_seconds: 0,
+  current: { time: "2026-08-14T14:00:00", temperature_2m: 80, weather_code: 2, is_day: 1 },
+  daily: {
+    time: ["2026-08-14", "2026-08-15"],
+    weather_code: [2, 2],
+    precipitation_probability_max: [5, 65],
+    precipitation_sum: [0, 0.02]
+  },
+  hourly: {
+    time: [
+      "2026-08-15T06:00", "2026-08-15T09:00", "2026-08-15T12:00",
+      "2026-08-15T16:00", "2026-08-15T17:00", "2026-08-15T18:00"
+    ],
+    temperature_2m: [65, 70, 78, 83, 80, 76],
+    apparent_temperature: [65, 70, 79, 86, 83, 77],
+    weather_code: [1, 2, 2, 61, 61, 2],
+    cloud_cover: [20, 35, 50, 85, 90, 65],
+    precipitation_probability: [5, 10, 15, 45, 45, 20],
+    precipitation: [0, 0, 0, 0.01, 0.01, 0],
+    wind_speed_10m: [4, 5, 7, 11, 13, 8],
+    wind_gusts_10m: [7, 9, 12, 24, 28, 15],
+    is_day: [1, 1, 1, 1, 1, 1]
+  }
+};
+
+export const nwsFutureConvectiveFixtures = [
+  {
+    name: "NWS-only future thunder stays a qualified hourly signal with exact daily timing",
+    now: "2026-08-14T14:00:00",
+    data: nwsFutureBase,
+    evidence: {
+      placeId: "maryville",
+      checkedAt: Date.UTC(2026, 7, 14, 14, 0, 0),
+      periods: [{
+        startMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        endMs: Date.UTC(2026, 7, 15, 18, 0, 0),
+        shortForecast: "Showers And Thunderstorms"
+      }]
+    },
+    hourIndex: 3,
+    dayIndex: 1,
+    expected: {
+      hourCode: 3,
+      hourLabel: "Cloudy",
+      level: "possible",
+      dailyCode: 2,
+      dailyTiming: /Thunderstorms possible after 4 PM/i
+    }
+  },
+  {
+    name: "NWS plus model thunder earns a likely hour without over-labeling the day",
+    now: "2026-08-14T14:00:00",
+    data: {
+      ...nwsFutureBase,
+      hourly: {
+        ...nwsFutureBase.hourly,
+        weather_code: [1, 2, 2, 95, 95, 2]
+      }
+    },
+    evidence: {
+      placeId: "maryville",
+      checkedAt: Date.UTC(2026, 7, 14, 14, 0, 0),
+      periods: [{
+        startMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        endMs: Date.UTC(2026, 7, 15, 18, 0, 0),
+        shortForecast: "Showers And Thunderstorms"
+      }]
+    },
+    hourIndex: 3,
+    dayIndex: 1,
+    expected: {
+      hourCode: 95,
+      hourLabel: "Thunderstorms likely",
+      level: "likely",
+      dailyCode: 2,
+      dailyTiming: /Storms likely after 4 PM/i
+    }
+  }
+];
+
 export const pmStormFixture = {
   name: "an afternoon storm callout names the first meaningful PM hour",
   hours: [
