@@ -33,23 +33,22 @@ assert.deepEqual(
 const majorMilestones = milestones.filter((marker) => marker.major);
 assert.deepEqual(
   majorMilestones.map((marker) => marker.offsetMinutes),
-  [-90, -30, 0, 60, 120, 180],
+  [-90, 0, 60, 120, 180],
   "the canonical rail uses the intended glanceable milestone set"
 );
 assert.deepEqual(
   majorMilestones.map((marker) => marker.label),
-  ["−90m", "−30m", "Now", "+1h", "+2h", "+3h"]
+  ["−90m", "Now", "+1h", "+2h", "+3h"]
 );
 assert.deepEqual(
   majorMilestones.map((marker) => marker.value),
-  [0, 222, 333, 556, 778, 1000],
+  [0, 333, 556, 778, 1000],
   "milestone slider values are proportional to elapsed time, not frame count"
 );
 assert.deepEqual(
   majorMilestones.map((marker) => marker.ariaLabel),
   [
     "Jump to 90 minutes ago",
-    "Jump to 30 minutes ago",
     "Jump to Now",
     "Jump to 1 hour from now",
     "Jump to 2 hours from now",
@@ -250,7 +249,7 @@ function createHarness(frames, initialNowIndex) {
     slider,
     rafCallbacks,
     STANDARD_TIMELINE_SLIDER_STEPS: 1000,
-    STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES: Object.freeze([-90, -30, 0, 60, 120, 180]),
+    STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES: Object.freeze([-90, 0, 60, 120, 180]),
     STANDARD_TIMELINE_MINOR_STEP_MINUTES: 30,
     RAW_MAP_FORECAST_STEP_MINUTES: 15,
     CANONICAL_TIMELINE_PLAY_DURATION_MS: 12_000,
@@ -281,6 +280,7 @@ function createHarness(frames, initialNowIndex) {
     }
     function startRadarPlayback(options = {}) { calls.start.push({ ...options }); }
     function showTimelineTimeBubble(durationMs) { calls.showBubble.push(durationMs); }
+    function setImmersiveTimelineScrubbing() {}
     function renderTimelineTimeBubble(options = {}) { calls.renderBubble.push({ ...options }); }
     function setStandardTimelineSliderValue(target, value, frameIndex = null) {
       target.value = String(Math.round(Number(value) || 0));

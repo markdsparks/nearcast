@@ -87,7 +87,7 @@ const RAW_MAP_OBSERVED_STEP_MINUTES = 5;
 const RAW_MAP_FORECAST_WINDOW_MINUTES = 180;
 const RAW_MAP_FORECAST_STEP_MINUTES = 15;
 const STANDARD_TIMELINE_SLIDER_STEPS = 1000;
-const STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES = Object.freeze([-90, -30, 0, 60, 120, 180]);
+const STANDARD_TIMELINE_MAJOR_OFFSETS_MINUTES = Object.freeze([-90, 0, 60, 120, 180]);
 const STANDARD_TIMELINE_MINOR_STEP_MINUTES = 30;
 const CANONICAL_TIMELINE_PLAY_DURATION_MS = 12000;
 const CANONICAL_TIMELINE_NOW_HOLD_MS = 650;
@@ -1384,6 +1384,7 @@ function xweatherStormTimelineCopy(snapshot = xweatherStormTimelineSnapshot()) {
   const abs = Math.abs(delta);
   const isNow = abs < XWEATHER_STORM_TIMELINE_FUTURE_GRACE_MS;
   const title = isNow ? "Now" : formatTimelineRelative(snapshot.currentMs);
+  const clock = formatTimelineTime(snapshot.currentMs, { showMinutes: true, dayStyle: "compact" });
   const meta = delta <= 0
     ? `Observed radar · ${formatTimelineTime(snapshot.currentMs, { showMinutes: true, dayStyle: "none" })}`
     : `Forecast guidance · ${formatTimelineTime(snapshot.currentMs, { showMinutes: true, dayStyle: "none" })}`;
@@ -1392,7 +1393,13 @@ function xweatherStormTimelineCopy(snapshot = xweatherStormTimelineSnapshot()) {
     title,
     meta,
     label,
-    source: delta > 0 ? "forecast" : "radar"
+    source: delta > 0 ? "forecast" : "radar",
+    sourceLabel: delta > 0 ? "Forecast motion" : isNow ? "Latest radar" : "Observed radar",
+    readoutTitle: isNow ? `Now · ${clock}` : clock,
+    readoutMeta: isNow ? "Current view" : formatTimelineRelative(snapshot.currentMs),
+    isNow,
+    canReturnToNow: true,
+    storm: true
   };
 }
 
@@ -1630,8 +1637,15 @@ function syncXweatherStormTimelineHud(record = mapLibreCurrentRecord(), options 
     slider.style.setProperty("--timeline-now", `${snapshot.nowPosition * 100}%`);
     slider.dataset.timelineKind = "storm";
     slider.dataset.source = copy.source;
+    slider.setAttribute(
+      "aria-valuetext",
+      `${copy.sourceLabel}, ${copy.readoutTitle}, ${copy.readoutMeta}`
+    );
     updateRangeProgress(slider);
   }
+
+  const timelineRoot = document.querySelector(".imm-timeline");
+  timelineRoot?.style.setProperty("--timeline-now", `${snapshot.nowPosition * 100}%`);
 
   const marker = document.getElementById("immNowMarker");
   if (marker) {
@@ -1640,6 +1654,7 @@ function syncXweatherStormTimelineHud(record = mapLibreCurrentRecord(), options 
   }
 
   setFrameLabel(`Storm motion · ${copy.label}`);
+  renderImmersiveTimelineReadout(copy);
   syncXweatherStormLightningVisibility(record, snapshot, options);
   syncXweatherStormTimelineJumpControls(record, snapshot);
   renderXweatherStormTimelineBubble(snapshot, options);
@@ -1655,7 +1670,7 @@ function renderXweatherStormTimelineBubble(snapshot = xweatherStormTimelineSnaps
   bubble.querySelector("span").textContent = copy.meta;
   bubble.style.setProperty("--time-bubble-left", `${Math.min(Math.max(snapshot.position * 100, 0), 100)}%`);
   bubble.dataset.source = copy.source;
-  if (options.show || mapState.playing) {
+  if (options.show) {
     bubble.hidden = false;
     requestAnimationFrame(() => bubble.classList.add("is-visible"));
   }
@@ -1785,7 +1800,7 @@ function setXweatherStormTimelinePlaying(record = mapLibreCurrentRecord(), playi
     clearXweatherObservedLightningSettle(record);
     setXweatherObservedLightningVisible(record, false, "playback");
     setPlaybackButtonState(els.playRadar, true);
-    showTimelineTimeBubble();
+    hideTimelineTimeBubble(true);
     startXweatherStormTimelineHudLoop(record);
   } else {
     if (storm.timelineLoopRaf) {
@@ -9508,11 +9523,123 @@ function updateMapModeButtons() {
   if (els.futureMode) els.futureMode.classList.toggle("active", mapState.mode === "future");
 }
 
+function timelineReadoutCopy(frame = mapState.frames[mapState.frameIndex]) {
+  if (!frame) {
+    return {
+      source: "radar",
+      sourceLabel: "Radar timeline",
+      readoutTitle: "No frames",
+      readoutMeta: "Map data unavailable",
+      isNow: false,
+      canReturnToNow: false,
+      storm: false
+    };
+  }
+
+  const frameIndex = mapState.frames.indexOf(frame);
+  const source = activeMapSource(frame);
+  const timestamp = rawMapTimelineTimestamp(frame);
+  const isNow = source === "radar" && Boolean(
+    frame.isNow || frameIndex === mapState.nowIndex
+  );
+  const observedTimestamp = Number(frame.observedTimestamp)
+    || Date.parse(frame.rawMapValidTime || "")
+    || timestamp;
+  const canReturnToNow = mapState.frames.some((candidate) => activeMapSource(candidate) === "radar")
+    && Number.isFinite(Number(mapState.nowIndex));
+  const clock = formatTimelineTime(timestamp, {
+    showMinutes: true,
+    dayStyle: "compact"
+  });
+
+  return {
+    source,
+    sourceLabel: source === "forecast"
+      ? "Forecast guidance"
+      : isNow ? "Latest radar" : "Observed radar",
+    readoutTitle: isNow ? `Now · ${clock}` : clock,
+    readoutMeta: isNow && observedTimestamp && observedTimestamp !== timestamp
+      ? formatTimelineRelative(observedTimestamp)
+      : isNow ? "Latest frame" : formatTimelineRelative(timestamp),
+    isNow,
+    canReturnToNow,
+    storm: false
+  };
+}
+
+function timelineHasObservedAndForecast() {
+  if (xweatherStormActive(mapLibreCurrentRecord())) return true;
+  let observed = false;
+  let forecast = false;
+  mapState.frames.forEach((frame) => {
+    if (activeMapSource(frame) === "forecast") forecast = true;
+    else observed = true;
+  });
+  return observed && forecast;
+}
+
+function renderImmersiveTimelineReadout(copy = timelineReadoutCopy()) {
+  const root = document.querySelector(".imm-timeline");
+  if (!root || !mapState.immersive) return;
+  const source = document.getElementById("immTimelineSource");
+  const label = document.getElementById("immLabel");
+  const relative = document.getElementById("immTimelineRelative");
+  const nowButton = document.getElementById("immTimelineNowButton");
+  const eras = document.getElementById("immTimelineEras");
+  const radarEra = document.getElementById("immTimelineRadarEra");
+  const forecastEra = document.getElementById("immTimelineForecastEra");
+
+  root.dataset.source = copy.source || "radar";
+  root.classList.toggle("is-away-from-now", Boolean(copy.canReturnToNow && !copy.isNow));
+  root.classList.toggle("is-storm-timeline", Boolean(copy.storm));
+  if (source) source.textContent = copy.sourceLabel || "Radar timeline";
+  if (label) label.textContent = copy.readoutTitle || "No frames";
+  if (relative) relative.textContent = copy.readoutMeta || "Drag to explore";
+  if (nowButton) {
+    nowButton.hidden = !copy.canReturnToNow || copy.isNow;
+    nowButton.setAttribute(
+      "aria-label",
+      copy.isNow ? "Timeline is at Now" : `Return timeline to Now from ${copy.readoutTitle || "selected time"}`
+    );
+  }
+
+  const showEras = timelineHasObservedAndForecast();
+  root.classList.toggle("has-timeline-eras", showEras);
+  if (eras) eras.hidden = !showEras;
+  if (radarEra) radarEra.textContent = "Radar";
+  if (forecastEra) forecastEra.textContent = copy.storm ? "Forecast motion" : "Forecast";
+}
+
+function setImmersiveTimelineScrubbing(active) {
+  document.querySelector(".imm-timeline")?.classList.toggle("is-scrubbing", Boolean(active));
+}
+
+function returnImmersiveTimelineToNow() {
+  if (xweatherStormActive(mapLibreCurrentRecord())) {
+    const changed = jumpXweatherStormTimeline(0);
+    if (changed) hideTimelineTimeBubble(true);
+    return changed;
+  }
+  if (!mapState.frames.length || !Number.isFinite(Number(mapState.nowIndex))) return false;
+  const nowIndex = clamp(Number(mapState.nowIndex), 0, mapState.frames.length - 1);
+  if (activeMapSource(mapState.frames[nowIndex]) !== "radar") return false;
+  if (mapState.playing) {
+    mapState.userPausedRadar = true;
+    stopRadarPlayback({ renderStatic: false });
+  }
+  showFrame(nowIndex);
+  hideTimelineTimeBubble(true);
+  return true;
+}
+
 function updateTimelineEraVisuals() {
   if (syncXweatherStormTimelineHud(mapLibreCurrentRecord())) return;
   hideXweatherStormTimelineJumpControls();
   const slider = els.frameSlider;
-  if (!slider) return;
+  if (!slider) {
+    renderImmersiveTimelineReadout();
+    return;
+  }
   const max = Math.max(0, mapState.frames.length - 1);
   const nowIndex = Number.isFinite(mapState.nowIndex) ? clamp(mapState.nowIndex, 0, max) : max;
   const timeRange = standardTimelineTimeRange();
@@ -9523,6 +9650,7 @@ function updateTimelineEraVisuals() {
   slider.style.setProperty("--timeline-now", `${nowProgress}%`);
   slider.dataset.timelineKind = mapState.timelineKind;
   slider.dataset.source = activeMapSource();
+  document.querySelector(".imm-timeline")?.style.setProperty("--timeline-now", `${nowProgress}%`);
 
   const marker = document.getElementById("immNowMarker");
   if (marker) {
@@ -9530,6 +9658,7 @@ function updateTimelineEraVisuals() {
     marker.hidden = !showMarker;
     marker.style.left = `${nowProgress}%`;
   }
+  renderImmersiveTimelineReadout();
   renderTimelineTimeBubble();
 }
 
@@ -9558,7 +9687,7 @@ function renderTimelineTimeBubble(options = {}) {
   bubble.style.setProperty("--time-bubble-left", `${Math.min(Math.max(progress, 0), 100)}%`);
   bubble.dataset.source = activeMapSource(frame);
 
-  if (options.show || mapState.playing) {
+  if (options.show) {
     bubble.hidden = false;
     requestAnimationFrame(() => bubble.classList.add("is-visible"));
   }
@@ -9645,11 +9774,13 @@ function cancelStandardTimelineScrub() {
   standardTimelineScrubRaf = 0;
   standardTimelinePendingScrubValue = null;
   standardTimelineScrubActive = false;
+  setImmersiveTimelineScrubbing(false);
 }
 
 function beginStandardTimelineScrub() {
   if (!canonicalRawTimelineActive() || xweatherStormActive(mapLibreCurrentRecord())) return false;
   standardTimelineScrubActive = true;
+  setImmersiveTimelineScrubbing(true);
   if (mapState.playing) {
     mapState.userPausedRadar = true;
     stopRadarPlayback({ renderStatic: false });
@@ -9681,6 +9812,7 @@ function settleStandardTimelineScrub() {
   standardTimelineScrubRaf = 0;
   renderPendingStandardTimelineScrub();
   standardTimelineScrubActive = false;
+  setImmersiveTimelineScrubbing(false);
   syncStandardTimelineSlider(mapState.frameIndex);
   showTimelineTimeBubble();
   return true;
@@ -9875,7 +10007,7 @@ function startRadarPlayback(options = {}) {
   }
   mapState.playing = true;
   setPlaybackButtonState();
-  showTimelineTimeBubble();
+  hideTimelineTimeBubble(true);
   mapState.playAccum = 0;
   mapState.playClock = performance.now();
   mapState.frameWaitIndex = null;
@@ -11327,6 +11459,7 @@ function bindImmersiveModeButtons() {
   bindTapAction(document.getElementById("stormReceiptBackdrop"), closeXweatherStormReceiptSheet);
   bindTapAction(document.getElementById("stormReceiptDone"), closeXweatherStormReceiptSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
+  bindTapAction(document.getElementById("immTimelineNowButton"), returnImmersiveTimelineToNow);
   document.querySelectorAll("#immTimeJumps [data-storm-jump]").forEach((button) => {
     bindTapAction(button, () => jumpXweatherStormTimeline(button.getAttribute("data-storm-jump")));
   });
@@ -11334,19 +11467,23 @@ function bindImmersiveModeButtons() {
   slider.oninput = (e) => scrubToFrame(Number(e.target.value));
   slider.onchange = () => settleStandardTimelineScrub();
   slider.onpointerdown = () => {
+    setImmersiveTimelineScrubbing(true);
     beginStandardTimelineScrub();
     showTimelineTimeBubble(2400);
   };
   slider.onpointerup = () => {
     settleStandardTimelineScrub();
+    setImmersiveTimelineScrubbing(false);
     showTimelineTimeBubble();
   };
   slider.onpointercancel = () => {
     settleStandardTimelineScrub();
+    setImmersiveTimelineScrubbing(false);
     scheduleTimelineBubbleHide();
   };
   slider.onblur = () => {
     settleStandardTimelineScrub();
+    setImmersiveTimelineScrubbing(false);
     scheduleTimelineBubbleHide(300);
   };
   slider.onkeydown = () => showTimelineTimeBubble(1400);

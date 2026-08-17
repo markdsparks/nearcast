@@ -283,6 +283,47 @@ assert.match(baseModeSource, /(?:endXweatherStormSession|nearcastDeactivateXweat
 assert.match(baseModeSource, /disposeRawMapEnhancement/, "entering Satellite releases high-detail radar work");
 assert.match(baseModeSource, /scheduleRawMapEnhancement/, "returning from Satellite can quietly restore included High detail");
 
+// The full-map scrubber is a persistent Time Lens rather than a thin media
+// control: selected time, evidence source, relative timing, and the Now escape
+// hatch remain visible without depending on a transient drag bubble.
+for (const id of [
+  "immTimelineSource",
+  "immTimelineRelative",
+  "immTimelineNowButton",
+  "immTimelineEras",
+  "immTimelineRadarEra",
+  "immTimelineForecastEra"
+]) {
+  assert.ok(openingTagForId(html, id), `the timeline exposes ${id}`);
+}
+assert.match(
+  openingTagForId(html, "immSlider"),
+  /aria-label="[^"]*Radar history and forecast guidance/i,
+  "the slider names both evidence eras for assistive technology"
+);
+const readoutSource = extractFunction(map, "timelineReadoutCopy");
+assert.match(readoutSource, /"Latest radar"/, "Now is identified as the latest radar frame");
+assert.match(readoutSource, /"Observed radar"/, "past frames are explicitly observed radar");
+assert.match(readoutSource, /"Forecast guidance"/, "future frames are explicitly guidance");
+assert.match(readoutSource, /rawMapValidTime/, "the Now readout can distinguish radar evidence time from the present boundary");
+const readoutRenderSource = extractFunction(map, "renderImmersiveTimelineReadout");
+assert.match(readoutRenderSource, /is-away-from-now/, "the shell exposes a stable away-from-Now state");
+assert.match(readoutRenderSource, /timelineHasObservedAndForecast/, "era captions only appear when both eras exist");
+const returnNowSource = extractFunction(map, "returnImmersiveTimelineToNow");
+assert.match(returnNowSource, /jumpXweatherStormTimeline\(0\)/, "StormScope returns to its own true Now");
+assert.match(returnNowSource, /mapState\.nowIndex/, "standard radar returns to the canonical Now frame");
+const bindSource = extractFunction(map, "bindImmersiveModeButtons");
+assert.match(bindSource, /immTimelineNowButton[^\n]*returnImmersiveTimelineToNow/, "the visible Now control is wired to the shared return action");
+const standardPlaybackSource = extractFunction(map, "startRadarPlayback");
+assert.match(standardPlaybackSource, /hideTimelineTimeBubble\(true\)/, "playback relies on the persistent readout instead of covering it with a bubble");
+const stormPlaybackSource = extractFunction(map, "setXweatherStormTimelinePlaying");
+assert.match(stormPlaybackSource, /hideTimelineTimeBubble\(true\)/, "StormScope playback shares the uncluttered persistent readout behavior");
+const stormTimelineSource = extractFunction(map, "syncXweatherStormTimelineHud");
+assert.match(stormTimelineSource, /aria-valuetext/, "StormScope replaces stale standard-radar speech with its selected source and time");
+assert.match(styles, /\.imm-timeline\s*\{[\s\S]{0,700}?background:\s*rgba\(8, 16, 25, 0\.82\)/, "the Time Lens remains readable over intense radar colors");
+assert.match(styles, /\.timeline-markers\s*\{[\s\S]{0,400}?pointer-events:\s*none/, "timeline labels stay inert so the whole drag lane remains available");
+assert.match(styles, /\.imm-timeline input\[type="range"\][\s\S]{0,200}?height:\s*48px/, "the visual rail retains a generous touch lane");
+
 const version = app.match(/const VERSION = "([^"]+)"/)?.[1];
 assert.ok(version, "app version is declared");
 assert.equal(serviceWorker.match(/const ASSET_VERSION = "([^"]+)"/)?.[1], version, "app and service-worker versions stay synchronized");
