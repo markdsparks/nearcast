@@ -1,4 +1,4 @@
-const VERSION = "3.0.353";
+const VERSION = "3.0.354";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -83,6 +83,9 @@ const REVERSE_GEOCODE_TIMEOUT_MS = 3200;
 const FORECAST_FETCH_TIMEOUT_MS = 10000;
 const AIR_QUALITY_FETCH_TIMEOUT_MS = 5500;
 const ALERTS_FETCH_TIMEOUT_MS = 6500;
+const NWS_CONVECTIVE_FETCH_TIMEOUT_MS = 6500;
+const NWS_CONVECTIVE_CACHE_MS = 5 * 60 * 1000;
+const NWS_POINT_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const FORECAST_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const FORECAST_CACHE_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const FORECAST_AUTO_REFRESH_MS = 15 * 60 * 1000;
@@ -576,6 +579,12 @@ const state = {
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
+
+// NWS hourly wording is deliberately kept beside, not inside, the provider
+// forecast. A WeakMap makes the evidence impossible to accidentally borrow for
+// a different place, saved plan, or remote Ask Nearcast answer.
+const nwsConvectiveEvidenceByForecast = new WeakMap();
+let nwsConvectiveProbeSequence = 0;
 
 window.nearcastReactiveSkyEnabled = () => state.reactiveSkyEnabled === true;
 
@@ -2101,6 +2110,46 @@ function hasThunderPotential(rawCode, pop, shownCode, precipAmount = 0, data = s
     ((pop || 0) >= THUNDER_POTENTIAL_POP || Boolean(measured));
 }
 
+function nwsConvectivePeriodForForecast(data = state.forecast, now = forecastNowMs(data)) {
+  const evidence = nwsConvectiveEvidenceByForecast.get(data);
+  if (!evidence?.periods?.length || !Number.isFinite(now)) return null;
+  return evidence.periods.find((period) =>
+    Number.isFinite(period.startMs) && Number.isFinite(period.endMs) &&
+    period.startMs <= now && now < period.endMs
+  ) || null;
+}
+
+function nwsConvectiveEvidenceKey(data = state.forecast) {
+  const evidence = nwsConvectiveEvidenceByForecast.get(data);
+  if (!evidence) return "none";
+  return [evidence.checkedAt || 0, evidence.placeId || "", evidence.periods?.length || 0].join(":");
+}
+
+// An NWS thunder call is useful supporting evidence, but precipitation radar
+// is what ties it to the selected place *right now*. That is strong enough for
+// “likely,” never for “observed”: only a direct lightning feed earns that word.
+function convectiveEvidenceForForecast(data = state.forecast, nowPrecip = null) {
+  const period = nwsConvectivePeriodForForecast(data);
+  if (!period) return null;
+  const radarActive = nowPrecip?.radar?.phase === "active";
+  return {
+    ...period,
+    level: radarActive ? "likely" : "possible",
+    label: radarActive ? "Thunderstorms likely" : "Thunderstorms possible",
+    source: radarActive ? "nws-hourly-radar" : "nws-hourly",
+    basis: radarActive ? "official-forecast-plus-radar" : "official-forecast"
+  };
+}
+
+function convectiveReceiptDetail(convective) {
+  if (!convective) return "";
+  const nwsText = convective.shortForecast || "The National Weather Service forecast";
+  if (convective.level === "likely") {
+    return `${nwsText} calls for thunderstorms this hour, and radar shows precipitation over this place. Lightning itself is not being asserted.`;
+  }
+  return `${nwsText} calls for thunderstorms this hour. Nearcast will elevate this to likely if radar shows precipitation over this place.`;
+}
+
 function dailyConditionLabel(code) {
   if (isThunderCode(code)) return "Storms";
   return weatherCodes[code] || "Weather";
@@ -2228,7 +2277,8 @@ function observedPrecipSummaryLabel(code) {
   return "Rain observed";
 }
 
-function activePrecipSummaryValue(precip, nowPrecip = null) {
+function activePrecipSummaryValue(precip, nowPrecip = null, convective = null) {
+  if (convective?.level === "likely") return convective.label;
   const code = precip?.textCode ?? precip?.visualCode ?? nowPrecip?.code ?? 61;
   const source = precip?.source || nowPrecip?.source || "";
   if (source === "radar-current") return observedPrecipSummaryLabel(code);
@@ -2475,10 +2525,12 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
 
 function weatherTruth(data = state.forecast) {
   const radarSignalKey = radarPrecipSignalKey(radarSignalForForecastData(data));
+  const convectiveKey = nwsConvectiveEvidenceKey(data);
   const evaluationKey = Math.floor(forecastNowMs(data) / FORECAST_CLOCK_BUCKET_MS);
   if (
     state.weatherTruth?.data === data &&
     state.weatherTruth?.radarSignalKey === radarSignalKey &&
+    state.weatherTruth?.convectiveKey === convectiveKey &&
     state.weatherTruth?.evaluationKey === evaluationKey
   ) return state.weatherTruth;
   return buildWeatherTruth(data);
@@ -2489,6 +2541,14 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
   const hourlyPop = display.hourlyIndex >= 0
     ? data?.hourly?.precipitation_probability?.[display.hourlyIndex]
     : null;
+  if (display?.convective?.level === "likely") {
+    return {
+      short: "Thunderstorms likely · NWS + radar",
+      detail: convectiveReceiptDetail(display.convective),
+      source: display.convective.source,
+      confidence: "likely"
+    };
+  }
   if (precipTruth?.phase === "active" || nowPrecip?.isWetNow) {
     const activeLabel = weatherCodes[precipTruth?.visualCode] || precipTruth?.label || label;
     const source = precipTruth?.source === "radar-current"
@@ -2616,7 +2676,7 @@ function updateHeroWeatherIcon(code, isDay) {
 function updateCurrentHourlyWeatherIcon(truth = state.weatherTruth) {
   const icon = els.hourly?.querySelector(".hour-card.current .hour-icon");
   if (!icon || !truth) return;
-  const stormPotential = truth.display?.stormPotential;
+  const stormPotential = truth.display?.stormPotential && !isThunderCode(truth.nowCode ?? truth.code);
   icon.innerHTML = weatherIcon(truth.nowCode ?? truth.code, truth.isDay, { density: "dense" }) +
     (stormPotential ? thunderBadgeHtml() : "");
 }
@@ -2698,6 +2758,18 @@ function buildWeatherTruth(data = state.forecast) {
     };
   }
 
+  const convective = convectiveEvidenceForForecast(data, nowPrecip);
+  if (convective?.level === "likely") {
+    // Rain remains the observed precipitation fact; the current condition can
+    // still express thunder when NWS and radar independently support it.
+    display.code = 95;
+    display.sceneCode = 95;
+    display.nowCode = 95;
+    display.stormPotential = true;
+  } else if (convective?.level === "possible") {
+    display.stormPotential = true;
+  }
+  display.convective = convective;
   display.isDay = currentLocalDaylightIsDay(data, display.isDay);
 
   const receipt = weatherTruthReceipt(display, nowPrecip, data, display.precipTruth);
@@ -2708,11 +2780,12 @@ function buildWeatherTruth(data = state.forecast) {
     code: display.nowCode,
     nowCode: display.nowCode,
     sceneCode: display.sceneCode,
-    label: weatherCodes[display.nowCode] || "Weather",
+    label: convective?.level === "likely" ? convective.label : (weatherCodes[display.nowCode] || "Weather"),
     isDay: display.isDay,
     rainChance: display.precipTruth?.chance ?? (display.pop ?? currentRainChanceFromHourly(data)),
     nowPrecip,
     precip: display.precipTruth,
+    convective,
     confidence: receipt.confidence,
     source: receipt.source,
     receipt: receipt.short,
@@ -2721,6 +2794,7 @@ function buildWeatherTruth(data = state.forecast) {
   };
   truth.radarPrecip = nowPrecip.radar || null;
   truth.radarSignalKey = radarSignalKey;
+  truth.convectiveKey = nwsConvectiveEvidenceKey(data);
   truth.evaluationKey = Math.floor(forecastNowMs(data) / FORECAST_CLOCK_BUCKET_MS);
   truth.surfaceDetail = weatherTruthSurfaceDetail(truth);
   return truth;
@@ -2812,7 +2886,9 @@ function forecastHourPresentation(data, index, options = {}) {
     ms: h.time?.[index] ? parseForecastTimestamp(h.time[index], data) : null,
     rawCode,
     code,
-    label: weatherCodes[code] || "Weather",
+    label: isCurrent && truth?.convective?.level === "likely"
+      ? truth.convective.label
+      : (weatherCodes[code] || "Weather"),
     storyLabel: forecastStoryCondition(code),
     family,
     precipKind: precipKindFromCode(code),
@@ -2820,7 +2896,7 @@ function forecastHourPresentation(data, index, options = {}) {
     precip: Math.max(0, Number(precip) || 0),
     precipPrimary: isCurrent && truth ? truth.precip?.phase === "active" : profile.primary,
     stormPotential: isCurrent && truth
-      ? Boolean(truth.display?.stormPotential)
+      ? Boolean(truth.display?.stormPotential || truth.convective)
       : hasThunderPotential(rawCode, pop, code, precip, data),
     temperature,
     feels,
@@ -7709,6 +7785,8 @@ function warmStartForecast(place) {
       cacheFallback: false,
       reason: ""
     }), normalized, { refreshMap: false });
+    startRadarPrecipProbe(normalized, cached.data);
+    startNwsConvectiveProbe(normalized, cached.data);
     setLoadingStatus("");
     return true;
   } catch {
@@ -7753,6 +7831,7 @@ async function loadPlace(place, force = false) {
     clearForecastLaunchLoading();
     renderForecast(data, nextPlace);
     startRadarPrecipProbe(nextPlace, data, force);
+    startNwsConvectiveProbe(nextPlace, data, force);
     setStatus("");
     lastLoadedAt = Date.now();
     lastLoadUsedForecastFallback = forecastUsedCacheFallback(data);
@@ -7775,6 +7854,7 @@ async function loadPlace(place, force = false) {
       });
       setAlertsLoading(previousPlace);
       startRadarPrecipProbe(previousPlace, previousForecast, true);
+      startNwsConvectiveProbe(previousPlace, previousForecast, true);
       setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
     } else {
       clearForecastLaunchLoading();
@@ -9194,7 +9274,10 @@ function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)
   const conditionSentence = forecastTransitionSentence(data, segments, periodLabel);
   const precipWindow = forecastStoryPrecipWindow(data, indices);
   const precipitationSentence = forecastPrecipStorySentence(data, precipWindow);
-  let text = [conditionSentence, precipitationSentence, temperatureSentence].filter(Boolean).join(" ");
+  const convectiveSentence = truth.convective?.level === "likely"
+    ? "Thunderstorms are likely now."
+    : "";
+  let text = [convectiveSentence, conditionSentence, precipitationSentence, temperatureSentence].filter(Boolean).join(" ");
 
   const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 12);
   const gust = gustIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m?.[gustIndex] || 0) : 0;
@@ -12299,12 +12382,12 @@ function launchSummaryItems(data, tempUnit, windUnit, truth = weatherTruth(data)
   });
   const activePrecip = precip.phase === "active";
   const nowValue = activePrecip
-    ? activePrecipSummaryValue(precip, nowPrecip)
+    ? activePrecipSummaryValue(precip, nowPrecip, truth.convective)
     : `${comfort} · feels ${feels}${degree(tempUnit)}`;
   const now = {
     label: "Now",
     value: nowValue,
-    tone: activePrecip ? (nowPrecip.isSnow ? "snow" : "rain") : "now",
+    tone: truth.convective?.level === "likely" ? "storm" : activePrecip ? (nowPrecip.isSnow ? "snow" : "rain") : "now",
     receipt: truth.surfaceDetail || truth.receiptDetail || truth.receipt,
     target: launchDetailTarget(
       data,
@@ -12777,7 +12860,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
   const ncConflicts = nowcastConflictsWithActivePrecip(nc, truth);
   let nowcast;
   if (truth?.nowPrecip?.isWetNow && (!nc || ncConflicts)) {
-    nowcast = `${activePrecipSummaryValue(truth.precip, truth.nowPrecip)}. ${truth.receiptDetail || truth.receipt || ""}`.trim();
+    nowcast = `${activePrecipSummaryValue(truth.precip, truth.nowPrecip, truth.convective)}. ${truth.receiptDetail || truth.receipt || ""}`.trim();
   } else if (nc) {
     nowcast = nc.headline;
   } else if (truth?.precip?.phase === "dry") {
@@ -13304,7 +13387,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const measuredWet = position === 0
       ? nowPrecipPhase === "active"
       : precipProfile.primary && precipProfile.amountSupported;
-    const code = weatherCodes[wcode] || "Weather";
+    const code = position === 0 && truth.convective?.level === "likely"
+      ? truth.convective.label
+      : (weatherCodes[wcode] || "Weather");
     const isHourDay = position === 0 ? truth.isDay : (data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true);
     const currentSnapshot = position === 0 ? (truth.current || canonicalCurrentSnapshot(data)) : null;
     const temp = Math.round(position === 0
@@ -13316,7 +13401,8 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       : data.hourly.wind_gusts_10m?.[index];
     const gust = Math.max(0, Math.round(Number(gustSource) || 0));
     const label = position === 0 ? "Now" : formatHour(time);
-    const title = stormPotential ? `${code}; thunder possible` : code;
+    const showStormPotentialBadge = stormPotential && !isThunderCode(wcode);
+    const title = showStormPotentialBadge ? `${code}; thunder possible` : code;
     const rainChance = Math.max(0, Math.min(100, Math.round(Number(rain) || 0)));
     const hasRainChance = rainChance > 0;
     const rainIsEmphasized = measuredWet || nowPrecipPhase === "imminent" || rainChance >= 20;
@@ -13340,10 +13426,10 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const isStoryFocus = index === storyFocusIndex && position > 0;
     const cardLabel = `${label}: ${code}, ${presentation.aria}${presentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
     return `
-      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${stormPotential ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
+      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
-        <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${stormPotential ? thunderBadgeHtml() : ""}</div>
+        <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml() : ""}</div>
         <strong class="hour-temp hour-trend-value"${temperatureColorStyle}>${presentation.trendLabel}</strong>
         <span class="hour-condition">${escapeHtml(code)}</span>
         <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${presentation.secondary}</span>
@@ -13934,7 +14020,7 @@ function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(da
   const precipUnit = data.current_units?.precipitation || data.hourly_units?.precipitation || (state.unit === "fahrenheit" ? "in" : "mm");
   const amount = Math.max(Number(data.current?.precipitation || 0), Number(truth.nowPrecip?.amount || 0));
   const nowLabel = precip.phase === "active"
-    ? activePrecipSummaryValue(precip, truth.nowPrecip)
+    ? activePrecipSummaryValue(precip, truth.nowPrecip, truth.convective)
     : precip.phase === "nearby" ? `${precip.label || "Rain"} nearby`
       : precip.phase === "imminent" ? `${precip.label || "Rain"} soon`
         : amount > 0 ? `${truth.label || "Precipitation"} now` : "Dry here";
@@ -14071,6 +14157,8 @@ function buildAirGlanceDetail(data) {
 
 function weatherSourceLabel(source) {
   const value = String(source || "").toLowerCase();
+  if (value.includes("nws-hourly-radar")) return "NWS + radar";
+  if (value.includes("nws")) return "NWS forecast";
   if (value.includes("radar")) return "Observed radar";
   if (value.includes("minutely") || value.includes("15-minute")) return "15-minute forecast";
   if (value.includes("current")) return "Current forecast";
@@ -14724,6 +14812,93 @@ async function fetchAlerts(place) {
     .sort((a, b) => alertPriority(b) - alertPriority(a));
   sessionStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: alerts }));
   return alerts;
+}
+
+function nwsConvectiveCacheKey(place) {
+  return `nws-convective:${Number(place.latitude).toFixed(3)}:${Number(place.longitude).toFixed(3)}`;
+}
+
+function readNwsConvectiveCache(key, maxAge) {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (cached && Date.now() - Number(cached.savedAt || 0) < maxAge) return cached.data || null;
+  } catch {
+    // The NWS signal is helpful enrichment; a cache failure must stay quiet.
+  }
+  return null;
+}
+
+function saveNwsConvectiveCache(key, data) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // Forecast rendering does not depend on local storage availability.
+  }
+}
+
+function nwsPeriodCallsForThunder(period) {
+  const text = [period?.shortForecast, period?.detailedForecast, period?.icon].join(" ");
+  return /\bthunderstorms?\b|\bt-?storms?\b|\btsra\b/i.test(text);
+}
+
+function normalizeNwsConvectiveEvidence(json, place) {
+  const periods = (json?.properties?.periods || [])
+    .filter(nwsPeriodCallsForThunder)
+    .map((period) => ({
+      startMs: new Date(period.startTime).getTime(),
+      endMs: new Date(period.endTime).getTime(),
+      shortForecast: String(period.shortForecast || "Thunderstorms"),
+      probability: Number(period.probabilityOfPrecipitation?.value || 0)
+    }))
+    .filter((period) => Number.isFinite(period.startMs) && Number.isFinite(period.endMs) && period.endMs > period.startMs);
+  return { placeId: place.id, checkedAt: Date.now(), periods };
+}
+
+async function fetchNwsConvectiveEvidence(place, force = false) {
+  if (!placeSupportsNwsAlerts(place)) return { placeId: place?.id || "", checkedAt: Date.now(), periods: [] };
+  const hourlyKey = nwsConvectiveCacheKey(place);
+  const cached = !force ? readNwsConvectiveCache(hourlyKey, NWS_CONVECTIVE_CACHE_MS) : null;
+  if (cached) return { ...cached, placeId: place.id };
+
+  const pointKey = `${hourlyKey}:point`;
+  let point = readNwsConvectiveCache(pointKey, NWS_POINT_CACHE_MS);
+  if (!point) {
+    const pointUrl = `https://api.weather.gov/points/${Number(place.latitude).toFixed(4)},${Number(place.longitude).toFixed(4)}`;
+    point = await fetchJsonWithTimeout(pointUrl, NWS_CONVECTIVE_FETCH_TIMEOUT_MS, null, {
+      headers: { Accept: "application/geo+json" }
+    });
+    saveNwsConvectiveCache(pointKey, point);
+  }
+
+  const hourlyUrl = String(point?.properties?.forecastHourly || "");
+  if (!/^https:\/\/api\.weather\.gov\//.test(hourlyUrl)) throw new Error("NWS hourly forecast unavailable.");
+  const hourly = await fetchJsonWithTimeout(hourlyUrl, NWS_CONVECTIVE_FETCH_TIMEOUT_MS, null, {
+    headers: { Accept: "application/geo+json" }
+  });
+  const evidence = normalizeNwsConvectiveEvidence(hourly, place);
+  saveNwsConvectiveCache(hourlyKey, evidence);
+  return evidence;
+}
+
+async function startNwsConvectiveProbe(place, data, force = false) {
+  if (!place || !data || !placeSupportsNwsAlerts(place)) return;
+  const sequence = ++nwsConvectiveProbeSequence;
+  try {
+    const evidence = await fetchNwsConvectiveEvidence(place, force);
+    if (
+      sequence !== nwsConvectiveProbeSequence ||
+      state.forecast !== data ||
+      state.activePlace?.id !== place.id
+    ) return;
+    nwsConvectiveEvidenceByForecast.set(data, evidence);
+    state.weatherTruth = null;
+    renderForecast(data, place, {
+      skip: ["daily", "map", "continuity"],
+      reason: "nws-convective"
+    });
+  } catch {
+    // NWS wording augments the core forecast; it never blocks the weather app.
+  }
 }
 
 function alertSeverityClass(severity) {

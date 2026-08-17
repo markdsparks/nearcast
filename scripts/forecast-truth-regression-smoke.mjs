@@ -160,6 +160,7 @@ const receipt = contextWith(`
     73: "Snow", 75: "Heavy snow", 95: "Thunderstorms", 10001: "Rain likely"
   };
   ${extractFunction(app, "isPrecipCode")}
+  ${extractFunction(app, "convectiveReceiptDetail")}
   ${extractFunction(app, "weatherTruthReceipt")}
   globalThis.subject = weatherTruthReceipt;
 `).subject;
@@ -172,6 +173,37 @@ sourceTaxonomyFixtures.forEach((fixture) => {
     assert.equal(value.confidence, fixture.expected.confidence);
     assert.match(value.short, fixture.expected.short);
   });
+});
+
+const nws = contextWith(`
+  ${extractFunction(app, "nwsPeriodCallsForThunder")}
+  ${extractFunction(app, "normalizeNwsConvectiveEvidence")}
+  globalThis.subject = { nwsPeriodCallsForThunder, normalizeNwsConvectiveEvidence };
+`).subject;
+
+check("NWS convective parsing accepts TSRA wording and ignores ordinary rain", () => {
+  const evidence = nws.normalizeNwsConvectiveEvidence({
+    properties: {
+      periods: [
+        {
+          startTime: "2026-08-17T00:00:00-05:00",
+          endTime: "2026-08-17T01:00:00-05:00",
+          shortForecast: "Showers And Thunderstorms",
+          probabilityOfPrecipitation: { value: 80 }
+        },
+        {
+          startTime: "2026-08-17T01:00:00-05:00",
+          endTime: "2026-08-17T02:00:00-05:00",
+          shortForecast: "Heavy Rain",
+          probabilityOfPrecipitation: { value: 80 }
+        }
+      ]
+    }
+  }, { id: "maryville" });
+  assert.equal(evidence.placeId, "maryville");
+  assert.equal(evidence.periods.length, 1);
+  assert.equal(evidence.periods[0].probability, 80);
+  assert.equal(nws.nwsPeriodCallsForThunder({ icon: "https://api.weather.gov/icons/land/night/tsra,60" }), true);
 });
 
 const story = contextWith(`
@@ -337,6 +369,7 @@ const placeTruth = contextWith(`
     activePlace: null,
     radarPrecipSignal: null
   };
+  const nwsConvectiveEvidenceByForecast = new WeakMap();
   const activeAlerts = [];
   const alertTrustState = { state: "ready" };
   function currentRadarPrecipSignal() { return state.radarPrecipSignal; }
@@ -401,6 +434,9 @@ const placeTruth = contextWith(`
   ${extractFunction(app, "activePrecipSummaryValue")}
   ${extractFunction(app, "nowcastConflictsWithActivePrecip")}
   ${extractFunction(app, "radarSignalForForecastData")}
+  ${extractFunction(app, "nwsConvectivePeriodForForecast")}
+  ${extractFunction(app, "nwsConvectiveEvidenceKey")}
+  ${extractFunction(app, "convectiveEvidenceForForecast")}
   ${extractFunction(app, "applyRadarPrecipSignal")}
   ${extractFunction(app, "buildWeatherTruth")}
   ${extractFunction(app, "buildAIContext")}
@@ -410,7 +446,8 @@ const placeTruth = contextWith(`
     state.radarPrecipSignal = activeRadar;
     state.weatherTruth = activeTruth;
   }
-  globalThis.subject = { radarSignalForForecastData, buildWeatherTruth, buildAIContext, configure };
+  function setNwsEvidence(data, evidence) { nwsConvectiveEvidenceByForecast.set(data, evidence); }
+  globalThis.subject = { radarSignalForForecastData, buildWeatherTruth, buildAIContext, configure, setNwsEvidence };
 `).subject;
 
 check("active-place radar cannot leak into a remote AI or plan forecast context", () => {
@@ -457,6 +494,30 @@ check("AI nowcast copy cannot say dry while canonical truth says precipitation i
   const context = placeTruth.buildAIContext(data, structuredClone(activePrecipAiFixture.place), []);
   assert.match(context.nowcast, activePrecipAiFixture.expected.nowcast);
   assert.doesNotMatch(context.nowcast, activePrecipAiFixture.expected.excludes);
+});
+
+check("NWS thunder wording plus active radar elevates rain to thunderstorms likely", () => {
+  const data = structuredClone(crossPlaceTruthFixture.remoteForecast);
+  const place = { id: "maryville", name: "Maryville" };
+  placeTruth.configure(data, place, {
+    phase: "active",
+    intensity: "moderate",
+    placeId: place.id
+  }, null);
+  placeTruth.setNwsEvidence(data, {
+    placeId: place.id,
+    checkedAt: Date.UTC(2026, 7, 14, 14, 0, 0),
+    periods: [{
+      startMs: Date.UTC(2026, 7, 14, 13, 0, 0),
+      endMs: Date.UTC(2026, 7, 14, 15, 0, 0),
+      shortForecast: "Showers And Thunderstorms"
+    }]
+  });
+  const truth = placeTruth.buildWeatherTruth(data);
+  assert.equal(truth.nowCode, 95);
+  assert.equal(truth.label, "Thunderstorms likely");
+  assert.equal(truth.convective.level, "likely");
+  assert.equal(truth.precip.source, "radar-current");
 });
 
 const focus = contextWith(`

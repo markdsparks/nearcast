@@ -39,6 +39,29 @@ export const hourBoundaryFixtures = [
 
 export const sourceTaxonomyFixtures = [
   {
+    name: "NWS thunder wording plus active radar is likely, not observed lightning",
+    display: {
+      code: 95,
+      rawCode: 61,
+      pop: 80,
+      hourlyIndex: 0,
+      convective: {
+        level: "likely",
+        source: "nws-hourly-radar",
+        shortForecast: "Showers And Thunderstorms"
+      }
+    },
+    nowPrecip: { isWetNow: true },
+    precipTruth: {
+      phase: "active",
+      visualCode: 61,
+      label: "Light rain",
+      source: "radar-current",
+      confidence: "observed"
+    },
+    expected: { source: "nws-hourly-radar", confidence: "likely", short: /thunderstorms likely.*nws.*radar/i }
+  },
+  {
     name: "radar-observed rain outranks the model",
     display: { code: 61, rawCode: 3, pop: 8, hourlyIndex: 0 },
     nowPrecip: { isWetNow: true },
