@@ -324,7 +324,9 @@ const stormPlaybackSource = extractFunction(map, "setXweatherStormTimelinePlayin
 assert.match(stormPlaybackSource, /hideTimelineTimeBubble\(true\)/, "StormScope playback shares the uncluttered persistent readout behavior");
 const stormTimelineSource = extractFunction(map, "syncXweatherStormTimelineHud");
 assert.match(stormTimelineSource, /aria-valuetext/, "StormScope replaces stale standard-radar speech with its selected source and time");
-assert.match(styles, /\.imm-timeline\s*\{[\s\S]{0,700}?background:\s*rgba\(8, 16, 25, 0\.82\)/, "the Time Lens remains readable over intense radar colors");
+assert.match(styles, /\.imm-timeline\s*\{[\s\S]{0,1200}?linear-gradient\(145deg,[\s\S]{0,500}?backdrop-filter:\s*blur\(28px\)\s+saturate\(1\.38\)/, "the Time Lens uses a legible translucent glass treatment over radar colors");
+assert.match(styles, /\.imm-timeline::after\s*\{[\s\S]{0,500}?linear-gradient\(132deg,[\s\S]{0,500}?pointer-events:\s*none/, "the Time Lens glass highlight adds depth without intercepting touch");
+assert.match(styles, /@media \(prefers-reduced-transparency:\s*reduce\)[\s\S]{0,500}?\.imm-timeline[\s\S]{0,200}?background:\s*#0b1721/, "the Time Lens retains an opaque accessibility fallback");
 assert.match(styles, /\.timeline-markers\s*\{[\s\S]{0,400}?pointer-events:\s*none/, "timeline labels stay inert so the whole drag lane remains available");
 assert.match(styles, /\.imm-timeline input\[type="range"\][\s\S]{0,200}?height:\s*48px/, "the visual rail retains a generous touch lane");
 
