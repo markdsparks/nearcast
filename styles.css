@@ -10047,7 +10047,7 @@ body.map-immersive-active .app-dock {
 .imm-attribution {
   position: absolute;
   left: max(calc(var(--imm-bottom-x) + 16px), calc(50% - 294px));
-  bottom: calc(var(--imm-rail-bottom) + 59px);
+  bottom: calc(var(--imm-rail-bottom) + 8px);
   z-index: 21;
   width: 44px;
   height: 44px;
@@ -10140,6 +10140,10 @@ body.map-immersive-active .app-dock {
   right: var(--imm-bottom-x);
   left: auto;
   bottom: var(--imm-rail-bottom);
+}
+
+.immersive-map.is-satellite-mode .imm-bottom-hud {
+  bottom: calc(var(--imm-rail-bottom) + 51px);
 }
 
 .immersive-map.is-satellite-mode .imm-credit-panel {
@@ -10896,7 +10900,7 @@ body.map-immersive-active #mapLegend {
   position: absolute;
   left: var(--imm-bottom-x);
   right: var(--imm-bottom-x);
-  bottom: calc(var(--imm-rail-bottom) + 51px);
+  bottom: var(--imm-rail-bottom);
   z-index: 20;
   display: grid;
   gap: 7px;
@@ -13230,6 +13234,10 @@ body.map-immersive-active #mapLegend {
   .imm-bottom-hud {
     gap: 5px;
     top: auto;
+    bottom: var(--imm-rail-bottom);
+  }
+
+  .immersive-map.is-satellite-mode .imm-bottom-hud {
     bottom: calc(var(--imm-rail-bottom) + 49px);
   }
 

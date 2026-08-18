@@ -330,11 +330,14 @@ assert.match(styles, /@media \(prefers-reduced-transparency:\s*reduce\)[\s\S]{0,
 assert.match(html, /class="imm-attribution"[\s\S]{0,500}?id="immCreditToggle"[\s\S]{0,500}?aria-controls="immCreditPanel"[\s\S]{0,500}?class="sr-only">Sources<\/span>[\s\S]{0,500}?role="region"[\s\S]{0,500}?id="immCredit"/, "immersive attribution remains an accessible icon-only disclosure");
 assert.doesNotMatch(html, /id="immCreditToggle"[^>]*aria-haspopup=/, "the auto-revealed source disclosure does not claim modal dialog behavior");
 assert.match(styles, /\.imm-attribution\s*\{[\s\S]{0,400}?position:\s*absolute[\s\S]{0,300}?left:\s*max\(calc\(var\(--imm-bottom-x\) \+ 16px\), calc\(50% - 294px\)\)[\s\S]{0,300}?height:\s*44px/, "the source icon overlays the scrubber's unused lower-left corner without entering layout");
+assert.match(styles, /\.imm-attribution\s*\{[\s\S]{0,400}?bottom:\s*calc\(var\(--imm-rail-bottom\) \+ 8px\)/, "the source icon follows the lowered scrubber while remaining inside its glass card");
 assert.match(styles, /\.imm-credit-toggle\s*\{[\s\S]{0,300}?width:\s*44px[\s\S]{0,100}?height:\s*44px[\s\S]{0,500}?background:\s*transparent/, "the muted source glyph retains a full 44px touch target without a large visible pill");
 assert.match(styles, /\.immersive-map\.is-satellite-mode \.imm-attribution\s*\{[\s\S]{0,250}?right:\s*var\(--imm-bottom-x\)[\s\S]{0,200}?bottom:\s*var\(--imm-rail-bottom\)/, "satellite mode keeps source attribution available when the timeline is hidden");
+assert.match(styles, /\.immersive-map\.is-satellite-mode \.imm-bottom-hud\s*\{[\s\S]{0,150}?bottom:\s*calc\(var\(--imm-rail-bottom\) \+ 51px\)/, "satellite mode retains separation between its status card and standalone source control");
 assert.match(styles, /\.imm-credit-panel\s*\{[\s\S]{0,300}?position:\s*absolute/, "expanded attribution overlays the map instead of moving the timeline");
 assert.match(map, /showImmersiveMapCreditBriefly\(\)[\s\S]{0,500}?IMMERSIVE_CREDIT_AUTO_HIDE_MS/, "full source attribution appears briefly before collapsing to the fixed indicator");
 assert.match(map, /slider\.onpointerdown\s*=\s*\(\)\s*=>\s*\{\s*closeImmersiveMapCredit\(\)/, "starting a timeline scrub clears the attribution overlay");
+assert.match(styles, /\.imm-bottom-hud\s*\{[\s\S]{0,300}?bottom:\s*var\(--imm-rail-bottom\)/, "the scrubber uses the safe-area rail directly without reserving space for an external attribution pill");
 assert.match(styles, /\.timeline-markers\s*\{[\s\S]{0,400}?pointer-events:\s*none/, "timeline labels stay inert so the whole drag lane remains available");
 assert.match(styles, /\.imm-timeline input\[type="range"\][\s\S]{0,200}?height:\s*48px/, "the visual rail retains a generous touch lane");
 
