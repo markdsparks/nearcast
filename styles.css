@@ -10041,51 +10041,69 @@ body.map-immersive-active .app-dock {
   height: 16px;
 }
 
-/* Attribution uses a fixed map overlay, so provider names can change across the
-   radar/forecast seam without moving the bottom-anchored timeline. */
+/* Attribution remains outside the scrubber layout, but its quiet icon is
+   visually tucked into the scrubber's unused lower-left corner. Provider copy
+   stays in an overlay and can never resize or move the timeline. */
 .imm-attribution {
   position: absolute;
-  right: var(--imm-bottom-x);
-  bottom: var(--imm-rail-bottom);
+  left: max(calc(var(--imm-bottom-x) + 16px), calc(50% - 294px));
+  bottom: calc(var(--imm-rail-bottom) + 59px);
   z-index: 21;
-  width: max-content;
+  width: 44px;
   height: 44px;
   pointer-events: auto;
 }
 
 .imm-credit-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 999px;
-  background: rgba(8, 16, 25, 0.56);
-  color: rgba(255, 255, 255, 0.9);
-  box-shadow:
-    0 10px 26px rgba(2, 7, 13, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  font-size: 0.64rem;
-  font-weight: 880;
-  line-height: 1;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(226, 240, 249, 0.58);
+  box-shadow: none;
   cursor: pointer;
-  backdrop-filter: blur(16px) saturate(1.24);
-  -webkit-backdrop-filter: blur(16px) saturate(1.24);
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.imm-credit-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
 }
 
 .imm-credit-toggle svg {
+  position: relative;
+  z-index: 1;
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
 }
 
 .imm-credit-toggle[aria-expanded="true"] {
-  border-color: rgba(143, 211, 255, 0.44);
-  background: rgba(24, 54, 78, 0.76);
-  color: #fff;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.imm-credit-toggle[aria-expanded="true"]::before {
+  border-color: rgba(143, 211, 255, 0.34);
+  background: rgba(70, 146, 199, 0.18);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .imm-credit-toggle:hover {
+    color: rgba(255, 255, 255, 0.86);
+  }
 }
 
 .imm-credit-toggle:active {
@@ -10099,11 +10117,11 @@ body.map-immersive-active .app-dock {
 
 .imm-credit-panel {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 154px);
+  left: 0;
+  bottom: calc(100% + 84px);
   display: grid;
   gap: 6px;
-  width: min(330px, calc(100vw - (var(--imm-bottom-x) * 2)));
+  width: min(330px, calc(100vw - (var(--imm-bottom-x) * 2) - 16px));
   max-height: min(220px, 34vh);
   padding: 11px 13px 12px;
   overflow: auto;
@@ -10116,6 +10134,18 @@ body.map-immersive-active .app-dock {
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(22px) saturate(1.2);
   -webkit-backdrop-filter: blur(22px) saturate(1.2);
+}
+
+.immersive-map.is-satellite-mode .imm-attribution {
+  right: var(--imm-bottom-x);
+  left: auto;
+  bottom: var(--imm-rail-bottom);
+}
+
+.immersive-map.is-satellite-mode .imm-credit-panel {
+  right: 0;
+  left: auto;
+  bottom: calc(100% + 8px);
 }
 
 .imm-credit-panel[hidden] {
@@ -13249,20 +13279,13 @@ body.map-immersive-active #mapLegend {
     height: 104px;
   }
 
-  .imm-attribution {
-    height: 42px;
-  }
-
-  .imm-credit-toggle {
-    min-width: 42px;
-    min-height: 42px;
-    padding-inline: 11px;
-    font-size: 0.6rem;
-  }
-
   .imm-credit-panel {
-    bottom: calc(100% + 148px);
-    width: min(310px, calc(100vw - (var(--imm-bottom-x) * 2)));
+    bottom: calc(100% + 84px);
+    width: min(310px, calc(100vw - (var(--imm-bottom-x) * 2) - 16px));
+  }
+
+  .immersive-map.is-satellite-mode .imm-credit-panel {
+    bottom: calc(100% + 8px);
   }
 
   .immersive-map .legend-labels {
