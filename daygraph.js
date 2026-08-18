@@ -87,12 +87,24 @@ function rollingWindowRangeLabel(rows, allRows, data) {
   return `${start.dayLabel} ${start.timeLabel}-${end.dayLabel} ${end.timeLabel}`;
 }
 
+function rollingWindowBlockForEvent(rows, eventWindow) {
+  const startMs = Number(eventWindow?.startMs);
+  const endMs = Number(eventWindow?.endMs);
+  if (!Number.isFinite(startMs)) return 0;
+  const position = rows.findIndex((row) => (
+    row.ms >= startMs && (!Number.isFinite(endMs) || row.ms < endMs)
+  ));
+  return position >= 0 ? Math.floor(position / ROLLING_HOURLY_PAGE_SIZE) : 0;
+}
+
 function openNext24Detail(options = {}) {
   const data = state.forecast;
   if (!data) return;
-  const { eventWindow = null, contextLabel = "", block = 0 } = options || {};
-  const safeBlock = Math.max(0, Math.floor(Number(block) || 0));
+  const { eventWindow = null, contextLabel = "", block = null } = options || {};
   const rows = rollingHourlyRows(data);
+  const safeBlock = block === null || block === undefined
+    ? rollingWindowBlockForEvent(rows, eventWindow)
+    : Math.max(0, Math.floor(Number(block) || 0));
   const start = safeBlock * 24;
   const windowRows = rows.slice(start, start + 24);
   const nextCount = Math.min(start + ROLLING_HOURLY_PAGE_SIZE, rows.length);

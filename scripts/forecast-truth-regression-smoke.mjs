@@ -176,6 +176,18 @@ sourceTaxonomyFixtures.forEach((fixture) => {
   });
 });
 
+check("the Now receipt names the same canonical condition as the hero and hourly row", () => {
+  const value = receipt(
+    { code: 2, nowCode: 3, rawCode: 2, hourlyIndex: 0, pop: 0 },
+    { isWetNow: false },
+    { hourly: { precipitation_probability: [0] } },
+    { phase: "dry", source: "dry" }
+  );
+  assert.match(value.short, /^Cloudy\b/);
+  assert.match(value.detail, /showing cloudy/i);
+  assert.doesNotMatch(value.detail, /partly cloudy/i);
+});
+
 const nws = contextWith(`
   ${extractFunction(app, "nwsPeriodCallsForThunder")}
   ${extractFunction(app, "normalizeNwsConvectiveEvidence")}
@@ -295,6 +307,7 @@ const story = contextWith(`
   ${extractFunction(app, "formatForecastMs")}
   ${extractFunction(app, "forecastStoryIndices")}
   ${extractFunction(app, "forecastStoryPrecipWindow")}
+  ${extractFunction(app, "forecastStoryTransitionSegment")}
   ${extractFunction(app, "forecastTransitionSentence")}
   ${extractFunction(app, "forecastPrecipStorySentence")}
   ${extractFunction(app, "buildForecastStory")}
@@ -625,6 +638,7 @@ const trust = contextWith(`
   ${extractFunction(app, "radarSignalForForecastData")}
   ${extractFunction(app, "forecastProvenance")}
   ${extractFunction(app, "forecastAgeLabel")}
+  ${extractFunction(app, "nearcastEvidencePresentation")}
   ${extractFunction(app, "forecastTrustPresentation")}
   ${extractFunction(app, "markForecastProvenance")}
   ${extractFunction(app, "markForecastCacheFallback")}
@@ -643,6 +657,7 @@ check("stale fallback has a persistent user-facing freshness presenter", () => {
   assert.equal(value.tone, staleCacheFixture.expected.tone);
   assert.match(value.headline, staleCacheFixture.expected.headline);
   assert.match(value.trigger, staleCacheFixture.expected.trigger);
+  assert.match(value.triggerMeta, staleCacheFixture.expected.triggerMeta);
   assert.match(value.freshness, staleCacheFixture.expected.freshness);
   assert.match(html, /id="forecastReceiptTrigger"/);
   assert.match(html, /id="forecastReceiptFreshness"/);

@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.363">
-    <link rel="manifest" href="manifest.json?v=3.0.363">
+    <link rel="stylesheet" href="styles.css?v=3.0.364">
+    <link rel="manifest" href="manifest.json?v=3.0.364">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.363">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.363">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.364">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.364">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -255,7 +255,7 @@
       <section class="status" id="status" hidden></section>
 
       <div id="forecastView">
-        <section class="launch-stage">
+        <section class="launch-stage nearcast-brief" id="nearcastBrief" aria-label="Current weather briefing">
           <div class="sr-only" id="alertAnnouncement" role="alert" aria-live="assertive" aria-atomic="true"></div>
           <div class="launch-place-row">
             <button class="launch-location" id="launchPlaceButton" type="button" aria-label="Open saved places">
@@ -281,6 +281,7 @@
             aria-expanded="false"
             hidden
           >
+            <span class="forecast-receipt-trigger-label" aria-hidden="true">Evidence</span>
             <span class="forecast-receipt-trigger-dot" data-forecast-receipt-indicator aria-hidden="true"></span>
             <span class="forecast-receipt-trigger-copy">
               <strong id="forecastReceiptStatus">Forecast checked</strong>
@@ -337,6 +338,10 @@
             <div class="glance-head">
               <p class="glance-kicker" id="glanceKicker">Coming up</p>
               <p class="glance-title" id="glanceTitle">Forecast is loading.</p>
+              <button class="nearcast-brief-jump" id="nearcastBriefJump" type="button" aria-haspopup="dialog" aria-controls="dayDetail" hidden>
+                <span id="nearcastBriefJumpLabel">See it in the hourly</span>
+                <i aria-hidden="true">→</i>
+              </button>
             </div>
             <button class="forecast-pulse" id="forecastPulse" type="button" data-tone="steady" aria-haspopup="dialog" aria-controls="forecastReceiptSheet" hidden>
               <span class="forecast-pulse-mark" aria-hidden="true"></span>
@@ -1124,17 +1129,17 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.363"></script>
-    <script src="planner.js?v=3.0.363"></script>
-    <script src="app.js?v=3.0.363"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.363"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.363"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.363"></script>
-    <script src="radar-seam-engine.js?v=3.0.363"></script>
-    <script src="raw-map-runtime.js?v=3.0.363"></script>
-    <script src="map.js?v=3.0.363"></script>
-    <script src="sky.js?v=3.0.363"></script>
-    <script src="daygraph.js?v=3.0.363"></script>
-    <script src="boot.js?v=3.0.363"></script>
+    <script src="weather-truth.js?v=3.0.364"></script>
+    <script src="planner.js?v=3.0.364"></script>
+    <script src="app.js?v=3.0.364"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.364"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.364"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.364"></script>
+    <script src="radar-seam-engine.js?v=3.0.364"></script>
+    <script src="raw-map-runtime.js?v=3.0.364"></script>
+    <script src="map.js?v=3.0.364"></script>
+    <script src="sky.js?v=3.0.364"></script>
+    <script src="daygraph.js?v=3.0.364"></script>
+    <script src="boot.js?v=3.0.364"></script>
   </body>
 </html>

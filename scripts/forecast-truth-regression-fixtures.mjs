@@ -397,6 +397,7 @@ export const staleCacheFixture = {
     tone: "stale",
     headline: /Using an older saved forecast/i,
     trigger: /Using saved forecast/i,
+    triggerMeta: /3 hrs ago/i,
     freshness: /Checked 3 hrs ago/i
   }
 };

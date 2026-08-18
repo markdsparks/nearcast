@@ -1,4 +1,4 @@
-const VERSION = "3.0.363";
+const VERSION = "3.0.364";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -138,6 +138,7 @@ const PRODUCT_EVENT_MAX_TOTAL_COUNT = 100;
 let productEventBatch = {};
 let productEventFlushTimer = 0;
 let productEventFlushPromise = null;
+let nearcastBriefJumpTarget = null;
 
 const WELCOME_WORLD_SKY_PLACES = [
   { id: "paris", name: "Paris", country: "France", countryCode: "FR", latitude: 48.8566, longitude: 2.3522 },
@@ -1444,6 +1445,8 @@ const els = {
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceKicker: document.querySelector("#glanceKicker"),
+  nearcastBriefJump: document.querySelector("#nearcastBriefJump"),
+  nearcastBriefJumpLabel: document.querySelector("#nearcastBriefJumpLabel"),
   forecastPulse: document.querySelector("#forecastPulse"),
   forecastPulseLabel: document.querySelector("#forecastPulseLabel"),
   forecastPulseMeta: document.querySelector("#forecastPulseMeta"),
@@ -2363,6 +2366,7 @@ function activePrecipSummaryValue(precip, nowPrecip = null, convective = null) {
   const source = precip?.source || nowPrecip?.source || "";
   if (source === "radar-current") return observedPrecipSummaryLabel(code);
   const label = precip?.label || weatherCodes[code] || (isSnowCode(code) ? "Snow" : "Rain");
+  if (["modeled-current", "modeled-15-minute"].includes(source)) return `${label} indicated now`;
   return `${label} now`;
 }
 
@@ -2617,7 +2621,7 @@ function weatherTruth(data = state.forecast) {
 }
 
 function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTruth = display?.precipTruth) {
-  const label = weatherCodes[display.code] || "Weather";
+  const label = weatherCodes[display.nowCode ?? display.code] || "Weather";
   const hourlyPop = display.hourlyIndex >= 0
     ? data?.hourly?.precipitation_probability?.[display.hourlyIndex]
     : null;
@@ -3018,10 +3022,14 @@ function dailyRelevantHourlyIndices(data, dayIndex, options = {}) {
   return (waking.length ? waking : remaining).map((row) => row.index);
 }
 
-function collapseForecastSegments(data, indices) {
+function collapseForecastSegments(data, indices, options = {}) {
   const segments = [];
   indices.forEach((index) => {
-    const hour = forecastHourPresentation(data, index, { isCurrent: index === currentHourlyIndex(data) });
+    const isCurrent = index === currentHourlyIndex(data);
+    const hour = forecastHourPresentation(data, index, {
+      isCurrent,
+      truth: isCurrent ? options.truth || null : null
+    });
     const previous = segments.at(-1);
     if (previous && previous.family === hour.family) {
       previous.endIndex = index;
@@ -3800,11 +3808,11 @@ function arrangeForecastHierarchy() {
   hourlyPanel.prepend(hero);
   // An active 15-minute nowcast is the most time-sensitive forecast on the
   // page. It stays hidden when dry, but when rain or snow is imminent it must
-  // appear before the plan and broad hourly outlook.
-  // Preserve the universal scan before personalized guidance: now, the next
-  // hours, then the coming days. Recommendations and the map remain close,
-  // but they no longer interrupt that basic forecast story.
-  launch.after(nowcast, els.planPulse, hourlyPanel, dailyPanel, els.goodWindow, map, els.forYouToday, els.planInvitation, els.insights);
+  // appear before the broad hourly outlook. Preserve the universal weather
+  // scan before personalized guidance: Now -> Hourly -> Daily -> Map. Plans
+  // and recommendations remain available below it, but no longer interrupt
+  // the forecast people came here to verify.
+  launch.after(nowcast, hourlyPanel, dailyPanel, map, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -4872,6 +4880,7 @@ function bindEvents() {
   bindTapDelegate(els.nowSummary, "[data-summary-index]", (event, target) => {
     openLaunchSummaryDetail(Number(target.dataset.summaryIndex));
   }, { preventDefault: false });
+  bindTapAction(els.nearcastBriefJump, openNearcastBriefJump);
   bindTapDelegate(els.hourly, ".hour-card", (event, card) => {
     openHourlyStripDetail(Number(card.dataset.hourIndex));
   }, { moveTolerance: 14 });
@@ -8626,6 +8635,11 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   const pulse = typeof forecastPulseDayPresentation === "function"
     ? forecastPulseDayPresentation(data, forecastDailyIndex(data), state.activePlace)
     : { status: "learning", tone: "neutral", label: "", detail: "" };
+  const briefEvidence = nearcastEvidencePresentation(data, truth, {
+    radar,
+    alertState: alerts,
+    alerts: typeof activeAlerts === "undefined" ? [] : activeAlerts
+  });
 
   let tone = radarObserved ? "observed" : "fresh";
   let headline = radarObserved ? "Radar confirms what is happening now" : "Latest forecast is ready";
@@ -8650,6 +8664,15 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
       ? `The forecast was checked ${age}, but the official alert service did not respond.`
       : "The forecast is ready, but the official alert service did not respond.";
     triggerMeta = "Alerts unavailable";
+  }
+
+  // The collapsed receipt is an evidence line, not merely a recency badge.
+  // It says whether Now is observed or estimated, then keeps forecast age and
+  // the independent official-alert check visible without claiming more than
+  // the underlying sources support.
+  if (!provenance.cacheFallback) {
+    trigger = briefEvidence.label;
+    triggerMeta = [briefEvidence.freshness, briefEvidence.alerts.label].filter(Boolean).join(" · ");
   }
 
   let evidence = "Near-term forecast guidance";
@@ -9173,7 +9196,7 @@ function renderForecastHero(ctx) {
 }
 
 function renderForecastLaunch(ctx) {
-  renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth);
+  renderLaunchSummaryStrip(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.truth, ctx.presentation);
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderAppDock(ctx.data, ctx.place);
   renderInlineMapPreviewVisibility(ctx.data, ctx.truth);
@@ -9260,15 +9283,18 @@ function forecastStoryRain(chance, period) {
 }
 
 function forecastStoryIndices(data, fromMs, toMs) {
+  const currentIndex = currentHourlyIndex(data);
   return (data?.hourly?.time || [])
     .map((time, index) => ({ index, ms: parseForecastTimestamp(time, data) }))
-    .filter((row) => row.ms !== null && row.ms >= fromMs - 30 * 60 * 1000 && row.ms < toMs)
+    .filter((row) => row.ms !== null && (row.index === currentIndex || row.ms >= fromMs - 30 * 60 * 1000) && row.ms < toMs)
     .map((row) => row.index);
 }
 
-function forecastStoryPrecipWindow(data, indices) {
+function forecastStoryPrecipWindow(data, indices, truth = null) {
+  const currentIndex = currentHourlyIndex(data);
   const wet = indices.map((index) => forecastHourPresentation(data, index, {
-    isCurrent: index === currentHourlyIndex(data)
+    isCurrent: index === currentIndex,
+    truth: index === currentIndex ? truth : null
   })).filter((hour) => hour.precipPrimary || hour.pop >= DAILY_PRECIP_THREE_HOURS_POP);
   if (!wet.length) return null;
   const groups = [];
@@ -9277,10 +9303,15 @@ function forecastStoryPrecipWindow(data, indices) {
     if (previous && hour.index === previous.hours.at(-1).index + 1) previous.hours.push(hour);
     else groups.push({ hours: [hour] });
   });
-  const best = groups.sort((a, b) => {
-    const score = (group) => group.hours.length * 100 + Math.max(...group.hours.map((hour) => hour.pop));
-    return score(b) - score(a);
-  })[0];
+  // The Brief promises the next meaningful change, not the strongest event
+  // later in the day. Hourly gating above has already filtered out unsupported
+  // drizzle codes and low-probability noise, so the first contiguous window is
+  // the honest event to promote.
+  const best = groups.find((group) => (
+    group.hours.length >= 2 ||
+    group.hours.some((hour) => hour.precipPrimary || hour.stormPotential || hour.convective)
+  ));
+  if (!best) return null;
   const strongest = best.hours.slice().sort((a, b) =>
     (precipRank(b.code) * 100 + b.pop) - (precipRank(a.code) * 100 + a.pop)
   )[0];
@@ -9298,12 +9329,22 @@ function forecastStoryPrecipWindow(data, indices) {
   };
 }
 
+function forecastStoryTransitionSegment(segments) {
+  const first = segments[0];
+  const stable = segments.slice(1).find((segment) => segment.endIndex - segment.startIndex >= 1) || null;
+  // A brief one-hour interruption that returns to the opening condition is
+  // visible in Hourly, but it is not a meaningful storyline transition.
+  if (stable && first && stable.family === first.family) return null;
+  return stable || segments[1] || null;
+}
+
 function forecastTransitionSentence(data, segments, periodLabel) {
   const first = segments[0];
   if (!first) return "Forecast details are still coming together.";
-  const transition = segments.slice(1).find((segment) => segment.endIndex - segment.startIndex >= 1) || segments[1];
+  const transition = forecastStoryTransitionSegment(segments);
   if (!transition || transition.startMs === null) return `${first.label} ${periodLabel}.`;
-  const at = formatForecastMs(transition.startMs, data);
+  const transitionTiming = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
+  const at = `${transitionTiming.timeLabel} ${transitionTiming.dayLabel}`;
   if (["cloudy", "partly-cloudy"].includes(first.family) && transition.family === "clear") {
     return `${first.label} through ${at}, then clearing.`;
   }
@@ -9317,14 +9358,96 @@ function forecastTransitionSentence(data, segments, periodLabel) {
   return `${first.label} through ${at}, then ${transition.label.toLowerCase()}.`;
 }
 
-function forecastPrecipStorySentence(data, window) {
+function forecastPrecipStorySentence(data, window, truth = weatherTruth(data)) {
   if (!window) return "";
   const noun = window.kind === "storm" ? "Storms" : window.kind === "snow" ? "Snow" : "Rain";
-  const start = formatForecastMs(window.startMs, data);
-  const end = formatForecastMs(window.endMs, data);
-  const timing = window.hours <= 1 ? `near ${start}` : `from ${start} to ${end}`;
-  if (window.pop >= RAIN_LIKELY_POP) return `${noun} is likely ${timing} (${window.pop}%).`;
-  return `${noun} is possible ${timing} (${window.pop}%).`;
+  const timing = nearcastRelativeTiming(data, window.startMs, window.endMs);
+  const now = forecastNowMs(data);
+  const active = truth?.precip?.phase === "active" && window.startMs <= now + 30 * 60 * 1000 && window.endMs > now;
+  if (active) {
+    const ending = window.endMs > now + 45 * 60 * 1000
+      ? `; easing near ${timing.endTimeLabel} ${timing.endDayLabel}`
+      : "";
+    const currentPhrase = truth?.precip?.source === "radar-current"
+      ? `${noun} now`
+      : `${noun} indicated now`;
+    return `${currentPhrase}${ending}.`;
+  }
+  const likelihood = window.pop >= RAIN_LIKELY_POP ? "likely" : "possible";
+  const overlapsThisHour = window.startMs <= now + 30 * 60 * 1000 && window.endMs > now;
+  if (overlapsThisHour) {
+    return `${noun} ${likelihood} through ${timing.endTimeLabel} ${timing.endDayLabel} (${window.pop}%).`;
+  }
+  const when = window.hours <= 1
+    ? `around ${timing.timeLabel} ${timing.dayLabel}`
+    : `${timing.rangeLabel}`;
+  return `${noun} ${likelihood} ${when} (${window.pop}%).`;
+}
+
+function nearcastRelativeTiming(data, startMs, endMs = null) {
+  const start = startMs === null || startMs === undefined ? NaN : Number(startMs);
+  const end = endMs === null || endMs === undefined ? NaN : Number(endMs);
+  if (!Number.isFinite(start)) {
+    return {
+      dayRelation: "future",
+      daypart: "later",
+      dayLabel: "later",
+      endDayLabel: "later",
+      timeLabel: "later",
+      endTimeLabel: "later",
+      rangeLabel: "later",
+      spokenLabel: "later"
+    };
+  }
+  const now = forecastNowMs(data);
+  const startDate = forecastLocalDateAtMs(data, start);
+  const endDate = Number.isFinite(end) ? forecastLocalDateAtMs(data, end) : startDate;
+  const today = forecastLocalDate(data, 0);
+  const tomorrow = forecastLocalDate(data, 1);
+  const shifted = new Date(start + forecastOffsetMs(data));
+  const hour = shifted.getUTCHours();
+  const daypart = hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "overnight";
+  const activeNow = start <= now && (!Number.isFinite(end) || end > now);
+  const startsSoon = start > now && start <= now + 30 * 60 * 1000;
+  const dayRelation = activeNow ? "now" : startDate === today ? "today" : startDate === tomorrow ? "tomorrow" : "future";
+  const futureDay = startDate
+    ? new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+      .format(new Date(`${startDate}T12:00:00Z`))
+    : "later";
+  const dayLabel = dayRelation === "now"
+    ? (startDate === today && hour >= 18 ? "tonight" : "today")
+    : dayRelation === "today" && hour >= 18 ? "tonight"
+      : dayRelation === "today" ? "today"
+        : dayRelation === "tomorrow" ? "tomorrow" : futureDay;
+  const endHour = Number.isFinite(end) ? new Date(end + forecastOffsetMs(data)).getUTCHours() : hour;
+  const endRelation = endDate === today ? "today" : endDate === tomorrow ? "tomorrow" : "future";
+  const endDayLabel = endRelation === "today" && endHour >= 18 ? "tonight"
+    : endRelation === "today" ? "today"
+      : endRelation === "tomorrow" ? "tomorrow"
+        : endDate
+          ? new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+            .format(new Date(`${endDate}T12:00:00Z`))
+          : dayLabel;
+  const timeLabel = formatForecastMs(start, data);
+  const endTimeLabel = Number.isFinite(end) ? formatForecastMs(end, data) : timeLabel;
+  const sameDay = startDate && startDate === endDate;
+  const hasRange = Number.isFinite(end) && end - start > 75 * 60 * 1000;
+  const rangeLabel = hasRange
+    ? sameDay
+      ? `${timeLabel}–${endTimeLabel} ${dayLabel}`
+      : `${timeLabel} ${dayLabel}–${endTimeLabel} ${endDayLabel}`
+    : `${timeLabel} ${dayLabel}`;
+  return {
+    dayRelation,
+    startsSoon,
+    daypart,
+    dayLabel,
+    endDayLabel,
+    timeLabel,
+    endTimeLabel,
+    rangeLabel,
+    spokenLabel: activeNow ? "now" : rangeLabel
+  };
 }
 
 function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)) {
@@ -9363,17 +9486,37 @@ function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)
   }
 
   const indices = forecastStoryIndices(data, now, horizon);
-  const segments = collapseForecastSegments(data, indices);
-  const conditionSentence = forecastTransitionSentence(data, segments, periodLabel);
-  const precipWindow = forecastStoryPrecipWindow(data, indices);
-  const convectiveWindow = nwsConvectiveWindowForIndices(data, indices);
+  // Keep the prose scoped to the current daypart, but look a full day ahead
+  // for the one event that deserves promotion. This prevents an afternoon
+  // Brief from saying only "clearing tonight" while a meaningful 5 AM rain
+  // signal is stranded several swipes away in Hourly.
+  const eventHorizon = Math.max(horizon, now + 24 * 60 * 60 * 1000);
+  const eventIndices = forecastStoryIndices(data, now, eventHorizon);
+  const segments = collapseForecastSegments(data, indices, { truth });
+  let conditionSentence = forecastTransitionSentence(data, segments, periodLabel);
+  const precipWindow = forecastStoryPrecipWindow(data, eventIndices, truth);
+  const convectiveWindow = nwsConvectiveWindowForIndices(data, eventIndices);
+  if (precipWindow && ["rain", "snow", "storm"].includes(segments[0]?.family)) {
+    // Current precipitation is already the Now fact. Do not describe the same
+    // wet period again as a generic sky transition before stating when it ends.
+    conditionSentence = "";
+  }
   const precipitationSentence = convectiveWindow && precipWindow?.kind === "storm"
     ? ""
-    : forecastPrecipStorySentence(data, precipWindow);
+    : forecastPrecipStorySentence(data, precipWindow, truth);
   const currentConvectiveSentence = truth.convective?.level === "likely" ? "Thunderstorms are likely now." : "";
-  const upcomingConvectiveSentence = convectiveWindow && (
+  const convectiveStartMs = convectiveWindow?.startTime
+    ? parseForecastTimestamp(convectiveWindow.startTime, data)
+    : null;
+  const convectiveEndMs = convectiveWindow?.endTime
+    ? parseForecastTimestamp(convectiveWindow.endTime, data)
+    : null;
+  const convectiveTiming = Number.isFinite(convectiveStartMs)
+    ? nearcastRelativeTiming(data, convectiveStartMs, convectiveEndMs)
+    : null;
+  const upcomingConvectiveSentence = convectiveWindow && convectiveTiming && (
     !currentConvectiveSentence || convectiveWindow.startIndex > currentHourlyIndex(data)
-  ) ? `${nwsConvectiveTimingPhrase(data, convectiveWindow, indices)}.` : "";
+  ) ? `${convectiveWindow.convective?.level === "likely" ? "Storms are likely" : "Thunderstorms are possible"} ${convectiveTiming.rangeLabel}.` : "";
   let text = [currentConvectiveSentence, upcomingConvectiveSentence, conditionSentence, precipitationSentence, temperatureSentence]
     .filter(Boolean)
     .join(" ");
@@ -9381,15 +9524,250 @@ function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)
   const gustIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 12);
   const gust = gustIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m?.[gustIndex] || 0) : 0;
   const gustThreshold = windUnit === "mph" ? 25 : 40;
-  if (gust >= gustThreshold) text += ` Gusts may reach ${gust} ${windUnit}.`;
+  if (gust >= gustThreshold) {
+    const gustMs = parseForecastTimestamp(data.hourly.time?.[gustIndex], data);
+    const gustTiming = Number.isFinite(gustMs) ? nearcastRelativeTiming(data, gustMs) : null;
+    text += ` Gusts may reach ${gust} ${windUnit}${gustTiming ? ` near ${gustTiming.timeLabel} ${gustTiming.dayLabel}` : ""}.`;
+  }
 
-  const transition = segments[1] || null;
+  const transition = forecastStoryTransitionSegment(segments);
   return {
     kicker,
     text,
     focusIndex: precipWindow?.startIndex ?? transition?.startIndex ?? null,
     transition,
-    precipWindow
+    precipWindow,
+    convectiveWindow,
+    gustIndex,
+    gust: gust >= gustThreshold ? gust : null
+  };
+}
+
+function nearcastEvidencePresentation(data, truth = weatherTruth(data), options = {}) {
+  const provenance = forecastProvenance(data);
+  const now = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const radar = options.radar === undefined ? radarSignalForForecastData(data) : options.radar;
+  const alerts = Array.isArray(options.alerts)
+    ? options.alerts
+    : (typeof activeAlerts === "undefined" ? [] : activeAlerts);
+  const alertState = options.alertState || (
+    typeof alertTrustState === "undefined"
+      ? { state: "unknown", checkedAt: null, reason: "" }
+      : alertTrustState
+  );
+  const radarAge = Number.isFinite(Number(radar?.timestamp))
+    ? forecastAgeLabel(Math.max(0, now - Number(radar.timestamp)))
+    : "time unavailable";
+  const radarSource = String(radar?.source || "weather radar");
+  const hasRadarObservation = Boolean(radar && ["active", "clear", "nearby"].includes(radar.phase));
+  let basis = hasRadarObservation ? "observed" : "estimated";
+  let currentLabel = "Estimated now";
+  let currentDetail = "Current conditions come from modeled guidance, not a direct observation.";
+
+  if (radar?.phase === "active") {
+    const label = truth?.precip?.label || radar.label || "Precipitation";
+    currentLabel = `${label} observed on radar`;
+    currentDetail = `${radarSource} shows ${String(label).toLowerCase()} over this place in a frame from ${radarAge}.`;
+  } else if (radar?.phase === "nearby") {
+    currentLabel = `${radar.label || "Precipitation"} nearby on radar`;
+    currentDetail = `${radarSource} shows precipitation nearby, but not directly over this place, in a frame from ${radarAge}.`;
+  } else if (radar?.phase === "clear") {
+    currentLabel = "Radar clear over this place";
+    currentDetail = `${radarSource} detects no precipitation over this place in a frame from ${radarAge}.`;
+  } else if (truth?.precip?.source === "modeled-15-minute") {
+    currentLabel = "Estimated now · 15-minute guidance";
+    currentDetail = "Nearcast's latest 15-minute model guidance indicates current precipitation; radar has not confirmed it.";
+  } else if (truth?.precip?.source === "modeled-current") {
+    currentLabel = "Estimated now · current guidance";
+  }
+
+  const forecastAge = provenance.savedAt
+    ? forecastAgeLabel(Math.max(0, now - Number(provenance.savedAt)))
+    : "time unavailable";
+  const forecastLabel = provenance.cacheFallback
+    ? `Saved forecast · ${forecastAge}`
+    : `Forecast refreshed ${forecastAge}`;
+  const forecastDetail = provenance.cacheFallback
+    ? "The live update did not complete. Nearcast is showing the last usable Open-Meteo Best Match forecast."
+    : "Future conditions use Open-Meteo Best Match guidance.";
+
+  let alertLabel = "Checking NWS alerts";
+  let alertDetail = "Official hazards are checked separately from ordinary forecast guidance.";
+  if (alertState.state === "ready") {
+    alertLabel = alerts.length
+      ? `${alerts.length} active NWS ${alerts.length === 1 ? "alert" : "alerts"}`
+      : "No active NWS alerts";
+    alertDetail = "Checked with the U.S. National Weather Service for this location.";
+  } else if (alertState.state === "failed") {
+    alertLabel = "NWS alerts unavailable";
+    alertDetail = "The weather forecast is available, but the official alert check did not complete.";
+  } else if (alertState.state === "unsupported") {
+    alertLabel = "Official alerts unavailable here";
+    alertDetail = "Nearcast currently checks National Weather Service alerts for U.S. locations.";
+  }
+
+  const currentMeta = hasRadarObservation ? `observed ${radarAge}` : "modeled guidance";
+  const parts = [
+    { kind: "current", basis, label: currentLabel, meta: currentMeta, source: hasRadarObservation ? radarSource : truth?.source || "forecast", detail: currentDetail },
+    { kind: "forecast", basis: "forecast", label: forecastLabel, meta: "Open-Meteo Best Match", source: "Open-Meteo Best Match", detail: forecastDetail },
+    { kind: "alerts", basis: "official", label: alertLabel, meta: "National Weather Service", source: "National Weather Service", detail: alertDetail }
+  ];
+  return {
+    basis,
+    label: currentLabel,
+    detail: currentDetail,
+    freshness: forecastLabel,
+    alerts: {
+      state: alertState.state || "unknown",
+      count: alerts.length,
+      label: alertLabel,
+      detail: alertDetail
+    },
+    parts,
+    summary: parts.map((part) => part.label).join(" · ")
+  };
+}
+
+function nearcastPromotedEvent(data, story, truth, options = {}) {
+  const currentIndex = currentHourlyIndex(data);
+  const visibleHourCount = Math.max(1, Number(options.visibleHourCount) || 5);
+  const window = story?.precipWindow;
+  if (window) {
+    const now = forecastNowMs(data);
+    const active = truth?.precip?.phase === "active" && window.startMs <= now + 30 * 60 * 1000 && window.endMs > now;
+    const timing = nearcastRelativeTiming(data, window.startMs, window.endMs);
+    const noun = window.kind === "storm" ? "Storms" : window.kind === "snow" ? "Snow" : "Rain";
+    const likelihood = window.pop >= RAIN_LIKELY_POP ? "likely" : "possible";
+    const overlapsThisHour = window.startMs <= now + 30 * 60 * 1000 && window.endMs > now;
+    const label = active
+      ? `${noun} now${window.endMs > now + 45 * 60 * 1000 ? `; easing near ${timing.endTimeLabel} ${timing.endDayLabel}` : ""}`
+      : overlapsThisHour
+        ? `${noun} ${likelihood} through ${timing.endTimeLabel} ${timing.endDayLabel}`
+        : `${noun} ${likelihood} ${window.hours <= 1 ? `around ${timing.timeLabel} ${timing.dayLabel}` : timing.rangeLabel}`;
+    const focusIndex = active ? Math.min(window.endIndex + 1, (data?.hourly?.time?.length || 1) - 1) : window.startIndex;
+    const startHour = forecastHourPresentation(data, window.startIndex, {
+      isCurrent: window.startIndex === currentIndex,
+      truth: window.startIndex === currentIndex ? truth : null
+    });
+    const basis = active
+      ? truth?.precip?.source === "radar-current" ? "observed" : "estimated"
+      : "forecast";
+    const source = active
+      ? truth?.precip?.source || truth?.source || "modeled-current"
+      : startHour?.convective?.source || "hourly-forecast";
+    return {
+      kind: window.kind || "rain",
+      label,
+      startMs: window.startMs,
+      endMs: window.endMs,
+      timing,
+      chance: window.pop,
+      source,
+      basis,
+      hourlyIndex: focusIndex,
+      requiresJump: focusIndex >= 0 && currentIndex >= 0 && focusIndex - currentIndex >= visibleHourCount,
+      target: launchDetailTarget(data, "Forecast change", label, window.startMs, { endMs: window.endMs, hours: Math.max(1, window.hours) })
+    };
+  }
+
+  const convective = story?.convectiveWindow;
+  if (convective?.startTime) {
+    const startMs = parseForecastTimestamp(convective.startTime, data);
+    const endMs = convective.endTime ? parseForecastTimestamp(convective.endTime, data) : startMs + 60 * 60 * 1000;
+    const timing = nearcastRelativeTiming(data, startMs, endMs);
+    const likely = convective.convective?.level === "likely";
+    const label = `${likely ? "Storms likely" : "Thunderstorms possible"} ${timing.rangeLabel}`;
+    return {
+      kind: "storm",
+      label,
+      startMs,
+      endMs,
+      timing,
+      chance: null,
+      source: convective.convective?.source || "nws-hourly",
+      basis: "forecast",
+      hourlyIndex: convective.startIndex,
+      requiresJump: convective.startIndex >= 0 && currentIndex >= 0 && convective.startIndex - currentIndex >= visibleHourCount,
+      target: launchDetailTarget(data, "Forecast change", label, startMs, { endMs, hours: Math.max(1, convective.endIndex - convective.startIndex + 1) })
+    };
+  }
+
+  const transition = story?.transition;
+  if (transition?.startMs !== null && transition?.startMs !== undefined) {
+    const timing = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
+    const label = transition.family === "clear"
+      ? `Clearing near ${timing.timeLabel} ${timing.dayLabel}`
+      : transition.family === "cloudy"
+        ? `Clouds increase near ${timing.timeLabel} ${timing.dayLabel}`
+        : transition.family === "fog"
+          ? `Fog develops near ${timing.timeLabel} ${timing.dayLabel}`
+          : `${transition.label} near ${timing.timeLabel} ${timing.dayLabel}`;
+    return {
+      kind: transition.family,
+      label,
+      startMs: transition.startMs,
+      endMs: transition.endMs,
+      timing,
+      chance: null,
+      source: "hourly-forecast",
+      basis: "forecast",
+      hourlyIndex: transition.startIndex,
+      requiresJump: transition.startIndex >= 0 && currentIndex >= 0 && transition.startIndex - currentIndex >= visibleHourCount,
+      target: launchDetailTarget(data, "Forecast change", label, transition.startMs, { endMs: transition.endMs, hours: Math.max(1, transition.endIndex - transition.startIndex + 1) })
+    };
+  }
+
+  if (story?.gust && story.gustIndex >= 0) {
+    const startMs = parseForecastTimestamp(data?.hourly?.time?.[story.gustIndex], data);
+    const timing = nearcastRelativeTiming(data, startMs, startMs + 60 * 60 * 1000);
+    const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
+    const label = `Gusts reach ${story.gust} ${windUnit} near ${timing.timeLabel} ${timing.dayLabel}`;
+    return {
+      kind: "wind",
+      label,
+      startMs,
+      endMs: startMs + 60 * 60 * 1000,
+      timing,
+      chance: null,
+      source: "hourly-forecast",
+      basis: "forecast",
+      hourlyIndex: story.gustIndex,
+      requiresJump: currentIndex >= 0 && story.gustIndex - currentIndex >= visibleHourCount,
+      target: launchDetailTarget(data, "Forecast change", label, startMs, { hours: 1 })
+    };
+  }
+  return null;
+}
+
+function buildNearcastBrief(data, options = {}) {
+  const truth = options.truth || buildWeatherTruth(data);
+  const tempUnit = options.tempUnit || (state.unit === "fahrenheit" ? "F" : "C");
+  const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
+  const current = truth.current || canonicalCurrentSnapshot(data);
+  const actual = Math.round(Number(current.temperature_2m) || 0);
+  const feels = Math.round(Number(current.apparent_temperature ?? current.temperature_2m) || 0);
+  const comfort = comfortGlance(actual, feels, Number(current.relative_humidity_2m || 0), tempUnit).headline;
+  const story = options.story || buildForecastStory(data, tempUnit, windUnit, truth);
+  const promotedEvent = nearcastPromotedEvent(data, story, truth, { ...options, windUnit });
+  return {
+    current: {
+      temperature: actual,
+      feelsLike: feels,
+      condition: truth.label || weatherCodes[truth.nowCode ?? truth.code] || "Weather",
+      comfort,
+      summary: truth?.precip?.phase === "active"
+        ? activePrecipSummaryValue(truth.precip, truth.nowPrecip, truth.convective)
+        : `${comfort} · feels ${feels}${degree(tempUnit)}`,
+      basis: truth?.precip?.source === "radar-current" ? "observed" : "estimated",
+      source: truth?.source || "forecast"
+    },
+    story: {
+      kicker: story.kicker,
+      text: story.text
+    },
+    promotedEvent,
+    evidence: nearcastEvidencePresentation(data, truth, options),
+    suppressesGenericWeather: true
   };
 }
 
@@ -9415,6 +9793,8 @@ function buildForecastPresentation(data, options = {}) {
   for (let index = Math.max(0, todayIndex); index < dailyCount; index += 1) {
     days.push(forecastDayPresentation(data, index));
   }
+  const story = buildForecastStory(data, tempUnit, windUnit, truth);
+  const brief = buildNearcastBrief(data, { ...options, truth, tempUnit, windUnit, story });
   return {
     evaluationMs: forecastNowMs(data),
     evaluationKey: truth.evaluationKey,
@@ -9424,7 +9804,8 @@ function buildForecastPresentation(data, options = {}) {
     truth,
     hours,
     days,
-    story: buildForecastStory(data, tempUnit, windUnit, truth),
+    story,
+    brief,
     receipt: forecastTrustPresentation(data, truth)
   };
 }
@@ -9446,9 +9827,11 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     ? `, ${air.summary.headline.toLowerCase()}`
     : "";
 
-  const story = presentation?.story || buildForecastStory(data, tempUnit, windUnit, truth);
+  const brief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
+  const story = brief.story;
   if (els.glanceKicker) els.glanceKicker.textContent = story.kicker;
   if (els.glanceTitle) els.glanceTitle.textContent = story.text;
+  renderNearcastBriefJump(brief);
   renderForecastPulse(data, todayIndex);
   document.querySelector("#hero")?.setAttribute("aria-label", `${story.kicker} forecast`);
   document.querySelector(".today-glance")?.setAttribute("aria-label", `${story.kicker} forecast`);
@@ -10680,32 +11063,54 @@ function uvRisk(value) {
   return { label: "Low", severity: "low" };
 }
 
-function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth(data)) {
+function renderLaunchSummaryStrip(data, tempUnit, windUnit, truth = weatherTruth(data), presentation = null) {
   if (!els.nowSummary) return;
-  const items = launchSummaryItems(data, tempUnit, windUnit, truth);
-  const current = items[0];
-  // The precipitation timeline is more precise than the generic "Next" chip.
-  // When it is on screen, do not announce the same imminent rain or snow twice.
-  const visibleNowcast = analyzeNowcast(data);
-  const nowcastOwnsNextChange = Boolean(visibleNowcast && !nowcastConflictsWithActivePrecip(visibleNowcast, truth));
-  const nextMeaningfulChange = items.slice(1).find((item) =>
-    item?.meaningful || item?.rainSoon || item?.tone === "rain" || item?.tone === "snow" || item?.tone === "wind"
-  ) || items.find((item, index) => index > 0 && item?.tone === "sun") || null;
-  const meaningfulChange = nowcastOwnsNextChange ? null : nextMeaningfulChange;
-  const meaningfulIndex = meaningfulChange ? items.indexOf(meaningfulChange) : -1;
-  launchSummaryTargets = items.map((item) => item?.target || null);
+  const brief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
+  const currentTarget = launchDetailTarget(data, "Now", brief.current.summary, forecastNowMs(data), { hours: 1 });
+  const detailItems = launchSummaryItems(data, tempUnit, windUnit, truth);
+  launchSummaryTargets = detailItems.map((item, index) => index === 0 ? currentTarget : item.target).filter(Boolean);
   els.nowSummary.classList.remove("summary-strip");
-  els.nowSummary.classList.toggle("has-next-change", Boolean(meaningfulChange));
-  const value = String(current?.value || "Forecast ready")
+  els.nowSummary.classList.remove("has-next-change");
+  const value = String(brief.current.summary || "Forecast ready")
     .replace(/\s+-\s+feels\s+/i, " · Feels ");
-  const currentButton = `<button class="launch-condition-button is-${escapeHtml(current?.tone || "neutral")}" type="button" data-summary-index="0" aria-label="${escapeHtml(current ? summaryItemAria(current) : value)}"><strong>${escapeHtml(value)}</strong><span aria-hidden="true">›</span></button>`;
-  const changeButton = meaningfulChange ? `
-    <button class="launch-next-change-button is-${escapeHtml(meaningfulChange.tone || "neutral")}" type="button" data-summary-index="${meaningfulIndex}" aria-label="${escapeHtml(summaryItemAria(meaningfulChange))}">
-      <span>Next</span><strong>${escapeHtml(meaningfulChange.value)}</strong><i aria-hidden="true">›</i>
-    </button>
-  ` : "";
-  els.nowSummary.innerHTML = `${currentButton}${changeButton}`;
+  const tone = truth.convective?.level === "likely" ? "storm"
+    : truth.precip?.phase === "active" ? (truth.nowPrecip?.isSnow ? "snow" : "rain") : "now";
+  const currentAria = `Now: ${brief.current.condition}. ${value}. ${brief.evidence.label}. Show current hourly details.`;
+  const currentButton = `<button class="launch-condition-button is-${escapeHtml(tone)}" type="button" data-summary-index="0" aria-label="${escapeHtml(currentAria)}"><strong>${escapeHtml(value)}</strong><span aria-hidden="true">›</span></button>`;
+  els.nowSummary.innerHTML = currentButton;
   els.nowSummary.removeAttribute("aria-label");
+  const briefElement = document.querySelector("#nearcastBrief");
+  if (briefElement) {
+    briefElement.dataset.nowBasis = brief.current.basis;
+    briefElement.dataset.evidenceBasis = brief.evidence.basis;
+    briefElement.dataset.hasPromotedEvent = String(Boolean(brief.promotedEvent));
+  }
+}
+
+function renderNearcastBriefJump(brief) {
+  if (!els.nearcastBriefJump) return;
+  const event = brief?.promotedEvent || null;
+  nearcastBriefJumpTarget = event?.target || null;
+  const visible = Boolean(event?.requiresJump && nearcastBriefJumpTarget);
+  els.nearcastBriefJump.hidden = !visible;
+  if (!visible) {
+    els.nearcastBriefJump.removeAttribute("aria-label");
+    if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = "See it in the hourly";
+    return;
+  }
+  const label = `See ${event.timing.timeLabel} ${event.timing.dayLabel} in Hourly`;
+  if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = label;
+  els.nearcastBriefJump.setAttribute("aria-label", `${event.label}. Open those hourly details.`);
+  els.nearcastBriefJump.dataset.eventKind = event.kind || "weather";
+  els.nearcastBriefJump.dataset.hourIndex = String(event.hourlyIndex);
+}
+
+function openNearcastBriefJump() {
+  if (!nearcastBriefJumpTarget) return;
+  openNext24Detail({
+    eventWindow: nearcastBriefJumpTarget,
+    contextLabel: `Nearcast Brief · ${nearcastBriefJumpTarget.label}`
+  });
 }
 
 function renderAppDock(data, place) {
@@ -10730,24 +11135,22 @@ function renderAppDock(data, place) {
 
 function inlineMapPreviewEmphasis(data, truth = weatherTruth(data)) {
   const phase = truth?.precip?.phase;
-  if (phase === "active" || phase === "imminent") return "active";
-  if (activeAlerts.some((alert) =>
-    /flood|rain|storm|thunder|tornado|snow|squall|hurricane|tropical/i.test(alert?.event || "")
-  )) return "alert";
-  if (nextRainChance(data, 12, 40)) return "forecast";
+  if (phase === "active") return "active";
+  if (phase === "imminent") return "imminent";
+  if (phase === "nearby") return "nearby";
   return "calm";
 }
 
 function renderInlineMapPreviewVisibility(data, truth = weatherTruth(data)) {
   if (!els.mapView) return;
   const emphasis = inlineMapPreviewEmphasis(data, truth);
-  const weatherRelevant = emphasis !== "calm";
+  const weatherRelevant = emphasis === "active" || emphasis === "imminent";
   const context = document.getElementById("mapPreviewContext");
   const contextCopy = {
-    active: "Precipitation nearby",
-    alert: "Weather alert area",
-    forecast: "Rain possible soon",
-    calm: "Weather map"
+    active: "Precipitation at this place",
+    imminent: "Precipitation expected soon",
+    nearby: "Precipitation observed nearby",
+    calm: "Precipitation map"
   }[emphasis];
 
   // Geographic context is useful even on a quiet day. Weather conditions
@@ -11762,7 +12165,10 @@ function buildTodayContext(data, place, tempUnit, windUnit, truth = weatherTruth
   const weatherItems = launchSummaryItems(data, tempUnit, windUnit, truth);
   const continuity = forYouContinuityCard(data, place, tempUnit, windUnit, truth, weatherItems, continuityBaselineStore(data, place));
   const watching = forYouWatchingCard(data, place);
-  const interruption = forYouInterruptionCard(data, tempUnit, windUnit, truth, weatherItems);
+  // The Nearcast Brief already owns ordinary rain/wind interpretation. Keep
+  // For You reserved for forecast changes, watched plans, and setup actions so
+  // users never have to reconcile two competing versions of the same weather.
+  const interruption = { type: "", html: "" };
   const install = forYouInstallCard();
   return {
     data,
@@ -12807,15 +13213,25 @@ function renderNowcast(data, truth = weatherTruth(data)) {
     return;
   }
 
-  document.getElementById("nowcastTitle").textContent = analysis.title;
+  const modeledNow = Boolean(
+    analysis.wet?.[0] &&
+    truth?.precip?.phase === "active" &&
+    ["modeled-current", "modeled-15-minute"].includes(truth?.precip?.source)
+  );
+  const displayTitle = modeledNow
+    ? `Forecast shows ${analysis.title.replace(/\s+now$/i, "").toLowerCase()}`
+    : analysis.title;
+  document.getElementById("nowcastTitle").textContent = displayTitle;
   document.getElementById("nowcastSubtitle").textContent = analysis.detail;
   document.getElementById("nowcastIcon").innerHTML = analysis.isSnow ? snowGlyph() : raindropGlyph();
   document.getElementById("nowcastGraph").innerHTML = buildNowcastGraph(analysis);
   el.style.setProperty("--nowcast-accent", nowcastIntensityColor(analysis.peakFrac));
   el.style.setProperty("--nowcast-glow", nowcastIntensityRgba(analysis.peakFrac, analysis.isSnow ? 0.18 : 0.22));
   const receipt = truth.surfaceDetail || truth.receiptDetail || "";
+  const receiptSentence = String(receipt).trim().replace(/[.!?]+$/, "");
   el.title = receipt;
-  el.setAttribute("aria-label", `${analysis.headline}. ${receipt ? `${receipt}. ` : ""}Open hourly details.`);
+  const displayHeadline = `${displayTitle}, ${analysis.detail.charAt(0).toLowerCase()}${analysis.detail.slice(1)}`;
+  el.setAttribute("aria-label", `${displayHeadline}. ${receiptSentence ? `${receiptSentence}. ` : ""}Open hourly details.`);
   el.hidden = false;
 }
 
@@ -13454,7 +13870,8 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   const planMemory = hourlyPlanMemoryContext(rows, data);
   const metric = savedHourlyHeroMetric();
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const storyFocusIndex = (presentation?.story || buildForecastStory(data, tempUnit, windUnit, truth)).focusIndex;
+  const resolvedBrief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
+  const storyFocusIndex = resolvedBrief.promotedEvent?.hourlyIndex ?? presentation?.story?.focusIndex;
   const metricValues = rows.map(({ index }, position) => hourlyMetricValue(data, index, metric, position === 0));
   const trend = hourlyTrendGeometry(metricValues, metric);
   const pointString = trend.points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
@@ -13506,14 +13923,15 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
       : "";
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
+    const receiptSentence = String(receipt).trim().replace(/[.!?]+$/, "");
     const memoryItems = planMemory.markers.get(index) || [];
     const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
     const hasPlanMemory = planMemory.overlaps.has(index);
     const rainAria = metric === "precipitation" ? "" : measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : hasRainChance ? `, ${rainChance}% rain` : "";
     const isStoryFocus = index === storyFocusIndex && position > 0;
-    const cardLabel = `${label}: ${code}, ${presentation.aria}${presentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receipt ? ` ${receipt}.` : ""} Show hourly details.`;
+    const cardLabel = `${label}: ${code}, ${presentation.aria}${presentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
     return `
-      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receipt || title)}">
+      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receiptSentence || title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml(thunderLabel) : ""}</div>
