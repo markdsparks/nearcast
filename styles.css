@@ -10041,23 +10041,107 @@ body.map-immersive-active .app-dock {
   height: 16px;
 }
 
-/* Attribution stays in the immersive HUD so it remains available when the inline
-   map chrome is hidden. */
+/* Attribution uses a fixed map overlay, so provider names can change across the
+   radar/forecast seam without moving the bottom-anchored timeline. */
+.imm-attribution {
+  position: absolute;
+  right: var(--imm-bottom-x);
+  bottom: var(--imm-rail-bottom);
+  z-index: 21;
+  width: max-content;
+  height: 44px;
+  pointer-events: auto;
+}
+
+.imm-credit-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(8, 16, 25, 0.56);
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 10px 26px rgba(2, 7, 13, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-size: 0.64rem;
+  font-weight: 880;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(16px) saturate(1.24);
+  -webkit-backdrop-filter: blur(16px) saturate(1.24);
+}
+
+.imm-credit-toggle svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.imm-credit-toggle[aria-expanded="true"] {
+  border-color: rgba(143, 211, 255, 0.44);
+  background: rgba(24, 54, 78, 0.76);
+  color: #fff;
+}
+
+.imm-credit-toggle:active {
+  transform: scale(0.96);
+}
+
+.imm-credit-toggle:focus-visible {
+  outline: 3px solid rgba(143, 211, 255, 0.5);
+  outline-offset: 2px;
+}
+
+.imm-credit-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 154px);
+  display: grid;
+  gap: 6px;
+  width: min(330px, calc(100vw - (var(--imm-bottom-x) * 2)));
+  max-height: min(220px, 34vh);
+  padding: 11px 13px 12px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 14px;
+  background: rgba(8, 16, 25, 0.9);
+  color: #fff;
+  box-shadow:
+    0 16px 38px rgba(2, 7, 13, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+}
+
+.imm-credit-panel[hidden] {
+  display: none;
+}
+
+.imm-credit-panel > strong {
+  font-size: 0.7rem;
+  font-weight: 920;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .imm-credit {
-  justify-self: end;
-  max-width: 100%;
   margin: 0;
-  padding: 0 3px;
-  color: rgba(255, 255, 255, 0.64);
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-align: right;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.58);
+  color: rgba(232, 241, 247, 0.78);
+  font-size: 0.66rem;
+  font-weight: 680;
+  line-height: 1.45;
+  text-align: left;
 }
 .imm-credit a {
-  color: inherit;
+  color: rgba(166, 220, 255, 0.96);
+  font-weight: 850;
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ── Immersive map ─────────────────────────────────────────── */
@@ -10782,7 +10866,7 @@ body.map-immersive-active #mapLegend {
   position: absolute;
   left: var(--imm-bottom-x);
   right: var(--imm-bottom-x);
-  bottom: var(--imm-rail-bottom);
+  bottom: calc(var(--imm-rail-bottom) + 51px);
   z-index: 20;
   display: grid;
   gap: 7px;
@@ -13116,7 +13200,7 @@ body.map-immersive-active #mapLegend {
   .imm-bottom-hud {
     gap: 5px;
     top: auto;
-    bottom: var(--imm-rail-bottom);
+    bottom: calc(var(--imm-rail-bottom) + 49px);
   }
 
   .imm-timeline {
@@ -13165,12 +13249,20 @@ body.map-immersive-active #mapLegend {
     height: 104px;
   }
 
-  .imm-credit {
-    justify-self: end;
-    margin-top: -2px;
-    max-width: calc(100% - 62px);
-    font-size: 0.52rem;
-    opacity: 0.72;
+  .imm-attribution {
+    height: 42px;
+  }
+
+  .imm-credit-toggle {
+    min-width: 42px;
+    min-height: 42px;
+    padding-inline: 11px;
+    font-size: 0.6rem;
+  }
+
+  .imm-credit-panel {
+    bottom: calc(100% + 148px);
+    width: min(310px, calc(100vw - (var(--imm-bottom-x) * 2)));
   }
 
   .immersive-map .legend-labels {
@@ -16794,6 +16886,14 @@ body.map-immersive-active .day-sheet.alert-sheet {
   .imm-timeline::after {
     display: none;
   }
+
+  .imm-credit-toggle,
+  .imm-credit-panel {
+    border-width: 2px;
+    background: rgba(7, 16, 25, 0.96);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 @media (prefers-color-scheme: dark) and (prefers-contrast: more) {
@@ -16815,12 +16915,21 @@ body.map-immersive-active .day-sheet.alert-sheet {
   .imm-timeline::after {
     display: none;
   }
+
+  .imm-credit-toggle,
+  .imm-credit-panel {
+    background: #0b1721;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 @media (forced-colors: active) {
   .imm-timeline,
   .imm-time-bubble,
   .imm-timeline-now-button,
+  .imm-credit-toggle,
+  .imm-credit-panel,
   .home-plan-decision,
   .app-dock,
   .launch-next-change-button,

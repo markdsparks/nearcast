@@ -327,6 +327,11 @@ assert.match(stormTimelineSource, /aria-valuetext/, "StormScope replaces stale s
 assert.match(styles, /\.imm-timeline\s*\{[\s\S]{0,1200}?linear-gradient\(145deg,[\s\S]{0,500}?backdrop-filter:\s*blur\(28px\)\s+saturate\(1\.38\)/, "the Time Lens uses a legible translucent glass treatment over radar colors");
 assert.match(styles, /\.imm-timeline::after\s*\{[\s\S]{0,500}?linear-gradient\(132deg,[\s\S]{0,500}?pointer-events:\s*none/, "the Time Lens glass highlight adds depth without intercepting touch");
 assert.match(styles, /@media \(prefers-reduced-transparency:\s*reduce\)[\s\S]{0,500}?\.imm-timeline[\s\S]{0,200}?background:\s*#0b1721/, "the Time Lens retains an opaque accessibility fallback");
+assert.match(html, /class="imm-attribution"[\s\S]{0,500}?id="immCreditToggle"[\s\S]{0,500}?aria-controls="immCreditPanel"[\s\S]{0,900}?id="immCredit"/, "immersive attribution remains available from an accessible Sources disclosure");
+assert.match(styles, /\.imm-attribution\s*\{[\s\S]{0,300}?position:\s*absolute[\s\S]{0,300}?height:\s*44px/, "the attribution control stays outside the timeline layout at a fixed height");
+assert.match(styles, /\.imm-credit-panel\s*\{[\s\S]{0,300}?position:\s*absolute/, "expanded attribution overlays the map instead of moving the timeline");
+assert.match(map, /showImmersiveMapCreditBriefly\(\)[\s\S]{0,500}?IMMERSIVE_CREDIT_AUTO_HIDE_MS/, "full source attribution appears briefly before collapsing to the fixed indicator");
+assert.match(map, /slider\.onpointerdown\s*=\s*\(\)\s*=>\s*\{\s*closeImmersiveMapCredit\(\)/, "starting a timeline scrub clears the attribution overlay");
 assert.match(styles, /\.timeline-markers\s*\{[\s\S]{0,400}?pointer-events:\s*none/, "timeline labels stay inert so the whole drag lane remains available");
 assert.match(styles, /\.imm-timeline input\[type="range"\][\s\S]{0,200}?height:\s*48px/, "the visual rail retains a generous touch lane");
 

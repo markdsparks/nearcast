@@ -1,4 +1,4 @@
-const VERSION = "3.0.358";
+const VERSION = "3.0.361";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);

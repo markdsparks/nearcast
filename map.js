@@ -93,6 +93,7 @@ const CANONICAL_TIMELINE_PLAY_DURATION_MS = 12000;
 const CANONICAL_TIMELINE_NOW_HOLD_MS = 650;
 const CANONICAL_TIMELINE_END_HOLD_MS = 700;
 const CANONICAL_TIMELINE_FRAME_WAIT_MS = 2500;
+const IMMERSIVE_CREDIT_AUTO_HIDE_MS = 5000;
 const MAPLIBRE_GENERATED_RADAR_PROTOCOL = "nearcast-radar";
 const MAPLIBRE_GENERATED_RADAR_DATA_PROTOCOL = "nearcast-radar-data";
 const MAPLIBRE_ENCODED_RADAR_TILE_CACHE_LIMIT = 160;
@@ -2444,6 +2445,7 @@ function cancelMapPreviewTap() {
 }
 
 function startMapDrag(x, y, el = els.weatherMap) {
+  if (mapState.immersive) closeImmersiveMapCredit();
   if (mapRendererIsGl()) return;
   pinchState.active = false;
   dragState.active = true;
@@ -6031,10 +6033,16 @@ function ensureMapLibreMap() {
   });
   map.on("render", () => recordMapLibreRenderFrame(record));
   map.on("movestart", (event) => {
-    if (event?.originalEvent) disengageDeviceLocationFollow();
+    if (event?.originalEvent) {
+      disengageDeviceLocationFollow();
+      closeImmersiveMapCredit();
+    }
     beginMapLibreInteraction(map);
   });
-  map.on("zoomstart", () => beginMapLibreInteraction(map));
+  map.on("zoomstart", (event) => {
+    if (event?.originalEvent) closeImmersiveMapCredit();
+    beginMapLibreInteraction(map);
+  });
   map.on("move", () => {
     countMapLibreDiagnosticMove(record);
     syncMapLibreStateAndOverlays(map);
@@ -9493,6 +9501,7 @@ function getNoaaRegion() {
 }
 
 let timelineBubbleHideTimer = null;
+let immersiveCreditHideTimer = 0;
 let standardTimelineScrubRaf = 0;
 let standardTimelinePendingScrubValue = null;
 let standardTimelineScrubActive = false;
@@ -9547,6 +9556,10 @@ function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
     document.querySelectorAll("#mapCredit, #immCredit").forEach((node) => {
       node.innerHTML = satelliteHtml;
     });
+    document.getElementById("immCreditToggle")?.setAttribute(
+      "aria-label",
+      `Map and weather data sources. Current layer: Satellite ${mapSatelliteState.layerLabel}`
+    );
     return;
   }
   const credit = xweatherStormActive(mapLibreCurrentRecord()) ? "StormScope Xweather" : mapCreditText(frame);
@@ -9557,6 +9570,46 @@ function renderMapCredit(frame = mapState.frames[mapState.frameIndex]) {
   document.querySelectorAll("#mapCredit, #immCredit").forEach((node) => {
     node.innerHTML = html;
   });
+  document.getElementById("immCreditToggle")?.setAttribute(
+    "aria-label",
+    `Map and weather data sources. Current weather layer: ${credit}`
+  );
+}
+
+function clearImmersiveCreditTimer() {
+  if (!immersiveCreditHideTimer) return;
+  clearTimeout(immersiveCreditHideTimer);
+  immersiveCreditHideTimer = 0;
+}
+
+function setImmersiveMapCreditOpen(open, { focusToggle = false } = {}) {
+  const panel = document.getElementById("immCreditPanel");
+  const toggle = document.getElementById("immCreditToggle");
+  if (!panel || !toggle) return;
+  const expanded = Boolean(open);
+  panel.hidden = !expanded;
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  if (!expanded && focusToggle) toggle.focus();
+}
+
+function closeImmersiveMapCredit(options = {}) {
+  clearImmersiveCreditTimer();
+  setImmersiveMapCreditOpen(false, options);
+}
+
+function toggleImmersiveMapCredit() {
+  clearImmersiveCreditTimer();
+  const panel = document.getElementById("immCreditPanel");
+  setImmersiveMapCreditOpen(Boolean(panel?.hidden));
+}
+
+function showImmersiveMapCreditBriefly() {
+  clearImmersiveCreditTimer();
+  setImmersiveMapCreditOpen(true);
+  immersiveCreditHideTimer = setTimeout(() => {
+    immersiveCreditHideTimer = 0;
+    setImmersiveMapCreditOpen(false);
+  }, IMMERSIVE_CREDIT_AUTO_HIDE_MS);
 }
 
 function mapCreditText(frame) {
@@ -11323,6 +11376,7 @@ async function enterImmersiveMap() {
     await nextMapPaint();
     renderImmersiveFrame();
   }
+  showImmersiveMapCreditBriefly();
   return true;
 }
 
@@ -11331,6 +11385,7 @@ function exitImmersiveMap() {
   if (!mapState.immersive || !mapState._normalEls) return;
 
   cancelStandardTimelineScrub();
+  closeImmersiveMapCredit();
   clearMapLibreInteractionState();
   closeXweatherStormSheet();
   endXweatherStormSession(mapLibreCurrentRecord(), "exit");
@@ -11366,6 +11421,10 @@ function exitImmersiveMap() {
 
 function onImmersiveKey(e) {
   if (e.key !== "Escape") return;
+  if (!document.getElementById("immCreditPanel")?.hidden) {
+    closeImmersiveMapCredit({ focusToggle: true });
+    return;
+  }
   if (stormReceiptSheetOpen()) {
     closeXweatherStormReceiptSheet();
     return;
@@ -11530,6 +11589,7 @@ function bindImmersiveModeButtons() {
   bindTapAction(document.getElementById("stormReceiptDone"), closeXweatherStormReceiptSheet);
   bindTapAction(document.getElementById("immPlay"), toggleRadarPlayback);
   bindTapAction(document.getElementById("immTimelineNowButton"), returnImmersiveTimelineToNow);
+  bindTapAction(document.getElementById("immCreditToggle"), toggleImmersiveMapCredit);
   document.querySelectorAll("#immTimeJumps [data-storm-jump]").forEach((button) => {
     bindTapAction(button, () => jumpXweatherStormTimeline(button.getAttribute("data-storm-jump")));
   });
@@ -11537,6 +11597,7 @@ function bindImmersiveModeButtons() {
   slider.oninput = (e) => scrubToFrame(Number(e.target.value));
   slider.onchange = () => settleStandardTimelineScrub();
   slider.onpointerdown = () => {
+    closeImmersiveMapCredit();
     setImmersiveTimelineScrubbing(true);
     beginStandardTimelineScrub();
     showTimelineTimeBubble(2400);

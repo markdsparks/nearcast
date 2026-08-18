@@ -16,7 +16,7 @@ assert.match(app, /navigator\.geolocation\.watchPosition\(/, "foreground locatio
 assert.match(app, /navigator\.geolocation\.clearWatch\(watchId\)/, "location watcher can be stopped");
 assert.match(map, /document\.hidden\) stopImmersiveLocationWatch\(\)/, "backgrounding stops location updates");
 assert.match(map, /stopImmersiveLocationWatch\(\);[\s\S]{0,180}immersiveLocationState\.following = false/, "closing the immersive map stops following");
-assert.match(map, /event\?\.originalEvent\) disengageDeviceLocationFollow\(\)/, "manual MapLibre movement disengages follow mode");
+assert.match(map, /if \(event\?\.originalEvent\)\s*\{[\s\S]{0,180}?disengageDeviceLocationFollow\(\)/, "manual MapLibre movement disengages follow mode");
 assert.match(map, /if \(mapState\.immersive\) disengageDeviceLocationFollow\(\)/, "manual classic-map movement disengages follow mode");
 assert.match(html, /See yourself on the map/, "first-use prompt explains the location benefit");
 assert.match(html, /id="immLocation"/, "immersive map includes a recenter control");
