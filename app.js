@@ -1,4 +1,4 @@
-const VERSION = "3.0.365";
+const VERSION = "3.0.366";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -2237,6 +2237,18 @@ function convectiveReceiptDetail(convective) {
 function dailyConditionLabel(code) {
   if (isThunderCode(code)) return "Storms";
   return weatherCodes[code] || "Weather";
+}
+
+// Hourly cards intentionally keep a narrow, consistent rhythm so the trend
+// line remains aligned and several hours stay visible at a glance. Preserve
+// the canonical condition in the card's accessible name and detail receipt,
+// but use the familiar shorter noun on the visual card when "thunderstorms"
+// cannot fit without clipping or an awkward mid-word break.
+function hourlyConditionCardLabel(label) {
+  return String(label || "Weather")
+    .replace(/\bThunderstorms\b/gi, "Storms")
+    .replace(/\bThunderstorm\b/gi, "Storm")
+    .trim();
 }
 
 function thunderBadgeHtml(label = "Thunder possible") {
@@ -14093,6 +14105,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       ? nowPrecipPhase === "active"
       : hour.precipPrimary && precipProfile.amountSupported;
     const code = hour.label;
+    const cardCondition = hourlyConditionCardLabel(code);
     const isHourDay = hour.isDay;
     const temp = Math.round(hour.temperature);
     const metricValue = metricValues[position];
@@ -14130,7 +14143,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml(thunderLabel) : ""}</div>
         <strong class="hour-temp hour-trend-value"${temperatureColorStyle}>${presentation.trendLabel}</strong>
-        <span class="hour-condition">${escapeHtml(code)}</span>
+        <span class="hour-condition" aria-hidden="true">${escapeHtml(cardCondition)}</span>
         <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${presentation.secondary}</span>
       </article>
     `;

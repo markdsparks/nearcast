@@ -40,6 +40,7 @@ run_portable_checks() {
     trust-loop-report-smoke.mjs \
     hourly-alert-detail-smoke.mjs \
     hourly-precip-graph-smoke.mjs \
+    hourly-hero-label-smoke.mjs \
     hourly-row-layout-smoke.mjs \
     interaction-gesture-smoke.mjs \
     reactive-sky-smoke.mjs \

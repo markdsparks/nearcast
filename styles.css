@@ -9652,6 +9652,9 @@ body.map-immersive-active .app-dock {
   font-size: 0.72rem;
   font-weight: 780;
   line-height: 1.1;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  hyphens: auto;
   text-wrap: balance;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
