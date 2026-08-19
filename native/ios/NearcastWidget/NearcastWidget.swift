@@ -155,6 +155,12 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     if canRefreshResolvedPlace,
        resolution.meaningfullyMoved || shouldRefreshWidgetWeather(cached, now: refreshStartedAt) {
         refreshedWeather = try? await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
+        if resolution.meaningfullyMoved {
+            // The canonical event was authored for the previous coordinate.
+            // Raw destination weather may refresh natively, but only the web
+            // forecast engine may author a new destination event story.
+            refreshedWeather?.clearCanonicalEvent()
+        }
     }
     let refreshedAlert = await alertRefresh
 
@@ -472,6 +478,12 @@ private func widgetEntryDates(snapshot: NearcastWidgetSnapshot, now: Date) -> [D
         }
     }
 
+    // Canonical event copy must disappear at the same instant across the app
+    // and its companions, even if WidgetKit delays the next provider refresh.
+    if let eventEndAt = snapshot.canonicalEventEndAt, eventEndAt > nowTimestamp {
+        timestamps.append(eventEndAt + 1)
+    }
+
     // The last cached forecast row must not remain painted on screen forever
     // if WidgetKit defers our requested provider reload. At the end of the
     // forecast's real validity window, advance to an explicit update state.
@@ -783,7 +795,7 @@ enum NearcastWidgetForecastClient {
         let refreshedAt = Date().timeIntervalSince1970
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 7),
+            version: max(fallback.version, 8),
             savedAt: refreshedAt,
             placeName: place.displayLabel,
             placeTimezone: forecast.timezone ?? fallback.placeTimezone,
@@ -806,6 +818,12 @@ enum NearcastWidgetForecastClient {
             nextValue: nextValue(rainChance: nextRainChance),
             laterLabel: "Later",
             laterValue: laterValue(forecast: forecast, wind: wind, windUnit: fallback.windUnit),
+            canonicalEventId: fallback.canonicalEventId,
+            canonicalEventHeadline: fallback.canonicalEventHeadline,
+            canonicalEventTiming: fallback.canonicalEventTiming,
+            canonicalEventStartAt: fallback.canonicalEventStartAt,
+            canonicalEventEndAt: fallback.canonicalEventEndAt,
+            canonicalEventKind: fallback.canonicalEventKind,
             planTitle: fallback.planTitle,
             planLabel: fallback.planLabel,
             planDetail: fallback.planDetail,
@@ -1982,6 +2000,7 @@ private struct MediumSignalSpec: Identifiable {
     let id: String
     let label: String
     let value: String
+    let detail: String?
     let tone: Color
 }
 
@@ -2114,6 +2133,7 @@ struct NearcastSmallWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
+        let canonicalEvent = snapshot.canonicalEventBrief()
         VStack(alignment: .leading, spacing: 5) {
             Text(cityName(snapshot.placeName))
                 .font(.system(size: 18, weight: .black, design: .rounded))
@@ -2130,12 +2150,16 @@ struct NearcastSmallWidget: View {
 
             SmallHighLowLine(snapshot: snapshot, palette: palette)
 
-            Text(widgetConditionTitle(snapshot))
+            Text(canonicalEvent?.headline ?? widgetConditionTitle(snapshot))
                 .font(.system(size: 22, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
 
-            MiniPill(text: smallWidgetChip(snapshot), tone: smallWidgetChipTone(snapshot), palette: palette)
+            MiniPill(
+                text: canonicalEvent?.timing ?? smallWidgetChip(snapshot),
+                tone: smallWidgetChipTone(snapshot),
+                palette: palette
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .padding(.top, 23)
@@ -2205,7 +2229,13 @@ struct NearcastMediumWidget: View {
 
                 VStack(spacing: 10) {
                     ForEach(rows) { row in
-                        SignalRow(label: row.label, value: row.value, tone: row.tone, palette: palette)
+                        SignalRow(
+                            label: row.label,
+                            value: row.value,
+                            detail: row.detail,
+                            tone: row.tone,
+                            palette: palette
+                        )
                     }
                 }
                 .frame(width: rightWidth)
@@ -2367,16 +2397,17 @@ private struct LargeWeatherRunway: View {
     var body: some View {
         let rows = largeRunwayRows(snapshot, at: entryDate, limit: density.timelineLimit)
         let mode = largeRunwayMode(snapshot, rows: rows)
+        let canonicalEvent = snapshot.canonicalEventBrief(at: entryDate.timeIntervalSince1970)
 
         VStack(alignment: .leading, spacing: density.isCompact ? 5 : 7) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(largeRunwayHorizonLabel(rows))
+                    Text(canonicalEvent?.timing ?? largeRunwayHorizonLabel(rows))
                         .font(WidgetText.eyebrow)
                         .tracking(0.5)
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
-                    Text(largeRunwayTitle(mode, snapshot: snapshot, rows: rows))
+                    Text(canonicalEvent?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows))
                         .font(density.isCompact ? WidgetText.body : WidgetText.bodyLarge)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
@@ -2435,7 +2466,7 @@ private struct LargeWeatherRunway: View {
                 .stroke(palette.stroke, lineWidth: 1)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(largeRunwayAccessibility(mode, snapshot: snapshot, rows: rows))
+        .accessibilityLabel(largeRunwayAccessibility(mode, snapshot: snapshot, rows: rows, at: entryDate))
     }
 }
 
@@ -3383,6 +3414,7 @@ struct UvTimelineStrip: View {
 struct SignalRow: View {
     let label: String
     let value: String
+    let detail: String?
     let tone: Color
     let palette: WidgetPalette
 
@@ -3395,12 +3427,21 @@ struct SignalRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(WidgetText.tinyScale)
                 .frame(width: 42, alignment: .leading)
-            Text(value)
-                .font(.system(size: 17, weight: .black, design: .rounded))
-                .foregroundStyle(palette.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.80)
-                .layoutPriority(2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .foregroundStyle(palette.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.80)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(palette.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+            }
+            .layoutPriority(2)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -3717,16 +3758,19 @@ private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
 
 private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: WidgetPalette) -> [MediumSignalSpec] {
     let focus = nextFocus(snapshot)
+    let canonicalEvent = snapshot.canonicalEventBrief()
     let first = MediumSignalSpec(
         id: "now",
         label: "Now",
         value: mediumNowValue(snapshot),
+        detail: nil,
         tone: palette.primary
     )
     let second = MediumSignalSpec(
         id: "next",
-        label: focus == .quiet ? "Next" : focusLabel(focus),
-        value: mediumFocusValue(snapshot, focus: focus),
+        label: canonicalEvent == nil && focus != .quiet ? focusLabel(focus) : "Next",
+        value: canonicalEvent?.headline ?? mediumFocusValue(snapshot, focus: focus),
+        detail: canonicalEvent?.timing,
         tone: nextFocusColor(focus, snapshot: snapshot)
     )
     return [first, second]
@@ -3839,6 +3883,9 @@ private func metricAccessibility(_ metric: LargeMetricSpec, snapshot: NearcastWi
 }
 
 private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let canonicalEvent = snapshot.canonicalEventBrief() {
+        return canonicalEvent.headline
+    }
     let next = snapshot.nextValue.lowercased()
     let now = snapshot.nowValue.lowercased()
     if next.contains("rain") || next.contains("storm") { return compactSignalValue(snapshot.nextValue) }
@@ -3849,6 +3896,7 @@ private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
 }
 
 private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let canonicalEvent = snapshot.canonicalEventBrief() { return canonicalEvent.headline }
     if let status = cleanOptional(snapshot.watchStatus) { return status }
     if let label = cleanOptional(snapshot.planLabel), label != "Watching" { return label }
     if snapshot.nextValue.lowercased().contains("rain") { return compactSignalValue(snapshot.nextValue) }
@@ -3859,6 +3907,7 @@ private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
 }
 
 private func watchDetail(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if let timing = snapshot.canonicalEventBrief()?.timing { return timing }
     if let detail = cleanOptional(snapshot.watchDetail) { return detail }
     if let detail = cleanOptional(snapshot.planDetail) { return detail }
     return "\(cityName(snapshot.placeName)) · \(compactSignalValue(snapshot.nextValue))"
@@ -3874,7 +3923,8 @@ private func watchSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
     case "good":
         return "checkmark.circle.fill"
     default:
-        let lower = "\(snapshot.nowValue) \(snapshot.nextValue) \(snapshot.condition)".lowercased()
+        let canonical = snapshot.canonicalEventBrief()
+        let lower = "\(canonical?.headline ?? "") \(canonical?.kind ?? "") \(snapshot.nowValue) \(snapshot.nextValue) \(snapshot.condition)".lowercased()
         if lower.contains("storm") { return "cloud.bolt.rain.fill" }
         if lower.contains("rain") { return "cloud.rain.fill" }
         if snapshot.feelsLike >= 95 { return "thermometer.sun.fill" }
@@ -4174,33 +4224,40 @@ private func largeRunwayHorizonLabel(_ rows: [NearcastWidgetHour]) -> String {
     return "NEXT \(rows.count - 1) HOURS"
 }
 
-private func largeRunwayAccessibility(_ mode: LargeRunwayMode, snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> String {
-    let title = largeRunwayTitle(mode, snapshot: snapshot, rows: rows)
+private func largeRunwayAccessibility(
+    _ mode: LargeRunwayMode,
+    snapshot: NearcastWidgetSnapshot,
+    rows: [NearcastWidgetHour],
+    at date: Date
+) -> String {
+    let canonicalEvent = snapshot.canonicalEventBrief(at: date.timeIntervalSince1970)
+    let title = canonicalEvent?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows)
+    let canonicalPrefix = canonicalEvent?.timing.map { "\(title). \($0)." }
     guard let first = rows.first, let last = rows.last else { return title }
     switch mode {
     case .rain:
         let peak = largeRunwayPoints(rows: rows, mode: .rain, snapshot: snapshot).map(\.value).max()
             ?? snapshot.rainChance
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
     case .snow:
         let end = last.temperature ?? snapshot.temperature
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
     case .wind:
         let peak = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
         let sustained = rows.compactMap(\.wind).max() ?? snapshot.wind
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Peak gust \(peak) \(snapshot.windUnit); sustained wind up to \(sustained)."
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak gust \(peak) \(snapshot.windUnit); sustained wind up to \(sustained)."
     case .heat:
         let focus = largeFeelsLikeFocus(snapshot, rows: rows)
         let direction = focus.isCold ? "as low as" : "as high as"
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the actual temperature is \(focus.air)."
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the actual temperature is \(focus.air)."
     case .sun:
         let peak = rows.compactMap(\.uv).max() ?? snapshot.uv
-        return "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
     case .quiet:
         let start = first.temperature ?? snapshot.temperature
         let end = last.temperature ?? start
         let transition = runwayConditionTransition(rows, snapshot: snapshot).map { " \($0)" } ?? ""
-        return "Next \(max(1, rows.count - 1)) hours. \(title). From \(start) to \(end) degrees.\(transition)"
+        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). From \(start) to \(end) degrees.\(transition)"
     }
 }
 
@@ -4714,6 +4771,9 @@ private func compactTimeSuffix(_ value: String) -> String? {
 }
 
 private func nextFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus {
+    if let canonicalFocus = canonicalEventFocus(snapshot) {
+        return canonicalFocus
+    }
     let rows = snapshot.timeline ?? []
     let maxRain = rows.compactMap(\.rainChance).max() ?? snapshot.rainChance
     let maxWind = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
@@ -4740,7 +4800,22 @@ private func nextFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus {
     return .quiet
 }
 
+private func canonicalEventFocus(_ snapshot: NearcastWidgetSnapshot) -> WidgetNextFocus? {
+    guard let event = snapshot.canonicalEventBrief() else { return nil }
+    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+    if value.contains("storm") || value.contains("thunder") || value.contains("rain")
+        || value.contains("precip") || value.contains("shower") || value.contains("snow") {
+        return .rain
+    }
+    if value.contains("wind") || value.contains("gust") { return .wind }
+    if value.contains("uv") || value.contains("sun") || value.contains("heat") { return .sun }
+    return .quiet
+}
+
 private func nextFocusTitle(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    if let canonicalEvent = snapshot.canonicalEventBrief() {
+        return canonicalEvent.headline
+    }
     switch focus {
     case .rain:
         let peak = peakRainHour(snapshot)
@@ -4763,6 +4838,9 @@ private func nextFocusTitle(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSn
 }
 
 private func nextFocusDetail(_ focus: WidgetNextFocus, snapshot: NearcastWidgetSnapshot) -> String {
+    if let canonicalTiming = snapshot.canonicalEventBrief()?.timing {
+        return canonicalTiming
+    }
     switch focus {
     case .rain:
         let peak = peakRainHour(snapshot)

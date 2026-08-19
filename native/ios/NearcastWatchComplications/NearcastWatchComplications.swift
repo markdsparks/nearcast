@@ -191,7 +191,7 @@ struct NearcastBriefWidget: Widget {
                 .widgetURL(nearcastComplicationURL("brief"))
         }
         .configurationDisplayName("Today Basics")
-        .description("Temperature, high and low, rain, and wind.")
+        .description("Current weather and the next meaningful change.")
         .supportedFamilies([.accessoryRectangular])
     }
 }
@@ -495,12 +495,75 @@ private struct NearcastBriefView: View {
 
     @ViewBuilder
     private var briefFresh: some View {
-        NearcastBasicsRectangle(snapshot: entry.snapshot)
-        .foregroundStyle(Color.primary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Today basics")
-        .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition), \(highLowText(entry.snapshot)), rain \(entry.snapshot.rainChance) percent, wind \(windBasicsText(entry.snapshot))")
+        if let event = entry.snapshot.canonicalEventBrief(at: entry.date.timeIntervalSince1970) {
+            NearcastCanonicalEventRectangle(snapshot: entry.snapshot, event: event)
+        } else {
+            NearcastBasicsRectangle(snapshot: entry.snapshot)
+                .foregroundStyle(Color.primary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Today basics")
+                .accessibilityValue("\(entry.snapshot.temperature) degrees, \(entry.snapshot.condition), \(highLowText(entry.snapshot)), rain \(entry.snapshot.rainChance) percent, wind \(windBasicsText(entry.snapshot))")
+        }
     }
+}
+
+private struct NearcastCanonicalEventRectangle: View {
+    let snapshot: NearcastWidgetSnapshot
+    let event: NearcastCanonicalEventBrief
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: canonicalEventSymbol(event))
+                .font(.system(size: 20, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .nearcastComplicationTint(canonicalEventColor(event))
+                .frame(width: 25)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.headline)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                if let timing = event.timing {
+                    Text(timing)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                }
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 0)
+
+            Text("\(snapshot.temperature)°")
+                .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Next weather")
+        .accessibilityValue([event.headline, event.timing].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+private func canonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> String {
+    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+    if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
+    if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
+    if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
+    if value.contains("wind") || value.contains("gust") { return "wind" }
+    if value.contains("heat") || value.contains("warm") { return "thermometer.sun.fill" }
+    if value.contains("cold") || value.contains("freeze") { return "thermometer.snowflake" }
+    if value.contains("sun") || value.contains("uv") || value.contains("clear") { return "sun.max.fill" }
+    return "clock.badge"
+}
+
+private func canonicalEventColor(_ event: NearcastCanonicalEventBrief) -> Color {
+    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+    if value.contains("wind") || value.contains("gust") { return NearcastComplicationColor.wind }
+    if value.contains("heat") || value.contains("sun") || value.contains("uv") { return NearcastComplicationColor.warm }
+    return NearcastComplicationColor.rain
 }
 
 private struct NearcastTemperatureRectangle: View {
@@ -1133,6 +1196,11 @@ private func complicationTimelineDates(snapshot: NearcastWidgetSnapshot, now: Da
     let staleDate = complicationWeatherValidUntil(snapshot)
     if staleDate > now {
         dates.append(staleDate)
+    }
+
+    if let eventEndAt = snapshot.canonicalEventEndAt {
+        let transition = Date(timeIntervalSince1970: eventEndAt + 1)
+        if transition > now { dates.append(transition) }
     }
 
     // Coalesce the half-hour safety entry with a forecast boundary when they

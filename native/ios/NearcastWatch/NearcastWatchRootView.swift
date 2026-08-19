@@ -253,6 +253,7 @@ private struct WatchTodayBasicsPage: View {
     let useUltraLayout: Bool
 
     var body: some View {
+        let canonicalEvent = snapshot.canonicalEventBrief()
         VStack(spacing: useUltraLayout ? 10 : 7) {
             if snapshot.hasWeatherData {
                 HStack(spacing: 7) {
@@ -268,10 +269,19 @@ private struct WatchTodayBasicsPage: View {
                     Spacer(minLength: 0)
                 }
 
+                if let canonicalEvent {
+                    WatchCanonicalEventSummary(
+                        event: canonicalEvent,
+                        isLuminanceReduced: isLuminanceReduced,
+                        useUltraLayout: useUltraLayout
+                    )
+                }
+
                 WatchTodayInfographic(
                     snapshot: snapshot,
                     isLuminanceReduced: isLuminanceReduced,
-                    useUltraLayout: useUltraLayout
+                    useUltraLayout: useUltraLayout,
+                    isCompact: canonicalEvent != nil
                 )
             } else {
                 WatchNoWeatherMessage(
@@ -290,10 +300,57 @@ private struct WatchTodayBasicsPage: View {
     }
 }
 
+private struct WatchCanonicalEventSummary: View {
+    let event: NearcastCanonicalEventBrief
+    let isLuminanceReduced: Bool
+    let useUltraLayout: Bool
+
+    var body: some View {
+        HStack(spacing: useUltraLayout ? 8 : 6) {
+            Image(systemName: watchCanonicalEventSymbol(event))
+                .font(.system(size: useUltraLayout ? 16 : 14, weight: .bold))
+                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                .frame(width: useUltraLayout ? 20 : 18)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.headline)
+                    .font(.system(size: useUltraLayout ? 15 : 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(watchPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                if let timing = event.timing {
+                    Text(timing)
+                        .font(.system(size: useUltraLayout ? 13 : 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(watchSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([event.headline, event.timing].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+private func watchCanonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> String {
+    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+    if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
+    if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
+    if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
+    if value.contains("wind") || value.contains("gust") { return "wind" }
+    if value.contains("heat") || value.contains("warm") { return "thermometer.sun.fill" }
+    if value.contains("cold") || value.contains("freeze") { return "thermometer.snowflake" }
+    if value.contains("sun") || value.contains("uv") || value.contains("clear") { return "sun.max.fill" }
+    return "clock.badge"
+}
+
 private struct WatchTodayInfographic: View {
     let snapshot: NearcastWidgetSnapshot
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
+    let isCompact: Bool
 
     var body: some View {
         GeometryReader { proxy in
@@ -329,9 +386,9 @@ private struct WatchTodayInfographic: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, useUltraLayout ? 12 : 9)
-        .padding(.vertical, useUltraLayout ? 12 : 10)
+        .padding(.vertical, isCompact ? (useUltraLayout ? 9 : 7) : (useUltraLayout ? 12 : 10))
         .frame(maxWidth: .infinity)
-        .frame(height: useUltraLayout ? 126 : 116)
+        .frame(height: isCompact ? (useUltraLayout ? 108 : 98) : (useUltraLayout ? 126 : 116))
         .background(Color.white.opacity(isLuminanceReduced ? 0 : 0.075), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -2380,7 +2437,7 @@ private func watchSurfaceForLaunch() -> WatchSurface {
 private func watchPreviewSnapshot() -> NearcastWidgetSnapshot {
     let now = Date().timeIntervalSince1970
     var snapshot = NearcastWidgetSnapshot.fallback
-    snapshot.version = 6
+    snapshot.version = 8
     snapshot.savedAt = now
     snapshot.weatherSavedAt = now
     snapshot.placeName = "Maryville, Illinois"
@@ -2418,6 +2475,12 @@ private func watchPreviewSnapshot() -> NearcastWidgetSnapshot {
         NearcastWidgetDay(date: "preview-1", label: "Tomorrow", high: 84, low: 63, rainChance: 28, conditionCode: 2),
         NearcastWidgetDay(date: "preview-2", label: "Thursday", high: 79, low: 59, rainChance: 12, conditionCode: 0)
     ]
+    snapshot.canonicalEventId = "preview:rain:today"
+    snapshot.canonicalEventHeadline = "Showers ease this afternoon"
+    snapshot.canonicalEventTiming = "Most likely through 2 PM"
+    snapshot.canonicalEventStartAt = now
+    snapshot.canonicalEventEndAt = now + 4 * 3600
+    snapshot.canonicalEventKind = "rain"
     if ProcessInfo.processInfo.arguments.contains("-nearcastPreviewPlan") {
         snapshot.planTitle = "Soccer practice"
         snapshot.planLabel = "Tonight · 6–8 PM"
@@ -2446,6 +2509,7 @@ enum NearcastWatchWeatherRefreshResult {
 private struct NearcastWatchPlaceResolution {
     let selected: NearcastWidgetPlace
     let requestPlace: NearcastWidgetPlace
+    let meaningfullyMoved: Bool
 }
 
 @MainActor
@@ -2624,7 +2688,7 @@ enum NearcastWatchWeatherClient {
                 intervalSeconds: current.interval,
                 cloudCover: current.cloudCover
             ) ?? current.weatherCode
-            updated.version = max(6, max(updated.version, fallback.version))
+            updated.version = max(8, max(updated.version, fallback.version))
             updated.placeName = place.displayLabel
             updated.placeTimezone = forecast.timezone ?? updated.placeTimezone
             updated.temperature = Int(current.temperature.rounded())
@@ -2637,6 +2701,12 @@ enum NearcastWatchWeatherClient {
             updated.windLabel = nil
             updated.isAvailable = true
             updated.weatherSavedAt = refreshedAt
+            if resolution.meaningfullyMoved {
+                // Never carry a web-authored event story to a new coordinate.
+                // The Watch may refresh raw basics, but Nearcast on iPhone
+                // remains the sole author of the canonical next event.
+                updated.clearCanonicalEvent()
+            }
 
             let semanticHours = forecast.hourly?.semanticHours ?? []
             if let hourly = forecast.hourly {
@@ -2671,7 +2741,11 @@ enum NearcastWatchWeatherClient {
         allowsLocationAuthorizationRequest: Bool
     ) async -> NearcastWatchPlaceResolution? {
         guard selected.tracksCurrentLocation else {
-            return NearcastWatchPlaceResolution(selected: selected, requestPlace: selected)
+            return NearcastWatchPlaceResolution(
+                selected: selected,
+                requestPlace: selected,
+                meaningfullyMoved: false
+            )
         }
         guard let location = await NearcastWatchLocationRequest.current(
             allowsAuthorizationRequest: allowsLocationAuthorizationRequest
@@ -2692,7 +2766,11 @@ enum NearcastWatchWeatherClient {
             requestPlace.country = nil
             requestPlace.countryCode = nil
         }
-        return NearcastWatchPlaceResolution(selected: selected, requestPlace: requestPlace)
+        return NearcastWatchPlaceResolution(
+            selected: selected,
+            requestPlace: requestPlace,
+            meaningfullyMoved: distance >= movementThreshold
+        )
     }
 
     private static func sameSelection(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {

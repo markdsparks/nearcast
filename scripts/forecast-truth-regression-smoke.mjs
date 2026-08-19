@@ -244,6 +244,20 @@ const story = contextWith(`
   };
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
   function degree(unit) { return "°" + unit; }
+  function buildWeatherTruth(data) {
+    return {
+      data,
+      current: data?.current || {},
+      code: data?.current?.weather_code ?? 0,
+      nowCode: data?.current?.weather_code ?? 0,
+      label: weatherCodes[data?.current?.weather_code] || "Weather",
+      precip: { phase: "dry", source: "modeled-current" },
+      source: "modeled-current"
+    };
+  }
+  function weatherTruth(data) {
+    return data === state.forecast && state.weatherTruth ? state.weatherTruth : buildWeatherTruth(data);
+  }
   function formatClock(hour, minute = 0) {
     const value = Number(hour) % 12 || 12;
     return String(value) + (Number(hour) < 12 ? " AM" : " PM");
@@ -251,6 +265,14 @@ const story = contextWith(`
   function formatTime(value) {
     const parts = localDateTimeParts(value);
     return parts ? formatClock(parts.hour, parts.minute) : "--";
+  }
+  function launchDetailTarget(_data, badgeLabel, label, startMs, options = {}) {
+    return {
+      startMs: Number(startMs),
+      endMs: Number(options.endMs ?? (Number(startMs) + Number(options.hours || 1) * 3600000)),
+      badgeLabel,
+      label: badgeLabel + ": " + label
+    };
   }
   ${extractFunction(app, "forecastOffsetMs")}
   ${extractFunction(app, "localDateTimeParts")}
@@ -311,12 +333,21 @@ const story = contextWith(`
   ${extractFunction(app, "forecastTransitionSentence")}
   ${extractFunction(app, "forecastPrecipStorySentence")}
   ${extractFunction(app, "buildForecastStory")}
+  ${extractFunction(app, "nearcastRelativeTiming")}
+  ${extractFunction(app, "nearcastPromotedEvent")}
+  ${extractFunction(app, "nearcastBriefCleanSentence")}
+  ${extractFunction(app, "nearcastBriefMaterialEvent")}
+  ${extractFunction(app, "forecastMaterialEventStory")}
+  ${extractFunction(app, "forecastMaterialEventId")}
+  ${extractFunction(app, "forecastMaterialEventLabel")}
+  ${extractFunction(app, "forecastMaterialEventDailyTiming")}
+  ${extractFunction(app, "forecastMaterialEvent")}
   function setActiveForecastTruth(data, truth) {
     state.forecast = data;
     state.weatherTruth = truth;
   }
   function setNwsEvidence(data, evidence) { nwsConvectiveEvidenceByForecast.set(data, evidence); }
-  globalThis.subject = { buildForecastStory, dailyPrecipProfile, forecastHourPresentation, forecastDayPresentation, setFixtureNow, setActiveForecastTruth, setNwsEvidence };
+  globalThis.subject = { buildForecastStory, dailyPrecipProfile, forecastHourPresentation, forecastDayPresentation, forecastMaterialEvent, setFixtureNow, setActiveForecastTruth, setNwsEvidence };
 `).subject;
 
 check("the outlook uses the selected place's remaining local day", () => {
@@ -354,6 +385,11 @@ dailyPresentationFixtures.forEach((fixture) => {
     }
     if (fixture.expected.timing instanceof RegExp) assert.match(value.timing, fixture.expected.timing);
     else assert.equal(value.timing, fixture.expected.timing);
+    if (fixture.expected.materialEvent) {
+      Object.entries(fixture.expected.materialEvent).forEach(([key, expected]) => {
+        assert.equal(value.materialEvent?.[key], expected, `Daily material event ${key} matches the shared contract`);
+      });
+    }
     (fixture.elapsedIndices || []).forEach((index) => {
       assert.ok(!value.primaryIndices.includes(index), `elapsed hourly index ${index} is excluded`);
     });
@@ -374,6 +410,9 @@ nwsFutureConvectiveFixtures.forEach((fixture) => {
     assert.equal(day.code, fixture.expected.dailyCode);
     assert.match(day.timing, fixture.expected.dailyTiming);
     assert.equal(day.stormPotential, true);
+    Object.entries(fixture.expected.materialEvent).forEach(([key, expected]) => {
+      assert.equal(day.materialEvent?.[key], expected, `Daily material event ${key} matches the shared contract`);
+    });
   });
 });
 
@@ -467,6 +506,7 @@ const placeTruth = contextWith(`
   function forecastDayPresentation(data, index) {
     return { label: weatherCodes[data.daily.weather_code[index]] || "Weather", timing: "" };
   }
+  function forecastMaterialEvent() { return null; }
   function shortClock(value) { return String(value || "").slice(-5); }
   ${extractFunction(app, "observedPrecipSummaryLabel")}
   ${extractFunction(app, "activePrecipSummaryValue")}

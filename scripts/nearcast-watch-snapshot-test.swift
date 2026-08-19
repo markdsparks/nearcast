@@ -29,6 +29,12 @@ legacyObject.removeValue(forKey: "planAvailable")
 legacyObject.removeValue(forKey: "planRisk")
 legacyObject.removeValue(forKey: "planStartAt")
 legacyObject.removeValue(forKey: "planEndAt")
+legacyObject.removeValue(forKey: "canonicalEventId")
+legacyObject.removeValue(forKey: "canonicalEventHeadline")
+legacyObject.removeValue(forKey: "canonicalEventTiming")
+legacyObject.removeValue(forKey: "canonicalEventStartAt")
+legacyObject.removeValue(forKey: "canonicalEventEndAt")
+legacyObject.removeValue(forKey: "canonicalEventKind")
 
 let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
 let legacy = try decoder.decode(NearcastWidgetSnapshot.self, from: legacyData)
@@ -36,6 +42,29 @@ require(legacy.hasWeatherData, "V4 snapshots remain readable and available")
 require(legacy.weatherAge >= 9 * 60, "V4 savedAt remains the weather freshness fallback")
 require(!legacy.hasPlan, "V4 snapshots without plan fields do not invent a plan")
 require(legacy.planStartAt == nil && legacy.planEndAt == nil, "V4 snapshots decode without a plan window")
+require(legacy.canonicalEventBrief(at: now) == nil, "V4 snapshots decode without inventing a canonical event")
+
+var canonicalSnapshot = legacy
+canonicalSnapshot.version = 8
+canonicalSnapshot.canonicalEventId = "rain:2026-08-19T15:00"
+canonicalSnapshot.canonicalEventHeadline = "Storms arrive this afternoon"
+canonicalSnapshot.canonicalEventTiming = "Most likely 3–6 PM"
+canonicalSnapshot.canonicalEventStartAt = now + 2 * 3600
+canonicalSnapshot.canonicalEventEndAt = now + 5 * 3600
+canonicalSnapshot.canonicalEventKind = "thunderstorm"
+let canonicalRoundTrip = try decoder.decode(
+    NearcastWidgetSnapshot.self,
+    from: encoder.encode(canonicalSnapshot)
+)
+let canonicalBrief = canonicalRoundTrip.canonicalEventBrief(at: now)
+require(canonicalBrief?.headline == "Storms arrive this afternoon", "V8 preserves the canonical event headline verbatim")
+require(canonicalBrief?.timing == "Most likely 3–6 PM", "V8 preserves the canonical event timing verbatim")
+require(canonicalBrief?.id == "rain:2026-08-19T15:00" && canonicalBrief?.kind == "thunderstorm", "V8 preserves canonical event identity and kind")
+require(canonicalBrief?.startAt == now + 2 * 3600 && canonicalBrief?.endAt == now + 5 * 3600, "V8 preserves the canonical event window")
+require(canonicalRoundTrip.canonicalEventBrief(at: now + 5 * 3600) == nil, "an ended canonical event cannot remain on companion surfaces")
+var movedPlaceSnapshot = canonicalRoundTrip
+movedPlaceSnapshot.clearCanonicalEvent()
+require(movedPlaceSnapshot.canonicalEventBrief(at: now) == nil, "moving to a new coordinate clears the prior place's canonical event")
 
 var splitFreshness = legacy
 splitFreshness.version = 5
@@ -428,6 +457,17 @@ require(mergedSnapshot.planTitle == "Newest plan" && mergedSnapshot.planStartAt 
 require(mergedSnapshot.planRisk == "rain", "an in-flight refresh preserves the plan risk")
 require(mergedSnapshot.alertId == alertSnapshot.alertId && mergedSnapshot.alertTitle == alertSnapshot.alertTitle, "an in-flight refresh preserves official alert metadata")
 require(mergedSnapshot.daily?.first?.high == 70, "an in-flight refresh merges daily weather basics")
+
+var canonicalWeather = inFlightWeather
+canonicalWeather.canonicalEventId = canonicalSnapshot.canonicalEventId
+canonicalWeather.canonicalEventHeadline = canonicalSnapshot.canonicalEventHeadline
+canonicalWeather.canonicalEventTiming = canonicalSnapshot.canonicalEventTiming
+canonicalWeather.canonicalEventStartAt = canonicalSnapshot.canonicalEventStartAt
+canonicalWeather.canonicalEventEndAt = canonicalSnapshot.canonicalEventEndAt
+canonicalWeather.canonicalEventKind = canonicalSnapshot.canonicalEventKind
+let canonicalMerge = newestPlan.mergingWeather(from: canonicalWeather)
+require(canonicalMerge.version >= 8, "weather merges advance the shared snapshot to V8")
+require(canonicalMerge.canonicalEventBrief(at: now) == canonicalBrief, "weather merges carry the canonical event without native reinterpretation")
 
 var delayedPhoneSnapshot = newestPlan
 delayedPhoneSnapshot.temperature = 69

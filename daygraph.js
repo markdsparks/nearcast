@@ -7,13 +7,40 @@ const ROLLING_HOURLY_PAGE_SIZE = 24;
 const ROLLING_HOURLY_LOAD_AHEAD_PX = 420;
 
 // Collect a single day's hours from the retained forecast and open the sheet.
+function dayDetailIndicesForDay(data, dayIndex, candidateIndices = null) {
+  if (!data?.hourly?.time?.length) return [];
+  const dayStr = data.daily?.time?.[dayIndex];
+  if (!dayStr) return [];
+  const indices = Array.isArray(candidateIndices)
+    ? candidateIndices.filter((index) => Number.isInteger(index) && data.hourly.time[index]?.startsWith(dayStr))
+    : data.hourly.time.reduce((result, time, index) => {
+      if (time.startsWith(dayStr)) result.push(index);
+      return result;
+    }, []);
+  if (dayIndex !== forecastDailyIndex(data)) return indices;
+
+  const now = forecastNowMs(data);
+  const remaining = indices.filter((index, position) => {
+    const startMs = parseForecastTimestamp(data.hourly.time[index], data);
+    if (startMs === null) return false;
+    const nextIndex = indices[position + 1];
+    const nextMs = Number.isInteger(nextIndex)
+      ? parseForecastTimestamp(data.hourly.time[nextIndex], data)
+      : null;
+    const endMs = nextMs !== null && nextMs > startMs ? nextMs : startMs + 60 * 60 * 1000;
+    return endMs > now;
+  });
+  // A malformed or lagging hourly feed should not make Today impossible to
+  // open. Keep the last supplied hour as an honest fallback rather than
+  // silently switching back to elapsed, full-day context.
+  return remaining.length ? remaining : indices.slice(-1);
+}
+
 function openDayFromIndex(i, options = {}) {
   const data = state.forecast;
   if (!data) return;
   if (!Number.isInteger(i) || i < 0 || i >= (data.daily?.time?.length || 0)) return;
-  const dayStr = data.daily.time[i];
-  const indices = [];
-  data.hourly.time.forEach((t, h) => { if (t.startsWith(dayStr)) indices.push(h); });
+  const indices = dayDetailIndicesForDay(data, i);
   const day = forecastDayPresentation(data, i);
   const code = day.code;
   const memoryItems = activePlanMemoryEventsForDay(i, data);
@@ -431,6 +458,7 @@ function detailHoursForIndices(indices, {
     const truthPrecip = truth?.display?.precip ?? truth?.nowPrecip?.amount ?? precip;
     const precipSource = truth?.precip?.source || truth?.source || "";
     return {
+      index: h,
       time: data.hourly.time[h],
       ms,
       endMs: nextMs,
@@ -496,7 +524,9 @@ function openDayDetail({
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const precipUnit = detailPrecipUnit(data);
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
-  const hrs = detailHoursForIndices(indices, { data, alerts, eventWindow, showNow });
+  const rawHrs = detailHoursForIndices(indices, { data, alerts, eventWindow, showNow });
+  const sharedEvent = dayDetailSharedEvent(data, rawHrs, { dayIndex, source, showNow });
+  const hrs = dayDetailReconcileRollingThunder(rawHrs, sharedEvent, source);
 
   const temps = hrs.map((h) => h.temp);
   const high = Math.round(Math.max(...temps));
@@ -512,11 +542,22 @@ function openDayDetail({
   document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay) + (stormPotential ? thunderBadgeHtml() : "");
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
-  renderDayFocus(hrs, { tempUnit, windUnit, source, showNow });
+  renderDayFocus(hrs, { tempUnit, windUnit, source, showNow, data, dayIndex, sharedEvent });
   renderDayForecastPulse(data, dayIndex, source);
 
   graphMetric = "temp"; // each focused day starts with the most legible trend.
-  dayDetailNavState = { source, dayIndex, data, eventWindow, showNow, sunriseISO, sunsetISO, contextLabel, ...(navState || {}) };
+  dayDetailNavState = {
+    source,
+    dayIndex,
+    data,
+    eventWindow,
+    materialEvent: sharedEvent,
+    showNow,
+    sunriseISO,
+    sunsetISO,
+    contextLabel,
+    ...(navState || {})
+  };
   if (dayDetailNavState.timeline) {
     dayDetailNavState.timeline.lastDay = null;
     dayDetailNavState.timeline.lastAlertKey = "";
@@ -557,9 +598,11 @@ function dayDetailRowsForState(nav = dayDetailNavState) {
   }
   const dayStr = data.daily?.time?.[nav.dayIndex];
   if (!dayStr) return [];
-  return data.hourly.time
+  const rows = data.hourly.time
     .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
     .filter((row) => row.ms !== null && row.time.startsWith(dayStr));
+  const visible = new Set(dayDetailIndicesForDay(data, nav.dayIndex, rows.map((row) => row.index)));
+  return rows.filter((row) => visible.has(row.index));
 }
 
 function planMemoryItemsOverlappingRows(rows, data = state.forecast, place = state.activePlace) {
@@ -643,18 +686,28 @@ function refreshOpenDayDetailMemorySurfaces() {
     sheetContext.hidden = !memoryContext.contextLabel;
   }
 
-  const hrs = detailHoursForIndices(rows.map((row) => row.index), {
+  const rawHrs = detailHoursForIndices(rows.map((row) => row.index), {
     data,
     alerts: activeAlerts,
     eventWindow: memoryContext.eventWindow,
     showNow: Boolean(dayDetailNavState.showNow)
   });
+  const sharedEvent = dayDetailSharedEvent(data, rawHrs, {
+    dayIndex: dayDetailNavState.dayIndex,
+    source: dayDetailNavState.source,
+    showNow: Boolean(dayDetailNavState.showNow)
+  });
+  const hrs = dayDetailReconcileRollingThunder(rawHrs, sharedEvent, dayDetailNavState.source);
+  dayDetailNavState.materialEvent = sharedEvent;
 
   renderDayFocus(hrs, {
     tempUnit,
     windUnit,
     source: dayDetailNavState.source,
-    showNow: Boolean(dayDetailNavState.showNow)
+    showNow: Boolean(dayDetailNavState.showNow),
+    data,
+    dayIndex: dayDetailNavState.dayIndex,
+    sharedEvent
   });
   renderDayForecastPulse(data, dayDetailNavState.dayIndex, dayDetailNavState.source);
 
@@ -768,7 +821,85 @@ function dayFocusPeriodHours(hrs, start, end) {
   });
 }
 
-function dayFocusStory(hrs, tempUnit, windUnit) {
+function dayDetailSharedEvent(data, hrs, {
+  dayIndex = 0,
+  source = "day",
+  showNow = false
+} = {}) {
+  const safeHours = Array.isArray(hrs) ? hrs.filter(Boolean) : [];
+  if (!data || !safeHours.length || !["day", "rolling"].includes(source)) return null;
+  const root = typeof globalThis === "object" && globalThis ? globalThis : {};
+  const eventBuilder = typeof root.forecastMaterialEvent === "function"
+    ? root.forecastMaterialEvent
+    : typeof root.nearcastMaterialEvent === "function"
+      ? root.nearcastMaterialEvent
+      : null;
+  if (!eventBuilder) return null;
+  const truth = data === state.forecast ? state.weatherTruth : null;
+  try {
+    const request = { truth, source: source === "rolling" ? "rolling-hourly-detail" : "day-detail", showNow };
+    if (source === "day") request.dayIndex = dayIndex;
+    const raw = eventBuilder(data, request);
+    const event = raw?.event && typeof raw.event === "object" ? raw.event : raw;
+    if (!event || typeof event !== "object") return null;
+    const startMs = event.startMs === null || event.startMs === undefined ? NaN : Number(event.startMs);
+    const endMs = event.endMs === null || event.endMs === undefined ? NaN : Number(event.endMs);
+    const rangeStart = Number(safeHours[0]?.ms);
+    const rangeEnd = Number(safeHours.at(-1)?.endMs ?? safeHours.at(-1)?.ms);
+    if (
+      (Number.isFinite(startMs) && Number.isFinite(rangeEnd) && startMs >= rangeEnd) ||
+      (Number.isFinite(endMs) && Number.isFinite(rangeStart) && endMs <= rangeStart)
+    ) return null;
+    const headline = String(event.headline || event.label || "").trim();
+    if (!headline) return null;
+    return {
+      ...event,
+      headline,
+      support: String(event.support || "").trim(),
+      startMs: Number.isFinite(startMs) ? startMs : null,
+      endMs: Number.isFinite(endMs) ? endMs : null
+    };
+  } catch {
+    // Day detail remains useful while an older cached app shell and a newer
+    // shared forecast contract briefly coexist during an asset update.
+    return null;
+  }
+}
+
+function dayDetailCanonicalStormWindow(event) {
+  if (!event || typeof event !== "object") return null;
+  const phase = event.phases?.find((item) => item?.kind === "storm") || null;
+  const rawStart = phase?.startMs ?? (event.kind === "storm" ? event.peakStartMs ?? event.startMs : null);
+  const rawEnd = phase?.endMs ?? (event.kind === "storm" ? event.peakEndMs ?? event.endMs : null);
+  const startMs = rawStart === null || rawStart === undefined ? NaN : Number(rawStart);
+  const endMs = rawEnd === null || rawEnd === undefined ? NaN : Number(rawEnd);
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+    ? { startMs, endMs }
+    : null;
+}
+
+function dayDetailReconcileRollingThunder(hrs, event, source = "day") {
+  const safeHours = Array.isArray(hrs) ? hrs.filter(Boolean) : [];
+  const stormWindow = source === "rolling" ? dayDetailCanonicalStormWindow(event) : null;
+  if (!stormWindow) return safeHours;
+  return safeHours.map((hour) => {
+    const nwsOnly = hour?.convective?.source === "nws-hourly" && !isThunderCode(hour?.rawCode);
+    if (!nwsOnly || !hour.stormPotential) return hour;
+    const startMs = Number(hour.ms);
+    const endMs = Number(hour.endMs);
+    const overlapsCanonicalStorm = Number.isFinite(startMs) && Number.isFinite(endMs) &&
+      startMs < stormWindow.endMs && endMs > stormWindow.startMs;
+    const precedesCanonicalStorm = Number.isFinite(endMs) && endMs <= stormWindow.startMs;
+    if (overlapsCanonicalStorm || !precedesCanonicalStorm) return hour;
+    return { ...hour, stormPotential: false, convective: null };
+  });
+}
+
+function dayFocusStory(hrs, tempUnit, windUnit, options = {}) {
+  const data = options.data || (typeof state === "object" ? state.forecast : null);
+  const dayIndex = Number.isInteger(options.dayIndex) ? options.dayIndex : 0;
+  const source = options.source || "day";
+  const showNow = Boolean(options.showNow);
   const safeHours = Array.isArray(hrs) ? hrs.filter(Boolean) : [];
   if (!safeHours.length) return { text: "Hourly detail is unavailable for this day.", signal: null };
   const segments = [];
@@ -805,10 +936,45 @@ function dayFocusStory(hrs, tempUnit, windUnit) {
   const wetLikelihood = (hour) => hour?.convective?.level === "likely" || Number(hour?.pop) >= 50
     ? "likely"
     : "possible";
-  const wetText = likelyWetHour
-    ? `${wetKind(likelyWetHour)} is ${wetLikelihood(likelyWetHour)} near ${dayFocusHourLabel(likelyWetHour)}.`
-    : wetHour
-      ? `${wetKind(wetHour)} is possible near ${dayFocusHourLabel(wetHour)}.`
+  const hasProvidedEvent = Object.prototype.hasOwnProperty.call(options, "sharedEvent");
+  const sharedEvent = hasProvidedEvent
+    ? options.sharedEvent
+    : typeof dayDetailSharedEvent === "function"
+      ? dayDetailSharedEvent(data, safeHours, { dayIndex, source, showNow })
+      : null;
+  if (sharedEvent) {
+    const firstIsEventWeather = ["rain", "storm", "snow"].includes(first.family);
+    const firstMs = Number(safeHours[0]?.ms);
+    const eventStartMs = sharedEvent.startMs === null || sharedEvent.startMs === undefined
+      ? NaN
+      : Number(sharedEvent.startMs);
+    const eventIsAlreadyUnderway = Number.isFinite(firstMs) && Number.isFinite(eventStartMs) && eventStartMs <= firstMs;
+    changeText = firstIsEventWeather || eventIsAlreadyUnderway ? "" : `${first.label} until then.`;
+  }
+  const wetSentence = (hour, likelihood = wetLikelihood(hour)) => {
+    const noun = wetKind(hour);
+    const verb = noun === "Storms" ? "are" : "is";
+    return `${noun} ${verb} ${likelihood} near ${dayFocusHourLabel(hour)}.`;
+  };
+  const sentence = (text) => {
+    const value = String(text || "").trim();
+    if (!value) return "";
+    return /[.!?]$/.test(value) ? value : `${value}.`;
+  };
+  const sharedHeadline = sentence(sharedEvent?.headline);
+  const sharedSupport = sentence(sharedEvent?.support);
+  const supportRepeatsHeadline = sharedHeadline && sharedSupport && (
+    sharedHeadline.toLowerCase() === sharedSupport.toLowerCase() ||
+    sharedHeadline.toLowerCase().includes(sharedSupport.toLowerCase()) ||
+    sharedSupport.toLowerCase().includes(sharedHeadline.toLowerCase())
+  );
+  const eventText = sharedEvent
+    ? [sharedHeadline, supportRepeatsHeadline ? "" : sharedSupport].filter(Boolean).join(" ")
+    : "";
+  const wetText = !sharedEvent && likelyWetHour
+    ? wetSentence(likelyWetHour)
+    : wetHour && !sharedEvent
+      ? wetSentence(wetHour, "possible")
       : "";
   const windThreshold = windUnit === "mph" ? 25 : 40;
   const windText = !wetText && Number(windyHour?.gust) >= windThreshold
@@ -816,34 +982,61 @@ function dayFocusStory(hrs, tempUnit, windUnit) {
     : "";
 
   let signal = null;
-  if (likelyWetHour) {
+  if (likelyWetHour && !sharedEvent) {
     const noun = wetKind(likelyWetHour);
     signal = {
       label: noun === "Snow" ? "Snow timing" : noun === "Storms" ? "Storm timing" : "Rain timing",
       value: `${noun} ${wetLikelihood(likelyWetHour)} near ${dayFocusHourLabel(likelyWetHour)}`,
-      tone: "wet"
+      tone: "wet",
+      claimId: "precip"
     };
   } else if (Number(windyHour?.gust) >= windThreshold) {
-    signal = { label: "Wind peak", value: `Gusts near ${Math.round(windyHour.gust)} ${windUnit} around ${dayFocusHourLabel(windyHour)}`, tone: "wind" };
+    signal = {
+      label: "Wind peak",
+      value: `Gusts near ${Math.round(windyHour.gust)} ${windUnit} around ${dayFocusHourLabel(windyHour)}`,
+      tone: "wind",
+      claimId: "wind"
+    };
   } else if (Number(uvHour?.uv) >= 6) {
-    signal = { label: "Sun exposure", value: `UV ${Math.round(uvHour.uv)} peaks around ${dayFocusHourLabel(uvHour)}`, tone: "sun" };
+    signal = {
+      label: "Sun exposure",
+      value: `UV ${Math.round(uvHour.uv)} peaks around ${dayFocusHourLabel(uvHour)}`,
+      tone: "sun",
+      claimId: "uv"
+    };
   }
 
   return {
-    text: [changeText, wetText || windText].filter(Boolean).join(" "),
-    signal
+    text: [changeText, eventText || wetText || windText].filter(Boolean).join(" "),
+    signal,
+    sharedEvent,
+    claimIds: [
+      changeText ? "condition" : null,
+      sharedEvent ? String(sharedEvent.kind || "event") : wetText ? "precip" : windText ? "wind" : null
+    ].filter(Boolean)
   };
 }
 
-function renderDayFocus(hrs, { tempUnit, windUnit, source = "day", showNow = false } = {}) {
+function renderDayFocus(hrs, {
+  tempUnit,
+  windUnit,
+  source = "day",
+  showNow = false,
+  data = state.forecast,
+  dayIndex = 0,
+  sharedEvent
+} = {}) {
   const kicker = document.getElementById("sheetKicker");
   const summary = document.getElementById("sheetSummary");
   const signal = document.getElementById("sheetFocusSignal");
-  const focus = dayFocusStory(hrs, tempUnit, windUnit);
+  const focus = dayFocusStory(hrs, tempUnit, windUnit, { data, dayIndex, source, showNow, sharedEvent });
   if (kicker) kicker.textContent = source === "rolling" ? "Hourly outlook" : showNow ? "Today's outlook" : "Day outlook";
   if (summary) summary.textContent = focus.text || buildDaySummary(hrs, windUnit);
   if (!signal) return;
-  if (!focus.signal) {
+  // A focus card earns space only when it adds a distinct fact. In
+  // particular, do not repeat a storm/rain event already stated in the
+  // narrative directly above it.
+  if (!focus.signal || focus.claimIds?.includes(focus.signal.claimId)) {
     signal.hidden = true;
     signal.innerHTML = "";
     signal.removeAttribute("data-tone");

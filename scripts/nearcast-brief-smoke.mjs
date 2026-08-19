@@ -104,6 +104,13 @@ vm.runInContext(`
   function forecastHourPresentation(data, index) {
     return data.fixtureHours?.[index] || { index, convective: null };
   }
+  function forecastDailyIndex(data) { return Number(data?.fixtureTodayIndex || 0); }
+  function forecastDayPresentation(data, index) {
+    const materialEvent = data?.fixtureStory
+      ? forecastMaterialEvent(data, { dayIndex: index, truth: data.fixtureTruth, story: data.fixtureStory })
+      : null;
+    return { index, label: data?.fixtureDayLabels?.[index] || "Weather", materialEvent };
+  }
   function precipRank(code) { return code >= 95 ? 6 : code >= 63 ? 4 : code >= 51 ? 3 : 1; }
   function parseForecastTimestamp(value) { return Date.parse(String(value).endsWith("Z") ? value : value + "Z"); }
   function launchDetailTarget(_data, badgeLabel, label, startMs, options = {}) {
@@ -127,7 +134,10 @@ vm.runInContext(`
   }
   function activePrecipSummaryValue(precip) { return precip?.label || "Precipitation now"; }
   function degree(unit) { return "°" + unit; }
-  function buildForecastStory() { throw new Error("fixture must pass canonical story"); }
+  function buildForecastStory(data) {
+    if (data?.fixtureStory) return data.fixtureStory;
+    throw new Error("fixture must pass canonical story");
+  }
 
   ${extractFunction(app, "nearcastRelativeTiming")}
   ${extractFunction(app, "forecastStoryIndices")}
@@ -140,10 +150,16 @@ vm.runInContext(`
   ${extractFunction(app, "nearcastBriefPeriod")}
   ${extractFunction(app, "nearcastBriefCleanSentence")}
   ${extractFunction(app, "nearcastBriefMaterialEvent")}
+  ${extractFunction(app, "forecastMaterialEventStory")}
+  ${extractFunction(app, "forecastMaterialEventId")}
+  ${extractFunction(app, "forecastMaterialEventLabel")}
+  ${extractFunction(app, "forecastMaterialEventDailyTiming")}
+  ${extractFunction(app, "forecastMaterialEvent")}
   ${extractFunction(app, "nearcastBriefTransitionSupport")}
   ${extractFunction(app, "nearcastBriefTemperatureSupport")}
   ${extractFunction(app, "nearcastBriefOutlook")}
   ${extractFunction(app, "buildNearcastBrief")}
+  ${extractFunction(app, "buildForecastPresentation")}
 
   globalThis.subject = {
     nearcastRelativeTiming,
@@ -154,7 +170,9 @@ vm.runInContext(`
     nearcastEvidencePresentation,
     forecastTrustPresentation,
     nearcastPromotedEvent,
-    buildNearcastBrief
+    forecastMaterialEvent,
+    buildNearcastBrief,
+    buildForecastPresentation
   };
 `, sandbox);
 
@@ -166,7 +184,9 @@ const {
   forecastPrecipStorySentence,
   nearcastEvidencePresentation,
   forecastTrustPresentation,
-  buildNearcastBrief
+  forecastMaterialEvent,
+  buildNearcastBrief,
+  buildForecastPresentation
 } = sandbox.subject;
 const eveningNow = Date.parse("2026-08-18T20:00:00Z");
 const tomorrowRainStart = Date.parse("2026-08-19T05:00:00Z");
@@ -225,6 +245,8 @@ const midnightTiming = nearcastRelativeTiming(midnightData, midnightStart, midni
 assert.equal(midnightTiming.dayRelation, "tomorrow", "a near-midnight event keeps the correct calendar day");
 assert.equal(midnightTiming.startsSoon, true, "soon remains separate from already happening");
 assert.equal(midnightTiming.dayLabel, "tomorrow");
+assert.equal(midnightTiming.timeLabel, "12 AM", "midnight keeps an explicit clock label");
+assert.equal(midnightTiming.rangeLabel, "12 AM tomorrow", "midnight is always paired with its calendar day");
 
 const lateCurrentData = {
   fixtureNowMs: Date.parse("2026-08-18T05:45:00Z"),
@@ -307,6 +329,131 @@ assert.equal(brief.outlook.target.startMs, brief.promotedEvent.startMs, "the vis
 assert.equal(brief.outlook.target.endMs, brief.promotedEvent.endMs, "the visible outlook and promoted event share one exact end");
 assert.equal(brief.outlook.claims.length, 2, "the concise outlook exposes only its headline and optional supporting claim");
 
+const contractNow = Date.parse("2026-08-19T13:20:00Z");
+const contractStart = Date.parse("2026-08-19T15:00:00Z");
+const contractPeakStart = Date.parse("2026-08-19T16:00:00Z");
+const contractPeakEnd = Date.parse("2026-08-19T18:00:00Z");
+const contractEnd = Date.parse("2026-08-19T19:00:00Z");
+const contractHours = Array.from({ length: 8 }, (_, index) => {
+  const ms = Date.parse(`2026-08-19T${String(13 + index).padStart(2, "0")}:00:00Z`);
+  const inRain = ms >= contractStart && ms < contractEnd;
+  const inStormPeak = ms >= contractPeakStart && ms < contractPeakEnd;
+  return {
+    index,
+    ms,
+    code: inStormPeak ? 95 : inRain ? 61 : 2,
+    family: inStormPeak ? "storm" : inRain ? "rain" : "partly-cloudy",
+    precipKind: inRain ? "rain" : "",
+    pop: inStormPeak ? 80 : inRain ? 65 : 10,
+    precipPrimary: inRain,
+    stormPotential: inStormPeak,
+    convective: inStormPeak ? { level: "likely", source: "nws-hourly" } : null
+  };
+});
+const contractTruth = {
+  evaluationKey: "storm-contract-fixture",
+  current: {
+    time: "2026-08-19T13:20",
+    temperature_2m: 82,
+    apparent_temperature: 84,
+    relative_humidity_2m: 64,
+    weather_code: 2
+  },
+  code: 2,
+  nowCode: 2,
+  label: "Partly cloudy",
+  source: "modeled-current",
+  precip: { phase: "dry", source: "modeled-current", label: "Dry" }
+};
+const contractStory = {
+  kicker: "This afternoon's outlook",
+  text: "Rain develops this afternoon, with storms most likely later.",
+  hour: 13,
+  segments: [
+    { family: "partly-cloudy", label: "Partly cloudy", startIndex: 0, endIndex: 1, startMs: contractHours[0].ms, endMs: contractStart },
+    { family: "rain", label: "Rain", startIndex: 2, endIndex: 5, startMs: contractStart, endMs: contractEnd }
+  ],
+  temperatures: { current: 82, todayHigh: 86, overnightLow: 70 },
+  transition: null,
+  precipWindow: {
+    kind: "rain",
+    pop: 80,
+    hours: 4,
+    startIndex: 2,
+    endIndex: 5,
+    startMs: contractStart,
+    endMs: contractEnd
+  },
+  convectiveWindow: {
+    startTime: "2026-08-19T16:00",
+    endTime: "2026-08-19T18:00",
+    startIndex: 3,
+    endIndex: 4,
+    convective: { level: "likely", source: "nws-hourly" }
+  },
+  gust: null,
+  gustIndex: -1
+};
+const contractData = {
+  fixtureNowMs: contractNow,
+  fixtureCurrentIndex: 0,
+  fixtureTodayIndex: 0,
+  fixtureProvenance: { savedAt: contractNow - 12 * 60000, cacheFallback: false },
+  fixtureHours: contractHours,
+  fixtureDayLabels: ["Storms"],
+  fixtureTruth: contractTruth,
+  fixtureStory: contractStory,
+  utc_offset_seconds: 0,
+  current: contractTruth.current,
+  hourly: {
+    time: contractHours.map((hour) => new Date(hour.ms).toISOString().slice(0, 16))
+  },
+  daily: { time: ["2026-08-19"] }
+};
+
+const canonicalEvent = forecastMaterialEvent(contractData, {
+  truth: contractTruth,
+  story: contractStory,
+  tempUnit: "F",
+  windUnit: "mph"
+});
+assert.equal(canonicalEvent.id, "precip:2026-08-19:0", "one stable identity owns the whole wet-weather window");
+assert.equal(canonicalEvent.kind, "rain", "the event preserves the initial precipitation phase");
+assert.equal(canonicalEvent.startMs, contractStart, "the event starts with the first material rain hour");
+assert.equal(canonicalEvent.peakStartMs, contractPeakStart, "the peak starts with the supported thunder window");
+assert.equal(canonicalEvent.peakEndMs, contractPeakEnd, "the peak ends with the supported thunder window");
+assert.equal(canonicalEvent.endMs, contractEnd, "the event ends when the broader precipitation window ends");
+assert.equal(canonicalEvent.phases.filter((phase) => phase.kind === "storm").length, 1, "broad thunder potential is one phase, not one claim per hour");
+assert.match(canonicalEvent.headline, /Rain likely 3 PM–7 PM today/i);
+assert.match(canonicalEvent.support || "", /Storms likely 4 PM–6 PM today/i);
+assert.equal(canonicalEvent.target.startMs, contractStart, "the event deep-link opens at the canonical start");
+assert.equal(canonicalEvent.target.endMs, contractEnd, "the event deep-link retains the canonical end");
+
+const contractPresentation = buildForecastPresentation(contractData, {
+  truth: contractTruth,
+  tempUnit: "F",
+  windUnit: "mph",
+  radar: null,
+  nowMs: contractNow,
+  alerts: [],
+  alertState: { state: "ready" }
+});
+assert.strictEqual(contractPresentation.materialEvent, contractPresentation.brief.materialEvent, "Home and the forecast package share one event object");
+assert.strictEqual(contractPresentation.materialEvent, contractPresentation.brief.promotedEvent, "the Home promotion cannot choose a second event");
+assert.equal(contractPresentation.days[0].materialEvent.id, canonicalEvent.id, "Daily uses the same canonical event identity");
+assert.equal(contractPresentation.days[0].materialEvent.startMs, contractStart, "Daily agrees on event start");
+assert.equal(contractPresentation.days[0].materialEvent.peakStartMs, contractPeakStart, "Daily agrees on peak start");
+assert.equal(contractPresentation.days[0].materialEvent.peakEndMs, contractPeakEnd, "Daily agrees on peak end");
+assert.equal(contractPresentation.days[0].materialEvent.endMs, contractEnd, "Daily agrees on event end");
+
+const eventHours = contractPresentation.hours.filter((hour) => hour.eventId);
+assert.deepEqual(Array.from(new Set(eventHours.map((hour) => hour.eventId))), [canonicalEvent.id], "Hourly references one event instead of restating separate hourly events");
+assert.equal(eventHours.filter((hour) => hour.eventPhase === "storm" && hour.eventStarts).length, 1, "Hourly marks the thunder phase onset once");
+assert.equal(eventHours.filter((hour) => hour.eventPhase === "storm" && hour.eventEnds).length, 1, "Hourly marks the thunder phase ending once");
+assert.ok(eventHours.every((hour) => !("materialEvent" in hour)), "hour rows carry identity and phase only, never duplicate event prose");
+assert.equal(contractPresentation.brief.outlook.target.startMs, contractStart, "the Home headline opens the same start shown by Hourly and Daily");
+assert.equal(contractPresentation.brief.outlook.target.endMs, contractEnd, "the Home headline opens the same end shown by Hourly and Daily");
+
 const quietBrief = buildNearcastBrief(data, {
   truth: dryTruth,
   story: {
@@ -382,6 +529,30 @@ assert.equal(radarEvidence.basis, "observed");
 assert.match(radarEvidence.label, /observed on radar/i);
 assert.match(radarEvidence.parts.find((part) => part.kind === "current")?.meta || "", /observed/i);
 assert.equal(radarEvidence.alerts.label, "No active NWS alerts");
+
+const freshnessNow = Date.parse("2026-08-18T20:00:00Z");
+const splitFreshness = nearcastEvidencePresentation({
+  ...data,
+  fixtureNowMs: freshnessNow,
+  fixtureProvenance: { savedAt: freshnessNow - 18 * 60000, cacheFallback: false }
+}, dryTruth, {
+  radar: {
+    phase: "clear",
+    confidence: "observed-clear",
+    source: "NOAA MRMS radar",
+    timestamp: freshnessNow - 4 * 60000
+  },
+  nowMs: freshnessNow,
+  alerts: [],
+  alertState: { state: "ready" }
+});
+const splitRadarPart = splitFreshness.parts.find((part) => part.kind === "current");
+const splitForecastPart = splitFreshness.parts.find((part) => part.kind === "forecast");
+assert.match(splitRadarPart?.meta || "", /4 min ago/, "radar freshness comes from the radar frame timestamp");
+assert.match(splitRadarPart?.detail || "", /4 min ago/, "radar detail keeps the radar frame age");
+assert.match(splitForecastPart?.label || "", /18 min ago/, "forecast freshness comes from the forecast save timestamp");
+assert.doesNotMatch(splitRadarPart?.meta || "", /18 min ago/, "forecast age cannot leak into the radar claim");
+assert.doesNotMatch(splitForecastPart?.label || "", /4 min ago/, "radar age cannot leak into the forecast claim");
 
 const modeledEvidence = nearcastEvidencePresentation(data, {
   ...dryTruth,
@@ -493,8 +664,7 @@ const skyOnlyBrief = buildNearcastBrief(data, {
   alerts: [],
   alertState: { state: "ready" }
 });
-assert.equal(skyOnlyBrief.promotedEvent.kind, "clear");
-assert.equal(skyOnlyBrief.promotedEvent.requiresJump, true, "the sky transition is genuinely beyond the visible hours");
+assert.equal(skyOnlyBrief.promotedEvent, null, "ordinary sky movement is not promoted as a material event");
 assert.equal(skyOnlyBrief.outlook.materialEvent, false, "an ordinary sky transition is context, not an interruption");
 
 const jumpButton = {
@@ -518,7 +688,7 @@ vm.runInContext(`
 `, jumpSandbox);
 jumpSandbox.subject.render(brief);
 assert.equal(jumpButton.hidden, false, "a material offscreen event earns the compact Hourly jump");
-assert.equal(jumpLabel.textContent, "Rain · 5 AM tomorrow", "the jump uses a compact event and time label");
+assert.equal(jumpLabel.textContent, "5 AM tomorrow", "the jump is a compact time link without repeating the event headline");
 assert.equal(jumpButton.dataset.hourIndex, "9");
 assert.equal(jumpSandbox.subject.target().startMs, brief.promotedEvent.startMs);
 assert.equal(jumpSandbox.subject.target().endMs, brief.promotedEvent.endMs);

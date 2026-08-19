@@ -270,7 +270,15 @@ export const dailyPresentationFixtures = [
     expected: {
       code: 95,
       family: "storm",
-      timing: /Storms after 3 PM/i,
+      timing: /Storms likely 3 PM–6 PM/i,
+      materialEvent: {
+        id: "precip:2026-08-15:0",
+        kind: "storm",
+        startMs: Date.UTC(2026, 7, 15, 15, 0, 0),
+        peakStartMs: Date.UTC(2026, 7, 15, 15, 0, 0),
+        peakEndMs: Date.UTC(2026, 7, 15, 18, 0, 0),
+        endMs: Date.UTC(2026, 7, 15, 18, 0, 0)
+      },
       precipPrimary: true,
       precipSustained: true,
       precipNote: ""
@@ -329,7 +337,15 @@ export const nwsFutureConvectiveFixtures = [
       hourLabel: "Cloudy",
       level: "possible",
       dailyCode: 2,
-      dailyTiming: /Thunderstorms possible after 4 PM/i
+      dailyTiming: /Storms possible 4 PM–6 PM/i,
+      materialEvent: {
+        id: "precip:2026-08-15:0",
+        kind: "storm",
+        startMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        peakStartMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        peakEndMs: Date.UTC(2026, 7, 15, 18, 0, 0),
+        endMs: Date.UTC(2026, 7, 15, 18, 0, 0)
+      }
     }
   },
   {
@@ -358,7 +374,15 @@ export const nwsFutureConvectiveFixtures = [
       hourLabel: "Thunderstorms likely",
       level: "likely",
       dailyCode: 2,
-      dailyTiming: /Storms likely after 4 PM/i
+      dailyTiming: /Storms likely 4 PM–6 PM/i,
+      materialEvent: {
+        id: "precip:2026-08-15:0",
+        kind: "storm",
+        startMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        peakStartMs: Date.UTC(2026, 7, 15, 16, 0, 0),
+        peakEndMs: Date.UTC(2026, 7, 15, 18, 0, 0),
+        endMs: Date.UTC(2026, 7, 15, 18, 0, 0)
+      }
     }
   }
 ];

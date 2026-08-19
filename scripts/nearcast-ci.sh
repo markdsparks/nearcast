@@ -42,6 +42,7 @@ run_portable_checks() {
     hourly-precip-graph-smoke.mjs \
     hourly-hero-label-smoke.mjs \
     hourly-row-layout-smoke.mjs \
+    day-detail-truth-smoke.mjs \
     interaction-gesture-smoke.mjs \
     reactive-sky-smoke.mjs \
     map-location-smoke.mjs \

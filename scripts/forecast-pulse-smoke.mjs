@@ -79,6 +79,28 @@ assert.equal(
   "Small model movement remains quiet"
 );
 
+assert.equal(
+  forecastPulseChange(
+    { ...baseDay, family: "cloudy", label: "Cloudy", timing: "" },
+    { ...baseDay, family: "partly-cloudy", label: "Partly cloudy", timing: "" },
+    "F",
+    "mph"
+  ),
+  null,
+  "Ordinary sky-cover movement never becomes a forecast-change interruption"
+);
+
+assert.equal(
+  forecastPulseChange(
+    { ...baseDay, precipStartMs: baseDay.precipStartMs + 60 * 60 * 1000 },
+    baseDay,
+    "F",
+    "mph"
+  ),
+  null,
+  "A one-hour timing wobble stays quiet instead of making the forecast feel unstable"
+);
+
 const earlier = forecastPulseChange(
   { ...baseDay, precipStartMs: Date.parse("2026-08-16T12:00:00Z") },
   baseDay,
@@ -87,6 +109,41 @@ const earlier = forecastPulseChange(
 );
 assert.equal(earlier.kind, "timing");
 assert.match(earlier.title, /earlier/);
+
+const canonicalEventDay = {
+  ...baseDay,
+  eventId: "precip:2026-08-16:0",
+  eventKind: "rain",
+  eventHeadline: "Rain likely 3 PM–6 PM",
+  eventStartMs: Date.parse("2026-08-16T15:00:00Z"),
+  eventEndMs: Date.parse("2026-08-16T18:00:00Z")
+};
+assert.equal(
+  forecastPulseChange(
+    { ...canonicalEventDay, eventStartMs: canonicalEventDay.eventStartMs + 60 * 60 * 1000 },
+    canonicalEventDay,
+    "F",
+    "mph"
+  ),
+  null,
+  "the same event moving one hour remains below the material-change threshold"
+);
+const canonicalTimingChange = forecastPulseChange(
+  { ...canonicalEventDay, eventStartMs: canonicalEventDay.eventStartMs - 2 * 60 * 60 * 1000 },
+  canonicalEventDay,
+  "F",
+  "mph"
+);
+assert.equal(canonicalTimingChange.kind, "timing", "a material move of the same event reports timing, not a new storm");
+assert.match(canonicalTimingChange.title, /earlier/);
+const replacementEvent = forecastPulseChange(
+  { ...canonicalEventDay, eventId: "precip:2026-08-16:1", eventHeadline: "A second rain window" },
+  canonicalEventDay,
+  "F",
+  "mph"
+);
+assert.equal(replacementEvent.kind, "event", "a changed canonical identity is a genuinely different weather window");
+assert.match(replacementEvent.title, /main weather window changed/i);
 
 const checkedAt = Date.parse("2026-08-15T12:00:00Z");
 setRuns([

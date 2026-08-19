@@ -30,6 +30,16 @@ struct NearcastWidgetSnapshot: Codable {
     var nextValue: String
     var laterLabel: String
     var laterValue: String
+    // Nearcast's web forecast engine owns the next meaningful event. Native
+    // companion surfaces present these words verbatim instead of independently
+    // inferring a different event from the raw hourly rows. Every field is
+    // optional so V7 and older snapshots continue to decode unchanged.
+    var canonicalEventId: String? = nil
+    var canonicalEventHeadline: String? = nil
+    var canonicalEventTiming: String? = nil
+    var canonicalEventStartAt: TimeInterval? = nil
+    var canonicalEventEndAt: TimeInterval? = nil
+    var canonicalEventKind: String? = nil
     var planTitle: String?
     var planLabel: String?
     var planDetail: String?
@@ -89,6 +99,15 @@ struct NearcastWidgetHour: Codable, Identifiable {
 struct NearcastWidgetTimelineProjection {
     var rows: [NearcastWidgetHour]
     var advancesCurrentWeather: Bool
+}
+
+struct NearcastCanonicalEventBrief: Equatable {
+    let id: String?
+    let headline: String
+    let timing: String?
+    let startAt: TimeInterval?
+    let endAt: TimeInterval?
+    let kind: String?
 }
 
 struct NearcastWidgetDay: Codable, Identifiable {
@@ -337,7 +356,7 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 7,
+        version: 8,
         savedAt: 0,
         placeName: "Nearcast",
         temperature: 0,
@@ -403,6 +422,40 @@ extension NearcastWidgetSnapshot {
             guard let value else { return false }
             return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    /// Returns the exact next-event language authored by Nearcast's canonical
+    /// forecast contract. An explicitly ended event is no longer eligible;
+    /// legacy snapshots and incomplete payloads fall back to their existing
+    /// native presentation without inventing missing canonical copy.
+    func canonicalEventBrief(at timestamp: TimeInterval = Date().timeIntervalSince1970) -> NearcastCanonicalEventBrief? {
+        guard let headline = canonicalEventHeadline?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !headline.isEmpty else {
+            return nil
+        }
+        if let canonicalEventEndAt, canonicalEventEndAt <= timestamp {
+            return nil
+        }
+        let timing = canonicalEventTiming?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = canonicalEventId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kind = canonicalEventKind?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NearcastCanonicalEventBrief(
+            id: identifier?.isEmpty == false ? identifier : nil,
+            headline: headline,
+            timing: timing?.isEmpty == false ? timing : nil,
+            startAt: canonicalEventStartAt,
+            endAt: canonicalEventEndAt,
+            kind: kind?.isEmpty == false ? kind : nil
+        )
+    }
+
+    mutating func clearCanonicalEvent() {
+        canonicalEventId = nil
+        canonicalEventHeadline = nil
+        canonicalEventTiming = nil
+        canonicalEventStartAt = nil
+        canonicalEventEndAt = nil
+        canonicalEventKind = nil
     }
 
     var weatherSavedTime: TimeInterval {
@@ -593,7 +646,7 @@ extension NearcastWidgetSnapshot {
     /// metadata delivered while a network request was in flight.
     func mergingWeather(
         from weather: NearcastWidgetSnapshot,
-        minimumVersion: Int = 7
+        minimumVersion: Int = 8
     ) -> NearcastWidgetSnapshot {
         var merged = self
         merged.version = max(minimumVersion, max(version, weather.version))
@@ -618,6 +671,12 @@ extension NearcastWidgetSnapshot {
         merged.nextValue = weather.nextValue
         merged.laterLabel = weather.laterLabel
         merged.laterValue = weather.laterValue
+        merged.canonicalEventId = weather.canonicalEventId
+        merged.canonicalEventHeadline = weather.canonicalEventHeadline
+        merged.canonicalEventTiming = weather.canonicalEventTiming
+        merged.canonicalEventStartAt = weather.canonicalEventStartAt
+        merged.canonicalEventEndAt = weather.canonicalEventEndAt
+        merged.canonicalEventKind = weather.canonicalEventKind
         merged.timeline = weather.timeline
         merged.daily = weather.daily
         merged.sunriseAt = weather.sunriseAt

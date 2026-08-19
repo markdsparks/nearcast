@@ -1,4 +1,4 @@
-const VERSION = "3.0.366";
+const VERSION = "3.0.370";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -3161,7 +3161,10 @@ function forecastDayPresentation(data, dayIndex) {
   const code = precipProfile.sustained && precipProfile.code != null
     ? precipProfile.code
     : modalSky != null ? Number(modalSky) : fallbackCode;
-  const timing = dailyTimingPhrase(data, dayIndex);
+  const materialEvent = forecastMaterialEvent(data, { dayIndex });
+  const timing = materialEvent
+    ? forecastMaterialEventDailyTiming(data, materialEvent)
+    : dailyTimingPhrase(data, dayIndex);
   const convective = nwsConvectiveWindowForIndices(data, relevantIndices);
   const stormPotential = !isThunderCode(code) && Boolean(
     hasThunderPotentialForDay(data, dayIndex, code) || convective
@@ -3176,6 +3179,7 @@ function forecastDayPresentation(data, dayIndex) {
     precip: precipProfile,
     stormPotential,
     convective,
+    materialEvent,
     primaryIndices
   };
 }
@@ -8422,6 +8426,7 @@ function forecastPulseDaySnapshot(data, dayIndex) {
   const date = data?.daily?.time?.[dayIndex] || "";
   if (!date) return null;
   const day = forecastDayPresentation(data, dayIndex);
+  const materialEvent = day.materialEvent || null;
   const indices = dailyRelevantHourlyIndices(data, dayIndex);
   const precipWindow = dailyPrecipitationWindow(data, dayIndex);
   const hourly = indices.map((index) => ({
@@ -8442,8 +8447,18 @@ function forecastPulseDaySnapshot(data, dayIndex) {
     family: day.family,
     label: day.storyLabel,
     timing: day.timing || "",
-    precipStartMs: precipWindow?.startTime ? parseForecastTimestamp(precipWindow.startTime, data) : null,
-    precipEndMs: precipWindow?.endTime ? parseForecastTimestamp(precipWindow.endTime, data) : null,
+    eventId: materialEvent?.id || null,
+    eventKind: materialEvent?.kind || null,
+    eventHeadline: materialEvent?.headline || null,
+    eventSupport: materialEvent?.support || null,
+    eventStartMs: Number.isFinite(Number(materialEvent?.startMs)) ? Number(materialEvent.startMs) : null,
+    eventEndMs: Number.isFinite(Number(materialEvent?.endMs)) ? Number(materialEvent.endMs) : null,
+    precipStartMs: Number.isFinite(Number(materialEvent?.startMs))
+      ? Number(materialEvent.startMs)
+      : precipWindow?.startTime ? parseForecastTimestamp(precipWindow.startTime, data) : null,
+    precipEndMs: Number.isFinite(Number(materialEvent?.endMs))
+      ? Number(materialEvent.endMs)
+      : precipWindow?.endTime ? parseForecastTimestamp(precipWindow.endTime, data) : null,
     hourly
   };
 }
@@ -8522,17 +8537,23 @@ function forecastPulseChange(current, previous, tempUnit, windUnit) {
   if (!current || !previous || current.date !== previous.date) return null;
   const changes = [];
   const add = (priority, kind, title, detail) => changes.push({ priority, kind, title, detail });
-  const currentWet = ["rain", "snow", "storm"].includes(current.family);
-  const previousWet = ["rain", "snow", "storm"].includes(previous.family);
-  if (current.family !== previous.family && (currentWet || previousWet)) {
-    if (currentWet && !previousWet) add(110, "condition", `${current.label} is now in the forecast`, `${current.timing || current.label} replaced ${String(previous.label || "drier weather").toLowerCase()}.`);
-    else if (!currentWet && previousWet) add(108, "condition", `${previous.label} backed off`, `${current.label}${current.timing ? ` · ${current.timing}` : ""}.`);
-    else add(106, "condition", `Precipitation type changed`, `${previous.label} shifted to ${current.label.toLowerCase()}.`);
+  // Treat a legacy precipitation snapshot as the same material event during
+  // the one-time schema migration. Otherwise the first v8 comparison can
+  // incorrectly announce that an already-known rain window is "now" present.
+  const currentEvent = current.eventId || Number.isFinite(Number(current.precipStartMs)) ? current : null;
+  const previousEvent = previous.eventId || Number.isFinite(Number(previous.precipStartMs)) ? previous : null;
+  if (currentEvent && !previousEvent) {
+    add(120, "event", `${current.eventHeadline || "Weather change"} is now in the forecast`, current.eventSupport || current.timing || "The next meaningful weather window changed.");
+  } else if (!currentEvent && previousEvent) {
+    add(118, "event", `${previous.eventKind === "storm" ? "Storms" : previous.eventKind === "snow" ? "Snow" : "Rain"} backed off`, "The previously highlighted weather window is no longer supported by the latest forecast.");
+  } else if (currentEvent && previousEvent && current.eventId && previous.eventId && current.eventId !== previous.eventId) {
+    add(116, "event", "The main weather window changed", `${current.eventHeadline || current.timing || "A new weather window"} replaced ${String(previous.eventHeadline || previous.timing || "the earlier signal").toLowerCase()}.`);
   }
-  const timingDelta = continuityDelta(current.precipStartMs, previous.precipStartMs);
+  const timingDelta = continuityDelta(current.eventStartMs ?? current.precipStartMs, previous.eventStartMs ?? previous.precipStartMs);
   if (timingDelta !== null && Math.abs(timingDelta) >= 90 * 60 * 1000 && Math.min(current.rainMax || 0, previous.rainMax || 0) >= 25) {
     const later = timingDelta > 0;
-    add(100 + Math.round(Math.abs(timingDelta) / 3600000), "timing", `${current.label || "Rain"} moved ${later ? "later" : "earlier"}`, `Now near ${formatTime(current.precipStartMs)}, previously near ${formatTime(previous.precipStartMs)}.`);
+    const eventName = current.eventKind === "storm" ? "Storms" : current.eventKind === "snow" ? "Snow" : "Rain";
+    add(100 + Math.round(Math.abs(timingDelta) / 3600000), "timing", `${eventName} moved ${later ? "later" : "earlier"}`, `Now near ${formatTime(current.eventStartMs ?? current.precipStartMs)}, previously near ${formatTime(previous.eventStartMs ?? previous.precipStartMs)}.`);
   }
   const rainDelta = continuityDelta(current.rainMax, previous.rainMax);
   if (rainDelta !== null && Math.abs(rainDelta) >= 20 && Math.max(current.rainMax || 0, previous.rainMax || 0) >= 30) {
@@ -8583,6 +8604,7 @@ function forecastPulseDayPresentation(data = state.forecast, dayIndex = forecast
       label: "Still shifting",
       meta: change?.title || "Recent updates show a wider range",
       detail: change?.detail || "Recent forecast updates have not converged on the same temperature or precipitation timing.",
+      changeKind: change?.kind || "range",
       previousCheckedAt: previous.run.checkedAt,
       previousTempUnit: previous.run.tempUnit,
       current: latest.day,
@@ -8597,6 +8619,7 @@ function forecastPulseDayPresentation(data = state.forecast, dayIndex = forecast
       label: change.title,
       meta: `Changed since ${previousTime}`,
       detail: change.detail,
+      changeKind: change.kind,
       previousCheckedAt: previous.run.checkedAt,
       previousTempUnit: previous.run.tempUnit,
       current: latest.day,
@@ -9784,6 +9807,259 @@ function nearcastPromotedEvent(data, story, truth, options = {}) {
   return null;
 }
 
+// One meaningful weather event is shared by every forecast surface. The
+// provider rows remain available as evidence, but Home, Hourly, Daily, day
+// detail, AI, widgets, and Watch must not independently choose a different
+// start time or description for the same rain or storm.
+function forecastMaterialEventStory(data, options = {}, truth = weatherTruth(data)) {
+  if (options.story) return options.story;
+  const dayIndex = Number(options.dayIndex);
+  if (!Number.isInteger(dayIndex) || dayIndex < 0) {
+    const tempUnit = options.tempUnit || (state.unit === "fahrenheit" ? "F" : "C");
+    const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
+    return buildForecastStory(data, tempUnit, windUnit, truth);
+  }
+
+  const indices = dailyRelevantHourlyIndices(data, dayIndex);
+  if (!indices.length) return null;
+  const segments = collapseForecastSegments(data, indices, { truth });
+  const precipWindow = forecastStoryPrecipWindow(data, indices, truth);
+  const convectiveWindow = nwsConvectiveWindowForIndices(data, indices);
+  const transition = forecastStoryTransitionSegment(segments);
+  const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
+  const gustThreshold = windUnit === "mph" ? 25 : 40;
+  const gustIndex = indices.reduce((best, index) => {
+    const gust = Number(data?.hourly?.wind_gusts_10m?.[index]);
+    const bestGust = Number(data?.hourly?.wind_gusts_10m?.[best]);
+    return Number.isFinite(gust) && (!Number.isFinite(bestGust) || gust > bestGust) ? index : best;
+  }, -1);
+  const gust = gustIndex >= 0 ? Math.round(Number(data?.hourly?.wind_gusts_10m?.[gustIndex]) || 0) : 0;
+  return {
+    segments,
+    precipWindow,
+    convectiveWindow,
+    transition,
+    gustIndex,
+    gust: gust >= gustThreshold ? gust : null
+  };
+}
+
+function forecastMaterialEventId(data, event, truth = null) {
+  if (!event || !Number.isFinite(Number(event.startMs))) return "";
+  const precipitationKinds = new Set(["rain", "storm", "snow", "ice", "precipitation"]);
+  const identityKind = precipitationKinds.has(event.kind) ? "precip" : event.kind || "weather";
+  let anchorIndex = Number.isInteger(event.startIndex) ? event.startIndex : -1;
+
+  // Preserve an active precipitation event's identity as the clock advances.
+  // Scan backward through the same contiguous wet window instead of assigning
+  // a new id to each new current hour.
+  if (identityKind === "precip" && anchorIndex >= 0) {
+    const isWet = (index) => {
+      if (index < 0 || index >= (data?.hourly?.time?.length || 0)) return false;
+      const currentIndex = currentHourlyIndex(data);
+      const hour = forecastHourPresentation(data, index, {
+        isCurrent: index === currentIndex,
+        truth: index === currentIndex ? truth : null
+      });
+      return Boolean(hour.precipPrimary || hour.pop >= DAILY_PRECIP_THREE_HOURS_POP || hour.stormPotential);
+    };
+    while (anchorIndex > 0 && isWet(anchorIndex - 1)) anchorIndex -= 1;
+  }
+
+  const anchorMs = anchorIndex >= 0
+    ? parseForecastTimestamp(data?.hourly?.time?.[anchorIndex], data)
+    : Number(event.startMs);
+  const date = forecastLocalDateAtMs(data, Number.isFinite(anchorMs) ? anchorMs : Number(event.startMs)) || "future";
+  if (identityKind !== "precip") {
+    const shifted = new Date(Number(event.startMs) + forecastOffsetMs(data));
+    const daypart = Math.floor(shifted.getUTCHours() / 6);
+    return `${identityKind}:${date}:${daypart}`;
+  }
+
+  let ordinal = 0;
+  let inside = false;
+  for (let index = 0; index <= Math.max(0, anchorIndex); index += 1) {
+    const ms = parseForecastTimestamp(data?.hourly?.time?.[index], data);
+    if (!Number.isFinite(ms) || forecastLocalDateAtMs(data, ms) !== date) continue;
+    const currentIndex = currentHourlyIndex(data);
+    const hour = forecastHourPresentation(data, index, {
+      isCurrent: index === currentIndex,
+      truth: index === currentIndex ? truth : null
+    });
+    const wet = Boolean(hour.precipPrimary || hour.pop >= DAILY_PRECIP_THREE_HOURS_POP || hour.stormPotential);
+    if (wet && !inside) ordinal += 1;
+    inside = wet;
+  }
+  return `${identityKind}:${date}:${Math.max(0, ordinal - 1)}`;
+}
+
+function forecastMaterialEventLabel(data, kind, likelihood, startMs, endMs, active = false) {
+  const timing = nearcastRelativeTiming(data, startMs, endMs);
+  const noun = kind === "storm" ? "Storms" : kind === "snow" ? "Snow" : kind === "ice" ? "Ice" : "Rain";
+  if (active) {
+    const ending = Number.isFinite(Number(endMs)) && Number(endMs) > forecastNowMs(data) + 45 * 60 * 1000
+      ? `; easing near ${timing.endTimeLabel} ${timing.endDayLabel}`
+      : "";
+    return `${noun} now${ending}`;
+  }
+  const when = Number(endMs) - Number(startMs) > 75 * 60 * 1000
+    ? timing.rangeLabel
+    : `around ${timing.timeLabel} ${timing.dayLabel}`;
+  return `${noun} ${likelihood} ${when}`;
+}
+
+function forecastMaterialEventDailyTiming(data, event) {
+  if (!event) return "";
+  const noun = event.kind === "storm" ? "Storms" : event.kind === "snow" ? "Snow" : event.kind === "ice" ? "Ice" : event.kind === "wind" ? "Wind" : event.kind === "fog" ? "Fog" : "Rain";
+  if (event.active) {
+    return Number(event.endMs) > forecastNowMs(data) + 45 * 60 * 1000
+      ? `${noun} now; easing near ${event.timing.endTimeLabel}`
+      : `${noun} now`;
+  }
+  if (event.kind === "wind" || event.kind === "fog") return event.headline || event.label || "";
+  const duration = Number(event.endMs) - Number(event.startMs);
+  const when = duration > 75 * 60 * 1000
+    ? `${event.timing.timeLabel}–${event.timing.endTimeLabel}`
+    : `near ${event.timing.timeLabel}`;
+  return `${noun} ${event.likelihood || "possible"} ${when}`;
+}
+
+function forecastMaterialEvent(data, options = {}) {
+  if (!data) return null;
+  const truth = options.truth || (data === state.forecast ? (state.weatherTruth || weatherTruth(data)) : buildWeatherTruth(data));
+  const story = forecastMaterialEventStory(data, options, truth);
+  if (!story) return null;
+  const base = nearcastPromotedEvent(data, story, truth, options);
+  if (!nearcastBriefMaterialEvent(base)) return null;
+
+  const precipWindow = story.precipWindow || null;
+  const convectiveWindow = story.convectiveWindow || null;
+  const currentIndex = currentHourlyIndex(data);
+  const now = forecastNowMs(data);
+  let startMs = Number(base.startMs);
+  let endMs = Number(base.endMs);
+  let startIndex = Number.isInteger(precipWindow?.startIndex) ? precipWindow.startIndex : base.hourlyIndex;
+  let endIndex = Number.isInteger(precipWindow?.endIndex) ? precipWindow.endIndex : base.hourlyIndex;
+  let kind = base.kind;
+  let chance = Number.isFinite(Number(base.chance)) ? Number(base.chance) : null;
+  let likelihood = /\blikely\b/i.test(String(base.label || "")) || (chance !== null && chance >= RAIN_LIKELY_POP)
+    ? "likely"
+    : "possible";
+  let headline = base.label;
+  let support = "";
+  let peakStartMs = startMs;
+  let peakEndMs = endMs;
+  let peakStartIndex = startIndex;
+  let peakEndIndex = endIndex;
+  const phases = [];
+
+  if (precipWindow) {
+    const firstHour = forecastHourPresentation(data, precipWindow.startIndex, {
+      isCurrent: precipWindow.startIndex === currentIndex,
+      truth: precipWindow.startIndex === currentIndex ? truth : null
+    });
+    const onsetKind = firstHour.family === "snow" ? "snow"
+      : firstHour.family === "storm" ? "storm"
+        : firstHour.precipKind === "snow" ? "snow" : "rain";
+    const active = truth?.precip?.phase === "active" && startMs <= now + 30 * 60 * 1000 && endMs > now;
+    kind = onsetKind;
+    headline = forecastMaterialEventLabel(data, kind, likelihood, startMs, endMs, active);
+    if (active && base.basis !== "observed") {
+      headline = headline.replace(/^(Rain|Storms|Snow|Ice) now\b/i, "$1 indicated now");
+    }
+    phases.push({
+      kind,
+      startMs,
+      endMs,
+      startIndex,
+      endIndex,
+      likelihood,
+      chance
+    });
+
+    if (convectiveWindow?.startTime) {
+      let stormStartIndex = convectiveWindow.startIndex;
+      let stormEndIndex = convectiveWindow.endIndex;
+      let stormLikelihood = convectiveWindow.convective?.level === "likely" ? "likely" : "possible";
+      const overlapStart = Math.max(stormStartIndex, precipWindow.startIndex);
+      const overlapEnd = Math.min(stormEndIndex, precipWindow.endIndex);
+      if (overlapStart <= overlapEnd) {
+        const overlapHours = Array.from({ length: overlapEnd - overlapStart + 1 }, (_, offset) => (
+          forecastHourPresentation(data, overlapStart + offset, {
+            isCurrent: overlapStart + offset === currentIndex,
+            truth: overlapStart + offset === currentIndex ? truth : null
+          })
+        ));
+        const firstLikely = overlapHours.find((hour) => hour.convective?.level === "likely");
+        stormStartIndex = firstLikely?.index ?? overlapStart;
+        stormEndIndex = overlapEnd;
+        stormLikelihood = firstLikely ? "likely" : "possible";
+      }
+      const stormStartMs = parseForecastTimestamp(data?.hourly?.time?.[stormStartIndex], data);
+      const stormEndMs = data?.hourly?.time?.[stormEndIndex + 1]
+        ? parseForecastTimestamp(data.hourly.time[stormEndIndex + 1], data)
+        : stormStartMs + 60 * 60 * 1000;
+      const stormTiming = nearcastRelativeTiming(data, stormStartMs, stormEndMs);
+      const stormHeadline = `Storms ${stormLikelihood} ${stormTiming.rangeLabel}`;
+      peakStartMs = stormStartMs;
+      peakEndMs = stormEndMs;
+      peakStartIndex = stormStartIndex;
+      peakEndIndex = stormEndIndex;
+      phases.push({
+        kind: "storm",
+        startMs: stormStartMs,
+        endMs: stormEndMs,
+        startIndex: stormStartIndex,
+        endIndex: stormEndIndex,
+        likelihood: stormLikelihood,
+        chance: null,
+        headline: stormHeadline
+      });
+      if (stormStartMs >= startMs - 30 * 60 * 1000 && stormStartMs <= startMs + 30 * 60 * 1000) {
+        kind = "storm";
+        likelihood = stormLikelihood;
+        headline = stormHeadline;
+      } else {
+        support = stormHeadline;
+      }
+    }
+  } else {
+    phases.push({ kind, startMs, endMs, startIndex, endIndex, likelihood, chance, headline });
+  }
+
+  const timing = nearcastRelativeTiming(data, startMs, endMs);
+  const focusIndex = Number.isInteger(startIndex) ? startIndex : base.hourlyIndex;
+  const event = {
+    ...base,
+    kind,
+    headline: nearcastBriefCleanSentence(headline),
+    label: nearcastBriefCleanSentence(headline),
+    support: support ? nearcastBriefCleanSentence(support) : null,
+    startMs,
+    endMs,
+    peakStartMs,
+    peakEndMs,
+    peakStartIndex,
+    peakEndIndex,
+    startIndex,
+    endIndex,
+    focusIndex,
+    hourlyIndex: focusIndex,
+    timing,
+    chance,
+    likelihood,
+    phases,
+    active: timing.dayRelation === "now",
+    target: launchDetailTarget(data, "Forecast change", nearcastBriefCleanSentence(headline), startMs, {
+      endMs,
+      hours: Math.max(1, Number.isInteger(endIndex) && Number.isInteger(startIndex) ? endIndex - startIndex + 1 : 1)
+    })
+  };
+  event.requiresJump = currentIndex >= 0 && focusIndex >= 0 && focusIndex - currentIndex >= Math.max(1, Number(options.visibleHourCount) || 5);
+  event.id = forecastMaterialEventId(data, event, truth);
+  return event;
+}
+
 function nearcastBriefPeriod(story) {
   const kicker = String(story?.kicker || "Coming up");
   if (/morning/i.test(kicker)) return { id: "morning", label: "This morning", phrase: "this morning" };
@@ -9859,14 +10135,17 @@ function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit) {
   let tone = first?.family || "calm";
 
   if (eventIsPrimary) {
-    headline = nearcastBriefCleanSentence(promotedEvent.label);
+    headline = nearcastBriefCleanSentence(promotedEvent.headline || promotedEvent.label);
     if (active && promotedEvent.basis !== "observed") {
       headline = headline.replace(/^(Rain|Storms|Snow) now\b/i, "$1 indicated now");
     }
     primaryClaimId = "event";
     target = promotedEvent.target || null;
     tone = promotedEvent.kind || tone;
-    if (!active && firstLabel && !["rain", "storm", "snow"].includes(first?.family)) {
+    if (promotedEvent.support) {
+      support = nearcastBriefCleanSentence(promotedEvent.support);
+      supportClaimId = "event-phase";
+    } else if (!active && firstLabel && !["rain", "storm", "snow"].includes(first?.family)) {
       support = `${firstLabel} until then`;
       supportClaimId = "condition";
     }
@@ -9929,18 +10208,22 @@ function buildNearcastBrief(data, options = {}) {
   const actual = Math.round(Number(current.temperature_2m) || 0);
   const feels = Math.round(Number(current.apparent_temperature ?? current.temperature_2m) || 0);
   const comfort = comfortGlance(actual, feels, Number(current.relative_humidity_2m || 0), tempUnit).headline;
+  const condition = truth.label || weatherCodes[truth.nowCode ?? truth.code] || "Weather";
   const story = options.story || buildForecastStory(data, tempUnit, windUnit, truth);
-  const promotedEvent = nearcastPromotedEvent(data, story, truth, { ...options, windUnit });
+  const materialEvent = options.materialEvent || forecastMaterialEvent(data, { ...options, truth, story, windUnit });
+  const promotedEvent = materialEvent;
   const outlook = nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit);
   return {
     current: {
       temperature: actual,
       feelsLike: feels,
-      condition: truth.label || weatherCodes[truth.nowCode ?? truth.code] || "Weather",
+      condition,
       comfort,
       summary: truth?.precip?.phase === "active"
         ? activePrecipSummaryValue(truth.precip, truth.nowPrecip, truth.convective)
-        : `${comfort} · feels ${feels}${degree(tempUnit)}`,
+        : Math.abs(feels - actual) >= 2
+          ? `${condition} · feels ${feels}${degree(tempUnit)}`
+          : condition,
       basis: truth?.precip?.source === "radar-current" ? "observed" : "estimated",
       source: truth?.source || "forecast"
     },
@@ -9951,6 +10234,7 @@ function buildNearcastBrief(data, options = {}) {
       support: outlook.support
     },
     outlook,
+    materialEvent,
     promotedEvent,
     evidence: nearcastEvidencePresentation(data, truth, options),
     suppressesGenericWeather: true
@@ -9966,7 +10250,7 @@ function buildForecastPresentation(data, options = {}) {
   const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
   const currentIndex = currentHourlyIndex(data);
   const todayIndex = forecastDailyIndex(data);
-  const hours = [];
+  let hours = [];
   const hourlyCount = data?.hourly?.time?.length || 0;
   for (let index = Math.max(0, currentIndex); index < hourlyCount && hours.length < 25; index += 1) {
     hours.push(forecastHourPresentation(data, index, {
@@ -9980,7 +10264,24 @@ function buildForecastPresentation(data, options = {}) {
     days.push(forecastDayPresentation(data, index));
   }
   const story = buildForecastStory(data, tempUnit, windUnit, truth);
-  const brief = buildNearcastBrief(data, { ...options, truth, tempUnit, windUnit, story });
+  const materialEvent = forecastMaterialEvent(data, { ...options, truth, tempUnit, windUnit, story });
+  const brief = buildNearcastBrief(data, { ...options, truth, tempUnit, windUnit, story, materialEvent });
+  if (materialEvent) {
+    hours = hours.map((hour) => {
+      const phase = materialEvent.phases?.slice().reverse().find((item) => (
+        Number.isFinite(Number(item.startMs)) && Number.isFinite(Number(item.endMs)) &&
+        Number(hour.ms) >= Number(item.startMs) && Number(hour.ms) < Number(item.endMs)
+      )) || null;
+      const inside = Number(hour.ms) >= Number(materialEvent.startMs) && Number(hour.ms) < Number(materialEvent.endMs);
+      return {
+        ...hour,
+        eventId: inside ? materialEvent.id : null,
+        eventPhase: phase?.kind || (inside ? materialEvent.kind : null),
+        eventStarts: Boolean(phase && hour.index === phase.startIndex),
+        eventEnds: Boolean(phase && hour.index === phase.endIndex)
+      };
+    });
+  }
   return {
     evaluationMs: forecastNowMs(data),
     evaluationKey: truth.evaluationKey,
@@ -9991,6 +10292,7 @@ function buildForecastPresentation(data, options = {}) {
     hours,
     days,
     story,
+    materialEvent,
     brief,
     receipt: forecastTrustPresentation(data, truth)
   };
@@ -10064,7 +10366,7 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
 function renderForecastPulse(data = state.forecast, dayIndex = forecastDailyIndex(data)) {
   if (!els.forecastPulse) return;
   const pulse = forecastPulseDayPresentation(data, dayIndex, state.activePlace);
-  const visible = pulse.status !== "learning";
+  const visible = pulse.status === "shifting" || pulse.status === "uncertain";
   els.forecastPulse.hidden = !visible;
   if (!visible) return;
   els.forecastPulse.dataset.tone = pulse.tone;
@@ -11300,11 +11602,7 @@ function renderNearcastBriefJump(brief) {
     if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = "Open hourly details";
     return;
   }
-  const eventLabel = event.kind === "storm" ? "Storms"
-    : event.kind === "snow" ? "Snow"
-      : event.kind === "wind" ? "Wind"
-        : event.kind === "fog" ? "Fog" : "Rain";
-  const label = `${eventLabel} · ${event.timing.timeLabel} ${event.timing.dayLabel}`;
+  const label = `${event.timing.timeLabel} ${event.timing.dayLabel}`;
   if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = label;
   els.nearcastBriefJump.setAttribute("aria-label", `${event.label}. Open those hourly details.`);
   els.nearcastBriefJump.dataset.eventKind = event.kind || "weather";
@@ -11404,13 +11702,14 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       : null;
     const windDirection = normalizeWindDegrees(current.wind_direction_10m);
     const windCue = windDirectionCue(current.wind_direction_10m);
+    const materialEvent = forecastMaterialEvent(data, { truth, tempUnit, windUnit });
     const widgetPlan = nativeWidgetPlanSummary(data, place);
     const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
     const widgetAlert = nativeWidgetAlertSummary();
     const forecastSavedAt = forecastProvenance(data).savedAt;
     const snapshotSavedAt = (forecastSavedAt || Date.now()) / 1000;
     const snapshot = {
-      version: 7,
+      version: 8,
       savedAt: snapshotSavedAt,
       placeName: widgetPlaceDisplayName,
       placeTimezone: String(data?.timezone || "").trim() || null,
@@ -11433,6 +11732,12 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       nextValue: item(1, "Next", "Check forecast").value,
       laterLabel: item(2, "Later", "Plan ahead").label,
       laterValue: item(2, "Later", "Plan ahead").value,
+      canonicalEventId: materialEvent?.id || null,
+      canonicalEventHeadline: materialEvent?.headline || null,
+      canonicalEventTiming: materialEvent?.timing?.rangeLabel || null,
+      canonicalEventStartAt: Number.isFinite(Number(materialEvent?.startMs)) ? Number(materialEvent.startMs) / 1000 : null,
+      canonicalEventEndAt: Number.isFinite(Number(materialEvent?.endMs)) ? Number(materialEvent.endMs) / 1000 : null,
+      canonicalEventKind: materialEvent?.kind || null,
       planTitle: widgetPlan?.title || null,
       planLabel: widgetPlan?.label || null,
       planDetail: widgetPlan?.detail || null,
@@ -13564,6 +13869,7 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
   const truth = data === state.forecast ? (state.weatherTruth || weatherTruth(data)) : buildWeatherTruth(data);
   const cur = truth.current || canonicalCurrentSnapshot(data);
   const provenance = forecastProvenance(data);
+  const materialEvent = forecastMaterialEvent(data, { truth });
   const daily = data.daily;
   const hourly = data.hourly;
   const now = forecastNowMs(data);
@@ -13650,6 +13956,18 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
       isDay: Boolean(truth.isDay)
     },
     nowcast,
+    nextMeaningfulEvent: materialEvent ? {
+      id: materialEvent.id,
+      kind: materialEvent.kind,
+      headline: materialEvent.headline,
+      support: materialEvent.support || null,
+      startsAt: materialEvent.startMs,
+      endsAt: materialEvent.endMs,
+      timing: materialEvent.timing?.rangeLabel || "",
+      likelihood: materialEvent.likelihood,
+      basis: materialEvent.basis,
+      source: materialEvent.source
+    } : null,
     today: {
       hi: r(daily.temperature_2m_max[todayIndex]),
       lo: r(daily.temperature_2m_min[todayIndex]),
@@ -13718,6 +14036,11 @@ function buildAIFactSheet() {
   );
 
   lines.push(`${c.nowcast.replace(/\.$/, "")}.`);
+
+  if (c.nextMeaningfulEvent) {
+    const event = c.nextMeaningfulEvent;
+    lines.push(`Next meaningful weather: ${event.headline}${event.support ? `. ${event.support}` : ""}. Use this exact event timing when answering follow-up questions.`);
+  }
 
   if (c.air) {
     const airParts = [];
@@ -14077,7 +14400,8 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   const metric = savedHourlyHeroMetric();
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const resolvedBrief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
-  const storyFocusIndex = resolvedBrief.promotedEvent?.hourlyIndex ?? presentation?.story?.focusIndex;
+  const canonicalEvent = presentation?.materialEvent || resolvedBrief.materialEvent || resolvedBrief.promotedEvent || null;
+  const storyFocusIndex = canonicalEvent?.focusIndex ?? canonicalEvent?.hourlyIndex ?? presentation?.story?.focusIndex;
   const metricValues = rows.map(({ index }, position) => hourlyMetricValue(data, index, metric, position === 0));
   const trend = hourlyTrendGeometry(metricValues, metric);
   const pointString = trend.points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
@@ -14092,7 +14416,8 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   // Values, icons, and line share the same 80px rhythm and scroll together.
   const cards = rows.map(({ time, index }, position) => {
     const precipProfile = hourlyPrecipProfile(data, index);
-    const hour = forecastHourPresentation(data, index, {
+    const packagedHour = presentation?.hours?.find((item) => item.index === index) || null;
+    const hour = packagedHour || forecastHourPresentation(data, index, {
       isCurrent: position === 0,
       truth: position === 0 ? truth : null
     });
@@ -14111,14 +14436,16 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const metricValue = metricValues[position];
     const gust = Math.max(0, Math.round(Number(hour.gust) || 0));
     const label = position === 0 ? "Now" : formatHour(time);
-    const showStormPotentialBadge = stormPotential && !isThunderCode(wcode);
+    const showStormPotentialBadge = stormPotential && !isThunderCode(wcode) && (
+      !canonicalEvent || hour.eventStarts || index === canonicalEvent.peakStartIndex
+    );
     const thunderLabel = convective?.label || "Thunder possible";
     const title = showStormPotentialBadge ? `${code}; ${thunderLabel.toLowerCase()}` : code;
     const rainChance = Math.max(0, Math.min(100, Math.round(Number(rain) || 0)));
     const hasRainChance = rainChance > 0;
     const rainIsEmphasized = measuredWet || nowPrecipPhase === "imminent" || rainChance >= 20;
     const rainClass = ` has-rain${rainIsEmphasized ? " wet" : " is-low"}`;
-    const presentation = hourlyMetricPresentation({
+    const metricPresentation = hourlyMetricPresentation({
       metric,
       value: metricValue,
       temp,
@@ -14126,7 +14453,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       gust,
       windUnit
     });
-    const temperatureColorStyle = presentation.temperatureColor
+    const temperatureColorStyle = metricPresentation.temperatureColor
       ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
       : "";
     const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
@@ -14136,15 +14463,15 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const hasPlanMemory = planMemory.overlaps.has(index);
     const rainAria = metric === "precipitation" ? "" : measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : hasRainChance ? `, ${rainChance}% rain` : "";
     const isStoryFocus = index === storyFocusIndex && position > 0;
-    const cardLabel = `${label}: ${code}, ${presentation.aria}${presentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
+    const cardLabel = `${label}: ${code}, ${metricPresentation.aria}${metricPresentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
     return `
       <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receiptSentence || title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml(thunderLabel) : ""}</div>
-        <strong class="hour-temp hour-trend-value"${temperatureColorStyle}>${presentation.trendLabel}</strong>
+        <strong class="hour-temp hour-trend-value"${temperatureColorStyle}>${metricPresentation.trendLabel}</strong>
         <span class="hour-condition" aria-hidden="true">${escapeHtml(cardCondition)}</span>
-        <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${presentation.secondary}</span>
+        <span class="hour-secondary${metric === "temperature" ? rainClass : ""}">${metricPresentation.secondary}</span>
       </article>
     `;
   }).join("");
