@@ -1618,6 +1618,9 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
   if (!memory?.id || !place) return null;
   const notification = watch?.notification || (watch ? planWeatherNotificationState(watch) : null);
   const receipt = watch?.receipt || (watch && typeof planWeatherReceiptText === "function" ? planWeatherReceiptText(watch) : "");
+  const canonicalEvent = watch?.stats?.materialEvent && typeof planMaterialEventSnapshot === "function"
+    ? { ...planMaterialEventSnapshot(watch.stats.materialEvent), authority: "nearcast-app", policyVersion: 1 }
+    : null;
   return {
     id: memory.id,
     title: planMemoryTitle(memory),
@@ -1640,6 +1643,7 @@ function planWatchServerPlanFromMemory(memory, watch = null) {
       latitude: Number(place.latitude),
       longitude: Number(place.longitude)
     },
+    canonicalEvent,
     lastKnown: {
       eventKey: watch ? planWatchNotificationEventKey(watch) : "",
       signal: notification?.signal || watch?.change?.type || watch?.tone || "",
@@ -1851,7 +1855,7 @@ function reportPlanWatchNotificationSyncResult(result) {
   if (!result || result.ok !== false || typeof setStatus !== "function") return;
   const reason = String(result.reason || result.error || "").toLowerCase();
   if (reason.includes("native") || reason.includes("apns")) {
-    setStatus("Native notification delivery needs server setup before it can send.", true);
+    setStatus("Phone notifications aren’t ready yet. Nearcast will keep watching here.", true);
     if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
   }
 }
@@ -1891,7 +1895,7 @@ function planWatchNotificationPlanCopy(memoryId) {
     if (planWatchNativeDeliveryNotConfigured()) {
       return {
         label: "Turn notifications off",
-        aria: "Turn off notifications for this plan; native delivery is unavailable",
+        aria: "Turn off notifications for this plan; phone alerts are unavailable",
         pressed: true,
         disabled: false,
         action: "disable"
@@ -1899,10 +1903,10 @@ function planWatchNotificationPlanCopy(memoryId) {
     }
     if (delivery.state === "failed" || delivery.state === "expired") {
       return {
-        label: delivery.state === "expired" ? "Renew delivery" : "Retry delivery",
+        label: delivery.state === "expired" ? "Reconnect" : "Try again",
         aria: delivery.state === "expired"
-          ? "Renew notification delivery for this plan"
-          : "Retry notification delivery for this plan",
+          ? "Reconnect notifications for this plan"
+          : "Try notifications again for this plan",
         pressed: true,
         disabled: false,
         action: "retry"
@@ -2056,36 +2060,34 @@ function planWatchNotificationPanelCopy(watchItems) {
       meta: count ? `${count} active` : "No active plans"
     };
   }
-  if (permission === "denied") {
+  if (permission === "denied" && enabledCount > 0) {
     return {
       tone: "caution",
-      title: "Notifications blocked",
-      body: "Nearcast still watches in the app. Change browser notification settings to receive notifications.",
+      title: "Phone notifications are off",
+      body: "Nearcast still watches here. Turn notifications back on in device settings if you want a heads-up.",
       button: "",
-      meta: "Blocked"
+      meta: "Off"
     };
   }
   if (enabled) {
     if (nativeDeliveryMissing || delivery.state === "failed" || delivery.state === "expired") {
       return {
         tone: "caution",
-        title: nativeDeliveryMissing
-          ? "Native delivery needs setup"
-          : delivery.state === "expired" ? "Notification delivery needs renewal" : "Notification delivery needs attention",
+        title: nativeDeliveryMissing ? "Phone notifications aren’t ready" : "Notifications need a quick fix",
         body: nativeDeliveryMissing
-          ? "This iPhone can allow notifications, but Nearcast needs APNs server setup before it can send them outside the app."
+          ? "Nearcast is still watching here, but it cannot send this phone a heads-up yet."
           : delivery.state === "expired"
-            ? "The last confirmed registration expired. Nearcast is still watching in the app; renew delivery from the selected plan."
-            : "The last registration attempt failed. Nearcast is still watching in the app; retry delivery from the selected plan.",
+            ? "Nearcast is still watching here. Open Notifications & activity to reconnect phone alerts."
+            : "Nearcast is still watching here. Open Notifications & activity and try phone alerts again.",
         button: "",
-        meta: "Not delivering"
+        meta: "Needs attention"
       };
     }
     if (enabledCount && !delivery.ready) {
       return {
         tone: "neutral",
-        title: "Finishing notification setup",
-        body: "The plan is saved and being watched. Nearcast has not confirmed delivery for this device yet.",
+        title: "Setting up notifications",
+        body: "The plan is already being watched here while Nearcast finishes connecting phone alerts.",
         button: "",
         meta: "Setting up"
       };
@@ -2170,12 +2172,12 @@ function planWatchActivityRows(watchItems) {
   const lastSignal = formatPlanWatchRelativeTimestamp(latestPlanWatchNotificationEventAt());
   const notificationState = notificationsReady
     ? nativeDeliveryMissing
-      ? "Delivery setup needed"
+      ? "Notifications need attention"
       : delivery.state === "failed" || delivery.state === "expired"
-        ? delivery.state === "expired" ? "Delivery expired" : "Delivery failed"
+        ? "Notifications need attention"
         : delivery.ready
-          ? "Notifications ready"
-          : "Delivery not confirmed"
+          ? "Notifications are on"
+          : "Setting up notifications"
     : planWatchNotificationPermission() === "denied"
       ? "Notifications blocked"
       : "In-app watching";
@@ -2228,16 +2230,16 @@ function renderPlanWatchActivityPanel(watchItems, options = {}) {
   const deliveryReady = planWatchNotificationsEnabled() && planWatchRegistrationHealth().ready;
   const body = planWatchNotificationsEnabled()
     ? planWatchNativeDeliveryNotConfigured()
-      ? "Nearcast will still check enabled plans and saved places in the app. Native delivery needs server setup before it can interrupt you."
+      ? "Nearcast is still checking your plans and places here, but phone alerts are not ready yet."
       : planWatchRegistrationHealth().ready
-        ? "Nearcast will check enabled plans and saved places, then interrupt only for meaningful changes."
-        : "Nearcast is watching in the app, but notification delivery has not been confirmed for this device."
-    : "Nearcast still checks watched plans in the app. Turn on notifications when you want phone/browser updates.";
+        ? "Only meaningful changes to the plans and places you chose can send a heads-up."
+        : "Nearcast is watching here while it finishes connecting phone alerts."
+    : "Nearcast still checks watched plans here. Turn on notifications only when you want a phone heads-up.";
   return `
     <section class="plan-watch-activity${compactClass}">
       <div class="plan-watch-activity-head">
         <span>Watching activity</span>
-        <strong>${deliveryReady ? "Notification delivery is confirmed" : "Watching is active in the app"}</strong>
+        <strong>${deliveryReady ? "Notifications are on" : "Plans are being watched"}</strong>
         <small>${escapeHtml(body)}</small>
       </div>
       <dl class="plan-watch-activity-list">
@@ -2312,12 +2314,12 @@ function planWatchNotificationHubStatus(watchItems) {
       primaryLabel: ""
     };
   }
-  if (permission === "denied") {
+  if (permission === "denied" && totalTargets > 0) {
     return {
       tone: "caution",
-      eyebrow: "Blocked",
-      title: "Notifications are blocked",
-      body: "Nearcast still watches in the app. Change browser notification settings if you want notifications outside the app.",
+      eyebrow: "Phone alerts off",
+      title: "Notifications are off for this device",
+      body: "Nearcast still watches your choices here. Turn notifications back on in device settings if you want a heads-up.",
       primary: "",
       primaryLabel: ""
     };
@@ -2326,9 +2328,9 @@ function planWatchNotificationHubStatus(watchItems) {
     if (nativeDeliveryMissing) {
       return {
         tone: "caution",
-        eyebrow: "Setup needed",
-        title: "Native delivery needs server setup",
-        body: "This iPhone is allowed and saved, but Nearcast needs APNs credentials before it can send notifications outside the app.",
+        eyebrow: "Phone alerts unavailable",
+        title: "Phone notifications aren’t ready",
+        body: "Nearcast is still watching your choices here, but it cannot send this phone a heads-up yet.",
         primary: "pause",
         primaryLabel: "Pause all"
       };
@@ -2337,11 +2339,11 @@ function planWatchNotificationHubStatus(watchItems) {
       const succeeded = formatPlanWatchRelativeTimestamp(delivery.successAt);
       return {
         tone: "caution",
-        eyebrow: "Renewal needed",
-        title: "Notification registration expired",
-        body: `Nearcast is still watching in the app${succeeded ? ` · last successful sync ${succeeded}` : ""}. Renew delivery before expecting another notification.`,
+        eyebrow: "Reconnect needed",
+        title: "Notifications need a quick refresh",
+        body: `Nearcast is still watching here${succeeded ? ` · phone alerts last worked ${succeeded}` : ""}. Reconnect before relying on another heads-up.`,
         primary: "retry",
-        primaryLabel: "Renew delivery"
+        primaryLabel: "Reconnect"
       };
     }
     if (delivery.state === "failed") {
@@ -2349,24 +2351,24 @@ function planWatchNotificationHubStatus(watchItems) {
       const succeeded = formatPlanWatchRelativeTimestamp(delivery.successAt);
       return {
         tone: "caution",
-        eyebrow: "Delivery not ready",
-        title: "The last registration attempt failed",
-        body: `Nearcast is still watching in the app${attempted ? ` · attempted ${attempted}` : ""}${succeeded ? ` · last successful sync ${succeeded}` : " · no successful sync yet"}.`,
+        eyebrow: "Needs attention",
+        title: "Phone notifications didn’t connect",
+        body: `Nearcast is still watching here${attempted ? ` · last tried ${attempted}` : ""}${succeeded ? ` · phone alerts last worked ${succeeded}` : ""}.`,
         primary: "retry",
-        primaryLabel: "Retry"
+        primaryLabel: "Try again"
       };
     }
     if (!delivery.ready) {
       const attempted = formatPlanWatchRelativeTimestamp(delivery.attemptAt);
       return {
         tone: "neutral",
-        eyebrow: delivery.state === "pending" ? "Setting up" : "Not registered",
-        title: delivery.state === "pending" ? "Confirming notification delivery" : "Notification delivery is not confirmed",
+        eyebrow: "Setting up",
+        title: "Connecting phone notifications",
         body: attempted
-          ? `The plan is being watched in the app. Registration was attempted ${attempted}; no successful sync is recorded yet.`
-          : "The plan is being watched in the app. Nearcast has not registered this device for delivery yet.",
+          ? `Your choices are already being watched here. Nearcast last tried to connect phone alerts ${attempted}.`
+          : "Your choices are already being watched here while Nearcast connects phone alerts.",
         primary: "retry",
-        primaryLabel: delivery.state === "pending" ? "Check again" : "Set up delivery"
+        primaryLabel: delivery.state === "pending" ? "Check again" : "Connect"
       };
     }
     return {
@@ -2410,18 +2412,16 @@ function planWatchNotificationHubStatus(watchItems) {
 
 function planWatchSyncResultText() {
   const health = planWatchRegistrationHealth();
-  if (health.state === "expired") return "Registration expired";
-  if (health.state === "failed") return "Registration failed";
-  if (health.state === "pending") return "Registration in progress";
-  if (health.ready) return "Delivery confirmed";
+  if (health.state === "expired") return "Reconnect needed";
+  if (health.state === "failed") return "Needs attention";
+  if (health.state === "pending") return "Connecting";
+  if (health.ready) return "Notifications on";
   const result = planWatchState.pushLastSyncResult;
   if (!result) {
     const lastSync = formatPlanWatchRelativeTimestamp(planWatchState.pushLastSyncAt);
     return lastSync ? `Checked ${lastSync}` : "Automatic";
   }
   if (result.ok === false) {
-    const reason = String(result.reason || result.error || result.state || "").toLowerCase();
-    if (reason.includes("native") || reason.includes("apns")) return "APNs setup needed";
     return "Needs attention";
   }
   if (result.state === "stored") {
@@ -2445,14 +2445,15 @@ function planWatchNotificationHubStats(watchItems) {
   const savedPlaces = placeWatchSavedPlaces().length;
   const permission = planWatchNotificationPermission();
   const delivery = planWatchRegistrationHealth();
+  const hasChosenTargets = enabledPlans > 0 || (placeWatchNotificationsRequested() && selectedPlaces > 0);
   const permissionMode = planWatchNotificationsEnabled()
     ? "On"
-    : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
+    : permission === "denied" && hasChosenTargets ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const notificationMode = planWatchNotificationsEnabled()
     ? planWatchNativeDeliveryNotConfigured() || delivery.state === "failed" || delivery.state === "expired"
-      ? "Not delivering"
-      : delivery.ready ? "Ready" : "Not confirmed"
-    : permission === "denied" ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
+      ? "Needs attention"
+      : delivery.ready ? "On" : "Connecting"
+    : permission === "denied" && hasChosenTargets ? "Blocked" : planWatchNotificationsSupported() ? "Off" : "In-app";
   const rows = [
     { label: "Notifications", value: permissionMode },
     {
@@ -2695,6 +2696,7 @@ function renderPlanWatchManagementPanel(watchItems, options = {}) {
 function savedPlaceWatchNotificationPanelCopy() {
   const savedCount = (state.savedPlaces || []).length;
   const selectedCount = placeWatchNotificationSelectedCount();
+  const preferences = readPlaceWatchNotificationPlaces();
   const supported = planWatchNotificationsSupported();
   const permission = planWatchNotificationPermission();
   const enabled = placeWatchNotificationsRequested() && planWatchNotificationsEnabled();
@@ -2708,13 +2710,13 @@ function savedPlaceWatchNotificationPanelCopy() {
       meta: `${savedCount} saved`
     };
   }
-  if (permission === "denied") {
+  if (permission === "denied" && preferences.hasExplicitSelection) {
     return {
       tone: "caution",
-      title: "Notifications blocked",
-      body: "Change browser notification settings to receive saved-place notifications.",
+      title: "Phone notifications are off",
+      body: "Saved places still update here. Turn notifications back on in device settings if you want a heads-up.",
       button: "",
-      meta: "Blocked"
+      meta: "Off"
     };
   }
   if (enabled) {
@@ -4580,6 +4582,70 @@ function nearcastPlaceArtifact(place, context = null) {
   );
 }
 
+// Keep the one material event authored by the shared forecast presentation
+// attached to plan and conversation windows. Operon can then carry exact
+// timing through a follow-up, while Agenda and plan verdicts can use the same
+// storm/rain identity as Home and Hourly instead of reclassifying raw codes.
+function planMaterialEventBoundaryMs(data, targetDate, hour) {
+  const value = Number(hour);
+  if (!data || !targetDate || !Number.isFinite(value)) return null;
+  const totalMinutes = Math.round(value * 60);
+  const dayShift = Math.floor(totalMinutes / (24 * 60));
+  const minuteOfDay = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const date = typeof addDaysToDateString === "function"
+    ? addDaysToDateString(targetDate, dayShift)
+    : new Date(Date.parse(`${targetDate}T12:00:00Z`) + dayShift * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (!date) return null;
+  const clock = `${String(Math.floor(minuteOfDay / 60)).padStart(2, "0")}:${String(minuteOfDay % 60).padStart(2, "0")}`;
+  if (typeof parseForecastTimestamp === "function") {
+    const parsed = parseForecastTimestamp(`${date}T${clock}`, data);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const parsed = Date.parse(`${date}T${clock}:00Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function planCanonicalMaterialEventForWindow(data, targetDate, dayIndex, startHour, endHour) {
+  if (!data || !targetDate || typeof forecastMaterialEvent !== "function") return null;
+  const dailyIndex = Array.isArray(data?.daily?.time) ? data.daily.time.indexOf(targetDate) : -1;
+  const event = forecastMaterialEvent(data, { dayIndex: dailyIndex >= 0 ? dailyIndex : dayIndex });
+  const eventStart = Number(event?.startMs);
+  const eventEnd = Number(event?.endMs);
+  if (!event || !Number.isFinite(eventStart) || !Number.isFinite(eventEnd) || eventEnd <= eventStart) return null;
+  const windowStart = planMaterialEventBoundaryMs(data, targetDate, startHour);
+  const windowEnd = planMaterialEventBoundaryMs(data, targetDate, endHour);
+  if (Number.isFinite(windowStart) && Number.isFinite(windowEnd) && (eventStart >= windowEnd || eventEnd <= windowStart)) {
+    return null;
+  }
+  const cleanNumber = (value) => (
+    value === null || value === undefined || value === ""
+      ? null
+      : Number.isFinite(Number(value)) ? Number(value) : null
+  );
+  return {
+    id: String(event.id || "").slice(0, 120),
+    kind: String(event.kind || "weather").slice(0, 32),
+    headline: String(event.headline || event.label || "").slice(0, 180),
+    support: event.support ? String(event.support).slice(0, 180) : null,
+    likelihood: event.likelihood ? String(event.likelihood).slice(0, 24) : null,
+    chance: cleanNumber(event.chance),
+    basis: event.basis ? String(event.basis).slice(0, 32) : null,
+    source: event.source ? String(event.source).slice(0, 64) : null,
+    authority: "nearcast-app",
+    policyVersion: 1,
+    startAt: eventStart,
+    peakStartAt: cleanNumber(event.peakStartMs),
+    peakEndAt: cleanNumber(event.peakEndMs),
+    endAt: eventEnd,
+    timing: event.timing?.rangeLabel ? String(event.timing.rangeLabel).slice(0, 120) : null
+  };
+}
+
+function planCanonicalMaterialEventSummary(event) {
+  if (!event?.headline) return "";
+  return ` Canonical Nearcast event in this window: ${event.headline}${event.support ? `; ${event.support}` : ""}.`;
+}
+
 function nearcastWindowArtifact(place, window, context = null, options = {}) {
   const data = state.forecast;
   const c = buildAIContext();
@@ -4592,6 +4658,7 @@ function nearcastWindowArtifact(place, window, context = null, options = {}) {
   const endHour = Number.isFinite(Number(window?.endHour)) ? Number(window.endHour) : 20;
   const requestedPeriod = String(window?.period || options.period || "day").toLowerCase();
   const period = NEARCAST_AGENT_PERIODS.has(requestedPeriod) ? requestedPeriod : "day";
+  const materialEvent = planCanonicalMaterialEventForWindow(data, targetDate, dayIndex, startHour, endHour);
   const windowLabel = c ? askWindowLabel(c, {
     dayIdx: dayIndex,
     startHour,
@@ -4601,7 +4668,7 @@ function nearcastWindowArtifact(place, window, context = null, options = {}) {
   }) : `${targetDate} ${period}`;
   return createNearcastAgentArtifact(
     NEARCAST_AGENT_ARTIFACT_KINDS.window,
-    `Most recent forecast target: ${windowLabel} in ${label}. Use for “that”, “same day”, or an hourly follow-up.`,
+    `Most recent forecast target: ${windowLabel} in ${label}.${planCanonicalMaterialEventSummary(materialEvent)} Use for “that”, “same day”, or an hourly follow-up.`,
     {
       place: normalized,
       place_label: label,
@@ -4610,7 +4677,8 @@ function nearcastWindowArtifact(place, window, context = null, options = {}) {
       day_text: options.dayText || targetDate,
       period,
       start_hour: startHour,
-      end_hour: endHour
+      end_hour: endHour,
+      material_event: materialEvent
     },
     context
   );
@@ -4618,13 +4686,15 @@ function nearcastWindowArtifact(place, window, context = null, options = {}) {
 
 function nearcastViewArtifact(view, place, context = null, windowArtifact = null) {
   const label = place ? placeLabel(place) : "the selected place";
+  const targetDate = windowArtifact?.value?.target_date || null;
   return createNearcastAgentArtifact(
     NEARCAST_AGENT_ARTIFACT_KINDS.view,
-    `Most recent app view: ${view} for ${label}.`,
+    `Most recent app view: ${view} for ${label}${targetDate ? `, retaining forecast context for ${targetDate}` : ""}.`,
     {
       view,
       place: place ? normalizePlace(place) : null,
-      target_date: windowArtifact?.value?.target_date || null
+      target_date: targetDate,
+      material_event: windowArtifact?.value?.material_event || null
     },
     context
   );
@@ -4658,14 +4728,30 @@ function nearcastViewArtifacts(view, place, context = null, windowArtifact = nul
   ];
 }
 
+function nearcastCompatibleWindowArtifact(context, place) {
+  const artifacts = Array.isArray(context?.sessionArtifacts) ? context.sessionArtifacts : [];
+  return artifacts.filter((artifact) => (
+    [NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan].includes(artifact?.kind) &&
+    artifact?.value?.place &&
+    samePlanPlace(artifact.value.place, place)
+  )).slice(-1)[0] || null;
+}
+
 function nearcastPlanArtifact(event, context = null) {
   if (!event?.place || !event?.data) return null;
   const targetDate = event.data.daily?.time?.[event.dayIndex];
   if (!targetDate) return null;
   const label = placeLabel(event.place);
+  const materialEvent = planCanonicalMaterialEventForWindow(
+    event.data,
+    targetDate,
+    event.dayIndex,
+    event.startHour,
+    event.endHour
+  );
   return createNearcastAgentArtifact(
     NEARCAST_AGENT_ARTIFACT_KINDS.plan,
-    `Most recent plan draft: ${event.title || "outdoor plan"} in ${label} on ${targetDate}, ${hourText(event.startHour)}-${hourText(event.endHour)}.`,
+    `Most recent plan draft: ${event.title || "outdoor plan"} in ${label} on ${targetDate}, ${hourText(event.startHour)}-${hourText(event.endHour)}.${planCanonicalMaterialEventSummary(materialEvent)}`,
     {
       place: normalizePlace(event.place),
       place_label: label,
@@ -4673,7 +4759,8 @@ function nearcastPlanArtifact(event, context = null) {
       day_index: event.dayIndex,
       start_hour: event.startHour,
       end_hour: event.endHour,
-      title: event.title || "Outdoor plan"
+      title: event.title || "Outdoor plan",
+      material_event: materialEvent
     },
     context
   );
@@ -5205,9 +5292,13 @@ async function executeNearcastPlaceNavigationSkill(args, context, type) {
     ? `Opening the weather map centered on ${label}.`
     : `Showing the forecast for ${label}.`;
   context.receipt.navigation = { type };
+  // The map itself remains a live/near-term surface, but opening it should not
+  // erase a previously grounded day/time. Retain that typed window so a
+  // follow-up such as “show the hourly for that” returns to the exact day.
+  const retainedWindow = nearcastCompatibleWindowArtifact(context, place);
   return nearcastSkillResult(
     { status: "opened", message: context.receipt.answer, place: label },
-    [nearcastPlaceArtifact(place, context), ...nearcastViewArtifacts(type, place, context)]
+    [nearcastPlaceArtifact(place, context), ...nearcastViewArtifacts(type, place, context, retainedWindow)]
   );
 }
 
@@ -10367,9 +10458,12 @@ function renderPlanWatchSecondaryDisclosure(watchItems) {
   const updateCount = readPlanWatchRecentUpdates().length;
   const permission = planWatchNotificationPermission();
   const delivery = planWatchRegistrationHealth();
+  const selectedTargets = planWatchNotificationEnabledCount(watchItems) + (
+    placeWatchNotificationsRequested() ? placeWatchNotificationSelectedCount() : 0
+  );
   const notificationState = planWatchNotificationsEnabled()
-    ? delivery.ready ? "Notifications on" : "Delivery needs attention"
-    : permission === "denied" ? "Notifications blocked" : "Notifications optional";
+    ? delivery.ready ? "Notifications on" : "Notifications need attention"
+    : permission === "denied" && selectedTargets ? "Phone notifications off" : "Notifications optional";
   const meta = [
     notificationState,
     updateCount ? `${updateCount} recent ${updateCount === 1 ? "update" : "updates"}` : ""
@@ -10989,6 +11083,7 @@ async function safeFetchPlanAlerts(place) {
 function planWindowStats(data, c, w) {
   const hours = planWindowHours(data, w);
   const day = c.daily[w.dayIdx] || c.daily[0];
+  const targetDate = data?.daily?.time?.[w.dayIdx] || day?.date || "";
   const idxs = hours.map(({ index }) => index);
   if (!idxs.length) return null;
   const values = (key, fallback) => idxs.map((i) => data.hourly[key][i] ?? fallback);
@@ -11002,6 +11097,15 @@ function planWindowStats(data, c, w) {
   const presentations = idxs.map((i) => forecastHourPresentation(data, i, { isCurrent: i === currentHourlyIndex(data) }));
   const codes = presentations.map((hour) => hour.code);
   const air = airStatsForHours(data, hours, c.air);
+  const materialEvent = planCanonicalMaterialEventForWindow(
+    data,
+    targetDate,
+    w.dayIdx,
+    w.startHour ?? 0,
+    w.endHour ?? 24
+  );
+  const canonicalStorm = materialEvent?.kind === "storm" ||
+    String(materialEvent?.support || "").toLowerCase().includes("storm");
 
   return {
     window: w,
@@ -11027,7 +11131,8 @@ function planWindowStats(data, c, w) {
     pollenLabel: air.pollenLabel,
     pollenLevel: air.pollenLevel,
     sky: weatherCodes[mostCommon(codes)] || day.sky || "Weather",
-    stormPotential: presentations.some((hour) => hour.stormPotential || isThunderCode(hour.code))
+    stormPotential: canonicalStorm || presentations.some((hour) => hour.stormPotential || isThunderCode(hour.code)),
+    materialEvent
   };
 }
 
@@ -12437,10 +12542,10 @@ function renderSavedPlanWatchConfirmation(memoryId) {
     notificationBody = "Nearcast can send a heads-up when this plan changes meaningfully.";
     notificationTone = "good";
   } else if (selected && (delivery.state === "failed" || delivery.state === "expired" || planWatchNativeDeliveryNotConfigured())) {
-    notificationTitle = delivery.state === "expired" ? "Delivery needs renewal" : "Delivery needs attention";
+    notificationTitle = "Notifications need a quick fix";
     notificationBody = delivery.state === "expired"
-      ? "The plan is still watched here, but this device’s notification registration expired."
-      : "The plan is still being watched here, but notifications are not reaching this device yet.";
+      ? "This plan is still watched here. Reconnect phone alerts from Notifications & activity."
+      : "This plan is still watched here, but phone alerts are not connected yet.";
     notificationTone = "caution";
   } else if (selected) {
     notificationTitle = "Setting up notifications";

@@ -188,7 +188,7 @@ struct NearcastBriefWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: briefKind, provider: NearcastComplicationProvider()) { entry in
             NearcastBriefView(entry: entry)
-                .widgetURL(nearcastComplicationURL("brief"))
+                .widgetURL(nearcastComplicationURL("brief", snapshot: entry.snapshot))
         }
         .configurationDisplayName("Today Basics")
         .description("Current weather and the next meaningful change.")
@@ -444,6 +444,13 @@ private struct NearcastBriefView: View {
         Group {
             if entry.weatherState == .placeholder {
                 briefPlaceholder
+            } else if let story = entry.snapshot.companionStory(at: entry.date.timeIntervalSince1970),
+                      story.kind == .officialAlert {
+                NearcastCompanionStoryRectangle(
+                    snapshot: entry.snapshot,
+                    story: story,
+                    showsTemperature: entry.weatherState == .fresh
+                )
             } else if entry.weatherState == .unavailable {
                 briefUnavailable
             } else if entry.weatherState == .stale {
@@ -495,8 +502,12 @@ private struct NearcastBriefView: View {
 
     @ViewBuilder
     private var briefFresh: some View {
-        if let event = entry.snapshot.canonicalEventBrief(at: entry.date.timeIntervalSince1970) {
-            NearcastCanonicalEventRectangle(snapshot: entry.snapshot, event: event)
+        if let story = entry.snapshot.companionStory(at: entry.date.timeIntervalSince1970) {
+            NearcastCompanionStoryRectangle(
+                snapshot: entry.snapshot,
+                story: story,
+                showsTemperature: true
+            )
         } else {
             NearcastBasicsRectangle(snapshot: entry.snapshot)
                 .foregroundStyle(Color.primary)
@@ -507,26 +518,27 @@ private struct NearcastBriefView: View {
     }
 }
 
-private struct NearcastCanonicalEventRectangle: View {
+private struct NearcastCompanionStoryRectangle: View {
     let snapshot: NearcastWidgetSnapshot
-    let event: NearcastCanonicalEventBrief
+    let story: NearcastCompanionStory
+    let showsTemperature: Bool
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: canonicalEventSymbol(event))
+            Image(systemName: companionStorySymbol(story))
                 .font(.system(size: 20, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
-                .nearcastComplicationTint(canonicalEventColor(event))
+                .nearcastComplicationTint(companionStoryColor(story))
                 .frame(width: 25)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(event.headline)
+                Text(story.headline)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
-                if let timing = event.timing {
-                    Text(timing)
+                if let detail = complicationStoryDetail(story) {
+                    Text(detail)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -537,18 +549,25 @@ private struct NearcastCanonicalEventRectangle: View {
 
             Spacer(minLength: 0)
 
-            Text("\(snapshot.temperature)°")
-                .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
-                .lineLimit(1)
+            if showsTemperature {
+                Text("\(snapshot.temperature)°")
+                    .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Next weather")
-        .accessibilityValue([event.headline, event.timing].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel(story.kind == .officialAlert ? "Official weather alert" : "Next weather")
+        .accessibilityValue(
+            [story.headline, story.timing, story.placeName, story.source]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
     }
 }
 
-private func canonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> String {
-    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+private func companionStorySymbol(_ story: NearcastCompanionStory) -> String {
+    if story.kind == .officialAlert { return "exclamationmark.triangle.fill" }
+    let value = story.headline.lowercased()
     if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
     if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
     if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
@@ -559,11 +578,18 @@ private func canonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> Strin
     return "clock.badge"
 }
 
-private func canonicalEventColor(_ event: NearcastCanonicalEventBrief) -> Color {
-    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+private func companionStoryColor(_ story: NearcastCompanionStory) -> Color {
+    if story.kind == .officialAlert { return NearcastComplicationColor.change }
+    let value = story.headline.lowercased()
     if value.contains("wind") || value.contains("gust") { return NearcastComplicationColor.wind }
     if value.contains("heat") || value.contains("sun") || value.contains("uv") { return NearcastComplicationColor.warm }
     return NearcastComplicationColor.rain
+}
+
+private func complicationStoryDetail(_ story: NearcastCompanionStory) -> String? {
+    let source = story.kind == .officialAlert ? story.source : nil
+    let parts = [story.timing, source].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
 }
 
 private struct NearcastTemperatureRectangle: View {
@@ -1147,8 +1173,8 @@ private func makeEntry(
 }
 
 private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, relativeTo now: Date) -> NearcastWidgetSnapshot {
-    guard let projection = base.timelineProjection(at: date, relativeTo: now) else { return base }
-    var projected = base
+    var projected = base.expiringCompanionContent(at: date.timeIntervalSince1970)
+    guard let projection = projected.timelineProjection(at: date, relativeTo: now) else { return projected }
     projected.timeline = projection.rows
     if let current = projection.rows.first,
        base.shouldPromoteCurrentWeather(from: projection) {
@@ -1203,6 +1229,15 @@ private func complicationTimelineDates(snapshot: NearcastWidgetSnapshot, now: Da
         if transition > now { dates.append(transition) }
     }
 
+    if snapshot.hasCurrentOfficialAlert(at: now.timeIntervalSince1970) {
+        let alertDeadline = snapshot.alertExpiresAt
+            ?? snapshot.alertSavedAt.map { $0 + nearcastWidgetAlertWithoutExpiryTTL }
+        if let alertDeadline {
+            let transition = Date(timeIntervalSince1970: alertDeadline + 1)
+            if transition > now { dates.append(transition) }
+        }
+    }
+
     // Coalesce the half-hour safety entry with a forecast boundary when they
     // are effectively the same time.
     return dates.sorted().reduce(into: [Date]()) { result, date in
@@ -1225,6 +1260,10 @@ private func briefRelevance(
     weatherState: WeatherDataState,
     planState: PlanDataState
 ) -> TimelineEntryRelevance? {
+    if let alert = snapshot.urgentOfficialAlertBrief(at: date.timeIntervalSince1970) {
+        let duration = max(5 * 60, (alert.expiresAt ?? date.addingTimeInterval(30 * 60).timeIntervalSince1970) - date.timeIntervalSince1970)
+        return TimelineEntryRelevance(score: 100, duration: duration)
+    }
     guard weatherState == .fresh else { return TimelineEntryRelevance(score: 5, duration: 30 * 60) }
     let signals = NearcastVisualSignalModel.make(snapshot: snapshot, now: date, horizonHours: 6)
     let currentRainChance = signals.rain.timelinePoints.first?.magnitude?.value ?? snapshot.rainChance
@@ -1401,8 +1440,23 @@ private func cardinalDirection(_ degrees: Int) -> String {
     return labels[Int((Double(normalized) + 22.5) / 45.0) % labels.count]
 }
 
-private func nearcastComplicationURL(_ surface: String) -> URL? {
-    URL(string: "nearcast://weather?source=watch-complication&surface=\(surface)")
+private func nearcastComplicationURL(_ surface: String, snapshot: NearcastWidgetSnapshot? = nil) -> URL? {
+    var components = URLComponents()
+    components.scheme = "nearcast"
+    components.host = "weather"
+    var items = [
+        URLQueryItem(name: "source", value: "watch-complication"),
+        URLQueryItem(name: "surface", value: surface)
+    ]
+    if let alert = snapshot?.urgentOfficialAlertBrief() {
+        items.append(URLQueryItem(name: "target", value: "alerts"))
+        items.append(URLQueryItem(name: "detail", value: "alerts"))
+        if let id = alert.id {
+            items.append(URLQueryItem(name: "alertId", value: id))
+        }
+    }
+    components.queryItems = items
+    return components.url
 }
 
 private enum NearcastWatchWeatherRefresh {

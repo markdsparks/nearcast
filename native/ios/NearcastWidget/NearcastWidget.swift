@@ -135,7 +135,7 @@ struct NearcastWidgetProvider: TimelineProvider {
 
 private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     let refreshStartedAt = Date().timeIntervalSince1970
-    let cached = NearcastWidgetSnapshot.current().expiringOfficialAlert(at: refreshStartedAt)
+    let cached = NearcastWidgetSnapshot.current().expiringCompanionContent(at: refreshStartedAt)
     guard let selectedPlace = NearcastWidgetPlace.stored() else {
         return cached
     }
@@ -167,7 +167,7 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     guard let latestPlace = NearcastWidgetPlace.stored(),
           sameWidgetSelection(selectedPlace, latestPlace) else {
         // The iPhone changed places while either request was in flight.
-        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+        return NearcastWidgetSnapshot.current().expiringCompanionContent(at: Date().timeIntervalSince1970)
     }
 
     let resolvedFallback = resolvedLocationRecord(
@@ -182,7 +182,7 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     // the successfully resolved destination alert can still be shown there.
     if resolution.meaningfullyMoved && refreshedWeather == nil {
         var unavailable = (NearcastWidgetSnapshot.stored() ?? cached)
-            .expiringOfficialAlert(at: Date().timeIntervalSince1970)
+            .expiringCompanionContent(at: Date().timeIntervalSince1970)
         unavailable.placeName = place.displayLabel
         unavailable.isAvailable = false
         unavailable.weatherSavedAt = 0
@@ -204,7 +204,7 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     // refreshes were in flight. Weather remains its own independently merged
     // domain, and a phone alert newer than this refresh always wins.
     let latest = (NearcastWidgetSnapshot.stored() ?? cached)
-        .expiringOfficialAlert(at: Date().timeIntervalSince1970)
+        .expiringCompanionContent(at: Date().timeIntervalSince1970)
     var snapshot = refreshedWeather.map { latest.mergingWeather(from: $0) } ?? latest
     let phoneDeliveredNewerAlert = !resolution.meaningfullyMoved
         && (latest.alertSavedAt ?? 0) > refreshStartedAt
@@ -229,7 +229,7 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
         }
     }
 
-    snapshot = snapshot.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+    snapshot = snapshot.expiringCompanionContent(at: Date().timeIntervalSince1970)
     return saveWidgetRefreshResult(
         snapshot,
         selected: selectedPlace,
@@ -385,7 +385,7 @@ private func saveWidgetRefreshResult(
     // must never publish a coordinate or weather for the newly selected place.
     guard let current = NearcastWidgetPlace.stored(),
           sameWidgetSelection(selected, current) else {
-        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+        return NearcastWidgetSnapshot.current().expiringCompanionContent(at: Date().timeIntervalSince1970)
     }
     if let resolvedLocation {
         saveResolvedLocation(resolvedLocation)
@@ -394,7 +394,7 @@ private func saveWidgetRefreshResult(
     // snapshot write, after the separate fallback write.
     guard let latest = NearcastWidgetPlace.stored(),
           sameWidgetSelection(selected, latest) else {
-        return NearcastWidgetSnapshot.current().expiringOfficialAlert(at: Date().timeIntervalSince1970)
+        return NearcastWidgetSnapshot.current().expiringCompanionContent(at: Date().timeIntervalSince1970)
     }
     NearcastWidgetSnapshotStore.save(snapshot)
     return snapshot
@@ -409,8 +409,12 @@ private func applyWidgetAlert(
     snapshot.alertId = alert.id
     snapshot.alertTitle = alert.title
     snapshot.alertSeverity = alert.severity
+    snapshot.alertStartsAt = alert.startsAt
     snapshot.alertExpiresAt = alert.expiresAt
     snapshot.alertImpact = alert.impact
+    snapshot.alertSource = alert.source
+    snapshot.alertUrgency = alert.urgency
+    snapshot.alertCertainty = alert.certainty
     snapshot.alertCount = count
     snapshot.alertSavedAt = fetchedAt
     snapshot.alertStateReady = true
@@ -507,7 +511,7 @@ private func projectedWidgetSnapshot(
     at date: Date,
     relativeTo now: Date
 ) -> NearcastWidgetSnapshot {
-    var projected = base.expiringOfficialAlert(at: date.timeIntervalSince1970)
+    var projected = base.expiringCompanionContent(at: date.timeIntervalSince1970)
 
     if let projection = base.timelineProjection(at: date, relativeTo: now) {
         projected.timeline = projection.rows
@@ -581,8 +585,12 @@ private struct NearcastWidgetOfficialAlert {
     let id: String?
     let title: String
     let severity: String?
+    let startsAt: TimeInterval?
     let expiresAt: TimeInterval?
     let impact: String
+    let source: String
+    let urgency: String?
+    let certainty: String?
     let priority: Int
 }
 
@@ -660,13 +668,21 @@ private enum NearcastWidgetAlertClient {
         let visibleSeverity = severity.isEmpty || severity.caseInsensitiveCompare("Unknown") == .orderedSame
             ? nil
             : severity
+        let startsAt = alertDate(properties.onset ?? properties.effective)?.timeIntervalSince1970
         let expiresAt = alertDate(properties.ends ?? properties.expires)?.timeIntervalSince1970
+        let source = compactAlertText(properties.senderName, limit: 90)
+        let urgency = compactAlertText(properties.urgency, limit: 24)
+        let certainty = compactAlertText(properties.certainty, limit: 24)
         return NearcastWidgetOfficialAlert(
             id: rawIdentifier.isEmpty ? nil : "id:\(rawIdentifier)",
             title: title,
             severity: visibleSeverity,
+            startsAt: startsAt,
             expiresAt: expiresAt,
             impact: alertImpact(event: title),
+            source: source.isEmpty ? "National Weather Service" : source,
+            urgency: urgency.isEmpty || urgency.caseInsensitiveCompare("Unknown") == .orderedSame ? nil : urgency,
+            certainty: certainty.isEmpty || certainty.caseInsensitiveCompare("Unknown") == .orderedSame ? nil : certainty,
             priority: alertPriority(event: title, severity: severity)
         )
     }
@@ -737,8 +753,13 @@ private struct NWSAlertProperties: Decodable {
     let event: String?
     let headline: String?
     let severity: String?
+    let onset: String?
+    let effective: String?
     let expires: String?
     let ends: String?
+    let senderName: String?
+    let urgency: String?
+    let certainty: String?
 }
 
 enum NearcastWidgetForecastClient {
@@ -835,8 +856,12 @@ enum NearcastWidgetForecastClient {
             alertId: fallback.alertId,
             alertTitle: fallback.alertTitle,
             alertSeverity: fallback.alertSeverity,
+            alertStartsAt: fallback.alertStartsAt,
             alertExpiresAt: fallback.alertExpiresAt,
             alertImpact: fallback.alertImpact,
+            alertSource: fallback.alertSource,
+            alertUrgency: fallback.alertUrgency,
+            alertCertainty: fallback.alertCertainty,
             alertCount: fallback.alertCount,
             alertSavedAt: fallback.alertSavedAt,
             alertStateReady: fallback.alertStateReady,
@@ -1156,7 +1181,13 @@ struct NearcastWidget: Widget {
 }
 
 private func nearcastWidgetForecastURL(snapshot: NearcastWidgetSnapshot) -> URL? {
-    nearcastWidgetURL(snapshot: snapshot, routeItems: [])
+    if let alert = snapshot.urgentOfficialAlertBrief() {
+        return nearcastWidgetAttentionURL(
+            snapshot: snapshot,
+            destination: .alert(alert.id)
+        )
+    }
+    return nearcastWidgetURL(snapshot: snapshot, routeItems: [])
 }
 
 private func nearcastWidgetAttentionURL(
@@ -2133,7 +2164,7 @@ struct NearcastSmallWidget: View {
 
     var body: some View {
         let palette = widgetPalette(snapshot)
-        let canonicalEvent = snapshot.canonicalEventBrief()
+        let story = snapshot.companionStory()
         VStack(alignment: .leading, spacing: 5) {
             Text(cityName(snapshot.placeName))
                 .font(.system(size: 18, weight: .black, design: .rounded))
@@ -2150,14 +2181,14 @@ struct NearcastSmallWidget: View {
 
             SmallHighLowLine(snapshot: snapshot, palette: palette)
 
-            Text(canonicalEvent?.headline ?? widgetConditionTitle(snapshot))
+            Text(story?.headline ?? widgetConditionTitle(snapshot))
                 .font(.system(size: 22, weight: .black, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
 
             MiniPill(
-                text: canonicalEvent?.timing ?? smallWidgetChip(snapshot),
-                tone: smallWidgetChipTone(snapshot),
+                text: story?.timing ?? smallWidgetChip(snapshot),
+                tone: story?.kind == .officialAlert ? Color.orange : smallWidgetChipTone(snapshot),
                 palette: palette
             )
         }
@@ -2397,17 +2428,17 @@ private struct LargeWeatherRunway: View {
     var body: some View {
         let rows = largeRunwayRows(snapshot, at: entryDate, limit: density.timelineLimit)
         let mode = largeRunwayMode(snapshot, rows: rows)
-        let canonicalEvent = snapshot.canonicalEventBrief(at: entryDate.timeIntervalSince1970)
+        let story = snapshot.companionStory(at: entryDate.timeIntervalSince1970)
 
         VStack(alignment: .leading, spacing: density.isCompact ? 5 : 7) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(canonicalEvent?.timing ?? largeRunwayHorizonLabel(rows))
+                    Text(story?.timing ?? largeRunwayHorizonLabel(rows))
                         .font(WidgetText.eyebrow)
                         .tracking(0.5)
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
-                    Text(canonicalEvent?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows))
+                    Text(story?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows))
                         .font(density.isCompact ? WidgetText.body : WidgetText.bodyLarge)
                         .foregroundStyle(palette.primary)
                         .lineLimit(1)
@@ -3758,7 +3789,7 @@ private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
 
 private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: WidgetPalette) -> [MediumSignalSpec] {
     let focus = nextFocus(snapshot)
-    let canonicalEvent = snapshot.canonicalEventBrief()
+    let story = snapshot.companionStory()
     let first = MediumSignalSpec(
         id: "now",
         label: "Now",
@@ -3768,10 +3799,10 @@ private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: Widge
     )
     let second = MediumSignalSpec(
         id: "next",
-        label: canonicalEvent == nil && focus != .quiet ? focusLabel(focus) : "Next",
-        value: canonicalEvent?.headline ?? mediumFocusValue(snapshot, focus: focus),
-        detail: canonicalEvent?.timing,
-        tone: nextFocusColor(focus, snapshot: snapshot)
+        label: story == nil && focus != .quiet ? focusLabel(focus) : (story?.kind == .officialAlert ? "Alert" : "Next"),
+        value: story?.headline ?? mediumFocusValue(snapshot, focus: focus),
+        detail: story?.timing,
+        tone: story?.kind == .officialAlert ? Color.orange : nextFocusColor(focus, snapshot: snapshot)
     )
     return [first, second]
 }
@@ -3883,8 +3914,8 @@ private func metricAccessibility(_ metric: LargeMetricSpec, snapshot: NearcastWi
 }
 
 private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
-    if let canonicalEvent = snapshot.canonicalEventBrief() {
-        return canonicalEvent.headline
+    if let story = snapshot.companionStory() {
+        return story.headline
     }
     let next = snapshot.nextValue.lowercased()
     let now = snapshot.nowValue.lowercased()
@@ -3896,7 +3927,7 @@ private func primarySignal(_ snapshot: NearcastWidgetSnapshot) -> String {
 }
 
 private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
-    if let canonicalEvent = snapshot.canonicalEventBrief() { return canonicalEvent.headline }
+    if let story = snapshot.companionStory() { return story.headline }
     if let status = cleanOptional(snapshot.watchStatus) { return status }
     if let label = cleanOptional(snapshot.planLabel), label != "Watching" { return label }
     if snapshot.nextValue.lowercased().contains("rain") { return compactSignalValue(snapshot.nextValue) }
@@ -3907,7 +3938,9 @@ private func watchStatus(_ snapshot: NearcastWidgetSnapshot) -> String {
 }
 
 private func watchDetail(_ snapshot: NearcastWidgetSnapshot) -> String {
-    if let timing = snapshot.canonicalEventBrief()?.timing { return timing }
+    if let story = snapshot.companionStory() {
+        return story.timing ?? story.source ?? "Open Nearcast"
+    }
     if let detail = cleanOptional(snapshot.watchDetail) { return detail }
     if let detail = cleanOptional(snapshot.planDetail) { return detail }
     return "\(cityName(snapshot.placeName)) · \(compactSignalValue(snapshot.nextValue))"
@@ -3923,8 +3956,9 @@ private func watchSymbol(_ snapshot: NearcastWidgetSnapshot) -> String {
     case "good":
         return "checkmark.circle.fill"
     default:
-        let canonical = snapshot.canonicalEventBrief()
-        let lower = "\(canonical?.headline ?? "") \(canonical?.kind ?? "") \(snapshot.nowValue) \(snapshot.nextValue) \(snapshot.condition)".lowercased()
+        if snapshot.urgentOfficialAlertBrief() != nil { return "exclamationmark.triangle.fill" }
+        let story = snapshot.companionStory()
+        let lower = "\(story?.headline ?? "") \(snapshot.nowValue) \(snapshot.nextValue) \(snapshot.condition)".lowercased()
         if lower.contains("storm") { return "cloud.bolt.rain.fill" }
         if lower.contains("rain") { return "cloud.rain.fill" }
         if snapshot.feelsLike >= 95 { return "thermometer.sun.fill" }
@@ -4230,34 +4264,38 @@ private func largeRunwayAccessibility(
     rows: [NearcastWidgetHour],
     at date: Date
 ) -> String {
-    let canonicalEvent = snapshot.canonicalEventBrief(at: date.timeIntervalSince1970)
-    let title = canonicalEvent?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows)
-    let canonicalPrefix = canonicalEvent?.timing.map { "\(title). \($0)." }
+    let story = snapshot.companionStory(at: date.timeIntervalSince1970)
+    let title = story?.headline ?? largeRunwayTitle(mode, snapshot: snapshot, rows: rows)
+    let storyPrefix = story.map { story in
+        [story.headline, story.timing, story.placeName, story.source]
+            .compactMap { $0 }
+            .joined(separator: ". ") + "."
+    }
     guard let first = rows.first, let last = rows.last else { return title }
     switch mode {
     case .rain:
         let peak = largeRunwayPoints(rows: rows, mode: .rain, snapshot: snapshot).map(\.value).max()
             ?? snapshot.rainChance
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
     case .snow:
         let end = last.temperature ?? snapshot.temperature
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
     case .wind:
         let peak = rows.compactMap { $0.windGust ?? $0.wind }.max() ?? snapshot.wind
         let sustained = rows.compactMap(\.wind).max() ?? snapshot.wind
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak gust \(peak) \(snapshot.windUnit); sustained wind up to \(sustained)."
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak gust \(peak) \(snapshot.windUnit); sustained wind up to \(sustained)."
     case .heat:
         let focus = largeFeelsLikeFocus(snapshot, rows: rows)
         let direction = focus.isCold ? "as low as" : "as high as"
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the actual temperature is \(focus.air)."
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Feels \(direction) \(focus.feelsLike) degrees while the actual temperature is \(focus.air)."
     case .sun:
         let peak = rows.compactMap(\.uv).max() ?? snapshot.uv
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Peak UV \(peak)."
     case .quiet:
         let start = first.temperature ?? snapshot.temperature
         let end = last.temperature ?? start
         let transition = runwayConditionTransition(rows, snapshot: snapshot).map { " \($0)" } ?? ""
-        return canonicalPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). From \(start) to \(end) degrees.\(transition)"
+        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). From \(start) to \(end) degrees.\(transition)"
     }
 }
 
@@ -4580,8 +4618,11 @@ private func hasCurrentWidgetAlert(_ snapshot: NearcastWidgetSnapshot) -> Bool {
 
 private func alertAttentionMeta(_ snapshot: NearcastWidgetSnapshot) -> String? {
     var parts: [String] = []
-    if let expiresAt = snapshot.alertExpiresAt {
-        parts.append(alertExpirationText(expiresAt))
+    if let alert = snapshot.officialAlertBrief() {
+        if let timing = snapshot.officialAlertTiming() {
+            parts.append(timing)
+        }
+        parts.append(alert.source)
     }
     if let count = snapshot.alertCount, count > 1 {
         parts.append("+\(count - 1) more")
@@ -4615,18 +4656,6 @@ private func alertSymbol(_ severity: String?) -> String {
     }
 }
 
-
-private func alertExpirationText(_ timestamp: TimeInterval) -> String {
-    let date = Date(timeIntervalSince1970: timestamp)
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    if Calendar.current.isDateInToday(date) {
-        formatter.dateFormat = "h:mm a"
-    } else {
-        formatter.dateFormat = "EEE h a"
-    }
-    return "Until \(formatter.string(from: date))"
-}
 
 private func uvRiskLabel(_ value: Int) -> String {
     if value >= 11 { return "Extreme" }

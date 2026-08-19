@@ -125,6 +125,13 @@ assert.match(snapshot, /var daily: \[NearcastWidgetDay\]\?/, "shared snapshots c
 assert.match(snapshot, /func preservingNewerWeather\(from stored:/, "shared snapshots arbitrate out-of-order weather by freshness");
 assert.match(snapshot, /func timelineProjection\(at date:[\s\S]*advancesCurrentWeather/, "shared timeline projection distinguishes current observations from future forecast rows");
 assert.match(app, /daily: nativeWidgetDaily\(data\)/, "the phone sends daily basics to the watch");
+assert.match(app, /alertStartsAt: widgetAlert\?\.startsAt \|\| null/, "the phone preserves an official alert's exact start time for companions");
+assert.match(app, /alertSource: widgetAlert\?\.source \|\| null/, "the phone preserves the official alert source for companions");
+assert.match(app, /alertUrgency: widgetAlert\?\.urgency \|\| null[\s\S]*alertCertainty: widgetAlert\?\.certainty \|\| null/, "the phone preserves official urgency and certainty instead of reinterpreting them natively");
+assert.match(snapshot, /func companionStory[\s\S]*urgentOfficialAlertBrief[\s\S]*canonicalEventBrief/, "shared companions use one warning-before-forecast story contract");
+assert.match(snapshot, /normalizedTitle\.contains\("watch"\)[\s\S]*normalizedTitle\.contains\("warning"\)/, "planning alerts do not preempt the forecast while warnings do");
+assert.match(sync, /urgentAlertChanged[\s\S]*forcePriority: placeChanged \|\| urgentAlertChanged/, "new and cleared urgent alerts bypass routine Watch transfer throttling");
+assert.match(complications, /alertDeadline[\s\S]*alertDeadline \+ 1/, "complications schedule an exact transition that removes expired alerts");
 
 const version = app.match(/const VERSION = "([^"]+)"/)?.[1];
 assert.ok(version, "app version is declared");

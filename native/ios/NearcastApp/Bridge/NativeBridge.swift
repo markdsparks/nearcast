@@ -1333,7 +1333,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
 
             if let incoming = incomingSnapshot,
                let stored = NearcastWidgetSnapshot.stored() {
-                let destination = stored.expiringOfficialAlert(at: Date().timeIntervalSince1970)
+                let destination = stored.expiringCompanionContent(at: Date().timeIntervalSince1970)
                 var protected = incoming.mergingWeather(from: destination)
                 protected = protected.preservingOfficialAlert(from: destination)
                 incomingSnapshot = protected
@@ -1343,18 +1343,24 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             }
         }
 
-        if let incoming = incomingSnapshot,
-           incoming.alertStateReady != true,
+        if let incoming = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: resolvedData),
            let incomingPlace,
            let storedPlace = NearcastWidgetPlace.stored(),
            abs(incomingPlace.latitude - storedPlace.latitude) < 0.00001,
            abs(incomingPlace.longitude - storedPlace.longitude) < 0.00001,
            let stored = NearcastWidgetSnapshot.stored() {
-            let currentStored = stored.expiringOfficialAlert(at: Date().timeIntervalSince1970)
-            let resolved = incoming.preservingOfficialAlert(from: currentStored)
+            let currentStored = stored.expiringCompanionContent(at: Date().timeIntervalSince1970)
+            let resolved = incoming.resolvingOfficialAlert(with: currentStored)
             if let encoded = try? JSONEncoder().encode(resolved) {
                 resolvedData = encoded
             }
+        }
+
+        if let decoded = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: resolvedData),
+           let encoded = try? JSONEncoder().encode(
+               decoded.expiringCompanionContent(at: Date().timeIntervalSince1970)
+           ) {
+            resolvedData = encoded
         }
 
         NearcastWidgetSnapshotStore.saveSnapshotData(resolvedData)

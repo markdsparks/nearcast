@@ -205,8 +205,8 @@ highDetailHarness.storm(true);
 assert.equal(highDetailHarness.visible(), false, "StormScope has its own distinct active state");
 
 const statusSource = extractFunction(map, "syncGeneratedRadarStatusChip");
-assert.match(statusSource, /rawMapHighDetailVisible\(/, "the public status uses actual enhanced-layer visibility");
-assert.match(statusSource, /"High detail"/, "the factual status is named High detail");
+assert.doesNotMatch(statusSource, /rawMapHighDetailVisible\(/, "source quality stays in the Time Lens instead of adding a second permanent badge");
+assert.doesNotMatch(statusSource, /"High detail"/, "the public map avoids implementation-language status chrome");
 assert.doesNotMatch(statusSource, /"(?:Checking radar|Enhancing radar|Radar enhanced)"/, "the UI makes no enhancement promise while loading");
 
 // A small pinch around the enhanced pack's nominal floor should not make the
@@ -244,7 +244,10 @@ const sheetActivationSource = extractFunction(map, "activateXweatherStormFromShe
 assert.match(sheetActivationSource, /startXweatherStormActivation\(/, "StormScope starts only from the sheet CTA");
 const enterSource = extractFunction(map, "enterImmersiveMap");
 assert.doesNotMatch(enterSource, /nearcastActivateXweatherStorm|startXweatherStormActivation/, "opening the full map never resumes StormScope");
-assert.match(enterSource, /await loadMapFrames\(true, \{ timelineKind: "precip", focusNow: true \}\)/, "immersive entry waits for the requested place timeline");
+assert.match(enterSource, /await loadMapFrames\(true, mapIntentLoadOptions\(intent\)\)/, "immersive entry waits for the requested place and time timeline");
+const mapIntentLoadSource = extractFunction(map, "mapIntentLoadOptions");
+assert.match(mapIntentLoadSource, /timelineKind:\s*"precip"/, "ordinary immersive entry keeps the unified radar-to-forecast timeline");
+assert.match(mapIntentLoadSource, /focusNow:\s*targetTimestamp == null/, "ordinary immersive entry still starts at Now");
 assert.match(enterSource, /await waitForImmersiveMapReady\(\)/, "immersive entry waits for a rendered surface postcondition");
 assert.match(map, /fallbackMapLibreRenderer\("Immersive map did not reach its ready postcondition"\)/, "a stuck GL surface falls back to the classic map");
 
@@ -302,9 +305,11 @@ assert.match(
   "the slider names both evidence eras for assistive technology"
 );
 const readoutSource = extractFunction(map, "timelineReadoutCopy");
-assert.match(readoutSource, /"Latest radar"/, "Now is identified as the latest radar frame");
-assert.match(readoutSource, /"Observed radar"/, "past frames are explicitly observed radar");
-assert.match(readoutSource, /rawMapForecastGuidanceLabel/, "future frames use their explicit guidance provenance");
+assert.match(readoutSource, /mapRadarTrustState/, "the visible source label comes from the shared radar freshness semantics");
+const mapRadarTrustSource = extractFunction(map, "mapRadarTrustState");
+assert.match(mapRadarTrustSource, /"current"[\s\S]{0,120}?Live radar/, "Now is identified as current live radar");
+assert.match(mapRadarTrustSource, /"historical"[\s\S]{0,120}?Observed radar/, "past frames are explicitly observed radar");
+assert.match(mapRadarTrustSource, /"forecast"[\s\S]{0,120}?Forecast guidance/, "future frames are plainly identified as guidance");
 const guidanceLabelSource = extractFunction(map, "rawMapForecastGuidanceLabel");
 assert.match(guidanceLabelSource, /"Radar nowcast"/, "observation-derived future frames are identified as a nowcast");
 assert.match(guidanceLabelSource, /"Blended forecast"/, "the radar-to-model handoff is identified as blended guidance");

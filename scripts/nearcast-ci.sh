@@ -33,12 +33,14 @@ run_portable_checks() {
   for smoke in \
     weather-truth-fixtures.mjs \
     plan-watch-receipt-smoke.mjs \
+    material-event-surfaces-smoke.mjs \
     product-activation-smoke.mjs \
     ai-operon-smoke.mjs \
     trust-loop-smoke.mjs \
     trust-loop-backend-smoke.mjs \
     trust-loop-report-smoke.mjs \
     hourly-alert-detail-smoke.mjs \
+    alert-geometry-smoke.mjs \
     hourly-precip-graph-smoke.mjs \
     hourly-hero-label-smoke.mjs \
     hourly-row-layout-smoke.mjs \
@@ -48,6 +50,7 @@ run_portable_checks() {
     map-location-smoke.mjs \
     map-aerial-smoke.mjs \
     map-satellite-smoke.mjs \
+    map-trust-experience-smoke.mjs \
     map-radar-experience-smoke.mjs \
     radar-capability-smoke.mjs \
     live-activity-smoke.mjs \
@@ -61,6 +64,7 @@ run_portable_checks() {
     watch-basics-smoke.mjs \
     forecast-pulse-smoke.mjs \
     nearcast-brief-smoke.mjs \
+    settings-onboarding-smoke.mjs \
     nearcast-place-label-test.mjs
   do
     node "$ROOT/scripts/$smoke"

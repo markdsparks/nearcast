@@ -53,7 +53,9 @@ struct NearcastWatchRootView: View {
             let useUltraLayout = proxy.size.width >= 190
 
             Group {
-                if snapshot.hasWeatherData || snapshot.hasPlan {
+                if snapshot.hasWeatherData
+                    || snapshot.hasPlan
+                    || snapshot.urgentOfficialAlertBrief() != nil {
                     if dynamicTypeSize.isAccessibilitySize {
                         WatchAccessibleOverview(
                             snapshot: snapshot,
@@ -253,14 +255,19 @@ private struct WatchTodayBasicsPage: View {
     let useUltraLayout: Bool
 
     var body: some View {
-        let canonicalEvent = snapshot.canonicalEventBrief()
+        let story = snapshot.companionStory()
         VStack(spacing: useUltraLayout ? 10 : 7) {
-            if snapshot.hasWeatherData {
+            if snapshot.hasWeatherData || story != nil {
                 HStack(spacing: 7) {
-                    Image(systemName: watchConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
+                    Image(systemName: story.map(watchCompanionStorySymbol)
+                        ?? watchConditionSymbol(snapshot.conditionCode, isDay: snapshot.isDay))
                         .font(.system(size: useUltraLayout ? 22 : 20, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                        .foregroundStyle(
+                            isLuminanceReduced
+                                ? Color.white
+                                : (story?.kind == .officialAlert ? nearcastCoral : nearcastCyan)
+                        )
                         .accessibilityHidden(true)
                     Text(cityName(snapshot.placeName))
                         .font(.system(size: useUltraLayout ? 17 : 15, weight: .bold, design: .rounded))
@@ -269,20 +276,28 @@ private struct WatchTodayBasicsPage: View {
                     Spacer(minLength: 0)
                 }
 
-                if let canonicalEvent {
-                    WatchCanonicalEventSummary(
-                        event: canonicalEvent,
+                if let story {
+                    WatchCompanionStorySummary(
+                        story: story,
                         isLuminanceReduced: isLuminanceReduced,
                         useUltraLayout: useUltraLayout
                     )
                 }
 
-                WatchTodayInfographic(
-                    snapshot: snapshot,
-                    isLuminanceReduced: isLuminanceReduced,
-                    useUltraLayout: useUltraLayout,
-                    isCompact: canonicalEvent != nil
-                )
+                if snapshot.hasWeatherData {
+                    WatchTodayInfographic(
+                        snapshot: snapshot,
+                        isLuminanceReduced: isLuminanceReduced,
+                        useUltraLayout: useUltraLayout,
+                        isCompact: story != nil
+                    )
+                } else {
+                    WatchNoWeatherMessage(
+                        syncState: syncState,
+                        isLuminanceReduced: isLuminanceReduced,
+                        useUltraLayout: useUltraLayout
+                    )
+                }
             } else {
                 WatchNoWeatherMessage(
                     syncState: syncState,
@@ -300,26 +315,30 @@ private struct WatchTodayBasicsPage: View {
     }
 }
 
-private struct WatchCanonicalEventSummary: View {
-    let event: NearcastCanonicalEventBrief
+private struct WatchCompanionStorySummary: View {
+    let story: NearcastCompanionStory
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
     var body: some View {
         HStack(spacing: useUltraLayout ? 8 : 6) {
-            Image(systemName: watchCanonicalEventSymbol(event))
+            Image(systemName: watchCompanionStorySymbol(story))
                 .font(.system(size: useUltraLayout ? 16 : 14, weight: .bold))
-                .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
+                .foregroundStyle(
+                    isLuminanceReduced
+                        ? Color.white
+                        : (story.kind == .officialAlert ? nearcastCoral : nearcastCyan)
+                )
                 .frame(width: useUltraLayout ? 20 : 18)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(event.headline)
+                Text(story.headline)
                     .font(.system(size: useUltraLayout ? 15 : 13, weight: .bold, design: .rounded))
                     .foregroundStyle(watchPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
-                if let timing = event.timing {
-                    Text(timing)
+                if let detail = watchCompanionStoryDetail(story) {
+                    Text(detail)
                         .font(.system(size: useUltraLayout ? 13 : 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(watchSecondary)
                         .lineLimit(1)
@@ -330,12 +349,17 @@ private struct WatchCanonicalEventSummary: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([event.headline, event.timing].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel(
+            [story.headline, story.timing, story.placeName, story.source]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
     }
 }
 
-private func watchCanonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> String {
-    let value = "\(event.kind ?? "") \(event.headline)".lowercased()
+private func watchCompanionStorySymbol(_ story: NearcastCompanionStory) -> String {
+    if story.kind == .officialAlert { return "exclamationmark.triangle.fill" }
+    let value = story.headline.lowercased()
     if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
     if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
     if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
@@ -344,6 +368,12 @@ private func watchCanonicalEventSymbol(_ event: NearcastCanonicalEventBrief) -> 
     if value.contains("cold") || value.contains("freeze") { return "thermometer.snowflake" }
     if value.contains("sun") || value.contains("uv") || value.contains("clear") { return "sun.max.fill" }
     return "clock.badge"
+}
+
+private func watchCompanionStoryDetail(_ story: NearcastCompanionStory) -> String? {
+    let source = story.kind == .officialAlert ? story.source : nil
+    let parts = [story.timing, source].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
 }
 
 private struct WatchTodayInfographic: View {
@@ -2379,12 +2409,13 @@ private func watchSnapshotForDisplay(
         return watchPreviewSnapshot()
     }
 #endif
-    guard stored.hasWeatherData else { return stored }
+    let current = stored.expiringCompanionContent(at: now.timeIntervalSince1970)
+    guard current.hasWeatherData else { return current }
 
     // Once the final cached forecast interval ends, showing its last raw
     // values is more misleading than admitting that an update is needed.
-    guard now < stored.weatherTimelineValidUntil() else {
-        var unavailable = stored
+    guard now < current.weatherTimelineValidUntil() else {
+        var unavailable = current
         unavailable.isAvailable = false
         unavailable.timeline = nil
         unavailable.daily = nil
@@ -2393,11 +2424,11 @@ private func watchSnapshotForDisplay(
         return unavailable
     }
 
-    var projected = stored
-    if let projection = stored.timelineProjection(at: now, relativeTo: now) {
+    var projected = current
+    if let projection = current.timelineProjection(at: now, relativeTo: now) {
         projected.timeline = projection.rows
         if let current = projection.rows.first,
-           stored.shouldPromoteCurrentWeather(from: projection) {
+           projected.shouldPromoteCurrentWeather(from: projection) {
             projected.temperature = current.temperature ?? projected.temperature
             projected.feelsLike = current.feelsLike ?? projected.feelsLike
             projected.rainChance = current.rainChance ?? projected.rainChance

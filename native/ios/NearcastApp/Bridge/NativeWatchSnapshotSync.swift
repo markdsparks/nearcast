@@ -18,6 +18,7 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
     private var pendingPriorityTransfer = false
     private var lastSnapshotData: Data?
     private var lastPlaceData: Data?
+    private var lastUrgentAlertIdentity: String?
     private var lastPriorityTransferAt: Date?
 
     private override init() {
@@ -47,9 +48,12 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         }
 
         let placeChanged = placeData != lastPlaceData
+        let urgentAlertIdentity = Self.urgentAlertIdentity(in: snapshotData)
+        let urgentAlertChanged = urgentAlertIdentity != lastUrgentAlertIdentity
         guard snapshotData != lastSnapshotData || placeChanged else { return }
         lastSnapshotData = snapshotData
         lastPlaceData = placeData
+        lastUrgentAlertIdentity = urgentAlertIdentity
 
         var payload: [String: Any] = [
             "type": "nearcast.widget.snapshot.v1",
@@ -64,12 +68,12 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         refreshSessionState(session)
         guard session.activationState == .activated else {
             pendingPayload = payload
-            pendingPriorityTransfer = pendingPriorityTransfer || placeChanged
+            pendingPriorityTransfer = pendingPriorityTransfer || placeChanged || urgentAlertChanged
             lastError = nil
             return
         }
 
-        sendPayload(payload, session: session, forcePriority: placeChanged)
+        sendPayload(payload, session: session, forcePriority: placeChanged || urgentAlertChanged)
     }
 
     var statusRows: [(String, String)] {
@@ -110,6 +114,20 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         formatter.timeStyle = .medium
         formatter.dateStyle = .none
         return formatter.string(from: date)
+    }
+
+    private static func urgentAlertIdentity(in data: Data) -> String? {
+        guard let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data),
+              let alert = snapshot.urgentOfficialAlertBrief() else { return nil }
+        let expiration = alert.expiresAt.map { String($0) } ?? ""
+        return [
+            alert.id ?? alert.title,
+            alert.title,
+            alert.severity ?? "",
+            alert.urgency ?? "",
+            expiration,
+            alert.source
+        ].joined(separator: "|")
     }
 
     private func flushPendingPayload(_ session: WCSession = .default) {

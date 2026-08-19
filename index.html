@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.370">
-    <link rel="manifest" href="manifest.json?v=3.0.370">
+    <link rel="stylesheet" href="styles.css?v=3.0.371">
+    <link rel="manifest" href="manifest.json?v=3.0.371">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.370">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.370">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.371">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.371">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -63,7 +63,7 @@
             <span class="brand-lockup-mark" aria-hidden="true"><img src="icons/nearcast-mark.svg" alt=""></span>
             <span class="brand-lockup-copy">
               <p class="eyebrow">Weather for the places that matter</p>
-              <h1><span class="brand-wordmark"><span class="brand-near">Near</span><span class="brand-cast">cast</span></span> <span id="appVersion" class="app-version"></span></h1>
+              <h1><span class="brand-wordmark"><span class="brand-near">Near</span><span class="brand-cast">cast</span></span> <span id="appVersion" class="app-version" data-debug-setting hidden></span></h1>
             </span>
           </div>
           <section class="saved-row" aria-label="Saved places">
@@ -106,11 +106,11 @@
             <button class="install-card-dismiss" id="installDismiss" type="button" aria-label="Dismiss install suggestion">×</button>
           </section>
           <div class="actions">
-            <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Search places" title="Search">
+            <button class="icon-button search-toggle" id="searchToggle" type="button" aria-label="Find a place" title="Find a place" data-label="Find">
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2"/><line x1="13.5" y1="13.5" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             </button>
-            <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">☀︎</button>
-            <button class="icon-button" id="unitToggle" type="button" aria-label="Switch units" title="Switch units">F</button>
+            <button class="icon-button" id="themeToggle" type="button" aria-label="Change appearance" title="Change appearance" data-label="Appearance">☀︎</button>
+            <button class="icon-button" id="unitToggle" type="button" aria-label="Switch temperature units" title="Switch temperature units" data-label="Units">F</button>
           </div>
           <div class="menu-setting time-format-setting" aria-labelledby="timeFormatLabel">
             <div class="menu-setting-copy">
@@ -125,18 +125,45 @@
           </div>
           <div class="menu-setting reactive-sky-setting" aria-labelledby="reactiveSkyLabel">
             <div class="menu-setting-copy">
-              <strong id="reactiveSkyLabel">Reactive sky <span class="experiment-badge">Experimental</span></strong>
-              <span id="reactiveSkyMeta">Off · the current sky stays unchanged</span>
+              <strong id="reactiveSkyLabel">Living sky <span class="feature-badge">Preview</span></strong>
+              <span id="reactiveSkyMeta">Off · the background stays still</span>
             </div>
             <button class="menu-action" id="reactiveSkyToggle" type="button" aria-pressed="false">Off</button>
           </div>
           <div class="menu-setting reactive-sky-motion-setting" id="reactiveSkyMotionSetting" aria-labelledby="reactiveSkyMotionLabel" hidden>
             <div class="menu-setting-copy">
-              <strong id="reactiveSkyMotionLabel">Device motion</strong>
-              <span id="reactiveSkyMotionMeta">Optional · Current Location only</span>
+              <strong id="reactiveSkyMotionLabel">Move with your phone</strong>
+              <span id="reactiveSkyMotionMeta">Optional · only at your current location</span>
             </div>
-            <button class="menu-action" id="reactiveSkyMotionButton" type="button">Allow motion</button>
+            <button class="menu-action" id="reactiveSkyMotionButton" type="button">Allow</button>
           </div>
+          <details class="menu-trust-details">
+            <summary>
+              <span class="menu-trust-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.2 19 6v5.2c0 4.4-2.9 7.8-7 9.6-4.1-1.8-7-5.2-7-9.6V6l7-2.8Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m8.8 11.9 2.1 2 4.4-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span class="menu-trust-summary-copy">
+                <strong>Weather &amp; privacy</strong>
+                <small>Updates, notifications, and your choices</small>
+              </span>
+              <span class="menu-trust-chevron" aria-hidden="true">›</span>
+            </summary>
+            <div class="menu-trust-body">
+              <section>
+                <strong>Forecast updates</strong>
+                <p>Nearcast refreshes automatically. Tap the status beneath the current conditions to see what was checked and when.</p>
+              </section>
+              <section>
+                <strong>Notifications are your choice</strong>
+                <p>They stay off until you choose a plan or place to watch.</p>
+              </section>
+              <section>
+                <strong>No account needed</strong>
+                <p>Your location is used to load weather. Watched items share only what is needed to send the heads-up you asked for.</p>
+              </section>
+            </div>
+          </details>
+          <p class="menu-diagnostics-label" data-debug-setting hidden>Diagnostics</p>
           <div class="menu-setting reactive-sky-lab-setting" id="reactiveSkyLabSetting" aria-labelledby="reactiveSkyLabLabel" data-debug-setting hidden>
             <div class="menu-setting-copy">
               <strong id="reactiveSkyLabLabel">Sky Lab</strong>
@@ -215,7 +242,7 @@
               <option value="12">Force z12</option>
             </select>
           </div>
-          <div class="menu-setting native-live-activity-setting" id="nativeLiveActivitySetting" aria-labelledby="nativeLiveActivityLabel" hidden>
+          <div class="menu-setting native-live-activity-setting" id="nativeLiveActivitySetting" aria-labelledby="nativeLiveActivityLabel" data-debug-setting hidden>
             <div class="menu-setting-copy">
               <strong id="nativeLiveActivityLabel">Live Activity test</strong>
               <span id="nativeLiveActivityMeta">Native app only</span>
@@ -252,6 +279,7 @@
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.6"/><line x1="10" y1="1" x2="10" y2="3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16.5" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="10" x2="3.5" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="16.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         Use my location
       </button>
+      <p class="welcome-privacy">No account needed · location is used only to load your weather.</p>
       <button class="welcome-ambient-label" id="welcomeAmbientLabel" type="button" hidden></button>
       <div class="loading-chip welcome-loading" data-loading-status hidden role="status" aria-live="polite" aria-atomic="true">
         <span class="loading-chip-dot" aria-hidden="true"></span>
@@ -604,6 +632,11 @@
             <p id="stormImpactSummary"></p>
             <div class="storm-impact-list" id="stormImpactList"></div>
           </section>
+          <section class="imm-map-context" id="immMapContext" hidden aria-live="polite" aria-atomic="true">
+            <span class="imm-map-context-kicker" id="immMapContextKicker">Forecast focus</span>
+            <strong id="immMapContextTitle"></strong>
+            <span class="imm-map-context-meta" id="immMapContextMeta"></span>
+          </section>
         </div>
 
         <div class="map-legend imm-map-legend" id="immersiveLegend" aria-label="Map legend"></div>
@@ -693,7 +726,7 @@
           <p class="sheet-context" id="installSheetContext">Keep your weather one tap away.</p>
         </div>
       </header>
-      <p class="sheet-summary" id="installSheetSummary">Add Nearcast to your Home Screen for a cleaner full-screen weather app, faster launch, and notification support when your browser allows it.</p>
+      <p class="sheet-summary" id="installSheetSummary">Add Nearcast to your Home Screen for faster, full-screen access. Notifications stay off until you choose something to watch.</p>
       <ol class="install-steps" id="installSteps"></ol>
       <div class="install-sheet-actions">
         <button class="install-sheet-primary" id="installSheetPrimary" type="button">Got it</button>
@@ -1135,17 +1168,17 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.370"></script>
-    <script src="planner.js?v=3.0.370"></script>
-    <script src="app.js?v=3.0.370"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.370"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.370"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.370"></script>
-    <script src="radar-seam-engine.js?v=3.0.370"></script>
-    <script src="raw-map-runtime.js?v=3.0.370"></script>
-    <script src="map.js?v=3.0.370"></script>
-    <script src="sky.js?v=3.0.370"></script>
-    <script src="daygraph.js?v=3.0.370"></script>
-    <script src="boot.js?v=3.0.370"></script>
+    <script src="weather-truth.js?v=3.0.371"></script>
+    <script src="planner.js?v=3.0.371"></script>
+    <script src="app.js?v=3.0.371"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.371"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.371"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.371"></script>
+    <script src="radar-seam-engine.js?v=3.0.371"></script>
+    <script src="raw-map-runtime.js?v=3.0.371"></script>
+    <script src="map.js?v=3.0.371"></script>
+    <script src="sky.js?v=3.0.371"></script>
+    <script src="daygraph.js?v=3.0.371"></script>
+    <script src="boot.js?v=3.0.371"></script>
   </body>
 </html>

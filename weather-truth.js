@@ -257,6 +257,8 @@ function planBriefingReason(item) {
   const stats = item?.stats || {};
   const units = item?.units || {};
   if (item?.alert) return reasons[0] || `${item.alert.event} overlaps that window`;
+  const materialEvent = planMaterialEventText(stats.materialEvent || item?.materialEvent);
+  if (materialEvent) return materialEvent;
   if (stats.stormPotential) return "thunderstorms are possible";
   if (stats.rainChance >= 35) return `${stats.rainChance}% rain chance`;
   if (stats.gustMax >= 25) return `gusts near ${stats.gustMax} ${units.wind || ""}`.trim();
@@ -380,6 +382,57 @@ function planWeatherWindCautionThreshold(unit = weatherTruthUnitPreference()) {
   return unit === "celsius" ? 40 : 25;
 }
 
+function planMaterialEventSnapshot(value) {
+  if (!value || typeof value !== "object") return null;
+  const startAt = weatherTruthTimestamp(value.startAt ?? value.start_at ?? value.startMs);
+  const endAt = weatherTruthTimestamp(value.endAt ?? value.end_at ?? value.endMs);
+  if (!startAt || !endAt || endAt <= startAt) return null;
+  return {
+    id: weatherTruthCleanText(value.id, 120),
+    kind: weatherTruthCleanToken(value.kind || "weather", 32),
+    headline: weatherTruthCleanText(value.headline || value.label, 180),
+    support: weatherTruthCleanText(value.support, 180),
+    likelihood: weatherTruthCleanToken(value.likelihood, 24),
+    chance: value.chance === null || value.chance === undefined || value.chance === ""
+      ? null
+      : weatherTruthNumber(value.chance),
+    basis: weatherTruthCleanToken(value.basis, 32),
+    source: weatherTruthCleanToken(value.source, 64),
+    authority: weatherTruthCleanToken(value.authority, 48),
+    policyVersion: value.policyVersion === null || value.policyVersion === undefined
+      ? null
+      : weatherTruthNumber(value.policyVersion),
+    startAt,
+    peakStartAt: weatherTruthTimestamp(value.peakStartAt ?? value.peak_start_at ?? value.peakStartMs),
+    peakEndAt: weatherTruthTimestamp(value.peakEndAt ?? value.peak_end_at ?? value.peakEndMs),
+    endAt,
+    timing: weatherTruthCleanText(value.timing || value.timingLabel, 120)
+  };
+}
+
+function planMaterialEventText(value) {
+  const event = planMaterialEventSnapshot(value);
+  if (!event?.headline) return "";
+  return [event.headline, event.support].filter(Boolean).join(" · ");
+}
+
+function planMaterialEventHasStorm(value) {
+  const event = planMaterialEventSnapshot(value);
+  return Boolean(event && (
+    event.kind === "storm" ||
+    /\b(storm|thunder)\w*\b/i.test(`${event.headline || ""} ${event.support || ""}`)
+  ));
+}
+
+function planMaterialEventsComparable(beforeEvent, nowEvent) {
+  if (!beforeEvent || !nowEvent) return false;
+  const beforeAuthority = beforeEvent.authority || "legacy";
+  const nowAuthority = nowEvent.authority || "legacy";
+  const beforePolicy = beforeEvent.policyVersion ?? 0;
+  const nowPolicy = nowEvent.policyVersion ?? 0;
+  return beforeAuthority === nowAuthority && beforePolicy === nowPolicy;
+}
+
 function planWeatherWatchCurrentState(plan = {}, stats = {}, alert = null, unit = weatherTruthUnitPreference()) {
   const preference = unit === "celsius" ? "celsius" : "fahrenheit";
   const alertToneValue = weatherTruthAlertTone(alert);
@@ -501,12 +554,20 @@ function planWeatherLastKnownFromState(plan = {}, current = {}, change = {}, che
 function planWeatherNotificationCandidate(plan = {}, current = {}, change = {}) {
   const signal = change.type || current.signal || "plan-watch";
   const detail = planWeatherNotificationDetail(signal);
+  const materialEvent = planMaterialEventSnapshot(current?.snapshot?.materialEvent || current?.truth?.materialEvent);
+  const eventRelevantSignal = /rain|storm|precip|score|baseline/i.test(signal);
+  const canonicalTitle = materialEvent?.headline && eventRelevantSignal
+    ? planWatchCompactText(`${plan.title || "Watched plan"}: ${materialEvent.headline}`, 110)
+    : "";
+  const canonicalBody = materialEvent?.headline && eventRelevantSignal
+    ? planWatchCompactText([materialEvent.headline, materialEvent.support].filter(Boolean).join(". "), 180)
+    : "";
   return {
     type: signal,
     priority: change.priority || 50,
     notification: {
-      title: change.title || `Nearcast: ${plan.title || "Watched plan"}`,
-      body: change.body || current.body || "Weather changed for this plan.",
+      title: canonicalTitle || change.title || `Nearcast: ${plan.title || "Watched plan"}`,
+      body: canonicalBody || change.body || current.body || "Weather changed for this plan.",
       tag: `nearcast-plan-${weatherTruthCleanToken(plan.id, 80)}`,
       renotify: false,
       icon: "/icons/icon-192.png",
@@ -551,6 +612,12 @@ function planWeatherChangeSnapshot(item) {
     alertTone: item.alertTone || weatherTruthAlertTone(item.alert),
     alertEvent: item.alert?.event || item.alertEvent || "",
     riskKind: item.riskKind || planWatchRiskKind(item),
+    materialEventReady: item.materialEventReady !== false && (
+      Object.prototype.hasOwnProperty.call(stats, "materialEvent") ||
+      Object.prototype.hasOwnProperty.call(item, "materialEvent") ||
+      Object.prototype.hasOwnProperty.call(item, "materialEventReady")
+    ),
+    materialEvent: planMaterialEventSnapshot(stats.materialEvent || item.materialEvent),
     savedAt: weatherTruthTimestamp(item.savedAt),
     checkedAt: weatherTruthTimestamp(item.checkedAt)
   };
@@ -599,6 +666,84 @@ function planWeatherChange(previousItem, currentItem) {
   if (!previous || !current || !samePlanWeatherWindow(previous, current)) return null;
   const title = current.title || previous.title || "Plan";
   const candidates = [];
+
+  // Compare canonical event identity/timing only after both sides have adopted
+  // the contract. This prevents a one-time notification storm while older
+  // stored baselines migrate, but future rain-to-storm and timing shifts no
+  // longer collapse into an unrelated percentage-only message.
+  if (previous.materialEventReady && current.materialEventReady) {
+    const beforeEvent = planMaterialEventSnapshot(previous.materialEvent);
+    const nowEvent = planMaterialEventSnapshot(current.materialEvent);
+    const eventKinds = new Set(["rain", "storm", "snow", "ice", "wind", "fog"]);
+    const nowIsMaterial = Boolean(nowEvent && eventKinds.has(nowEvent.kind));
+    if (!beforeEvent && nowIsMaterial) {
+      const eventTitle = nowEvent.headline || "Weather now overlaps this plan";
+      const change = {
+        type: `plan-event-${nowEvent.kind}`,
+        tone: ["storm", "snow", "ice"].includes(nowEvent.kind) ? "watch" : "caution",
+        notify: true,
+        priority: nowEvent.kind === "storm" ? 120 : nowEvent.kind === "snow" || nowEvent.kind === "ice" ? 110 : 96,
+        title: planWatchCompactText(`${title}: ${eventTitle}`, 110),
+        body: planWatchCompactText([eventTitle, nowEvent.support].filter(Boolean).join(". "), 180)
+      };
+      candidates.push(planWeatherChangeResult(change, previous, current, {
+        direction: "worse",
+        metricLabel: "Weather window",
+        before: "No material event",
+        after: eventTitle,
+        why: `${eventTitle} now overlaps this plan window.`,
+        action: nowEvent.kind === "storm"
+          ? "Keep an indoor or delay option and check the exact hourly timing."
+          : "Review the exact hourly window and keep a backup option ready."
+      }));
+    } else if (beforeEvent && !nowEvent) {
+      const change = {
+        type: "plan-event-cleared",
+        tone: "good",
+        notify: false,
+        priority: 52,
+        title: `${title} cleared up`,
+        body: `${beforeEvent.headline || "The earlier weather event"} no longer overlaps this plan window.`
+      };
+      candidates.push(planWeatherChangeResult(change, previous, current, {
+        direction: "better",
+        metricLabel: "Weather window",
+        before: beforeEvent.headline || "Material event",
+        after: "No material event",
+        why: "The earlier weather event no longer overlaps this plan window.",
+        action: "The original timing looks more workable; check once more before you go."
+      }));
+    } else if (beforeEvent && nowEvent && planMaterialEventsComparable(beforeEvent, nowEvent)) {
+      const becameStorm = !planMaterialEventHasStorm(beforeEvent) && planMaterialEventHasStorm(nowEvent);
+      const timingDelta = weatherTruthDelta(nowEvent.startAt, beforeEvent.startAt);
+      const timingMoved = timingDelta !== null && Math.abs(timingDelta) >= 60 * 60 * 1000;
+      if (becameStorm || timingMoved) {
+        const earlier = timingMoved && timingDelta < 0;
+        const worse = becameStorm || earlier;
+        const eventTitle = nowEvent.headline || planMaterialEventText(nowEvent) || "Weather timing changed";
+        const change = {
+          type: becameStorm ? "plan-event-storm" : "plan-event-timing",
+          tone: worse ? (nowEvent.kind === "storm" ? "watch" : "caution") : "good",
+          notify: worse,
+          priority: becameStorm ? 124 : 88 + Math.min(24, Math.round(Math.abs(timingDelta) / (60 * 60 * 1000))),
+          title: planWatchCompactText(`${title}: ${eventTitle}`, 110),
+          body: planWatchCompactText([eventTitle, nowEvent.support].filter(Boolean).join(". "), 180)
+        };
+        candidates.push(planWeatherChangeResult(change, previous, current, {
+          direction: worse ? "worse" : "better",
+          metricLabel: becameStorm ? "Weather type" : "Event timing",
+          before: beforeEvent.headline || beforeEvent.timing || "Previous timing",
+          after: eventTitle,
+          why: becameStorm
+            ? "The canonical forecast event strengthened from ordinary precipitation to storms during this plan."
+            : `The same weather event moved ${earlier ? "earlier" : "later"} by at least an hour.`,
+          action: worse
+            ? "Review the exact hourly timing and keep a backup option ready."
+            : "The weather moved later; check once more before you go."
+        }));
+      }
+    }
+  }
 
   if (
     current.alertTone &&
@@ -1074,6 +1219,8 @@ const NearcastWeatherTruth = {
   planWeatherUnits,
   planWeatherWindowScore,
   planWeatherWindCautionThreshold,
+  planMaterialEventSnapshot,
+  planMaterialEventText,
   planWeatherWatchCurrentState,
   planWeatherWatchStateChange,
   planWeatherLastKnownFromState,

@@ -3520,6 +3520,223 @@ async function fetchJsonWithTimeout(url, timeoutMs, init = {}) {
   }
 }
 
+function planWatchPrecipKind(code) {
+  const value = Number(code);
+  if (value >= 95 && value <= 99) return "storm";
+  if ((value >= 71 && value <= 77) || (value >= 85 && value <= 86)) return "snow";
+  if ((value >= 56 && value <= 57) || (value >= 66 && value <= 67)) return "ice";
+  if ((value >= 51 && value <= 55) || (value >= 61 && value <= 65) || (value >= 80 && value <= 82)) return "rain";
+  return "";
+}
+
+function planWatchEventClockLabel(value) {
+  const match = String(value || "").match(/T(\d{1,2})(?::(\d{2}))?/);
+  if (!match) return "";
+  const hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+  const suffix = hour < 12 ? "AM" : "PM";
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}${minute ? `:${String(minute).padStart(2, "0")}` : ""} ${suffix}`;
+}
+
+function planWatchEventRangeLabel(startValue, endValue) {
+  const start = planWatchEventClockLabel(startValue);
+  const end = planWatchEventClockLabel(endValue);
+  if (!start) return "during this plan";
+  if (!end || start === end) return `near ${start}`;
+  const startParts = start.split(" ");
+  const endParts = end.split(" ");
+  if (startParts[1] && startParts[1] === endParts[1]) return `${startParts[0]}–${end}`;
+  return `${start}–${end}`;
+}
+
+function planWatchMaterialEventWindows(plan, forecast) {
+  const offset = finiteNumber(forecast?.utc_offset_seconds, 0) * 1000;
+  const windows = Array.isArray(plan?.windows) && plan.windows.length ? plan.windows : [plan];
+  return windows.map((window) => {
+    const startAt = planWatchLocalDateHourMs(window.targetDate, finiteNumber(window.startHour, 0), offset);
+    const endAt = planWatchLocalDateHourMs(window.targetDate, finiteNumber(window.endHour, 24), offset);
+    return Number.isFinite(startAt) && Number.isFinite(endAt) && endAt > startAt
+      ? { startAt, endAt }
+      : null;
+  }).filter(Boolean);
+}
+
+export function planWatchBackgroundMaterialEvent(plan, forecast, unit = "fahrenheit") {
+  const hourly = forecast?.hourly || {};
+  const times = Array.isArray(hourly.time) ? hourly.time : [];
+  const planWindows = planWatchMaterialEventWindows(plan, forecast);
+  if (!times.length || !planWindows.length) return null;
+  const offset = finiteNumber(forecast?.utc_offset_seconds, 0) * 1000;
+  const hourRows = times.map((time, index) => {
+    const startAt = planWatchLocalDateHourMs(String(time).slice(0, 10), planWatchLocalHour(time), offset);
+    const nextTime = times[index + 1];
+    const nextAt = nextTime
+      ? planWatchLocalDateHourMs(String(nextTime).slice(0, 10), planWatchLocalHour(nextTime), offset)
+      : startAt + 60 * 60 * 1000;
+    const code = finiteNumber(hourly.weather_code?.[index], 0);
+    const chance = finiteNumber(hourly.precipitation_probability?.[index], 0);
+    const amount = Math.max(0, finiteNumber(hourly.precipitation?.[index], 0));
+    const precipKind = planWatchPrecipKind(code);
+    return {
+      index,
+      time,
+      startAt,
+      endAt: Number.isFinite(nextAt) && nextAt > startAt ? nextAt : startAt + 60 * 60 * 1000,
+      code,
+      chance,
+      amount,
+      precipKind,
+      wet: Boolean(precipKind || amount > 0 || chance >= 35),
+      fog: code === 45 || code === 48,
+      gust: finiteNumber(hourly.wind_gusts_10m?.[index], 0)
+    };
+  }).filter((row) => Number.isFinite(row.startAt));
+  const overlapsPlan = (startAt, endAt) => planWindows.some((window) => startAt < window.endAt && endAt > window.startAt);
+  const groupsFor = (predicate) => {
+    const groups = [];
+    let current = [];
+    hourRows.forEach((row) => {
+      if (!predicate(row)) {
+        if (current.length) groups.push(current);
+        current = [];
+        return;
+      }
+      if (current.length && row.index !== current[current.length - 1].index + 1) {
+        groups.push(current);
+        current = [];
+      }
+      current.push(row);
+    });
+    if (current.length) groups.push(current);
+    return groups;
+  };
+  const wetGroups = groupsFor((row) => row.wet);
+  const wetGroup = wetGroups.find((group) => overlapsPlan(group[0].startAt, group[group.length - 1].endAt));
+  if (wetGroup) {
+    const start = wetGroup[0];
+    const end = wetGroup[wetGroup.length - 1];
+    const stormRows = wetGroup.filter((row) => row.precipKind === "storm");
+    const firstKind = start.precipKind || wetGroup.find((row) => row.precipKind)?.precipKind || "rain";
+    const kind = firstKind === "storm" ? "storm" : firstKind;
+    const chance = Math.round(Math.max(...wetGroup.map((row) => row.chance)));
+    const likelihood = chance >= 60 ? "likely" : "possible";
+    const active = start.startAt <= Date.now() + 30 * 60 * 1000 && end.endAt > Date.now();
+    const timing = planWatchEventRangeLabel(start.time, times[end.index + 1] || end.time);
+    const noun = kind === "storm" ? "Storms" : kind === "snow" ? "Snow" : kind === "ice" ? "Ice" : "Rain";
+    const headline = active
+      ? `${noun} now${end.endAt > Date.now() + 45 * 60 * 1000 ? `; easing near ${planWatchEventClockLabel(times[end.index + 1] || end.time)}` : ""}`
+      : `${noun} ${likelihood} ${timing}`;
+    const stormStart = stormRows[0];
+    const stormEnd = stormRows[stormRows.length - 1];
+    const support = stormStart && kind !== "storm"
+      ? `Storms ${Math.max(...stormRows.map((row) => row.chance)) >= 60 ? "likely" : "possible"} ${planWatchEventRangeLabel(stormStart.time, times[stormEnd.index + 1] || stormEnd.time)}`
+      : null;
+    const anchorDate = String(start.time).slice(0, 10);
+    const ordinal = wetGroups.filter((group) => (
+      String(group[0]?.time || "").startsWith(anchorDate) && group[0].index < start.index
+    )).length;
+    return {
+      id: `precip:${anchorDate}:${ordinal}`,
+      kind,
+      headline,
+      support,
+      likelihood,
+      chance,
+      basis: "forecast",
+      source: "open-meteo-hourly",
+      authority: "background-open-meteo",
+      policyVersion: 1,
+      startAt: start.startAt,
+      peakStartAt: stormStart?.startAt || start.startAt,
+      peakEndAt: stormEnd?.endAt || end.endAt,
+      endAt: end.endAt,
+      timing
+    };
+  }
+
+  const fogGroup = groupsFor((row) => row.fog)
+    .find((group) => overlapsPlan(group[0].startAt, group[group.length - 1].endAt));
+  if (fogGroup) {
+    const start = fogGroup[0];
+    const end = fogGroup[fogGroup.length - 1];
+    const timing = planWatchEventRangeLabel(start.time, times[end.index + 1] || end.time);
+    return {
+      id: `fog:${String(start.time).slice(0, 10)}:${Math.floor(planWatchLocalHour(start.time) / 6)}`,
+      kind: "fog",
+      headline: `Fog ${timing}`,
+      support: null,
+      likelihood: null,
+      chance: null,
+      basis: "forecast",
+      source: "open-meteo-hourly",
+      authority: "background-open-meteo",
+      policyVersion: 1,
+      startAt: start.startAt,
+      peakStartAt: start.startAt,
+      peakEndAt: end.endAt,
+      endAt: end.endAt,
+      timing
+    };
+  }
+
+  const gustThreshold = unit === "fahrenheit" ? 25 : 40;
+  const gustRow = hourRows
+    .filter((row) => overlapsPlan(row.startAt, row.endAt) && row.gust >= gustThreshold)
+    .sort((a, b) => b.gust - a.gust || a.startAt - b.startAt)[0];
+  if (!gustRow) return null;
+  const timing = planWatchEventRangeLabel(gustRow.time, gustRow.time);
+  const windUnit = unit === "fahrenheit" ? "mph" : "km/h";
+  return {
+    id: `wind:${String(gustRow.time).slice(0, 10)}:${Math.floor(planWatchLocalHour(gustRow.time) / 6)}`,
+    kind: "wind",
+    headline: `Gusts reach ${Math.round(gustRow.gust)} ${windUnit} ${timing}`,
+    support: null,
+    likelihood: null,
+    chance: null,
+    basis: "forecast",
+    source: "open-meteo-hourly",
+    authority: "background-open-meteo",
+    policyVersion: 1,
+    startAt: gustRow.startAt,
+    peakStartAt: gustRow.startAt,
+    peakEndAt: gustRow.endAt,
+    endAt: gustRow.endAt,
+    timing
+  };
+}
+
+function planWatchBackgroundEventHasStorm(event) {
+  return Boolean(event && (
+    event.kind === "storm" ||
+    /\b(storm|thunder)\w*\b/i.test(`${event.headline || ""} ${event.support || ""}`)
+  ));
+}
+
+function planWatchBackgroundEventFamily(event) {
+  if (!event) return "";
+  if (["rain", "storm"].includes(event.kind)) return "rain";
+  return event.kind || "";
+}
+
+export function planWatchCanonicalEventForBackgroundEvaluation(plan, forecast, unit = "fahrenheit", backgroundEvent = null) {
+  const canonical = normalizePlanWatchMaterialEvent(plan?.canonicalEvent);
+  if (!canonical || canonical.authority !== "nearcast-app") return null;
+  const background = backgroundEvent || planWatchBackgroundMaterialEvent(plan, forecast, unit);
+  if (!background) return null;
+  if (planWatchBackgroundEventFamily(canonical) !== planWatchBackgroundEventFamily(background)) return null;
+  // A raw WMO thunder code is not enough to overrule the app's NWS/radar
+  // convective gating. Exact event copy is safe only when both authorities
+  // agree that storms are (or are not) part of this precipitation window.
+  if (planWatchBackgroundEventHasStorm(canonical) !== planWatchBackgroundEventHasStorm(background)) return null;
+  if (Math.abs(canonical.startAt - background.startAt) > 60 * 60 * 1000) return null;
+  if (Math.abs(canonical.endAt - background.endAt) > 2 * 60 * 60 * 1000) return null;
+  const planWindows = planWatchMaterialEventWindows(plan, forecast);
+  if (!planWindows.some((window) => canonical.startAt < window.endAt && canonical.endAt > window.startAt)) return null;
+  return canonical;
+}
+
 function planWatchWindowStats(plan, forecast, unit = "fahrenheit") {
   const hourly = forecast?.hourly || {};
   const times = Array.isArray(hourly.time) ? hourly.time : [];
@@ -3548,7 +3765,7 @@ function planWatchWindowStats(plan, forecast, unit = "fahrenheit") {
   const gust = values("wind_gusts_10m", dayValue("wind_gusts_10m_max", 0));
   const uv = values("uv_index", dayValue("uv_index_max", 0));
   const codes = indexes.length ? indexes.map((index) => hourly.weather_code?.[index]) : [dayValue("weather_code", 0)];
-  return {
+  const result = {
     tempMin: roundNumber(Math.min(...temps)),
     tempMax: roundNumber(Math.max(...temps)),
     feelsAvg: roundNumber(avgNumber(feels)),
@@ -3563,6 +3780,10 @@ function planWatchWindowStats(plan, forecast, unit = "fahrenheit") {
     uvMax: roundNumber(Math.max(...uv)),
     stormPotential: codes.some((code) => Number(code) >= 95)
   };
+  const backgroundEvent = planWatchBackgroundMaterialEvent(plan, forecast, unit);
+  const canonicalEvent = planWatchCanonicalEventForBackgroundEvaluation(plan, forecast, unit, backgroundEvent);
+  if (canonicalEvent) result.materialEvent = canonicalEvent;
+  return result;
 }
 
 function planWatchLocalHour(value) {
@@ -4160,6 +4381,7 @@ function normalizePlanWatchPlan(value) {
     scheduleType: ["single", "discrete", "continuous_span"].includes(value.scheduleType) ? value.scheduleType : (windows.length > 1 ? "discrete" : "single"),
     windows: windows.length ? windows : [{ id: "window-0", targetDate, startHour, endHour }],
     place,
+    canonicalEvent: normalizePlanWatchMaterialEvent(value.canonicalEvent),
     lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
   };
 }
@@ -4236,6 +4458,35 @@ function planWatchRegistrationCapStorageName() {
   return "limits/registration-cap.json";
 }
 
+function normalizePlanWatchMaterialEvent(value) {
+  if (!value || typeof value !== "object") return null;
+  const startAt = finiteNumber(value.startAt ?? value.start_at ?? value.startMs, 0);
+  const endAt = finiteNumber(value.endAt ?? value.end_at ?? value.endMs, 0);
+  if (!(startAt > 0) || !(endAt > startAt)) return null;
+  const optionalNumber = (candidate) => (
+    candidate === null || candidate === undefined || candidate === ""
+      ? null
+      : finiteNumber(candidate, null)
+  );
+  return {
+    id: cleanText(value.id, 120),
+    kind: cleanToken(value.kind || "weather", 32),
+    headline: cleanText(value.headline || value.label, 180),
+    support: cleanText(value.support, 180),
+    likelihood: cleanToken(value.likelihood, 24),
+    chance: optionalNumber(value.chance),
+    basis: cleanToken(value.basis, 32),
+    source: cleanToken(value.source, 64),
+    authority: cleanToken(value.authority, 48),
+    policyVersion: optionalNumber(value.policyVersion),
+    startAt,
+    peakStartAt: optionalNumber(value.peakStartAt ?? value.peak_start_at ?? value.peakStartMs),
+    peakEndAt: optionalNumber(value.peakEndAt ?? value.peak_end_at ?? value.peakEndMs),
+    endAt,
+    timing: cleanText(value.timing || value.timingLabel, 120)
+  };
+}
+
 function normalizePlanWatchSnapshot(value) {
   if (!value || typeof value !== "object") return null;
   const snapshot = {
@@ -4258,6 +4509,8 @@ function normalizePlanWatchSnapshot(value) {
     alertEvent: cleanText(value.alertEvent, 120),
     alertReadiness: cleanToken(value.alertReadiness, 24),
     riskKind: cleanToken(value.riskKind, 32),
+    materialEventReady: Boolean(value.materialEventReady),
+    materialEvent: normalizePlanWatchMaterialEvent(value.materialEvent),
     savedAt: finiteNumber(value.savedAt, 0),
     checkedAt: finiteNumber(value.checkedAt, 0),
     days: normalizePlanWatchSnapshotDays(value.days)
@@ -4268,6 +4521,8 @@ function normalizePlanWatchSnapshot(value) {
     snapshot.title ||
     snapshot.targetDate ||
     snapshot.alertEvent ||
+    snapshot.materialEvent ||
+    snapshot.materialEventReady ||
     snapshot.tone ||
     snapshot.riskKind ||
     snapshot.days.length ||

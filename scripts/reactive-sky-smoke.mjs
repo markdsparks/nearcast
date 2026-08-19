@@ -99,12 +99,12 @@ function openingTagForId(source, id) {
   return source.match(new RegExp(`<[^>]+\\bid="${id}"[^>]*>`))?.[0] || "";
 }
 
-// The first release is a real, visible experiment, but starts off and keeps
-// device sensors behind a second, explicit user action.
+// Living sky remains an honest, visible preview, starts off, and keeps device
+// sensors behind a second, explicit user action.
 const reactiveSetting = html.match(/<div class="[^"]*\breactive-sky-setting\b[^"]*"[^>]*>/)?.[0] || "";
 assert.ok(reactiveSetting, "Reactive sky is present in normal settings");
 assert.doesNotMatch(reactiveSetting, /\b(?:hidden|data-debug-setting)\b/, "Reactive sky is not hidden behind debug settings");
-assert.match(html, /Reactive sky[\s\S]{0,100}Experimental/, "the setting is clearly labeled experimental");
+assert.match(html, /Living sky[\s\S]{0,100}Preview/, "the setting uses a family-facing preview label");
 const reactiveToggle = openingTagForId(html, "reactiveSkyToggle");
 assert.match(reactiveToggle, /aria-pressed="false"/, "Reactive sky is visibly off by default");
 assert.match(html, /<button[^>]*id="reactiveSkyToggle"[^>]*>Off<\/button>/, "the default action reads Off");
@@ -112,7 +112,7 @@ assert.match(app, /reactiveSkyEnabled:\s*localStorage\.getItem\(REACTIVE_SKY_KEY
 
 const motionSetting = openingTagForId(html, "reactiveSkyMotionSetting");
 assert.match(motionSetting, /\bhidden\b/, "the optional motion row stays hidden until the experiment is enabled");
-assert.match(html, /<button[^>]*id="reactiveSkyMotionButton"[^>]*>Allow motion<\/button>/, "motion has its own explicit permission action");
+assert.match(html, /<button[^>]*id="reactiveSkyMotionButton"[^>]*>Allow<\/button>/, "motion has its own explicit permission action");
 const skyLab = openingTagForId(html, "reactiveSkyLabSetting");
 assert.match(skyLab, /\bdata-debug-setting\b/, "Sky Lab remains diagnostic-only");
 assert.match(skyLab, /\bhidden\b/, "Sky Lab is hidden in normal settings");

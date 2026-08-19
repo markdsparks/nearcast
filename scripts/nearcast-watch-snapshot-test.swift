@@ -35,6 +35,10 @@ legacyObject.removeValue(forKey: "canonicalEventTiming")
 legacyObject.removeValue(forKey: "canonicalEventStartAt")
 legacyObject.removeValue(forKey: "canonicalEventEndAt")
 legacyObject.removeValue(forKey: "canonicalEventKind")
+legacyObject.removeValue(forKey: "alertStartsAt")
+legacyObject.removeValue(forKey: "alertSource")
+legacyObject.removeValue(forKey: "alertUrgency")
+legacyObject.removeValue(forKey: "alertCertainty")
 
 let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
 let legacy = try decoder.decode(NearcastWidgetSnapshot.self, from: legacyData)
@@ -383,26 +387,66 @@ require(visualRoundTrip.placeTimezone == "Europe/London", "snapshots preserve th
 
 var alertSnapshot = visual
 alertSnapshot.version = 7
+alertSnapshot.canonicalEventId = canonicalSnapshot.canonicalEventId
+alertSnapshot.canonicalEventHeadline = canonicalSnapshot.canonicalEventHeadline
+alertSnapshot.canonicalEventTiming = canonicalSnapshot.canonicalEventTiming
+alertSnapshot.canonicalEventStartAt = canonicalSnapshot.canonicalEventStartAt
+alertSnapshot.canonicalEventEndAt = canonicalSnapshot.canonicalEventEndAt
+alertSnapshot.canonicalEventKind = canonicalSnapshot.canonicalEventKind
 alertSnapshot.alertId = "id:urn:oid:example-alert"
 alertSnapshot.alertTitle = "Severe Thunderstorm Warning"
 alertSnapshot.alertSeverity = "Severe"
+alertSnapshot.alertStartsAt = baseTime - 30 * 60
 alertSnapshot.alertExpiresAt = baseTime + 2 * 3600
 alertSnapshot.alertImpact = "Damaging wind and hail may affect travel and outdoor plans."
+alertSnapshot.alertSource = "NWS St. Louis MO"
+alertSnapshot.alertUrgency = "Immediate"
+alertSnapshot.alertCertainty = "Observed"
 alertSnapshot.alertCount = 2
 alertSnapshot.alertSavedAt = now
 alertSnapshot.alertStateReady = true
 let alertRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(alertSnapshot))
 require(alertRoundTrip.alertId == alertSnapshot.alertId, "V7 round trips the official alert identity")
 require(alertRoundTrip.alertExpiresAt == alertSnapshot.alertExpiresAt, "V7 round trips the official alert window")
+require(alertRoundTrip.alertStartsAt == alertSnapshot.alertStartsAt, "official alerts preserve their exact start time")
 require(alertRoundTrip.alertImpact == alertSnapshot.alertImpact && alertRoundTrip.alertCount == 2 && alertRoundTrip.alertSavedAt == now, "V7 round trips official alert context")
 require(alertRoundTrip.alertStateReady == true, "V7 round trips authoritative alert readiness")
+require(alertRoundTrip.alertSource == "NWS St. Louis MO", "official alerts preserve the issuing source")
+require(alertRoundTrip.alertUrgency == "Immediate" && alertRoundTrip.alertCertainty == "Observed", "official alerts preserve provider urgency and certainty")
+
+let urgentStory = alertRoundTrip.companionStory(at: baseTime)
+require(urgentStory?.kind == .officialAlert, "an active official warning preempts the canonical forecast event")
+require(urgentStory?.headline == "Severe Thunderstorm Warning", "companion surfaces preserve the official warning title verbatim")
+require(urgentStory?.placeName == visual.placeName && urgentStory?.source == "NWS St. Louis MO", "the companion warning preserves exact place and source")
+require(urgentStory?.startsAt == alertSnapshot.alertStartsAt && urgentStory?.endsAt == alertSnapshot.alertExpiresAt, "the companion warning preserves its exact time window")
+require(urgentStory?.timing?.hasPrefix("Until ") == true, "an active warning has a family-friendly exact end-time label")
+
+var planningAlert = alertSnapshot
+planningAlert.alertTitle = "Tornado Watch"
+planningAlert.alertSeverity = "Extreme"
+planningAlert.alertUrgency = "Expected"
+require(planningAlert.urgentOfficialAlertBrief(at: baseTime) == nil, "a watch remains planning context instead of hijacking the immediate story")
+require(planningAlert.companionStory(at: baseTime)?.kind == .forecastEvent, "the canonical forecast remains primary under a watch")
+
+var advisoryAlert = alertSnapshot
+advisoryAlert.alertTitle = "Heat Advisory"
+require(advisoryAlert.urgentOfficialAlertBrief(at: baseTime) == nil, "an advisory does not preempt the canonical forecast event")
+
+let afterWarning = alertRoundTrip.companionStory(at: (alertSnapshot.alertExpiresAt ?? baseTime) + 1)
+require(afterWarning?.kind == .forecastEvent, "an expired warning immediately yields back to the still-current forecast event")
+let fullyExpired = alertRoundTrip.expiringCompanionContent(at: now + 6 * 3600)
+require(fullyExpired.alertTitle == nil && fullyExpired.canonicalEventHeadline == nil, "expired alerts and forecast events are removed from companion snapshots")
 
 var alertPendingSnapshot = alertSnapshot
 alertPendingSnapshot.alertId = nil
 alertPendingSnapshot.alertTitle = nil
 alertPendingSnapshot.alertSeverity = nil
+alertPendingSnapshot.alertStartsAt = nil
 alertPendingSnapshot.alertExpiresAt = nil
 alertPendingSnapshot.alertImpact = nil
+alertPendingSnapshot.alertSource = nil
+alertPendingSnapshot.alertUrgency = nil
+alertPendingSnapshot.alertCertainty = nil
 alertPendingSnapshot.alertCount = 0
 alertPendingSnapshot.alertSavedAt = nil
 alertPendingSnapshot.alertStateReady = false
@@ -436,6 +480,16 @@ require(
     !legacyOpenEndedAlert.hasCurrentOfficialAlert(at: now),
     "a legacy open-ended alert without freshness metadata cannot persist indefinitely"
 )
+
+var newerStoredAlert = alertSnapshot
+newerStoredAlert.alertSavedAt = now + 60
+var delayedAlertPayload = alertSnapshot
+delayedAlertPayload.alertTitle = "Old Warning"
+delayedAlertPayload.alertSource = "Old source"
+delayedAlertPayload.alertSavedAt = now - 60
+let alertFreshnessWinner = delayedAlertPayload.resolvingOfficialAlert(with: newerStoredAlert, at: now)
+require(alertFreshnessWinner.alertTitle == alertSnapshot.alertTitle, "a delayed payload cannot replace newer official-alert metadata")
+require(alertFreshnessWinner.alertSource == "NWS St. Louis MO", "alert freshness arbitration preserves the newer issuing source")
 
 var inFlightWeather = visual
 inFlightWeather.temperature = 71

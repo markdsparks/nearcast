@@ -182,7 +182,7 @@ assert.match(extractFunction(planner, "renderPlanPulse"), /home-plan-decision[\s
 assert.match(extractFunction(app, "forYouWatchingCard"), /homePlanDecisionCandidate[\s\S]*?Do not repeat a lower-value Watching card below/, "promoted plans are not duplicated later on the homepage");
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
 assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
-assert.match(extractFunction(app, "handleAppDockAction"), /enterImmersiveMap\(\)/, "the Map destination opens the immersive map directly");
+assert.match(extractFunction(app, "handleAppDockAction"), /openNearcastMapIntent\(nearcastMapIntentForNow\(\)\)/, "the Map destination opens immersive current radar with an explicit typed intent");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
 assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
 assert.match(extractFunction(app, "noteSheetShown"), /prepareSheetAccessibility\(sheet\)/, "every shared modal sheet enters the common focus lifecycle");

@@ -83,11 +83,15 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
                 && abs(incomingPlace.longitude - storedPlace.longitude) < 0.00001
         } ?? (incoming.placeName == NearcastWidgetSnapshot.stored()?.placeName)
 
+        let now = Date().timeIntervalSince1970
         let resolved: NearcastWidgetSnapshot
         if isSamePlace, let stored = NearcastWidgetSnapshot.stored() {
-            resolved = incoming.preservingNewerWeather(from: stored)
-        } else {
             resolved = incoming
+                .preservingNewerWeather(from: stored)
+                .resolvingOfficialAlert(with: stored, at: now)
+                .expiringCompanionContent(at: now)
+        } else {
+            resolved = incoming.expiringCompanionContent(at: now)
         }
         NearcastWidgetSnapshotStore.save(resolved)
         if let placeData {

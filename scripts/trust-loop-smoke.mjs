@@ -190,13 +190,13 @@ assert.match(planner, /pushLastAttemptAt:[\s\S]*pushLastAttemptState:[\s\S]*push
 assert.match(planner, /function beginPlanWatchRegistrationAttempt\([\s\S]*lastAttemptState: "pending"/, "a registration attempt is visible before it is confirmed");
 assert.match(planner, /function completePlanWatchRegistrationAttempt\([\s\S]*pushLastSuccessAt = now/, "only a successful registration advances last success");
 assert.match(planner, /label: "Last attempt"[\s\S]*label: "Last success"/, "Watching shows both the latest attempt and latest confirmed sync");
-assert.match(planner, /The last registration attempt failed[\s\S]*no successful sync yet/, "failed setup is described honestly instead of appearing ready");
+assert.match(planner, /Phone notifications didn’t connect[\s\S]*Nearcast is still watching here/, "failed setup is described honestly in family-facing language instead of appearing ready");
 assert.match(planner, /data-watch-notify-retry/, "degraded delivery offers a retry without pausing the plan");
 assert.match(planner, /const PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS = 5 \* 60 \* 1000/, "readiness renews with a small five-minute expiry skew");
 assert.match(planner, /registrationExpiresAt: planWatchRegistrationExpiryTimestamp\(parsed\?\.registrationExpiresAt\)/, "server registration expiry survives an app restart");
 assert.match(planner, /function planWatchRegistrationHealth\([\s\S]*expiresAt <= now \+ PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS[\s\S]*stateValue = "expired"/, "an expired registration cannot remain ready");
 assert.match(planner, /function planWatchRegistrationResultSucceeded\([\s\S]*result\.expiresAt[\s\S]*expiresAt > Date\.now\(\) \+ PLAN_WATCH_REGISTRATION_EXPIRY_SKEW_MS/, "a register response is successful only with a usable future expiry");
-assert.match(planner, /Notification registration expired[\s\S]*Renew delivery/, "expired delivery has an explicit renewal state and action");
+assert.match(planner, /Notifications need a quick refresh[\s\S]*primaryLabel: "Reconnect"/, "expired delivery has an explicit human renewal state and action");
 
 assert.match(planner, /PLAN_IMPLICIT_LOCATION_DROP_WORDS = new Set\([\s\S]*"hour", "hours", "hr", "hrs", "minute", "minutes", "min", "mins"/, "duration words cannot be mistaken for an implicit city");
 

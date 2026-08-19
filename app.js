@@ -1,4 +1,4 @@
-const VERSION = "3.0.370";
+const VERSION = "3.0.371";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -4039,7 +4039,7 @@ function renderInstallSheet() {
       : "Your browser controls the final install step.";
   }
   if (els.installSheetSummary) {
-    els.installSheetSummary.textContent = "Add Nearcast for a cleaner full-screen weather app, faster launch, and notification support when your browser allows it.";
+    els.installSheetSummary.textContent = "Add Nearcast to your Home Screen for faster, full-screen access. Notifications stay off until you choose something to watch.";
   }
   els.installSteps.innerHTML = installInstructionSteps()
     .map((step) => `<li>${escapeHtml(step)}</li>`)
@@ -4341,7 +4341,7 @@ function handleAppDockAction(action) {
   if (action === "map") {
     setAppDockCurrent("map");
     if (typeof ensureInlineMapReady === "function") ensureInlineMapReady(true);
-    enterImmersiveMap();
+    openNearcastMapIntent(nearcastMapIntentForNow());
     return;
   }
   if (action === "plans") {
@@ -4880,7 +4880,7 @@ function bindEvents() {
   els.frameSlider.addEventListener("pointerup", settleStandardTimelineScrub);
   els.frameSlider.addEventListener("pointercancel", settleStandardTimelineScrub);
   els.frameSlider.addEventListener("blur", settleStandardTimelineScrub);
-  bindTapAction(document.getElementById("expandMap"), enterImmersiveMap);
+  bindTapAction(document.getElementById("expandMap"), openInlineMapPreview);
 
   // Day-detail drill-down: tap a 10-day row or the hourly strip
   bindTapDelegate(els.daily, ".day-row", (event, row) => {
@@ -4990,6 +4990,9 @@ function bindEvents() {
   bindTapAction(alertBar, () => openAlertSheet(null, { returnFocus: alertBar }));
   bindTapAction(document.getElementById("alertSheetClose"), closeAlertSheet);
   bindTapAction(document.getElementById("alertBackdrop"), closeAlertSheet);
+  bindTapDelegate(document.getElementById("alertInsight"), "[data-alert-map-key]", (event, button) => {
+    openAlertAffectedArea(button.dataset.alertMapKey || "");
+  }, { moveTolerance: 14 });
   document.addEventListener("keydown", (event) => {
     const sheet = document.getElementById("alertSheet");
     if (event.key === "Escape" && !sheet.hidden && isTopmostShownSheet(sheet)) {
@@ -5040,6 +5043,7 @@ function applyTheme(options = {}) {
   els.themeToggle.title = state.theme === "auto"
     ? (isDark ? "Night mode (auto) — click to force light" : "Day mode (auto) — click to force dark")
     : (isDark ? "Dark mode (manual) — click to reset to auto" : "Light mode (manual) — click to reset to auto");
+  els.themeToggle.setAttribute("aria-label", els.themeToggle.title);
 
   if (rerenderSky) {
     if (state.skyCode !== null) {
@@ -5153,7 +5157,7 @@ function setReactiveSkyMotionStatus(status) {
 }
 
 function reactiveSkyMotionMetaText() {
-  if (!reactiveSkyIsCurrentLocation()) return "Available at Current Location";
+  if (!reactiveSkyIsCurrentLocation()) return "Available at your current location";
   switch (reactiveSkyMotionState.status) {
     case "requesting": return "Waiting for permission…";
     case "active": return "Rain and clouds respond as you turn";
@@ -5165,7 +5169,7 @@ function reactiveSkyMotionMetaText() {
     case "reconnect": return "Tap to reconnect on this device";
     case "unsupported": return "Unavailable · weather motion still works";
     case "ready": return "Ready to respond when weather is visible";
-    default: return "Optional · processed on this device";
+    default: return "Optional · motion stays on this device";
   }
 }
 
@@ -5197,13 +5201,13 @@ function updateReactiveSkyControls() {
   }
   if (els.reactiveSkyMeta) {
     els.reactiveSkyMeta.textContent = enabled
-      ? "Wind shapes rain and low clouds"
-      : "Off · the current sky stays unchanged";
+      ? "Weather gently shapes the background"
+      : "Off · the background stays still";
   }
   if (els.reactiveSkyMotionSetting) els.reactiveSkyMotionSetting.hidden = !enabled;
   if (els.reactiveSkyMotionButton) {
     const allowed = state.reactiveSkyMotionAllowed === true;
-    els.reactiveSkyMotionButton.textContent = allowed ? "Turn off" : "Allow motion";
+    els.reactiveSkyMotionButton.textContent = allowed ? "Turn off" : "Allow";
     els.reactiveSkyMotionButton.setAttribute("aria-pressed", String(allowed));
     els.reactiveSkyMotionButton.disabled = reactiveSkyMotionState.requestInFlight ||
       (!allowed && (!reactiveSkyIsCurrentLocation() || !reactiveSkyMotionSupported()));
@@ -5709,6 +5713,7 @@ function daysFromForecastToday(value, data = state.forecast) {
 function updateUnitButton() {
   els.unitToggle.textContent = state.unit === "fahrenheit" ? "F" : "C";
   els.unitToggle.title = state.unit === "fahrenheit" ? "Switch to Celsius" : "Switch to Fahrenheit";
+  els.unitToggle.setAttribute("aria-label", els.unitToggle.title);
 }
 
 function sanitizeTimeFormatPreference(value) {
@@ -11645,23 +11650,98 @@ function inlineMapPreviewEmphasis(data, truth = weatherTruth(data)) {
   return "calm";
 }
 
+let inlineMapPreviewIntent = null;
+
+function nearcastMapIntentPlace(place = state.activePlace) {
+  if (!place) return {};
+  return {
+    place: normalizePlace(place),
+    placeId: String(place.id || ""),
+    placeName: placeLabel(place),
+    latitude: Number(place.latitude),
+    longitude: Number(place.longitude)
+  };
+}
+
+function nearcastMapIntentForNow(place = state.activePlace) {
+  return {
+    source: "radar",
+    ...nearcastMapIntentPlace(place)
+  };
+}
+
+function nearcastMapIntentForPreview(data, truth = weatherTruth(data), place = state.activePlace) {
+  const phase = String(truth?.precip?.phase || "");
+  if (["active", "imminent", "nearby"].includes(phase)) {
+    return {
+      ...nearcastMapIntentForNow(place),
+      event: phase === "active"
+        ? "Precipitation at this place"
+        : phase === "imminent"
+          ? "Precipitation arriving soon"
+          : "Precipitation nearby"
+    };
+  }
+
+  const event = typeof forecastMaterialEvent === "function"
+    ? forecastMaterialEvent(data, { truth })
+    : null;
+  const now = forecastNowMs(data);
+  const focusMs = Number(event?.peakStartMs ?? event?.startMs);
+  const leadMs = focusMs - now;
+  const mapRelevant = ["rain", "storm", "snow", "ice"].includes(String(event?.kind || ""))
+    && Number.isFinite(focusMs)
+    && leadMs > 5 * 60 * 1000
+    && leadMs <= 3 * 60 * 60 * 1000;
+  if (mapRelevant) {
+    return {
+      source: "forecast",
+      timestamp: focusMs,
+      event: String(event.headline || event.label || "Forecast precipitation"),
+      ...nearcastMapIntentPlace(place)
+    };
+  }
+  return nearcastMapIntentForNow(place);
+}
+
+function openNearcastMapIntent(intent = null) {
+  const target = intent && typeof intent === "object" ? intent : nearcastMapIntentForNow();
+  if (typeof window.nearcastOpenMapIntent === "function") {
+    return window.nearcastOpenMapIntent(target);
+  }
+  return enterImmersiveMap(target);
+}
+
+function openInlineMapPreview() {
+  return openNearcastMapIntent(inlineMapPreviewIntent || nearcastMapIntentForNow());
+}
+
+window.nearcastInlineMapIntent = () => (
+  inlineMapPreviewIntent ? { ...inlineMapPreviewIntent } : nearcastMapIntentForNow()
+);
+
 function renderInlineMapPreviewVisibility(data, truth = weatherTruth(data)) {
   if (!els.mapView) return;
   const emphasis = inlineMapPreviewEmphasis(data, truth);
+  inlineMapPreviewIntent = nearcastMapIntentForPreview(data, truth, state.activePlace);
   const weatherRelevant = emphasis === "active" || emphasis === "imminent";
   const context = document.getElementById("mapPreviewContext");
-  const contextCopy = {
-    active: "Precipitation at this place",
-    imminent: "Precipitation expected soon",
-    nearby: "Precipitation observed nearby",
-    calm: "Precipitation map"
-  }[emphasis];
+  const contextualForecast = inlineMapPreviewIntent?.source === "forecast";
+  const contextCopy = contextualForecast
+    ? inlineMapPreviewIntent.event
+    : {
+        active: "Precipitation at this place",
+        imminent: "Precipitation expected soon",
+        nearby: "Precipitation observed nearby",
+        calm: "Radar and forecast map"
+      }[emphasis];
 
   // Geographic context is useful even on a quiet day. Weather conditions
   // change the preview emphasis, never whether the map is available.
   els.mapView.hidden = false;
   els.mapView.dataset.weatherEmphasis = emphasis;
   els.mapView.classList.toggle("is-weather-relevant", weatherRelevant);
+  els.mapView.classList.toggle("is-forecast-relevant", contextualForecast);
   els.mapView.setAttribute("aria-label", `${contextCopy} for ${placeLabel(state.activePlace)}`);
   if (context) context.textContent = contextCopy;
 }
@@ -11749,8 +11829,12 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       alertId: widgetAlert?.id || null,
       alertTitle: widgetAlert?.title || null,
       alertSeverity: widgetAlert?.severity || null,
+      alertStartsAt: widgetAlert?.startsAt || null,
       alertExpiresAt: widgetAlert?.expiresAt || null,
       alertImpact: widgetAlert?.impact || null,
+      alertSource: widgetAlert?.source || null,
+      alertUrgency: widgetAlert?.urgency || null,
+      alertCertainty: widgetAlert?.certainty || null,
       alertCount: widgetAlert?.count || 0,
       alertSavedAt: activeAlertsReady ? Date.now() / 1000 : null,
       alertStateReady: Boolean(activeAlertsReady),
@@ -11866,13 +11950,18 @@ function nativeWidgetAlertSummary(alertsSource = activeAlerts) {
   const top = currentAlerts[0];
   if (!top) return null;
 
+  const startsAt = alertStartMs(top);
   const expiresAt = alertEndMs(top);
   return {
     id: alertIdentityKey(top),
     title: cleanAlertText(top.event || top.headline || "Weather alert"),
     severity: cleanAlertText(top.severity || "") || null,
+    startsAt: Number.isFinite(startsAt) ? startsAt / 1000 : null,
     expiresAt: Number.isFinite(expiresAt) ? expiresAt / 1000 : null,
     impact: alertImpactLine(top, alertKind(top)),
+    source: cleanAlertText(top.senderName || "National Weather Service"),
+    urgency: cleanAlertText(top.urgency || "") || null,
+    certainty: cleanAlertText(top.certainty || "") || null,
     count: currentAlerts.length
   };
 }
@@ -12096,7 +12185,7 @@ function nativeStormActivityDebugPayload(options = {}) {
 
 function updateNativeStormActivityDebugControl() {
   if (els.nativeLiveActivitySetting) {
-    els.nativeLiveActivitySetting.hidden = !isNativeNearcastApp();
+    els.nativeLiveActivitySetting.hidden = !DEBUG_SETTINGS_ENABLED || !isNativeNearcastApp();
   }
   const button = els.nativeLiveActivityOpen;
   const meta = els.nativeLiveActivityMeta;
@@ -15837,20 +15926,207 @@ function updateAlertTrustState(nextState, reason = "") {
   if (state.forecast) renderForecastTrust(state.forecast, state.weatherTruth || weatherTruth(state.forecast));
 }
 
+function normalizeAlertPosition(position) {
+  if (!Array.isArray(position) || position.length < 2) return null;
+  const longitude = Number(position[0]);
+  const latitude = Number(position[1]);
+  if (
+    !Number.isFinite(longitude) ||
+    !Number.isFinite(latitude) ||
+    longitude < -180 ||
+    longitude > 180 ||
+    latitude < -90 ||
+    latitude > 90
+  ) return null;
+  return [longitude, latitude];
+}
+
+function normalizeAlertRing(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return null;
+  const normalized = [];
+  for (const position of ring) {
+    const next = normalizeAlertPosition(position);
+    // Never repair a damaged official polygon by silently dropping vertices.
+    if (!next) return null;
+    normalized.push(next);
+  }
+  const first = normalized[0];
+  const last = normalized[normalized.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) normalized.push([...first]);
+  const distinct = new Set(normalized.slice(0, -1).map((position) => `${position[0]},${position[1]}`));
+  return normalized.length >= 4 && distinct.size >= 3 ? normalized : null;
+}
+
+function normalizeAlertPolygon(polygon) {
+  if (!Array.isArray(polygon) || !polygon.length) return null;
+  const normalized = polygon.map(normalizeAlertRing);
+  return normalized.every(Boolean) ? normalized : null;
+}
+
+function alertGeometryBbox(coordinates) {
+  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  const visit = (value) => {
+    if (!Array.isArray(value)) return;
+    if (
+      value.length === 2 &&
+      Number.isFinite(value[0]) &&
+      Number.isFinite(value[1])
+    ) {
+      bounds[0] = Math.min(bounds[0], value[0]);
+      bounds[1] = Math.min(bounds[1], value[1]);
+      bounds[2] = Math.max(bounds[2], value[0]);
+      bounds[3] = Math.max(bounds[3], value[1]);
+      return;
+    }
+    value.forEach(visit);
+  };
+  visit(coordinates);
+  return bounds.every(Number.isFinite) ? bounds : null;
+}
+
+function normalizeAlertGeometry(geometry) {
+  if (!geometry || typeof geometry !== "object") return null;
+  const type = String(geometry.type || "");
+  let coordinates = null;
+  if (type === "Polygon") {
+    coordinates = normalizeAlertPolygon(geometry.coordinates);
+  } else if (type === "MultiPolygon" && Array.isArray(geometry.coordinates) && geometry.coordinates.length) {
+    const polygons = geometry.coordinates.map(normalizeAlertPolygon);
+    if (polygons.every(Boolean)) coordinates = polygons;
+  }
+  if (!coordinates) return null;
+  const bbox = alertGeometryBbox(coordinates);
+  return bbox ? { type, coordinates, bbox } : null;
+}
+
+function unwrappedAlertRing(ring) {
+  if (!Array.isArray(ring) || !ring.length) return [];
+  const unwrapped = [[ring[0][0], ring[0][1]]];
+  for (let index = 1; index < ring.length; index += 1) {
+    let longitude = ring[index][0];
+    const previous = unwrapped[index - 1][0];
+    while (longitude - previous > 180) longitude -= 360;
+    while (longitude - previous < -180) longitude += 360;
+    unwrapped.push([longitude, ring[index][1]]);
+  }
+  return unwrapped;
+}
+
+function alertPointOnSegment(point, start, end) {
+  const [x, y] = point;
+  const [x1, y1] = start;
+  const [x2, y2] = end;
+  const cross = (x - x1) * (y2 - y1) - (y - y1) * (x2 - x1);
+  const tolerance = 1e-9 * Math.max(1, Math.abs(x2 - x1) + Math.abs(y2 - y1));
+  if (Math.abs(cross) > tolerance) return false;
+  return x >= Math.min(x1, x2) - tolerance &&
+    x <= Math.max(x1, x2) + tolerance &&
+    y >= Math.min(y1, y2) - tolerance &&
+    y <= Math.max(y1, y2) + tolerance;
+}
+
+function alertPointRingRelation(point, ring) {
+  const unwrapped = unwrappedAlertRing(ring);
+  if (unwrapped.length < 4) return { inside: false, boundary: false };
+  for (const longitude of [point[0] - 360, point[0], point[0] + 360]) {
+    const candidate = [longitude, point[1]];
+    let inside = false;
+    for (let current = 0, previous = unwrapped.length - 1; current < unwrapped.length; previous = current, current += 1) {
+      const a = unwrapped[previous];
+      const b = unwrapped[current];
+      if (alertPointOnSegment(candidate, a, b)) return { inside: true, boundary: true };
+      const crosses = (a[1] > candidate[1]) !== (b[1] > candidate[1]);
+      if (crosses) {
+        const crossingLongitude = ((b[0] - a[0]) * (candidate[1] - a[1])) / (b[1] - a[1]) + a[0];
+        if (candidate[0] < crossingLongitude) inside = !inside;
+      }
+    }
+    if (inside) return { inside: true, boundary: false };
+  }
+  return { inside: false, boundary: false };
+}
+
+function alertPointInPolygon(point, polygon) {
+  const outer = alertPointRingRelation(point, polygon[0]);
+  if (!outer.inside) return false;
+  if (outer.boundary) return true;
+  for (let index = 1; index < polygon.length; index += 1) {
+    const hole = alertPointRingRelation(point, polygon[index]);
+    // A place exactly on any official boundary is treated conservatively as
+    // covered; only a place strictly inside a hole is outside the alert.
+    if (hole.boundary) return true;
+    if (hole.inside) return false;
+  }
+  return true;
+}
+
+function alertGeometryContainsPlace(geometry, place) {
+  const point = normalizeAlertPosition([place?.longitude, place?.latitude]);
+  if (!geometry || !point) return null;
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  return polygons.some((polygon) => alertPointInPolygon(point, polygon));
+}
+
+function alertPlaceCoverage(geometry, place, geometryWasProvided = false) {
+  const inside = alertGeometryContainsPlace(geometry, place);
+  if (inside !== null) {
+    return { status: inside ? "inside" : "outside", basis: "feature-geometry" };
+  }
+  const point = normalizeAlertPosition([place?.longitude, place?.latitude]);
+  if (!geometryWasProvided && point) {
+    // The active-alert request itself was filtered by this exact point. NWS
+    // alerts without feature geometry can still truthfully cover the place.
+    return { status: "inside", basis: "nws-point-query" };
+  }
+  return { status: "unknown", basis: "unavailable" };
+}
+
+function normalizeNwsAlertFeature(feature, place) {
+  const hasFeatureEnvelope = Boolean(feature?.properties && typeof feature.properties === "object");
+  const properties = hasFeatureEnvelope ? feature.properties : (feature && typeof feature === "object" ? feature : {});
+  const sourceGeometry = hasFeatureEnvelope ? feature.geometry : properties.geometry;
+  const geometryWasProvided = sourceGeometry !== null && sourceGeometry !== undefined || (
+    !hasFeatureEnvelope && properties?.placeCoverage?.basis === "unavailable"
+  );
+  const geometry = normalizeAlertGeometry(sourceGeometry);
+  const id = String(properties.id || (hasFeatureEnvelope ? feature.id : "") || "").trim();
+  return {
+    ...properties,
+    ...(id ? { id } : {}),
+    geometry,
+    placeCoverage: alertPlaceCoverage(geometry, place, geometryWasProvided)
+  };
+}
+
 async function fetchAlerts(place) {
   if (!placeSupportsNwsAlerts(place)) return [];
   const cacheKey = `alerts:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
-  const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
-  if (cached && Date.now() - cached.savedAt < 5 * 60 * 1000) return cached.data;
+  let cached = null;
+  try {
+    cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
+  } catch {
+    // A damaged session entry should not turn the official alert check into a
+    // false failure. Fetch a fresh authoritative response instead.
+  }
+  if (cached && Date.now() - cached.savedAt < 5 * 60 * 1000 && Array.isArray(cached.data)) {
+    return cached.data
+      .map((alert) => normalizeNwsAlertFeature(alert, place))
+      .sort((a, b) => alertPriority(b) - alertPriority(a));
+  }
 
   const url = `https://api.weather.gov/alerts/active?point=${place.latitude.toFixed(4)},${place.longitude.toFixed(4)}`;
   const json = await fetchJsonWithTimeout(url, ALERTS_FETCH_TIMEOUT_MS, null, {
     headers: { Accept: "application/geo+json" }
   });
-  const alerts = (json.features || [])
-    .map((f) => f.properties)
+  const alerts = (Array.isArray(json.features) ? json.features : [])
+    .map((feature) => normalizeNwsAlertFeature(feature, place))
     .sort((a, b) => alertPriority(b) - alertPriority(a));
-  sessionStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: alerts }));
+  try {
+    sessionStorage.setItem(cacheKey, JSON.stringify({ schema: 2, savedAt: Date.now(), data: alerts }));
+  } catch {
+    // Detailed polygons can exceed constrained WebKit session storage. A
+    // successful live official-alert response must still reach the UI.
+  }
   return alerts;
 }
 
@@ -15995,6 +16271,49 @@ function alertIdentityKey(alert) {
     .map((value) => String(value || "").trim())
     .join("|");
 }
+
+function cloneAlertGeometry(geometry) {
+  const normalized = normalizeAlertGeometry(geometry);
+  if (!normalized) return null;
+  const clonePosition = (position) => [position[0], position[1]];
+  const cloneRing = (ring) => ring.map(clonePosition);
+  const clonePolygon = (polygon) => polygon.map(cloneRing);
+  const coordinates = normalized.type === "Polygon"
+    ? clonePolygon(normalized.coordinates)
+    : normalized.coordinates.map(clonePolygon);
+  return { type: normalized.type, coordinates, bbox: [...normalized.bbox] };
+}
+
+function alertGeometrySnapshot(alertsSource = activeAlerts) {
+  const alerts = (Array.isArray(alertsSource) ? alertsSource : []).map((alert) => {
+    const status = ["inside", "outside"].includes(alert?.placeCoverage?.status)
+      ? alert.placeCoverage.status
+      : "unknown";
+    const basis = ["feature-geometry", "nws-point-query"].includes(alert?.placeCoverage?.basis)
+      ? alert.placeCoverage.basis
+      : "unavailable";
+    return {
+      key: alertIdentityKey(alert),
+      id: String(alert?.id || ""),
+      event: String(alert?.event || "Weather alert"),
+      headline: String(alert?.headline || ""),
+      severity: String(alert?.severity || "Unknown"),
+      tone: alertTone(alert),
+      onset: alert?.onset || alert?.effective || null,
+      expiresAt: alert?.ends || alert?.expires || null,
+      geometry: cloneAlertGeometry(alert?.geometry),
+      placeCoverage: { status, basis },
+      inside: status === "inside" ? true : status === "outside" ? false : null
+    };
+  });
+  return {
+    state: String(alertTrustState?.state || "unknown"),
+    checkedAt: Number.isFinite(alertTrustState?.checkedAt) ? alertTrustState.checkedAt : null,
+    alerts
+  };
+}
+
+window.nearcastAlertGeometrySnapshot = alertGeometrySnapshot;
 
 function alertsForAlertSheet(selectedAlert = null) {
   const hasSelection = selectedAlert !== null && selectedAlert !== undefined && selectedAlert !== "";
@@ -16288,6 +16607,17 @@ function renderAlertInsight(alert) {
     ["Action", alertActionLine(alert, tone)]
   ];
   const chips = alertInsightChips(alert, tone).map((chip) => `<span>${escapeHtml(chip)}</span>`).join("");
+  const mapKey = normalizeAlertGeometry(alert.geometry) ? alertIdentityKey(alert) : "";
+  const mapAction = mapKey ? `
+    <div class="storm-view-actions alert-insight-actions">
+      <button
+        class="storm-view-primary alert-insight-map-action"
+        type="button"
+        data-alert-map-key="${escapeHtml(mapKey)}"
+        aria-label="Show affected area for ${escapeHtml(alert.event || "this weather alert")}"
+      >Show affected area</button>
+    </div>
+  ` : "";
   return `
     <section class="alert-insight-panel" aria-label="Nearcast alert read">
       <div class="alert-insight-head">
@@ -16303,8 +16633,30 @@ function renderAlertInsight(alert) {
         `).join("")}
       </div>
       ${chips ? `<div class="alert-insight-chips">${chips}</div>` : ""}
+      ${mapAction}
     </section>
   `;
+}
+
+function openAlertAffectedArea(alertKey) {
+  const key = String(alertKey || "").trim();
+  if (!key || typeof window.nearcastOpenMapIntent !== "function") return false;
+  const alert = activeAlerts.find((candidate) => alertIdentityKey(candidate) === key);
+  if (!alert || !normalizeAlertGeometry(alert.geometry)) return false;
+  try {
+    const result = window.nearcastOpenMapIntent({
+      type: "alert",
+      source: "alert",
+      alertKey: key,
+      alertId: key,
+      event: alert.event || "Weather alert"
+    });
+    closeAlertSheet();
+    if (result && typeof result.catch === "function") result.catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function alertStartMs(alert) {

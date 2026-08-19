@@ -54,8 +54,12 @@ struct NearcastWidgetSnapshot: Codable {
     var alertId: String? = nil
     var alertTitle: String? = nil
     var alertSeverity: String? = nil
+    var alertStartsAt: TimeInterval? = nil
     var alertExpiresAt: TimeInterval? = nil
     var alertImpact: String? = nil
+    var alertSource: String? = nil
+    var alertUrgency: String? = nil
+    var alertCertainty: String? = nil
     var alertCount: Int? = nil
     var alertSavedAt: TimeInterval? = nil
     // False means the phone refreshed weather while its alert request was
@@ -108,6 +112,58 @@ struct NearcastCanonicalEventBrief: Equatable {
     let startAt: TimeInterval?
     let endAt: TimeInterval?
     let kind: String?
+}
+
+struct NearcastOfficialAlertBrief: Equatable {
+    let id: String?
+    let title: String
+    let severity: String?
+    let startsAt: TimeInterval?
+    let expiresAt: TimeInterval?
+    let impact: String?
+    let source: String
+    let urgency: String?
+    let certainty: String?
+    let placeName: String
+
+    var isUrgent: Bool {
+        let normalizedTitle = title.lowercased()
+        // Watches and advisories are important planning context, but they do
+        // not replace the family's immediate forecast story. Warnings and
+        // emergencies do, as do provider-marked immediate severe hazards.
+        if normalizedTitle.contains("watch")
+            || normalizedTitle.contains("advisory")
+            || normalizedTitle.contains("statement")
+            || normalizedTitle.contains("outlook") {
+            return false
+        }
+        if normalizedTitle.contains("warning") || normalizedTitle.contains("emergency") {
+            return true
+        }
+        let severe = ["extreme", "severe"].contains(severity?.lowercased() ?? "")
+        let immediate = ["immediate", "expected"].contains(urgency?.lowercased() ?? "")
+        return severe && immediate
+    }
+}
+
+enum NearcastCompanionStoryKind: Equatable {
+    case officialAlert
+    case forecastEvent
+}
+
+/// A single truthful headline contract for compact native surfaces. The web
+/// forecast remains the author of forecast-event language; native companions
+/// only allow an active urgent official alert to preempt it.
+struct NearcastCompanionStory: Equatable {
+    let kind: NearcastCompanionStoryKind
+    let id: String?
+    let headline: String
+    let timing: String?
+    let startsAt: TimeInterval?
+    let endsAt: TimeInterval?
+    let source: String?
+    let placeName: String
+    let impact: String?
 }
 
 struct NearcastWidgetDay: Codable, Identifiable {
@@ -449,6 +505,85 @@ extension NearcastWidgetSnapshot {
         )
     }
 
+    func officialAlertBrief(
+        at timestamp: TimeInterval = Date().timeIntervalSince1970,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> NearcastOfficialAlertBrief? {
+        guard hasCurrentOfficialAlert(at: timestamp, missingExpiryTTL: missingExpiryTTL),
+              let title = cleanCompanionText(alertTitle) else {
+            return nil
+        }
+        return NearcastOfficialAlertBrief(
+            id: cleanCompanionText(alertId),
+            title: title,
+            severity: cleanCompanionText(alertSeverity),
+            startsAt: alertStartsAt,
+            expiresAt: alertExpiresAt,
+            impact: cleanCompanionText(alertImpact),
+            // Nearcast's current official-alert feed is weather.gov. Newer
+            // snapshots preserve the issuing office verbatim when available;
+            // this fallback keeps legacy V7/V8 snapshots honestly sourced.
+            source: cleanCompanionText(alertSource) ?? "National Weather Service",
+            urgency: cleanCompanionText(alertUrgency),
+            certainty: cleanCompanionText(alertCertainty),
+            placeName: placeName
+        )
+    }
+
+    func urgentOfficialAlertBrief(
+        at timestamp: TimeInterval = Date().timeIntervalSince1970,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> NearcastOfficialAlertBrief? {
+        guard let alert = officialAlertBrief(at: timestamp, missingExpiryTTL: missingExpiryTTL),
+              alert.isUrgent else { return nil }
+        return alert
+    }
+
+    func officialAlertTiming(
+        at timestamp: TimeInterval = Date().timeIntervalSince1970,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> String? {
+        guard let alert = officialAlertBrief(at: timestamp, missingExpiryTTL: missingExpiryTTL) else {
+            return nil
+        }
+        return companionAlertTiming(
+            alert,
+            at: timestamp,
+            timeZoneIdentifier: placeTimezone
+        )
+    }
+
+    func companionStory(
+        at timestamp: TimeInterval = Date().timeIntervalSince1970,
+        missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> NearcastCompanionStory? {
+        if let alert = urgentOfficialAlertBrief(at: timestamp, missingExpiryTTL: missingExpiryTTL) {
+            return NearcastCompanionStory(
+                kind: .officialAlert,
+                id: alert.id,
+                headline: alert.title,
+                timing: officialAlertTiming(at: timestamp, missingExpiryTTL: missingExpiryTTL),
+                startsAt: alert.startsAt,
+                endsAt: alert.expiresAt,
+                source: alert.source,
+                placeName: alert.placeName,
+                impact: alert.impact
+            )
+        }
+        guard let event = canonicalEventBrief(at: timestamp) else { return nil }
+        return NearcastCompanionStory(
+            kind: .forecastEvent,
+            id: event.id,
+            headline: event.headline,
+            timing: event.timing,
+            startsAt: event.startAt,
+            endsAt: event.endAt,
+            source: nil,
+            placeName: placeName,
+            impact: nil
+        )
+    }
+
     mutating func clearCanonicalEvent() {
         canonicalEventId = nil
         canonicalEventHeadline = nil
@@ -456,6 +591,20 @@ extension NearcastWidgetSnapshot {
         canonicalEventStartAt = nil
         canonicalEventEndAt = nil
         canonicalEventKind = nil
+    }
+
+    func expiringCompanionContent(
+        at timestamp: TimeInterval,
+        missingAlertExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
+    ) -> NearcastWidgetSnapshot {
+        var snapshot = expiringOfficialAlert(
+            at: timestamp,
+            missingExpiryTTL: missingAlertExpiryTTL
+        )
+        if let eventEndAt = snapshot.canonicalEventEndAt, eventEndAt <= timestamp {
+            snapshot.clearCanonicalEvent()
+        }
+        return snapshot
     }
 
     var weatherSavedTime: TimeInterval {
@@ -501,8 +650,12 @@ extension NearcastWidgetSnapshot {
         alertId = nil
         alertTitle = nil
         alertSeverity = nil
+        alertStartsAt = nil
         alertExpiresAt = nil
         alertImpact = nil
+        alertSource = nil
+        alertUrgency = nil
+        alertCertainty = nil
         alertCount = 0
         alertSavedAt = checkedAt
         alertStateReady = true
@@ -513,11 +666,37 @@ extension NearcastWidgetSnapshot {
         snapshot.alertId = stored.alertId
         snapshot.alertTitle = stored.alertTitle
         snapshot.alertSeverity = stored.alertSeverity
+        snapshot.alertStartsAt = stored.alertStartsAt
         snapshot.alertExpiresAt = stored.alertExpiresAt
         snapshot.alertImpact = stored.alertImpact
+        snapshot.alertSource = stored.alertSource
+        snapshot.alertUrgency = stored.alertUrgency
+        snapshot.alertCertainty = stored.alertCertainty
         snapshot.alertCount = stored.alertCount
         snapshot.alertSavedAt = stored.alertSavedAt
         return snapshot
+    }
+
+    /// Arbitrates alert metadata independently from weather freshness. This
+    /// prevents a delayed phone or Watch payload from resurrecting an expired
+    /// alert, clearing a newer warning, or losing the issuing source.
+    func resolvingOfficialAlert(
+        with stored: NearcastWidgetSnapshot,
+        at timestamp: TimeInterval = Date().timeIntervalSince1970
+    ) -> NearcastWidgetSnapshot {
+        let incoming = expiringOfficialAlert(at: timestamp)
+        let existing = stored.expiringOfficialAlert(at: timestamp)
+        let incomingCheckedAt = incoming.alertSavedAt ?? 0
+        let existingCheckedAt = existing.alertSavedAt ?? 0
+        let shouldKeepExisting = incoming.alertStateReady != true
+            || existingCheckedAt > incomingCheckedAt
+        guard shouldKeepExisting else { return incoming }
+
+        var resolved = incoming.preservingOfficialAlert(from: existing)
+        if existingCheckedAt > incomingCheckedAt {
+            resolved.alertStateReady = existing.alertStateReady
+        }
+        return resolved
     }
 
     func expiringOfficialAlert(
@@ -685,6 +864,41 @@ extension NearcastWidgetSnapshot {
         merged.weatherSavedAt = weather.weatherSavedAt
         return merged
     }
+}
+
+private func cleanCompanionText(_ value: String?) -> String? {
+    let cleaned = (value ?? "")
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    return cleaned.isEmpty ? nil : cleaned
+}
+
+private func companionAlertTiming(
+    _ alert: NearcastOfficialAlertBrief,
+    at timestamp: TimeInterval,
+    timeZoneIdentifier: String?
+) -> String? {
+    let timeZone = timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) ?? .current
+    let now = Date(timeIntervalSince1970: timestamp)
+
+    if let startsAt = alert.startsAt, startsAt > timestamp + 60 {
+        return "Starts \(companionDateLabel(Date(timeIntervalSince1970: startsAt), relativeTo: now, timeZone: timeZone))"
+    }
+    if let expiresAt = alert.expiresAt {
+        return "Until \(companionDateLabel(Date(timeIntervalSince1970: expiresAt), relativeTo: now, timeZone: timeZone))"
+    }
+    return "Active now"
+}
+
+private func companionDateLabel(_ date: Date, relativeTo now: Date, timeZone: TimeZone) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = timeZone
+    formatter.dateFormat = calendar.isDate(date, inSameDayAs: now) ? "h:mm a" : "EEE h:mm a"
+    return formatter.string(from: date).replacingOccurrences(of: ":00", with: "")
 }
 
 extension NearcastWidgetPlace {
