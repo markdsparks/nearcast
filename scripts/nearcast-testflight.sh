@@ -12,11 +12,8 @@ KEY_PATH="${NEARCAST_ASC_KEY_PATH:-$ROOT/AppStoreConnect/AuthKey_8LM389Z6NR.p8}"
 KEY_ID="${NEARCAST_ASC_KEY_ID:-8LM389Z6NR}"
 ISSUER_ID="${NEARCAST_ASC_ISSUER_ID:-00459337-a0be-4634-9c5c-96ea253447e9}"
 SIGNING_IDENTITY="${NEARCAST_CODE_SIGN_IDENTITY:-}"
-SIGNING_ARGS=()
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
-  SIGNING_ARGS+=("CODE_SIGN_IDENTITY=$SIGNING_IDENTITY")
-
   runtime_export_options="$(mktemp -t nearcast-export-options)"
   cp "$EXPORT_OPTIONS_SOURCE" "$runtime_export_options"
   /usr/bin/plutil -replace signingCertificate -string "$SIGNING_IDENTITY" "$runtime_export_options"
@@ -58,15 +55,23 @@ archive="$ROOT/native/ios/build/Nearcast-${build}.xcarchive"
 export_path="$ROOT/native/ios/build/upload-testflight-${build}"
 
 printf 'Archiving Nearcast build %s with iPhone, widget, and Watch products...\n' "$build"
-xcodebuild \
-  -project "$PROJECT" \
-  -scheme Nearcast \
-  -configuration Release \
-  -destination 'generic/platform=iOS' \
-  -archivePath "$archive" \
-  archive \
-  -allowProvisioningUpdates \
-  "${SIGNING_ARGS[@]}"
+archive_nearcast() {
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme Nearcast \
+    -configuration Release \
+    -destination 'generic/platform=iOS' \
+    -archivePath "$archive" \
+    archive \
+    -allowProvisioningUpdates \
+    "$@"
+}
+
+if [[ -n "$SIGNING_IDENTITY" ]]; then
+  archive_nearcast "CODE_SIGN_IDENTITY=$SIGNING_IDENTITY"
+else
+  archive_nearcast
+fi
 
 "$VALIDATOR" "$archive"
 
