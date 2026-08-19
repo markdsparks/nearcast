@@ -1,4 +1,4 @@
-const VERSION = "3.0.364";
+const VERSION = "3.0.365";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1445,6 +1445,7 @@ const els = {
   planInvitationDismiss: document.querySelector("#planInvitationDismiss"),
   glanceTitle: document.querySelector("#glanceTitle"),
   glanceKicker: document.querySelector("#glanceKicker"),
+  glanceSupport: document.querySelector("#glanceSupport"),
   nearcastBriefJump: document.querySelector("#nearcastBriefJump"),
   nearcastBriefJumpLabel: document.querySelector("#nearcastBriefJumpLabel"),
   forecastPulse: document.querySelector("#forecastPulse"),
@@ -8667,12 +8668,24 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   }
 
   // The collapsed receipt is an evidence line, not merely a recency badge.
-  // It says whether Now is observed or estimated, then keeps forecast age and
-  // the independent official-alert check visible without claiming more than
-  // the underlying sources support.
+  // It says whether Now is observed or estimated and keeps freshness visible.
+  // A successful no-alert check is intentionally silent here; real alerts have
+  // their own interruptive surface, while failures remain worth surfacing.
   if (!provenance.cacheFallback) {
-    trigger = briefEvidence.label;
-    triggerMeta = [briefEvidence.freshness, briefEvidence.alerts.label].filter(Boolean).join(" · ");
+    trigger = radarObserved
+      ? `Radar confirms ${String(truth?.precip?.label || radar?.label || "precipitation").toLowerCase()}`
+      : radar?.phase === "nearby"
+        ? `${radar.label || "Precipitation"} nearby`
+        : radarClear
+          ? "Radar clear"
+          : briefEvidence.basis === "estimated"
+            ? "Estimated now"
+            : briefEvidence.label;
+    const radarFactVisible = radarObserved || radarClear || radar?.phase === "nearby";
+    triggerMeta = radarFactVisible && radarAge !== "time unavailable"
+      ? radarAge
+      : savedAt ? `Updated ${age}` : "Freshness details";
+    if (alerts.state === "failed") triggerMeta += " · Alerts unavailable";
   }
 
   let evidence = "Near-term forecast guidance";
@@ -8762,6 +8775,10 @@ function renderForecastTrust(data = state.forecast, truth = state.weatherTruth |
   els.forecastReceiptTrigger.dataset.tone = receipt.tone;
   els.forecastReceiptStatus.textContent = receipt.trigger;
   els.forecastReceiptStatusMeta.textContent = receipt.triggerMeta;
+  els.forecastReceiptTrigger.setAttribute(
+    "aria-label",
+    `${receipt.trigger}. ${receipt.triggerMeta}. See weather sources and freshness.`
+  );
   els.forecastReceiptContext.textContent = state.activePlace ? placeLabel(state.activePlace) : "Selected place";
   els.forecastReceiptOverview.dataset.tone = receipt.tone;
   els.forecastReceiptHeadline.textContent = receipt.headline;
@@ -9534,6 +9551,22 @@ function buildForecastStory(data, tempUnit, windUnit, truth = weatherTruth(data)
   return {
     kicker,
     text,
+    periodLabel,
+    hour,
+    segments,
+    sentences: {
+      condition: conditionSentence,
+      precipitation: precipitationSentence,
+      currentConvective: currentConvectiveSentence,
+      upcomingConvective: upcomingConvectiveSentence,
+      temperature: temperatureSentence
+    },
+    temperatures: {
+      current: Math.round(Number(current.temperature_2m) || 0),
+      todayHigh,
+      overnightLow,
+      tomorrowHigh
+    },
     focusIndex: precipWindow?.startIndex ?? transition?.startIndex ?? null,
     transition,
     precipWindow,
@@ -9739,6 +9772,143 @@ function nearcastPromotedEvent(data, story, truth, options = {}) {
   return null;
 }
 
+function nearcastBriefPeriod(story) {
+  const kicker = String(story?.kicker || "Coming up");
+  if (/morning/i.test(kicker)) return { id: "morning", label: "This morning", phrase: "this morning" };
+  if (/afternoon/i.test(kicker)) return { id: "afternoon", label: "This afternoon", phrase: "this afternoon" };
+  if (/evening/i.test(kicker)) return { id: "evening", label: "This evening", phrase: "this evening" };
+  if (/tonight/i.test(kicker)) return { id: "tonight", label: "Tonight", phrase: "tonight" };
+  return { id: "next", label: "Coming up", phrase: "for now" };
+}
+
+function nearcastBriefCleanSentence(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ");
+}
+
+function nearcastBriefMaterialEvent(event) {
+  return Boolean(event && ["rain", "storm", "snow", "wind", "fog", "ice"].includes(event.kind));
+}
+
+function nearcastBriefTransitionSupport(data, transition) {
+  if (!transition || !Number.isFinite(Number(transition.startMs))) return "";
+  const timing = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
+  const when = `${timing.timeLabel} ${timing.dayLabel}`;
+  if (transition.family === "clear") return `Clearing after ${when}`;
+  if (transition.family === "cloudy") return `Clouds increase after ${when}`;
+  if (transition.family === "partly-cloudy") return `Some clearing after ${when}`;
+  if (transition.family === "fog") return `Fog develops near ${when}`;
+  return `${transition.label} near ${when}`;
+}
+
+function nearcastBriefTemperatureSupport(story, truth, tempUnit) {
+  const temperatures = story?.temperatures || {};
+  const current = Math.round(Number(truth?.current?.temperature_2m ?? temperatures.current));
+  const hour = Number(story?.hour);
+  const unit = degree(tempUnit);
+  if (!Number.isFinite(current)) return "";
+  if (hour < 12 && Number.isFinite(temperatures.todayHigh)) {
+    const high = Math.round(temperatures.todayHigh);
+    return high - current >= 4 ? `Warming to ${high}${unit} this afternoon` : `High near ${high}${unit}`;
+  }
+  if (Number.isFinite(temperatures.overnightLow)) {
+    const low = Math.round(temperatures.overnightLow);
+    return current - low >= 4 ? `Cooling to ${low}${unit} overnight` : `Low near ${low}${unit} overnight`;
+  }
+  return "";
+}
+
+function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit) {
+  const period = nearcastBriefPeriod(story);
+  const first = story?.segments?.[0] || null;
+  const firstLabel = nearcastBriefCleanSentence(first?.label || truth?.label || "Weather");
+  const eventIsMaterial = nearcastBriefMaterialEvent(promotedEvent);
+  const now = forecastNowMs(data);
+  const leadMs = Number(promotedEvent?.startMs) - now;
+  const active = promotedEvent?.timing?.dayRelation === "now";
+  const priorityHorizon = ["storm", "snow", "fog", "ice"].includes(promotedEvent?.kind)
+    ? 12 * 60 * 60 * 1000
+    : 6 * 60 * 60 * 1000;
+  const eventIsPrimary = eventIsMaterial && (active || (Number.isFinite(leadMs) && leadMs <= priorityHorizon));
+  const temperature = nearcastBriefTemperatureSupport(story, truth, tempUnit);
+  const transition = nearcastBriefTransitionSupport(data, story?.transition);
+  const temperatureDirection = /^Cooling\b/i.test(temperature) ? "cooling"
+    : /^Warming\b/i.test(temperature) ? "warming" : "";
+  const baseHeadline = temperatureDirection
+    ? `${firstLabel} and ${temperatureDirection}`
+    : firstLabel;
+  let headline = baseHeadline;
+  let support = "";
+  let primaryClaimId = "condition";
+  let supportClaimId = null;
+  let target = null;
+  let tone = first?.family || "calm";
+
+  if (eventIsPrimary) {
+    headline = nearcastBriefCleanSentence(promotedEvent.label);
+    if (active && promotedEvent.basis !== "observed") {
+      headline = headline.replace(/^(Rain|Storms|Snow) now\b/i, "$1 indicated now");
+    }
+    primaryClaimId = "event";
+    target = promotedEvent.target || null;
+    tone = promotedEvent.kind || tone;
+    if (!active && firstLabel && !["rain", "storm", "snow"].includes(first?.family)) {
+      support = `${firstLabel} until then`;
+      supportClaimId = "condition";
+    }
+  } else if (eventIsMaterial) {
+    support = nearcastBriefCleanSentence(promotedEvent.label);
+    supportClaimId = "event";
+    target = promotedEvent.target || null;
+  } else if (transition) {
+    support = transition;
+    supportClaimId = "transition";
+  }
+
+  if (!support && temperature && !active) {
+    support = temperature;
+    supportClaimId = "temperature";
+  } else if (support && supportClaimId !== "event" && temperature) {
+    const combined = `${support} · ${temperature}`;
+    if (combined.length <= 62) support = combined;
+  }
+
+  return {
+    period,
+    headline: headline || "Forecast ready",
+    support: support || null,
+    tone,
+    primaryClaimId,
+    supportClaimId,
+    target,
+    materialEvent: eventIsMaterial,
+    claims: [
+      {
+        id: "condition",
+        kind: "condition",
+        family: first?.family || null,
+        startMs: first?.startMs ?? now,
+        endMs: first?.endMs ?? null,
+        basis: "forecast",
+        materiality: eventIsPrimary ? "support" : "primary"
+      },
+      ...(eventIsMaterial ? [{
+        id: "event",
+        kind: promotedEvent.kind,
+        startMs: promotedEvent.startMs,
+        endMs: promotedEvent.endMs,
+        hourlyIndex: promotedEvent.hourlyIndex,
+        chance: promotedEvent.chance,
+        basis: promotedEvent.basis,
+        source: promotedEvent.source,
+        materiality: eventIsPrimary ? "primary" : "support"
+      }] : [])
+    ]
+  };
+}
+
 function buildNearcastBrief(data, options = {}) {
   const truth = options.truth || buildWeatherTruth(data);
   const tempUnit = options.tempUnit || (state.unit === "fahrenheit" ? "F" : "C");
@@ -9749,6 +9919,7 @@ function buildNearcastBrief(data, options = {}) {
   const comfort = comfortGlance(actual, feels, Number(current.relative_humidity_2m || 0), tempUnit).headline;
   const story = options.story || buildForecastStory(data, tempUnit, windUnit, truth);
   const promotedEvent = nearcastPromotedEvent(data, story, truth, { ...options, windUnit });
+  const outlook = nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit);
   return {
     current: {
       temperature: actual,
@@ -9763,8 +9934,11 @@ function buildNearcastBrief(data, options = {}) {
     },
     story: {
       kicker: story.kicker,
-      text: story.text
+      text: story.text,
+      headline: outlook.headline,
+      support: outlook.support
     },
+    outlook,
     promotedEvent,
     evidence: nearcastEvidencePresentation(data, truth, options),
     suppressesGenericWeather: true
@@ -9828,13 +10002,24 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
     : "";
 
   const brief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
-  const story = brief.story;
-  if (els.glanceKicker) els.glanceKicker.textContent = story.kicker;
-  if (els.glanceTitle) els.glanceTitle.textContent = story.text;
+  const outlook = brief.outlook || {
+    period: nearcastBriefPeriod(brief.story),
+    headline: brief.story?.headline || brief.story?.text || "Forecast ready",
+    support: brief.story?.support || null
+  };
+  if (els.glanceKicker) els.glanceKicker.textContent = outlook.period?.label || "Coming up";
+  if (els.glanceTitle) els.glanceTitle.textContent = outlook.headline;
+  if (els.glanceSupport) {
+    els.glanceSupport.hidden = !outlook.support;
+    els.glanceSupport.textContent = outlook.support || "";
+  }
+  const hourlyPanel = document.querySelector(".hourly-panel");
+  if (hourlyPanel) hourlyPanel.dataset.outlookTone = outlook.tone || "calm";
   renderNearcastBriefJump(brief);
   renderForecastPulse(data, todayIndex);
-  document.querySelector("#hero")?.setAttribute("aria-label", `${story.kicker} forecast`);
-  document.querySelector(".today-glance")?.setAttribute("aria-label", `${story.kicker} forecast`);
+  const outlookLabel = [outlook.period?.label, outlook.headline, outlook.support].filter(Boolean).join(". ");
+  document.querySelector("#hero")?.setAttribute("aria-label", outlookLabel);
+  document.querySelector(".today-glance")?.setAttribute("aria-label", outlookLabel);
   if (els.feelsContext) els.feelsContext.textContent = feelsContext(diff, tempUnit);
   if (els.rainContext) els.rainContext.textContent = rain.context;
   if (els.rainSignal) {
@@ -11091,14 +11276,23 @@ function renderNearcastBriefJump(brief) {
   if (!els.nearcastBriefJump) return;
   const event = brief?.promotedEvent || null;
   nearcastBriefJumpTarget = event?.target || null;
-  const visible = Boolean(event?.requiresJump && nearcastBriefJumpTarget);
+  const visible = Boolean(
+    event?.requiresJump &&
+    nearcastBriefJumpTarget &&
+    brief?.outlook?.materialEvent &&
+    ["rain", "storm", "snow", "wind", "fog", "ice"].includes(event.kind)
+  );
   els.nearcastBriefJump.hidden = !visible;
   if (!visible) {
     els.nearcastBriefJump.removeAttribute("aria-label");
-    if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = "See it in the hourly";
+    if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = "Open hourly details";
     return;
   }
-  const label = `See ${event.timing.timeLabel} ${event.timing.dayLabel} in Hourly`;
+  const eventLabel = event.kind === "storm" ? "Storms"
+    : event.kind === "snow" ? "Snow"
+      : event.kind === "wind" ? "Wind"
+        : event.kind === "fog" ? "Fog" : "Rain";
+  const label = `${eventLabel} · ${event.timing.timeLabel} ${event.timing.dayLabel}`;
   if (els.nearcastBriefJumpLabel) els.nearcastBriefJumpLabel.textContent = label;
   els.nearcastBriefJump.setAttribute("aria-label", `${event.label}. Open those hourly details.`);
   els.nearcastBriefJump.dataset.eventKind = event.kind || "weather";

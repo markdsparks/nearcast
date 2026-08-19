@@ -1379,28 +1379,55 @@ h2 {
 }
 
 .manual-refresh-button {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  margin-top: 0;
-  border: 0;
-  border-radius: 999px;
-  background: var(--glass-heavy);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 52px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-glass-md);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--glass-light) 72%, transparent);
   color: var(--ink);
-  box-shadow:
-    0 10px 28px rgba(13, 27, 38, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
   pointer-events: auto;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   -webkit-tap-highlight-color: transparent;
 }
 
-.manual-refresh-button svg {
+.manual-refresh-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--semantic-blue) 9%, transparent);
+  color: var(--semantic-blue);
+}
+
+.manual-refresh-icon svg {
   width: 21px;
   height: 21px;
+}
+
+.manual-refresh-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.manual-refresh-copy strong {
+  font-size: 0.84rem;
+  font-weight: 870;
+}
+
+.manual-refresh-copy small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 670;
 }
 
 .manual-refresh-button:focus {
@@ -1412,7 +1439,7 @@ h2 {
   outline-offset: 3px;
 }
 
-.manual-refresh-button.is-refreshing svg {
+.manual-refresh-button.is-refreshing .manual-refresh-icon svg {
   animation: pull-refresh-spin 0.82s linear infinite;
 }
 
@@ -2014,9 +2041,20 @@ h2 {
 
 .nearcast-brief .launch-place-row,
 .nearcast-brief .launch-current,
-.nearcast-brief .launch-condition,
+.nearcast-brief .launch-meta-row,
 .nearcast-brief .launch-loading {
   width: min(100%, var(--brief-max-width));
+}
+
+.launch-meta-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  margin-top: 4px;
 }
 
 .launch-place-row,
@@ -2116,7 +2154,7 @@ h2 {
 
 .launch-stage .summary {
   max-width: 840px;
-  margin-top: 7px;
+  margin-top: 0;
   color: var(--ink);
   text-shadow: 0 2px 18px rgba(255, 255, 255, 0.28);
 }
@@ -2170,12 +2208,11 @@ h2 {
   margin-bottom: 3px;
 }
 .launch-stage.has-urgent-alert > .launch-current { order: 3; }
-.launch-stage.has-urgent-alert > .launch-condition { order: 4; }
+.launch-stage.has-urgent-alert > .launch-meta-row { order: 4; }
 .launch-stage.has-urgent-alert > .launch-next-change-button { order: 5; }
-.launch-stage.has-urgent-alert > .forecast-receipt-trigger { order: 6; }
-.launch-stage.has-urgent-alert > .for-you-today { order: 7; }
-.launch-stage.has-urgent-alert > .launch-loading { order: 8; }
-.launch-stage.has-urgent-alert > .plan-invitation { order: 9; }
+.launch-stage.has-urgent-alert > .for-you-today { order: 6; }
+.launch-stage.has-urgent-alert > .launch-loading { order: 7; }
+.launch-stage.has-urgent-alert > .plan-invitation { order: 8; }
 
 .launch-next-change-button[hidden] {
   display: none;
@@ -2256,12 +2293,12 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: min(100%, 460px);
-  max-width: min(100%, 460px);
+  width: auto;
+  max-width: min(100%, 248px);
   min-width: 0;
   min-height: 44px;
-  margin-top: 2px;
-  padding: 5px 9px;
+  margin-top: 0;
+  padding: 5px 8px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
@@ -2271,16 +2308,6 @@ h2 {
   text-align: left;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-}
-
-.forecast-receipt-trigger-label {
-  flex: 0 0 auto;
-  color: var(--semantic-muted);
-  font-size: 0.61rem;
-  font-weight: 930;
-  letter-spacing: 0.075em;
-  line-height: 1;
-  text-transform: uppercase;
 }
 
 .forecast-receipt-trigger[hidden] {
@@ -2312,14 +2339,16 @@ h2 {
 }
 
 .forecast-receipt-trigger-copy strong {
+  flex: 0 0 auto;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 850;
 }
 
 .forecast-receipt-trigger-copy span {
+  min-width: 0;
   color: var(--ink-faint);
-  font-size: 0.7rem;
+  font-size: 0.74rem;
   font-weight: 720;
 }
 
@@ -9091,12 +9120,13 @@ body.map-immersive-active .app-dock {
 }
 
 .hourly-panel {
+  --brief-accent: var(--semantic-blue);
   position: relative;
   isolation: isolate;
   overflow: hidden;
   margin-bottom: 14px;
-  padding: 15px 12px 9px;
-  border: 1px solid var(--border-glass);
+  padding: 13px 10px 8px;
+  border: 1px solid color-mix(in srgb, var(--brief-accent) 13%, var(--border-glass));
   border-radius: 24px;
   background:
     linear-gradient(145deg, color-mix(in srgb, var(--glass-heavy) 92%, transparent), color-mix(in srgb, var(--glass-mid) 84%, transparent));
@@ -9104,6 +9134,12 @@ body.map-immersive-active .app-dock {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
+
+.hourly-panel[data-outlook-tone="storm"] { --brief-accent: var(--semantic-gold); }
+.hourly-panel[data-outlook-tone="rain"] { --brief-accent: #4a96dc; }
+.hourly-panel[data-outlook-tone="snow"] { --brief-accent: #83c9e8; }
+.hourly-panel[data-outlook-tone="wind"] { --brief-accent: #4cae9a; }
+.hourly-panel[data-outlook-tone="fog"] { --brief-accent: var(--semantic-muted); }
 
 .hourly-panel::before {
   content: "";
@@ -9114,7 +9150,7 @@ body.map-immersive-active .app-dock {
   width: 240px;
   height: 180px;
   border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--semantic-blue) 11%, transparent), transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--brief-accent) 9%, transparent), transparent 70%);
   pointer-events: none;
 }
 
@@ -9126,7 +9162,7 @@ body.map-immersive-active .app-dock {
 .hourly-panel > .hero {
   overflow: visible;
   margin: 0;
-  padding: 4px 5px 16px;
+  padding: 4px 7px 11px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -9138,7 +9174,16 @@ body.map-immersive-active .app-dock {
 .hourly-panel .glance-head {
   display: grid;
   justify-items: start;
-  gap: 0;
+  gap: 4px;
+  width: 100%;
+}
+
+.glance-context-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
 }
 
 .hourly-panel > .hero::before {
@@ -9270,23 +9315,38 @@ body.map-immersive-active .app-dock {
 }
 
 .hourly-panel .glance-kicker {
-  margin: 0 0 7px;
-  color: var(--ink);
-  font-size: clamp(1.3rem, 4vw, 1.7rem);
-  font-weight: 900;
-  line-height: 1.05;
-  letter-spacing: -0.035em;
-  text-transform: none;
+  margin: 0;
+  color: color-mix(in srgb, var(--brief-accent) 72%, var(--ink));
+  font-size: 0.69rem;
+  font-weight: 920;
+  line-height: 1;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
 }
 
 .hourly-panel .glance-title {
   max-width: 780px;
   margin: 0;
-  color: var(--muted);
-  font-size: clamp(0.98rem, 2.7vw, 1.15rem);
-  font-weight: 680;
-  line-height: 1.38;
+  color: var(--ink);
+  font-size: clamp(1.24rem, 4.4vw, 1.62rem);
+  font-weight: 910;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.hourly-panel .glance-support {
+  max-width: 760px;
+  margin: 0;
+  color: color-mix(in srgb, var(--muted) 76%, var(--ink));
+  font-size: clamp(0.88rem, 2.8vw, 1rem);
+  font-weight: 720;
+  line-height: 1.28;
   text-wrap: pretty;
+}
+
+.hourly-panel .glance-support[hidden] {
+  display: none;
 }
 
 .nearcast-brief-jump {
@@ -9295,15 +9355,15 @@ body.map-immersive-active .app-dock {
   gap: 7px;
   min-height: 44px;
   max-width: 100%;
-  margin-top: 10px;
-  padding: 6px 9px;
+  margin: -9px -7px -9px 0;
+  padding: 8px 7px;
   border: 0;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--semantic-blue) 8%, transparent);
+  border-radius: 11px;
+  background: transparent;
   color: color-mix(in srgb, var(--semantic-blue) 80%, var(--ink));
   cursor: pointer;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 870;
   line-height: 1.2;
   text-align: left;
@@ -9331,7 +9391,7 @@ body.map-immersive-active .app-dock {
 
 .nearcast-brief-jump:hover,
 .nearcast-brief-jump:focus-visible {
-  background: color-mix(in srgb, var(--semantic-blue) 14%, transparent);
+  background: color-mix(in srgb, var(--semantic-blue) 10%, transparent);
   outline: none;
 }
 
@@ -9362,12 +9422,6 @@ body.map-immersive-active .app-dock {
   text-align: right;
 }
 
-.hourly-panel .section-head {
-  margin-bottom: 0;
-  padding: 0 5px 11px;
-  border-bottom: 1px solid var(--border-glass);
-}
-
 .daily-panel .section-head {
   margin-bottom: 0;
   padding: 0 0 12px;
@@ -9386,7 +9440,8 @@ body.map-immersive-active .app-dock {
   grid-auto-columns: 76px;
   gap: 4px;
   overflow-x: auto;
-  padding: 13px 2px 8px;
+  padding: 9px 2px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-glass) 76%, transparent);
   scroll-padding-inline: 2px;
   scroll-snap-type: x proximity;
   scrollbar-width: thin;
@@ -13001,9 +13056,9 @@ body.map-immersive-active #mapLegend {
   }
 
   .launch-stage {
-    --launch-top-clearance: clamp(86px, calc(env(safe-area-inset-top, 0px) + 66px), 116px);
+    --launch-top-clearance: clamp(70px, calc(env(safe-area-inset-top, 0px) + 54px), 92px);
     min-height: 0;
-    padding: var(--launch-top-clearance) 8px 16px;
+    padding: var(--launch-top-clearance) 8px 9px;
   }
 
   .launch-place-row {
@@ -13016,7 +13071,7 @@ body.map-immersive-active #mapLegend {
 
   .launch-current {
     gap: 3px;
-    margin-top: 10px;
+    margin-top: 5px;
   }
 
   .launch-main-weather {
@@ -13187,7 +13242,7 @@ body.map-immersive-active #mapLegend {
 
   .hourly-panel {
     margin-inline: 2px;
-    padding: 14px 9px 7px;
+    padding: 12px 8px 7px;
   }
 
   .hourly {

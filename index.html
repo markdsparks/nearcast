@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.364">
-    <link rel="manifest" href="manifest.json?v=3.0.364">
+    <link rel="stylesheet" href="styles.css?v=3.0.365">
+    <link rel="manifest" href="manifest.json?v=3.0.365">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.364">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.364">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.365">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.365">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -58,12 +58,6 @@
           <span aria-hidden="true"></span>
           <span aria-hidden="true"></span>
         </button>
-        <button class="manual-refresh-button" id="manualRefresh" type="button" aria-label="Update forecast" title="Update forecast">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <path d="M18 3.8v3.8h-3.8M6 20.2v-3.8h3.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
         <div class="app-menu" id="appMenu" hidden>
           <div class="brand-lockup">
             <span class="brand-lockup-mark" aria-hidden="true"><img src="icons/nearcast-mark.svg" alt=""></span>
@@ -84,6 +78,18 @@
               <span class="place-switcher-chevron" aria-hidden="true">›</span>
             </button>
           </section>
+          <button class="manual-refresh-button" id="manualRefresh" type="button" aria-label="Update forecast">
+            <span class="manual-refresh-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M18 3.8v3.8h-3.8M6 20.2v-3.8h3.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="manual-refresh-copy">
+              <strong>Refresh forecast</strong>
+              <small>Nearcast also updates automatically</small>
+            </span>
+          </button>
           <section class="install-card" id="installCard" hidden aria-label="Add Nearcast to your home screen">
             <span class="install-card-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
@@ -269,26 +275,28 @@
             </div>
             <p class="hero-range" id="heroRange" hidden>H -- · L --</p>
           </div>
-          <p class="summary launch-condition" id="nowSummary">Search for a city to load a clean forecast.</p>
-          <button
-            class="forecast-receipt-trigger"
-            id="forecastReceiptTrigger"
-            type="button"
-            data-forecast-receipt-trigger
-            data-tone="forecast"
-            aria-haspopup="dialog"
-            aria-controls="forecastReceiptSheet"
-            aria-expanded="false"
-            hidden
-          >
-            <span class="forecast-receipt-trigger-label" aria-hidden="true">Evidence</span>
-            <span class="forecast-receipt-trigger-dot" data-forecast-receipt-indicator aria-hidden="true"></span>
-            <span class="forecast-receipt-trigger-copy">
-              <strong id="forecastReceiptStatus">Forecast checked</strong>
-              <span id="forecastReceiptStatusMeta">See sources and freshness</span>
-            </span>
-            <span class="forecast-receipt-trigger-chevron" aria-hidden="true">›</span>
-          </button>
+          <div class="launch-meta-row">
+            <p class="summary launch-condition" id="nowSummary">Search for a city to load a clean forecast.</p>
+            <button
+              class="forecast-receipt-trigger"
+              id="forecastReceiptTrigger"
+              type="button"
+              data-forecast-receipt-trigger
+              data-tone="forecast"
+              aria-label="See weather sources and freshness"
+              aria-haspopup="dialog"
+              aria-controls="forecastReceiptSheet"
+              aria-expanded="false"
+              hidden
+            >
+              <span class="forecast-receipt-trigger-dot" data-forecast-receipt-indicator aria-hidden="true"></span>
+              <span class="forecast-receipt-trigger-copy">
+                <strong id="forecastReceiptStatus">Forecast checked</strong>
+                <span id="forecastReceiptStatusMeta">See sources and freshness</span>
+              </span>
+              <span class="forecast-receipt-trigger-chevron" aria-hidden="true">›</span>
+            </button>
+          </div>
           <section class="for-you-today" id="forYouToday" aria-label="For You / Today" hidden></section>
           <div class="loading-chip launch-loading" data-loading-status hidden role="status" aria-live="polite" aria-atomic="true">
             <span class="loading-chip-dot" aria-hidden="true"></span>
@@ -336,12 +344,15 @@
         <section class="hero" id="hero" aria-label="Today at a glance">
           <div class="today-glance" aria-label="Today at a glance">
             <div class="glance-head">
-              <p class="glance-kicker" id="glanceKicker">Coming up</p>
+              <div class="glance-context-row">
+                <p class="glance-kicker" id="glanceKicker">Coming up</p>
+                <button class="nearcast-brief-jump" id="nearcastBriefJump" type="button" aria-haspopup="dialog" aria-controls="dayDetail" hidden>
+                  <span id="nearcastBriefJumpLabel">Open hourly details</span>
+                  <i aria-hidden="true">→</i>
+                </button>
+              </div>
               <p class="glance-title" id="glanceTitle">Forecast is loading.</p>
-              <button class="nearcast-brief-jump" id="nearcastBriefJump" type="button" aria-haspopup="dialog" aria-controls="dayDetail" hidden>
-                <span id="nearcastBriefJumpLabel">See it in the hourly</span>
-                <i aria-hidden="true">→</i>
-              </button>
+              <p class="glance-support" id="glanceSupport" hidden></p>
             </div>
             <button class="forecast-pulse" id="forecastPulse" type="button" data-tone="steady" aria-haspopup="dialog" aria-controls="forecastReceiptSheet" hidden>
               <span class="forecast-pulse-mark" aria-hidden="true"></span>
@@ -441,13 +452,8 @@
         </section>
 
         <section class="panel hourly-panel">
-          <div class="section-head">
-            <h2>Hourly</h2>
-            <div class="section-meta">
-              <span>Next 24 hours</span>
-              <span id="updatedAt" hidden>Not loaded</span>
-            </div>
-          </div>
+          <h2 class="sr-only">Hourly forecast for the next 24 hours</h2>
+          <span class="sr-only" id="updatedAt" hidden>Not loaded</span>
           <div class="hourly" id="hourly"></div>
           <div class="hourly-metric-tabs" id="hourlyMetricTabs" role="group" aria-label="Hourly trend metric">
             <button type="button" data-hourly-metric="temperature" aria-label="Temperature trend" aria-pressed="true"><span class="hourly-metric-label-full">Temperature</span><span class="hourly-metric-label-short" aria-hidden="true">Temp</span></button>
@@ -503,7 +509,7 @@
         <section class="panel daily-panel">
           <div class="section-head">
             <h2>10-Day Outlook</h2>
-            <span>Tap a day for hourly detail</span>
+            <span class="sr-only">Tap a day for hourly detail</span>
           </div>
           <div class="daily" id="daily"></div>
         </section>
@@ -1129,17 +1135,17 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.364"></script>
-    <script src="planner.js?v=3.0.364"></script>
-    <script src="app.js?v=3.0.364"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.364"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.364"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.364"></script>
-    <script src="radar-seam-engine.js?v=3.0.364"></script>
-    <script src="raw-map-runtime.js?v=3.0.364"></script>
-    <script src="map.js?v=3.0.364"></script>
-    <script src="sky.js?v=3.0.364"></script>
-    <script src="daygraph.js?v=3.0.364"></script>
-    <script src="boot.js?v=3.0.364"></script>
+    <script src="weather-truth.js?v=3.0.365"></script>
+    <script src="planner.js?v=3.0.365"></script>
+    <script src="app.js?v=3.0.365"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.365"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.365"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.365"></script>
+    <script src="radar-seam-engine.js?v=3.0.365"></script>
+    <script src="raw-map-runtime.js?v=3.0.365"></script>
+    <script src="map.js?v=3.0.365"></script>
+    <script src="sky.js?v=3.0.365"></script>
+    <script src="daygraph.js?v=3.0.365"></script>
+    <script src="boot.js?v=3.0.365"></script>
   </body>
 </html>
