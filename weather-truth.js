@@ -107,6 +107,18 @@ function planWatchCompactText(value, limit = 98) {
   return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
+function planActivePrecipText(stats = {}, options = {}) {
+  const chance = Math.max(0, Math.min(100, Math.round(Number(stats.rainChance) || 0)));
+  if (stats.rainChanceAvailable === false) {
+    if (!stats.activePrecipNow) return "Rain guidance unavailable";
+    return `${weatherTruthCleanText(stats.activePrecipLabel || "Rain now", 80)} · guidance unavailable`;
+  }
+  if (!stats.activePrecipNow) return options.compact ? `${chance}%` : `${chance}% rain chance`;
+  const baseLabel = weatherTruthCleanText(stats.activePrecipLabel || "Rain now", 80);
+  const label = stats.observedNow ? `${baseLabel} on radar` : baseLabel;
+  return options.compact ? `${label} · ${chance}% guidance` : `${label}; earlier hourly guidance was ${chance}%`;
+}
+
 function planWeatherAlertName(value) {
   return weatherTruthCleanText(value || "Weather alert", 96) || "Weather alert";
 }
@@ -145,7 +157,7 @@ function planConditionRiskKind(stats = {}, alert = null, text = "", unit = weath
   if (/\b(pollen|allerg)\b/.test(alertText)) return "pollen";
   if (/\b(cold|freeze|frost|snow|ice|winter)\b/.test(alertText)) return "cold";
   if (stats.stormPotential) return "storm";
-  if (stats.rainChance >= 35 || stats.precipTotal > precipThreshold) return "rain";
+  if (stats.activePrecipNow || stats.rainChance >= 35 || stats.precipTotal > precipThreshold) return "rain";
   if (stats.gustMax >= windThreshold) return "wind";
   if (stats.aqiMax >= 101) return "air";
   if (stats.pollenRank >= 3) return "pollen";
@@ -214,6 +226,7 @@ function planWatchActionText(item) {
   if (risk === "storm") return "Keep an indoor or delay option if thunder gets close.";
   if (risk === "flood") return "Avoid low spots and check routes before you leave.";
   if (risk === "rain") {
+    if (stats.activePrecipNow) return "Precipitation is active now. Keep rain gear close and check when it eases.";
     if ((stats.rainChance || 0) >= 60) return "Bring rain gear and expect possible interruptions.";
     return "Keep rain gear close and watch the timing.";
   }
@@ -237,7 +250,7 @@ function planVerdict(score, tone) {
 function planBriefingTone(item) {
   const unit = planWeatherUnitFromItem(item);
   if (item?.alertTone === "warning" || item?.alertTone === "watch") return "watch";
-  if (item?.score < 45 || item?.stats?.stormPotential) return "watch";
+  if (item?.score < 45 || item?.stats?.stormPotential || item?.stats?.activePrecipNow) return "watch";
   if (item?.score < 65 || item?.stats?.rainChance >= 35 || item?.stats?.gustMax >= planWeatherWindCautionThreshold(unit)) return "caution";
   return "good";
 }
@@ -246,7 +259,9 @@ function planBriefingPriority(item) {
   const alertWeight = item?.alertTone === "warning" ? 80 :
     item?.alertTone === "watch" ? 65 :
       item?.alertTone === "advisory" ? 42 : 0;
-  const rainWeight = item?.stats?.stormPotential ? 35 : Math.min(35, Math.max(0, item?.stats?.rainChance || 0) / 2);
+  const rainWeight = item?.stats?.stormPotential || item?.stats?.activePrecipNow
+    ? 35
+    : Math.min(35, Math.max(0, item?.stats?.rainChance || 0) / 2);
   const windWeight = Math.max(0, (item?.stats?.gustMax || 0) - 18);
   const scoreWeight = Math.max(0, 75 - (item?.score ?? 75));
   return alertWeight + rainWeight + windWeight + scoreWeight;
@@ -259,6 +274,7 @@ function planBriefingReason(item) {
   if (item?.alert) return reasons[0] || `${item.alert.event} overlaps that window`;
   const materialEvent = planMaterialEventText(stats.materialEvent || item?.materialEvent);
   if (materialEvent) return materialEvent;
+  if (stats.activePrecipNow || stats.rainChanceAvailable === false) return planActivePrecipText(stats);
   if (stats.stormPotential) return "thunderstorms are possible";
   if (stats.rainChance >= 35) return `${stats.rainChance}% rain chance`;
   if (stats.gustMax >= 25) return `gusts near ${stats.gustMax} ${units.wind || ""}`.trim();
@@ -296,6 +312,7 @@ function planAdvice(stats = {}, alert = null, score = 100, alertSignal = null, u
     return "Keep an eye on the official alert details.";
   }
   if (stats.stormPotential) return "Have a delay or indoor fallback.";
+  if (stats.activePrecipNow) return "Precipitation is active now. Keep rain gear close and check when it eases.";
   if (stats.rainChance >= 55) return "Bring rain gear and expect interruptions.";
   if (stats.aqiMax >= 151) return "Air quality is rough enough to consider moving it indoors.";
   if (stats.aqiMax >= 101) return "Sensitive folks may want a shorter window or an indoor backup.";
@@ -372,7 +389,7 @@ function planWeatherWindowScore(stats = {}, unit = weatherTruthUnitPreference())
   const gustMph = preference === "celsius" ? gustMax / 1.609344 : gustMax;
   const target = 72;
   const tempPenalty = Math.abs(feelsF - target) * 0.8;
-  const rainPenalty = rainChance * 1.2 + precipTotal * 80;
+  const rainPenalty = rainChance * 1.2 + precipTotal * 80 + (stats.activePrecipNow ? 120 : 0);
   const windPenalty = Math.max(0, windMph - 24) * 2 + Math.max(0, gustMph - 32) * 2;
   const uvPenalty = Math.max(0, uvMax - 8 + 1) * 5;
   return Math.round(100 - tempPenalty - rainPenalty - windPenalty - uvPenalty);
@@ -437,7 +454,7 @@ function planWeatherWatchCurrentState(plan = {}, stats = {}, alert = null, unit 
   const preference = unit === "celsius" ? "celsius" : "fahrenheit";
   const alertToneValue = weatherTruthAlertTone(alert);
   const score = planWeatherWindowScore(stats, preference);
-  const tone = alertToneValue === "warning" || alertToneValue === "watch" || score < 45 || stats.stormPotential
+  const tone = alertToneValue === "warning" || alertToneValue === "watch" || score < 45 || stats.stormPotential || stats.activePrecipNow
     ? "watch"
     : score < 65 || stats.rainChance >= 35 || stats.gustMax >= planWeatherWindCautionThreshold(preference) ? "caution" : "good";
   const truth = planWeatherTruth({
@@ -945,6 +962,11 @@ function planWeatherReceiptLines(item) {
   const wind = units.wind || (weatherTruthUnitPreference() === "fahrenheit" ? "mph" : "km/h");
   const precip = units.precip || (weatherTruthUnitPreference() === "fahrenheit" ? "in" : "mm");
   const lines = [];
+  const rainValue = stats.activePrecipNow
+    ? planActivePrecipText(stats, { compact: true })
+    : stats.rainChanceAvailable === false
+      ? "Unavailable"
+      : planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance);
 
   if (item.alert?.event) {
     lines.push({
@@ -983,19 +1005,19 @@ function planWeatherReceiptLines(item) {
       { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
     ],
     rain: [
-      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Rain", value: rainValue, kind: "rain" },
       { label: "Amount", value: planSignalPrecipTotalText(stats.precipTotal, precip), kind: "rain" },
       { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
     ],
     storm: [
       { label: "Storms", value: stats.stormPotential ? "Possible" : "Watch", kind: "storm" },
-      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Rain", value: rainValue, kind: "rain" },
       { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
     ],
     wind: [
       { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" },
       { label: "Wind", value: planSignalUnitRangeText(stats.windMin ?? stats.windMax, stats.windMax, wind), kind: "wind" },
-      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" }
+      { label: "Rain", value: rainValue, kind: "rain" }
     ],
     air: [
       { label: "Air", value: stats.aqiMax ? `Peak AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" },
@@ -1006,7 +1028,7 @@ function planWeatherReceiptLines(item) {
       { label: "Air", value: stats.aqiMax ? `Peak AQI ${stats.aqiMax}` : (stats.aqiLabel || "Good"), kind: "air" }
     ],
     good: [
-      { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" },
+      { label: "Rain", value: rainValue, kind: "rain" },
       { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" },
       { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" }
     ]
@@ -1151,7 +1173,15 @@ function planContextSignalRows(item) {
   const risk = planSignalRiskKind(item);
   const feelsRow = { label: "Feels", value: planSignalRangeText(stats.feelsMin ?? stats.feelsAvg, stats.feelsMax ?? stats.feelsAvg, temp), kind: "heat" };
   const tempRow = { label: "Temp", value: planSignalRangeText(stats.tempMin, stats.tempMax, temp), kind: "temp" };
-  const rainRow = { label: "Rain", value: planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance), kind: "rain" };
+  const rainRow = {
+    label: "Rain",
+    value: stats.activePrecipNow
+      ? planActivePrecipText(stats, { compact: true })
+      : stats.rainChanceAvailable === false
+        ? "Unavailable"
+        : planSignalChanceRangeText(stats.rainChanceMin ?? stats.rainChance, stats.rainChance),
+    kind: "rain"
+  };
   const amountRow = { label: "Amount", value: planSignalPrecipTotalText(stats.precipTotal, precip), kind: "rain" };
   const gustRow = { label: "Gusts", value: planSignalPeakText(stats.gustMax || stats.windMax, wind), kind: "wind" };
   const windRow = { label: "Wind", value: planSignalUnitRangeText(stats.windMin ?? stats.windMax, stats.windMax, wind), kind: "wind" };

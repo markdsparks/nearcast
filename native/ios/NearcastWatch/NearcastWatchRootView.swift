@@ -425,7 +425,7 @@ private struct WatchTodayInfographic: View {
                 .stroke(Color.white.opacity(isLuminanceReduced ? 0.32 : 0.10), lineWidth: 1)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(snapshot.temperature) degrees, low \(snapshot.low.map(String.init) ?? "unavailable"), high \(snapshot.high.map(String.init) ?? "unavailable"), wind from \(watchWindCardinal(snapshot)) at \(snapshot.wind) \(snapshot.windUnit), rain chance \(snapshot.rainChance) percent")
+        .accessibilityLabel("\(snapshot.temperature) degrees, low \(snapshot.low.map(String.init) ?? "unavailable"), high \(snapshot.high.map(String.init) ?? "unavailable"), wind from \(watchWindCardinal(snapshot)) at \(snapshot.wind) \(snapshot.windUnit), \(watchPrecipitationAccessibility(snapshot))")
     }
 }
 
@@ -518,13 +518,13 @@ private struct WatchRainProbability: View {
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
-    private var values: [Int] {
+    private var values: [Int?] {
         let hourly = NearcastVisualSignalModel.activeTimelineRows(
             snapshot,
             now: Date(),
             maximumHours: 4
-        ).compactMap(\.rainChance)
-        return hourly.isEmpty ? [snapshot.rainChance] : hourly
+        ).map(\.rainChance)
+        return hourly.isEmpty ? [snapshot.forecastRainChanceForDisplay] : hourly
     }
 
     var body: some View {
@@ -536,9 +536,11 @@ private struct WatchRainProbability: View {
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                     Capsule()
-                        .fill(isLuminanceReduced ? Color.white : nearcastCyan)
+                        .fill(value == nil
+                            ? Color.white.opacity(0.18)
+                            : (isLuminanceReduced ? Color.white : nearcastCyan))
                         .frame(maxWidth: .infinity)
-                        .frame(height: max(2, CGFloat(value) / 100 * CGFloat(useUltraLayout ? 18 : 16)))
+                        .frame(height: value.map { max(2, CGFloat($0) / 100 * CGFloat(useUltraLayout ? 18 : 16)) } ?? 2)
                 }
             }
             .frame(maxWidth: useUltraLayout ? 58 : 50)
@@ -552,12 +554,24 @@ private struct WatchRainProbability: View {
             Image(systemName: "drop.fill")
                 .font(.system(size: symbolSize, weight: .bold))
                 .foregroundStyle(isLuminanceReduced ? Color.white : nearcastCyan)
-            Text("\(snapshot.rainChance)%")
+            Text(snapshot.precipitationNowObserved == true
+                ? "Now"
+                : snapshot.forecastRainChanceForDisplay.map { "\($0)%" } ?? "--")
                 .font(.system(size: valueSize, weight: .bold, design: .rounded).monospacedDigit())
                 .fixedSize(horizontal: true, vertical: false)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
+}
+
+private func watchPrecipitationAccessibility(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if snapshot.precipitationNowObserved == true {
+        let guidance = snapshot.forecastRainChanceForDisplay.map { "earlier hourly forecast chance \($0) percent" }
+            ?? "hourly probability guidance unavailable"
+        return "\(snapshot.precipitationNowLabel ?? "Rain now"), observed; \(guidance)"
+    }
+    return snapshot.forecastRainChanceForDisplay.map { "rain chance \($0) percent" }
+        ?? "rain probability guidance unavailable"
 }
 
 private struct WatchBasicHoursPage: View {
@@ -735,19 +749,23 @@ private struct WatchHourlyRainBand: View {
 
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(hours) { hour in
-                    let chance = hour.rainChance ?? 0
+                    let chance = hour.rainChance
                     VStack(spacing: 2) {
                         Capsule()
-                            .fill(isLuminanceReduced ? Color.white : nearcastCyan)
+                            .fill(chance == nil
+                                ? Color.white.opacity(0.18)
+                                : (isLuminanceReduced ? Color.white : nearcastCyan))
                             .frame(width: useUltraLayout ? 8 : 7)
-                            .frame(height: max(3, CGFloat(chance) / 100 * CGFloat(useUltraLayout ? 17 : 14)))
-                        Text("\(chance)%")
+                            .frame(height: chance.map { max(3, CGFloat($0) / 100 * CGFloat(useUltraLayout ? 17 : 14)) } ?? 3)
+                        Text(chance.map { "\($0)%" } ?? "--")
                             .font(.system(size: useUltraLayout ? 13 : 12, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(chance >= 30 ? watchPrimary : watchMuted)
+                            .foregroundStyle((chance ?? 0) >= 30 ? watchPrimary : watchMuted)
                     }
                     .frame(minWidth: 0, maxWidth: .infinity)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(hour.offsetHours == 0 ? "Now" : hour.timeLabel), rain chance \(chance) percent")
+                    .accessibilityLabel(hour.precipitationObserved == true
+                        ? "\(hour.precipitationLabel ?? "Rain now"), observed. \(chance.map { "Earlier hourly forecast chance \($0) percent" } ?? "Hourly probability guidance unavailable")"
+                        : "\(hour.offsetHours == 0 ? "Now" : hour.timeLabel), \(chance.map { "rain chance \($0) percent" } ?? "rain probability guidance unavailable")")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -2481,6 +2499,11 @@ private func watchSnapshotForDisplay(
             projected.temperature = current.temperature ?? projected.temperature
             projected.feelsLike = current.feelsLike ?? projected.feelsLike
             projected.rainChance = current.rainChance ?? projected.rainChance
+            projected.forecastRainChance = current.rainChance
+            projected.precipitationNowLabel = current.precipitationLabel
+            projected.precipitationNowBasis = current.precipitationBasis
+            projected.precipitationNowObserved = current.precipitationObserved
+            projected.precipitationNowDetail = current.precipitationDetail
             projected.wind = current.wind ?? projected.wind
             projected.windDirection = current.windDirection ?? projected.windDirection
             projected.windLabel = nil
@@ -2768,7 +2791,7 @@ enum NearcastWatchWeatherClient {
                 intervalSeconds: current.interval,
                 cloudCover: current.cloudCover
             ) ?? current.weatherCode
-            updated.version = max(8, max(updated.version, fallback.version))
+            updated.version = max(9, max(updated.version, fallback.version))
             updated.placeName = place.displayLabel
             updated.placeTimezone = forecast.timezone ?? updated.placeTimezone
             updated.temperature = Int(current.temperature.rounded())
@@ -2779,6 +2802,11 @@ enum NearcastWatchWeatherClient {
             updated.wind = Int(current.windSpeed.rounded())
             updated.windDirection = Int(current.windDirection.rounded())
             updated.windLabel = nil
+            updated.precipitationNowLabel = nil
+            updated.precipitationNowBasis = nil
+            updated.precipitationNowObserved = false
+            updated.precipitationNowDetail = nil
+            updated.forecastRainChance = nil
             updated.isAvailable = true
             updated.weatherSavedAt = refreshedAt
             if resolution.meaningfullyMoved {
@@ -2795,6 +2823,7 @@ enum NearcastWatchWeatherClient {
                 let rows = hourly.rows(limit: 24, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
                 updated.timeline = rows
                 updated.rainChance = rows.first?.rainChance ?? fallback.rainChance
+                updated.forecastRainChance = rows.first?.rainChance
                 updated.uv = rows.first?.uv ?? fallback.uv
             }
             if let daily = forecast.daily {

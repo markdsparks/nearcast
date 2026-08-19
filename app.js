@@ -1,4 +1,4 @@
-const VERSION = "3.0.372";
+const VERSION = "3.0.373";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1963,10 +1963,33 @@ function hourlySkyCode(data, index) {
   });
 }
 
+function forecastProbabilityValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function forecastRainGuidanceCoverage(data, startIndex, hours) {
+  const probabilities = data?.hourly?.precipitation_probability;
+  const count = Math.max(0, Math.round(Number(hours) || 0));
+  if (!Array.isArray(probabilities) || startIndex < 0 || count < 1) {
+    return { complete: false, values: [] };
+  }
+  const values = Array.from({ length: count }, (_, offset) => (
+    forecastProbabilityValue(probabilities[startIndex + offset])
+  ));
+  return {
+    complete: values.length === count && values.every((value) => value !== null),
+    values
+  };
+}
+
 function hourlyPrecipProfile(data, index, options = {}) {
   const h = data?.hourly || {};
   const rawCode = h.weather_code?.[index];
-  const pop = h.precipitation_probability ? (h.precipitation_probability[index] || 0) : 0;
+  const forecastPop = forecastProbabilityValue(h.precipitation_probability?.[index]);
+  const pop = forecastPop ?? 0;
   const cloud = h.cloud_cover ? h.cloud_cover[index] : null;
   const precip = h.precipitation ? (h.precipitation[index] || 0) : 0;
   const rate = precipRateFromAmount(precip, options.intervalSeconds || 3600);
@@ -1984,6 +2007,8 @@ function hourlyPrecipProfile(data, index, options = {}) {
   return {
     rawCode,
     pop,
+    forecastPop,
+    forecastPopAvailable: forecastPop !== null,
     cloud,
     precip,
     rate,
@@ -2011,8 +2036,17 @@ function dailyPrecipProfile(data, dayIndex, options = {}) {
   const dailyPop = scopedIndices
     ? Math.max(0, ...scopedProfiles.map((profile) => Number(profile.pop || 0)))
     : daily.precipitation_probability_max?.[dayIndex] || 0;
-  const currentTruth = state.weatherTruth?.data === data ? state.weatherTruth : null;
-  const activeNow = dayIndex === forecastDailyIndex(data) && currentTruth?.precip?.phase === "active";
+  const isToday = dayIndex === forecastDailyIndex(data);
+  const suppliedTruth = options.truth?.data === data ? options.truth : null;
+  const currentTruth = isToday
+    ? suppliedTruth || (data === state.forecast
+      ? (state.weatherTruth?.data === data ? state.weatherTruth : weatherTruth(data))
+      : buildWeatherTruth(data))
+    : null;
+  const currentHour = isToday && currentHourlyIndex(data) >= 0
+    ? forecastHourPresentation(data, currentHourlyIndex(data), { isCurrent: true, truth: currentTruth })
+    : null;
+  const activeNow = Boolean(currentHour?.precipDisplay?.isActiveNow);
   let maxPop = dailyPop;
   let count20 = 0;
   let count30 = 0;
@@ -2074,7 +2108,7 @@ function dailyPrecipProfile(data, dayIndex, options = {}) {
   const amountPrimary = dailyAmount >= thresholds.dailyAmount && maxPop >= HOURLY_PRECIP_SUPPORTED_POP;
   const primary = Boolean(activeNow || count60 >= 1 || count40 >= 2 || count30 >= 3 || amountPrimary);
   const sustained = Boolean(activeNow || count60 >= 2 || count40 >= 3 || count30 >= 4 || amountPrimary);
-  if (activeNow && isPrecipCode(currentTruth?.nowCode)) {
+  if (activeNow && (isPrecipCode(currentTruth?.nowCode) || isThunderCode(currentTruth?.nowCode))) {
     bestCode = currentTruth.nowCode;
   }
   if (primary && bestCode == null) {
@@ -2273,14 +2307,16 @@ function nowPrecipSignal(data = state.forecast) {
   const current = canonicalCurrentSnapshot(data);
   const hourly = data?.hourly || {};
   const currentIndex = currentHourlyIndex(data);
-  const hourlyPop = currentIndex >= 0 ? (hourly.precipitation_probability?.[currentIndex] || 0) : 0;
+  const hourlyPop = currentIndex >= 0
+    ? forecastProbabilityValue(hourly.precipitation_probability?.[currentIndex])
+    : null;
   const signal = {
     isWetNow: false,
     isSnow: false,
     rate: 0,
     amount: 0,
     code: null,
-    chance: hourlyPop,
+    chance: hourlyPop ?? 0,
     label: "",
     detail: "",
     nowcast: null,
@@ -2298,7 +2334,10 @@ function nowPrecipSignal(data = state.forecast) {
       signal.isSnow = isSnow || isSnowCode(measuredCode);
       signal.source = source;
     }
-    signal.chance = Math.max(signal.chance, chance || 0, 100);
+    // Observation certainty and forecast probability are different claims.
+    // Active precipitation makes the current state certain, but it must not
+    // rewrite the provider's probability guidance to 100%.
+    signal.chance = Math.max(signal.chance, chance || 0);
   };
 
   // Open-Meteo current and 15-minute values are modeled guidance. They can
@@ -2346,7 +2385,6 @@ function applyRadarPrecipSignal(signal, data = state.forecast, radar = radarSign
   signal.rate = Math.max(signal.rate || 0, precipRateThresholds(data).measurable);
   signal.code = strongerPrecipCode(signal.code, radarCode);
   signal.isSnow = signal.isSnow || isSnowCode(radarCode);
-  signal.chance = Math.max(signal.chance || 0, 100);
   signal.label = weatherCodes[signal.code] || (signal.isSnow ? "Snow" : "Rain");
   signal.detail = radarObservedPrecipDetail(radarCode, "over this place");
   signal.source = "radar-current";
@@ -2709,9 +2747,12 @@ function weatherTruthReceipt(display, nowPrecip, data = state.forecast, precipTr
   }
 
   if (display.rawCode !== display.code && isPrecipCode(display.rawCode)) {
+    const probabilityCopy = display.pop === null
+      ? "hourly rain probability guidance is unavailable"
+      : `rain chance is ${display.pop}%`;
     return {
       short: `${label} · low precip confidence`,
-      detail: `Hourly code suggested ${String(weatherCodes[display.rawCode] || "precipitation").toLowerCase()}, but rain chance is ${display.pop || 0}% and the latest current evidence does not indicate active precipitation.`,
+      detail: `Hourly code suggested ${String(weatherCodes[display.rawCode] || "precipitation").toLowerCase()}, but ${probabilityCopy} and the latest current evidence does not indicate active precipitation.`,
       source: "gated-hourly",
       confidence: "mixed"
     };
@@ -2790,7 +2831,7 @@ function buildWeatherTruth(data = state.forecast) {
 
   if (currentIndex >= 0 && hourly.weather_code?.[currentIndex] != null) {
     const rawCode = hourly.weather_code[currentIndex];
-    const pop = hourly.precipitation_probability ? (hourly.precipitation_probability[currentIndex] || 0) : null;
+    const pop = forecastProbabilityValue(hourly.precipitation_probability?.[currentIndex]);
     const cloud = hourly.cloud_cover ? hourly.cloud_cover[currentIndex] : current.cloud_cover;
     const precip = hourly.precipitation?.[currentIndex] || 0;
     const baseCode = effectiveWeatherCode(rawCode, pop, cloud, 0, {
@@ -2817,11 +2858,16 @@ function buildWeatherTruth(data = state.forecast) {
       sceneCode,
       nowCode,
       rawCode,
-      pop: Math.max(pop || 0, precipTruth.chance || 0),
+      // `pop` is always provider forecast guidance. Observed rain lives in
+      // precipTruth/nowPrecip and never mutates this probability.
+      pop,
+      forecastPop: pop,
       cloud,
       isDay: hourly.is_day ? Boolean(hourly.is_day[currentIndex]) : fallbackIsDay,
       hourlyIndex: currentIndex,
-      precip: Math.max(precip, nowPrecip.amount || 0, current.precipitation || 0),
+      precip,
+      forecastPrecip: precip,
+      observedPrecip: Math.max(nowPrecip.amount || 0, current.precipitation || 0),
       nowPrecip,
       precipTruth,
       stormPotential: hasThunderPotential(rawCode, pop, nowCode, precip, data)
@@ -2844,11 +2890,14 @@ function buildWeatherTruth(data = state.forecast) {
       sceneCode,
       nowCode,
       rawCode: current.weather_code,
-      pop: precipTruth.chance || null,
+      pop: null,
+      forecastPop: null,
       cloud: current.cloud_cover,
       isDay: fallbackIsDay,
       hourlyIndex: -1,
-      precip: Math.max(nowPrecip.amount || 0, current.precipitation || 0),
+      precip: 0,
+      forecastPrecip: 0,
+      observedPrecip: Math.max(nowPrecip.amount || 0, current.precipitation || 0),
       nowPrecip,
       precipTruth,
       stormPotential: false
@@ -2879,7 +2928,12 @@ function buildWeatherTruth(data = state.forecast) {
     sceneCode: display.sceneCode,
     label: convective?.level === "likely" ? convective.label : (weatherCodes[display.nowCode] || "Weather"),
     isDay: display.isDay,
-    rainChance: display.precipTruth?.chance ?? (display.pop ?? currentRainChanceFromHourly(data)),
+    // Compatibility name retained, but its meaning is deliberately narrow:
+    // probability guidance for the current forecast hour, not certainty that
+    // an observation is happening.
+    rainChance: display.forecastPop ?? currentRainChanceFromHourly(data),
+    forecastRainChance: display.forecastPop ?? currentRainChanceFromHourly(data),
+    nearTermRainChance: display.precipTruth?.chance ?? (display.forecastPop ?? currentRainChanceFromHourly(data)),
     nowPrecip,
     precip: display.precipTruth,
     convective,
@@ -2904,9 +2958,9 @@ function currentDisplayCondition(data = state.forecast) {
 function currentRainChanceFromHourly(data = state.forecast) {
   const chances = data?.hourly?.precipitation_probability || [];
   const currentIndex = currentHourlyIndex(data);
-  if (currentIndex >= 0) return chances[currentIndex] ?? 0;
+  if (currentIndex >= 0) return forecastProbabilityValue(chances[currentIndex]);
   const hour = forecastCurrentHour(data);
-  return chances[hour] ?? chances[0] ?? data?.daily?.precipitation_probability_max?.[forecastDailyIndex(data)] ?? 0;
+  return forecastProbabilityValue(chances[hour] ?? chances[0]);
 }
 
 // Rough severity ranking so a daily headline can feature the most significant
@@ -2944,12 +2998,128 @@ function forecastStoryCondition(code) {
   return weatherCodes[code] || "Mixed conditions";
 }
 
+function forecastPrecipNoun(kind) {
+  return kind === "snow" ? "snow" : "rain";
+}
+
+function forecastPrecipGuidanceLabel(probability, kind) {
+  return `${Math.max(0, Math.min(100, Math.round(Number(probability) || 0)))}% ${forecastPrecipNoun(kind)}`;
+}
+
+// Resolve the precipitation claim for one hour without collapsing two very
+// different facts into a single percentage. Radar can establish what is
+// happening now; PoP remains the forecast guidance that existed for the hour.
+// Surfaces should use displayLabel/ariaLabel for copy and forecastProbability
+// only when they explicitly mean forecast chance.
+function forecastHourPrecipDisplay(data, profile, options = {}) {
+  const isCurrent = Boolean(options.isCurrent);
+  const truth = isCurrent && options.truth?.data === data ? options.truth : null;
+  const precipTruth = isCurrent ? truth?.precip || null : null;
+  const forecastPopAvailable = options.forecastPopAvailable !== false;
+  const forecastPrecipAvailable = options.forecastPrecipAvailable !== false;
+  const forecastProbability = forecastPopAvailable
+    ? Math.max(0, Math.min(100, Math.round(Number(profile?.pop) || 0)))
+    : null;
+  const forecastAmount = forecastPrecipAvailable ? Math.max(0, Number(profile?.precip) || 0) : null;
+  const claimCode = precipTruth?.textCode ?? precipTruth?.visualCode ?? options.code ?? profile?.code ?? profile?.rawCode;
+  const kind = precipKindFromCode(claimCode);
+  const noun = forecastPrecipNoun(kind);
+  const nounTitle = capitalize(noun);
+  const forecastLabel = forecastPopAvailable
+    ? forecastPrecipGuidanceLabel(forecastProbability, kind)
+    : `${nounTitle} chance unavailable`;
+  const phase = isCurrent ? (precipTruth?.phase || "forecast") : "forecast";
+  const isActiveNow = isCurrent && phase === "active";
+  const isObservedNow = Boolean(
+    isActiveNow &&
+    (precipTruth?.basis === "observed" || precipTruth?.source === "radar-current")
+  );
+  const isImminent = isCurrent && phase === "imminent";
+  const guidanceDetail = forecastPopAvailable
+    ? `Hourly forecast guidance for this hour is ${forecastLabel}.`
+    : "Hourly probability guidance is unavailable for this hour.";
+  let displayMode = "forecast-probability";
+  let displayLabel = forecastLabel;
+  let ariaLabel = `${forecastLabel} in hourly forecast guidance`;
+  let detail = isCurrent
+    ? guidanceDetail
+    : forecastPopAvailable
+      ? `${capitalize(forecastLabel)} in hourly forecast guidance.`
+      : guidanceDetail;
+
+  if (isObservedNow) {
+    const observedGuidanceDetail = forecastPopAvailable
+      ? `Earlier hourly guidance was ${forecastLabel}.`
+      : "Earlier hourly probability guidance is unavailable.";
+    displayMode = "observed-now";
+    displayLabel = `${nounTitle} now`;
+    ariaLabel = `${nounTitle} observed now. ${observedGuidanceDetail}`;
+    detail = `${String(precipTruth?.detail || `${nounTitle} is observed on radar now.`).trim().replace(/[.!?]+$/, "")}. ${observedGuidanceDetail}`;
+  } else if (isActiveNow) {
+    displayMode = "forecast-now";
+    displayLabel = `${nounTitle} indicated now`;
+    ariaLabel = `${nounTitle} indicated now by near-term forecast guidance. ${guidanceDetail}`;
+    detail = `${String(precipTruth?.detail || `${nounTitle} is indicated now by near-term forecast guidance.`).trim().replace(/[.!?]+$/, "")}. ${guidanceDetail}`;
+  } else if (isImminent) {
+    displayMode = "forecast-soon";
+    displayLabel = `${nounTitle} soon`;
+    ariaLabel = `${nounTitle} forecast soon. ${guidanceDetail}`;
+    detail = `${String(precipTruth?.detail || `${nounTitle} is forecast soon.`).trim().replace(/[.!?]+$/, "")}. ${guidanceDetail}`;
+  } else if (isCurrent && phase === "nearby") {
+    displayMode = "radar-nearby";
+    displayLabel = `${nounTitle} nearby`;
+    ariaLabel = `${nounTitle} observed nearby on radar, but not over this place. ${guidanceDetail}`;
+    detail = `${String(precipTruth?.detail || `${nounTitle} is nearby on radar, but not over this place.`).trim().replace(/[.!?]+$/, "")}. ${guidanceDetail}`;
+  }
+
+  const observation = isObservedNow ? {
+    kind,
+    code: claimCode,
+    label: nounTitle,
+    detail: precipTruth?.detail || `${nounTitle} is observed on radar now.`,
+    source: precipTruth?.source || "radar-current",
+    basis: "observed",
+    amount: Math.max(0, Number(truth?.display?.observedPrecip) || 0)
+  } : null;
+
+  return {
+    phase,
+    basis: isObservedNow ? "observed" : (precipTruth?.basis || "forecast"),
+    source: precipTruth?.source || "hourly-forecast",
+    confidence: precipTruth?.confidence || "forecast",
+    isObservedNow,
+    isActiveNow,
+    isImminent,
+    kind,
+    code: claimCode,
+    label: nounTitle,
+    displayMode,
+    displayLabel,
+    ariaLabel,
+    detail,
+    forecastProbability,
+    forecastPopAvailable,
+    forecastLabel,
+    amount: forecastAmount,
+    forecastPrecipAvailable,
+    observation
+  };
+}
+
 function forecastHourPresentation(data, index, options = {}) {
   const h = data?.hourly || {};
   const activeIndex = currentHourlyIndex(data);
   const isCurrent = options.isCurrent ?? index === activeIndex;
-  const truth = options.truth || (isCurrent && data === state.forecast ? weatherTruth(data) : null);
+  const suppliedTruth = options.truth?.data === data ? options.truth : null;
+  const truth = isCurrent
+    ? suppliedTruth || (data === state.forecast ? weatherTruth(data) : buildWeatherTruth(data))
+    : null;
   const profile = hourlyPrecipProfile(data, index);
+  const rawForecastPop = h.precipitation_probability?.[index];
+  const rawForecastPrecip = h.precipitation?.[index];
+  const forecastPopValue = forecastProbabilityValue(rawForecastPop);
+  const forecastPopAvailable = forecastPopValue !== null;
+  const forecastPrecipAvailable = rawForecastPrecip !== null && rawForecastPrecip !== undefined && rawForecastPrecip !== "" && Number.isFinite(Number(rawForecastPrecip));
   const current = isCurrent ? (truth?.current || canonicalCurrentSnapshot(data)) : null;
   const baseCode = isCurrent && truth
     ? (truth.nowCode ?? truth.code ?? profile.code)
@@ -2961,12 +3131,15 @@ function forecastHourPresentation(data, index, options = {}) {
       : null;
   const code = convective?.level === "likely" ? 95 : baseCode;
   const rawCode = isCurrent && truth ? truth.display?.rawCode ?? profile.rawCode : profile.rawCode;
-  const pop = isCurrent && truth
-    ? Math.max(profile.pop || 0, truth.display?.pop || 0, truth.precip?.chance || 0)
-    : profile.pop;
-  const precip = isCurrent && truth
-    ? Math.max(profile.precip || 0, truth.display?.precip || 0)
-    : profile.precip;
+  const forecastPop = forecastPopValue ?? 0;
+  const forecastPrecip = Math.max(0, Number(profile.precip) || 0);
+  const precipDisplay = forecastHourPrecipDisplay(data, profile, {
+    isCurrent,
+    truth,
+    code,
+    forecastPopAvailable,
+    forecastPrecipAvailable
+  });
   const temperature = isCurrent
     ? Number(current?.temperature_2m ?? h.temperature_2m?.[index])
     : Number(h.temperature_2m?.[index]);
@@ -2983,7 +3156,7 @@ function forecastHourPresentation(data, index, options = {}) {
     ? Boolean(truth.isDay)
     : h.is_day ? Boolean(h.is_day[index]) : true;
   const family = forecastConditionFamily(code);
-  const modelStormPotential = hasThunderPotential(rawCode, pop, code, precip, data);
+  const modelStormPotential = hasThunderPotential(rawCode, forecastPop, code, forecastPrecip, data);
   return {
     index,
     time: h.time?.[index] || "",
@@ -2996,8 +3169,22 @@ function forecastHourPresentation(data, index, options = {}) {
     storyLabel: forecastStoryCondition(code),
     family,
     precipKind: precipKindFromCode(code),
-    pop: Math.max(0, Math.min(100, Math.round(Number(pop) || 0))),
-    precip: Math.max(0, Number(precip) || 0),
+    // Compatibility aliases remain, but both are forecast-only values.
+    pop: forecastPop,
+    forecastPop,
+    forecastPopAvailable,
+    precip: forecastPrecip,
+    forecastPrecip,
+    forecastPrecipAvailable,
+    precipDisplay,
+    observation: precipDisplay.observation,
+    forecast: {
+      probability: forecastPopAvailable ? forecastPop : null,
+      amount: forecastPrecipAvailable ? forecastPrecip : null,
+      code: profile.code,
+      rawCode: profile.rawCode,
+      source: "hourly-forecast"
+    },
     precipPrimary: isCurrent && truth ? truth.precip?.phase === "active" : profile.primary,
     stormPotential: isCurrent && truth
       ? Boolean(truth.display?.stormPotential || convective)
@@ -3145,10 +3332,13 @@ function dailyTimingPhrase(data, dayIndex) {
   return "";
 }
 
-function forecastDayPresentation(data, dayIndex) {
+function forecastDayPresentation(data, dayIndex, options = {}) {
   const primaryIndices = dailyRelevantHourlyIndices(data, dayIndex, { primary: true });
   const relevantIndices = dailyRelevantHourlyIndices(data, dayIndex);
-  const precipProfile = dailyPrecipProfile(data, dayIndex, { indices: primaryIndices });
+  const precipProfile = dailyPrecipProfile(data, dayIndex, {
+    indices: primaryIndices,
+    truth: options.truth
+  });
   const skyCounts = {};
   primaryIndices.forEach((index) => {
     const code = hourlySkyCode(data, index);
@@ -3161,7 +3351,7 @@ function forecastDayPresentation(data, dayIndex) {
   const code = precipProfile.sustained && precipProfile.code != null
     ? precipProfile.code
     : modalSky != null ? Number(modalSky) : fallbackCode;
-  const materialEvent = forecastMaterialEvent(data, { dayIndex });
+  const materialEvent = forecastMaterialEvent(data, { dayIndex, truth: options.truth });
   const timing = materialEvent
     ? forecastMaterialEventDailyTiming(data, materialEvent)
     : dailyTimingPhrase(data, dayIndex);
@@ -9769,7 +9959,13 @@ function renderForecastCurrentReadouts(ctx) {
   els.rainChance.textContent = ctx.truth.precip?.phase === "active"
     ? "Now"
     : ctx.truth.precip?.phase === "nearby" ? "Nearby"
-      : ctx.truth.precip?.phase === "imminent" ? "Soon" : `${ctx.firstRainChance || 0}%`;
+      : ctx.truth.precip?.phase === "imminent" ? "Soon"
+        : ctx.firstRainChance == null ? "--" : `${ctx.firstRainChance}%`;
+  if (ctx.firstRainChance == null && !["active", "nearby", "imminent"].includes(ctx.truth.precip?.phase)) {
+    els.rainChance.setAttribute("aria-label", "Hourly rain probability guidance unavailable");
+  } else {
+    els.rainChance.removeAttribute("aria-label");
+  }
   els.wind.textContent = `${Math.round(ctx.current.wind_speed_10m)} ${ctx.windUnit}`;
   els.uv.textContent = currentUvIndex(ctx.data, ctx.todayIndex);
   els.humidity.textContent = `${ctx.current.relative_humidity_2m ?? "--"}%`;
@@ -10769,7 +10965,9 @@ function buildForecastPresentation(data, options = {}) {
   const days = [];
   const dailyCount = data?.daily?.time?.length || 0;
   for (let index = Math.max(0, todayIndex); index < dailyCount; index += 1) {
-    days.push(forecastDayPresentation(data, index));
+    days.push(forecastDayPresentation(data, index, {
+      truth: index === todayIndex ? truth : null
+    }));
   }
   const story = buildForecastStory(data, tempUnit, windUnit, truth);
   const materialEvent = forecastMaterialEvent(data, { ...options, truth, tempUnit, windUnit, story });
@@ -10955,7 +11153,14 @@ function rainGlance(data, currentChance, truth = weatherTruth(data)) {
   }
 
   const start = forecastCurrentHour(data);
-  const maxToday = Math.max(...(data.hourly.precipitation_probability || []).slice(start, start + 12).filter((value) => Number.isFinite(value)), 0);
+  const availableChances = (data.hourly.precipitation_probability || [])
+    .slice(start, start + 12)
+    .map(forecastProbabilityValue)
+    .filter((value) => value !== null);
+  if (currentChance === null && !availableChances.length) {
+    return { headline: "rain guidance unavailable", context: "Hourly probability unavailable" };
+  }
+  const maxToday = Math.max(...availableChances, 0);
   if (maxToday >= 20) return { headline: "rain chances stay low", context: `Peak ${maxToday}% nearby` };
   return { headline: "staying dry nearby", context: "No meaningful rain nearby" };
 }
@@ -12273,6 +12478,10 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
     const todayIndex = forecastDailyIndex(data);
     const current = truth?.current || canonicalCurrentSnapshot(data);
+    const currentHourIndex = currentHourlyIndex(data);
+    const currentHour = currentHourIndex >= 0
+      ? forecastHourPresentation(data, currentHourIndex, { isCurrent: true, truth })
+      : null;
     const items = launchSummaryItems(data, tempUnit, windUnit, truth);
     const item = (index, fallbackLabel, fallbackValue) => items[index] || { label: fallbackLabel, value: fallbackValue };
     const high = data.daily?.temperature_2m_max?.[todayIndex];
@@ -12297,7 +12506,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     const forecastSavedAt = provenance.savedAt;
     const snapshotSavedAt = (forecastSavedAt || Date.now()) / 1000;
     const snapshot = {
-      version: 8,
+      version: 9,
       savedAt: snapshotSavedAt,
       placeName: widgetPlaceDisplayName,
       placeTimezone: String(data?.timezone || "").trim() || null,
@@ -12308,7 +12517,17 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       condition: truth?.label || weatherCodes[truth?.nowCode] || "Weather",
       conditionCode: nativeWeatherCode(truth?.nowCode ?? current.weather_code ?? 0),
       isDay: Boolean(truth?.isDay),
-      rainChance: Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0),
+      // Native companions continue to receive PoP as a forecast probability;
+      // the adjacent precipitation fields carry the distinct current claim.
+      // `rainChance` stays populated for old native decoders. V9-aware
+      // surfaces use optional `forecastRainChance`, where null means the
+      // provider did not supply probability guidance for this hour.
+      rainChance: Math.round(currentHour?.forecast?.probability ?? 0),
+      precipitationNowLabel: currentHour?.precipDisplay?.displayLabel || null,
+      precipitationNowBasis: currentHour?.precipDisplay?.basis || null,
+      precipitationNowObserved: Boolean(currentHour?.precipDisplay?.isObservedNow),
+      precipitationNowDetail: currentHour?.precipDisplay?.detail || null,
+      forecastRainChance: currentHour?.forecast?.probability ?? null,
       wind: Math.round(current.wind_speed_10m || 0),
       windUnit,
       windDirection,
@@ -12398,6 +12617,7 @@ function nativeWidgetTimeline(data = state.forecast) {
       truth: index === startIndex ? (state.weatherTruth || weatherTruth(data)) : null
     });
     const roundOrNull = (value) => {
+      if (value === null || value === undefined || value === "") return null;
       const number = Number(value);
       return Number.isFinite(number) ? Math.round(number) : null;
     };
@@ -12407,7 +12627,11 @@ function nativeWidgetTimeline(data = state.forecast) {
       timeLabel: shortClock(times[index]),
       temperature: roundOrNull(presentation.temperature),
       feelsLike: roundOrNull(presentation.feels),
-      rainChance: roundOrNull(presentation.pop),
+      rainChance: roundOrNull(presentation.forecast.probability),
+      precipitationLabel: presentation.precipDisplay?.displayLabel || null,
+      precipitationBasis: presentation.precipDisplay?.basis || null,
+      precipitationObserved: Boolean(presentation.precipDisplay?.isObservedNow),
+      precipitationDetail: presentation.precipDisplay?.detail || null,
       wind: roundOrNull(presentation.wind),
       windGust: roundOrNull(presentation.gust),
       windDirection: normalizeWindDegrees(hourly.wind_direction_10m?.[index]),
@@ -12549,13 +12773,14 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
   for (let index = 0; index < minutelyTimes.length; index += 1) {
     const ms = parseForecastTimestamp(minutelyTimes[index], data);
     if (!Number.isFinite(ms) || ms < now - 5 * 60 * 1000 || ms > end) continue;
-    const pop = Number(minutely.precipitation_probability?.[index] || 0);
+    const pop = forecastProbabilityValue(minutely.precipitation_probability?.[index]);
     const precip = Number(minutely.precipitation?.[index] || 0);
-    const storm = Boolean(truth?.display?.stormPotential) && (pop >= 35 || precip > 0);
-    const meaningfulRain = pop >= 55 || precip >= 0.03;
+    const popForScoring = pop ?? 0;
+    const storm = Boolean(truth?.display?.stormPotential) && (popForScoring >= 35 || precip > 0);
+    const meaningfulRain = popForScoring >= 55 || precip >= 0.03;
     if (!storm && !meaningfulRain) continue;
     const etaMinutes = Math.max(0, Math.round((ms - now) / 60000));
-    const score = (storm ? 1000 : 0) + pop * 10 + precip * 500 - etaMinutes * 3;
+    const score = (storm ? 1000 : 0) + popForScoring * 10 + precip * 500 - etaMinutes * 3;
     if (!best || score > best.score) {
       best = { index, ms, pop, rawCode: Number(truth?.nowCode ?? truth?.code ?? 61), precip, storm, etaMinutes, score, source: "minutely_15" };
     }
@@ -12565,14 +12790,15 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     const ms = parseForecastTimestamp(times[index], data);
     if (!Number.isFinite(ms) || ms < now - 10 * 60 * 1000 || ms > end) continue;
     const presentation = forecastHourPresentation(data, index, { isCurrent: index === currentHourlyIndex(data), truth });
-    const pop = presentation.pop;
+    const pop = presentation.forecast.probability;
+    const popForScoring = pop ?? 0;
     const rawCode = Number(presentation.code ?? 0);
     const precip = presentation.precip;
     const storm = presentation.stormPotential || isThunderCode(presentation.code);
-    const meaningfulRain = pop >= 65 || precip >= 0.8;
+    const meaningfulRain = popForScoring >= 65 || precip >= 0.8;
     if (!storm && !meaningfulRain) continue;
     const etaMinutes = Math.max(0, Math.round((ms - now) / 60000));
-    const score = (storm ? 1000 : 0) + pop * 10 + precip * 100 - etaMinutes;
+    const score = (storm ? 1000 : 0) + popForScoring * 10 + precip * 100 - etaMinutes;
     if (!best || score > best.score) {
       best = { index, ms, pop, rawCode, precip, storm, etaMinutes, score, source: "hourly" };
     }
@@ -12583,7 +12809,7 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     best = {
       index: currentHourlyIndex(data),
       ms: now,
-      pop: Math.round(truth?.rainChance ?? currentRainChance(data) ?? 0),
+      pop: forecastProbabilityValue(truth?.forecastRainChance ?? currentRainChance(data)),
       rawCode: Number(truth?.nowCode ?? truth?.code ?? 95),
       precip: Number(data?.current?.precipitation || 0),
       storm: true,
@@ -12599,23 +12825,27 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
   const status = best.etaMinutes <= 5
     ? `${stormName} at ${city}`
     : `${stormName} near ${city}`;
+  const probabilityDetail = best.pop === null
+    ? "Rain probability guidance is unavailable."
+    : `Rain chance ${best.pop}%.`;
   const detail = best.storm
     ? best.etaMinutes <= 5
-      ? `Thunder is possible now. Rain chance ${best.pop}%.`
-      : `Thunder possible in about ${best.etaMinutes} min. Rain chance ${best.pop}%.`
+      ? `Thunder is possible now. ${probabilityDetail}`
+      : `Thunder possible in about ${best.etaMinutes} min. ${probabilityDetail}`
     : best.etaMinutes <= 5
-      ? `Rain is likely now. Chance ${best.pop}%.`
-      : `Rain possible in about ${best.etaMinutes} min. Chance ${best.pop}%.`;
+      ? `Rain is indicated now. ${probabilityDetail}`
+      : `Rain possible in about ${best.etaMinutes} min. ${probabilityDetail}`;
+  const popForScoring = best.pop ?? 0;
   const confidence = best.storm
-    ? best.pop >= 50 || best.etaMinutes <= 15 ? "Likely" : "Watching"
-    : best.pop >= 75 ? "Likely" : "Possible";
+    ? popForScoring >= 50 || best.etaMinutes <= 15 ? "Likely" : "Watching"
+    : popForScoring >= 75 || best.precip >= 0.8 ? "Likely" : "Possible";
   const route = nativeStormActivityUrl(place);
   const severity = best.storm
-    ? best.pop >= 80 || best.precip >= 1.6 ? 4 : 3
-    : best.pop >= 75 || best.precip >= 0.8 ? 2 : 1;
+    ? popForScoring >= 80 || best.precip >= 1.6 ? 4 : 3
+    : popForScoring >= 75 || best.precip >= 0.8 ? 2 : 1;
   const confidenceValue = best.storm
-    ? Math.max(0.52, Math.min(0.92, (best.pop / 100) * 0.72 + (best.etaMinutes <= 15 ? 0.18 : 0.06)))
-    : Math.max(0.42, Math.min(0.82, best.pop / 100));
+    ? Math.max(0.52, Math.min(0.92, (popForScoring / 100) * 0.72 + (best.etaMinutes <= 15 ? 0.18 : 0.06)))
+    : Math.max(0.42, Math.min(0.82, popForScoring / 100));
 
   const arrivalAtEpoch = Math.round(best.ms / 1000);
   const expiresAtEpoch = Math.round(Math.max(best.ms + 45 * 60 * 1000, now + 30 * 60 * 1000) / 1000);
@@ -12624,7 +12854,7 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     key: [
       place.id || placeName,
       best.index,
-      Math.round(best.pop / 5) * 5,
+      best.pop === null ? "unknown" : Math.round(best.pop / 5) * 5,
       best.storm ? "storm" : "rain"
     ].join(":"),
     placeName,
@@ -14096,6 +14326,18 @@ function launchNextItem(data, options = {}) {
     };
   }
 
+  const currentIndex = currentHourlyIndex(data);
+  if (!forecastRainGuidanceCoverage(data, currentIndex, 2).complete) {
+    const value = "Rain guidance unavailable";
+    return {
+      label: "Next",
+      value,
+      tone: "neutral",
+      rainSoon: false,
+      target: launchDetailTarget(data, "Next", value, forecastNowMs(data), { hours: 2 })
+    };
+  }
+
   const value = "Dry next 2 hours";
   return {
     label: "Next",
@@ -14471,6 +14713,10 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
   const inch = state.unit === "fahrenheit";
   const truth = data === state.forecast ? (state.weatherTruth || weatherTruth(data)) : buildWeatherTruth(data);
   const cur = truth.current || canonicalCurrentSnapshot(data);
+  const currentHourIndex = currentHourlyIndex(data);
+  const currentHour = currentHourIndex >= 0
+    ? forecastHourPresentation(data, currentHourIndex, { isCurrent: true, truth })
+    : null;
   const provenance = forecastProvenance(data);
   const materialEvent = forecastMaterialEvent(data, { truth });
   const daily = data.daily;
@@ -14511,7 +14757,11 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
     next12h.push({
       t: shortClock(hourly.time[i]),
       temp: r(hour.temperature),
-      rain: hour.pop,
+      rain: hour?.forecast?.probability ?? hour?.forecastPop ?? null,
+      rainGuidance: hour?.forecast?.probability ?? hour?.forecastPop ?? null,
+      precipitation: hour?.precipDisplay?.displayLabel || hour?.label || null,
+      precipitationBasis: hour?.precipDisplay?.basis || "forecast",
+      precipitationObserved: Boolean(hour?.precipDisplay?.isObservedNow),
       sky: hour.label
     });
   }
@@ -14556,7 +14806,12 @@ function buildAIContext(data = state.forecast, place = state.activePlace, alerts
       wind: r(cur.wind_speed_10m),
       gust: r(cur.wind_gusts_10m),
       windDir: dir(cur.wind_direction_10m),
-      isDay: Boolean(truth.isDay)
+      isDay: Boolean(truth.isDay),
+      precipitation: currentHour?.precipDisplay?.displayLabel || null,
+      precipitationBasis: currentHour?.precipDisplay?.basis || null,
+      precipitationObserved: Boolean(currentHour?.precipDisplay?.isObservedNow),
+      rainChanceGuidance: currentHour?.forecast?.probability ?? null,
+      precipitationDetail: currentHour?.precipDisplay?.detail || null
     },
     nowcast,
     nextMeaningfulEvent: materialEvent ? {
@@ -14834,10 +15089,11 @@ function savedHourlyHeroMetric() {
   return HOURLY_HERO_METRICS.has(saved) ? saved : "temperature";
 }
 
-function hourlyMetricValue(data, index, metric, isCurrent = false) {
+function hourlyMetricValue(data, index, metric, isCurrent = false, truth = null, presentation = null) {
   const current = isCurrent ? canonicalCurrentSnapshot(data) : null;
   if (metric === "precipitation") {
-    return Math.max(0, Math.min(100, Math.round(Number(data.hourly.precipitation_probability?.[index]) || 0)));
+    const hour = presentation || forecastHourPresentation(data, index, { isCurrent, truth });
+    return hour.forecastPopAvailable ? hour.forecastPop : null;
   }
   if (metric === "uv") {
     return Math.max(0, Math.round(Number(data.hourly.uv_index?.[index]) || 0));
@@ -14863,8 +15119,9 @@ function hourlyTrendGeometry(values, metric) {
   const width = Math.max(pitch, values.length * pitch - 4);
   const top = 8;
   const bottom = 42;
-  let min = Math.min(...values);
-  let max = Math.max(...values);
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  let min = finiteValues.length ? Math.min(...finiteValues) : 0;
+  let max = finiteValues.length ? Math.max(...finiteValues) : 1;
   if (metric === "precipitation") {
     min = 0;
     max = 100;
@@ -14880,16 +15137,36 @@ function hourlyTrendGeometry(values, metric) {
     max = midpoint + 2.5;
   }
   const y = (value) => bottom - ((value - min) / Math.max(1, max - min)) * (bottom - top);
-  const points = values.map((value, position) => ({ x: 39 + pitch * position, y: y(value) }));
+  const points = values.map((value, position) => ({
+    x: 39 + pitch * position,
+    y: Number.isFinite(value) ? y(value) : null,
+    available: Number.isFinite(value)
+  }));
   return { width, points };
 }
 
-function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windUnit }) {
+function hourlyTrendSegments(points) {
+  return points.reduce((segments, point, index) => {
+    if (!point.available) return segments;
+    const previous = points[index - 1];
+    if (!segments.length || !previous?.available) segments.push([]);
+    segments.at(-1).push(point);
+    return segments;
+  }, []);
+}
+
+function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windUnit, precipDisplay = null, isCurrent = false }) {
   if (metric === "precipitation") {
+    const currentClaim = isCurrent && precipDisplay?.displayMode !== "forecast-probability";
+    const guidanceAvailable = precipDisplay?.forecastPopAvailable !== false;
     return {
-      trendLabel: `${value}%`,
-      aria: `${value}% precipitation`,
-      secondary: `${temp}° temp`,
+      trendLabel: currentClaim ? precipDisplay.displayLabel : guidanceAvailable ? `${value}%` : "--",
+      aria: currentClaim
+        ? precipDisplay.ariaLabel
+        : guidanceAvailable ? `${value}% precipitation forecast guidance` : "Precipitation forecast guidance unavailable",
+      secondary: currentClaim
+        ? guidanceAvailable ? `${value}% chance` : "Chance --"
+        : `${temp}° temp`,
       contextAria: "",
       temperatureColor: false
     };
@@ -14925,7 +15202,10 @@ function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windU
   return {
     trendLabel: `${value}°`,
     aria: `${value} degrees`,
-    secondary: `${rainChance}% rain`,
+    secondary: isCurrent && precipDisplay?.displayMode !== "forecast-probability"
+      ? precipDisplay.displayLabel
+      : precipDisplay?.forecastPopAvailable === false ? "Rain --"
+      : `${rainChance}% rain`,
     contextAria: "",
     temperatureColor: true
   };
@@ -15005,11 +15285,26 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   const resolvedBrief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
   const canonicalEvent = presentation?.materialEvent || resolvedBrief.materialEvent || resolvedBrief.promotedEvent || null;
   const storyFocusIndex = canonicalEvent?.focusIndex ?? canonicalEvent?.hourlyIndex ?? presentation?.story?.focusIndex;
-  const metricValues = rows.map(({ index }, position) => hourlyMetricValue(data, index, metric, position === 0));
+  const resolvedHours = rows.map(({ index }, position) => (
+    presentation?.hours?.find((item) => item.index === index) || forecastHourPresentation(data, index, {
+      isCurrent: position === 0,
+      truth: position === 0 ? truth : null
+    })
+  ));
+  const metricValues = resolvedHours.map((hour, position) => (
+    hourlyMetricValue(data, hour.index, metric, position === 0, position === 0 ? truth : null, hour)
+  ));
   const trend = hourlyTrendGeometry(metricValues, metric);
-  const pointString = trend.points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-  const areaPath = ["precipitation", "uv"].includes(metric) && trend.points.length
-    ? `M ${trend.points[0].x.toFixed(1)} 48 L ${trend.points.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${trend.points.at(-1).x.toFixed(1)} 48 Z`
+  const trendSegments = hourlyTrendSegments(trend.points);
+  const trendLines = trendSegments
+    .filter((segment) => segment.length > 1)
+    .map((segment) => `<polyline points="${segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}"></polyline>`)
+    .join("");
+  const areaPaths = ["precipitation", "uv"].includes(metric)
+    ? trendSegments
+      .filter((segment) => segment.length > 1)
+      .map((segment) => `<path class="hourly-trend-area" d="M ${segment[0].x.toFixed(1)} 48 L ${segment.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${segment.at(-1).x.toFixed(1)} 48 Z"></path>`)
+      .join("")
     : "";
 
   els.hourlyMetricTabs?.querySelectorAll("[data-hourly-metric]").forEach((button) => {
@@ -15019,18 +15314,14 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   // Values, icons, and line share the same 80px rhythm and scroll together.
   const cards = rows.map(({ time, index }, position) => {
     const precipProfile = hourlyPrecipProfile(data, index);
-    const packagedHour = presentation?.hours?.find((item) => item.index === index) || null;
-    const hour = packagedHour || forecastHourPresentation(data, index, {
-      isCurrent: position === 0,
-      truth: position === 0 ? truth : null
-    });
-    const rain = hour.pop;
+    const hour = resolvedHours[position];
+    const rain = hour.forecastPop;
     const wcode = hour.code;
     const stormPotential = hour.stormPotential;
     const convective = hour.convective;
-    const nowPrecipPhase = position === 0 ? truth.precip?.phase : null;
+    const nowPrecipPhase = position === 0 ? hour.precipDisplay.phase : null;
     const measuredWet = position === 0
-      ? nowPrecipPhase === "active"
+      ? hour.precipDisplay.isActiveNow
       : hour.precipPrimary && precipProfile.amountSupported;
     const code = hour.label;
     const cardCondition = hourlyConditionCardLabel(code);
@@ -15054,7 +15345,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       temp,
       rainChance,
       gust,
-      windUnit
+      windUnit,
+      precipDisplay: hour.precipDisplay,
+      isCurrent: position === 0
     });
     const temperatureColorStyle = metricPresentation.temperatureColor
       ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
@@ -15064,11 +15357,17 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const memoryItems = planMemory.markers.get(index) || [];
     const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
     const hasPlanMemory = planMemory.overlaps.has(index);
-    const rainAria = metric === "precipitation" ? "" : measuredWet ? ", rain" : nowPrecipPhase === "imminent" ? ", precipitation soon" : hasRainChance ? `, ${rainChance}% rain` : "";
+    const rainAria = metric === "precipitation"
+      ? ""
+      : hour.precipDisplay.displayMode !== "forecast-probability"
+        ? `, ${hour.precipDisplay.ariaLabel}`
+        : hour.forecastPopAvailable === false ? ", rain forecast guidance unavailable"
+        : hasRainChance ? `, ${rainChance}% rain forecast guidance` : "";
     const isStoryFocus = index === storyFocusIndex && position > 0;
-    const cardLabel = `${label}: ${code}, ${metricPresentation.aria}${metricPresentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
+    const metricAria = String(metricPresentation.aria || "").trim().replace(/[.!?]+$/, "");
+    const cardLabel = `${label}: ${code}, ${metricAria}${metricPresentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
     return `
-      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${trend.points[position].y.toFixed(1)}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receiptSentence || title)}">
+      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${Number.isFinite(trend.points[position].y) ? trend.points[position].y.toFixed(1) : "25"}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receiptSentence || title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml(thunderLabel) : ""}</div>
@@ -15080,9 +15379,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   }).join("");
   els.hourly.innerHTML = `
     <svg class="hourly-trend metric-${metric}" style="width:${trend.width}px" viewBox="0 0 ${trend.width} 50" preserveAspectRatio="none" aria-hidden="true">
-      ${areaPath ? `<path class="hourly-trend-area" d="${areaPath}"></path>` : ""}
-      <polyline points="${pointString}"></polyline>
-      ${trend.points.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3"></circle>`).join("")}
+      ${areaPaths}
+      ${trendLines}
+      ${trend.points.filter((point) => point.available).map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3"></circle>`).join("")}
     </svg>
     ${cards}
   `;
@@ -15106,18 +15405,29 @@ function outdoorWindowCandidate(data) {
   const horizon = now + 24 * 60 * 60 * 1000;
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const truth = data === state.forecast ? (state.weatherTruth || weatherTruth(data)) : buildWeatherTruth(data);
+  const currentIndex = currentHourlyIndex(data);
   const rows = (data?.hourly?.time || [])
-    .map((time, index) => ({
-      index,
-      time,
-      ms: parseForecastTimestamp(time, data),
-      feels: Number(data.hourly.apparent_temperature?.[index] ?? data.hourly.temperature_2m?.[index]),
-      rain: Math.max(0, Math.min(100, Number(data.hourly.precipitation_probability?.[index]) || 0)),
-      wind: Math.max(0, Number(data.hourly.wind_speed_10m?.[index]) || 0),
-      gust: Math.max(0, Number(data.hourly.wind_gusts_10m?.[index]) || 0),
-      uv: Math.max(0, Number(data.hourly.uv_index?.[index]) || 0),
-      isDay: data.hourly.is_day ? Boolean(data.hourly.is_day[index]) : true
-    }))
+    .map((time, index) => {
+      const presentation = forecastHourPresentation(data, index, {
+        isCurrent: index === currentIndex,
+        truth: index === currentIndex ? truth : null
+      });
+      return {
+        index,
+        time,
+        ms: parseForecastTimestamp(time, data),
+        feels: presentation.feels,
+        rain: presentation.forecastPop,
+        rainAvailable: presentation.forecastPopAvailable,
+        activePrecip: Boolean(presentation.precipDisplay?.isActiveNow),
+        precipLabel: presentation.precipDisplay?.displayLabel || null,
+        wind: Math.max(0, Number(presentation.wind) || 0),
+        gust: Math.max(0, Number(presentation.gust) || 0),
+        uv: presentation.uv,
+        isDay: presentation.isDay
+      };
+    })
     .filter((row) => row.ms !== null && row.ms >= now - 10 * 60 * 1000 && row.ms <= horizon);
   if (rows.length < profile.duration) return null;
 
@@ -15126,10 +15436,13 @@ function outdoorWindowCandidate(data) {
     if (windowRows.length < profile.duration) return null;
     if (windowRows.some((row, rowIndex) => rowIndex > 0 && row.ms - windowRows[rowIndex - 1].ms > 75 * 60 * 1000)) return null;
     if (profile.daytime && windowRows.some((row) => !row.isDay)) return null;
+    if (windowRows.some((row) => !row.rainAvailable)) return null;
     const feels = windowRows.reduce((total, row) => total + row.feels, 0) / windowRows.length;
     const wind = windowRows.reduce((total, row) => total + row.wind, 0) / windowRows.length;
     const gust = Math.max(...windowRows.map((row) => row.gust));
     const rain = Math.round(windowRows.reduce((total, row) => total + row.rain, 0) / windowRows.length);
+    const activePrecip = windowRows.some((row) => row.activePrecip);
+    const activePrecipLabel = windowRows.find((row) => row.activePrecip)?.precipLabel || "Rain now";
     const uv = Math.round(Math.max(...windowRows.map((row) => row.uv)));
     const feelsF = tempUnit === "F" ? feels : feels * 9 / 5 + 32;
     const windMph = windUnit === "mph" ? wind : wind / 1.60934;
@@ -15140,14 +15453,14 @@ function outdoorWindowCandidate(data) {
     const temperaturePenalty = Math.max(0, Math.abs(feelsF - profile.idealFeelsF) - profile.temperatureMarginF) * 1.25;
     const windPenalty = (Math.max(0, gustMph - 11) * 2.1 + Math.max(0, windMph - 14) * 0.8) * profile.windWeight;
     const uvPenalty = Math.max(0, uv - 5) * 7 * profile.uvWeight;
-    const score = rain * profile.rainWeight + temperaturePenalty + windPenalty + uvPenalty + lateNightPenalty;
+    const score = rain * profile.rainWeight + temperaturePenalty + windPenalty + uvPenalty + lateNightPenalty + (activePrecip ? 1000 : 0);
     // A window can be the best available without being unreservedly pleasant.
     // Keep those two ideas separate so our language stays as honest as the data.
     const startMs = first.ms;
     const endMs = windowRows.at(-1).ms + 60 * 60 * 1000;
     const officialAlert = activeAlertsReady ? topAlertForRange(startMs, endMs) : null;
     const alertBlocksRecommendation = Boolean(officialAlert && ["warning", "watch"].includes(alertTone(officialAlert)));
-    const good = !alertBlocksRecommendation && rain < 30 && gustMph < 24 && feelsF >= 42 && feelsF <= 96 && score < 48;
+    const good = !activePrecip && !alertBlocksRecommendation && rain < 30 && gustMph < 24 && feelsF >= 42 && feelsF <= 96 && score < 48;
     const standout = good && rain < 15 && gustMph < 18 && feelsF >= 50 && feelsF <= 88 && uv <= 6 && score < 34;
     return {
       startMs,
@@ -15155,6 +15468,8 @@ function outdoorWindowCandidate(data) {
       dayIndex: outdoorWindowDayIndex(data, first.ms),
       feels: Math.round(feels),
       rain,
+      activePrecip,
+      activePrecipLabel,
       wind: Math.round(wind),
       gust: Math.round(gust),
       uv,
@@ -15203,6 +15518,9 @@ function outdoorWindowCopy(window) {
   if (window.officialAlert) {
     return `${window.officialAlert.event || "An official weather alert"} overlaps this window. Check the alert before making outdoor plans.`;
   }
+  if (window.activePrecip) {
+    return `${window.activePrecipLabel || "Rain now"} overlaps this window. The percentage remains forecast guidance, while the current precipitation claim comes from the latest near-term evidence.`;
+  }
   const rain = window.rain < 15 ? "dry" : window.rain < 30 ? "a slight rain chance" : `${window.rain}% rain chance`;
   const wind = outdoorWindowWindCopy(window);
   const uv = window.uv < 3 ? "low UV" : `UV ${window.uv}`;
@@ -15231,7 +15549,7 @@ function renderGoodOutdoorWindow(data) {
   const time = outdoorWindowTimeRange(window, data);
   const signals = [
     `${window.feels}° feels`,
-    window.rain < 15 ? "Dry" : `${window.rain}% rain`,
+    window.activePrecip ? window.activePrecipLabel : window.rain < 15 ? "Dry" : `${window.rain}% rain`,
     outdoorWindowWindCopy(window),
     window.uv < 3 ? "UV low" : `UV ${window.uv}`
   ];
@@ -15663,24 +15981,44 @@ function buildFeelsGlanceDetail(data, tempUnit, windUnit) {
 }
 
 function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(data)) {
-  const rain = rainGlance(data, truth.rainChance, truth);
+  const currentIndex = currentHourlyIndex(data);
+  const currentHour = currentIndex >= 0
+    ? forecastHourPresentation(data, currentIndex, { isCurrent: true, truth })
+    : null;
+  const chanceAvailable = Boolean(currentHour?.forecastPopAvailable ?? (truth.rainChance !== null && truth.rainChance !== undefined));
+  const chance = chanceAvailable ? (currentHour?.forecastPop ?? truth.rainChance) : null;
+  const rain = rainGlance(data, chance, truth);
   const precip = truth.precip || {};
-  const chance = truth.rainChance || 0;
+  const precipDisplay = currentHour?.precipDisplay || null;
   const nowcast = analyzeNowcast(data);
   const usableNowcast = nowcast && !nowcastConflictsWithActivePrecip(nowcast, truth) ? nowcast : null;
   const next = nextRainChance(data, 12, 20);
+  const nextGuidance = forecastRainGuidanceCoverage(data, currentIndex, 12);
+  const nextSignalValue = next
+    ? `${next.chance}% near ${formatTime(next.time)}`
+    : nextGuidance.complete ? "No meaningful rain" : "Guidance unavailable";
+  const nextSignalNote = next
+    ? "Forecast window"
+    : nextGuidance.complete ? "Next 12 hours" : "Incomplete hourly guidance";
   const precipUnit = data.current_units?.precipitation || data.hourly_units?.precipitation || (state.unit === "fahrenheit" ? "in" : "mm");
   const amount = Math.max(Number(data.current?.precipitation || 0), Number(truth.nowPrecip?.amount || 0));
-  const nowLabel = precip.phase === "active"
-    ? activePrecipSummaryValue(precip, truth.nowPrecip, truth.convective)
+  const nowLabel = precipDisplay?.displayMode !== "forecast-probability"
+    ? precipDisplay.displayLabel
+    : precip.phase === "active"
+      ? activePrecipSummaryValue(precip, truth.nowPrecip, truth.convective)
     : precip.phase === "nearby" ? `${precip.label || "Rain"} nearby`
       : precip.phase === "imminent" ? `${precip.label || "Rain"} soon`
         : amount > 0 ? `${truth.label || "Precipitation"} now` : "Dry here";
   const source = weatherSourceLabel(precip.source || truth.source);
-  const detail = precip.detail || truth.surfaceDetail || truth.receiptDetail || metricTipRain(chance);
+  const detail = precipDisplay?.detail || precip.detail || truth.surfaceDetail || truth.receiptDetail || (
+    chanceAvailable ? metricTipRain(chance) : "Hourly rain probability guidance is unavailable right now."
+  );
   const title = precip.phase === "active" || precip.phase === "nearby" || precip.phase === "imminent"
     ? capitalize(nowLabel)
-    : `Rain chance ${chance}%`;
+    : chanceAvailable ? `Rain chance ${chance}%` : "Rain guidance unavailable";
+  const heroValue = precipDisplay?.displayMode !== "forecast-probability"
+    ? precipDisplay.displayLabel
+    : (els.rainChance?.textContent || (chanceAvailable ? `${chance}%` : "--"));
 
   return {
     kind: "rain",
@@ -15690,13 +16028,13 @@ function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(da
     summary: detail,
     body: `
       <section class="glance-detail-hero is-rain">
-        <b>${escapeHtml(els.rainChance?.textContent || `${chance}%`)}</b>
+        <b>${escapeHtml(heroValue)}</b>
         <span>${escapeHtml(rain.context)}</span>
       </section>
       <div class="glance-detail-facts">
         ${glanceDetailFactHtml("Right now", nowLabel, amount > 0 ? `${formatAmount(amount)} ${precipUnit} in current guidance` : source)}
-        ${glanceDetailFactHtml("This hour", `${chance}%`, "Hourly forecast chance")}
-        ${glanceDetailFactHtml("Next signal", next ? `${next.chance}% near ${formatTime(next.time)}` : "No meaningful rain", next ? "Forecast window" : "Next 12 hours")}
+        ${glanceDetailFactHtml("This hour", chanceAvailable ? `${chance}%` : "Unavailable", "Hourly forecast guidance")}
+        ${glanceDetailFactHtml("Next signal", nextSignalValue, nextSignalNote)}
         ${glanceDetailFactHtml("Wind", `${Math.round(data.current?.wind_speed_10m || 0)} ${windUnit}`, "For umbrella comfort")}
       </div>
       ${usableNowcast ? `
@@ -15876,7 +16214,11 @@ function bindMetricTips(data, tempUnit, windUnit) {
 
   const tips = {
     feelsLike: { kind: "feels", tip: metricTipFeels(diff, feelsVal, tempUnit), aria: "Open feels-like detail" },
-    rainChance: { kind: "rain", tip: metricTipRain(rainVal), aria: "Open rain detail" },
+    rainChance: {
+      kind: "rain",
+      tip: rainVal == null ? "Hourly rain probability guidance is unavailable right now." : metricTipRain(rainVal),
+      aria: "Open rain detail"
+    },
     wind: { kind: "wind", tip: metricTipWind(windVal, windUnit), aria: "Open wind detail" },
     humidity: { kind: "air", tip: air.tipHtml || metricTipHumidity(humidityVal), rich: Boolean(air.tipHtml), aria: air.tipHtml ? "Open air quality detail" : "Open air detail" }
   };

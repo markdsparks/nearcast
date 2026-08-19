@@ -9175,7 +9175,7 @@ async function updateMemoryEditPreview(options = {}) {
       if (dayIdx < 0 || !c) return `<div><span>${escapeHtml(window.targetDate)}</span><strong>Outside forecast range</strong></div>`;
       const stats = planWindowStats(data, c, { dayIdx, startHour: window.startHour, endHour: window.endHour, label: "custom" });
       if (!stats) return `<div><span>${escapeHtml(memoryEditDateLabel(window.targetDate, data))}</span><strong>No hourly data</strong></div>`;
-      return `<div><span>${escapeHtml(memoryEditDateLabel(window.targetDate, data))} · ${escapeHtml(hourText(window.startHour))}-${escapeHtml(hourText(window.endHour))}</span><strong>${escapeHtml(stats.sky)} · ${stats.rainChance}% rain · ${stats.windMax} ${escapeHtml(c.units.wind)}</strong></div>`;
+      return `<div><span>${escapeHtml(memoryEditDateLabel(window.targetDate, data))} · ${escapeHtml(hourText(window.startHour))}-${escapeHtml(hourText(window.endHour))}</span><strong>${escapeHtml(stats.sky)} · ${escapeHtml(statsRainRead(stats, { compact: true }))} · ${stats.windMax} ${escapeHtml(c.units.wind)}</strong></div>`;
     });
     setMemoryEditPreview(`<div><span>${memoryEditState.scheduleType === "continuous_span" ? "Continuous plan" : "Schedule"}</span><strong>${windows.length} day${windows.length === 1 ? "" : "s"}</strong></div>${rows.join("")}`);
     return;
@@ -9202,7 +9202,7 @@ async function updateMemoryEditPreview(options = {}) {
   setMemoryEditPreview(`
     <div><span>Window</span><strong>${escapeHtml(memoryEditWindowText())}</strong></div>
     <div><span>Weather</span><strong>${escapeHtml(stats.sky)}</strong></div>
-    <div><span>Rain</span><strong>${stats.rainChance}%</strong></div>
+    <div><span>Rain</span><strong>${escapeHtml(statsRainRead(stats, { compact: true }))}</strong></div>
     <div><span>Wind</span><strong>${stats.windMax} ${escapeHtml(c.units.wind)}</strong></div>
     <div><span>Temp</span><strong>${stats.tempMin}${escapeHtml(c.units.temp)}-${stats.tempMax}${escapeHtml(c.units.temp)}</strong></div>
     ${alert ? `<div><span>Weather alert</span><strong>${escapeHtml(alert.event)}</strong></div>` : ""}
@@ -9566,8 +9566,8 @@ function planWindowDetailRows(event, data) {
       if (ms === null) return null;
       const presentation = forecastHourPresentation(data, index, { isCurrent: index === currentHourlyIndex(data) });
       const code = Number(presentation.code);
-      const precip = Number(data.hourly.precipitation?.[index] || 0);
-      const pop = Math.round(Number(data.hourly.precipitation_probability?.[index] || 0));
+      const precip = Number(presentation.forecastPrecip ?? presentation.precip ?? 0);
+      const pop = Math.round(Number(presentation.forecastPop ?? presentation.pop ?? 0));
       const wind = Math.round(Number(data.hourly.wind_speed_10m?.[index] || 0));
       const gust = Math.round(Number(data.hourly.wind_gusts_10m?.[index] || wind));
       const temp = Math.round(Number(data.hourly.temperature_2m?.[index] || 0));
@@ -9584,7 +9584,13 @@ function planWindowDetailRows(event, data) {
         temp,
         feels,
         pop,
+        popAvailable: presentation.forecastPopAvailable !== false,
         precip,
+        precipAvailable: presentation.forecastPrecipAvailable !== false,
+        precipDisplay: presentation.precipDisplay || null,
+        observation: presentation.observation || null,
+        activePrecipNow: Boolean(presentation.precipDisplay?.isActiveNow),
+        observedNow: Boolean(presentation.precipDisplay?.isObservedNow),
         wind,
         gust,
         uv,
@@ -9600,12 +9606,13 @@ function planWindowDetailHourScore(row, risk, unit) {
   const preference = unit === "celsius" ? "celsius" : "fahrenheit";
   const feels = Number(row.feels || 0);
   const gust = Number(row.gust || 0);
-  const rain = Number(row.pop || 0);
-  const precip = Number(row.precip || 0);
+  const rain = row.popAvailable === false ? 0 : Number(row.pop || 0);
+  const precip = row.precipAvailable === false ? 0 : Number(row.precip || 0);
+  const activeNow = row.activePrecipNow ? 180 : 0;
   if (risk === "heat") return feels * 1.6 + Number(row.uv || 0) * 5 + Math.max(0, rain - 35) * 0.25;
   if (risk === "cold") return -feels * 1.4 + gust * 0.7 + rain * 0.2;
-  if (risk === "rain" || risk === "flood") return rain + precip * 160 + gust * 0.25;
-  if (risk === "storm") return rain + precip * 140 + gust * 0.45 + (row.storm ? 35 : 0);
+  if (risk === "rain" || risk === "flood") return rain + precip * 160 + gust * 0.25 + activeNow;
+  if (risk === "storm") return rain + precip * 140 + gust * 0.45 + (row.storm ? 35 : 0) + activeNow;
   if (risk === "wind") return gust * 2 + Number(row.wind || 0) + rain * 0.15;
   const target = preference === "celsius" ? 22 : 72;
   return rain * 0.55 + Math.abs(feels - target) * 1.2 + Math.max(0, gust - 20);
@@ -9640,8 +9647,13 @@ function planWindowDetailPeakText(row, watch) {
   const time = planWindowDetailHourLabel(row);
   if (risk === "heat") return `${time}: feels ${planWindowDetailUnitValue(row.feels, tempUnit)}, UV ${row.uv || "low"}.`;
   if (risk === "cold") return `${time}: feels ${planWindowDetailUnitValue(row.feels, tempUnit)}, gusts ${row.gust} ${windUnit}.`;
-  if (risk === "rain" || risk === "flood") return `${time}: rain ${row.pop}%, ${planWindowDetailAmount(row.precip, precipUnit)}.`;
-  if (risk === "storm") return `${time}: rain ${row.pop}%, gusts ${row.gust} ${windUnit}.`;
+  const guidance = row.popAvailable === false ? "hourly rain guidance unavailable" : `rain ${row.pop}%`;
+  if (risk === "rain" || risk === "flood") return row.activePrecipNow
+    ? `${time}: ${row.precipDisplay?.detail || `${row.precipDisplay?.displayLabel || "Rain now"}; ${guidance}`}`
+    : `${time}: ${guidance}, ${row.precipAvailable === false ? "precipitation amount unavailable" : planWindowDetailAmount(row.precip, precipUnit)}.`;
+  if (risk === "storm") return row.activePrecipNow
+    ? `${time}: ${row.precipDisplay?.detail || `${row.precipDisplay?.displayLabel || "Precipitation now"}; ${guidance}`} Gusts ${row.gust} ${windUnit}.`
+    : `${time}: ${guidance}, gusts ${row.gust} ${windUnit}.`;
   if (risk === "wind") return `${time}: gusts ${row.gust} ${windUnit}.`;
   return `${time}: ${row.label.toLowerCase()}, feels ${planWindowDetailUnitValue(row.feels, tempUnit)}.`;
 }
@@ -9689,6 +9701,12 @@ function renderPlanWindowHourRow(row, event, peak, watch) {
   const windUnit = planWindowDetailWindUnit(watch);
   const precipUnit = planWindowDetailPrecipUnit(watch);
   const isPeak = peak && row.index === peak.index;
+  const guidance = row.popAvailable === false ? "guidance unavailable" : `${row.pop}% guidance`;
+  const rainRead = row.activePrecipNow
+    ? `${row.precipDisplay?.displayLabel || "Rain now"} · ${guidance}`
+    : row.popAvailable === false
+      ? "Guidance unavailable"
+      : `${row.pop}%${row.precipAvailable !== false && row.precip ? ` · ${planWindowDetailAmount(row.precip, precipUnit)}` : ""}`;
   return `
     <article class="plan-window-hour${row.inWindow ? " is-in-window" : " is-buffer"}${isPeak ? " is-peak" : ""}">
       <span class="plan-window-hour-time">${escapeHtml(planWindowDetailHourLabel(row))}</span>
@@ -9699,7 +9717,7 @@ function renderPlanWindowHourRow(row, event, peak, watch) {
       </span>
       <dl>
         <div><dt>Feels</dt><dd>${escapeHtml(planWindowDetailUnitValue(row.feels, tempUnit))}</dd></div>
-        <div><dt>Rain</dt><dd>${row.pop}%${row.precip ? ` · ${escapeHtml(planWindowDetailAmount(row.precip, precipUnit))}` : ""}</dd></div>
+        <div><dt>Rain</dt><dd>${escapeHtml(rainRead)}</dd></div>
         <div><dt>Gust</dt><dd>${row.gust} ${escapeHtml(windUnit)}</dd></div>
         <div><dt>UV</dt><dd>${row.uv || "Low"}</dd></div>
       </dl>
@@ -9984,7 +10002,7 @@ function planMemoryMeta(memory, event = null) {
     label: "custom"
   });
   if (!stats) return `${when} · ${where}`;
-  return `${when} · ${stats.rainChance}% rain · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
+  return `${when} · ${statsRainRead(stats, { compact: true })} · ${stats.windMax} ${state.unit === "fahrenheit" ? "mph" : "km/h"}`;
 }
 
 function planMemoryListItems(data = state.forecast, place = state.activePlace, options = {}) {
@@ -11521,12 +11539,17 @@ function planWindowStats(data, c, w) {
   const values = (key, fallback) => idxs.map((i) => data.hourly[key][i] ?? fallback);
   const temps = idxs.map((i) => data.hourly.temperature_2m[i]);
   const feels = idxs.map((i) => data.hourly.apparent_temperature[i]);
-  const pop = values("precipitation_probability", 0);
-  const precip = values("precipitation", 0);
   const wind = values("wind_speed_10m", c.now.wind);
   const gust = values("wind_gusts_10m", c.now.gust);
   const uv = values("uv_index", 0);
   const presentations = idxs.map((i) => forecastHourPresentation(data, i, { isCurrent: i === currentHourlyIndex(data) }));
+  const pop = presentations
+    .filter((hour) => hour.forecastPopAvailable !== false)
+    .map((hour) => Number(hour.forecastPop ?? hour.pop ?? 0));
+  const precip = presentations
+    .filter((hour) => hour.forecastPrecipAvailable !== false)
+    .map((hour) => Number(hour.forecastPrecip ?? hour.precip ?? 0));
+  const activePrecip = presentations.find((hour) => hour.precipDisplay?.isActiveNow) || null;
   const codes = presentations.map((hour) => hour.code);
   const air = airStatsForHours(data, hours, c.air);
   const materialEvent = planCanonicalMaterialEventForWindow(
@@ -11549,9 +11572,16 @@ function planWindowStats(data, c, w) {
     feelsAvg: Math.round(avg(feels)),
     feelsMin: Math.round(Math.min(...feels)),
     feelsMax: Math.round(Math.max(...feels)),
-    rainChance: Math.round(Math.max(...pop)),
-    rainChanceMin: Math.round(Math.min(...pop)),
+    rainChance: pop.length ? Math.round(Math.max(...pop)) : 0,
+    rainChanceMin: pop.length ? Math.round(Math.min(...pop)) : 0,
+    rainChanceAvailable: Boolean(pop.length),
     precipTotal: precip.reduce((sum, item) => sum + Number(item || 0), 0),
+    precipTotalAvailable: Boolean(precip.length),
+    activePrecipNow: Boolean(activePrecip),
+    observedNow: Boolean(activePrecip?.precipDisplay?.isObservedNow),
+    activePrecipLabel: activePrecip?.precipDisplay?.displayLabel || "",
+    activePrecipDetail: activePrecip?.precipDisplay?.detail || "",
+    activePrecipSource: activePrecip?.precipDisplay?.source || "",
     windMin: Math.round(Math.min(...wind)),
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
@@ -11638,8 +11668,12 @@ function planDisplayName(plan) {
 function planReasons(stats, units, alert) {
   const reasons = [];
   if (alert) reasons.push(`${alert.event} overlaps that window`);
+  if (stats.activePrecipNow) reasons.push((stats.activePrecipLabel || "precipitation now").toLowerCase());
   if (stats.stormPotential) reasons.push("thunderstorms are possible");
-  if (stats.rainChance >= 60) reasons.push(`${stats.rainChance}% rain chance`);
+  if (stats.activePrecipNow && stats.rainChanceAvailable === false) reasons.push("hourly rain guidance unavailable");
+  else if (stats.activePrecipNow) reasons.push(`earlier hourly guidance ${stats.rainChance}%`);
+  else if (stats.rainChanceAvailable === false) reasons.push("rain guidance unavailable");
+  else if (stats.rainChance >= 60) reasons.push(`${stats.rainChance}% rain chance`);
   else if (stats.rainChance >= 35) reasons.push(`${stats.rainChance}% rain chance`);
   else reasons.push(`rain looks low (${stats.rainChance}%)`);
   if (stats.gustMax >= stats.windMax + 8 && stats.gustMax >= 22) reasons.push(`gusts near ${stats.gustMax} ${units.wind}`);
@@ -11815,12 +11849,21 @@ function askWindowStats(w) {
   const values = (key, fallback) => idxs.length ? idxs.map((i) => data.hourly[key][i] ?? fallback) : [fallback];
   const temps = idxs.length ? idxs.map((i) => data.hourly.temperature_2m[i]) : [day.hi, day.lo];
   const feels = idxs.length ? idxs.map((i) => data.hourly.apparent_temperature[i]) : temps;
-  const pop = idxs.length ? values("precipitation_probability", 0) : [day.rainChance];
-  const precip = idxs.length ? values("precipitation", 0) : [0];
   const wind = idxs.length ? values("wind_speed_10m", c.now.wind) : [c.now.wind];
   const gust = idxs.length ? values("wind_gusts_10m", c.now.gust) : [c.now.gust];
   const uv = idxs.length ? values("uv_index", 0) : [w.dayIdx === 0 ? c.today.uvPeak : 0];
   const presentations = idxs.map((i) => forecastHourPresentation(data, i, { isCurrent: i === currentHourlyIndex(data) }));
+  const pop = presentations.length
+    ? presentations
+      .filter((hour) => hour.forecastPopAvailable !== false)
+      .map((hour) => Number(hour.forecastPop ?? hour.pop ?? 0))
+    : [day.rainChance];
+  const precip = presentations.length
+    ? presentations
+      .filter((hour) => hour.forecastPrecipAvailable !== false)
+      .map((hour) => Number(hour.forecastPrecip ?? hour.precip ?? 0))
+    : [0];
+  const activePrecip = presentations.find((hour) => hour.precipDisplay?.isActiveNow) || null;
   const codes = presentations.length
     ? presentations.map((hour) => hour.code)
     : [forecastDayPresentation(data, w.dayIdx).code || canonicalCurrentSnapshot(data).weather_code];
@@ -11836,9 +11879,16 @@ function askWindowStats(w) {
     feelsAvg: Math.round(avg(feels)),
     feelsMin: Math.round(Math.min(...feels)),
     feelsMax: Math.round(Math.max(...feels)),
-    rainChance: Math.round(Math.max(...pop)),
-    rainChanceMin: Math.round(Math.min(...pop)),
+    rainChance: pop.length ? Math.round(Math.max(...pop)) : 0,
+    rainChanceMin: pop.length ? Math.round(Math.min(...pop)) : 0,
+    rainChanceAvailable: Boolean(pop.length),
     precipTotal: precip.reduce((sum, item) => sum + Number(item || 0), 0),
+    precipTotalAvailable: Boolean(precip.length),
+    activePrecipNow: Boolean(activePrecip),
+    observedNow: Boolean(activePrecip?.precipDisplay?.isObservedNow),
+    activePrecipLabel: activePrecip?.precipDisplay?.displayLabel || "",
+    activePrecipDetail: activePrecip?.precipDisplay?.detail || "",
+    activePrecipSource: activePrecip?.precipDisplay?.source || "",
     windMin: Math.round(Math.min(...wind)),
     windMax: Math.round(Math.max(...wind)),
     gustMax: Math.round(Math.max(...gust)),
@@ -11864,6 +11914,20 @@ function askRainWord(p) {
   return "likely";
 }
 
+function statsRainRead(stats, options = {}) {
+  const chance = Math.max(0, Math.min(100, Math.round(Number(stats?.rainChance) || 0)));
+  if (stats?.rainChanceAvailable === false) {
+    if (!stats?.activePrecipNow) return "Rain guidance unavailable";
+    return `${stats.activePrecipLabel || "Rain now"} · guidance unavailable`;
+  }
+  if (!stats?.activePrecipNow) return options.compact ? `${chance}% rain` : `${chance}% rain chance`;
+  const label = stats.activePrecipLabel || "Rain now";
+  const observed = stats.observedNow ? `${label} on radar` : label;
+  return options.compact
+    ? `${observed} · ${chance}% guidance`
+    : `${observed}; earlier hourly guidance was ${chance}%`;
+}
+
 function activityComfort(feelsF, rule) {
   if (feelsF >= rule.hot + 8) return "too hot";
   if (feelsF >= rule.hot) return "hot";
@@ -11882,7 +11946,12 @@ function scoreActivityWindow(rule, stats, units) {
   const reasons = [];
   let score = 3;
 
-  if (stats.rainChance >= rule.rain + 25) {
+  if (stats.activePrecipNow) {
+    score = Math.min(score, 0);
+    reasons.push(statsRainRead(stats));
+  } else if (stats.rainChanceAvailable === false) {
+    reasons.push("rain guidance unavailable");
+  } else if (stats.rainChance >= rule.rain + 25) {
     score = Math.min(score, 0);
     reasons.push(`${stats.rainChance}% rain chance`);
   } else if (stats.rainChance >= rule.rain) {
@@ -11941,7 +12010,7 @@ function numericWindowScore(rule, stats) {
   const feelsF = tempAsF(stats.feelsAvg);
   const target = 72;
   const tempPenalty = Math.abs(feelsF - target) * (rule.label === "the pool" ? 0.35 : 0.8);
-  const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80;
+  const rainPenalty = stats.rainChance * 1.2 + stats.precipTotal * 80 + (stats.activePrecipNow ? 120 : 0) + (stats.rainChanceAvailable === false ? 30 : 0);
   const windPenalty = Math.max(0, stats.windMax - rule.wind) * 2 + Math.max(0, stats.gustMax - rule.wind - 8) * 2;
   const uvPenalty = rule.uv < 99 ? Math.max(0, stats.uvMax - rule.uv + 1) * 5 : 0;
   const airPenalty = stats.aqiMax ? Math.max(0, stats.aqiMax - 80) * 0.8 : 0;
@@ -12058,7 +12127,7 @@ function bestDryWindow(options = {}) {
     .filter(Boolean)
     .map((stats) => ({
       stats,
-      score: 100 - stats.rainChance - stats.precipTotal * 120 - Math.max(0, stats.windMax - 25)
+      score: 100 - stats.rainChance - stats.precipTotal * 120 - Math.max(0, stats.windMax - 25) - (stats.activePrecipNow ? 180 : 0) - (stats.rainChanceAvailable === false ? 50 : 0)
     }))
     .sort((a, b) => b.score - a.score);
   if (!windows.length) return null;
@@ -12066,8 +12135,10 @@ function bestDryWindow(options = {}) {
   return {
     ...best,
     title: "Best dry window",
-    answer: `Best dry window ${best.stats.label}: rain is ${askRainWord(best.stats.rainChance)} (${best.stats.rainChance}%), wind up to ${best.stats.windMax} ${c.units.wind}.`,
-    reasons: [`${best.stats.rainChance}% rain`, `${best.stats.windMax} ${c.units.wind} wind`, `${best.stats.tempAvg}${c.units.temp}`]
+    answer: best.stats.activePrecipNow
+      ? `Best available window ${best.stats.label}: ${statsRainRead(best.stats)}, with wind up to ${best.stats.windMax} ${c.units.wind}.`
+      : `Best dry window ${best.stats.label}: rain is ${askRainWord(best.stats.rainChance)} (${best.stats.rainChance}%), wind up to ${best.stats.windMax} ${c.units.wind}.`,
+    reasons: [statsRainRead(best.stats, { compact: true }), `${best.stats.windMax} ${c.units.wind} wind`, `${best.stats.tempAvg}${c.units.temp}`]
   };
 }
 
@@ -12274,20 +12345,27 @@ function outfitAnswer(stats, units) {
   else if (feelsF >= 30) outfit = "a warm coat";
   else outfit = "heavy winter layers";
   const extras = [];
-  if (stats.rainChance >= 35) extras.push("rain gear");
+  if (stats.activePrecipNow || stats.rainChance >= 35) extras.push("rain gear");
   if (stats.windMax >= 20) extras.push("something wind-resistant");
   if (stats.uvMax >= 7) extras.push("sunscreen");
   return `${capitalize(stats.label)}: feels around ${stats.feelsAvg}${units.temp}, ${stats.sky.toLowerCase()}. Wear ${outfit}${extras.length ? `, plus ${extras.join(" and ")}` : ""}.`;
 }
 
 function umbrellaAnswer(stats) {
+  if (stats.activePrecipNow) return `Yes — ${statsRainRead(stats)}. Take an umbrella.`;
+  if (stats.rainChanceAvailable === false) return "I do not have reliable hourly rain guidance for that window.";
   if (stats.rainChance >= 60) return `Yes — rain is likely ${stats.label} (${stats.rainChance}% chance). Take an umbrella.`;
   if (stats.rainChance >= 35) return `Maybe — there is a ${stats.rainChance}% rain chance ${stats.label}. An umbrella is worth carrying.`;
   return `Probably not — rain is ${askRainWord(stats.rainChance)} ${stats.label} (${stats.rainChance}% chance).`;
 }
 
 function generalForecastAnswer(stats, units) {
-  return `${capitalize(stats.label)}: ${stats.sky.toLowerCase()}, ${stats.tempMin}${units.temp} to ${stats.tempMax}${units.temp}, rain ${askRainWord(stats.rainChance)} (${stats.rainChance}%), wind up to ${stats.windMax} ${units.wind}.`;
+  const rain = stats.activePrecipNow
+    ? statsRainRead(stats)
+    : stats.rainChanceAvailable === false
+      ? "rain guidance unavailable"
+    : `rain ${askRainWord(stats.rainChance)} (${stats.rainChance}%)`;
+  return `${capitalize(stats.label)}: ${stats.sky.toLowerCase()}, ${stats.tempMin}${units.temp} to ${stats.tempMax}${units.temp}, ${rain}, wind up to ${stats.windMax} ${units.wind}.`;
 }
 
 function metricAskAnswer(q, stats, c) {
@@ -12300,6 +12378,8 @@ function metricAskAnswer(q, stats, c) {
     return stats.day.sunrise ? `Sunrise ${askDayLabel(c, stats.window.dayIdx)} is at ${stats.day.sunrise}.` : "I do not have sunrise for that day.";
   }
   if (hasAny(s, ["rain", "wet", "precip", "shower", "storm", "drizzle", "snow", "pour"])) {
+    if (stats.activePrecipNow) return `${statsRainRead(stats)}${stats.precipTotal ? `; forecast guidance totals about ${formatAmount(stats.precipTotal)} ${u.precip}` : ""}.`;
+    if (stats.rainChanceAvailable === false) return `Hourly rain guidance is unavailable ${stats.label}.`;
     return `Rain is ${askRainWord(stats.rainChance)} ${stats.label}: ${stats.rainChance}% chance${stats.precipTotal ? `, about ${formatAmount(stats.precipTotal)} ${u.precip}` : ""}.`;
   }
   if (hasAny(s, ["hot", "warm", "cold", "temperature", "temp ", " high ", " low ", "degrees"])) {

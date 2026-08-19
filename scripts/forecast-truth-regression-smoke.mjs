@@ -305,6 +305,7 @@ const story = contextWith(`
   ${extractFunction(app, "skyCodeFromCloud")}
   ${extractFunction(app, "effectiveWeatherCode")}
   ${extractFunction(app, "precipKindFromCode")}
+  ${extractFunction(app, "forecastProbabilityValue")}
   ${extractFunction(app, "hourlySkyCode")}
   ${extractFunction(app, "hourlyPrecipProfile")}
   ${extractFunction(app, "dailyPrecipProfile")}
@@ -317,6 +318,10 @@ const story = contextWith(`
   ${extractFunction(app, "precipRank")}
   ${extractFunction(app, "forecastConditionFamily")}
   ${extractFunction(app, "forecastStoryCondition")}
+  ${extractFunction(app, "capitalize")}
+  ${extractFunction(app, "forecastPrecipNoun")}
+  ${extractFunction(app, "forecastPrecipGuidanceLabel")}
+  ${extractFunction(app, "forecastHourPrecipDisplay")}
   ${extractFunction(app, "forecastHourPresentation")}
   ${extractFunction(app, "dailyRelevantHourlyIndices")}
   ${extractFunction(app, "collapseForecastSegments")}
@@ -508,6 +513,7 @@ const placeTruth = contextWith(`
   }
   function forecastMaterialEvent() { return null; }
   function shortClock(value) { return String(value || "").slice(-5); }
+  ${extractFunction(app, "forecastProbabilityValue")}
   ${extractFunction(app, "observedPrecipSummaryLabel")}
   ${extractFunction(app, "activePrecipSummaryValue")}
   ${extractFunction(app, "nowcastConflictsWithActivePrecip")}

@@ -169,8 +169,10 @@ assert.match(daygraph, /if \(isPrecip\) \{\s*drawPrecipGraph\(\)/, "Precip uses 
 assert.doesNotMatch(daygraph, /const precipBars|\$\{precipBars\}/, "Temp and Wind no longer carry the ambiguous mini probability strip");
 assert.match(daygraph, /const tempTop = 34, tempBottom = 136/, "Temp and Wind keep a label lane while reclaiming the former mini-strip space");
 assert.match(daygraph, /labelY: 28/, "Temp and Wind memory labels clear both their curves and the Now pill");
-assert.match(daygraph, /const rawForecastPop = data\.hourly\.precipitation_probability\?\.\[h\]/, "hour records preserve raw forecast chance availability");
-assert.match(daygraph, /const rawForecastPrecip = data\.hourly\.precipitation\?\.\[h\]/, "hour records preserve raw forecast amount availability");
+assert.match(daygraph, /const forecastPopValue = presentation\.forecastPop \?\? presentation\.pop/, "hour records receive forecast chance from the resolved-hour contract");
+assert.match(daygraph, /const popAvailable = presentation\.forecastPopAvailable !== false &&[\s\S]{0,120}Number\.isFinite\(forecastPopValue\)/, "hour records preserve resolved forecast chance availability");
+assert.match(daygraph, /const forecastPrecipValue = presentation\.forecastPrecip \?\? presentation\.precip/, "hour records receive forecast amount from the resolved-hour contract");
+assert.match(daygraph, /const precipAvailable = presentation\.forecastPrecipAvailable !== false &&[\s\S]{0,120}Number\.isFinite\(forecastPrecipValue\)/, "hour records preserve resolved forecast amount availability");
 assert.match(daygraph, /const truth = data === state\.forecast \? state\.weatherTruth : null/, "live radar truth cannot leak into another place's retained forecast");
 assert.match(daygraph, /return forecastUsesInches\(data\) \? "in" : "mm"/, "precipitation labels follow the supplied forecast's units");
 assert.match(daygraph, /xStart = xForMs\(ms\)[\s\S]*xEnd = xForMs\(ms \+ hourMs\)/, "amount bins use the same start-hour convention as Nearcast's hourly rows");

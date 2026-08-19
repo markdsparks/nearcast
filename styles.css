@@ -9857,6 +9857,20 @@ body.map-immersive-active .app-dock {
   color: var(--semantic-blue);
 }
 
+/* Observation labels such as “Rain now” carry more meaning than a bare PoP,
+   but must keep the same compact 80px timeline rhythm as numeric values. */
+.hour-card.metric-precipitation.current .hour-trend-value {
+  width: max-content;
+  max-width: calc(100% - 6px);
+  min-width: 0;
+  padding-inline: 4px;
+  overflow: hidden;
+  font-size: 0.74rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hour-card.metric-uv .hour-trend-value {
   min-width: 48px;
   color: var(--semantic-gold);
@@ -9888,12 +9902,15 @@ body.map-immersive-active .app-dock {
 }
 
 .hour-secondary {
+  max-width: 100%;
   min-height: 0.95em;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -15715,7 +15732,8 @@ body.map-immersive-active .day-sheet.show {
   flex-direction: column;
   align-items: center;
   line-height: 1.22;
-  white-space: nowrap;
+  text-align: center;
+  white-space: normal;
   max-width: calc(100% - 4px);
   padding: 6px 11px;
   border-radius: 9px;
@@ -15745,10 +15763,14 @@ body.map-immersive-active .day-sheet.show {
   min-width: 156px;
 }
 .callout-main {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-weight: 800;
   font-size: 0.92rem;
 }
 .callout-sub {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-size: 0.72rem;
   opacity: 0.82;
 }
@@ -16245,13 +16267,14 @@ button.sheet-plan-badge:focus-visible {
   font-weight: 900;
   letter-spacing: 0;
   text-transform: none;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .sheet-hour-detail-grid strong {
   color: var(--ink);
   font-size: 0.96rem;
   font-weight: 900;
-  white-space: nowrap;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .sheet-stats {
@@ -16361,6 +16384,19 @@ button.sheet-plan-badge:focus-visible {
   .sheet-hour-wind span {
     width: 13px;
     height: 13px;
+  }
+  .sheet-hour-row.is-now .sheet-hour-rain.is-semantic {
+    justify-content: center;
+    line-height: 1.05;
+    text-align: center;
+    white-space: normal;
+  }
+  .sheet-hour-row.is-now .sheet-hour-rain.is-semantic > span {
+    display: none;
+  }
+  .sheet-hour-row.is-now .sheet-hour-rain.is-semantic strong {
+    overflow: visible;
+    text-overflow: clip;
   }
   .sheet-hour-cue {
     width: 14px;

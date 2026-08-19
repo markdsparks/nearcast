@@ -349,26 +349,38 @@ private struct NearcastRainComplicationView: View {
     @ViewBuilder
     private var freshBody: some View {
         let rain = NearcastVisualSignalModel.rain(snapshot: entry.snapshot, now: entry.date, horizonHours: 4)
-        let probability = max(0, rain.magnitude?.value ?? entry.snapshot.rainChance)
+        let availableValues = NearcastVisualSignalModel.activeTimelineRows(
+            entry.snapshot,
+            now: entry.date,
+            maximumHours: 4
+        ).compactMap(\.rainChance)
+        let probability = availableValues.max() ?? entry.snapshot.forecastRainChanceForDisplay
+        let observed = entry.snapshot.precipitationNowObserved == true
         switch family {
         case .accessoryInline:
             ViewThatFits {
-                Label(rainInlineText(rain, probability: probability, includesHorizon: true), systemImage: rain.symbolName)
-                Label(rainInlineText(rain, probability: probability, includesHorizon: false), systemImage: rain.symbolName)
-                Text("\(probability)%")
+                Label(rainInlineText(rain, probability: probability, observed: observed, includesHorizon: true), systemImage: rain.symbolName)
+                Label(rainInlineText(rain, probability: probability, observed: observed, includesHorizon: false), systemImage: rain.symbolName)
+                Text(observed ? "Now" : probability.map { "\($0)%" } ?? "--")
             }
                 .labelStyle(NearcastInlineAccentLabelStyle(color: NearcastComplicationColor.rain))
-                .accessibilityLabel("Rain, \(rain.accessibilityDescription)")
+                .accessibilityLabel(observed
+                    ? "\(entry.snapshot.precipitationNowLabel ?? "Rain now"), observed"
+                    : probability.map { "Rain chance \($0) percent" } ?? "Rain probability guidance unavailable")
         case .accessoryCircular:
-            NearcastRainMark(probability: probability, compact: showsWidgetLabel)
+            NearcastRainMark(probability: probability, observed: observed, compact: showsWidgetLabel)
                 .widgetLabel { Text(rainBezelText(rain)) }
                 .accessibilityLabel("Rain")
-                .accessibilityValue(rain.accessibilityDescription)
+                .accessibilityValue(observed
+                    ? entry.snapshot.precipitationNowLabel ?? "Rain now"
+                    : probability.map { "\($0) percent" } ?? "Probability unavailable")
         case .accessoryCorner:
-            NearcastRainMark(probability: probability, compact: true)
+            NearcastRainMark(probability: probability, observed: observed, compact: true)
                 .widgetLabel { Text(cornerText(rain)) }
                 .accessibilityLabel("Rain")
-                .accessibilityValue(rain.accessibilityDescription)
+                .accessibilityValue(observed
+                    ? entry.snapshot.precipitationNowLabel ?? "Rain now"
+                    : probability.map { "\($0) percent" } ?? "Probability unavailable")
         default:
             NearcastRainInstrument(signal: rain)
             .accessibilityElement(children: .ignore)
@@ -662,7 +674,9 @@ private struct NearcastBasicsRectangle: View {
                             .font(.system(size: 14, weight: .bold))
                             .nearcastComplicationTint(NearcastComplicationColor.rain)
                             .frame(width: 16)
-                        Text("\(snapshot.rainChance)%")
+                        Text(snapshot.precipitationNowObserved == true
+                            ? "Now"
+                            : snapshot.forecastRainChanceForDisplay.map { "\($0)%" } ?? "--")
                             .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
                             .fixedSize(horizontal: true, vertical: false)
                         ComplicationRainBars(values: complicationRainValues(snapshot))
@@ -766,7 +780,8 @@ private struct ComplicationTemperatureBezel: View {
 }
 
 private struct NearcastRainMark: View {
-    let probability: Int
+    let probability: Int?
+    var observed = false
     var compact = false
 
     var body: some View {
@@ -774,7 +789,7 @@ private struct NearcastRainMark: View {
             Image(systemName: "drop.fill")
                 .font(.system(size: compact ? 15 : 18, weight: .bold))
                 .nearcastComplicationTint(NearcastComplicationColor.rain)
-            Text("\(probability)%")
+            Text(observed ? "Now" : probability.map { "\($0)%" } ?? "--")
                 .font(.system(size: compact ? 12 : 14, weight: .bold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.72)
         }
@@ -1181,6 +1196,11 @@ private func projectedSnapshot(_ base: NearcastWidgetSnapshot, at date: Date, re
         projected.temperature = current.temperature ?? projected.temperature
         projected.feelsLike = current.feelsLike ?? projected.feelsLike
         projected.rainChance = current.rainChance ?? projected.rainChance
+        projected.forecastRainChance = current.rainChance
+        projected.precipitationNowLabel = current.precipitationLabel
+        projected.precipitationNowBasis = current.precipitationBasis
+        projected.precipitationNowObserved = current.precipitationObserved
+        projected.precipitationNowDetail = current.precipitationDetail
         projected.wind = current.wind ?? projected.wind
         projected.windDirection = current.windDirection ?? projected.windDirection
         projected.windLabel = nil
@@ -1357,7 +1377,9 @@ private func temperatureInlineText(_ snapshot: NearcastWidgetSnapshot, includesR
     return "\(snapshot.temperature)° · \(low)–\(high)°"
 }
 
-private func rainInlineText(_ signal: NearcastVisualSignal, probability: Int, includesHorizon: Bool) -> String {
+private func rainInlineText(_ signal: NearcastVisualSignal, probability: Int?, observed: Bool, includesHorizon: Bool) -> String {
+    if observed { return includesHorizon ? "Rain now" : "Now" }
+    guard let probability else { return includesHorizon ? "Rain guidance unavailable" : "Rain --" }
     if signal.headline == "Dry" || probability == 0 {
         return includesHorizon ? "Dry next 4h" : "Dry"
     }
@@ -1398,7 +1420,8 @@ private func windBasicsText(_ snapshot: NearcastWidgetSnapshot) -> String {
 
 private func complicationRainValues(_ snapshot: NearcastWidgetSnapshot) -> [Int] {
     let values = (snapshot.timeline ?? []).prefix(4).compactMap(\.rainChance)
-    return values.isEmpty ? [snapshot.rainChance] : values
+    if !values.isEmpty { return values }
+    return snapshot.forecastRainChanceForDisplay.map { [$0] } ?? []
 }
 
 private func complicationCardinalDirection(_ snapshot: NearcastWidgetSnapshot) -> String {
@@ -1523,6 +1546,11 @@ private enum NearcastWatchWeatherRefresh {
                 let rows = hourly.rows(limit: 24, utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0)
                 weather.timeline = rows
                 weather.rainChance = rows.first?.rainChance ?? fallback.rainChance
+                weather.forecastRainChance = rows.first?.rainChance
+                weather.precipitationNowLabel = nil
+                weather.precipitationNowBasis = nil
+                weather.precipitationNowObserved = false
+                weather.precipitationNowDetail = nil
                 weather.uv = rows.first?.uv ?? fallback.uv
             }
             if let daily = forecast.daily {
@@ -1590,6 +1618,11 @@ private enum NearcastWatchWeatherRefresh {
         updated.conditionCode = weather.conditionCode
         updated.isDay = weather.isDay
         updated.rainChance = weather.rainChance
+        updated.forecastRainChance = weather.forecastRainChance
+        updated.precipitationNowLabel = weather.precipitationNowLabel
+        updated.precipitationNowBasis = weather.precipitationNowBasis
+        updated.precipitationNowObserved = weather.precipitationNowObserved
+        updated.precipitationNowDetail = weather.precipitationNowDetail
         updated.wind = weather.wind
         updated.windUnit = weather.windUnit
         updated.windDirection = weather.windDirection

@@ -93,6 +93,23 @@ struct NearcastWidgetSnapshot: Codable {
     // Milliseconds from the web payload are converted to seconds before storage.
     var planStartAt: TimeInterval? = nil
     var planEndAt: TimeInterval? = nil
+    // Current precipitation observation is deliberately separate from PoP.
+    // `rainChance` remains forecast guidance even when radar says rain is
+    // occurring now, so native surfaces never turn an observation into 100%.
+    var precipitationNowLabel: String? = nil
+    var precipitationNowBasis: String? = nil
+    var precipitationNowObserved: Bool? = nil
+    var precipitationNowDetail: String? = nil
+    var forecastRainChance: Int? = nil
+}
+
+extension NearcastWidgetSnapshot {
+    // V9 is the first snapshot contract that can distinguish an absent PoP
+    // from a real 0%. Older snapshots only carried the required `rainChance`
+    // field, so retain that value when decoding them.
+    var forecastRainChanceForDisplay: Int? {
+        forecastRainChance ?? (version < 9 ? rainChance : nil)
+    }
 }
 
 struct NearcastWidgetHour: Codable, Identifiable {
@@ -109,6 +126,10 @@ struct NearcastWidgetHour: Codable, Identifiable {
     var conditionCode: Int?
     var isDay: Bool?
     var startsAt: TimeInterval?
+    var precipitationLabel: String? = nil
+    var precipitationBasis: String? = nil
+    var precipitationObserved: Bool? = nil
+    var precipitationDetail: String? = nil
 }
 
 struct NearcastWidgetTimelineProjection {
@@ -446,7 +467,7 @@ struct NearcastWidgetPlace: Codable {
 
 extension NearcastWidgetSnapshot {
     static let fallback = NearcastWidgetSnapshot(
-        version: 8,
+        version: 9,
         savedAt: 0,
         placeName: "Nearcast",
         temperature: 0,
@@ -918,6 +939,11 @@ extension NearcastWidgetSnapshot {
         merged.conditionCode = weather.conditionCode
         merged.isDay = weather.isDay
         merged.rainChance = weather.rainChance
+        merged.precipitationNowLabel = weather.precipitationNowLabel
+        merged.precipitationNowBasis = weather.precipitationNowBasis
+        merged.precipitationNowObserved = weather.precipitationNowObserved
+        merged.precipitationNowDetail = weather.precipitationNowDetail
+        merged.forecastRainChance = weather.forecastRainChance
         merged.wind = weather.wind
         merged.windUnit = weather.windUnit
         merged.windDirection = weather.windDirection

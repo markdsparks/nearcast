@@ -118,6 +118,83 @@ require(movedConfidence.forecastConfidenceBrief(at: now) == nil, "moving to a ne
 let mergedConfidence = legacy.mergingWeather(from: confidenceRoundTrip)
 require(mergedConfidence.confidenceHeadline == "High confidence", "weather merges carry the matching phone-authored confidence receipt")
 
+var truthContractSnapshot = legacy
+truthContractSnapshot.version = 8
+truthContractSnapshot.condition = "Light rain"
+truthContractSnapshot.conditionCode = 61
+truthContractSnapshot.rainChance = 2
+truthContractSnapshot.forecastRainChance = 2
+truthContractSnapshot.precipitationNowLabel = "Rain now"
+truthContractSnapshot.precipitationNowBasis = "observed"
+truthContractSnapshot.precipitationNowObserved = true
+truthContractSnapshot.precipitationNowDetail = "Light rain is observed on radar now. Hourly forecast guidance for this hour is 2% rain."
+truthContractSnapshot.timeline = [
+    NearcastWidgetHour(
+        offsetHours: 0,
+        timeLabel: "Now",
+        temperature: 73,
+        feelsLike: 74,
+        rainChance: 2,
+        wind: 7,
+        windGust: 11,
+        windDirection: 180,
+        uv: 2,
+        conditionCode: 61,
+        isDay: true,
+        startsAt: now,
+        precipitationLabel: "Rain now",
+        precipitationBasis: "observed",
+        precipitationObserved: true,
+        precipitationDetail: "Light rain is observed on radar now. Hourly forecast guidance for this hour is 2% rain."
+    )
+]
+let truthContractRoundTrip = try decoder.decode(
+    NearcastWidgetSnapshot.self,
+    from: encoder.encode(truthContractSnapshot)
+)
+require(truthContractRoundTrip.rainChance == 2 && truthContractRoundTrip.forecastRainChance == 2, "observed rain does not become a fabricated 100% native forecast")
+require(truthContractRoundTrip.precipitationNowObserved == true, "native snapshot preserves the typed observed-now state")
+require(truthContractRoundTrip.precipitationNowLabel == "Rain now", "native snapshot preserves the web-authored observed label")
+require(truthContractRoundTrip.precipitationNowDetail?.contains("2% rain") == true, "native observation detail retains earlier hourly guidance")
+require(truthContractRoundTrip.timeline?.first?.rainChance == 2, "native timeline bars retain raw forecast guidance during observed rain")
+require(truthContractRoundTrip.timeline?.first?.precipitationObserved == true, "native timeline separately preserves the current observation")
+
+let mergedTruthContract = legacy.mergingWeather(from: truthContractRoundTrip)
+require(mergedTruthContract.forecastRainChance == 2 && mergedTruthContract.precipitationNowObserved == true, "weather merges preserve the Forecast Truth Contract")
+
+var missingGuidanceSnapshot = legacy
+missingGuidanceSnapshot.version = 9
+missingGuidanceSnapshot.rainChance = 0 // required compatibility field for old decoders
+missingGuidanceSnapshot.forecastRainChance = nil
+missingGuidanceSnapshot.timeline = [
+    NearcastWidgetHour(
+        offsetHours: 0,
+        timeLabel: "Now",
+        temperature: 73,
+        feelsLike: 74,
+        rainChance: nil,
+        wind: 7,
+        windGust: 11,
+        windDirection: 180,
+        uv: 2,
+        conditionCode: 2,
+        isDay: true,
+        startsAt: now
+    )
+]
+let missingGuidanceRoundTrip = try decoder.decode(
+    NearcastWidgetSnapshot.self,
+    from: encoder.encode(missingGuidanceSnapshot)
+)
+require(missingGuidanceRoundTrip.forecastRainChanceForDisplay == nil, "V9 keeps absent forecast guidance unavailable instead of fabricating zero percent")
+require(missingGuidanceRoundTrip.timeline?.first?.rainChance == nil, "V9 hourly guidance preserves missing values as gaps")
+
+var legacyGuidanceSnapshot = legacy
+legacyGuidanceSnapshot.version = 8
+legacyGuidanceSnapshot.rainChance = 27
+legacyGuidanceSnapshot.forecastRainChance = nil
+require(legacyGuidanceSnapshot.forecastRainChanceForDisplay == 27, "pre-V9 snapshots retain their legacy rain chance when the optional field is absent")
+
 var splitFreshness = legacy
 splitFreshness.version = 5
 splitFreshness.isAvailable = true

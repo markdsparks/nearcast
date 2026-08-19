@@ -524,6 +524,11 @@ private func projectedWidgetSnapshot(
             projected.temperature = current.temperature ?? projected.temperature
             projected.feelsLike = current.feelsLike ?? projected.feelsLike
             projected.rainChance = current.rainChance ?? projected.rainChance
+            projected.forecastRainChance = current.rainChance
+            projected.precipitationNowLabel = current.precipitationLabel
+            projected.precipitationNowBasis = current.precipitationBasis
+            projected.precipitationNowObserved = current.precipitationObserved
+            projected.precipitationNowDetail = current.precipitationDetail
             projected.wind = current.wind ?? projected.wind
             projected.windDirection = current.windDirection ?? projected.windDirection
             projected.windLabel = projected.windDirection.map(NearcastWidgetForecastClient.windDirectionLabel)
@@ -799,7 +804,8 @@ enum NearcastWidgetForecastClient {
     private static func buildSnapshot(from forecast: WidgetForecastResponse, place: NearcastWidgetPlace, fallback: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
         let current = forecast.current
         let currentIndex = hourlyIndex(hourlyTimes: forecast.hourly?.time, currentTime: current.time)
-        let rainChance = roundedValue(flatValue(forecast.hourly?.precipitationProbability?[safe: currentIndex])) ?? fallback.rainChance
+        let forecastRainChance = roundedValue(flatValue(forecast.hourly?.precipitationProbability?[safe: currentIndex]))
+        let rainChance = forecastRainChance ?? fallback.rainChance
         let uv = roundedValue(flatValue(forecast.hourly?.uvIndex?[safe: currentIndex])) ?? fallback.uv
         let high = roundedValue(flatValue(forecast.daily?.temperatureMax?.first)) ?? fallback.high
         let low = roundedValue(flatValue(forecast.daily?.temperatureMin?.first)) ?? fallback.low
@@ -820,7 +826,7 @@ enum NearcastWidgetForecastClient {
         let refreshedAt = Date().timeIntervalSince1970
 
         return NearcastWidgetSnapshot(
-            version: max(fallback.version, 8),
+            version: max(fallback.version, 9),
             savedAt: refreshedAt,
             placeName: place.displayLabel,
             placeTimezone: forecast.timezone ?? fallback.placeTimezone,
@@ -886,7 +892,12 @@ enum NearcastWidgetForecastClient {
             planAvailable: fallback.planAvailable ?? fallback.hasPlan,
             planRisk: fallback.planRisk,
             planStartAt: fallback.planStartAt,
-            planEndAt: fallback.planEndAt
+            planEndAt: fallback.planEndAt,
+            precipitationNowLabel: nil,
+            precipitationNowBasis: nil,
+            precipitationNowObserved: false,
+            precipitationNowDetail: nil,
+            forecastRainChance: forecastRainChance
         )
     }
 
@@ -971,13 +982,13 @@ enum NearcastWidgetForecastClient {
         return 0
     }
 
-    private static func nextTwoHourRainChance(hourly: WidgetForecastResponse.Hourly?, currentIndex: Int) -> Int {
-        guard let probabilities = hourly?.precipitationProbability, !probabilities.isEmpty else { return 0 }
+    private static func nextTwoHourRainChance(hourly: WidgetForecastResponse.Hourly?, currentIndex: Int) -> Int? {
+        guard let probabilities = hourly?.precipitationProbability, !probabilities.isEmpty else { return nil }
         let end = min(probabilities.count - 1, currentIndex + 2)
-        guard currentIndex <= end else { return 0 }
-        return (currentIndex...end)
-            .compactMap { roundedValue(flatValue(probabilities[safe: $0])) }
-            .max() ?? 0
+        guard currentIndex <= end, end - currentIndex == 2 else { return nil }
+        let values = (currentIndex...end).map { roundedValue(flatValue(probabilities[safe: $0])) }
+        guard values.allSatisfy({ $0 != nil }) else { return nil }
+        return values.compactMap { $0 }.max()
     }
 
     fileprivate static func nowValue(feelsLike: Int, code: Int) -> String {
@@ -989,8 +1000,9 @@ enum NearcastWidgetForecastClient {
         return "Feels \(feelsLike)°"
     }
 
-    fileprivate static func nextValue(rainChance: Int) -> String {
-        rainChance >= 20 ? "Rain \(rainChance)%" : "Dry 2h"
+    fileprivate static func nextValue(rainChance: Int?) -> String {
+        guard let rainChance else { return "Rain guidance unavailable" }
+        return rainChance >= 20 ? "Rain \(rainChance)%" : "Dry 2h"
     }
 
     private static func laterValue(forecast: WidgetForecastResponse, wind: Int, windUnit: String) -> String {
@@ -3071,7 +3083,7 @@ private struct LargeFallbackContext: View {
     var body: some View {
         HStack(spacing: 0) {
             LargeFallbackMetric(label: "FEELS", value: "\(snapshot.feelsLike)°", palette: palette)
-            LargeFallbackMetric(label: "RAIN", value: "\(snapshot.rainChance)%", palette: palette)
+            LargeFallbackMetric(label: "RAIN", value: nativeRainMetricValue(snapshot), palette: palette)
             LargeFallbackMetric(label: "WIND", value: "\(snapshot.wind) \(snapshot.windUnit)", palette: palette)
         }
         .padding(.horizontal, compact ? 8 : 10)
@@ -3884,11 +3896,19 @@ private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: Widge
 }
 
 private func mediumNowValue(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if snapshot.precipitationNowObserved == true {
+        return snapshot.precipitationNowLabel ?? "Rain now"
+    }
     if snapshot.feelsLike != snapshot.temperature {
         return "Feels \(snapshot.feelsLike)°"
     }
-    if snapshot.rainChance >= 20 { return "Rain \(snapshot.rainChance)%" }
+    if let chance = snapshot.forecastRainChanceForDisplay, chance >= 20 { return "Rain \(chance)%" }
     return widgetConditionTitle(snapshot)
+}
+
+private func nativeRainMetricValue(_ snapshot: NearcastWidgetSnapshot) -> String {
+    if snapshot.precipitationNowObserved == true { return "Now" }
+    return snapshot.forecastRainChanceForDisplay.map { "\($0)%" } ?? "--"
 }
 
 private func focusLabel(_ focus: WidgetNextFocus) -> String {
@@ -3948,7 +3968,7 @@ private func largeMetricSpecs(_ snapshot: NearcastWidgetSnapshot, focus: WidgetN
     ]
 
     if focus != .rain {
-        specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: rainAccentColor(snapshot)))
+        specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: nativeRainMetricValue(snapshot), tone: rainAccentColor(snapshot)))
     }
     if focus != .wind {
         specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
@@ -3958,7 +3978,7 @@ private func largeMetricSpecs(_ snapshot: NearcastWidgetSnapshot, focus: WidgetN
     }
     if specs.count < 3 {
         if !specs.contains(where: { $0.id == "rain" }) {
-            specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: "\(snapshot.rainChance)%", tone: rainAccentColor(snapshot)))
+            specs.append(LargeMetricSpec(id: "rain", kind: .rain, label: "Rain", value: nativeRainMetricValue(snapshot), tone: rainAccentColor(snapshot)))
         } else if !specs.contains(where: { $0.id == "wind" }) {
             specs.append(LargeMetricSpec(id: "wind", kind: .wind, label: "Wind", value: "\(snapshot.wind)", tone: signalColor("wind")))
         } else if !specs.contains(where: { $0.id == "uv" }) {
@@ -3980,6 +4000,13 @@ private func metricStroke(_ metric: LargeMetricSpec, palette: WidgetPalette) -> 
 
 private func metricAccessibility(_ metric: LargeMetricSpec, snapshot: NearcastWidgetSnapshot) -> String {
     switch metric.kind {
+    case .rain where snapshot.precipitationNowObserved == true:
+        let guidance = snapshot.forecastRainChanceForDisplay.map { "Earlier hourly forecast chance \($0) percent" }
+            ?? "Hourly probability guidance unavailable"
+        return "\(snapshot.precipitationNowLabel ?? "Rain now"), observed. \(guidance)"
+    case .rain:
+        return snapshot.forecastRainChanceForDisplay.map { "Rain chance \($0) percent" }
+            ?? "Rain probability guidance unavailable"
     case .wind:
         return "Wind \(snapshot.wind) \(snapshot.windUnit)"
     case .uv:
@@ -4284,8 +4311,9 @@ private func largeRunwayTitle(_ mode: LargeRunwayMode, snapshot: NearcastWidgetS
         let peak = rows.max { ($0.uv ?? 0) < ($1.uv ?? 0) }
         return "UV \(uvRiskLabel(peak?.uv ?? snapshot.uv)) near \(peak.map(runwayTimeLabel) ?? "soon")"
     case .quiet:
-        let maxRain = rows.compactMap(\.rainChance).max() ?? snapshot.rainChance
-        if maxRain < 20, let last = rows.last {
+        let rainGuidanceComplete = !rows.isEmpty && rows.allSatisfy { $0.rainChance != nil }
+        let maxRain = rows.compactMap(\.rainChance).max()
+        if rainGuidanceComplete, let maxRain, maxRain < 20, let last = rows.last {
             return "Dry through \(runwayTimeLabel(last))"
         }
         guard let first = rows.first, let last = rows.last else {
@@ -4300,14 +4328,23 @@ private func largeRunwayTitle(_ mode: LargeRunwayMode, snapshot: NearcastWidgetS
 }
 
 private func largeRainRunwayTitle(_ snapshot: NearcastWidgetSnapshot, rows: [NearcastWidgetHour]) -> String {
-    if isStormCode(snapshot.conditionCode) { return "Storms nearby now" }
+    if isStormCode(snapshot.conditionCode) {
+        if snapshot.precipitationNowObserved == true {
+            let observation = snapshot.precipitationNowLabel ?? "Rain now"
+            let qualifier = snapshot.condition.lowercased().contains("likely") ? "storms likely" : "storms possible"
+            return "\(observation) · \(qualifier)"
+        }
+        return "Storms nearby now"
+    }
     if isRainCode(snapshot.conditionCode) {
         if let futureStorm = rows.first(where: {
             $0.offsetHours > 0 && isStormCode(runwayConditionCode($0, snapshot: snapshot))
         }) {
             return "Rain now · storms \(runwayTimeLabel(futureStorm))"
         }
-        return "Rain nearby now"
+        return snapshot.precipitationNowObserved == true
+            ? (snapshot.precipitationNowLabel ?? "Rain now")
+            : "Rain nearby now"
     }
 
     let wetRows = rows.filter { row in
@@ -4352,7 +4389,10 @@ private func largeRunwayAccessibility(
     case .rain:
         let peak = largeRunwayPoints(rows: rows, mode: .rain, snapshot: snapshot).map(\.value).max()
             ?? snapshot.rainChance
-        return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Rain peaks at \(peak) percent."
+        let observedPrefix = snapshot.precipitationNowObserved == true
+            ? "\(snapshot.precipitationNowLabel ?? "Rain now"), observed. "
+            : ""
+        return storyPrefix ?? "\(observedPrefix)Next \(max(1, rows.count - 1)) hours. \(title). Forecast rain chance peaks at \(peak) percent."
     case .snow:
         let end = last.temperature ?? snapshot.temperature
         return storyPrefix ?? "Next \(max(1, rows.count - 1)) hours. \(title). Temperature near \(end) degrees."
@@ -4396,9 +4436,10 @@ private func largeRunwayPoints(rows: [NearcastWidgetHour], mode: LargeRunwayMode
         switch mode {
         case .rain:
             let reportedChance = row.rainChance ?? snapshot.rainChance
-            value = row.offsetHours == 0 && isRainCode(snapshot.conditionCode)
-                ? max(100, reportedChance)
-                : reportedChance
+            // A wet current condition is an observation, not a probability.
+            // Keep the line at the forecast guidance value; the current label
+            // and condition icon carry the independent observed-now claim.
+            value = reportedChance
             secondary = nil
         case .snow:
             value = row.offsetHours == 0 ? snapshot.temperature : (row.temperature ?? snapshot.temperature)

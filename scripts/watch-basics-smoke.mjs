@@ -59,7 +59,7 @@ assert.match(complications, /struct ComplicationTemperatureTrack/, "rectangular 
 assert.match(complications, /struct ComplicationTemperatureBezel[\s\S]*Gauge\(/, "only temperature uses a meaningful low-to-high corner gauge");
 assert.equal(complications.match(/\bGauge\(/g)?.length, 1, "temperature is the only complication encoded as a gauge");
 assert.match(complications, /struct ComplicationRainBars/, "rain chance uses a short hourly bar sequence");
-assert.match(complications, /Image\(systemName: "drop\.fill"\)[\s\S]*Text\("\\\(snapshot\.rainChance\)%"\)/, "rain is encoded as a drop and value without a repeated label");
+assert.match(complications, /Image\(systemName: "drop\.fill"\)[\s\S]*precipitationNowObserved == true[\s\S]*\? "Now"[\s\S]*forecastRainChanceForDisplay[\s\S]*\?\? "--"/, "rain is encoded as a drop plus observed-now or nullable forecast guidance without a repeated label");
 assert.match(complications, /NearcastWindMark\(snapshot: entry\.snapshot/, "small wind complications pair current speed with current direction");
 assert.match(complications, /struct NearcastComplicationTint[\s\S]*widgetRenderingMode[\s\S]*\.fullColor/, "complication colors adapt to the watch face rendering mode");
 assert.match(complications, /struct NearcastInlineAccentLabelStyle[\s\S]*configuration\.icon[\s\S]*configuration\.title/, "inline complications accent only their icon");
