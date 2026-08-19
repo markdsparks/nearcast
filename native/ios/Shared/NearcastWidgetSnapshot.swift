@@ -40,6 +40,17 @@ struct NearcastWidgetSnapshot: Codable {
     var canonicalEventStartAt: TimeInterval? = nil
     var canonicalEventEndAt: TimeInterval? = nil
     var canonicalEventKind: String? = nil
+    // Optional forecast-confidence evidence authored by Nearcast's web
+    // consensus engine. Timestamps are seconds since 1970 at the native
+    // boundary. Keeping the entire contract optional preserves snapshots from
+    // older app builds and lets native-only refreshes retain phone-authored
+    // evidence without trying to recreate it from a single forecast source.
+    var confidenceLevel: String? = nil
+    var confidenceHeadline: String? = nil
+    var confidenceSummary: String? = nil
+    var confidenceWindowStartAt: TimeInterval? = nil
+    var confidenceWindowEndAt: TimeInterval? = nil
+    var confidenceGeneratedAt: TimeInterval? = nil
     var planTitle: String?
     var planLabel: String?
     var planDetail: String?
@@ -112,6 +123,29 @@ struct NearcastCanonicalEventBrief: Equatable {
     let startAt: TimeInterval?
     let endAt: TimeInterval?
     let kind: String?
+}
+
+enum NearcastForecastConfidenceLevel: String, Equatable {
+    case high
+    case medium
+    case low
+}
+
+/// A validated, presentation-neutral confidence receipt for native companion
+/// surfaces. `unavailable` and stale/ended receipts are intentionally omitted:
+/// compact surfaces must never imply confidence that the current snapshot no
+/// longer supports.
+struct NearcastForecastConfidenceBrief: Equatable {
+    let level: NearcastForecastConfidenceLevel
+    let headline: String
+    let summary: String
+    let windowStartAt: TimeInterval
+    let windowEndAt: TimeInterval
+    let generatedAt: TimeInterval
+
+    var isMaterialCaution: Bool {
+        level == .medium || level == .low
+    }
 }
 
 struct NearcastOfficialAlertBrief: Equatable {
@@ -505,6 +539,38 @@ extension NearcastWidgetSnapshot {
         )
     }
 
+    /// Confidence is useful only while its claim window and generation time
+    /// are current. The weather itself may remain projectable for longer, but
+    /// an old model-comparison receipt must not quietly survive on a widget.
+    func forecastConfidenceBrief(
+        at timestamp: TimeInterval = Date().timeIntervalSince1970,
+        maximumAge: TimeInterval = 3 * 60 * 60
+    ) -> NearcastForecastConfidenceBrief? {
+        guard let rawLevel = cleanCompanionText(confidenceLevel)?.lowercased(),
+              let level = NearcastForecastConfidenceLevel(rawValue: rawLevel),
+              let headline = cleanCompanionText(confidenceHeadline),
+              let summary = cleanCompanionText(confidenceSummary),
+              let windowStartAt = confidenceWindowStartAt,
+              let windowEndAt = confidenceWindowEndAt,
+              let generatedAt = confidenceGeneratedAt,
+              windowStartAt > 0,
+              windowEndAt > windowStartAt,
+              windowEndAt > timestamp,
+              generatedAt > 0,
+              generatedAt <= timestamp + 5 * 60,
+              max(0, timestamp - generatedAt) <= maximumAge else {
+            return nil
+        }
+        return NearcastForecastConfidenceBrief(
+            level: level,
+            headline: headline,
+            summary: summary,
+            windowStartAt: windowStartAt,
+            windowEndAt: windowEndAt,
+            generatedAt: generatedAt
+        )
+    }
+
     func officialAlertBrief(
         at timestamp: TimeInterval = Date().timeIntervalSince1970,
         missingExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
@@ -593,6 +659,15 @@ extension NearcastWidgetSnapshot {
         canonicalEventKind = nil
     }
 
+    mutating func clearForecastConfidence() {
+        confidenceLevel = nil
+        confidenceHeadline = nil
+        confidenceSummary = nil
+        confidenceWindowStartAt = nil
+        confidenceWindowEndAt = nil
+        confidenceGeneratedAt = nil
+    }
+
     func expiringCompanionContent(
         at timestamp: TimeInterval,
         missingAlertExpiryTTL: TimeInterval = nearcastWidgetAlertWithoutExpiryTTL
@@ -603,6 +678,10 @@ extension NearcastWidgetSnapshot {
         )
         if let eventEndAt = snapshot.canonicalEventEndAt, eventEndAt <= timestamp {
             snapshot.clearCanonicalEvent()
+        }
+        if snapshot.confidenceLevel != nil,
+           snapshot.forecastConfidenceBrief(at: timestamp) == nil {
+            snapshot.clearForecastConfidence()
         }
         return snapshot
     }
@@ -856,6 +935,12 @@ extension NearcastWidgetSnapshot {
         merged.canonicalEventStartAt = weather.canonicalEventStartAt
         merged.canonicalEventEndAt = weather.canonicalEventEndAt
         merged.canonicalEventKind = weather.canonicalEventKind
+        merged.confidenceLevel = weather.confidenceLevel
+        merged.confidenceHeadline = weather.confidenceHeadline
+        merged.confidenceSummary = weather.confidenceSummary
+        merged.confidenceWindowStartAt = weather.confidenceWindowStartAt
+        merged.confidenceWindowEndAt = weather.confidenceWindowEndAt
+        merged.confidenceGeneratedAt = weather.confidenceGeneratedAt
         merged.timeline = weather.timeline
         merged.daily = weather.daily
         merged.sunriseAt = weather.sunriseAt

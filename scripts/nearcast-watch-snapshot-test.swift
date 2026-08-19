@@ -35,6 +35,12 @@ legacyObject.removeValue(forKey: "canonicalEventTiming")
 legacyObject.removeValue(forKey: "canonicalEventStartAt")
 legacyObject.removeValue(forKey: "canonicalEventEndAt")
 legacyObject.removeValue(forKey: "canonicalEventKind")
+legacyObject.removeValue(forKey: "confidenceLevel")
+legacyObject.removeValue(forKey: "confidenceHeadline")
+legacyObject.removeValue(forKey: "confidenceSummary")
+legacyObject.removeValue(forKey: "confidenceWindowStartAt")
+legacyObject.removeValue(forKey: "confidenceWindowEndAt")
+legacyObject.removeValue(forKey: "confidenceGeneratedAt")
 legacyObject.removeValue(forKey: "alertStartsAt")
 legacyObject.removeValue(forKey: "alertSource")
 legacyObject.removeValue(forKey: "alertUrgency")
@@ -69,6 +75,48 @@ require(canonicalRoundTrip.canonicalEventBrief(at: now + 5 * 3600) == nil, "an e
 var movedPlaceSnapshot = canonicalRoundTrip
 movedPlaceSnapshot.clearCanonicalEvent()
 require(movedPlaceSnapshot.canonicalEventBrief(at: now) == nil, "moving to a new coordinate clears the prior place's canonical event")
+
+var confidenceSnapshot = canonicalRoundTrip
+confidenceSnapshot.confidenceLevel = "high"
+confidenceSnapshot.confidenceHeadline = "High confidence"
+confidenceSnapshot.confidenceSummary = "Three independent forecasts align on storms arriving this afternoon."
+confidenceSnapshot.confidenceWindowStartAt = now + 2 * 3600
+confidenceSnapshot.confidenceWindowEndAt = now + 5 * 3600
+confidenceSnapshot.confidenceGeneratedAt = now - 5 * 60
+let confidenceRoundTrip = try decoder.decode(
+    NearcastWidgetSnapshot.self,
+    from: encoder.encode(confidenceSnapshot)
+)
+let confidenceBrief = confidenceRoundTrip.forecastConfidenceBrief(at: now)
+require(confidenceBrief?.level == .high, "snapshots preserve the calibrated forecast confidence level")
+require(confidenceBrief?.headline == "High confidence", "snapshots preserve confidence language verbatim")
+require(confidenceBrief?.summary.contains("Three independent forecasts") == true, "snapshots preserve concise confidence evidence")
+require(confidenceBrief?.windowStartAt == now + 2 * 3600 && confidenceBrief?.windowEndAt == now + 5 * 3600, "confidence remains attached to its exact forecast window")
+require(confidenceBrief?.isMaterialCaution == false, "high confidence stays quiet on compact surfaces")
+
+var uncertainConfidence = confidenceRoundTrip
+uncertainConfidence.confidenceLevel = "medium"
+uncertainConfidence.confidenceHeadline = "Timing uncertain"
+require(uncertainConfidence.forecastConfidenceBrief(at: now)?.isMaterialCaution == true, "medium confidence can flag material uncertainty on compact surfaces")
+uncertainConfidence.confidenceLevel = "low"
+require(uncertainConfidence.forecastConfidenceBrief(at: now)?.isMaterialCaution == true, "low confidence can flag material uncertainty on compact surfaces")
+uncertainConfidence.confidenceLevel = "unavailable"
+require(uncertainConfidence.forecastConfidenceBrief(at: now) == nil, "unavailable confidence never becomes a native badge")
+
+var expiredConfidence = confidenceRoundTrip
+expiredConfidence.confidenceWindowEndAt = now
+require(expiredConfidence.forecastConfidenceBrief(at: now) == nil, "an ended confidence window cannot survive on companion surfaces")
+require(expiredConfidence.expiringCompanionContent(at: now).confidenceLevel == nil, "projection removes an ended confidence receipt")
+var staleConfidence = confidenceRoundTrip
+staleConfidence.confidenceGeneratedAt = now - 13 * 3600
+require(staleConfidence.forecastConfidenceBrief(at: now) == nil, "stale model agreement is not presented as current confidence")
+
+var movedConfidence = confidenceRoundTrip
+movedConfidence.clearForecastConfidence()
+require(movedConfidence.forecastConfidenceBrief(at: now) == nil, "moving to a new coordinate clears the prior place's confidence receipt")
+
+let mergedConfidence = legacy.mergingWeather(from: confidenceRoundTrip)
+require(mergedConfidence.confidenceHeadline == "High confidence", "weather merges carry the matching phone-authored confidence receipt")
 
 var splitFreshness = legacy
 splitFreshness.version = 5

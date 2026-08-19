@@ -158,8 +158,10 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
         if resolution.meaningfullyMoved {
             // The canonical event was authored for the previous coordinate.
             // Raw destination weather may refresh natively, but only the web
-            // forecast engine may author a new destination event story.
+            // forecast engine may author a new destination event story or
+            // multi-model confidence receipt.
             refreshedWeather?.clearCanonicalEvent()
+            refreshedWeather?.clearForecastConfidence()
         }
     }
     let refreshedAlert = await alertRefresh
@@ -188,6 +190,8 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
         unavailable.weatherSavedAt = 0
         unavailable.timeline = nil
         unavailable.daily = nil
+        unavailable.clearCanonicalEvent()
+        unavailable.clearForecastConfidence()
         unavailable.clearOfficialAlert(checkedAt: Date().timeIntervalSince1970)
         if case .success(let alert, let count, let fetchedAt) = refreshedAlert,
            let alert {
@@ -845,6 +849,12 @@ enum NearcastWidgetForecastClient {
             canonicalEventStartAt: fallback.canonicalEventStartAt,
             canonicalEventEndAt: fallback.canonicalEventEndAt,
             canonicalEventKind: fallback.canonicalEventKind,
+            confidenceLevel: fallback.confidenceLevel,
+            confidenceHeadline: fallback.confidenceHeadline,
+            confidenceSummary: fallback.confidenceSummary,
+            confidenceWindowStartAt: fallback.confidenceWindowStartAt,
+            confidenceWindowEndAt: fallback.confidenceWindowEndAt,
+            confidenceGeneratedAt: fallback.confidenceGeneratedAt,
             planTitle: fallback.planTitle,
             planLabel: fallback.planLabel,
             planDetail: fallback.planDetail,
@@ -2165,6 +2175,7 @@ struct NearcastSmallWidget: View {
     var body: some View {
         let palette = widgetPalette(snapshot)
         let story = snapshot.companionStory()
+        let confidence = compactForecastConfidence(snapshot)
         VStack(alignment: .leading, spacing: 5) {
             Text(cityName(snapshot.placeName))
                 .font(.system(size: 18, weight: .black, design: .rounded))
@@ -2187,8 +2198,12 @@ struct NearcastSmallWidget: View {
                 .minimumScaleFactor(0.82)
 
             MiniPill(
-                text: story?.timing ?? smallWidgetChip(snapshot),
-                tone: story?.kind == .officialAlert ? Color.orange : smallWidgetChipTone(snapshot),
+                text: story?.kind == .officialAlert
+                    ? (story?.timing ?? "Weather alert")
+                    : (confidence?.headline ?? story?.timing ?? smallWidgetChip(snapshot)),
+                tone: story?.kind == .officialAlert
+                    ? Color.orange
+                    : (confidence.map(forecastConfidenceTone) ?? smallWidgetChipTone(snapshot)),
                 palette: palette
             )
         }
@@ -2429,6 +2444,7 @@ private struct LargeWeatherRunway: View {
         let rows = largeRunwayRows(snapshot, at: entryDate, limit: density.timelineLimit)
         let mode = largeRunwayMode(snapshot, rows: rows)
         let story = snapshot.companionStory(at: entryDate.timeIntervalSince1970)
+        let confidence = largeForecastConfidence(snapshot, at: entryDate.timeIntervalSince1970)
 
         VStack(alignment: .leading, spacing: density.isCompact ? 5 : 7) {
             HStack(alignment: .center, spacing: 8) {
@@ -2446,6 +2462,15 @@ private struct LargeWeatherRunway: View {
                 }
                 Spacer(minLength: 4)
                 LargeRunwayLegend(mode: mode, snapshot: snapshot, rows: rows, palette: palette)
+            }
+
+            if let confidence {
+                Label(confidence.summary, systemImage: forecastConfidenceSymbol(confidence))
+                    .font(.system(size: density.isCompact ? 11 : 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(forecastConfidenceTone(confidence))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+                    .accessibilityLabel("\(confidence.headline). \(confidence.summary)")
             }
 
             if rows.isEmpty {
@@ -3787,9 +3812,58 @@ private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
     }
 }
 
+/// Small and medium widgets show confidence only when it changes how a family
+/// should read the forecast. High confidence remains quiet at these sizes;
+/// urgent alerts and actionable plan changes keep their established priority.
+private func compactForecastConfidence(_ snapshot: NearcastWidgetSnapshot) -> NearcastForecastConfidenceBrief? {
+    guard snapshot.urgentOfficialAlertBrief() == nil,
+          !shouldShowPlanAttention(snapshot),
+          let confidence = snapshot.forecastConfidenceBrief(),
+          confidence.isMaterialCaution else {
+        return nil
+    }
+    return confidence
+}
+
+/// The large widget has room for a concise evidence line. It appears only in
+/// the healthy forecast state so it never competes with the alert/plan panel.
+private func largeForecastConfidence(
+    _ snapshot: NearcastWidgetSnapshot,
+    at timestamp: TimeInterval
+) -> NearcastForecastConfidenceBrief? {
+    guard largeAttentionContext(snapshot) == nil else { return nil }
+    return snapshot.forecastConfidenceBrief(at: timestamp)
+}
+
+private func forecastConfidenceTone(_ confidence: NearcastForecastConfidenceBrief) -> Color {
+    switch confidence.level {
+    case .high:
+        return Color(red: 0.10, green: 0.58, blue: 0.43)
+    case .medium:
+        return Color(red: 0.72, green: 0.47, blue: 0.08)
+    case .low:
+        return Color(red: 0.82, green: 0.31, blue: 0.24)
+    }
+}
+
+private func forecastConfidenceSymbol(_ confidence: NearcastForecastConfidenceBrief) -> String {
+    switch confidence.level {
+    case .high:
+        return "checkmark.seal.fill"
+    case .medium:
+        return "waveform.path.ecg"
+    case .low:
+        return "arrow.triangle.branch"
+    }
+}
+
 private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: WidgetPalette) -> [MediumSignalSpec] {
     let focus = nextFocus(snapshot)
     let story = snapshot.companionStory()
+    let confidence = compactForecastConfidence(snapshot)
+    let nextDetail = [story?.timing, confidence?.headline]
+        .compactMap(cleanOptional)
+        .joined(separator: " · ")
     let first = MediumSignalSpec(
         id: "now",
         label: "Now",
@@ -3801,8 +3875,10 @@ private func mediumSignalRows(_ snapshot: NearcastWidgetSnapshot, palette: Widge
         id: "next",
         label: story == nil && focus != .quiet ? focusLabel(focus) : (story?.kind == .officialAlert ? "Alert" : "Next"),
         value: story?.headline ?? mediumFocusValue(snapshot, focus: focus),
-        detail: story?.timing,
-        tone: story?.kind == .officialAlert ? Color.orange : nextFocusColor(focus, snapshot: snapshot)
+        detail: nextDetail.isEmpty ? nil : nextDetail,
+        tone: story?.kind == .officialAlert
+            ? Color.orange
+            : (confidence.map(forecastConfidenceTone) ?? nextFocusColor(focus, snapshot: snapshot))
     )
     return [first, second]
 }

@@ -164,6 +164,7 @@ assert.equal(shifting.status, "uncertain");
 assert.equal(shifting.label, "Still shifting");
 
 assert.match(app, /saveForecastPulseSnapshot\(ctx\.data, ctx\.place\)/, "Records one bounded run after rendering");
-assert.match(app, /pulseCue = pulse\.status === "uncertain"/, "Daily rows expose useful uncertainty only");
+assert.match(app, /showConfidenceCue = dayConfidence &&/, "Daily rows use claim-scoped confidence rather than a separate pulse label");
+assert.match(app, /dayConfidence\.level === "low" \|\| agreementStatus === "diverging" \|\| agreementStatus === "mixed"/, "Daily rows expose only material uncertainty");
 
 console.log("PASS  Forecast Pulse detects meaningful movement, stays quiet on noise, and distinguishes settled from shifting forecasts");

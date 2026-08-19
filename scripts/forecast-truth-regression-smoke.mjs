@@ -666,6 +666,7 @@ const trust = contextWith(`
   const state = { forecast: null, activePlace: null };
   const activeAlerts = [];
   function currentRadarPrecipSignal() { return null; }
+  function nearcastForecastConfidence() { return null; }
   function weatherTruth() { return {}; }
   function alertCountLabel(count) { return String(count); }
   const RealDate = Date;

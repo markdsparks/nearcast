@@ -1036,7 +1036,56 @@ private struct WatchSavedForecastStatus: View {
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(watchMuted)
                 .frame(maxWidth: .infinity, alignment: .center)
+        } else if let confidence = watchForecastConfidence(snapshot) {
+            Label(confidence.headline, systemImage: watchForecastConfidenceSymbol(confidence))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(watchForecastConfidenceTone(confidence))
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityLabel("Forecast confidence")
+                .accessibilityValue("\(confidence.headline). \(confidence.summary)")
         }
+    }
+}
+
+/// The healthy-state footer is the only Watch app confidence affordance. It
+/// stays out of complications and yields to refresh failures, stale weather,
+/// urgent official alerts, and actionable watched-plan changes.
+private func watchForecastConfidence(_ snapshot: NearcastWidgetSnapshot) -> NearcastForecastConfidenceBrief? {
+    guard snapshot.urgentOfficialAlertBrief() == nil,
+          !watchHasPriorityPlan(snapshot) else {
+        return nil
+    }
+    return snapshot.forecastConfidenceBrief()
+}
+
+private func watchHasPriorityPlan(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+    guard snapshot.hasPlan else { return false }
+    let tone = (cleanOptional(snapshot.planTone) ?? cleanOptional(snapshot.watchTone) ?? "").lowercased()
+    let label = (cleanOptional(snapshot.planLabel) ?? cleanOptional(snapshot.watchStatus) ?? "").lowercased()
+    return ["changed", "caution", "watch"].contains(tone) || label.contains("changed")
+}
+
+private func watchForecastConfidenceSymbol(_ confidence: NearcastForecastConfidenceBrief) -> String {
+    switch confidence.level {
+    case .high:
+        return "checkmark.seal.fill"
+    case .medium:
+        return "waveform.path.ecg"
+    case .low:
+        return "arrow.triangle.branch"
+    }
+}
+
+private func watchForecastConfidenceTone(_ confidence: NearcastForecastConfidenceBrief) -> Color {
+    switch confidence.level {
+    case .high:
+        return nearcastMint
+    case .medium:
+        return nearcastAmber
+    case .low:
+        return nearcastCoral
     }
 }
 
@@ -2735,8 +2784,10 @@ enum NearcastWatchWeatherClient {
             if resolution.meaningfullyMoved {
                 // Never carry a web-authored event story to a new coordinate.
                 // The Watch may refresh raw basics, but Nearcast on iPhone
-                // remains the sole author of the canonical next event.
+                // remains the sole author of the canonical next event and its
+                // multi-model confidence receipt.
                 updated.clearCanonicalEvent()
+                updated.clearForecastConfidence()
             }
 
             let semanticHours = forecast.hourly?.semanticHours ?? []

@@ -543,7 +543,7 @@ function openDayDetail({
   document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
   document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
   renderDayFocus(hrs, { tempUnit, windUnit, source, showNow, data, dayIndex, sharedEvent });
-  renderDayForecastPulse(data, dayIndex, source);
+  renderDayForecastPulse(data, dayIndex, source, eventWindow, sharedEvent);
 
   graphMetric = "temp"; // each focused day starts with the most legible trend.
   dayDetailNavState = {
@@ -709,7 +709,13 @@ function refreshOpenDayDetailMemorySurfaces() {
     dayIndex: dayDetailNavState.dayIndex,
     sharedEvent
   });
-  renderDayForecastPulse(data, dayDetailNavState.dayIndex, dayDetailNavState.source);
+  renderDayForecastPulse(
+    data,
+    dayDetailNavState.dayIndex,
+    dayDetailNavState.source,
+    memoryContext.eventWindow,
+    sharedEvent
+  );
 
   buildHourlyGraph(hrs, tempUnit, windUnit, Boolean(dayDetailNavState.showNow), {
     dayIndex: dayDetailNavState.dayIndex,
@@ -1049,9 +1055,75 @@ function renderDayFocus(hrs, {
   signal.setAttribute("aria-label", `${focus.signal.label}: ${focus.signal.value}`);
 }
 
-function renderDayForecastPulse(data, dayIndex, source = "day") {
+function dayDetailForecastConfidence(data, dayIndex, source, eventWindow, sharedEvent) {
+  if (source !== "day") return null;
+  const startMs = Number(eventWindow?.startMs);
+  const endMs = Number(eventWindow?.endMs);
+  if (
+    Number.isFinite(startMs) &&
+    Number.isFinite(endMs) &&
+    endMs > startMs &&
+    typeof globalThis.nearcastForecastConfidenceForWindow === "function"
+  ) {
+    const eventStart = Number(sharedEvent?.startMs);
+    const eventEnd = Number(sharedEvent?.endMs);
+    const eventOverlaps = Number.isFinite(eventStart) && Number.isFinite(eventEnd) && eventStart < endMs && eventEnd > startMs;
+    const eventKind = String(sharedEvent?.kind || "").toLowerCase();
+    const precipEvent = eventOverlaps && ["rain", "storm", "snow", "ice"].includes(eventKind);
+    const windEvent = eventOverlaps && eventKind === "wind";
+    const claimStart = precipEvent || windEvent ? Math.max(startMs, eventStart) : startMs;
+    const claimEnd = precipEvent || windEvent ? Math.min(endMs, eventEnd) : endMs;
+    const claim = {
+      id: `day-detail:${dayIndex}:${startMs}:${endMs}`,
+      kind: precipEvent ? "precip-window" : windEvent ? "wind" : "dry-window",
+      headline: precipEvent || windEvent
+        ? sharedEvent.headline || "Weather during this window"
+        : "Dry during this window",
+      startMs: claimStart,
+      endMs: claimEnd,
+      canonical: {
+        eventKind: precipEvent || windEvent ? eventKind : "dry",
+        windUnit: state.unit === "fahrenheit" ? "mph" : "km/h"
+      }
+    };
+    return globalThis.nearcastForecastConfidenceForWindow({
+      data,
+      place: state.activePlace,
+      startMs,
+      endMs,
+      claim
+    });
+  }
+  return globalThis.nearcastForecastConfidenceForDay?.(data, dayIndex) || null;
+}
+
+function renderDayForecastPulse(data, dayIndex, source = "day", eventWindow = null, sharedEvent = null) {
   const element = document.getElementById("sheetForecastPulse");
   if (!element) return;
+  const confidenceApiAvailable = typeof globalThis.nearcastForecastConfidenceForDay === "function";
+  const confidence = dayDetailForecastConfidence(data, dayIndex, source, eventWindow, sharedEvent);
+  if (confidence && confidence.level !== "unavailable") {
+    const tone = confidence.level === "high"
+      ? "settled"
+      : confidence.level === "medium"
+        ? "uncertain"
+        : "change";
+    element.hidden = false;
+    element.dataset.tone = tone;
+    element.innerHTML = `<span>Forecast confidence</span><strong>${escapeHtml(confidence.headline)}</strong><p>${escapeHtml(confidence.summary)}</p>`;
+    element.setAttribute(
+      "aria-label",
+      `Forecast confidence. ${confidence.headline}. ${confidence.summary}`
+    );
+    return;
+  }
+  if (confidenceApiAvailable) {
+    element.hidden = true;
+    element.innerHTML = "";
+    element.removeAttribute("data-tone");
+    element.removeAttribute("aria-label");
+    return;
+  }
   if (source !== "day" || typeof forecastPulseDayPresentation !== "function") {
     element.hidden = true;
     element.innerHTML = "";

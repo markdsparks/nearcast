@@ -2540,6 +2540,85 @@ h2 {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-red) 14%, transparent);
 }
 
+.hourly-panel .forecast-receipt-trigger {
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 100%;
+  min-height: 48px;
+  margin-top: 7px;
+  padding: 7px 10px;
+  border-color: color-mix(in srgb, var(--semantic-blue) 13%, var(--border-glass));
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--glass-light) 42%, transparent);
+}
+
+.hourly-panel .forecast-receipt-trigger-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 1px;
+  align-items: start;
+  overflow: visible;
+}
+
+.hourly-panel .forecast-receipt-trigger-copy strong,
+.hourly-panel .forecast-receipt-trigger-copy span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.hourly-panel .forecast-receipt-trigger-copy strong {
+  color: var(--ink);
+  font-size: 0.81rem;
+  line-height: 1.18;
+}
+
+.hourly-panel .forecast-receipt-trigger-copy span {
+  font-size: 0.73rem;
+  line-height: 1.28;
+}
+
+.hourly-panel .forecast-receipt-trigger-copy span::before {
+  content: none;
+}
+
+.hourly-panel .forecast-receipt-trigger-chevron {
+  margin-left: auto;
+}
+
+.forecast-receipt-trigger[data-tone="confidence-high"] .forecast-receipt-trigger-dot,
+.forecast-receipt-overview[data-tone="confidence-high"] .forecast-receipt-overview-dot {
+  background: var(--semantic-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-green) 14%, transparent);
+}
+
+.forecast-receipt-trigger[data-tone="confidence-medium"] .forecast-receipt-trigger-dot,
+.forecast-receipt-overview[data-tone="confidence-medium"] .forecast-receipt-overview-dot {
+  background: var(--semantic-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-blue) 14%, transparent);
+}
+
+.forecast-receipt-trigger[data-tone="confidence-low"] .forecast-receipt-trigger-dot,
+.forecast-receipt-overview[data-tone="confidence-low"] .forecast-receipt-overview-dot {
+  background: var(--semantic-gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-gold) 14%, transparent);
+}
+
+.forecast-receipt-overview[data-tone="confidence-high"] {
+  border-color: color-mix(in srgb, var(--semantic-green) 30%, var(--border-glass));
+  background: color-mix(in srgb, var(--semantic-green) 8%, var(--glass-light));
+}
+
+.forecast-receipt-overview[data-tone="confidence-medium"] {
+  border-color: color-mix(in srgb, var(--semantic-blue) 28%, var(--border-glass));
+  background: color-mix(in srgb, var(--semantic-blue) 8%, var(--glass-light));
+}
+
+.forecast-receipt-overview[data-tone="confidence-low"] {
+  border-color: color-mix(in srgb, var(--semantic-gold) 34%, var(--border-glass));
+  background: color-mix(in srgb, var(--semantic-gold) 9%, var(--glass-light));
+}
+
 .hero {
   position: relative;
   overflow: hidden;
@@ -14750,6 +14829,11 @@ body.map-immersive-active .day-sheet.show {
 }
 .sheet-forecast-pulse[data-tone="change"] > span,
 .sheet-forecast-pulse[data-tone="watch"] > span { color: var(--semantic-gold); }
+.sheet-forecast-pulse[data-tone="uncertain"] {
+  border-color: color-mix(in srgb, var(--semantic-blue) 30%, var(--line));
+  background: color-mix(in srgb, var(--semantic-blue) 8%, transparent);
+}
+.sheet-forecast-pulse[data-tone="uncertain"] > span { color: var(--semantic-blue); }
 
 .graph-previous-forecast {
   fill: none;
@@ -14978,6 +15062,26 @@ body.map-immersive-active .day-sheet.show {
   font-weight: 650;
   line-height: 1.4;
   text-align: center;
+}
+
+.forecast-receipt-source-link {
+  display: block;
+  width: fit-content;
+  min-height: 44px;
+  margin: 2px auto 0;
+  padding: 13px 8px 8px;
+  color: var(--semantic-blue);
+  font-size: 0.7rem;
+  font-weight: 760;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+}
+
+.forecast-receipt-source-link:hover,
+.forecast-receipt-source-link:focus-visible {
+  text-decoration: underline;
+  outline: none;
 }
 
 .glance-detail-sheet {

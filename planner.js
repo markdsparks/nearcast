@@ -3861,6 +3861,7 @@ const NEARCAST_AGENT_PERIODS = new Set(["morning", "afternoon", "evening", "nigh
 const NEARCAST_AGENT_ARTIFACT_KINDS = Object.freeze({
   place: "nearcast.place",
   window: "nearcast.forecast-window",
+  confidence: "nearcast.forecast-confidence",
   view: "nearcast.view",
   dayView: "nearcast.view.day",
   forecastView: "nearcast.view.forecast",
@@ -4022,6 +4023,36 @@ const NEARCAST_AGENT_SKILL_DEFINITIONS = Object.freeze([
     consumes: ["nearcast.place"],
     prepare: prepareNearcastAnswerSkill,
     execute: executeNearcastAnswerSkill
+  },
+  {
+    id: "nearcast.forecast_confidence",
+    description: "Read Nearcast's calibrated confidence for an exact place and forecast window. Use only when the user asks how sure, certain, reliable, settled, or changed the forecast is. For a contextual follow-up, pass window_ref as the compatible typed forecast-window or plan artifact ID, or 'last_result'. This is read-only: it never changes a plan verdict, watch state, or notification policy, and it never returns a confidence percentage.",
+    input_schema: {
+      type: "object",
+      properties: {
+        request: { type: "string" },
+        window_ref: { type: "string" }
+      },
+      required: ["request"],
+      additionalProperties: false
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["checked", "unavailable"] },
+        level: { type: "string", enum: ["high", "medium", "low", "unavailable"] },
+        message: { type: "string" },
+        place: { type: "string" },
+        window: { type: "string" }
+      },
+      required: ["status", "level", "message", "place", "window"],
+      additionalProperties: false
+    },
+    requires_user_confirmation: false,
+    consumes: ["nearcast.place"],
+    produces: ["nearcast.forecast-confidence"],
+    prepare: prepareNearcastConfidenceSkill,
+    execute: executeNearcastConfidenceSkill
   },
   {
     id: "nearcast.place_switch",
@@ -4510,7 +4541,7 @@ function rememberNearcastAgentArtifacts(artifacts) {
       // window or draft from another place and later combine its date with the
       // newly selected place.
       nearcastAgentSessionArtifacts = nearcastAgentSessionArtifacts.filter((item) => {
-        if (![NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan].includes(item.kind)) {
+        if (![NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan, NEARCAST_AGENT_ARTIFACT_KINDS.confidence].includes(item.kind)) {
           return true;
         }
         return item.value?.place && samePlanPlace(item.value.place, artifact.value.place);
@@ -4731,7 +4762,7 @@ function nearcastViewArtifacts(view, place, context = null, windowArtifact = nul
 function nearcastCompatibleWindowArtifact(context, place) {
   const artifacts = Array.isArray(context?.sessionArtifacts) ? context.sessionArtifacts : [];
   return artifacts.filter((artifact) => (
-    [NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan].includes(artifact?.kind) &&
+    [NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan, NEARCAST_AGENT_ARTIFACT_KINDS.confidence].includes(artifact?.kind) &&
     artifact?.value?.place &&
     samePlanPlace(artifact.value.place, place)
   )).slice(-1)[0] || null;
@@ -4915,6 +4946,7 @@ function nearcastPlaceArtifactForPreparation(context) {
     NEARCAST_AGENT_ARTIFACT_KINDS.place,
     NEARCAST_AGENT_ARTIFACT_KINDS.window,
     NEARCAST_AGENT_ARTIFACT_KINDS.plan,
+    NEARCAST_AGENT_ARTIFACT_KINDS.confidence,
     NEARCAST_AGENT_ARTIFACT_KINDS.view
   ]);
   return (context?.sessionArtifacts || [])
@@ -4993,7 +5025,8 @@ function prepareNearcastHourlySkill(args, context, definition) {
   const shouldResolveWindow = referencesWindow || Boolean(requestedWindowRef);
   const windowArtifact = shouldResolveWindow
     ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
-      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.confidence, requestedWindowRef)
     : null;
   if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
     return nearcastPreparationNeedsInput(
@@ -5042,7 +5075,8 @@ function prepareNearcastAnswerSkill(args, context, definition) {
   const referencesWindow = nearcastReferencesWindow(request) || Boolean(requestedWindowRef);
   const windowArtifact = referencesWindow
     ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
-      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.confidence, requestedWindowRef)
     : null;
   if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
     return nearcastPreparationNeedsInput(
@@ -5076,6 +5110,54 @@ function prepareNearcastAnswerSkill(args, context, definition) {
   return { kind: "ready", arguments: { request } };
 }
 
+function prepareNearcastConfidenceSkill(args, context, definition) {
+  const source = args || {};
+  const request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
+  const requestedWindowRef = String(source.window_ref || "").trim();
+  let windowArtifact = requestedWindowRef || nearcastReferencesWindow(request)
+    ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.confidence, requestedWindowRef)
+    : null;
+  const hasExplicitTarget = Boolean(
+    nearcastExplicitDayText(request) ||
+    nearcastExplicitPeriodText(request) ||
+    extractPlanLocationQuery(request)
+  );
+  if (!windowArtifact && !hasExplicitTarget && nearcastExplicitConfidenceQuestion(request) && context.lastPlace) {
+    windowArtifact = nearcastCompatibleWindowArtifact(context, context.lastPlace);
+  }
+  if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      "I can’t find that forecast window anymore. Which place and time should I check?",
+      ["place", "day"]
+    );
+  }
+  if (
+    Array.isArray(windowArtifact?.value?.windows) &&
+    windowArtifact.value.windows.length > 1 &&
+    !nearcastExplicitDayText(request)
+  ) {
+    return nearcastPreparationNeedsInput(
+      definition.id,
+      "Which day in that multi-day plan should I check?",
+      ["day"]
+    );
+  }
+  if (!request) {
+    return nearcastPreparationNeedsInput(definition.id, "Which forecast should I check confidence for?", ["request"]);
+  }
+  context.preparedSkillState?.set(definition.id, { windowArtifact });
+  return {
+    kind: "ready",
+    arguments: {
+      request,
+      ...(windowArtifact ? { window_ref: windowArtifact.id } : {})
+    }
+  };
+}
+
 function prepareNearcastPlanSkill(args, context, definition) {
   const source = args || {};
   const request = nearcastScopedSkillRequest(source.request, context?.question, definition.id);
@@ -5084,7 +5166,8 @@ function prepareNearcastPlanSkill(args, context, definition) {
   const referencesWindow = nearcastReferencesWindow(request) || Boolean(requestedWindowRef);
   const windowArtifact = referencesWindow
     ? nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.window, requestedWindowRef) ||
-      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef)
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.plan, requestedWindowRef) ||
+      nearcastArtifactForPreparation(context, NEARCAST_AGENT_ARTIFACT_KINDS.confidence, requestedWindowRef)
     : null;
   if (requestedWindowRef && !nearcastSemanticReference(requestedWindowRef) && !windowArtifact) {
     return nearcastPreparationNeedsInput(
@@ -5237,6 +5320,235 @@ function nearcastSkillResult(output, artifacts = []) {
   return { output, sources: [], artifacts: Array.isArray(artifacts) ? artifacts.filter(Boolean) : [] };
 }
 
+function nearcastConfidenceTargetLabel(context, target) {
+  if (!context || !target) return "";
+  const day = capitalize(askDayLabel(context, target.dayIdx));
+  return `${day} · ${hourText(target.startHour)}-${hourText(target.endHour)}`;
+}
+
+function nearcastConfidenceTargetFromArtifact(artifact, data, request, context) {
+  const value = artifact?.value || {};
+  const windows = Array.isArray(value.windows) ? value.windows : [];
+  let selected = null;
+  if (windows.length) {
+    const explicitDay = nearcastExplicitDayText(request);
+    if (explicitDay && context) {
+      const dayIndex = resolveDayIndex(explicitDay, context);
+      const targetDate = Number.isInteger(dayIndex) ? data?.daily?.time?.[dayIndex] : "";
+      selected = windows.find((window) => window?.targetDate === targetDate) || null;
+      if (!selected) return null;
+    } else if (windows.length === 1) {
+      selected = windows[0];
+    } else {
+      return { needsDay: true };
+    }
+  }
+  const targetDate = String(selected?.targetDate || value.target_date || "").slice(0, 10);
+  const dayIdx = data?.daily?.time?.indexOf(targetDate) ?? -1;
+  const startHour = Number(selected?.startHour ?? value.start_hour);
+  const endHour = Number(selected?.endHour ?? value.end_hour);
+  if (dayIdx < 0 || !Number.isFinite(startHour) || !Number.isFinite(endHour)) return null;
+  const startMs = planMaterialEventBoundaryMs(data, targetDate, startHour);
+  const endMs = planMaterialEventBoundaryMs(data, targetDate, endHour);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { dayIdx, targetDate, startHour, endHour, startMs, endMs };
+}
+
+function nearcastConfidenceTargetForRequest(request, data, context, artifact = null) {
+  const fromArtifact = artifact
+    ? nearcastConfidenceTargetFromArtifact(artifact, data, request, context)
+    : null;
+  if (fromArtifact) return fromArtifact;
+  if (!context) return null;
+  const window = resolveAskWindow(request, context);
+  const targetDate = data?.daily?.time?.[window?.dayIdx];
+  if (!targetDate || !window) return null;
+  const startMs = planMaterialEventBoundaryMs(data, targetDate, window.startHour);
+  const endMs = planMaterialEventBoundaryMs(data, targetDate, window.endHour);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return {
+    dayIdx: window.dayIdx,
+    targetDate,
+    startHour: window.startHour,
+    endHour: window.endHour,
+    startMs,
+    endMs
+  };
+}
+
+function nearcastConfidenceClaimForTarget(data, target, request = "", risk = "") {
+  if (!data || !target) return null;
+  const materialEvent = planCanonicalMaterialEventForWindow(
+    data,
+    target.targetDate,
+    target.dayIdx,
+    target.startHour,
+    target.endHour
+  );
+  const eventKind = String(materialEvent?.kind || "").toLowerCase();
+  const text = String(request || "").toLowerCase();
+  let kind = "dry-window";
+  if (/\b(?:temperature|temp|high|low|hot|heat|cold|warm|cool)\b/.test(text) || ["heat", "cold"].includes(risk)) {
+    kind = "temperature";
+  } else if (/\b(?:wind|windy|gust|gusts|breeze)\b/.test(text) || risk === "wind") {
+    kind = "wind";
+  } else if (
+    /\b(?:rain|storm|snow|ice|sleet|precip|wet)\b/.test(text) ||
+    ["rain", "storm", "snow", "ice"].includes(eventKind) ||
+    ["rain", "storm", "flood"].includes(risk)
+  ) {
+    kind = "precip-window";
+  }
+  const eventStart = Number(materialEvent?.startAt);
+  const eventEnd = Number(materialEvent?.endAt);
+  const claimStart = kind === "precip-window" && Number.isFinite(eventStart)
+    ? Math.max(target.startMs, eventStart)
+    : target.startMs;
+  const claimEnd = kind === "precip-window" && Number.isFinite(eventEnd)
+    ? Math.min(target.endMs, eventEnd)
+    : target.endMs;
+  const safeStart = claimEnd > claimStart ? claimStart : target.startMs;
+  const safeEnd = claimEnd > claimStart ? claimEnd : target.endMs;
+  const windowName = `${target.targetDate} ${hourText(target.startHour)}-${hourText(target.endHour)}`;
+  const headline = kind === "precip-window"
+    ? materialEvent?.headline || `Precipitation during ${windowName}`
+    : kind === "temperature"
+      ? `Temperature during ${windowName}`
+      : kind === "wind"
+        ? `Wind during ${windowName}`
+        : `Dry during ${windowName}`;
+  return {
+    id: `nearcast-${kind}:${target.startMs}:${target.endMs}`,
+    kind,
+    headline,
+    startMs: safeStart,
+    endMs: safeEnd,
+    canonical: {
+      eventKind: materialEvent?.kind || (kind === "dry-window" ? "dry" : kind),
+      windUnit: state.unit === "fahrenheit" ? "mph" : "km/h"
+    }
+  };
+}
+
+function nearcastConfidenceForExactTarget({ data, place, target, request = "", risk = "" }) {
+  if (!data || !place || !target || typeof window.nearcastForecastConfidenceForWindow !== "function") return null;
+  const claim = nearcastConfidenceClaimForTarget(data, target, request, risk);
+  if (!claim) return null;
+  const confidence = window.nearcastForecastConfidenceForWindow({
+    data,
+    place,
+    startMs: target.startMs,
+    endMs: target.endMs,
+    claim
+  });
+  if (!confidence || confidence.placeKey !== continuityPlaceKey(place)) return null;
+  if (Number(confidence.window?.startMs) !== target.startMs || Number(confidence.window?.endMs) !== target.endMs) return null;
+  return confidence;
+}
+
+function nearcastConfidenceAffectsRecommendation(confidence, tone = "") {
+  if (!confidence || !["medium", "low"].includes(confidence.level)) return false;
+  if (confidence.level === "low") return true;
+  return tone !== "good" ||
+    ["mixed", "diverging"].includes(confidence.evidence?.agreement?.status) ||
+    confidence.evidence?.evolution?.status === "shifted" ||
+    confidence.evidence?.observation?.status === "conflict";
+}
+
+function nearcastConfidenceArtifact(confidence, place, target, context = null) {
+  if (!confidence || !place || !target) return null;
+  const label = `${target.targetDate} · ${hourText(target.startHour)}-${hourText(target.endHour)}`;
+  return createNearcastAgentArtifact(
+    NEARCAST_AGENT_ARTIFACT_KINDS.confidence,
+    `Forecast confidence for ${label} in ${placeLabel(place)}: ${confidence.headline}. ${confidence.summary}`,
+    {
+      place: normalizePlace(place),
+      place_label: placeLabel(place),
+      target_date: target.targetDate,
+      start_hour: target.startHour,
+      end_hour: target.endHour,
+      window_start_at: target.startMs,
+      window_end_at: target.endMs,
+      level: confidence.level,
+      headline: confidence.headline,
+      summary: confidence.summary,
+      changed: confidence.evidence?.evolution?.status === "shifted"
+        ? confidence.evidence.evolution.direction
+        : null
+    },
+    context
+  );
+}
+
+function nearcastConfidenceAnswerMessage(confidence, place, windowLabel, request) {
+  const scope = `${windowLabel} in ${placeLabel(place)}`;
+  if (/\bwhat\s+changed\b/i.test(String(request || ""))) {
+    const evolution = confidence?.evidence?.evolution;
+    if (evolution?.status === "shifted") return `${confidence.headline} for ${scope}. ${confidence.summary}`;
+    if (evolution?.status === "stable") {
+      return `No meaningful timing change for ${scope}. ${confidence.summary}`;
+    }
+    return `Nearcast is still learning how this forecast is changing for ${scope}. ${confidence.summary}`;
+  }
+  return `${confidence.headline} for ${scope}. ${confidence.summary}`;
+}
+
+async function executeNearcastConfidenceSkill(args, context, definition) {
+  const request = String(args?.request || context.question || "").trim();
+  const prepared = context.preparedSkillState?.get(definition.id) || {};
+  const artifact = prepared.windowArtifact || null;
+  const artifactPlace = artifact?.value?.place || null;
+  const explicitPlace = extractPlanLocationQuery(request);
+  const requestedPlace = explicitPlace && !nearcastSemanticReference(explicitPlace)
+    ? explicitPlace
+    : artifactPlace ? placeLabel(artifactPlace) : "";
+  const place = await ensureNearcastSkillPlace(requestedPlace, context);
+  if (!place || !state.forecast) {
+    const message = `I could not load ${requestedPlace || "that place"} to check forecast confidence.`;
+    context.receipt.answer = message;
+    return nearcastSkillResult({ status: "unavailable", level: "unavailable", message, place: "", window: "" });
+  }
+  const forecastContext = buildAIContext(state.forecast, place, activeAlerts);
+  const target = nearcastConfidenceTargetForRequest(request, state.forecast, forecastContext, artifact);
+  if (target?.needsDay) {
+    const message = "Which day in that multi-day plan should I check?";
+    context.receipt.answer = message;
+    return nearcastSkillResult({ status: "unavailable", level: "unavailable", message, place: placeLabel(place), window: "" });
+  }
+  if (!target) {
+    const message = "I could not resolve an exact forecast window to check.";
+    context.receipt.answer = message;
+    return nearcastSkillResult({ status: "unavailable", level: "unavailable", message, place: placeLabel(place), window: "" });
+  }
+  let confidence = nearcastConfidenceForExactTarget({ data: state.forecast, place, target, request });
+  if (!confidence && typeof window.nearcastEnsureForecastConfidence === "function") {
+    await window.nearcastEnsureForecastConfidence(place, state.forecast);
+    confidence = nearcastConfidenceForExactTarget({ data: state.forecast, place, target, request });
+  }
+  const windowLabel = nearcastConfidenceTargetLabel(forecastContext, target);
+  if (!confidence || confidence.level === "unavailable") {
+    const message = `Confidence is not available yet for ${windowLabel} in ${placeLabel(place)}.`;
+    context.receipt.answer = message;
+    return nearcastSkillResult({
+      status: "unavailable",
+      level: "unavailable",
+      message,
+      place: placeLabel(place),
+      window: windowLabel
+    });
+  }
+  const message = nearcastConfidenceAnswerMessage(confidence, place, windowLabel, request);
+  context.receipt.answer = message;
+  const confidenceArtifact = nearcastConfidenceArtifact(confidence, place, target, context);
+  return nearcastSkillResult({
+    status: "checked",
+    level: confidence.level,
+    message,
+    place: placeLabel(place),
+    window: windowLabel
+  }, [confidenceArtifact]);
+}
+
 async function executeNearcastAnswerSkill(args, context, definition) {
   const request = String(args?.request || context.question).trim();
   if (parseNearcastDirectNavigation(request)) {
@@ -5262,7 +5574,38 @@ async function executeNearcastAnswerSkill(args, context, definition) {
     context.receipt.answer = checked.clarification.prompt;
     return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer });
   }
-  const fallback = checked?.answer || answerFreeform(request);
+  let fallback = checked?.answer || answerFreeform(request);
+  let recommendationConfidence = null;
+  let recommendationTarget = null;
+  let recommendationConfidenceShown = false;
+  if (checked?.event?.data && checked?.event?.place) {
+    const targetDate = checked.event.data.daily?.time?.[checked.event.dayIndex];
+    const startMs = planMaterialEventBoundaryMs(checked.event.data, targetDate, checked.event.startHour);
+    const endMs = planMaterialEventBoundaryMs(checked.event.data, targetDate, checked.event.endHour);
+    if (targetDate && Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      recommendationTarget = {
+        dayIdx: checked.event.dayIndex,
+        targetDate,
+        startHour: checked.event.startHour,
+        endHour: checked.event.endHour,
+        startMs,
+        endMs
+      };
+      const recommendationItem = planDecisionItemForExchange({ event: checked.event, q: request, a: fallback }, -1);
+      const risk = recommendationItem ? planWatchRiskKind(recommendationItem) : "";
+      recommendationConfidence = nearcastConfidenceForExactTarget({
+        data: checked.event.data,
+        place: checked.event.place,
+        target: recommendationTarget,
+        request,
+        risk
+      });
+      if (fallback && recommendationItem && nearcastConfidenceAffectsRecommendation(recommendationConfidence, recommendationItem.tone || "")) {
+        fallback = `${fallback} Confidence note: ${recommendationConfidence.headline}. ${recommendationConfidence.summary}`;
+        recommendationConfidenceShown = true;
+      }
+    }
+  }
   context.receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
   context.receipt.event = checked?.event || null;
   const artifacts = [];
@@ -5273,6 +5616,12 @@ async function executeNearcastAnswerSkill(args, context, definition) {
     const window = c ? resolveAskWindow(request, c) : null;
     if (place && window) artifacts.push(nearcastWindowArtifact(place, window, context, { dayText: request }));
     if (checked?.event) artifacts.push(nearcastPlanArtifact(checked.event, context));
+    if (
+      recommendationTarget && recommendationConfidenceShown &&
+      checked?.event?.place
+    ) {
+      artifacts.push(nearcastConfidenceArtifact(recommendationConfidence, checked.event.place, recommendationTarget, context));
+    }
   }
   return nearcastSkillResult({
     status: fallback ? (definition.id === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
@@ -6015,6 +6364,31 @@ async function runNearcastDirectWeatherAnswer(question, signal = null, rowIndex 
   };
 }
 
+async function runNearcastDirectConfidenceAnswer(question, signal = null, rowIndex = null) {
+  if (!nearcastExplicitConfidenceQuestion(question)) return null;
+  const context = createNearcastAgentContext(question, rowIndex, signal);
+  const skillId = "nearcast.forecast_confidence";
+  const prepared = await prepareRegisteredNearcastSkill(context, {
+    skillId,
+    partialArguments: { request: question },
+    artifacts: context.sessionArtifacts.map(({ id, kind, summary }) => ({ id, kind, summary }))
+  });
+  if (prepared?.kind === "ready") {
+    await invokeRegisteredNearcastSkill(context, { skillId, arguments: prepared.arguments });
+  }
+  const { receipt } = context;
+  if (!receipt.answer && prepared?.kind !== "ready") {
+    receipt.answer = prepared?.clarification?.prompt || prepared?.reason || "I need an exact place and time to check confidence.";
+  }
+  if (!receipt.answer) return null;
+  return {
+    answer: receipt.answer,
+    clarification: receipt.clarification,
+    navigation: receipt.navigation,
+    skillCalls: receipt.skillCalls
+  };
+}
+
 async function scheduleNearcastAgentNavigation(navigation) {
   const type = typeof navigation === "string" ? navigation : navigation?.type;
   if (!type) return;
@@ -6085,6 +6459,11 @@ function nearcastLooksLikeMultiDayPlan(question) {
     (weekdays.length >= 2 && /\b(?:through|until|to|and)\b/i.test(raw));
 }
 
+function nearcastExplicitConfidenceQuestion(question) {
+  const text = String(question || "");
+  return /\b(?:how\s+(?:sure|certain|reliable)|confidence|confident|certainty|how\s+reliable|can\s+i\s+trust|still\s+(?:shifting|settling)|what\s+changed|moved\s+(?:earlier|later))\b/i.test(text);
+}
+
 function nearcastCompletionForQuestion(question) {
   const raw = String(question || "");
   // Completion contracts describe the user-visible outcome, not the route.
@@ -6108,6 +6487,9 @@ function nearcastCompletionForQuestion(question) {
   const directCommand = parseNearcastDirectNavigation(raw);
   if (directCommand?.skillId === "nearcast.place_switch" && directCommand.arguments?.place) {
     return { required_skill_ids: ["nearcast.place_switch"] };
+  }
+  if (typeof nearcastExplicitConfidenceQuestion === "function" && nearcastExplicitConfidenceQuestion(raw)) {
+    return { required_skill_ids: ["nearcast.forecast_confidence"] };
   }
   // Operon owns intent interpretation and skill selection. Keep completion
   // contracts only for workflows where Nearcast must guarantee a typed result
@@ -6135,6 +6517,9 @@ function nearcastRecoverableDirectCommand(question, skillCalls = 0) {
   // retry the same typed Operon skill through the host. That preserves model
   // latitude while refusing a false "need more information" dead end.
   if (skillCalls > 0) return null;
+  if (typeof nearcastExplicitConfidenceQuestion === "function" && nearcastExplicitConfidenceQuestion(question)) {
+    return { skillId: "nearcast.forecast_confidence", arguments: { request: question } };
+  }
   const command = parseNearcastDirectNavigation(question);
   if (!command?.skillId || !NEARCAST_AGENT_SKILL_REGISTRY.has(command.skillId)) return null;
   return command;
@@ -6179,6 +6564,7 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
   planIntentDiagnostics.operonResourcePolicy = resourcePolicy.mode;
   if (result?.status === "cancelled") return null;
   if (result?.status === "abstained" && receipt.skillCalls === 0) {
+    if (nearcastExplicitConfidenceQuestion(question)) return null;
     planIntentDiagnostics.operonAbstention = result?.abstention?.reason || "validation-exhausted";
     const sources = Array.isArray(result?.sources) ? result.sources : [];
     const sourceLabels = [...new Set(sources.map((source) => {
@@ -6219,7 +6605,9 @@ async function runNearcastAgent(question, rowIndex, signal = null) {
     : null;
   if (directRecovery) {
     planIntentDiagnostics.operonRecovery = directRecovery.skillId;
-    const recovered = await runNearcastDirectNavigation(question, signal, rowIndex);
+    const recovered = directRecovery.skillId === "nearcast.forecast_confidence"
+      ? await runNearcastDirectConfidenceAnswer(question, signal, rowIndex)
+      : await runNearcastDirectNavigation(question, signal, rowIndex);
     if (recovered?.clarification) setPlannerClarification(recovered.clarification, rowIndex);
     if (recovered?.answer || recovered?.skillCalls || recovered?.clarification) return recovered;
   }
@@ -6347,6 +6735,13 @@ async function runAsk(question, intent) {
         captureArtifacts: false
       });
       await scheduleNearcastAgentNavigation(directNavigation.navigation);
+      return;
+    }
+    const directConfidence = await runNearcastDirectConfidenceAnswer(question, runSignal, row);
+    if (!runIsCurrent()) return;
+    if (directConfidence) {
+      if (directConfidence.clarification) setPlannerClarification(directConfidence.clarification, row);
+      finishAskResponse(row, directConfidence, { captureArtifacts: false });
       return;
     }
     // If Operon declines an obvious weather question, execute the same
@@ -6604,7 +6999,7 @@ async function continuePlannerClarificationWithText(text, signal = null) {
       if (skillArguments.place && (!resumedPlace || nearcastSemanticReference(resumedPlace))) {
         resumedQuestion += ` in ${skillArguments.place}`;
       }
-      if (["nearcast.weather_answer", "nearcast.plan_check", "nearcast.plan_find_and_draft"].includes(pending.pendingSkill.skillId)) {
+      if (["nearcast.weather_answer", "nearcast.forecast_confidence", "nearcast.plan_check", "nearcast.plan_find_and_draft"].includes(pending.pendingSkill.skillId)) {
         skillArguments.request = resumedQuestion;
       }
       const context = createNearcastAgentContext(resumedQuestion, row, signal);
@@ -9312,6 +9707,41 @@ function renderPlanWindowHourRow(row, event, peak, watch) {
   `;
 }
 
+function planConfidenceNoteForEvent(memory, event, watch, data, place) {
+  const targetDate = data?.daily?.time?.[event?.dayIndex];
+  const startMs = Number(event?.startMs);
+  const endMs = Number(event?.endMs);
+  if (!data || !place || !targetDate || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return "";
+  const target = {
+    dayIdx: event.dayIndex,
+    targetDate,
+    startHour: event.startHour,
+    endHour: event.endHour,
+    startMs,
+    endMs
+  };
+  const confidence = nearcastConfidenceForExactTarget({
+    data,
+    place,
+    target,
+    request: [memory?.original, memory?.title].filter(Boolean).join(" "),
+    risk: planWatchRiskKind(watch)
+  });
+  if (!nearcastConfidenceAffectsRecommendation(confidence, watch?.tone || "")) return "";
+  return `For ${planWatchMetaText(memory, watch)}: ${confidence.headline}. ${confidence.summary}`;
+}
+
+function planWindowConfidenceNote(memory, detail) {
+  const watch = detail?.watch;
+  return planConfidenceNoteForEvent(
+    memory,
+    detail?.event,
+    watch,
+    watch?.data || detail?.source?.data,
+    detail?.source?.place || memory?.place
+  );
+}
+
 function renderPlanWindowDetailPanel(memory) {
   const selectedWindow = Number.isInteger(memoryDetailWindowIndex) ? memory.windows?.[memoryDetailWindowIndex] : null;
   const focusedMemory = selectedWindow ? { ...memory, targetDate: selectedWindow.targetDate, startHour: selectedWindow.startHour, endHour: selectedWindow.endHour, label: selectedWindow.label, windows: [selectedWindow], scheduleType: "single", span: null } : memory;
@@ -9324,6 +9754,7 @@ function renderPlanWindowDetailPanel(memory) {
   const signals = planContextSignalRows(watch).map(renderPlanSignalChip).join("");
   const reason = watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
   const hint = planWindowDetailAdjustmentHint(rows, peak, watch);
+  const confidenceNote = planWindowConfidenceNote(focusedMemory, detail);
   return `
     <article class="plan-window-detail is-${escapeHtml(watch.tone || "pending")}">
       <div class="plan-window-detail-head">
@@ -9334,6 +9765,7 @@ function renderPlanWindowDetailPanel(memory) {
       <section class="plan-window-story">
         <p><span>Main read</span>${escapeHtml(reason)}</p>
         ${hint ? `<p><span>Best adjustment</span>${escapeHtml(hint)}</p>` : ""}
+        ${confidenceNote ? `<p><span>Confidence</span>${escapeHtml(confidenceNote)}</p>` : ""}
       </section>
       ${signals ? `<div class="plan-watch-signals plan-window-signals">${signals}</div>` : ""}
       ${peak ? `
@@ -12597,6 +13029,7 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
     : "";
   const reason = item.fullReason || item.primaryReason || exchange.a;
   const action = item.action || (item.tone === "good" ? "" : item.advice);
+  const confidenceNote = planConfidenceNoteForEvent(memory, event, item, event.data, event.place);
   const signals = planContextSignalRows(item).map(renderPlanSignalChip).join("");
   const decisionLabel = item.label || item.verdict || "Forecast checked";
   const reasonLabel = item.tone === "good" ? "Why it works" : "Main concern";
@@ -12620,6 +13053,7 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
       <div class="ask-decision-story">
         ${reason ? `<p class="ask-decision-reason"><span>${escapeHtml(reasonLabel)}</span>${escapeHtml(reason)}</p>` : ""}
         ${action ? `<p class="ask-decision-action"><span>${escapeHtml(actionLabel)}</span>${escapeHtml(action)}</p>` : ""}
+        ${confidenceNote ? `<p class="ask-decision-action"><span>Confidence</span>${escapeHtml(confidenceNote)}</p>` : ""}
       </div>
       ${signals ? `<div class="plan-watch-signals ask-decision-signals">${signals}</div>` : ""}
       <div class="ask-decision-actions">

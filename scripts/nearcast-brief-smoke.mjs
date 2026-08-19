@@ -123,6 +123,7 @@ vm.runInContext(`
   }
   function forecastProvenance(data) { return data.fixtureProvenance || { savedAt: null, cacheFallback: false }; }
   function radarSignalForForecastData() { return null; }
+  function nearcastForecastConfidence() { return null; }
   function forecastAgeLabel(ms) {
     const minutes = Math.max(0, Math.round(Number(ms) / 60000));
     return minutes < 60 ? minutes + " min ago" : Math.round(minutes / 60) + " hrs ago";
@@ -716,10 +717,8 @@ assert.equal((html.match(/id="glanceSupport"/g) || []).length, 1, "the Brief ren
 const renderTodayGlanceSource = extractFunction(app, "renderTodayGlance");
 assert.match(renderTodayGlanceSource, /glanceTitle\.textContent = outlook\.headline/, "the hero renders only the concise outlook headline");
 assert.match(renderTodayGlanceSource, /glanceSupport\.hidden = !outlook\.support[\s\S]*glanceSupport\.textContent = outlook\.support \|\| ""/, "the optional support row disappears completely when there is no second claim");
-const receiptMarkupStart = html.indexOf('<button\n              class="forecast-receipt-trigger"');
-const receiptMarkupEnd = html.indexOf("</button>", receiptMarkupStart);
-assert.ok(receiptMarkupStart >= 0 && receiptMarkupEnd > receiptMarkupStart, "the collapsed evidence control is present");
-const receiptMarkup = html.slice(receiptMarkupStart, receiptMarkupEnd);
+const receiptMarkup = html.match(/<button\s+class="forecast-receipt-trigger"[\s\S]*?<\/button>/)?.[0] || "";
+assert.ok(receiptMarkup, "the collapsed evidence control is present");
 assert.doesNotMatch(receiptMarkup, /forecast-receipt-trigger-label|>\s*Evidence\s*</i, "the collapsed control has no visible Evidence eyebrow");
 assert.doesNotMatch(receiptMarkup, /No active (?:NWS|official) alerts/i, "the collapsed control does not advertise a routine successful no-alert check");
 assert.match(extractCssRule(styles, ".nearcast-brief-jump"), /min-height:\s*44px/, "the promoted-event jump remains a full touch target");

@@ -12,6 +12,7 @@ run_portable_checks() {
     app.js \
     planner.js \
     weather-truth.js \
+    forecast-confidence.js \
     map.js \
     sky.js \
     daygraph.js \
@@ -63,6 +64,8 @@ run_portable_checks() {
     raw-map-timeline-controls-smoke.mjs \
     watch-basics-smoke.mjs \
     forecast-pulse-smoke.mjs \
+    forecast-confidence-contract-smoke.mjs \
+    forecast-confidence-integration-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
     nearcast-place-label-test.mjs
