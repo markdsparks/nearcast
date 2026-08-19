@@ -1,4 +1,4 @@
-const VERSION = "3.0.373";
+const VERSION = "3.0.374";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -8687,7 +8687,10 @@ function renderForecastConfidenceSurfaces(data, place) {
   const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const precipUnit = state.unit === "fahrenheit" ? "in" : "mm";
-  const presentation = state.forecastPresentation || buildForecastPresentation(data, { truth, tempUnit, windUnit });
+  const presentation = buildForecastPresentation(data, { truth, tempUnit, windUnit, place });
+  state.forecastPresentation = presentation;
+  renderTodayGlance(data, tempUnit, windUnit, forecastDailyIndex(data), truth, presentation);
+  renderHourly(data, tempUnit, truth, presentation);
   renderForecastTrust(data, truth);
   renderDaily(data, tempUnit, precipUnit, presentation);
   if (typeof refreshOpenDayDetailMemorySurfaces === "function") refreshOpenDayDetailMemorySurfaces();
@@ -9225,6 +9228,37 @@ function nearcastForecastConfidence(data = state.forecast, truth = state.weather
   return nearcastForecastConfidenceForWindow({ data, truth, place });
 }
 
+function nearcastForecastDisclosure(data = state.forecast, truth = state.weatherTruth || weatherTruth(data), place = state.activePlace, options = {}) {
+  if (!data || typeof forecastDisclosurePresentation !== "function") return null;
+  const confidence = options.confidence || nearcastForecastConfidence(data, truth, place);
+  const claim = options.claim || confidence?.claim || null;
+  const provenance = forecastProvenance(data);
+  const savedAt = Number(provenance.savedAt);
+  const activeOfficialAlerts = typeof activeAlerts === "undefined" ? [] : activeAlerts;
+  const disclosureWindow = confidence?.window || (claim ? {
+    startMs: claim.startMs,
+    endMs: claim.endMs
+  } : null);
+  const windowStartMs = Number(disclosureWindow?.startMs);
+  const windowEndMs = Number(disclosureWindow?.endMs);
+  const overlappingOfficialAlert = Number.isFinite(windowStartMs) && Number.isFinite(windowEndMs)
+    ? topAlertForRange(windowStartMs, windowEndMs, activeOfficialAlerts)
+    : null;
+  return forecastDisclosurePresentation({
+    confidence,
+    claim,
+    canonical: {
+      cacheFallback: Boolean(provenance.cacheFallback),
+      ageMs: Number.isFinite(savedAt) && savedAt > 0 ? Math.max(0, Date.now() - savedAt) : null,
+      stale: Boolean(options.stale)
+    },
+    alertState: typeof alertTrustState === "undefined" ? "unknown" : alertTrustState.state,
+    officialAlert: options.officialAlert ?? Boolean(overlappingOfficialAlert),
+    decisionSensitive: Boolean(options.decisionSensitive),
+    hazardRelevant: Boolean(options.hazardRelevant)
+  });
+}
+
 function nearcastForecastConfidenceForDay(data, dayIndex, day = null, place = state.activePlace) {
   const date = data?.daily?.time?.[dayIndex];
   if (!date) return null;
@@ -9261,16 +9295,28 @@ function nearcastForecastConfidenceForDay(data, dayIndex, day = null, place = st
   return nearcastForecastConfidenceForWindow({ data, place, startMs, endMs: endOfDay, claim });
 }
 
+function nearcastForecastDisclosureForDay(data, dayIndex, day = null, place = state.activePlace, options = {}) {
+  const confidence = nearcastForecastConfidenceForDay(data, dayIndex, day, place);
+  return nearcastForecastDisclosure(data, data === state.forecast ? (state.weatherTruth || weatherTruth(data)) : buildWeatherTruth(data), place, {
+    ...options,
+    confidence,
+    claim: confidence?.claim || null,
+    officialAlert: false
+  });
+}
+
 window.nearcastForecastConfidence = nearcastForecastConfidence;
 window.nearcastForecastConfidenceForWindow = nearcastForecastConfidenceForWindow;
 window.nearcastForecastConfidenceForDay = nearcastForecastConfidenceForDay;
+window.nearcastForecastDisclosure = nearcastForecastDisclosure;
+window.nearcastForecastDisclosureForDay = nearcastForecastDisclosureForDay;
 window.nearcastEnsureForecastConfidence = async (place = state.activePlace, data = state.forecast) => {
   if (!place || !data) return null;
   await startForecastConfidenceProbe(place, data);
   return nearcastForecastConfidence(data, state.weatherTruth || weatherTruth(data), place);
 };
 
-function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(data)) {
+function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(data), options = {}) {
   const provenance = forecastProvenance(data);
   const savedAt = provenance.savedAt;
   const ageMs = savedAt ? Math.max(0, Date.now() - savedAt) : null;
@@ -9283,92 +9329,74 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   const radarSource = String(radar?.source || "weather radar");
   const radarObserved = truth?.precip?.source === "radar-current" || radar?.phase === "active";
   const radarClear = radar?.phase === "clear" && radar?.confidence === "observed-clear";
-  const directRadarFact = radarObserved || radarClear || radar?.phase === "nearby";
   const alerts = typeof alertTrustState === "undefined"
     ? { state: "unknown", checkedAt: null, reason: "" }
     : alertTrustState;
-  const pulse = typeof forecastPulseDayPresentation === "function"
-    ? forecastPulseDayPresentation(data, forecastDailyIndex(data), state.activePlace)
-    : { status: "learning", tone: "neutral", label: "", detail: "" };
+  const alertItems = typeof activeAlerts === "undefined" ? [] : activeAlerts;
   const confidence = nearcastForecastConfidence(data, truth, state.activePlace);
+  const disclosure = nearcastForecastDisclosure(data, truth, state.activePlace, { confidence });
   const briefEvidence = nearcastEvidencePresentation(data, truth, {
     radar,
     alertState: alerts,
-    alerts: typeof activeAlerts === "undefined" ? [] : activeAlerts
+    alerts: alertItems
   });
+  const brief = options.brief || (state.forecastPresentation?.brief && state.forecast === data
+    ? state.forecastPresentation.brief
+    : null);
 
   let tone = radarObserved ? "observed" : "fresh";
-  let headline = radarObserved ? "Radar confirms what is happening now" : "Latest forecast is ready";
-  let overview = savedAt ? `Forecast checked ${age}.` : "Forecast timing is available; update time was not recorded.";
-  let trigger = radarObserved ? "Radar-confirmed now" : "Forecast checked";
-  let triggerMeta = radarObserved
-    ? (radarAge === "time unavailable" ? "Latest radar frame" : `${radarAge} frame`)
-    : savedAt ? age : "See sources";
+  let headline = brief?.outlook?.headline || brief?.story?.headline || "Latest forecast";
+  let overview = brief?.outlook?.support || brief?.story?.support || (savedAt ? `Updated ${age}.` : "Nearcast's best read for this location.");
+  let trigger = savedAt ? `Updated ${age}` : "Forecast updated";
+  let triggerMeta = "For this location";
 
   if (provenance.cacheFallback) {
     tone = stale ? "stale" : "cached";
-    headline = stale ? "Using an older saved forecast" : "Using the last saved forecast";
-    overview = savedAt
-      ? `The live update did not complete. This forecast was saved ${age}.`
-      : "The live update did not complete, so Nearcast is showing its last saved forecast.";
     trigger = "Using saved forecast";
     triggerMeta = savedAt ? age : "Tap for details";
   } else if (alerts.state === "failed") {
     tone = "issue";
-    headline = "Forecast ready; alerts could not be checked";
-    overview = savedAt
-      ? `The forecast was checked ${age}, but the official alert service did not respond.`
-      : "The forecast is ready, but the official alert service did not respond.";
-    triggerMeta = "Alerts unavailable";
-  }
-
-  // The collapsed receipt is an evidence line, not merely a recency badge.
-  // It says whether Now is observed or estimated and keeps freshness visible.
-  // A successful no-alert check is intentionally silent here; real alerts have
-  // their own interruptive surface, while failures remain worth surfacing.
-  if (!provenance.cacheFallback) {
+    trigger = "Official alerts unavailable";
+    triggerMeta = "Forecast still available";
+  } else {
     trigger = radarObserved
-      ? `Radar confirms ${String(truth?.precip?.label || radar?.label || "precipitation").toLowerCase()}`
+      ? String(truth?.precip?.label || radar?.label || "Rain now")
       : radar?.phase === "nearby"
         ? `${radar.label || "Precipitation"} nearby`
         : radarClear
-          ? "Radar clear"
-          : briefEvidence.basis === "estimated"
-            ? "Estimated now"
-            : briefEvidence.label;
-    const radarFactVisible = radarObserved || radarClear || radar?.phase === "nearby";
-    triggerMeta = radarFactVisible && radarAge !== "time unavailable"
-      ? radarAge
-      : savedAt ? `Updated ${age}` : "Freshness details";
-    if (alerts.state === "failed") triggerMeta += " · Alerts unavailable";
+          ? "Radar clear now"
+          : savedAt ? `Updated ${age}` : "Forecast updated";
+    triggerMeta = radarObserved || radarClear || radar?.phase === "nearby"
+      ? `Radar${radarAge === "time unavailable" ? "" : ` · ${radarAge}`}`
+      : "For this location";
   }
 
-  let evidence = "Near-term forecast guidance";
-  let evidenceMeta = truth?.receiptDetail || truth?.receipt || "Nearcast reconciles current, 15-minute, and hourly guidance.";
+  let evidence = "Estimated for this location";
+  let evidenceMeta = "Nearcast uses the best available local forecast for current conditions and what comes next.";
   if (radarObserved) {
     evidence = truth?.precip?.label ? `${truth.precip.label} observed on radar` : "Precipitation observed on radar";
-    evidenceMeta = `${radarSource} frame from ${radarAge}. Radar observation takes priority over a conflicting hourly probability.`;
+    evidenceMeta = `${radarSource} frame from ${radarAge}. Nearcast uses the observation for what is happening now and the forecast for what comes next.`;
   } else if (radar?.phase === "nearby") {
     evidence = `${radar.label || "Precipitation"} detected nearby`;
     evidenceMeta = `${radarSource} frame from ${radarAge}; it is not detected directly over this place.`;
   } else if (radarClear) {
     evidence = "No precipitation detected over this place";
-    evidenceMeta = `${radarSource} frame from ${radarAge}. The forecast may still show a later chance; radar only describes what is nearby now.`;
+    evidenceMeta = `${radarSource} frame from ${radarAge}. Radar describes now; the forecast describes what may arrive later.`;
   } else if (radar?.phase === "unavailable") {
-    evidence = "Radar evidence unavailable";
-    evidenceMeta = "Nearcast is relying on forecast guidance because the latest radar frame could not be sampled here.";
+    evidence = "Current conditions estimated";
+    evidenceMeta = "The latest radar frame could not be sampled here, so Nearcast is using the local forecast.";
   } else if (truth?.precip?.source === "modeled-15-minute") {
-    evidence = "15-minute forecast indicates precipitation now";
-    evidenceMeta = "This is modeled guidance, not a radar observation.";
+    evidence = "Rain indicated for this location";
+    evidenceMeta = "This is a near-term forecast, not a direct radar observation.";
   } else if (truth?.precip?.source === "modeled-current") {
-    evidence = "Current model indicates precipitation";
-    evidenceMeta = "This is modeled guidance, not a direct observation.";
+    evidence = "Rain estimated for this location";
+    evidenceMeta = "This is a local forecast estimate, not a direct observation.";
   }
 
   let alertLabel = "Checking official alerts";
   let alertMeta = "Official hazards stay separate from ordinary forecast confidence.";
   if (alerts.state === "ready") {
-    alertLabel = activeAlerts.length ? `${alertCountLabel(activeAlerts.length)} found` : "No active official alerts";
+    alertLabel = alertItems.length ? `${alertCountLabel(alertItems.length)} found` : "No active official alerts";
     alertMeta = "Checked with the U.S. National Weather Service for this location.";
   } else if (alerts.state === "failed") {
     alertLabel = "Official alerts unavailable";
@@ -9378,46 +9406,26 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     alertMeta = "Nearcast currently checks National Weather Service alerts for U.S. locations.";
   }
 
-  const precipTiming = ["imminent", "possible-later", "likely-this-hour", "possible-this-hour"].includes(truth?.precip?.phase);
-  let uncertaintyTitle = stale
+  let showQualifier = Boolean(provenance.cacheFallback || alerts.state === "failed" || disclosure?.actionable);
+  let uncertaintyTitle = provenance.cacheFallback
     ? "Refresh before making a weather-sensitive decision"
-    : precipTiming ? "Precipitation timing can shift" : "Later details can still change";
-  let uncertaintyText = stale
-    ? "This saved forecast may no longer reflect the latest timing or intensity. Official alerts are checked separately."
-    : precipTiming
-      ? "The broad signal may be useful before the exact start or stop time settles. Check again as the time approaches."
-      : "Nearcast is most specific about the next several hours. Exact timing and intensity are less settled farther out.";
-
+    : alerts.state === "failed" ? "Official alerts could not be checked"
+      : "What to keep in mind";
+  let uncertaintyText = provenance.cacheFallback
+    ? "This saved forecast may no longer reflect the latest timing or intensity."
+    : alerts.state === "failed"
+      ? "The weather forecast still works, but Nearcast could not verify active official alerts."
+      : disclosure?.qualifier || "";
   let source = "Open-Meteo Best Match";
-  let sourceMeta = "Nearcast turns the selected local models into one consistent current, hourly, and daily story.";
-  let movement = pulse.status === "learning" ? "" : pulse.label;
-  let movementMeta = pulse.status === "learning" ? "" : pulse.detail;
-  let movementTone = pulse.tone;
-  let uncertaintyTone = stale || precipTiming ? "watch" : "neutral";
+  let sourceMeta = "Nearcast turns the available local forecasts into one consistent current, hourly, and daily story.";
+  let movement = "";
+  let movementMeta = "";
+  let movementTone = "neutral";
+  let uncertaintyTone = showQualifier ? "watch" : "neutral";
   const confidenceReady = confidence && confidence.level !== "unavailable";
   if (confidenceReady && !provenance.cacheFallback && alerts.state !== "failed") {
-    const confidenceTone = {
-      high: "confidence-high",
-      medium: "confidence-medium",
-      low: "confidence-low"
-    }[confidence.level] || "forecast";
-    if (!directRadarFact) {
-      tone = confidenceTone;
-      trigger = confidence.headline;
-      triggerMeta = confidence.summary;
-    } else {
-      triggerMeta = [triggerMeta, confidence.headline].filter(Boolean).join(" · ");
-    }
-    headline = confidence.headline;
-    overview = confidence.summary;
     const agreement = confidence.evidence?.agreement || {};
-    source = agreement.status === "aligned"
-      ? `${agreement.providersUsed} model families align`
-      : agreement.status === "mixed"
-        ? "Guidance has a wider range"
-        : agreement.status === "diverging"
-          ? "Guidance disagrees"
-          : `${agreement.providersUsed} of ${agreement.providersExpected} sources available`;
+    source = `${agreement.providersUsed} of ${agreement.providersExpected} forecast systems compared`;
     const timingRange = Number(agreement.timingRangeMs);
     const timingDetail = Number.isFinite(timingRange) && timingRange > 0
       ? ` Start times span about ${Math.max(1, Math.round(timingRange / 3600000))} hour${Math.round(timingRange / 3600000) === 1 ? "" : "s"}.`
@@ -9428,30 +9436,12 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     const guidanceAge = Number.isFinite(Number(confidence.guidanceFetchedAtMs))
       ? forecastAgeLabel(Math.max(0, Date.now() - Number(confidence.guidanceFetchedAtMs)))
       : "time unavailable";
-    sourceMeta = `${sourceNames.length ? `Compared ${forecastConfidenceSourceList(sourceNames)}` : "Independent guidance was unavailable"}.${timingDetail} Guidance updated ${guidanceAge}.`;
+    sourceMeta = `${sourceNames.length ? `Compared ${forecastConfidenceSourceList(sourceNames)}` : "No supplemental comparison was available"}.${timingDetail} Comparison updated ${guidanceAge}.`;
     const evolution = confidence.evidence?.evolution;
-    movement = "";
-    movementMeta = "";
-    movementTone = "neutral";
-    if (evolution?.status === "shifted") {
-      movement = `Shifted ${evolution.direction}`;
-      movementMeta = confidence.summary;
+    if (evolution?.status === "shifted" && disclosure?.actionable) {
+      movement = `Expected timing moved ${evolution.direction}`;
+      movementMeta = disclosure.qualifier || "The latest forecast changed enough to matter for this window.";
       movementTone = "change";
-    } else if (evolution?.status === "stable") {
-      movement = "Holding steady";
-      movementMeta = "The highlighted forecast window has not moved meaningfully across recent updates.";
-      movementTone = "steady";
-    }
-    if (confidence.limitations?.length) {
-      uncertaintyTitle = confidence.level === "low" ? "What is still settling" : "What could still change";
-      uncertaintyText = confidence.limitations.join(" ");
-      uncertaintyTone = confidence.level === "low" ? "watch" : "neutral";
-    } else {
-      uncertaintyTitle = "Why Nearcast is confident";
-      uncertaintyText = evolution?.status === "stable"
-        ? "Independent guidance agrees, the highlighted timing is holding steady, and fresh observations are used when they apply."
-        : "Independent guidance agrees on this forecast window. Fresh observations are used when they apply.";
-      uncertaintyTone = "neutral";
     }
   }
 
@@ -9478,11 +9468,13 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     uncertaintyTitle,
     uncertaintyText,
     uncertaintyTone,
-    showAlerts: alerts.state !== "ready" || activeAlerts.length > 0,
+    showQualifier,
+    showAlerts: alerts.state !== "ready" || alertItems.length > 0,
     confidence,
+    disclosure,
     footnote: data?.airQuality
-      ? "Weather uses Open-Meteo Best Match; air quality uses CAMS. Confidence uses agreement, change, observations, and freshness—never an invented percentage."
-      : "Confidence uses agreement, change, observations, and freshness—never an invented percentage."
+      ? "Weather uses Open-Meteo Best Match; air quality uses CAMS. Nearcast checks observations, forecast movement, and additional forecast systems before choosing how specific to be."
+      : "Nearcast checks observations, forecast movement, and additional forecast systems before choosing how specific to be."
   };
 }
 
@@ -9501,14 +9493,20 @@ function renderForecastTrust(data = state.forecast, truth = state.weatherTruth |
   els.forecastReceiptStatusMeta.textContent = receipt.triggerMeta;
   els.forecastReceiptTrigger.setAttribute(
     "aria-label",
-    `${String(receipt.trigger).replace(/[.!?]+$/, "")}. ${String(receipt.triggerMeta).replace(/[.!?]+$/, "")}. Open forecast confidence and evidence.`
+    `${String(receipt.trigger).replace(/[.!?]+$/, "")}. ${String(receipt.triggerMeta).replace(/[.!?]+$/, "")}. Open why this forecast.`
   );
-  const confidenceTiming = receipt.confidence?.claim
-    ? nearcastRelativeTiming(data, receipt.confidence.claim.startMs, receipt.confidence.claim.endMs)
-    : null;
+  const disclosureTiming = receipt.disclosure?.claim && Number.isFinite(Number(receipt.disclosure.timingStartMs))
+    ? (receipt.disclosure.precision === "daypart"
+      ? nearcastCalmDaypart(data, Number(receipt.disclosure.timingStartMs))
+      : nearcastRelativeTiming(
+        data,
+        Number(receipt.disclosure.timingStartMs),
+        Number(receipt.disclosure.timingEndMs) || Number(receipt.disclosure.timingStartMs)
+      ).rangeLabel)
+    : "";
   els.forecastReceiptContext.textContent = [
     state.activePlace ? placeLabel(state.activePlace) : "Selected place",
-    confidenceTiming?.rangeLabel || ""
+    disclosureTiming
   ].filter(Boolean).join(" · ");
   els.forecastReceiptOverview.dataset.tone = receipt.tone;
   els.forecastReceiptHeadline.textContent = receipt.headline;
@@ -9530,6 +9528,7 @@ function renderForecastTrust(data = state.forecast, truth = state.weatherTruth |
   if (els.forecastReceiptAlerts?.closest(".forecast-receipt-fact")) {
     els.forecastReceiptAlerts.closest(".forecast-receipt-fact").hidden = !receipt.showAlerts;
   }
+  els.forecastReceiptUncertainty.hidden = !receipt.showQualifier;
   els.forecastReceiptUncertainty.dataset.tone = receipt.uncertaintyTone;
   els.forecastReceiptUncertaintyTitle.textContent = receipt.uncertaintyTitle;
   els.forecastReceiptUncertaintyText.textContent = receipt.uncertaintyText;
@@ -10784,6 +10783,109 @@ function nearcastBriefMaterialEvent(event) {
   return Boolean(event && ["rain", "storm", "snow", "wind", "fog", "ice"].includes(event.kind));
 }
 
+function nearcastCalmDaypart(data, startMs) {
+  const timing = nearcastRelativeTiming(data, startMs, startMs + 60 * 60 * 1000);
+  if (timing.dayRelation === "now") return "now";
+  if (timing.dayRelation === "today") {
+    return timing.daypart === "overnight" ? "overnight" : `this ${timing.daypart}`;
+  }
+  if (timing.dayRelation === "tomorrow") return `tomorrow ${timing.daypart}`;
+  return `${timing.dayLabel} ${timing.daypart}`;
+}
+
+function nearcastCalmEventCopy(data, event, disclosure = null) {
+  if (!event || !disclosure || disclosure.precision === "exact" || event.active) {
+    return { headline: event?.headline || event?.label || "", support: event?.support || null };
+  }
+  const likelihood = event.likelihood || "possible";
+  const typeVaries = disclosure.reason === "weather-type-varies";
+  const kind = typeVaries && event.kind === "storm" ? "rain" : event.kind;
+  const noun = kind === "storm" ? "Storms"
+    : kind === "snow" ? "Snow"
+      : kind === "ice" ? "Ice"
+        : kind === "wind" ? "Wind"
+          : kind === "fog" ? "Fog" : "Rain";
+  const startMs = Number.isFinite(Number(disclosure.timingStartMs))
+    ? Number(disclosure.timingStartMs)
+    : Number(event.startMs);
+  const endMs = Number.isFinite(Number(disclosure.timingEndMs))
+    ? Number(disclosure.timingEndMs)
+    : Number(event.endMs);
+  let when;
+  if (disclosure.precision === "daypart") {
+    when = nearcastCalmDaypart(data, startMs);
+  } else {
+    const timing = nearcastRelativeTiming(data, startMs, endMs);
+    when = endMs - startMs > 45 * 60 * 1000
+      ? timing.rangeLabel
+      : `around ${timing.timeLabel} ${timing.dayLabel}`;
+  }
+  const verb = kind === "wind" ? "picks up" : kind === "fog" ? "possible" : likelihood;
+  return {
+    headline: nearcastBriefCleanSentence(`${noun} ${verb} ${when}`),
+    support: typeVaries && event.kind === "storm" ? "Thunder is possible within that window" : event.support || null
+  };
+}
+
+function nearcastCalmDailyTiming(data, event, disclosure, fallback = "", requestedDayIndex = null) {
+  if (!event || !disclosure || disclosure.precision === "exact" || event.active) return fallback;
+  const eventStartMs = Number(event.startMs);
+  const eventEndMs = Number(event.endMs);
+  const eventDate = Number.isFinite(eventStartMs) ? forecastLocalDateAtMs(data, eventStartMs) : "";
+  const dates = Array.isArray(data?.daily?.time) ? data.daily.time : [];
+  const requestedIndex = Number(requestedDayIndex);
+  const dayIndex = Number.isInteger(requestedIndex) && requestedIndex >= 0 && requestedIndex < dates.length
+    ? requestedIndex
+    : dates.indexOf(eventDate);
+  const dayStartMs = dayIndex >= 0 ? parseForecastTimestamp(dates[dayIndex], data) : null;
+  const dayEndMs = dayIndex >= 0
+    ? (dates[dayIndex + 1]
+      ? parseForecastTimestamp(dates[dayIndex + 1], data)
+      : Number(dayStartMs) + 24 * 60 * 60 * 1000)
+    : null;
+  const suggestedStartMs = Number(disclosure.timingStartMs);
+  const suggestedEndMs = Number(disclosure.timingEndMs);
+  const hasDayBounds = Number.isFinite(dayStartMs) && Number.isFinite(dayEndMs);
+  const eventFallsInDay = hasDayBounds && Number.isFinite(eventStartMs) &&
+    eventStartMs >= dayStartMs && eventStartMs < dayEndMs;
+  if (hasDayBounds && !eventFallsInDay) {
+    return dailyTimingPhrase(data, dayIndex) || fallback;
+  }
+  const comparisonOverlapsDay = hasDayBounds && Number.isFinite(suggestedStartMs) &&
+    Number.isFinite(suggestedEndMs) && suggestedStartMs < dayEndMs && suggestedEndMs > dayStartMs;
+  const timingStartMs = comparisonOverlapsDay
+    ? Math.max(dayStartMs, suggestedStartMs)
+    : eventStartMs;
+  const timingEndMs = comparisonOverlapsDay
+    ? Math.min(dayEndMs, suggestedEndMs)
+    : eventEndMs;
+  const dayScopedDisclosure = {
+    ...disclosure,
+    timingStartMs,
+    timingEndMs: Number.isFinite(timingEndMs) && timingEndMs > timingStartMs
+      ? timingEndMs
+      : timingStartMs + 60 * 60 * 1000
+  };
+  const typeVaries = dayScopedDisclosure.reason === "weather-type-varies";
+  const kind = typeVaries && event.kind === "storm" ? "rain" : event.kind;
+  const noun = kind === "storm" ? "Storms"
+    : kind === "snow" ? "Snow"
+      : kind === "ice" ? "Ice"
+        : kind === "wind" ? "Wind"
+          : kind === "fog" ? "Fog" : "Rain";
+  const verb = kind === "wind" ? "picks up" : kind === "fog" ? "possible" : (event.likelihood || "possible");
+  const local = new Date(timingStartMs + forecastOffsetMs(data));
+  const hour = local.getUTCHours();
+  const daypart = hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "overnight";
+  const durationMs = dayScopedDisclosure.timingEndMs - timingStartMs;
+  const when = dayScopedDisclosure.precision === "daypart"
+    ? (daypart === "overnight" ? "overnight" : `in the ${daypart}`)
+    : durationMs > 45 * 60 * 1000
+      ? `${formatForecastMs(timingStartMs, data)}–${formatForecastMs(dayScopedDisclosure.timingEndMs, data)}`
+      : `near ${formatForecastMs(timingStartMs, data)}`;
+  return nearcastBriefCleanSentence(`${noun} ${verb} ${when}`) || fallback;
+}
+
 function nearcastBriefTransitionSupport(data, transition) {
   if (!transition || !Number.isFinite(Number(transition.startMs))) return "";
   const timing = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
@@ -10812,7 +10914,7 @@ function nearcastBriefTemperatureSupport(story, truth, tempUnit) {
   return "";
 }
 
-function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit) {
+function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit, disclosure = null) {
   const period = nearcastBriefPeriod(story);
   const first = story?.segments?.[0] || null;
   const firstLabel = nearcastBriefCleanSentence(first?.label || truth?.label || "Weather");
@@ -10839,22 +10941,24 @@ function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit) {
   let tone = first?.family || "calm";
 
   if (eventIsPrimary) {
-    headline = nearcastBriefCleanSentence(promotedEvent.headline || promotedEvent.label);
+    const calmEvent = nearcastCalmEventCopy(data, promotedEvent, disclosure);
+    headline = nearcastBriefCleanSentence(calmEvent.headline || promotedEvent.headline || promotedEvent.label);
     if (active && promotedEvent.basis !== "observed") {
       headline = headline.replace(/^(Rain|Storms|Snow) now\b/i, "$1 indicated now");
     }
     primaryClaimId = "event";
     target = promotedEvent.target || null;
     tone = promotedEvent.kind || tone;
-    if (promotedEvent.support) {
-      support = nearcastBriefCleanSentence(promotedEvent.support);
+    if (calmEvent.support || promotedEvent.support) {
+      support = nearcastBriefCleanSentence(calmEvent.support || promotedEvent.support);
       supportClaimId = "event-phase";
     } else if (!active && firstLabel && !["rain", "storm", "snow"].includes(first?.family)) {
       support = `${firstLabel} until then`;
       supportClaimId = "condition";
     }
   } else if (eventIsMaterial) {
-    support = nearcastBriefCleanSentence(promotedEvent.label);
+    const calmEvent = nearcastCalmEventCopy(data, promotedEvent, disclosure);
+    support = nearcastBriefCleanSentence(calmEvent.headline || promotedEvent.label);
     supportClaimId = "event";
     target = promotedEvent.target || null;
   } else if (transition) {
@@ -10916,7 +11020,8 @@ function buildNearcastBrief(data, options = {}) {
   const story = options.story || buildForecastStory(data, tempUnit, windUnit, truth);
   const materialEvent = options.materialEvent || forecastMaterialEvent(data, { ...options, truth, story, windUnit });
   const promotedEvent = materialEvent;
-  const outlook = nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit);
+  const disclosure = options.disclosure || null;
+  const outlook = nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit, disclosure);
   return {
     current: {
       temperature: actual,
@@ -10940,6 +11045,7 @@ function buildNearcastBrief(data, options = {}) {
     outlook,
     materialEvent,
     promotedEvent,
+    disclosure,
     evidence: nearcastEvidencePresentation(data, truth, options),
     suppressesGenericWeather: true
   };
@@ -10971,7 +11077,12 @@ function buildForecastPresentation(data, options = {}) {
   }
   const story = buildForecastStory(data, tempUnit, windUnit, truth);
   const materialEvent = forecastMaterialEvent(data, { ...options, truth, tempUnit, windUnit, story });
-  const brief = buildNearcastBrief(data, { ...options, truth, tempUnit, windUnit, story, materialEvent });
+  const confidence = options.confidence || nearcastForecastConfidence(data, truth, options.place || state.activePlace);
+  const disclosure = options.disclosure || nearcastForecastDisclosure(data, truth, options.place || state.activePlace, {
+    confidence,
+    claim: confidence?.claim || null
+  });
+  const brief = buildNearcastBrief(data, { ...options, truth, tempUnit, windUnit, story, materialEvent, disclosure });
   if (materialEvent) {
     hours = hours.map((hour) => {
       const phase = materialEvent.phases?.slice().reverse().find((item) => (
@@ -10999,8 +11110,10 @@ function buildForecastPresentation(data, options = {}) {
     days,
     story,
     materialEvent,
+    confidence,
+    disclosure,
     brief,
-    receipt: forecastTrustPresentation(data, truth)
+    receipt: forecastTrustPresentation(data, truth, { brief })
   };
 }
 
@@ -12500,6 +12613,12 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       typeof alertTrustState === "undefined" || alertTrustState.state !== "failed"
     );
     const confidence = confidenceAllowedForCompanion ? nearcastForecastConfidence(data, truth, place) : null;
+    const confidenceDisclosure = confidence ? nearcastForecastDisclosure(data, truth, place, {
+      confidence,
+      claim: confidence.claim,
+      officialAlert: false
+    }) : null;
+    const confidenceActionable = Boolean(confidence && confidenceDisclosure?.actionable);
     const widgetPlan = nativeWidgetPlanSummary(data, place);
     const watchSummary = nativeWidgetWatchSummary(data, place, truth, widgetPlan);
     const widgetAlert = nativeWidgetAlertSummary();
@@ -12545,12 +12664,13 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       canonicalEventStartAt: Number.isFinite(Number(materialEvent?.startMs)) ? Number(materialEvent.startMs) / 1000 : null,
       canonicalEventEndAt: Number.isFinite(Number(materialEvent?.endMs)) ? Number(materialEvent.endMs) / 1000 : null,
       canonicalEventKind: materialEvent?.kind || null,
-      confidenceLevel: confidence?.level || null,
-      confidenceHeadline: confidence?.headline || null,
-      confidenceSummary: confidence?.summary || null,
-      confidenceWindowStartAt: Number.isFinite(Number(confidence?.window?.startMs)) ? Number(confidence.window.startMs) / 1000 : null,
-      confidenceWindowEndAt: Number.isFinite(Number(confidence?.window?.endMs)) ? Number(confidence.window.endMs) / 1000 : null,
-      confidenceGeneratedAt: Number.isFinite(Number(confidence?.guidanceFetchedAtMs)) ? Number(confidence.guidanceFetchedAtMs) / 1000 : null,
+      confidenceActionable,
+      confidenceLevel: confidenceActionable ? confidence?.level || null : null,
+      confidenceHeadline: confidenceActionable ? confidenceDisclosure?.qualifier || confidence?.headline || null : null,
+      confidenceSummary: confidenceActionable ? confidence?.summary || null : null,
+      confidenceWindowStartAt: confidenceActionable && Number.isFinite(Number(confidence?.window?.startMs)) ? Number(confidence.window.startMs) / 1000 : null,
+      confidenceWindowEndAt: confidenceActionable && Number.isFinite(Number(confidence?.window?.endMs)) ? Number(confidence.window.endMs) / 1000 : null,
+      confidenceGeneratedAt: confidenceActionable && Number.isFinite(Number(confidence?.guidanceFetchedAtMs)) ? Number(confidence.guidanceFetchedAtMs) / 1000 : null,
       planTitle: widgetPlan?.title || null,
       planLabel: widgetPlan?.label || null,
       planDetail: widgetPlan?.detail || null,
@@ -15159,13 +15279,17 @@ function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windU
   if (metric === "precipitation") {
     const currentClaim = isCurrent && precipDisplay?.displayMode !== "forecast-probability";
     const guidanceAvailable = precipDisplay?.forecastPopAvailable !== false;
+    const currentContext = precipDisplay?.isObservedNow
+      ? "Observed"
+      : precipDisplay?.phase === "nearby" ? "Nearby radar"
+        : precipDisplay?.phase === "imminent" ? "Starting soon" : "Estimated";
     return {
       trendLabel: currentClaim ? precipDisplay.displayLabel : guidanceAvailable ? `${value}%` : "--",
       aria: currentClaim
         ? precipDisplay.ariaLabel
         : guidanceAvailable ? `${value}% precipitation forecast guidance` : "Precipitation forecast guidance unavailable",
       secondary: currentClaim
-        ? guidanceAvailable ? `${value}% chance` : "Chance --"
+        ? currentContext
         : `${temp}° temp`,
       contextAria: "",
       temperatureColor: false
@@ -15352,8 +15476,6 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     const temperatureColorStyle = metricPresentation.temperatureColor
       ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
       : "";
-    const receipt = position === 0 ? (truth.surfaceDetail || truth.receiptDetail || truth.receipt || "") : "";
-    const receiptSentence = String(receipt).trim().replace(/[.!?]+$/, "");
     const memoryItems = planMemory.markers.get(index) || [];
     const memoryLabel = hourlyPlanMemoryLabel(memoryItems);
     const hasPlanMemory = planMemory.overlaps.has(index);
@@ -15365,9 +15487,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
         : hasRainChance ? `, ${rainChance}% rain forecast guidance` : "";
     const isStoryFocus = index === storyFocusIndex && position > 0;
     const metricAria = String(metricPresentation.aria || "").trim().replace(/[.!?]+$/, "");
-    const cardLabel = `${label}: ${code}, ${metricAria}${metricPresentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}.${receiptSentence ? ` ${receiptSentence}.` : ""} Show hourly details.`;
+    const cardLabel = `${label}: ${code}, ${metricAria}${metricPresentation.contextAria}${rainAria}${isStoryFocus ? ", forecast changes here" : ""}${memoryLabel ? `, ${memoryLabel} starts` : ""}. Show hourly details.`;
     return `
-      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${Number.isFinite(trend.points[position].y) ? trend.points[position].y.toFixed(1) : "25"}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(receiptSentence || title)}">
+      <article class="hour-card metric-${metric}${position === 0 ? " current" : ""}${isStoryFocus ? " story-focus" : ""}${showStormPotentialBadge ? " has-storm-potential" : ""}${hasPlanMemory ? " has-plan-memory" : ""}" style="--trend-y:${Number.isFinite(trend.points[position].y) ? trend.points[position].y.toFixed(1) : "25"}px" role="button" tabindex="0" data-hour-index="${index}" aria-label="${escapeHtml(cardLabel)}" title="${escapeHtml(title)}">
         <span class="hour-label">${label}</span>
         ${memoryLabel ? `<span class="hour-memory">${escapeHtml(memoryLabel)}</span>` : ""}
         <div class="hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(wcode, isHourDay, { density: "dense" })}${showStormPotentialBadge ? thunderBadgeHtml(thunderLabel) : ""}</div>
@@ -15687,18 +15809,8 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
     const stormLabel = day.convective?.label || "Thunder possible";
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
-    const dayConfidence = nearcastForecastConfidenceForDay(data, index, day, state.activePlace);
-    const agreementStatus = dayConfidence?.evidence?.agreement?.status;
-    const showConfidenceCue = dayConfidence && (
-      dayConfidence.level === "low" || agreementStatus === "diverging" || agreementStatus === "mixed"
-    );
-    const pulseCue = showConfidenceCue
-      ? agreementStatus === "diverging" && dayConfidence.claim?.kind === "precip-window"
-        ? "Timing uncertain"
-        : dayConfidence.headline
-      : "";
-    const pulseTone = dayConfidence?.level === "low" ? "watch" : "change";
-    const precipNote = day.timing || precipProfile.note;
+    const dayDisclosure = nearcastForecastDisclosureForDay(data, index, day, state.activePlace);
+    const precipNote = nearcastCalmDailyTiming(data, day.materialEvent, dayDisclosure, day.timing || precipProfile.note, index);
     const dayAria = [
       formatDay(time, index),
       code,
@@ -15708,7 +15820,6 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
       stormPotential ? stormLabel : "",
       precipNote,
       memoryCue ? `watched plan ${memoryCue}` : "",
-      pulseCue ? `${pulseCue}: ${dayConfidence.summary}` : "",
       "Open day details"
     ].filter(Boolean).join(", ");
     return `
@@ -15720,7 +15831,6 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
             <div class="day-meta">
               <span class="day-condition">${escapeHtml(code)}</span>
               ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
-              ${pulseCue ? `<span class="day-pulse is-${escapeHtml(pulseTone)}"><i aria-hidden="true"></i>${escapeHtml(pulseCue)}</span>` : ""}
               ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
             </div>
           </div>

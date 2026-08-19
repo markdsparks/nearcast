@@ -14971,6 +14971,64 @@ body.map-immersive-active .day-sheet.show {
   background: color-mix(in srgb, var(--glass-light) 82%, transparent);
 }
 
+.forecast-receipt-technical {
+  overflow: hidden;
+  margin-top: 13px;
+  border: 1px solid var(--border-glass);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--glass-light) 62%, transparent);
+}
+
+.forecast-receipt-technical > summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 12px 13px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.forecast-receipt-technical > summary::-webkit-details-marker {
+  display: none;
+}
+
+.forecast-receipt-technical > summary::after {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  color: var(--semantic-blue);
+  background: color-mix(in srgb, var(--semantic-blue) 10%, transparent);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.forecast-receipt-technical[open] > summary::after {
+  content: "−";
+}
+
+.forecast-receipt-technical > .forecast-receipt-facts {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border-glass);
+  border-radius: 0;
+  background: transparent;
+}
+
+.forecast-receipt-technical > .forecast-receipt-footnote {
+  margin: 0;
+  padding: 11px 14px 14px;
+  border-top: 1px solid var(--border-glass);
+}
+
 .forecast-receipt-fact {
   display: grid;
   grid-template-columns: minmax(70px, 0.34fr) minmax(0, 1fr);
@@ -15033,6 +15091,10 @@ body.map-immersive-active .day-sheet.show {
   border: 1px solid var(--border-glass);
   border-radius: 13px;
   background: color-mix(in srgb, var(--glass-light) 66%, transparent);
+}
+
+.forecast-receipt-uncertainty[hidden] {
+  display: none;
 }
 
 .forecast-receipt-uncertainty-icon {
@@ -17495,6 +17557,7 @@ body.map-immersive-active .day-sheet.alert-sheet {
   .forecast-receipt-trigger,
   .forecast-receipt-overview,
   .forecast-receipt-facts,
+  .forecast-receipt-technical,
   .forecast-receipt-uncertainty,
   .alert-bar {
     border-width: 2px;
@@ -17579,6 +17642,7 @@ body.map-immersive-active .day-sheet.alert-sheet {
   .forecast-receipt-trigger,
   .forecast-receipt-overview,
   .forecast-receipt-facts,
+  .forecast-receipt-technical,
   .forecast-receipt-uncertainty,
   .alert-bar,
   .hourly-metric-tabs button {

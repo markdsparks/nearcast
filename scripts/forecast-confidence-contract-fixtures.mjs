@@ -262,7 +262,7 @@ export const confidenceContractFixtures = [
     }
   },
   {
-    name: "fresh clear radar exposes a near-term mismatch instead of claiming confidence",
+    name: "fresh clear radar describes now without disproving a forecast window",
     input: {
       nowMs: confidenceNowMs,
       place: confidencePlace,
@@ -287,9 +287,9 @@ export const confidenceContractFixtures = [
       }
     },
     expected: {
-      level: "low",
-      observationStatus: "conflict",
-      limitations: /radar|observation|not.*confirm|mismatch/i
+      level: "medium",
+      observationStatus: "not-confirmed",
+      forbiddenText: /disagree|conflict|mismatch/i
     }
   },
   {

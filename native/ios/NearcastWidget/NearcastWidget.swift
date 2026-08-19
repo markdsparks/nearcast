@@ -861,6 +861,7 @@ enum NearcastWidgetForecastClient {
             confidenceWindowStartAt: fallback.confidenceWindowStartAt,
             confidenceWindowEndAt: fallback.confidenceWindowEndAt,
             confidenceGeneratedAt: fallback.confidenceGeneratedAt,
+            confidenceActionable: fallback.confidenceActionable,
             planTitle: fallback.planTitle,
             planLabel: fallback.planLabel,
             planDetail: fallback.planDetail,
@@ -2482,7 +2483,7 @@ private struct LargeWeatherRunway: View {
                     .foregroundStyle(forecastConfidenceTone(confidence))
                     .lineLimit(1)
                     .minimumScaleFactor(0.74)
-                    .accessibilityLabel("\(confidence.headline). \(confidence.summary)")
+                    .accessibilityLabel("Forecast advice. \(confidence.headline). \(confidence.summary)")
             }
 
             if rows.isEmpty {
@@ -3824,21 +3825,20 @@ private func smallWidgetChipTone(_ snapshot: NearcastWidgetSnapshot) -> Color? {
     }
 }
 
-/// Small and medium widgets show confidence only when it changes how a family
-/// should read the forecast. High confidence remains quiet at these sizes;
-/// urgent alerts and actionable plan changes keep their established priority.
+/// Small and medium widgets show only phone-authored, action-changing advice;
+/// they never turn a raw high/medium/low grade into another thing to interpret.
+/// Urgent alerts and actionable plan changes keep their established priority.
 private func compactForecastConfidence(_ snapshot: NearcastWidgetSnapshot) -> NearcastForecastConfidenceBrief? {
     guard snapshot.urgentOfficialAlertBrief() == nil,
           !shouldShowPlanAttention(snapshot),
-          let confidence = snapshot.forecastConfidenceBrief(),
-          confidence.isMaterialCaution else {
+          let confidence = snapshot.forecastConfidenceBrief() else {
         return nil
     }
     return confidence
 }
 
-/// The large widget has room for a concise evidence line. It appears only in
-/// the healthy forecast state so it never competes with the alert/plan panel.
+/// The large widget has room for one concise, actionable qualifier. It appears
+/// only in the healthy forecast state and never exposes routine model grades.
 private func largeForecastConfidence(
     _ snapshot: NearcastWidgetSnapshot,
     at timestamp: TimeInterval

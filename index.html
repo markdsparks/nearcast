@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.373">
-    <link rel="manifest" href="manifest.json?v=3.0.373">
+    <link rel="stylesheet" href="styles.css?v=3.0.374">
+    <link rel="manifest" href="manifest.json?v=3.0.374">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.373">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.373">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.374">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.374">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -368,7 +368,7 @@
                 type="button"
                 data-forecast-receipt-trigger
                 data-tone="forecast"
-                aria-label="Open forecast confidence and evidence"
+                aria-label="Open why this forecast"
                 aria-haspopup="dialog"
                 aria-controls="forecastReceiptSheet"
                 aria-expanded="false"
@@ -376,8 +376,8 @@
               >
                 <span class="forecast-receipt-trigger-dot" data-forecast-receipt-indicator aria-hidden="true"></span>
                 <span class="forecast-receipt-trigger-copy">
-                  <strong id="forecastReceiptStatus">Forecast confidence</strong>
-                  <span id="forecastReceiptStatusMeta">Comparing guidance</span>
+                  <strong id="forecastReceiptStatus">Forecast updated</strong>
+                  <span id="forecastReceiptStatusMeta">For this location</span>
                 </span>
                 <span class="forecast-receipt-trigger-chevron" aria-hidden="true">›</span>
               </button>
@@ -771,12 +771,12 @@
           </svg>
         </span>
         <div class="sheet-head-text">
-          <p class="sheet-kicker">Forecast confidence</p>
-          <h2 id="forecastReceiptTitle">How certain is this?</h2>
+          <p class="sheet-kicker">Forecast details</p>
+          <h2 id="forecastReceiptTitle">Why this forecast?</h2>
           <p class="sheet-context" id="forecastReceiptContext">Selected place</p>
         </div>
       </header>
-      <p class="sheet-summary" id="forecastReceiptSummary">How independent guidance compares, what observations confirm, and what has changed.</p>
+      <p class="sheet-summary" id="forecastReceiptSummary">Nearcast’s best read, what matters now, and where the forecast comes from.</p>
 
       <section class="forecast-receipt-overview" id="forecastReceiptOverview" data-tone="forecast" aria-live="polite">
         <span class="forecast-receipt-overview-dot" aria-hidden="true"></span>
@@ -786,7 +786,17 @@
         </div>
       </section>
 
-      <dl class="forecast-receipt-facts" id="forecastReceiptFacts">
+      <section class="forecast-receipt-uncertainty" id="forecastReceiptUncertainty" data-tone="neutral" hidden>
+        <span class="forecast-receipt-uncertainty-icon" aria-hidden="true">i</span>
+        <div>
+          <h3 id="forecastReceiptUncertaintyTitle">What to keep in mind</h3>
+          <p id="forecastReceiptUncertaintyText"></p>
+        </div>
+      </section>
+
+      <details class="forecast-receipt-technical" id="forecastReceiptTechnical">
+        <summary>Sources and technical details</summary>
+        <dl class="forecast-receipt-facts" id="forecastReceiptFacts">
         <div class="forecast-receipt-fact" id="forecastReceiptFreshnessRow" data-forecast-receipt-fact="freshness">
           <dt>Freshness &amp; sources</dt>
           <dd>
@@ -822,16 +832,9 @@
             <span id="forecastReceiptAlertsMeta">Nearcast keeps official hazards separate from ordinary forecast confidence.</span>
           </dd>
         </div>
-      </dl>
-
-      <section class="forecast-receipt-uncertainty" id="forecastReceiptUncertainty" data-tone="neutral">
-        <span class="forecast-receipt-uncertainty-icon" aria-hidden="true">i</span>
-        <div>
-          <h3 id="forecastReceiptUncertaintyTitle">What could change</h3>
-          <p id="forecastReceiptUncertaintyText">Timing and intensity become less certain farther into the forecast.</p>
-        </div>
-      </section>
-      <p class="forecast-receipt-footnote" id="forecastReceiptFootnote">Confidence uses agreement, change, observations, and freshness—never an invented percentage.</p>
+        </dl>
+        <p class="forecast-receipt-footnote" id="forecastReceiptFootnote">Nearcast checks observations, forecast movement, and additional forecast systems before choosing how specific to be.</p>
+      </details>
       <a class="forecast-receipt-source-link" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Weather data by Open-Meteo · CC BY 4.0</a>
     </aside>
 
@@ -1169,18 +1172,18 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.373"></script>
-    <script src="planner.js?v=3.0.373"></script>
-    <script src="forecast-confidence.js?v=3.0.373"></script>
-    <script src="app.js?v=3.0.373"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.373"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.373"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.373"></script>
-    <script src="radar-seam-engine.js?v=3.0.373"></script>
-    <script src="raw-map-runtime.js?v=3.0.373"></script>
-    <script src="map.js?v=3.0.373"></script>
-    <script src="sky.js?v=3.0.373"></script>
-    <script src="daygraph.js?v=3.0.373"></script>
-    <script src="boot.js?v=3.0.373"></script>
+    <script src="weather-truth.js?v=3.0.374"></script>
+    <script src="planner.js?v=3.0.374"></script>
+    <script src="forecast-confidence.js?v=3.0.374"></script>
+    <script src="app.js?v=3.0.374"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.374"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.374"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.374"></script>
+    <script src="radar-seam-engine.js?v=3.0.374"></script>
+    <script src="raw-map-runtime.js?v=3.0.374"></script>
+    <script src="map.js?v=3.0.374"></script>
+    <script src="sky.js?v=3.0.374"></script>
+    <script src="daygraph.js?v=3.0.374"></script>
+    <script src="boot.js?v=3.0.374"></script>
   </body>
 </html>

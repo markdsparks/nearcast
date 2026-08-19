@@ -1061,15 +1061,15 @@ private struct WatchSavedForecastStatus: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
                 .frame(maxWidth: .infinity, alignment: .center)
-                .accessibilityLabel("Forecast confidence")
+                .accessibilityLabel("Forecast advice")
                 .accessibilityValue("\(confidence.headline). \(confidence.summary)")
         }
     }
 }
 
-/// The healthy-state footer is the only Watch app confidence affordance. It
-/// stays out of complications and yields to refresh failures, stale weather,
-/// urgent official alerts, and actionable watched-plan changes.
+/// The healthy-state footer accepts only phone-authored, action-changing
+/// advice. It stays out of complications and yields to refresh failures, stale
+/// weather, urgent official alerts, and actionable watched-plan changes.
 private func watchForecastConfidence(_ snapshot: NearcastWidgetSnapshot) -> NearcastForecastConfidenceBrief? {
     guard snapshot.urgentOfficialAlertBrief() == nil,
           !watchHasPriorityPlan(snapshot) else {

@@ -41,6 +41,7 @@ legacyObject.removeValue(forKey: "confidenceSummary")
 legacyObject.removeValue(forKey: "confidenceWindowStartAt")
 legacyObject.removeValue(forKey: "confidenceWindowEndAt")
 legacyObject.removeValue(forKey: "confidenceGeneratedAt")
+legacyObject.removeValue(forKey: "confidenceActionable")
 legacyObject.removeValue(forKey: "alertStartsAt")
 legacyObject.removeValue(forKey: "alertSource")
 legacyObject.removeValue(forKey: "alertUrgency")
@@ -87,36 +88,46 @@ let confidenceRoundTrip = try decoder.decode(
     NearcastWidgetSnapshot.self,
     from: encoder.encode(confidenceSnapshot)
 )
-let confidenceBrief = confidenceRoundTrip.forecastConfidenceBrief(at: now)
-require(confidenceBrief?.level == .high, "snapshots preserve the calibrated forecast confidence level")
-require(confidenceBrief?.headline == "High confidence", "snapshots preserve confidence language verbatim")
-require(confidenceBrief?.summary.contains("Three independent forecasts") == true, "snapshots preserve concise confidence evidence")
-require(confidenceBrief?.windowStartAt == now + 2 * 3600 && confidenceBrief?.windowEndAt == now + 5 * 3600, "confidence remains attached to its exact forecast window")
-require(confidenceBrief?.isMaterialCaution == false, "high confidence stays quiet on compact surfaces")
+require(confidenceRoundTrip.forecastConfidenceBrief(at: now) == nil, "ordinary confidence stays quiet without explicit editorial promotion")
 
-var uncertainConfidence = confidenceRoundTrip
+var actionableConfidence = confidenceRoundTrip
+actionableConfidence.confidenceActionable = true
+actionableConfidence.confidenceHeadline = "Keep plans flexible"
+actionableConfidence.confidenceSummary = "Rain may overlap the last hour."
+let confidenceBrief = actionableConfidence.forecastConfidenceBrief(at: now)
+require(confidenceBrief?.level == .high, "explicitly actionable advice preserves its calibrated confidence level")
+require(confidenceBrief?.headline == "Keep plans flexible", "snapshots preserve actionable advice verbatim")
+require(confidenceBrief?.summary == "Rain may overlap the last hour.", "snapshots preserve the concise action-changing reason")
+require(confidenceBrief?.windowStartAt == now + 2 * 3600 && confidenceBrief?.windowEndAt == now + 5 * 3600, "actionable advice remains attached to its exact forecast window")
+
+var uncertainConfidence = actionableConfidence
 uncertainConfidence.confidenceLevel = "medium"
 uncertainConfidence.confidenceHeadline = "Timing uncertain"
-require(uncertainConfidence.forecastConfidenceBrief(at: now)?.isMaterialCaution == true, "medium confidence can flag material uncertainty on compact surfaces")
+require(uncertainConfidence.forecastConfidenceBrief(at: now) != nil, "explicit action-changing advice can use medium confidence internally")
 uncertainConfidence.confidenceLevel = "low"
-require(uncertainConfidence.forecastConfidenceBrief(at: now)?.isMaterialCaution == true, "low confidence can flag material uncertainty on compact surfaces")
+require(uncertainConfidence.forecastConfidenceBrief(at: now) != nil, "explicit action-changing advice can use low confidence internally")
+uncertainConfidence.confidenceActionable = false
+require(uncertainConfidence.forecastConfidenceBrief(at: now) == nil, "a low confidence grade alone never becomes user-facing advice")
+uncertainConfidence.confidenceActionable = true
 uncertainConfidence.confidenceLevel = "unavailable"
 require(uncertainConfidence.forecastConfidenceBrief(at: now) == nil, "unavailable confidence never becomes a native badge")
 
-var expiredConfidence = confidenceRoundTrip
+var expiredConfidence = actionableConfidence
 expiredConfidence.confidenceWindowEndAt = now
 require(expiredConfidence.forecastConfidenceBrief(at: now) == nil, "an ended confidence window cannot survive on companion surfaces")
 require(expiredConfidence.expiringCompanionContent(at: now).confidenceLevel == nil, "projection removes an ended confidence receipt")
-var staleConfidence = confidenceRoundTrip
+var staleConfidence = actionableConfidence
 staleConfidence.confidenceGeneratedAt = now - 13 * 3600
 require(staleConfidence.forecastConfidenceBrief(at: now) == nil, "stale model agreement is not presented as current confidence")
 
-var movedConfidence = confidenceRoundTrip
+var movedConfidence = actionableConfidence
 movedConfidence.clearForecastConfidence()
 require(movedConfidence.forecastConfidenceBrief(at: now) == nil, "moving to a new coordinate clears the prior place's confidence receipt")
+require(movedConfidence.confidenceActionable == nil, "clearing confidence also clears editorial promotion")
 
-let mergedConfidence = legacy.mergingWeather(from: confidenceRoundTrip)
-require(mergedConfidence.confidenceHeadline == "High confidence", "weather merges carry the matching phone-authored confidence receipt")
+let mergedConfidence = legacy.mergingWeather(from: actionableConfidence)
+require(mergedConfidence.confidenceHeadline == "Keep plans flexible", "weather merges carry matching phone-authored forecast advice")
+require(mergedConfidence.confidenceActionable == true, "weather merges preserve explicit editorial promotion")
 
 var truthContractSnapshot = legacy
 truthContractSnapshot.version = 8

@@ -419,7 +419,7 @@ export const staleCacheFixture = {
     cacheFallback: true,
     ageMs: 2.5 * hour,
     tone: "stale",
-    headline: /Using an older saved forecast/i,
+    headline: /Cloudy through the afternoon/i,
     trigger: /Using saved forecast/i,
     triggerMeta: /3 hrs ago/i,
     freshness: /Checked 3 hrs ago/i

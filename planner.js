@@ -3187,15 +3187,6 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
   const laterChangeText = laterChanged
     ? `${planMemoryTitle(laterChanged.memory)} changed`
     : "";
-  const targetDate = String(memory.targetDate || memory.windows?.[0]?.targetDate || "").slice(0, 10);
-  const planDayIndex = (data?.daily?.time || []).findIndex((date) => String(date).slice(0, 10) === targetDate);
-  const forecastPulse = planDayIndex >= 0 && typeof forecastPulseDayPresentation === "function"
-    ? forecastPulseDayPresentation(data, planDayIndex, place)
-    : null;
-  const stabilityCue = forecastPulse?.status === "uncertain"
-    ? "Forecast still shifting"
-    : forecastPulse?.status === "shifting" ? "Forecast changed recently" : "";
-
   slot.hidden = false;
   slot.innerHTML = `
     <button class="home-plan-decision is-agenda is-expanded is-${escapeHtml(tone)}${changed ? " is-changed" : ""}" type="button" data-agenda-open data-memory-show="${escapeHtml(memory.id)}" data-plan-state="${escapeHtml(tone)}" data-plan-risk="${escapeHtml(riskKind)}" aria-label="${escapeHtml(`${kicker}. ${outcome}. ${where}. ${when}. ${evidence}. Open plans.`)}">
@@ -3203,7 +3194,6 @@ function renderPlanPulse(data = state.forecast, place = state.activePlace) {
       <span class="home-plan-place">${escapeHtml(where)}</span>
       <strong>${escapeHtml(outcome)}</strong>
       <span class="home-plan-evidence">${escapeHtml(compact(evidence, 150))}</span>
-      ${stabilityCue ? `<span class="home-plan-stability is-${escapeHtml(forecastPulse.tone)}"><i aria-hidden="true"></i>${escapeHtml(stabilityCue)}</span>` : ""}
       <span class="home-plan-footer">
         <span>${escapeHtml(active ? "Nearcast is watching this window" : `Starts ${formatForecastMs(startMs, watch.data || data)}`)}</span>
         <em>Open plans <span aria-hidden="true">›</span></em>
@@ -5448,11 +5438,105 @@ function nearcastConfidenceForExactTarget({ data, place, target, request = "", r
 
 function nearcastConfidenceAffectsRecommendation(confidence, tone = "") {
   if (!confidence || !["medium", "low"].includes(confidence.level)) return false;
-  if (confidence.level === "low") return true;
-  return tone !== "good" ||
-    ["mixed", "diverging"].includes(confidence.evidence?.agreement?.status) ||
-    confidence.evidence?.evolution?.status === "shifted" ||
-    confidence.evidence?.observation?.status === "conflict";
+  const disclosure = typeof globalThis.forecastDisclosurePresentation === "function"
+    ? globalThis.forecastDisclosurePresentation({
+        confidence,
+        decisionSensitive: true,
+        hazardRelevant: tone !== "good"
+      })
+    : null;
+  if (disclosure) return Boolean(disclosure.actionable);
+  const agreement = confidence.evidence?.agreement || {};
+  const evolution = confidence.evidence?.evolution || {};
+  const observation = confidence.evidence?.observation || {};
+  const expectedKind = String(confidence.claim?.canonical?.eventKind || confidence.claim?.kind || "").toLowerCase();
+  const exactTypeIsUnsettled =
+    ["storm", "snow", "ice"].includes(expectedKind) &&
+    Number(agreement.typeSupportCount) < Number(agreement.providersUsed);
+  const timingOutsideWindow =
+    ["mixed", "diverging"].includes(agreement.status) &&
+    Math.abs(Number(agreement.canonicalDeltaMs) || 0) > Number(agreement.timingToleranceMs || 2 * 60 * 60 * 1000);
+  return observation.status === "conflict" ||
+    evolution.status === "shifted" ||
+    agreement.status === "diverging" ||
+    timingOutsideWindow ||
+    (tone !== "good" && exactTypeIsUnsettled);
+}
+
+function nearcastCalmForecastAdvice(confidence, tone = "") {
+  if (!nearcastConfidenceAffectsRecommendation(confidence, tone)) return "";
+  const disclosure = typeof globalThis.forecastDisclosurePresentation === "function"
+    ? globalThis.forecastDisclosurePresentation({
+        confidence,
+        decisionSensitive: true,
+        hazardRelevant: tone !== "good"
+      })
+    : null;
+  const agreement = confidence.evidence?.agreement || {};
+  const evolution = confidence.evidence?.evolution || {};
+  const observation = confidence.evidence?.observation || {};
+  const expectedKind = String(confidence.claim?.canonical?.eventKind || confidence.claim?.kind || "").toLowerCase();
+  const expectsDry = /dry/.test(expectedKind);
+  const exactTypeIsUnsettled =
+    ["storm", "snow", "ice"].includes(expectedKind) &&
+    Number(agreement.typeSupportCount) < Number(agreement.providersUsed);
+
+  if (disclosure?.reason === "conditions-changed") {
+    return expectsDry
+      ? "Conditions are changing now; adjust the plan for active precipitation."
+      : "Keep it flexible; the expected weather has not reached this place yet.";
+  }
+  if (disclosure?.reason === "timing-moved") {
+    const direction = evolution.direction === "earlier" ? "earlier" : "later";
+    return `Keep it flexible; the weather window recently moved ${direction}.`;
+  }
+  if (disclosure?.reason === "weather-type-varies") {
+    return expectedKind === "storm"
+      ? "Plan for wet weather; whether it becomes a thunderstorm is less settled."
+      : `Plan for precipitation; the exact ${expectedKind || "weather"} type is less settled.`;
+  }
+  if (disclosure?.reason === "timing-varies") {
+    return "Keep it flexible; the start time could move by a few hours.";
+  }
+
+  if (observation.status === "conflict") {
+    return expectsDry
+      ? "Conditions are changing now; adjust the plan for active precipitation."
+      : "Keep it flexible; the expected weather has not reached this place yet.";
+  }
+  if (evolution.status === "shifted") {
+    const direction = evolution.direction === "earlier" ? "earlier" : "later";
+    return `Keep it flexible; the weather window recently moved ${direction}.`;
+  }
+  if (exactTypeIsUnsettled) {
+    return expectedKind === "storm"
+      ? "Plan for wet weather; whether it becomes a thunderstorm is less settled."
+      : `Plan for precipitation; the exact ${expectedKind} type is less settled.`;
+  }
+  if (agreement.status === "diverging") {
+    return "Keep it flexible; the start time could move by a few hours.";
+  }
+  return "Keep it flexible; the exact timing may move outside this window.";
+}
+
+function mergePlanActionAdvice(action, forecastAdvice) {
+  const primary = String(action || "").trim();
+  const qualifier = String(forecastAdvice || "").trim();
+  if (!primary) return qualifier;
+  if (!qualifier) return primary;
+  const normalizedPrimary = primary.toLowerCase();
+  const normalizedQualifier = qualifier.toLowerCase();
+  if (normalizedPrimary.includes("looks manageable right now")) return qualifier;
+  const primaryAlreadyCoversTiming =
+    (normalizedPrimary.includes("keep") && normalizedPrimary.includes("flexib")) ||
+    (normalizedPrimary.includes("timing") && normalizedPrimary.includes("check"));
+  const qualifierIsTimingAdvice = normalizedQualifier.includes("flexib") || normalizedQualifier.includes("timing");
+  if (
+    primaryAlreadyCoversTiming && qualifierIsTimingAdvice
+  ) {
+    return primary;
+  }
+  return `${primary} ${qualifier}`;
 }
 
 function nearcastConfidenceArtifact(confidence, place, target, context = null) {
@@ -5576,14 +5660,12 @@ async function executeNearcastAnswerSkill(args, context, definition) {
   }
   let fallback = checked?.answer || answerFreeform(request);
   let recommendationConfidence = null;
-  let recommendationTarget = null;
-  let recommendationConfidenceShown = false;
   if (checked?.event?.data && checked?.event?.place) {
     const targetDate = checked.event.data.daily?.time?.[checked.event.dayIndex];
     const startMs = planMaterialEventBoundaryMs(checked.event.data, targetDate, checked.event.startHour);
     const endMs = planMaterialEventBoundaryMs(checked.event.data, targetDate, checked.event.endHour);
     if (targetDate && Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
-      recommendationTarget = {
+      const recommendationTarget = {
         dayIdx: checked.event.dayIndex,
         targetDate,
         startHour: checked.event.startHour,
@@ -5600,9 +5682,11 @@ async function executeNearcastAnswerSkill(args, context, definition) {
         request,
         risk
       });
-      if (fallback && recommendationItem && nearcastConfidenceAffectsRecommendation(recommendationConfidence, recommendationItem.tone || "")) {
-        fallback = `${fallback} Confidence note: ${recommendationConfidence.headline}. ${recommendationConfidence.summary}`;
-        recommendationConfidenceShown = true;
+      const forecastAdvice = recommendationItem
+        ? nearcastCalmForecastAdvice(recommendationConfidence, recommendationItem.tone || "")
+        : "";
+      if (fallback && forecastAdvice) {
+        fallback = mergePlanActionAdvice(fallback, forecastAdvice);
       }
     }
   }
@@ -5616,12 +5700,6 @@ async function executeNearcastAnswerSkill(args, context, definition) {
     const window = c ? resolveAskWindow(request, c) : null;
     if (place && window) artifacts.push(nearcastWindowArtifact(place, window, context, { dayText: request }));
     if (checked?.event) artifacts.push(nearcastPlanArtifact(checked.event, context));
-    if (
-      recommendationTarget && recommendationConfidenceShown &&
-      checked?.event?.place
-    ) {
-      artifacts.push(nearcastConfidenceArtifact(recommendationConfidence, checked.event.place, recommendationTarget, context));
-    }
   }
   return nearcastSkillResult({
     status: fallback ? (definition.id === "nearcast.plan_check" ? "checked" : "answered") : "unavailable",
@@ -9725,7 +9803,7 @@ function renderPlanWindowHourRow(row, event, peak, watch) {
   `;
 }
 
-function planConfidenceNoteForEvent(memory, event, watch, data, place) {
+function planUncertaintyAdviceForEvent(memory, event, watch, data, place) {
   const targetDate = data?.daily?.time?.[event?.dayIndex];
   const startMs = Number(event?.startMs);
   const endMs = Number(event?.endMs);
@@ -9745,13 +9823,12 @@ function planConfidenceNoteForEvent(memory, event, watch, data, place) {
     request: [memory?.original, memory?.title].filter(Boolean).join(" "),
     risk: planWatchRiskKind(watch)
   });
-  if (!nearcastConfidenceAffectsRecommendation(confidence, watch?.tone || "")) return "";
-  return `For ${planWatchMetaText(memory, watch)}: ${confidence.headline}. ${confidence.summary}`;
+  return nearcastCalmForecastAdvice(confidence, watch?.tone || "");
 }
 
-function planWindowConfidenceNote(memory, detail) {
+function planWindowUncertaintyAdvice(memory, detail) {
   const watch = detail?.watch;
-  return planConfidenceNoteForEvent(
+  return planUncertaintyAdviceForEvent(
     memory,
     detail?.event,
     watch,
@@ -9772,7 +9849,8 @@ function renderPlanWindowDetailPanel(memory) {
   const signals = planContextSignalRows(watch).map(renderPlanSignalChip).join("");
   const reason = watch.fullReason || watch.primaryReason || watch.reason || "Nearcast checked this plan against the forecast.";
   const hint = planWindowDetailAdjustmentHint(rows, peak, watch);
-  const confidenceNote = planWindowConfidenceNote(focusedMemory, detail);
+  const forecastAdvice = planWindowUncertaintyAdvice(focusedMemory, detail);
+  const adjustment = mergePlanActionAdvice(hint, forecastAdvice);
   return `
     <article class="plan-window-detail is-${escapeHtml(watch.tone || "pending")}">
       <div class="plan-window-detail-head">
@@ -9782,8 +9860,7 @@ function renderPlanWindowDetailPanel(memory) {
       </div>
       <section class="plan-window-story">
         <p><span>Main read</span>${escapeHtml(reason)}</p>
-        ${hint ? `<p><span>Best adjustment</span>${escapeHtml(hint)}</p>` : ""}
-        ${confidenceNote ? `<p><span>Confidence</span>${escapeHtml(confidenceNote)}</p>` : ""}
+        ${adjustment ? `<p><span>Best adjustment</span>${escapeHtml(adjustment)}</p>` : ""}
       </section>
       ${signals ? `<div class="plan-watch-signals plan-window-signals">${signals}</div>` : ""}
       ${peak ? `
@@ -13108,8 +13185,9 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
         </button>`).join("")}</div>`
     : "";
   const reason = item.fullReason || item.primaryReason || exchange.a;
-  const action = item.action || (item.tone === "good" ? "" : item.advice);
-  const confidenceNote = planConfidenceNoteForEvent(memory, event, item, event.data, event.place);
+  const primaryAction = item.action || (item.tone === "good" ? "" : item.advice);
+  const forecastAdvice = planUncertaintyAdviceForEvent(memory, event, item, event.data, event.place);
+  const action = mergePlanActionAdvice(primaryAction, forecastAdvice);
   const signals = planContextSignalRows(item).map(renderPlanSignalChip).join("");
   const decisionLabel = item.label || item.verdict || "Forecast checked";
   const reasonLabel = item.tone === "good" ? "Why it works" : "Main concern";
@@ -13133,7 +13211,6 @@ function renderPlanDecisionExchange(exchange, index, streaming = false) {
       <div class="ask-decision-story">
         ${reason ? `<p class="ask-decision-reason"><span>${escapeHtml(reasonLabel)}</span>${escapeHtml(reason)}</p>` : ""}
         ${action ? `<p class="ask-decision-action"><span>${escapeHtml(actionLabel)}</span>${escapeHtml(action)}</p>` : ""}
-        ${confidenceNote ? `<p class="ask-decision-action"><span>Confidence</span>${escapeHtml(confidenceNote)}</p>` : ""}
       </div>
       ${signals ? `<div class="plan-watch-signals ask-decision-signals">${signals}</div>` : ""}
       <div class="ask-decision-actions">

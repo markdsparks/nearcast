@@ -43,9 +43,12 @@ assert.match(snapshot, /func weatherTimelineValidUntil[\s\S]*lastOffset \+ 1/, "
 assert.match(snapshot, /func shouldPromoteCurrentWeather[\s\S]*activeRow\.startsAt[\s\S]*weatherSavedTime/, "old observations yield to the forecast row active after their save time");
 assert.match(snapshot, /var confidenceLevel: String\?[\s\S]*var confidenceGeneratedAt: TimeInterval\?/, "shared snapshots carry an optional backward-compatible confidence receipt");
 assert.match(snapshot, /func forecastConfidenceBrief[\s\S]*maximumAge[\s\S]*windowEndAt > timestamp/, "native surfaces reject stale or ended confidence evidence");
-assert.match(phoneWidget, /compactForecastConfidence[\s\S]*confidence\.isMaterialCaution/, "small and medium widgets keep high confidence quiet and surface material uncertainty");
+assert.match(snapshot, /confidenceActionable:\s*Bool\?[\s\S]*guard confidenceActionable == true/, "native companions require explicit editorial promotion before surfacing uncertainty");
+assert.match(phoneWidget, /compactForecastConfidence[\s\S]*forecastConfidenceBrief\(\)/, "small and medium widgets consume only the shared actionable forecast advice contract");
+assert.match(phoneWidget, /compactForecastConfidence[\s\S]*urgentOfficialAlertBrief\(\) == nil[\s\S]*!shouldShowPlanAttention/, "compact widget advice yields to urgent alerts and actionable watched plans");
 assert.match(phoneWidget, /largeForecastConfidence[\s\S]*largeAttentionContext\(snapshot\) == nil/, "large widgets yield confidence evidence to alert and plan attention");
 assert.match(watchApp, /WatchSavedForecastStatus[\s\S]*watchForecastConfidence\(snapshot\)/, "the Watch app uses confidence only in its healthy forecast status");
+assert.match(watchApp, /syncState == \.failed[\s\S]*weatherAge > 2 \* 60 \* 60[\s\S]*syncState == \.refreshing[\s\S]*watchForecastConfidence/, "Watch refresh and stale states take precedence over optional forecast advice");
 assert.doesNotMatch(complications, /forecastConfidenceBrief|confidenceHeadline|confidenceSummary/, "Watch complications remain focused on weather and urgent alerts");
 
 assert.match(complications, /complicationWeatherValidUntil[\s\S]*weatherTimelineValidUntil/, "weather remains useful through the shared final cached forecast interval");

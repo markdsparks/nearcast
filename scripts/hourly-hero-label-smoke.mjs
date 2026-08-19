@@ -81,8 +81,8 @@ assert.match(
 );
 assert.match(
   hourlyRenderer,
-  /title="\$\{escapeHtml\(receiptSentence \|\| title\)\}"/,
-  "the card title retains canonical condition and evidence wording"
+  /title="\$\{escapeHtml\(title\)\}"/,
+  "the card title retains the canonical condition without leaking technical evidence wording"
 );
 
 const conditionRule = styles.match(/\.hour-card \.hour-condition\s*\{[\s\S]*?\n\}/)?.[0] || "";

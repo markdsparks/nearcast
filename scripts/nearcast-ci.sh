@@ -66,6 +66,7 @@ run_portable_checks() {
     forecast-pulse-smoke.mjs \
     forecast-truth-contract-smoke.mjs \
     forecast-confidence-contract-smoke.mjs \
+    forecast-disclosure-contract-smoke.mjs \
     forecast-confidence-integration-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \

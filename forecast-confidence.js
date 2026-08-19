@@ -4,6 +4,7 @@
   if (root) {
     root.NearcastForecastConfidence = api;
     root.forecastConfidencePresentation = api.forecastConfidencePresentation;
+    root.forecastDisclosurePresentation = api.forecastDisclosurePresentation;
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function createNearcastForecastConfidence() {
   "use strict";
@@ -68,7 +69,8 @@
   }
 
   function isPrecipClaim(claim) {
-    return PRECIP_KINDS.has(claim.kind) || /rain|storm|snow|precip/i.test(claim.kind);
+    const kind = String(claim?.kind || "");
+    return PRECIP_KINDS.has(kind) || /rain|storm|snow|precip/i.test(kind);
   }
 
   function isDryClaim(claim) {
@@ -114,14 +116,17 @@
 
   function agreementForClaim(signals, expectedProviders, claim, window, nowMs) {
     const starts = signals.map((signal) => signal?.precipitation?.startMs).map(finite).filter((value) => value !== null);
+    const precipitationTimingApplies = isPrecipClaim(claim);
     const tempMins = signals.map((signal) => signal?.temperature?.min).map(finite).filter((value) => value !== null);
     const tempMaxes = signals.map((signal) => signal?.temperature?.max).map(finite).filter((value) => value !== null);
     const gustValues = signals.map((signal) => signal?.wind?.gustMax).map(finite).filter((value) => value !== null);
     const supportCount = signals.filter((signal) => signalSupportsClaim(signal, claim)).length;
     const typeSupportCount = signals.filter((signal) => signalSupportsClaim(signal, claim) && signalSupportsEventKind(signal, claim)).length;
     const used = signals.length;
-    const timingRangeMs = starts.length >= 2 ? range(starts) : null;
-    const medianStartMs = starts.length ? median(starts) : null;
+    // Precipitation onset is evidence only for precipitation claims. A wet
+    // forecast must never move an unrelated wind or temperature event.
+    const timingRangeMs = precipitationTimingApplies && starts.length >= 2 ? range(starts) : null;
+    const medianStartMs = precipitationTimingApplies && starts.length ? median(starts) : null;
     const canonicalDeltaMs = medianStartMs === null ? null : medianStartMs - Number(claim.startMs);
     const comparableTempRanges = [range(tempMins), range(tempMaxes)].filter((value) => value !== null);
     const tempRange = comparableTempRanges.length ? Math.max(...comparableTempRanges) : null;
@@ -161,8 +166,8 @@
       expectedEventKind: precipitationFamily(claim?.canonical?.eventKind) || null,
       timingRangeMs,
       timingToleranceMs: alignedTimingMs,
-      timingStartMs: starts.length ? Math.min(...starts) : null,
-      timingEndMs: starts.length ? Math.max(...starts) : null,
+      timingStartMs: precipitationTimingApplies && starts.length ? Math.min(...starts) : null,
+      timingEndMs: precipitationTimingApplies && starts.length ? Math.max(...starts) : null,
       canonicalDeltaMs,
       tempRange,
       windRange: gustRange,
@@ -219,7 +224,10 @@
     const claimActiveNow = claim.startMs <= nowMs && claim.endMs > nowMs;
     if (isPrecipClaim(claim) && claimActiveNow) {
       if (active) return { status: "confirmed", source: observation.source || "radar", ageMs };
-      if (clear) return { status: "conflict", source: observation.source || "radar", ageMs };
+      // A clear radar frame says what is happening now; it cannot disprove a
+      // forecast event that may begin later in the highlighted window. Keep
+      // that distinction as evidence instead of manufacturing a conflict.
+      if (clear) return { status: "not-confirmed", source: observation.source || "radar", ageMs };
     }
     if (isDryClaim(claim) && claimActiveNow && clear) return { status: "confirmed", source: observation.source || "radar", ageMs };
     if (isDryClaim(claim) && claimActiveNow && active) return { status: "conflict", source: observation.source || "radar", ageMs };
@@ -352,8 +360,101 @@
     };
   }
 
+  // Confidence is an internal editorial signal. Product surfaces consume this
+  // smaller disclosure contract so ordinary model spread changes the precision
+  // of the forecast instead of asking people to reconcile providers themselves.
+  function forecastDisclosurePresentation(options = {}) {
+    const confidence = options.confidence && typeof options.confidence === "object"
+      ? options.confidence
+      : null;
+    const claim = confidence?.claim || options.claim || null;
+    const agreement = confidence?.evidence?.agreement || {};
+    const evolution = confidence?.evidence?.evolution || {};
+    const observation = confidence?.evidence?.observation || {};
+    const cacheFallback = Boolean(options?.canonical?.cacheFallback);
+    const stale = Boolean(options?.canonical?.stale) || Number(options?.canonical?.ageMs) >= 90 * 60 * 1000;
+    const officialAlert = Boolean(options.officialAlert);
+    const alertCheckFailed = String(options.alertState || "") === "failed";
+    const decisionSensitive = Boolean(options.decisionSensitive);
+    const hazardRelevant = Boolean(options.hazardRelevant);
+    const status = String(agreement.status || "unavailable");
+    const shifted = evolution.status === "shifted";
+    const observedConflict = observation.status === "conflict";
+    const typeSpread = Number(agreement.providersUsed) > 0 &&
+      Number(agreement.typeSupportCount) < Number(agreement.providersUsed) &&
+      ["storm", "snow", "ice"].includes(String(agreement.expectedEventKind || ""));
+
+    let mode = "silent";
+    let precision = "exact";
+    let actionable = false;
+    let reason = "settled";
+    let qualifier = null;
+
+    if (officialAlert) {
+      mode = "interrupt";
+      actionable = true;
+      reason = "official-alert";
+      qualifier = "An official alert affects this forecast window.";
+    } else if (cacheFallback || stale) {
+      mode = "interrupt";
+      actionable = true;
+      reason = "saved-forecast";
+      qualifier = "Refresh before making a weather-sensitive decision.";
+    } else if (alertCheckFailed) {
+      mode = "interrupt";
+      actionable = true;
+      reason = "alerts-unavailable";
+      qualifier = "Official alerts could not be checked.";
+    } else if (status === "diverging" || confidence?.level === "low") {
+      mode = decisionSensitive || hazardRelevant ? "caution" : "soften";
+      precision = "daypart";
+      actionable = decisionSensitive || hazardRelevant;
+      reason = typeSpread ? "weather-type-varies" : "timing-varies";
+      qualifier = decisionSensitive
+        ? "Keep the timing flexible for this decision."
+        : typeSpread ? "Precipitation is more likely than one exact type." : null;
+    } else if (status === "mixed" || confidence?.level === "medium" || shifted || observedConflict || typeSpread) {
+      mode = decisionSensitive && (shifted || observedConflict || typeSpread) ? "caution" : "soften";
+      precision = "range";
+      actionable = mode === "caution";
+      reason = observedConflict ? "conditions-changed"
+        : shifted ? "timing-moved"
+          : typeSpread ? "weather-type-varies" : "timing-varies";
+      qualifier = actionable
+        ? observedConflict ? "Current conditions may affect this decision."
+          : shifted ? "The expected timing changed enough to affect this decision."
+            : "Leave some flexibility around the start time."
+        : null;
+    } else if (!confidence || confidence.level === "unavailable") {
+      // Supplemental comparison can be unavailable while the canonical
+      // forecast remains healthy. That is not a user-facing failure.
+      reason = "comparison-unavailable";
+    }
+
+    const comparisonTimingApplies = isPrecipClaim(claim);
+    const timingStartMs = (comparisonTimingApplies ? finite(agreement.timingStartMs) : null) ?? finite(claim?.startMs);
+    const timingEndMs = precision === "exact"
+      ? (finite(claim?.endMs) ?? timingStartMs)
+      : ((comparisonTimingApplies ? finite(agreement.timingEndMs) : null) ?? finite(claim?.endMs) ?? timingStartMs);
+
+    return {
+      version: 1,
+      mode,
+      precision,
+      actionable,
+      reason,
+      qualifier,
+      claim,
+      window: confidence?.window || (claim ? { startMs: claim.startMs, endMs: claim.endMs } : null),
+      timingStartMs,
+      timingEndMs,
+      technicalAvailable: Boolean(confidence)
+    };
+  }
+
   return {
     forecastConfidencePresentation,
+    forecastDisclosurePresentation,
     agreementForClaim,
     evolutionForClaim,
     observationForClaim

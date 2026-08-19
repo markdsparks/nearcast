@@ -18,7 +18,8 @@ function extractFunction(source, name) {
   const starts = markers.map((marker) => source.indexOf(marker)).filter((index) => index >= 0);
   const start = starts.length ? Math.min(...starts) : -1;
   assert.notEqual(start, -1, `Found ${name}`);
-  const bodyStart = source.indexOf("{", start);
+  const signatureEnd = source.indexOf(") {", start);
+  const bodyStart = signatureEnd >= 0 ? signatureEnd + 2 : source.indexOf("{", start);
   assert.notEqual(bodyStart, -1, `Found ${name} body`);
   let depth = 0;
   let quote = "";
@@ -440,6 +441,78 @@ assert.ok(outlookStart >= 0 && outlookEnd > outlookStart, "outlook header region
 assert.match(html.slice(outlookStart, outlookEnd), /id="forecastReceiptTrigger"/, "the confidence receipt sits with the claim it explains");
 assert.match(extractFunction(app, "renderTodayGlance"), /if \(els\.forecastPulse\) els\.forecastPulse\.hidden = true;/, "the legacy forecast pulse is retired from Home");
 
+// Official alerts only interrupt the calm forecast when their effective
+// interval actually intersects the claim being shown. A different active
+// alert may remain discoverable in Alerts without becoming false context for
+// this particular Home/Hourly/Daily window.
+const claimWindowStartMs = Date.parse("2026-08-19T20:00:00Z");
+const claimWindowEndMs = Date.parse("2026-08-19T23:00:00Z");
+const disclosureAlertSandbox = {
+  state: { forecast: {}, activePlace: { id: "maryville" } },
+  activeAlerts: [],
+  alertTrustState: { state: "ready", checkedAt: Date.now(), reason: "" },
+  forecastProvenance() { return { source: "network", savedAt: Date.now(), cacheFallback: false }; },
+  nearcastForecastConfidence() { return null; },
+  weatherTruth() { return {}; },
+  parseForecastTimestamp(value) {
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  },
+  alertPriority() { return 1; },
+  forecastDisclosurePresentation(options) {
+    return {
+      mode: options.officialAlert ? "interrupt" : "silent",
+      actionable: Boolean(options.officialAlert),
+      reason: options.officialAlert ? "official-alert" : "settled"
+    };
+  }
+};
+vm.createContext(disclosureAlertSandbox);
+vm.runInContext(`
+  ${extractFunction(app, "alertStartMs")}
+  ${extractFunction(app, "alertEndMs")}
+  ${extractFunction(app, "alertOverlapsRange")}
+  ${extractFunction(app, "topAlertForRange")}
+  ${extractFunction(app, "nearcastForecastDisclosure")}
+  globalThis.present = nearcastForecastDisclosure;
+`, disclosureAlertSandbox);
+const claimConfidence = {
+  claim: {
+    id: "precip:2026-08-19:0",
+    kind: "precip-window",
+    startMs: claimWindowStartMs,
+    endMs: claimWindowEndMs
+  },
+  window: { startMs: claimWindowStartMs, endMs: claimWindowEndMs }
+};
+disclosureAlertSandbox.activeAlerts = [{
+  event: "Heat Advisory",
+  onset: "2026-08-20T15:00:00Z",
+  ends: "2026-08-20T23:00:00Z"
+}];
+const unrelatedAlertDisclosure = plain(disclosureAlertSandbox.present(
+  disclosureAlertSandbox.state.forecast,
+  {},
+  disclosureAlertSandbox.state.activePlace,
+  { confidence: claimConfidence }
+));
+assert.equal(unrelatedAlertDisclosure.mode, "silent", "an active alert outside the claim window does not interrupt this forecast");
+assert.equal(unrelatedAlertDisclosure.reason, "settled", "an unrelated alert cannot be described as affecting this forecast window");
+
+disclosureAlertSandbox.activeAlerts = [{
+  event: "Severe Thunderstorm Watch",
+  onset: "2026-08-19T19:00:00Z",
+  ends: "2026-08-19T21:00:00Z"
+}];
+const overlappingAlertDisclosure = plain(disclosureAlertSandbox.present(
+  disclosureAlertSandbox.state.forecast,
+  {},
+  disclosureAlertSandbox.state.activePlace,
+  { confidence: claimConfidence }
+));
+assert.equal(overlappingAlertDisclosure.mode, "interrupt", "an official alert overlapping the claim window still interrupts");
+assert.equal(overlappingAlertDisclosure.reason, "official-alert", "the overlapping alert keeps the correct interruption reason");
+
 // Exercise the real receipt precedence. A good comparison may enhance a live
 // forecast, but can never hide a canonical refresh failure or alert-check failure.
 const receiptSandbox = {
@@ -465,16 +538,31 @@ const receiptSandbox = {
   forecastPulseDayPresentation() { return { status: "learning", tone: "neutral", label: "", detail: "" }; },
   forecastDailyIndex() { return 0; },
   nearcastForecastConfidence() { return receiptSandbox.confidenceFixture; },
+  nearcastForecastDisclosure() {
+    return {
+      mode: "silent",
+      precision: "exact",
+      actionable: false,
+      reason: "settled",
+      qualifier: null,
+      claim: receiptSandbox.confidenceFixture.claim || null
+    };
+  },
+  buildNearcastBrief() {
+    return { outlook: { headline: "Rain possible this evening", support: "Most likely after 6 PM" } };
+  },
   nearcastEvidencePresentation() { return { basis: "forecast", label: "Forecast guidance" }; },
   alertCountLabel(count) { return `${count} alert${count === 1 ? "" : "s"}`; },
   weatherTruth() { return {}; }
 };
 vm.createContext(receiptSandbox);
 vm.runInContext(`${extractFunction(app, "forecastConfidenceSourceList")}\n${extractFunction(app, "forecastTrustPresentation")}\nglobalThis.present = forecastTrustPresentation;`, receiptSandbox);
-const liveReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }));
-assert.equal(liveReceipt.tone, "confidence-high", "confidence can summarize a healthy live forecast");
-assert.equal(liveReceipt.trigger, "High confidence");
-assert.equal(liveReceipt.source, "3 model families align");
+const receiptOptions = { brief: { outlook: { headline: "Rain possible this evening", support: "Most likely after 6 PM" } } };
+const liveReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
+assert.equal(liveReceipt.tone, "fresh", "ordinary model agreement remains quiet on a healthy forecast");
+assert.match(liveReceipt.trigger, /^Updated /);
+assert.equal(liveReceipt.headline, "Rain possible this evening", "the receipt leads with Nearcast's weather answer, not a confidence grade");
+assert.equal(liveReceipt.source, "3 of 3 forecast systems compared");
 assert.match(liveReceipt.sourceMeta, /NOAA GFS/);
 assert.match(liveReceipt.sourceMeta, /Environment Canada GEM/);
 assert.match(liveReceipt.sourceMeta, /DWD ICON/);
@@ -487,12 +575,12 @@ receiptSandbox.radarFixture = {
 };
 const observedReceipt = plain(receiptSandbox.present({}, {
   precip: { phase: "likely-this-hour", source: "radar-current", label: "Light rain" }
-}));
+}, receiptOptions));
 assert.equal(observedReceipt.tone, "observed", "fresh direct radar keeps the observed Home treatment instead of a model-agreement color");
-assert.equal(observedReceipt.trigger, "Radar confirms light rain", "the collapsed Home receipt leads with what radar observes now");
+assert.equal(observedReceipt.trigger, "Light rain", "the collapsed Home receipt leads with what radar observes now");
 assert.match(observedReceipt.triggerMeta, /4 min ago/, "the collapsed observed claim keeps radar freshness visible");
-assert.equal(observedReceipt.headline, "High confidence", "model confidence remains available inside the expanded receipt");
-assert.equal(observedReceipt.source, "3 model families align", "the expanded receipt retains independent-guidance evidence behind the observed Home claim");
+assert.equal(observedReceipt.headline, "Rain possible this evening", "the expanded receipt keeps the best weather read instead of a confidence grade");
+assert.equal(observedReceipt.source, "3 of 3 forecast systems compared", "technical comparison remains available behind the observed Home claim");
 assert.match(observedReceipt.evidence, /observed on radar/i, "the sheet separately explains the direct observation");
 
 receiptSandbox.radarFixture = null;
@@ -503,19 +591,20 @@ receiptSandbox.provenanceFixture = {
   cacheFallback: true,
   reason: "forecast-fetch-failed"
 };
-const staleReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }));
+const staleReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
 assert.equal(staleReceipt.tone, "stale", "an old canonical fallback preempts a reassuring confidence color");
 assert.equal(staleReceipt.trigger, "Using saved forecast", "canonical refresh failure stays visible in the collapsed receipt");
-assert.match(staleReceipt.headline, /older saved forecast/i);
+assert.equal(staleReceipt.headline, "Rain possible this evening", "the sheet preserves the best read while explaining the stale limitation separately");
+assert.equal(staleReceipt.showQualifier, true);
 assert.equal(staleReceipt.source, "Open-Meteo Best Match", "supplemental models do not replace the canonical source during failure");
 
 receiptSandbox.provenanceFixture = { source: "network", savedAt: Date.now() - 5 * 60 * 1000, cacheFallback: false, reason: "" };
 receiptSandbox.alertTrustState = { state: "failed", checkedAt: Date.now(), reason: "timeout" };
-const alertFailureReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }));
+const alertFailureReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
 assert.equal(alertFailureReceipt.tone, "issue", "an alert-check failure preempts a reassuring confidence color");
-assert.match(alertFailureReceipt.headline, /alerts could not be checked/i);
+assert.equal(alertFailureReceipt.headline, "Rain possible this evening");
 assert.doesNotMatch(alertFailureReceipt.trigger, /high confidence/i, "the compact line cannot conceal failed official-alert verification");
-assert.match(alertFailureReceipt.triggerMeta, /Alerts unavailable/);
+assert.match(alertFailureReceipt.trigger, /Official alerts unavailable/);
 
 // Best Match remains the one canonical weather story; the three comparison
 // families are named evidence, not blended into an opaque fourth forecast.
@@ -529,6 +618,6 @@ for (const name of ["NOAA GFS", "Environment Canada GEM", "DWD ICON"]) {
 }
 assert.doesNotMatch(confidenceIntegrationSource, /confidence(?:Score|Pct|Percent|Percentage)|Math\.round\([^)]*confidence[^)]*\*\s*100/i, "integration exposes calibrated language instead of a synthetic score");
 assert.doesNotMatch(confidenceSource, /\bconfidence\s+(?:of\s+)?\d{1,3}(?:\.\d+)?\s*%/i, "the confidence engine never emits an invented confidence percentage");
-assert.match(html, /never an invented percentage/i, "the detailed receipt explains the no-false-precision policy");
+assert.match(html, /before choosing how specific to be/i, "the detailed receipt explains the calm no-false-precision policy");
 
 console.log("PASS  Forecast Confidence integration: independent guidance, non-blocking probes, exact-place isolation, consolidated receipt, and failure precedence");

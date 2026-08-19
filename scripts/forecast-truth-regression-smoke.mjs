@@ -673,6 +673,7 @@ const trust = contextWith(`
   const activeAlerts = [];
   function currentRadarPrecipSignal() { return null; }
   function nearcastForecastConfidence() { return null; }
+  function nearcastForecastDisclosure() { return null; }
   function weatherTruth() { return {}; }
   function alertCountLabel(count) { return String(count); }
   const RealDate = Date;
@@ -700,6 +701,13 @@ check("stale fallback has a persistent user-facing freshness presenter", () => {
     precip: { phase: "dry", source: "dry" },
     receipt: "Cloudy · hourly forecast",
     receiptDetail: "Showing cloudy conditions from the nearest hourly forecast row."
+  }, {
+    brief: {
+      outlook: {
+        headline: "Cloudy through the afternoon",
+        support: "Clearing near sunset."
+      }
+    }
   });
   assert.equal(value.tone, staleCacheFixture.expected.tone);
   assert.match(value.headline, staleCacheFixture.expected.headline);

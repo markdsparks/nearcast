@@ -1111,23 +1111,96 @@ function dayDetailForecastConfidence(data, dayIndex, source, eventWindow, shared
   return globalThis.nearcastForecastConfidenceForDay?.(data, dayIndex) || null;
 }
 
+function dayDetailCalmForecastNote(confidence, { eventWindow = null, sharedEvent = null } = {}) {
+  if (!confidence || confidence.level === "unavailable") return null;
+  const agreement = confidence.evidence?.agreement || {};
+  const evolution = confidence.evidence?.evolution || {};
+  const observation = confidence.evidence?.observation || {};
+  const claim = confidence.claim || {};
+  const claimText = String(claim.headline || "this weather window").trim().replace(/[.!?]+$/, "").toLowerCase();
+  const expectedKind = String(claim.canonical?.eventKind || claim.kind || "").toLowerCase();
+  const expectsDry = /dry/.test(expectedKind);
+  const exactTypeIsUnsettled =
+    ["storm", "snow", "ice"].includes(expectedKind) &&
+    Number(agreement.typeSupportCount) < Number(agreement.providersUsed);
+  const timingOutsideWindow =
+    ["mixed", "diverging"].includes(agreement.status) &&
+    Math.abs(Number(agreement.canonicalDeltaMs) || 0) > Number(agreement.timingToleranceMs || 2 * 60 * 60 * 1000);
+  const disclosure = typeof globalThis.forecastDisclosurePresentation === "function"
+    ? globalThis.forecastDisclosurePresentation({
+        confidence,
+        decisionSensitive: Boolean(eventWindow),
+        hazardRelevant: false
+      })
+    : null;
+  if (disclosure && !disclosure.actionable) return null;
+
+  if (observation.status === "conflict") {
+    return expectsDry
+      ? {
+          tone: "change",
+          kicker: "Right now",
+          headline: "Weather is arriving sooner",
+          detail: "Precipitation is already underway. Adjust near-term outdoor plans now."
+        }
+      : {
+          tone: "uncertain",
+          kicker: "Right now",
+          headline: "Still dry at this place",
+          detail: `Conditions are still dry here. Keep near-term timing flexible around ${claimText}.`
+        };
+  }
+  if (evolution.status === "shifted") {
+    const direction = evolution.direction === "earlier" ? "earlier" : "later";
+    return {
+      tone: "change",
+      kicker: "Plan note",
+      headline: `Timing moved ${direction}`,
+      detail: `Recheck plans around ${claimText}; leave a little room on either side of the current window.`
+    };
+  }
+  if (exactTypeIsUnsettled) {
+    return {
+      tone: "uncertain",
+      kicker: "Plan note",
+      headline: "Plan for wet weather",
+      detail: expectedKind === "storm"
+        ? "Rain is the useful planning signal; whether it becomes a thunderstorm is less settled."
+        : `Precipitation is the useful planning signal; the exact ${expectedKind} type is less settled.`
+    };
+  }
+  if (agreement.status === "diverging" || timingOutsideWindow) {
+    return {
+      tone: "uncertain",
+      kicker: "Plan note",
+      headline: "Allow a wider weather window",
+      detail: `Keep plans flexible around ${claimText}; the start time may move by a few hours.`
+    };
+  }
+  if (disclosure?.actionable) {
+    return {
+      tone: disclosure.mode === "interrupt" ? "change" : "uncertain",
+      kicker: "Plan note",
+      headline: "Keep plans flexible",
+      detail: disclosure.qualifier || `Leave a little room around ${claimText} before heading out.`
+    };
+  }
+  return null;
+}
+
 function renderDayForecastPulse(data, dayIndex, source = "day", eventWindow = null, sharedEvent = null) {
   const element = document.getElementById("sheetForecastPulse");
   if (!element) return;
   const confidenceApiAvailable = typeof globalThis.nearcastForecastConfidenceForDay === "function";
   const confidence = dayDetailForecastConfidence(data, dayIndex, source, eventWindow, sharedEvent);
-  if (confidence && confidence.level !== "unavailable") {
-    const tone = confidence.level === "high"
-      ? "settled"
-      : confidence.level === "medium"
-        ? "uncertain"
-        : "change";
+  const calmNote = dayDetailCalmForecastNote(confidence, { eventWindow, sharedEvent });
+  if (calmNote) {
     element.hidden = false;
-    element.dataset.tone = tone;
-    element.innerHTML = `<span>Forecast confidence</span><strong>${escapeHtml(confidence.headline)}</strong><p>${escapeHtml(confidence.summary)}</p>`;
+    element.dataset.tone = calmNote.tone;
+    element.innerHTML = `<span>${escapeHtml(calmNote.kicker)}</span><strong>${escapeHtml(calmNote.headline)}</strong><p>${escapeHtml(calmNote.detail)}</p>`;
     element.setAttribute(
       "aria-label",
-      `Forecast confidence. ${confidence.headline}. ${confidence.summary}`
+      `${calmNote.kicker}. ${calmNote.headline}. ${calmNote.detail}`
     );
     return;
   }
@@ -1138,22 +1211,13 @@ function renderDayForecastPulse(data, dayIndex, source = "day", eventWindow = nu
     element.removeAttribute("aria-label");
     return;
   }
-  if (source !== "day" || typeof forecastPulseDayPresentation !== "function") {
-    element.hidden = true;
-    element.innerHTML = "";
-    return;
-  }
-  const pulse = forecastPulseDayPresentation(data, dayIndex);
-  if (!pulse || pulse.status === "learning") {
-    element.hidden = true;
-    element.innerHTML = "";
-    return;
-  }
-  element.hidden = false;
-  element.dataset.tone = pulse.tone;
-  const kicker = pulse.status === "settled" ? "Forecast trend" : pulse.status === "uncertain" ? "Confidence note" : "Changed forecast";
-  element.innerHTML = `<span>${escapeHtml(kicker)}</span><strong>${escapeHtml(pulse.label)}</strong><p>${escapeHtml(pulse.detail)}</p>`;
-  element.setAttribute("aria-label", `${kicker}. ${pulse.label}. ${pulse.detail}`);
+  // Forecast movement is already reflected in the resolved story and timing
+  // precision. Without a focused decision window there is nothing else for a
+  // person to interpret here.
+  element.hidden = true;
+  element.innerHTML = "";
+  element.removeAttribute("data-tone");
+  element.removeAttribute("aria-label");
 }
 
 function hourlyRowRainText(hour) {

@@ -37,7 +37,7 @@ const LEVELS = new Set(["high", "medium", "low", "unavailable"]);
 const AGREEMENT = new Set(["aligned", "mixed", "diverging", "limited", "unavailable"]);
 const EVOLUTION = new Set(["stable", "shifted", "learning", "unavailable"]);
 const DIRECTIONS = new Set(["earlier", "later", "stronger", "weaker", "steady", null]);
-const OBSERVATION = new Set(["confirmed", "conflict", "delayed", "unavailable", "not-applicable"]);
+const OBSERVATION = new Set(["confirmed", "conflict", "not-confirmed", "delayed", "unavailable", "not-applicable"]);
 const CLAIM_KINDS = new Set(["dry-window", "precip-window", "temperature", "wind"]);
 
 function plain(value) {

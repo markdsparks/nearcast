@@ -94,8 +94,90 @@ vm.runInContext(`
   ${extractFunction(daygraph, "dayDetailCanonicalStormWindow")}
   ${extractFunction(daygraph, "dayDetailReconcileRollingThunder")}
   ${extractFunction(daygraph, "dayFocusStory")}
-  globalThis.subject = { dayDetailIndicesForDay, dayDetailReconcileRollingThunder, dayFocusStory };
+  ${extractFunction(daygraph, "dayDetailCalmForecastNote")}
+  globalThis.subject = { dayDetailIndicesForDay, dayDetailReconcileRollingThunder, dayFocusStory, dayDetailCalmForecastNote };
 `, sandbox);
+
+const quietHighConfidence = sandbox.subject.dayDetailCalmForecastNote({
+  level: "high",
+  claim: { kind: "precip-window", headline: "Rain this evening", canonical: { eventKind: "rain" } },
+  evidence: {
+    agreement: { status: "aligned", providersUsed: 3, typeSupportCount: 3 },
+    evolution: { status: "stable" },
+    observation: { status: "not-applicable" }
+  }
+});
+assert.equal(quietHighConfidence, null, "high confidence stays silent instead of adding a diagnostic card");
+
+const quietLimitedConfidence = sandbox.subject.dayDetailCalmForecastNote({
+  level: "medium",
+  claim: { kind: "precip-window", headline: "Rain this evening", canonical: { eventKind: "rain" } },
+  evidence: {
+    agreement: { status: "limited", providersUsed: 2, providersExpected: 3, typeSupportCount: 2 },
+    evolution: { status: "learning" },
+    observation: { status: "not-applicable" }
+  }
+});
+assert.equal(quietLimitedConfidence, null, "non-actionable model availability stays silent");
+
+const timingAdvice = sandbox.subject.dayDetailCalmForecastNote({
+  level: "low",
+  claim: { kind: "precip-window", headline: "Rain this evening", canonical: { eventKind: "rain" } },
+  evidence: {
+    agreement: { status: "diverging", providersUsed: 3, typeSupportCount: 3, timingToleranceMs: 2 * 60 * 60 * 1000 },
+    evolution: { status: "learning" },
+    observation: { status: "not-applicable" }
+  }
+});
+assert.equal(timingAdvice.headline, "Allow a wider weather window", "material timing spread becomes a planning conclusion");
+assert.match(timingAdvice.detail, /Keep plans flexible/);
+assert.doesNotMatch(`${timingAdvice.kicker} ${timingAdvice.headline} ${timingAdvice.detail}`, /confidence|models?|guidance|disagree/i, "the planning conclusion hides diagnostic vocabulary");
+
+sandbox.forecastDisclosurePresentation = () => ({ mode: "soften", actionable: false, reason: "timing-varies" });
+assert.equal(
+  sandbox.subject.dayDetailCalmForecastNote({
+    level: "low",
+    claim: { kind: "precip-window", headline: "Rain this evening", canonical: { eventKind: "rain" } },
+    evidence: {
+      agreement: { status: "diverging", providersUsed: 3, typeSupportCount: 3 },
+      evolution: { status: "learning" },
+      observation: { status: "not-applicable" }
+    }
+  }),
+  null,
+  "the shared disclosure policy can soften the forecast without adding another card"
+);
+delete sandbox.forecastDisclosurePresentation;
+
+sandbox.forecastDisclosurePresentation = () => ({
+  mode: "caution",
+  actionable: true,
+  reason: "timing-varies",
+  qualifier: "Keep the timing flexible for this decision."
+});
+const sharedAction = sandbox.subject.dayDetailCalmForecastNote({
+  level: "low",
+  claim: { kind: "precip-window", headline: "Rain this evening", canonical: { eventKind: "rain" } },
+  evidence: {
+    agreement: { status: "limited", providersUsed: 1, typeSupportCount: 1 },
+    evolution: { status: "learning" },
+    observation: { status: "not-applicable" }
+  }
+});
+assert.equal(sharedAction.headline, "Keep plans flexible", "an actionable shared disclosure always becomes one practical note");
+assert.equal(sharedAction.detail, "Keep the timing flexible for this decision.");
+delete sandbox.forecastDisclosurePresentation;
+
+const stormTypeAdvice = sandbox.subject.dayDetailCalmForecastNote({
+  level: "low",
+  claim: { kind: "precip-window", headline: "Storms this evening", canonical: { eventKind: "storm" } },
+  evidence: {
+    agreement: { status: "diverging", providersUsed: 3, typeSupportCount: 1 },
+    evolution: { status: "learning" },
+    observation: { status: "not-applicable" }
+  }
+});
+assert.equal(stormTypeAdvice.headline, "Plan for wet weather", "uncertain storm identity keeps the useful wet-weather action");
 
 const times = [];
 for (const day of ["2026-08-19", "2026-08-20"]) {

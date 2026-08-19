@@ -111,6 +111,7 @@ vm.runInContext(`
       : null;
     return { index, label: data?.fixtureDayLabels?.[index] || "Weather", materialEvent };
   }
+  function dailyTimingPhrase() { return "Storms possible near 12 AM"; }
   function precipRank(code) { return code >= 95 ? 6 : code >= 63 ? 4 : code >= 51 ? 3 : 1; }
   function parseForecastTimestamp(value) { return Date.parse(String(value).endsWith("Z") ? value : value + "Z"); }
   function launchDetailTarget(_data, badgeLabel, label, startMs, options = {}) {
@@ -124,6 +125,7 @@ vm.runInContext(`
   function forecastProvenance(data) { return data.fixtureProvenance || { savedAt: null, cacheFallback: false }; }
   function radarSignalForForecastData() { return null; }
   function nearcastForecastConfidence() { return null; }
+  function nearcastForecastDisclosure() { return null; }
   function forecastAgeLabel(ms) {
     const minutes = Math.max(0, Math.round(Number(ms) / 60000));
     return minutes < 60 ? minutes + " min ago" : Math.round(minutes / 60) + " hrs ago";
@@ -151,6 +153,9 @@ vm.runInContext(`
   ${extractFunction(app, "nearcastBriefPeriod")}
   ${extractFunction(app, "nearcastBriefCleanSentence")}
   ${extractFunction(app, "nearcastBriefMaterialEvent")}
+  ${extractFunction(app, "nearcastCalmDaypart")}
+  ${extractFunction(app, "nearcastCalmEventCopy")}
+  ${extractFunction(app, "nearcastCalmDailyTiming")}
   ${extractFunction(app, "forecastMaterialEventStory")}
   ${extractFunction(app, "forecastMaterialEventId")}
   ${extractFunction(app, "forecastMaterialEventLabel")}
@@ -171,6 +176,7 @@ vm.runInContext(`
     nearcastEvidencePresentation,
     forecastTrustPresentation,
     nearcastPromotedEvent,
+    nearcastCalmDailyTiming,
     forecastMaterialEvent,
     buildNearcastBrief,
     buildForecastPresentation
@@ -185,6 +191,7 @@ const {
   forecastPrecipStorySentence,
   nearcastEvidencePresentation,
   forecastTrustPresentation,
+  nearcastCalmDailyTiming,
   forecastMaterialEvent,
   buildNearcastBrief,
   buildForecastPresentation
@@ -248,6 +255,36 @@ assert.equal(midnightTiming.startsSoon, true, "soon remains separate from alread
 assert.equal(midnightTiming.dayLabel, "tomorrow");
 assert.equal(midnightTiming.timeLabel, "12 AM", "midnight keeps an explicit clock label");
 assert.equal(midnightTiming.rangeLabel, "12 AM tomorrow", "midnight is always paired with its calendar day");
+
+const tomorrowEvent = {
+  kind: "storm",
+  likelihood: "possible",
+  headline: "Storms possible around 12 AM tomorrow",
+  label: "Storms possible around 12 AM tomorrow",
+  startMs: midnightStart,
+  endMs: midnightStart + 60 * 60 * 1000
+};
+const priorEveningComparison = {
+  precision: "daypart",
+  reason: "weather-type-varies",
+  timingStartMs: Date.parse("2026-08-18T18:00:00Z"),
+  timingEndMs: Date.parse("2026-08-18T21:00:00Z")
+};
+const dayScopedTiming = nearcastCalmDailyTiming({
+  ...midnightData,
+  daily: { time: ["2026-08-18", "2026-08-19", "2026-08-20"] }
+}, tomorrowEvent, priorEveningComparison, tomorrowEvent.headline, 1);
+assert.equal(dayScopedTiming, "Rain possible in the morning", "a softened Daily row stays concise inside the day it represents");
+assert.doesNotMatch(dayScopedTiming, /this evening/i, "comparison guidance from the prior day cannot relabel Tomorrow");
+const rowScopedFallback = nearcastCalmDailyTiming({
+  ...midnightData,
+  daily: { time: ["2026-08-18", "2026-08-19", "2026-08-20"] }
+}, {
+  ...tomorrowEvent,
+  startMs: Date.parse("2026-08-18T18:00:00Z"),
+  endMs: Date.parse("2026-08-18T21:00:00Z")
+}, priorEveningComparison, "Rain possible this evening", 1);
+assert.equal(rowScopedFallback, "Storms possible near 12 AM", "a Daily row rejects an event that belongs to another calendar day");
 
 const lateCurrentData = {
   fixtureNowMs: Date.parse("2026-08-18T05:45:00Z"),
@@ -329,6 +366,40 @@ assert.equal(brief.outlook.supportClaimId, "event");
 assert.equal(brief.outlook.target.startMs, brief.promotedEvent.startMs, "the visible outlook and promoted event share one exact start");
 assert.equal(brief.outlook.target.endMs, brief.promotedEvent.endMs, "the visible outlook and promoted event share one exact end");
 assert.equal(brief.outlook.claims.length, 2, "the concise outlook exposes only its headline and optional supporting claim");
+
+const softenedOvernightBrief = buildNearcastBrief(data, {
+  truth: dryTruth,
+  story: overnightStory,
+  tempUnit: "F",
+  windUnit: "mph",
+  visibleHourCount: 5,
+  radar: null,
+  nowMs: eveningNow,
+  alerts: [],
+  alertState: { state: "ready" },
+  disclosure: {
+    mode: "soften",
+    precision: "daypart",
+    actionable: false,
+    reason: "timing-varies",
+    qualifier: null,
+    timingStartMs: tomorrowRainStart - 60 * 60 * 1000,
+    timingEndMs: tomorrowRainEnd + 60 * 60 * 1000
+  }
+});
+assert.equal(softenedOvernightBrief.outlook.primaryClaimId, "condition", "a material event beyond six hours remains supporting context");
+assert.equal(softenedOvernightBrief.outlook.supportClaimId, "event", "the later event still earns the one useful support line");
+assert.match(softenedOvernightBrief.outlook.support || "", /rain likely tomorrow morning/i, "a later promoted event uses the calm daypart disclosure");
+assert.doesNotMatch(softenedOvernightBrief.outlook.support || "", /5 AM|8 AM/i, "a softened later event cannot leak the original exact onset range");
+
+const softenedReceipt = forecastTrustPresentation(data, dryTruth, { brief: softenedOvernightBrief });
+assert.equal(softenedReceipt.headline, softenedOvernightBrief.outlook.headline, "the receipt headline follows the same softened Home brief");
+assert.equal(softenedReceipt.overview, softenedOvernightBrief.outlook.support, "the receipt summary follows the same softened timing as Home");
+assert.doesNotMatch(
+  `${softenedReceipt.headline} ${softenedReceipt.overview}`,
+  /5 AM|8 AM/i,
+  "the expanded receipt cannot contradict the calm timing with the raw exact range"
+);
 
 const contractNow = Date.parse("2026-08-19T13:20:00Z");
 const contractStart = Date.parse("2026-08-19T15:00:00Z");
@@ -699,8 +770,8 @@ assert.equal(jumpButton.hidden, true, "a sky-only transition never adds a compet
 assert.equal(jumpLabel.textContent, "Open hourly details");
 
 const compactTrust = forecastTrustPresentation(data, dryTruth);
-assert.equal(compactTrust.trigger, "Estimated now");
-assert.match(compactTrust.triggerMeta, /^Updated /);
+assert.match(compactTrust.trigger, /^Updated /);
+assert.equal(compactTrust.triggerMeta, "For this location");
 assert.doesNotMatch(
   `${compactTrust.trigger} ${compactTrust.triggerMeta}`,
   /evidence|no active (?:nws|official) alerts/i,
@@ -731,7 +802,7 @@ assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /width:\s*auto
 const askDockRule = extractCssRule(styles, ".app-dock-ai");
 assert.doesNotMatch(askDockRule, /linear-gradient|margin:\s*-/, "Ask stays available without overpowering the weather hierarchy");
 assert.match(askDockRule, /background:\s*transparent[\s\S]*box-shadow:\s*none/, "Ask uses the same quiet dock treatment as the weather destinations");
-assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(!provenance\.cacheFallback\)[\s\S]*trigger = radarObserved/, "saved-forecast warnings remain stronger than the compact live evidence copy");
+assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*trigger = radarObserved/, "saved-forecast warnings remain stronger than the compact live evidence copy");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /launchSummaryItems[\s\S]*launchSummaryTargets = detailItems\.map/, "forecast-change cards retain their exact hidden detail targets");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, dailyPanel, map, els\.planPulse/, "the stable scan stays current, urgent nowcast, hourly proof, daily forecast, then map evidence");
 

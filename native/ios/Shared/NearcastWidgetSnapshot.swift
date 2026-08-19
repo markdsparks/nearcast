@@ -51,6 +51,11 @@ struct NearcastWidgetSnapshot: Codable {
     var confidenceWindowStartAt: TimeInterval? = nil
     var confidenceWindowEndAt: TimeInterval? = nil
     var confidenceGeneratedAt: TimeInterval? = nil
+    // Native companions never infer whether model disagreement matters to a
+    // person. Only the phone's editorial forecast contract can promote a
+    // confidence receipt into short, actionable advice. Older snapshots omit
+    // this field and therefore remain quietly non-actionable.
+    var confidenceActionable: Bool? = nil
     var planTitle: String?
     var planLabel: String?
     var planDetail: String?
@@ -163,10 +168,6 @@ struct NearcastForecastConfidenceBrief: Equatable {
     let windowStartAt: TimeInterval
     let windowEndAt: TimeInterval
     let generatedAt: TimeInterval
-
-    var isMaterialCaution: Bool {
-        level == .medium || level == .low
-    }
 }
 
 struct NearcastOfficialAlertBrief: Equatable {
@@ -560,12 +561,22 @@ extension NearcastWidgetSnapshot {
         )
     }
 
-    /// Confidence is useful only while its claim window and generation time
-    /// are current. The weather itself may remain projectable for longer, but
-    /// an old model-comparison receipt must not quietly survive on a widget.
+    /// Returns forecast advice only when the web forecast editor explicitly
+    /// says uncertainty changes what the family should do. Confidence grades
+    /// alone are never promoted on compact native surfaces.
     func forecastConfidenceBrief(
         at timestamp: TimeInterval = Date().timeIntervalSince1970,
         maximumAge: TimeInterval = 3 * 60 * 60
+    ) -> NearcastForecastConfidenceBrief? {
+        guard confidenceActionable == true else { return nil }
+        return validatedForecastConfidenceBrief(at: timestamp, maximumAge: maximumAge)
+    }
+
+    /// Validates freshness independently from presentation gating so native
+    /// refreshes can retain a quiet receipt until its real validity expires.
+    private func validatedForecastConfidenceBrief(
+        at timestamp: TimeInterval,
+        maximumAge: TimeInterval
     ) -> NearcastForecastConfidenceBrief? {
         guard let rawLevel = cleanCompanionText(confidenceLevel)?.lowercased(),
               let level = NearcastForecastConfidenceLevel(rawValue: rawLevel),
@@ -687,6 +698,7 @@ extension NearcastWidgetSnapshot {
         confidenceWindowStartAt = nil
         confidenceWindowEndAt = nil
         confidenceGeneratedAt = nil
+        confidenceActionable = nil
     }
 
     func expiringCompanionContent(
@@ -701,7 +713,10 @@ extension NearcastWidgetSnapshot {
             snapshot.clearCanonicalEvent()
         }
         if snapshot.confidenceLevel != nil,
-           snapshot.forecastConfidenceBrief(at: timestamp) == nil {
+           snapshot.validatedForecastConfidenceBrief(
+               at: timestamp,
+               maximumAge: 3 * 60 * 60
+           ) == nil {
             snapshot.clearForecastConfidence()
         }
         return snapshot
@@ -967,6 +982,7 @@ extension NearcastWidgetSnapshot {
         merged.confidenceWindowStartAt = weather.confidenceWindowStartAt
         merged.confidenceWindowEndAt = weather.confidenceWindowEndAt
         merged.confidenceGeneratedAt = weather.confidenceGeneratedAt
+        merged.confidenceActionable = weather.confidenceActionable
         merged.timeline = weather.timeline
         merged.daily = weather.daily
         merged.sunriseAt = weather.sunriseAt
