@@ -1,4 +1,4 @@
-const VERSION = "3.0.375";
+const VERSION = "3.0.376";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -10463,6 +10463,29 @@ function nearcastPromotedEvent(data, story, truth, options = {}) {
     };
   }
 
+  // A meaningful wind change deserves the Outlook before a routine sky
+  // transition. Otherwise a harmless clearing change can consume the one
+  // promoted-event slot and hide gusts that affect the day.
+  if (story?.gust && story.gustIndex >= 0) {
+    const startMs = parseForecastTimestamp(data?.hourly?.time?.[story.gustIndex], data);
+    const timing = nearcastRelativeTiming(data, startMs, startMs + 60 * 60 * 1000);
+    const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
+    const label = `Gusts reach ${story.gust} ${windUnit} near ${timing.timeLabel} ${timing.dayLabel}`;
+    return {
+      kind: "wind",
+      label,
+      startMs,
+      endMs: startMs + 60 * 60 * 1000,
+      timing,
+      chance: null,
+      source: "hourly-forecast",
+      basis: "forecast",
+      hourlyIndex: story.gustIndex,
+      requiresJump: currentIndex >= 0 && story.gustIndex - currentIndex >= visibleHourCount,
+      target: launchDetailTarget(data, "Forecast change", label, startMs, { hours: 1 })
+    };
+  }
+
   const transition = story?.transition;
   if (transition?.startMs !== null && transition?.startMs !== undefined) {
     const timing = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
@@ -10485,26 +10508,6 @@ function nearcastPromotedEvent(data, story, truth, options = {}) {
       hourlyIndex: transition.startIndex,
       requiresJump: transition.startIndex >= 0 && currentIndex >= 0 && transition.startIndex - currentIndex >= visibleHourCount,
       target: launchDetailTarget(data, "Forecast change", label, transition.startMs, { endMs: transition.endMs, hours: Math.max(1, transition.endIndex - transition.startIndex + 1) })
-    };
-  }
-
-  if (story?.gust && story.gustIndex >= 0) {
-    const startMs = parseForecastTimestamp(data?.hourly?.time?.[story.gustIndex], data);
-    const timing = nearcastRelativeTiming(data, startMs, startMs + 60 * 60 * 1000);
-    const windUnit = options.windUnit || (state.unit === "fahrenheit" ? "mph" : "km/h");
-    const label = `Gusts reach ${story.gust} ${windUnit} near ${timing.timeLabel} ${timing.dayLabel}`;
-    return {
-      kind: "wind",
-      label,
-      startMs,
-      endMs: startMs + 60 * 60 * 1000,
-      timing,
-      chance: null,
-      source: "hourly-forecast",
-      basis: "forecast",
-      hourlyIndex: story.gustIndex,
-      requiresJump: currentIndex >= 0 && story.gustIndex - currentIndex >= visibleHourCount,
-      target: launchDetailTarget(data, "Forecast change", label, startMs, { hours: 1 })
     };
   }
   return null;
@@ -10763,13 +10766,37 @@ function forecastMaterialEvent(data, options = {}) {
   return event;
 }
 
-function nearcastBriefPeriod(story) {
-  const kicker = String(story?.kicker || "Coming up");
-  if (/morning/i.test(kicker)) return { id: "morning", label: "This morning", phrase: "this morning" };
-  if (/afternoon/i.test(kicker)) return { id: "afternoon", label: "This afternoon", phrase: "this afternoon" };
-  if (/evening/i.test(kicker)) return { id: "evening", label: "This evening", phrase: "this evening" };
-  if (/tonight/i.test(kicker)) return { id: "tonight", label: "Tonight", phrase: "tonight" };
-  return { id: "next", label: "Coming up", phrase: "for now" };
+function nearcastBriefPeriod(data, story, event = null, options = {}) {
+  const primaryEvent = Boolean(options.primaryEvent && event);
+  const eventAnchor = event?.active
+    ? Number(event.endMs)
+    : Number(event?.startMs);
+
+  // A daypart label must describe the claim the person is about to read. At
+  // 9 AM, an afternoon storm belongs under "This afternoon," not "This
+  // morning" simply because that is when the app was opened.
+  if (primaryEvent && Number.isFinite(eventAnchor)) {
+    const timing = nearcastRelativeTiming(data, eventAnchor, Number(event?.endMs) || eventAnchor + 60 * 60 * 1000);
+    if (timing.dayRelation === "today") {
+      if (timing.daypart === "morning") return { id: "morning", label: "This morning's outlook", phrase: "this morning" };
+      if (timing.daypart === "afternoon") return { id: "afternoon", label: "This afternoon's outlook", phrase: "this afternoon" };
+      return { id: "tonight", label: "Tonight's outlook", phrase: "tonight" };
+    }
+    // An important overnight change is part of tonight's decision horizon.
+    if (timing.dayRelation === "tomorrow") return { id: "tonight", label: "Tonight's outlook", phrase: "tonight" };
+  }
+
+  const hour = Number(story?.hour);
+  if (Number.isFinite(hour) && hour >= 17) {
+    return { id: "tonight", label: "Tonight's outlook", phrase: "tonight" };
+  }
+  // Retained/partial forecast stories from an earlier app version may not
+  // carry the normalized local hour. Their authored overnight kicker remains
+  // a better fallback than resetting the card to a daytime label.
+  if (!Number.isFinite(hour) && /tonight|evening/i.test(String(story?.kicker || ""))) {
+    return { id: "tonight", label: "Tonight's outlook", phrase: "tonight" };
+  }
+  return { id: "today", label: "Today's outlook", phrase: "today" };
 }
 
 function nearcastBriefCleanSentence(value = "") {
@@ -10889,7 +10916,11 @@ function nearcastCalmDailyTiming(data, event, disclosure, fallback = "", request
 function nearcastBriefTransitionSupport(data, transition) {
   if (!transition || !Number.isFinite(Number(transition.startMs))) return "";
   const timing = nearcastRelativeTiming(data, transition.startMs, transition.endMs);
-  const when = `${timing.timeLabel} ${timing.dayLabel}`;
+  // "Today" is already supplied by the Outlook kicker. Retain the calendar
+  // label only when the transition falls outside that visible day horizon.
+  const when = ["today", "now"].includes(timing.dayRelation)
+    ? timing.timeLabel
+    : `${timing.timeLabel} ${timing.dayLabel}`;
   if (transition.family === "clear") return `Clearing after ${when}`;
   if (transition.family === "cloudy") return `Clouds increase after ${when}`;
   if (transition.family === "partly-cloudy") return `Some clearing after ${when}`;
@@ -10915,7 +10946,6 @@ function nearcastBriefTemperatureSupport(story, truth, tempUnit) {
 }
 
 function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit, disclosure = null) {
-  const period = nearcastBriefPeriod(story);
   const first = story?.segments?.[0] || null;
   const firstLabel = nearcastBriefCleanSentence(first?.label || truth?.label || "Weather");
   const eventIsMaterial = nearcastBriefMaterialEvent(promotedEvent);
@@ -10926,6 +10956,7 @@ function nearcastBriefOutlook(data, story, promotedEvent, truth, tempUnit, discl
     ? 12 * 60 * 60 * 1000
     : 6 * 60 * 60 * 1000;
   const eventIsPrimary = eventIsMaterial && (active || (Number.isFinite(leadMs) && leadMs <= priorityHorizon));
+  const period = nearcastBriefPeriod(data, story, promotedEvent, { primaryEvent: eventIsPrimary });
   const temperature = nearcastBriefTemperatureSupport(story, truth, tempUnit);
   const transition = nearcastBriefTransitionSupport(data, story?.transition);
   const temperatureDirection = /^Cooling\b/i.test(temperature) ? "cooling"
@@ -11136,7 +11167,9 @@ function renderTodayGlance(data, tempUnit, windUnit, todayIndex = forecastDailyI
 
   const brief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
   const outlook = brief.outlook || {
-    period: nearcastBriefPeriod(brief.story),
+    period: nearcastBriefPeriod(data, brief.story, brief.promotedEvent, {
+      primaryEvent: brief.story?.headline === brief.promotedEvent?.headline
+    }),
     headline: brief.story?.headline || brief.story?.text || "Forecast ready",
     support: brief.story?.support || null
   };

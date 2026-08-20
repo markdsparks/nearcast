@@ -361,11 +361,12 @@ assert.equal(brief.promotedEvent.target.endMs, brief.promotedEvent.endMs, "the d
 assert.equal(brief.promotedEvent.requiresJump, true, "an event beyond the visible hours exposes a deliberate jump");
 assert.equal(brief.outlook.headline, "Partly cloudy", "the headline remains one concise current-period answer");
 assert.match(brief.outlook.support || "", /rain likely.*5 AM.*8 AM.*tomorrow/i, "the optional support line carries the later material event");
+assert.equal(brief.outlook.period.label, "Tonight's outlook", "an evening opening keeps its overall story anchored to tonight");
 assert.equal(brief.outlook.primaryClaimId, "condition");
 assert.equal(brief.outlook.supportClaimId, "event");
 assert.equal(brief.outlook.target.startMs, brief.promotedEvent.startMs, "the visible outlook and promoted event share one exact start");
 assert.equal(brief.outlook.target.endMs, brief.promotedEvent.endMs, "the visible outlook and promoted event share one exact end");
-assert.equal(brief.outlook.claims.length, 2, "the concise outlook exposes only its headline and optional supporting claim");
+assert.ok(brief.outlook.claims.some((claim) => claim.id === "event"), "the outlook retains its later meaningful event as a semantic claim");
 
 const softenedOvernightBrief = buildNearcastBrief(data, {
   truth: dryTruth,
@@ -525,6 +526,31 @@ assert.equal(eventHours.filter((hour) => hour.eventPhase === "storm" && hour.eve
 assert.ok(eventHours.every((hour) => !("materialEvent" in hour)), "hour rows carry identity and phase only, never duplicate event prose");
 assert.equal(contractPresentation.brief.outlook.target.startMs, contractStart, "the Home headline opens the same start shown by Hourly and Daily");
 assert.equal(contractPresentation.brief.outlook.target.endMs, contractEnd, "the Home headline opens the same end shown by Hourly and Daily");
+assert.equal(contractPresentation.brief.outlook.period.label, "This afternoon's outlook", "a later-day primary event names its own decision window, not the opening clock");
+
+const windyData = {
+  ...contractData,
+  hourly: {
+    ...contractData.hourly,
+    wind_gusts_10m: [8, 10, 14, 32, 25, 14, 10, 8]
+  }
+};
+const windyStory = {
+  ...contractStory,
+  precipWindow: null,
+  convectiveWindow: null,
+  transition: { family: "clear", label: "Clear", startIndex: 2, endIndex: 7, startMs: contractStart, endMs: contractEnd },
+  gust: 32,
+  gustIndex: 3
+};
+const windEvent = forecastMaterialEvent(windyData, {
+  truth: contractTruth,
+  story: windyStory,
+  tempUnit: "F",
+  windUnit: "mph"
+});
+assert.equal(windEvent?.kind, "wind", "meaningful gusts outrank a routine clearing transition in the Outlook");
+assert.match(windEvent?.headline || "", /32 mph.*4 PM/i, "the Outlook preserves the gust magnitude and timing that affect the day");
 
 const quietBrief = buildNearcastBrief(data, {
   truth: dryTruth,
@@ -562,6 +588,35 @@ assert.doesNotMatch(
 );
 assert.equal(quietBrief.promotedEvent, null);
 assert.equal(quietBrief.outlook.claims.length, 1, "quiet weather remains a single-claim glance");
+
+const morningData = {
+  ...data,
+  fixtureNowMs: Date.parse("2026-08-19T14:00:00Z"),
+  current: { ...data.current, time: "2026-08-19T14:00", temperature_2m: 70, apparent_temperature: 70 }
+};
+const morningBrief = buildNearcastBrief(morningData, {
+  truth: { ...dryTruth, current: morningData.current, label: "Partly cloudy" },
+  story: {
+    kicker: "This morning's outlook",
+    text: "Partly cloudy and warming. High near 76°F this afternoon.",
+    hour: 9,
+    segments: [{ family: "partly-cloudy", label: "Partly cloudy", startIndex: 0, endIndex: 8, startMs: morningData.fixtureNowMs, endMs: morningData.fixtureNowMs + 9 * 3600000 }],
+    temperatures: { current: 70, todayHigh: 76, overnightLow: 58 },
+    transition: null,
+    convectiveWindow: null,
+    precipWindow: null,
+    gust: null,
+    gustIndex: -1
+  },
+  visibleHourCount: 5,
+  radar: null,
+  nowMs: morningData.fixtureNowMs,
+  alerts: [],
+  alertState: { state: "ready" }
+});
+assert.equal(morningBrief.outlook.period.label, "Today's outlook", "a steady daytime story restores the all-day Outlook label");
+assert.equal(morningBrief.outlook.headline, "Partly cloudy and warming", "the stable Outlook keeps a useful day-scale headline");
+assert.match(morningBrief.outlook.support || "", /warming to 76°F this afternoon/i, "the stable Outlook keeps the day’s consequential temperature arc");
 
 const nearEvent = buildNearcastBrief(data, {
   truth: dryTruth,
