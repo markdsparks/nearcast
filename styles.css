@@ -10174,7 +10174,11 @@ body.map-immersive-active .app-dock {
   position: relative;
   display: grid;
   grid-template-columns: var(--daily-label-col) minmax(0, 1fr) var(--daily-rain-col);
-  gap: 18px;
+  grid-template-areas:
+    "label temps rain"
+    "story story story";
+  column-gap: 18px;
+  row-gap: 5px;
   align-items: center;
   min-height: 66px;
   /* Uniform left gutter on every row so the current-day accent bar lives in the
@@ -10202,16 +10206,16 @@ body.map-immersive-active .app-dock {
 
 .day-name {
   font-weight: 850;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.12;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .day-meta {
   display: grid;
   gap: 1px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* The icon already carries the condition, so keep the repeated word quiet. */
@@ -10224,15 +10228,32 @@ body.map-immersive-active .app-dock {
 .day-condition,
 .day-precip-note,
 .day-memory {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .day-condition {
   color: var(--daily-secondary-strong);
   font-weight: 820;
+  line-height: 1.15;
   opacity: var(--daily-condition-opacity);
+}
+
+.day-label {
+  grid-area: label;
+}
+
+.day-story {
+  grid-area: story;
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  padding-left: 42px;
+  padding-right: 2px;
 }
 
 .day-memory {
@@ -10246,6 +10267,7 @@ body.map-immersive-active .app-dock {
   color: var(--daily-secondary);
   font-size: 0.68rem;
   font-weight: 850;
+  line-height: 1.22;
   opacity: var(--daily-precip-note-opacity);
 }
 
@@ -10284,6 +10306,7 @@ body.map-immersive-active .app-dock {
 }
 
 .day-temps {
+  grid-area: temps;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -10332,6 +10355,7 @@ body.map-immersive-active .app-dock {
 }
 
 .day-rain {
+  grid-area: rain;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -13634,6 +13658,7 @@ body.map-immersive-active #mapLegend {
 
   .day-row .day-icon { width: 26px; height: 26px; }
   .day-row .day-label { gap: 8px; }
+  .day-row .day-story { padding-left: 34px; }
   .day-row .day-temps { gap: 6px; }
   .day-row .day-low,
   .day-row .day-high { font-size: 0.92rem; }

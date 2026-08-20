@@ -1,4 +1,4 @@
-const VERSION = "3.0.374";
+const VERSION = "3.0.375";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -15810,7 +15810,12 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
     const dayDisclosure = nearcastForecastDisclosureForDay(data, index, day, state.activePlace);
-    const precipNote = nearcastCalmDailyTiming(data, day.materialEvent, dayDisclosure, day.timing || precipProfile.note, index);
+    // The dense list earns a second line only for a material event. Routine
+    // cloud transitions and low-rain notes already have a condition and PoP
+    // in this row; richer narration remains available in day detail.
+    const precipNote = day.materialEvent
+      ? nearcastCalmDailyTiming(data, day.materialEvent, dayDisclosure, day.timing, index)
+      : "";
     const dayAria = [
       formatDay(time, index),
       code,
@@ -15830,8 +15835,6 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
             <div class="day-name">${formatDay(time, index)}</div>
             <div class="day-meta">
               <span class="day-condition">${escapeHtml(code)}</span>
-              ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
-              ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
             </div>
           </div>
         </div>
@@ -15846,6 +15849,12 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
           <span>${rain}%</span>
           ${precip > 0 ? `<small>${formatAmount(precip)} ${precipUnit}</small>` : ""}
         </div>
+        ${(precipNote || memoryCue) ? `
+          <div class="day-story">
+            ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
+            ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
+          </div>
+        ` : ""}
       </article>
     `;
   }).join("");
