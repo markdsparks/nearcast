@@ -31,9 +31,10 @@ struct NearcastWidgetSnapshot: Codable {
     var laterLabel: String
     var laterValue: String
     // Nearcast's web forecast engine owns the next meaningful event. Native
-    // companion surfaces present these words verbatim instead of independently
-    // inferring a different event from the raw hourly rows. Every field is
-    // optional so V7 and older snapshots continue to decode unchanged.
+    // companions retain the exact story for accessibility and detail, then
+    // derive a bounded Watch-sized title and clock cue from its semantic kind
+    // and timestamps. Every field is optional so older snapshots continue to
+    // decode unchanged.
     var canonicalEventId: String? = nil
     var canonicalEventHeadline: String? = nil
     var canonicalEventTiming: String? = nil
@@ -220,6 +221,187 @@ struct NearcastCompanionStory: Equatable {
     let source: String?
     let placeName: String
     let impact: String?
+    /// Forecast-event kind authored by Nearcast (rain, storm, snow, wind,
+    /// etc.). Compact surfaces use this instead of trying to recover meaning
+    /// from a sentence that was written for the phone.
+    let semanticKind: String?
+}
+
+/// Deliberately small copy for Watch complications and the Watch Today header.
+/// The complete canonical story remains untouched for accessibility and deeper
+/// detail; this projection is sized for one title line and one clock line.
+struct NearcastCompactStoryCopy: Equatable {
+    let title: String
+    let timing: String?
+}
+
+let nearcastCompactStoryTitleMaximumCharacters = 20
+let nearcastCompactStoryTimingMaximumCharacters = 22
+
+func nearcastCompactStoryCopy(
+    _ story: NearcastCompanionStory,
+    at timestamp: TimeInterval = Date().timeIntervalSince1970,
+    timeZoneIdentifier: String? = nil
+) -> NearcastCompactStoryCopy {
+    let title = nearcastCompactStoryTitle(story)
+    let timing = nearcastCompactStoryTiming(
+        story,
+        at: timestamp,
+        timeZoneIdentifier: timeZoneIdentifier
+    )
+    return NearcastCompactStoryCopy(
+        title: nearcastCompactWords(title, maximumCharacters: nearcastCompactStoryTitleMaximumCharacters),
+        timing: timing.map {
+            nearcastCompactWords($0, maximumCharacters: nearcastCompactStoryTimingMaximumCharacters)
+        }
+    )
+}
+
+private func nearcastCompactStoryTitle(_ story: NearcastCompanionStory) -> String {
+    let raw = [story.semanticKind, story.headline]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
+
+    if story.kind == .officialAlert {
+        if raw.contains("tornado") { return "Tornado warning" }
+        if raw.contains("flash flood") { return "Flash flood warning" }
+        if raw.contains("flood") { return "Flood warning" }
+        if raw.contains("blizzard") { return "Blizzard warning" }
+        if raw.contains("winter storm") { return "Winter storm warning" }
+        if raw.contains("severe") && (raw.contains("storm") || raw.contains("thunder")) {
+            return "Severe storm warning"
+        }
+        if raw.contains("heat") { return "Heat warning" }
+        return "Weather warning"
+    }
+
+    let isNow = raw.range(of: #"\b(now|currently)\b"#, options: .regularExpression) != nil
+    let likelihood = raw.contains("likely")
+        ? "likely"
+        : (raw.contains("possible") || raw.contains("chance") || raw.contains(" may ") ? "possible" : nil)
+
+    func eventTitle(_ noun: String, fallback: String) -> String {
+        if isNow { return "\(noun) now" }
+        if let likelihood { return "\(noun) \(likelihood)" }
+        return fallback
+    }
+
+    if raw.contains("storm") || raw.contains("thunder") {
+        return eventTitle("Storms", fallback: "Storms ahead")
+    }
+    if raw.contains("snow") {
+        return eventTitle("Snow", fallback: "Snow ahead")
+    }
+    if raw.contains("ice") || raw.contains("icing") || raw.contains("freezing rain") {
+        return eventTitle("Icing", fallback: "Icing ahead")
+    }
+    if raw.contains("rain") || raw.contains("shower") || raw.contains("precip") {
+        return eventTitle("Rain", fallback: "Rain ahead")
+    }
+    if raw.contains("wind") || raw.contains("gust") {
+        return isNow ? "Strong winds now" : "Strong winds"
+    }
+    if raw.contains("fog") || raw.contains("visibility") {
+        return isNow ? "Fog now" : "Fog possible"
+    }
+    if raw.contains("heat") || raw.contains("hot") {
+        return "Heat builds"
+    }
+    if raw.contains("cold") || raw.contains("freeze") {
+        return "Cold ahead"
+    }
+    if raw.contains("clear") || raw.contains("sun") {
+        return "Clearing"
+    }
+    if raw.contains("cloud") {
+        return "Clouds building"
+    }
+    return "Weather changing"
+}
+
+private func nearcastCompactStoryTiming(
+    _ story: NearcastCompanionStory,
+    at timestamp: TimeInterval,
+    timeZoneIdentifier: String?
+) -> String? {
+    let start = story.startsAt.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+    let end = story.endsAt.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+    guard start != nil || end != nil else { return nil }
+
+    let now = Date(timeIntervalSince1970: timestamp)
+    let timeZone = timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) ?? .current
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+
+    if let end, end > now, start.map({ $0 <= now }) ?? true {
+        return "Until \(nearcastCompactClock(end, calendar: calendar))"
+    }
+
+    guard let start, start > now else { return nil }
+    let dayPrefix = calendar.isDate(start, inSameDayAs: now)
+        ? nil
+        : nearcastCompactWeekday(start, calendar: calendar)
+
+    if let end, end > start {
+        let range = nearcastCompactClockRange(start: start, end: end, calendar: calendar)
+        return [dayPrefix, range].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    let point = "Near \(nearcastCompactClock(start, calendar: calendar))"
+    return [dayPrefix, point].compactMap { $0 }.joined(separator: " · ")
+}
+
+private func nearcastCompactClockRange(start: Date, end: Date, calendar: Calendar) -> String {
+    let startParts = nearcastCompactClockParts(start, calendar: calendar)
+    let endParts = nearcastCompactClockParts(end, calendar: calendar)
+    if endParts.hour24 == 0 && endParts.minute == 0 {
+        return "\(nearcastCompactClock(start, calendar: calendar))–midnight"
+    }
+    if endParts.hour24 == 12 && endParts.minute == 0 {
+        return "\(nearcastCompactClock(start, calendar: calendar))–noon"
+    }
+    if startParts.meridiem == endParts.meridiem {
+        return "\(startParts.clock)–\(endParts.clock) \(endParts.meridiem)"
+    }
+    return "\(startParts.clock) \(startParts.meridiem)–\(endParts.clock) \(endParts.meridiem)"
+}
+
+private func nearcastCompactClock(_ date: Date, calendar: Calendar) -> String {
+    let parts = nearcastCompactClockParts(date, calendar: calendar)
+    if parts.hour24 == 0 && parts.minute == 0 { return "midnight" }
+    if parts.hour24 == 12 && parts.minute == 0 { return "noon" }
+    return "\(parts.clock) \(parts.meridiem)"
+}
+
+private func nearcastCompactClockParts(
+    _ date: Date,
+    calendar: Calendar
+) -> (clock: String, meridiem: String, hour24: Int, minute: Int) {
+    let components = calendar.dateComponents([.hour, .minute], from: date)
+    let hour24 = components.hour ?? 0
+    let minute = components.minute ?? 0
+    let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
+    let clock = minute == 0 ? "\(hour12)" : String(format: "%d:%02d", hour12, minute)
+    return (clock, hour24 < 12 ? "AM" : "PM", hour24, minute)
+}
+
+private func nearcastCompactWeekday(_ date: Date, calendar: Calendar) -> String {
+    let symbols = calendar.shortWeekdaySymbols
+    let weekday = max(1, min(symbols.count, calendar.component(.weekday, from: date)))
+    return String(symbols[weekday - 1].prefix(3))
+}
+
+private func nearcastCompactWords(_ value: String, maximumCharacters: Int) -> String {
+    let words = value.split(whereSeparator: \.isWhitespace).map(String.init)
+    guard !words.isEmpty else { return "Weather" }
+    var result = ""
+    for word in words {
+        let candidate = result.isEmpty ? word : "\(result) \(word)"
+        if candidate.count > maximumCharacters { break }
+        result = candidate
+    }
+    return result.isEmpty ? String(words[0].prefix(maximumCharacters)) : result
 }
 
 struct NearcastWidgetDay: Codable, Identifiable {
@@ -665,7 +847,8 @@ extension NearcastWidgetSnapshot {
                 endsAt: alert.expiresAt,
                 source: alert.source,
                 placeName: alert.placeName,
-                impact: alert.impact
+                impact: alert.impact,
+                semanticKind: alert.title
             )
         }
         guard let event = canonicalEventBrief(at: timestamp) else { return nil }
@@ -678,7 +861,8 @@ extension NearcastWidgetSnapshot {
             endsAt: event.endAt,
             source: nil,
             placeName: placeName,
-            impact: nil
+            impact: nil,
+            semanticKind: event.kind
         )
     }
 

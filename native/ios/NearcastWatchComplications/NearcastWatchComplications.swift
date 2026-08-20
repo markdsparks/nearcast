@@ -461,7 +461,7 @@ private struct NearcastBriefView: View {
                 NearcastCompanionStoryRectangle(
                     snapshot: entry.snapshot,
                     story: story,
-                    showsTemperature: entry.weatherState == .fresh
+                    referenceDate: entry.date
                 )
             } else if entry.weatherState == .unavailable {
                 briefUnavailable
@@ -518,7 +518,7 @@ private struct NearcastBriefView: View {
             NearcastCompanionStoryRectangle(
                 snapshot: entry.snapshot,
                 story: story,
-                showsTemperature: true
+                referenceDate: entry.date
             )
         } else {
             NearcastBasicsRectangle(snapshot: entry.snapshot)
@@ -533,40 +533,37 @@ private struct NearcastBriefView: View {
 private struct NearcastCompanionStoryRectangle: View {
     let snapshot: NearcastWidgetSnapshot
     let story: NearcastCompanionStory
-    let showsTemperature: Bool
+    let referenceDate: Date
 
     var body: some View {
-        HStack(spacing: 7) {
+        let copy = nearcastCompactStoryCopy(
+            story,
+            at: referenceDate.timeIntervalSince1970,
+            timeZoneIdentifier: snapshot.placeTimezone
+        )
+
+        HStack(spacing: 6) {
             Image(systemName: companionStorySymbol(story))
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
                 .nearcastComplicationTint(companionStoryColor(story))
-                .frame(width: 25)
+                .frame(width: 22)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(story.headline)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                Text(copy.title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
-                if let detail = complicationStoryDetail(story) {
-                    Text(detail)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                if let timing = copy.timing {
+                    Text(timing)
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.65)
                 }
             }
             .layoutPriority(1)
-
-            Spacer(minLength: 0)
-
-            if showsTemperature {
-                Text("\(snapshot.temperature)°")
-                    .font(.system(size: 18, weight: .bold, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
-            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(story.kind == .officialAlert ? "Official weather alert" : "Next weather")
         .accessibilityValue(
@@ -579,7 +576,10 @@ private struct NearcastCompanionStoryRectangle: View {
 
 private func companionStorySymbol(_ story: NearcastCompanionStory) -> String {
     if story.kind == .officialAlert { return "exclamationmark.triangle.fill" }
-    let value = story.headline.lowercased()
+    let value = [story.semanticKind, story.headline]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
     if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
     if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
     if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
@@ -592,16 +592,13 @@ private func companionStorySymbol(_ story: NearcastCompanionStory) -> String {
 
 private func companionStoryColor(_ story: NearcastCompanionStory) -> Color {
     if story.kind == .officialAlert { return NearcastComplicationColor.change }
-    let value = story.headline.lowercased()
+    let value = [story.semanticKind, story.headline]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
     if value.contains("wind") || value.contains("gust") { return NearcastComplicationColor.wind }
     if value.contains("heat") || value.contains("sun") || value.contains("uv") { return NearcastComplicationColor.warm }
     return NearcastComplicationColor.rain
-}
-
-private func complicationStoryDetail(_ story: NearcastCompanionStory) -> String? {
-    let source = story.kind == .officialAlert ? story.source : nil
-    let parts = [story.timing, source].compactMap { $0 }
-    return parts.isEmpty ? nil : parts.joined(separator: " · ")
 }
 
 private struct NearcastTemperatureRectangle: View {

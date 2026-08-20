@@ -73,9 +73,68 @@ require(canonicalBrief?.timing == "Most likely 3–6 PM", "V8 preserves the cano
 require(canonicalBrief?.id == "rain:2026-08-19T15:00" && canonicalBrief?.kind == "thunderstorm", "V8 preserves canonical event identity and kind")
 require(canonicalBrief?.startAt == now + 2 * 3600 && canonicalBrief?.endAt == now + 5 * 3600, "V8 preserves the canonical event window")
 require(canonicalRoundTrip.canonicalEventBrief(at: now + 5 * 3600) == nil, "an ended canonical event cannot remain on companion surfaces")
+
+var compactCalendar = Calendar(identifier: .gregorian)
+compactCalendar.timeZone = TimeZone(identifier: "America/Chicago")!
+let compactNow = compactCalendar.date(from: DateComponents(year: 2026, month: 8, day: 19, hour: 19, minute: 38))!.timeIntervalSince1970
+let compactStart = compactCalendar.date(from: DateComponents(year: 2026, month: 8, day: 19, hour: 18))!.timeIntervalSince1970
+let compactEnd = compactCalendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 2))!.timeIntervalSince1970
+let compactStormStory = NearcastCompanionStory(
+    kind: .forecastEvent,
+    id: "precip:2026-08-19:0",
+    headline: "Thunderstorms possible 6:00 PM tonight–2:00 AM tomorrow",
+    timing: "6:00 PM tonight–2:00 AM tomorrow",
+    startsAt: compactStart,
+    endsAt: compactEnd,
+    source: nil,
+    placeName: "Maryville, Illinois",
+    impact: nil,
+    semanticKind: "storm"
+)
+let activeCompactStorm = nearcastCompactStoryCopy(
+    compactStormStory,
+    at: compactNow,
+    timeZoneIdentifier: "America/Chicago"
+)
+require(activeCompactStorm.title == "Storms possible", "Watch copy preserves likelihood without repeating the phone headline")
+require(activeCompactStorm.timing == "Until 2 AM", "an active overnight event becomes one useful clock cue")
+let upcomingCompactStorm = nearcastCompactStoryCopy(
+    compactStormStory,
+    at: compactStart - 60 * 60,
+    timeZoneIdentifier: "America/Chicago"
+)
+require(upcomingCompactStorm.timing == "6 PM–2 AM", "an upcoming overnight event uses a compact non-redundant range")
+require(activeCompactStorm.title.count <= nearcastCompactStoryTitleMaximumCharacters, "Watch story titles honor the complication budget")
+require((activeCompactStorm.timing?.count ?? 0) <= nearcastCompactStoryTimingMaximumCharacters, "Watch story timing honors the complication budget")
+require(!activeCompactStorm.title.lowercased().contains("thunderstorms possible 6"), "compact Watch copy never leaks the full app headline")
+require(upcomingCompactStorm.timing?.lowercased().contains("tonight") == false, "compact Watch timing never depends on verbose tonight prose")
+require(upcomingCompactStorm.timing?.lowercased().contains("tomorrow") == false, "compact Watch timing never depends on verbose tomorrow prose")
+
 var movedPlaceSnapshot = canonicalRoundTrip
 movedPlaceSnapshot.clearCanonicalEvent()
 require(movedPlaceSnapshot.canonicalEventBrief(at: now) == nil, "moving to a new coordinate clears the prior place's canonical event")
+
+let compactOfficialAlert = NearcastCompanionStory(
+    kind: .officialAlert,
+    id: "alert:compact-regression",
+    headline: "Severe Thunderstorm Warning for Madison County, Illinois",
+    timing: "Until 8:15 PM this evening",
+    startsAt: compactStart - 60 * 60,
+    endsAt: compactStart + 2.25 * 60 * 60,
+    source: "National Weather Service St. Louis, Missouri",
+    placeName: "Maryville, Illinois",
+    impact: "Damaging wind and hail are possible.",
+    semanticKind: nil
+)
+let compactAlertCopy = nearcastCompactStoryCopy(
+    compactOfficialAlert,
+    at: compactStart,
+    timeZoneIdentifier: "America/Chicago"
+)
+require(compactAlertCopy.title == "Severe storm warning", "long official titles become a bounded but specific Watch warning")
+require(compactAlertCopy.timing == "Until 8:15 PM", "official alert timing keeps its exact useful end time")
+require(compactOfficialAlert.headline.contains("Madison County"), "the complete official title remains available to accessibility and detail surfaces")
+require(compactOfficialAlert.source?.contains("National Weather Service") == true, "the complete official source remains available to accessibility and detail surfaces")
 
 var confidenceSnapshot = canonicalRoundTrip
 confidenceSnapshot.confidenceLevel = "high"

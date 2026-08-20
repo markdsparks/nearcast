@@ -279,6 +279,7 @@ private struct WatchTodayBasicsPage: View {
                 if let story {
                     WatchCompanionStorySummary(
                         story: story,
+                        timeZoneIdentifier: snapshot.placeTimezone,
                         isLuminanceReduced: isLuminanceReduced,
                         useUltraLayout: useUltraLayout
                     )
@@ -317,10 +318,16 @@ private struct WatchTodayBasicsPage: View {
 
 private struct WatchCompanionStorySummary: View {
     let story: NearcastCompanionStory
+    let timeZoneIdentifier: String?
     let isLuminanceReduced: Bool
     let useUltraLayout: Bool
 
     var body: some View {
+        let copy = nearcastCompactStoryCopy(
+            story,
+            timeZoneIdentifier: timeZoneIdentifier
+        )
+
         HStack(spacing: useUltraLayout ? 8 : 6) {
             Image(systemName: watchCompanionStorySymbol(story))
                 .font(.system(size: useUltraLayout ? 16 : 14, weight: .bold))
@@ -332,17 +339,15 @@ private struct WatchCompanionStorySummary: View {
                 .frame(width: useUltraLayout ? 20 : 18)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
-                Text(story.headline)
+                Text(copy.title)
                     .font(.system(size: useUltraLayout ? 15 : 13, weight: .bold, design: .rounded))
                     .foregroundStyle(watchPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-                if let detail = watchCompanionStoryDetail(story) {
-                    Text(detail)
+                if let timing = copy.timing {
+                    Text(timing)
                         .font(.system(size: useUltraLayout ? 13 : 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(watchSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                 }
             }
             Spacer(minLength: 0)
@@ -359,7 +364,10 @@ private struct WatchCompanionStorySummary: View {
 
 private func watchCompanionStorySymbol(_ story: NearcastCompanionStory) -> String {
     if story.kind == .officialAlert { return "exclamationmark.triangle.fill" }
-    let value = story.headline.lowercased()
+    let value = [story.semanticKind, story.headline]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
     if value.contains("storm") || value.contains("thunder") { return "cloud.bolt.rain.fill" }
     if value.contains("snow") || value.contains("ice") { return "cloud.snow.fill" }
     if value.contains("rain") || value.contains("precip") || value.contains("shower") { return "cloud.rain.fill" }
@@ -368,12 +376,6 @@ private func watchCompanionStorySymbol(_ story: NearcastCompanionStory) -> Strin
     if value.contains("cold") || value.contains("freeze") { return "thermometer.snowflake" }
     if value.contains("sun") || value.contains("uv") || value.contains("clear") { return "sun.max.fill" }
     return "clock.badge"
-}
-
-private func watchCompanionStoryDetail(_ story: NearcastCompanionStory) -> String? {
-    let source = story.kind == .officialAlert ? story.source : nil
-    let parts = [story.timing, source].compactMap { $0 }
-    return parts.isEmpty ? nil : parts.joined(separator: " · ")
 }
 
 private struct WatchTodayInfographic: View {
