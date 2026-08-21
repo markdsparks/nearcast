@@ -2299,6 +2299,38 @@ h2 {
   white-space: nowrap;
 }
 
+/* This is deliberately a small state marker, not a second weather claim.
+   It appears only when fresh nearby observations materially refined the
+   current temperature estimate. */
+.local-reading-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 20px;
+  margin: -2px 0 0;
+  padding: 2px 7px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--semantic-blue) 22%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--semantic-blue) 8%, transparent);
+  color: color-mix(in srgb, var(--semantic-blue) 78%, var(--ink));
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  text-shadow: none;
+}
+
+.local-reading-mark[hidden] {
+  display: none;
+}
+
+.local-reading-mark svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+
 .launch-stage .summary {
   max-width: 840px;
   margin-top: 0;
@@ -2527,6 +2559,11 @@ h2 {
 .forecast-receipt-trigger[data-tone="fresh"] .forecast-receipt-trigger-dot {
   background: var(--semantic-green);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-green) 14%, transparent);
+}
+
+.forecast-receipt-trigger[data-tone="localized"] .forecast-receipt-trigger-dot {
+  background: var(--semantic-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--semantic-blue) 14%, transparent);
 }
 
 .forecast-receipt-trigger[data-tone="cached"] .forecast-receipt-trigger-dot,

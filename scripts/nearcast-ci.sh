@@ -73,6 +73,7 @@ run_portable_checks() {
     forecast-confidence-integration-smoke.mjs \
     current-reality-smoke.mjs \
     current-reality-worker-smoke.mjs \
+    current-reality-ui-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
     nearcast-place-label-test.mjs

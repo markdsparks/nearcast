@@ -1,4 +1,4 @@
-const VERSION = "3.0.377";
+const VERSION = "3.0.378";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1421,6 +1421,7 @@ const els = {
   launchPlaceButton: document.querySelector("#launchPlaceButton"),
   nowTemp: document.querySelector("#nowTemp"),
   heroRange: document.querySelector("#heroRange"),
+  localReadingMark: document.querySelector("#localReadingMark"),
   nowSummary: document.querySelector("#nowSummary"),
   forecastReceiptTrigger: document.querySelector("#forecastReceiptTrigger"),
   forecastReceiptStatus: document.querySelector("#forecastReceiptStatus"),
@@ -9504,16 +9505,22 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     trigger = "Official alerts unavailable";
     triggerMeta = "Forecast still available";
   } else {
-    trigger = radarObserved
-      ? String(truth?.precip?.label || radar?.label || "Rain now")
-      : radar?.phase === "nearby"
-        ? `${radar.label || "Precipitation"} nearby`
-        : radarClear
-          ? "Radar clear now"
-          : savedAt ? `Updated ${age}` : "Forecast updated";
-    triggerMeta = radarObserved || radarClear || radar?.phase === "nearby"
-      ? `Radar${radarAge === "time unavailable" ? "" : ` · ${radarAge}`}`
-      : "For this location";
+    if (!radarObserved && radar?.phase !== "nearby" && !radarClear && reality?.applied) {
+      tone = "localized";
+      trigger = "Local reading";
+      triggerMeta = `${reality.stationLabel || "Nearby observations"}${realityAge === "time unavailable" ? "" : ` · ${realityAge}`}`;
+    } else {
+      trigger = radarObserved
+        ? String(truth?.precip?.label || radar?.label || "Rain now")
+        : radar?.phase === "nearby"
+          ? `${radar.label || "Precipitation"} nearby`
+          : radarClear
+            ? "Radar clear now"
+            : savedAt ? `Updated ${age}` : "Forecast updated";
+      triggerMeta = radarObserved || radarClear || radar?.phase === "nearby"
+        ? `Radar${radarAge === "time unavailable" ? "" : ` · ${radarAge}`}`
+        : "For this location";
+    }
   }
 
   let evidence = "Estimated for this location";
@@ -10096,6 +10103,26 @@ function applyForecastRenderState(ctx, lanes) {
 function renderForecastHero(ctx) {
   els.locationName.textContent = placeLabel(ctx.place);
   els.nowTemp.textContent = `${Math.round(ctx.current.temperature_2m)}${degree(ctx.tempUnit)}`;
+  if (els.localReadingMark) {
+    const reality = ctx.current?.reality;
+    const localized = Boolean(reality?.applied);
+    const age = Number.isFinite(Number(reality?.ageMs))
+      ? forecastAgeLabel(Math.max(0, Number(reality.ageMs)))
+      : "time unavailable";
+    const sourceCount = Number(reality?.stationCount) || 0;
+    els.localReadingMark.hidden = !localized;
+    if (localized) {
+      const countLabel = reality.stationLabel || (sourceCount === 1 ? "1 nearby observation" : `${sourceCount} nearby observations`);
+      els.localReadingMark.setAttribute(
+        "aria-label",
+        `Local reading. Temperature was refined with ${countLabel}${age === "time unavailable" ? "" : `, ${age} old`}. Open forecast evidence for details.`
+      );
+      els.localReadingMark.title = "Temperature refined with fresh nearby observations";
+    } else {
+      els.localReadingMark.removeAttribute("aria-label");
+      els.localReadingMark.removeAttribute("title");
+    }
+  }
   const high = ctx.data.daily?.temperature_2m_max?.[ctx.todayIndex];
   const low = ctx.data.daily?.temperature_2m_min?.[ctx.todayIndex];
   const hasRange = Number.isFinite(high) && Number.isFinite(low);
