@@ -1,4 +1,4 @@
-const VERSION = "3.0.376";
+const VERSION = "3.0.377";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -86,6 +86,9 @@ const ALERTS_FETCH_TIMEOUT_MS = 6500;
 const NWS_CONVECTIVE_FETCH_TIMEOUT_MS = 6500;
 const NWS_CONVECTIVE_CACHE_MS = 5 * 60 * 1000;
 const NWS_POINT_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+const CURRENT_REALITY_ENDPOINT = "/api/observations/current";
+const CURRENT_REALITY_FETCH_TIMEOUT_MS = 6500;
+const CURRENT_REALITY_CACHE_MS = 5 * 60 * 1000;
 const FORECAST_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const FORECAST_CACHE_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const FORECAST_AUTO_REFRESH_MS = 15 * 60 * 1000;
@@ -586,6 +589,13 @@ const state = {
 // a different place, saved plan, or remote Ask Nearcast answer.
 const nwsConvectiveEvidenceByForecast = new WeakMap();
 let nwsConvectiveProbeSequence = 0;
+
+// Nearby station reports can calibrate the modelled current temperature, but
+// are always held separately from a forecast object. This makes it impossible
+// for a saved place, plan, or Ask Nearcast answer to inherit another place's
+// observations.
+const currentRealityByForecast = new WeakMap();
+let currentRealityProbeSequence = 0;
 
 window.nearcastReactiveSkyEnabled = () => state.reactiveSkyEnabled === true;
 
@@ -2661,11 +2671,13 @@ function buildPrecipTruth(data, nowPrecip, context = {}) {
 function weatherTruth(data = state.forecast) {
   const radarSignalKey = radarPrecipSignalKey(radarSignalForForecastData(data));
   const convectiveKey = nwsConvectiveEvidenceKey(data);
+  const realityKey = typeof currentRealityKey === "function" ? currentRealityKey(data) : "";
   const evaluationKey = Math.floor(forecastNowMs(data) / FORECAST_CLOCK_BUCKET_MS);
   if (
     state.weatherTruth?.data === data &&
     state.weatherTruth?.radarSignalKey === radarSignalKey &&
     state.weatherTruth?.convectiveKey === convectiveKey &&
+    state.weatherTruth?.realityKey === realityKey &&
     state.weatherTruth?.evaluationKey === evaluationKey
   ) return state.weatherTruth;
   return buildWeatherTruth(data);
@@ -2946,6 +2958,7 @@ function buildWeatherTruth(data = state.forecast) {
   truth.radarPrecip = nowPrecip.radar || null;
   truth.radarSignalKey = radarSignalKey;
   truth.convectiveKey = nwsConvectiveEvidenceKey(data);
+  truth.realityKey = typeof currentRealityKey === "function" ? currentRealityKey(data) : "";
   truth.evaluationKey = Math.floor(forecastNowMs(data) / FORECAST_CLOCK_BUCKET_MS);
   truth.surfaceDetail = weatherTruthSurfaceDetail(truth);
   return truth;
@@ -5841,7 +5854,117 @@ function currentHourlyIndex(data = state.forecast) {
   return nearestHourlyIndexAt(data, now, 90 * 60 * 1000);
 }
 
-function canonicalCurrentSnapshot(data = state.forecast) {
+/* ---------- Observed-now reality layer ---------- */
+
+function currentRealityPlaceKey(place) {
+  if (!place) return "";
+  const lat = Number(place.latitude);
+  const lon = Number(place.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "";
+  return `${String(place.id || "").trim()}:${lat.toFixed(3)}:${lon.toFixed(3)}`;
+}
+
+function currentRealityCacheKey(place) {
+  const lat = Number(place?.latitude);
+  const lon = Number(place?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "";
+  return `nearcast-current-reality-v1:${lat.toFixed(3)}:${lon.toFixed(3)}`;
+}
+
+function readCurrentRealityCache(place) {
+  const key = currentRealityCacheKey(place);
+  if (!key) return null;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (!cached?.savedAt || !cached?.data || Date.now() - Number(cached.savedAt) > CURRENT_REALITY_CACHE_MS) return null;
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function saveCurrentRealityCache(place, data) {
+  const key = currentRealityCacheKey(place);
+  if (!key || !data) return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // Current observations are supplemental. Storage is never required to use Nearcast.
+  }
+}
+
+function currentRealityForForecast(data = state.forecast) {
+  const record = currentRealityByForecast.get(data);
+  if (!record || record.placeKey !== currentRealityPlaceKey(state.activePlace)) return null;
+  return record;
+}
+
+function currentRealityKey(data = state.forecast) {
+  const reality = currentRealityForForecast(data);
+  if (!reality) return "";
+  return [reality.status, reality.observedAtMs || 0, reality.stationCount || 0, reality.applied ? 1 : 0].join(":");
+}
+
+function bindCurrentReality(place, data, response) {
+  if (!place || !data || response?.status !== "ready" || !globalThis.NearcastCurrentReality?.currentRealityPresentation) return null;
+  const current = canonicalCurrentSnapshot(data, { skipReality: true });
+  const unit = data?.current_units?.temperature_2m || (state.unit === "fahrenheit" ? "fahrenheit" : "celsius");
+  const presentation = globalThis.NearcastCurrentReality.currentRealityPresentation({
+    nowMs: Date.now(),
+    unit,
+    current,
+    observations: response
+  });
+  if (!presentation || presentation.status === "estimated") return null;
+  const record = {
+    ...presentation,
+    placeKey: currentRealityPlaceKey(place),
+    fetchedAtMs: Number(response.fetchedAtMs) || Date.now()
+  };
+  currentRealityByForecast.set(data, record);
+  return record;
+}
+
+async function fetchCurrentReality(place, force = false) {
+  if (!place || !placeSupportsNwsAlerts(place)) return { status: "unsupported", stations: [] };
+  const cached = !force ? readCurrentRealityCache(place) : null;
+  if (cached) return cached;
+  const url = new URL(CURRENT_REALITY_ENDPOINT, window.location.origin);
+  url.searchParams.set("lat", Number(place.latitude).toFixed(4));
+  url.searchParams.set("lon", Number(place.longitude).toFixed(4));
+  const response = await fetchJsonWithTimeout(url.toString(), CURRENT_REALITY_FETCH_TIMEOUT_MS, null, {
+    headers: { Accept: "application/json" }
+  });
+  if (response?.status === "ready") saveCurrentRealityCache(place, response);
+  return response;
+}
+
+async function startCurrentRealityProbe(place, data, force = false) {
+  if (!place || !data || !placeSupportsNwsAlerts(place)) return;
+  const sequence = ++currentRealityProbeSequence;
+  try {
+    const response = await fetchCurrentReality(place, force);
+    if (
+      sequence !== currentRealityProbeSequence ||
+      state.forecast !== data ||
+      !samePlanPlace(state.activePlace, place)
+    ) return;
+    const reality = bindCurrentReality(place, data, response);
+    if (!reality) return;
+    state.weatherTruth = null;
+    renderForecast(data, place, {
+      // This is a narrow, non-blocking current reading upgrade. The forecast,
+      // map, and personal surfaces do not need to re-load.
+      only: ["hero", "glance", "hourly", "daily", "sky"],
+      refreshMap: false,
+      reason: "current-reality"
+    });
+  } catch {
+    // Nearby observations are useful corroboration, never a prerequisite.
+  }
+}
+
+function canonicalCurrentSnapshot(data = state.forecast, options = {}) {
   const current = data?.current || {};
   const hourly = data?.hourly || {};
   const index = currentHourlyIndex(data);
@@ -5862,7 +5985,7 @@ function canonicalCurrentSnapshot(data = state.forecast) {
     return fallback;
   };
   const rowTime = index >= 0 ? hourly.time?.[index] : null;
-  return {
+  const snapshot = {
     ...current,
     time: useHourly && rowTime ? rowTime : current.time,
     temperature_2m: pick("temperature_2m", 0),
@@ -5881,6 +6004,18 @@ function canonicalCurrentSnapshot(data = state.forecast) {
     asOfMs: useHourly && rowTime ? parseForecastTimestamp(rowTime, data) : currentAt,
     evaluationMs: now
   };
+  const reality = options.skipReality || typeof currentRealityForForecast !== "function"
+    ? null
+    : currentRealityForForecast(data);
+  if (reality?.applied && Number.isFinite(Number(reality.temperature_2m))) {
+    snapshot.temperature_2m = Number(reality.temperature_2m);
+    if (Number.isFinite(Number(reality.apparent_temperature))) {
+      snapshot.apparent_temperature = Number(reality.apparent_temperature);
+    }
+    snapshot.basis = "localized-nearby-observations";
+  }
+  snapshot.reality = reality || null;
+  return snapshot;
 }
 
 function currentRainChance(data = state.forecast) {
@@ -8100,6 +8235,7 @@ function warmStartForecast(place) {
       reason: ""
     }), normalized, { refreshMap: false });
     startRadarPrecipProbe(normalized, cached.data);
+    startCurrentRealityProbe(normalized, cached.data);
     startNwsConvectiveProbe(normalized, cached.data);
     startForecastConfidenceProbe(normalized, cached.data);
     setLoadingStatus("");
@@ -8146,6 +8282,7 @@ async function loadPlace(place, force = false) {
     clearForecastLaunchLoading();
     renderForecast(data, nextPlace);
     startRadarPrecipProbe(nextPlace, data, force);
+    startCurrentRealityProbe(nextPlace, data, force);
     startNwsConvectiveProbe(nextPlace, data, force);
     startForecastConfidenceProbe(nextPlace, data, force);
     setStatus("");
@@ -8170,6 +8307,7 @@ async function loadPlace(place, force = false) {
       });
       setAlertsLoading(previousPlace);
       startRadarPrecipProbe(previousPlace, previousForecast, true);
+      startCurrentRealityProbe(previousPlace, previousForecast, true);
       startNwsConvectiveProbe(previousPlace, previousForecast, true);
       startForecastConfidenceProbe(previousPlace, previousForecast, true);
       setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
@@ -9327,6 +9465,13 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     ? forecastAgeLabel(Math.max(0, Date.now() - Number(radar.timestamp)))
     : "time unavailable";
   const radarSource = String(radar?.source || "weather radar");
+  const reality = truth?.current?.reality || null;
+  const realityAge = Number.isFinite(Number(reality?.ageMs))
+    ? forecastAgeLabel(Math.max(0, Number(reality.ageMs)))
+    : "time unavailable";
+  const realityMeta = reality?.applied
+    ? `${reality.stationLabel || "Nearby observations"} localized the temperature estimate; nearest report ${Math.round(Number(reality.nearestStation?.distanceKm) || 0)} km away, ${realityAge} old.`
+    : "";
   const radarObserved = truth?.precip?.source === "radar-current" || radar?.phase === "active";
   const radarClear = radar?.phase === "clear" && radar?.confidence === "observed-clear";
   const alerts = typeof alertTrustState === "undefined"
@@ -9391,6 +9536,15 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   } else if (truth?.precip?.source === "modeled-current") {
     evidence = "Rain estimated for this location";
     evidenceMeta = "This is a local forecast estimate, not a direct observation.";
+  }
+
+  if (realityMeta) {
+    if (!radarObserved && radar?.phase !== "nearby" && !radarClear) {
+      evidence = "Current temperature localized";
+      evidenceMeta = `${realityMeta} Rain and sky conditions remain estimated for this exact place unless radar says otherwise.`;
+    } else {
+      evidenceMeta = `${evidenceMeta} ${realityMeta}`;
+    }
   }
 
   let alertLabel = "Checking official alerts";
@@ -9732,6 +9886,7 @@ function convertForecastUnits(data, fromUnit, toUnit) {
 
   const provenance = forecastProvenance(data);
   const converted = JSON.parse(JSON.stringify(data));
+  const reality = currentRealityByForecast.get(data);
   const temp = converterForUnit(fromUnit, toUnit, "temp");
   const wind = converterForUnit(fromUnit, toUnit, "wind");
   const precip = converterForUnit(fromUnit, toUnit, "precip");
@@ -9752,6 +9907,23 @@ function convertForecastUnits(data, fromUnit, toUnit) {
   convertFields(converted.daily, ["precipitation_sum"], precip);
   convertFields(converted.minutely_15, ["precipitation", "snowfall"], precip);
   updateForecastUnitLabels(converted, toUnit);
+
+  // The observation response remains in Celsius, but the resolved calibration
+  // is already in the forecast's display unit. Carry it across an in-app unit
+  // toggle rather than briefly snapping the hero back to the raw model value.
+  if (reality) {
+    const convertTemperature = converterForUnit(fromUnit, toUnit, "temp");
+    const convertRealityValue = (value) => Number.isFinite(Number(value)) ? convertTemperature(Number(value)) : value;
+    currentRealityByForecast.set(converted, {
+      ...reality,
+      temperature_2m: convertRealityValue(reality.temperature_2m),
+      apparent_temperature: convertRealityValue(reality.apparent_temperature),
+      modelTemperature: convertRealityValue(reality.modelTemperature),
+      observedTemperature: convertRealityValue(reality.observedTemperature),
+      adjustment: convertRealityValue(reality.adjustment),
+      spread: convertRealityValue(reality.spread)
+    });
+  }
 
   return markForecastProvenance(converted, provenance);
 }
@@ -10330,6 +10502,13 @@ function nearcastEvidencePresentation(data, truth = weatherTruth(data), options 
     ? forecastAgeLabel(Math.max(0, now - Number(radar.timestamp)))
     : "time unavailable";
   const radarSource = String(radar?.source || "weather radar");
+  const reality = truth?.current?.reality || null;
+  const realityAge = Number.isFinite(Number(reality?.ageMs))
+    ? forecastAgeLabel(Math.max(0, Number(reality.ageMs)))
+    : "time unavailable";
+  const realityDetail = reality?.applied
+    ? `${reality.stationLabel || "Nearby observations"} localized the temperature estimate; nearest report ${Math.round(Number(reality.nearestStation?.distanceKm) || 0)} km away, ${realityAge} old.`
+    : "";
   const hasRadarObservation = Boolean(radar && ["active", "clear", "nearby"].includes(radar.phase));
   let basis = hasRadarObservation ? "observed" : "estimated";
   let currentLabel = "Estimated now";
@@ -10350,6 +10529,14 @@ function nearcastEvidencePresentation(data, truth = weatherTruth(data), options 
     currentDetail = "Nearcast's latest 15-minute model guidance indicates current precipitation; radar has not confirmed it.";
   } else if (truth?.precip?.source === "modeled-current") {
     currentLabel = "Estimated now · current guidance";
+  }
+
+  if (!hasRadarObservation && reality?.applied) {
+    basis = "localized";
+    currentLabel = "Localized from nearby observations";
+    currentDetail = `${realityDetail} Precipitation and sky conditions remain estimated for this exact place unless radar says otherwise.`;
+  } else if (realityDetail) {
+    currentDetail = `${currentDetail} ${realityDetail}`;
   }
 
   const forecastAge = provenance.savedAt
@@ -10377,7 +10564,9 @@ function nearcastEvidencePresentation(data, truth = weatherTruth(data), options 
     alertDetail = "Nearcast currently checks National Weather Service alerts for U.S. locations.";
   }
 
-  const currentMeta = hasRadarObservation ? `observed ${radarAge}` : "modeled guidance";
+  const currentMeta = hasRadarObservation
+    ? `observed ${radarAge}`
+    : reality?.applied ? `localized ${realityAge}` : "modeled guidance";
   const parts = [
     { kind: "current", basis, label: currentLabel, meta: currentMeta, source: hasRadarObservation ? radarSource : truth?.source || "forecast", detail: currentDetail },
     { kind: "forecast", basis: "forecast", label: forecastLabel, meta: "Open-Meteo Best Match", source: "Open-Meteo Best Match", detail: forecastDetail },

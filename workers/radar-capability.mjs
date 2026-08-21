@@ -28,6 +28,7 @@ const PRODUCT_EVENTS_ENDPOINT_PATH = "/api/product/events";
 const LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH = "/api/live-activities/register";
 const LIVE_ACTIVITY_END_ENDPOINT_PATH = "/api/live-activities/end";
 const XWEATHER_CONFIG_ENDPOINT_PATH = "/api/xweather/config";
+const CURRENT_REALITY_ENDPOINT_PATH = "/api/observations/current";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
 const RADAR_FRAME_INDEX_URL_ENV = "RADAR_FRAME_INDEX_URL";
@@ -111,6 +112,9 @@ const PLAN_WATCH_SCAN_PAGE_HARD_LIMIT = 100;
 const PLAN_WATCH_FORECAST_TIMEOUT_MS = 5500;
 const PLAN_WATCH_ALERT_TIMEOUT_MS = 3500;
 const PLAN_WATCH_NWS_USER_AGENT = "Nearcast/3.0 (+https://getnearcast.app)";
+const CURRENT_REALITY_NWS_TIMEOUT_MS = 4500;
+const CURRENT_REALITY_CACHE_SECONDS = 5 * 60;
+const CURRENT_REALITY_MAX_STATIONS = 3;
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_START = 22;
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_END = 7;
 const DEFAULT_PLAN_WATCH_QUIET_HOURS_BYPASS_PRIORITY = 135;
@@ -192,6 +196,9 @@ export default {
     }
     if (url.pathname === XWEATHER_CONFIG_ENDPOINT_PATH) {
       return handleXweatherConfigRequest(request, env);
+    }
+    if (url.pathname === CURRENT_REALITY_ENDPOINT_PATH) {
+      return handleCurrentRealityRequest(request, env, ctx);
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -3517,6 +3524,144 @@ async function fetchJsonWithTimeout(url, timeoutMs, init = {}) {
     return response.json();
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function currentRealityCoordinate(value, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+function currentRealityDistanceKm(latA, lonA, latB, lonB) {
+  const radians = Math.PI / 180;
+  const dLat = (latB - latA) * radians;
+  const dLon = (lonB - lonA) * radians;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(latA * radians) * Math.cos(latB * radians) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+}
+
+function currentRealityNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function currentRealityStationCandidate(feature, latitude, longitude) {
+  const coordinates = Array.isArray(feature?.geometry?.coordinates) ? feature.geometry.coordinates : [];
+  const lon = currentRealityCoordinate(coordinates[0], -180, 180);
+  const lat = currentRealityCoordinate(coordinates[1], -90, 90);
+  if (lat === null || lon === null) return null;
+  const properties = feature?.properties || {};
+  const id = cleanToken(properties.stationIdentifier || feature?.id || "", 80);
+  if (!id) return null;
+  return {
+    id,
+    name: cleanToken(properties.name || id, 120),
+    latitude: lat,
+    longitude: lon,
+    distanceKm: currentRealityDistanceKm(latitude, longitude, lat, lon)
+  };
+}
+
+function currentRealityObservation(candidate, json) {
+  const properties = json?.properties || {};
+  const observedAtMs = new Date(properties.timestamp || "").getTime();
+  const temperatureC = currentRealityNumber(properties.temperature?.value);
+  if (!Number.isFinite(observedAtMs) || temperatureC === null) return null;
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    distanceKm: Math.round(candidate.distanceKm * 10) / 10,
+    observedAtMs,
+    temperatureC,
+    relativeHumidity: currentRealityNumber(properties.relativeHumidity?.value),
+    windSpeedMps: currentRealityNumber(properties.windSpeed?.value),
+    windGustMps: currentRealityNumber(properties.windGust?.value),
+    windDirection: currentRealityNumber(properties.windDirection?.value),
+    provider: cleanToken(properties.provider || "NWS", 80)
+  };
+}
+
+function currentRealityResponse(body, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("Content-Type", "application/json; charset=utf-8");
+  headers.set("Cache-Control", `public, max-age=${CURRENT_REALITY_CACHE_SECONDS}, s-maxage=${CURRENT_REALITY_CACHE_SECONDS}`);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  return new Response(JSON.stringify(body), { status: options.status || 200, headers });
+}
+
+async function fetchCurrentRealityNws(latitude, longitude) {
+  const headers = {
+    Accept: "application/geo+json",
+    "User-Agent": PLAN_WATCH_NWS_USER_AGENT
+  };
+  const pointUrl = `https://api.weather.gov/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
+  const point = await fetchJsonWithTimeout(pointUrl, CURRENT_REALITY_NWS_TIMEOUT_MS, { headers });
+  const stationsUrl = String(point?.properties?.observationStations || "");
+  if (!/^https:\/\/api\.weather\.gov\//.test(stationsUrl)) throw new Error("nws-observation-stations-unavailable");
+  const stations = await fetchJsonWithTimeout(stationsUrl, CURRENT_REALITY_NWS_TIMEOUT_MS, { headers });
+  const nearest = (stations?.features || [])
+    .map((feature) => currentRealityStationCandidate(feature, latitude, longitude))
+    .filter(Boolean)
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, CURRENT_REALITY_MAX_STATIONS);
+  const observations = await Promise.all(nearest.map(async (station) => {
+    try {
+      const json = await fetchJsonWithTimeout(
+        `https://api.weather.gov/stations/${encodeURIComponent(station.id)}/observations/latest`,
+        CURRENT_REALITY_NWS_TIMEOUT_MS,
+        { headers }
+      );
+      return currentRealityObservation(station, json);
+    } catch {
+      return null;
+    }
+  }));
+  return observations.filter(Boolean);
+}
+
+export async function handleCurrentRealityRequest(request, env = {}, ctx = {}) {
+  if (request.method === "OPTIONS") return currentRealityResponse({}, { status: 204 });
+  if (request.method !== "GET") return currentRealityResponse({ error: "method-not-allowed" }, { status: 405 });
+  const url = new URL(request.url);
+  const latitude = currentRealityCoordinate(url.searchParams.get("lat"), -90, 90);
+  const longitude = currentRealityCoordinate(url.searchParams.get("lon"), -180, 180);
+  if (latitude === null || longitude === null) {
+    return currentRealityResponse({ status: "unsupported", reason: "coordinates-invalid", stations: [] }, { status: 400 });
+  }
+
+  // Coordinates are rounded before the cache key. No place name, account, or
+  // plan data is sent to NWS or retained in the response cache.
+  const cacheUrl = new URL(CURRENT_REALITY_ENDPOINT_PATH, url.origin);
+  cacheUrl.searchParams.set("lat", latitude.toFixed(3));
+  cacheUrl.searchParams.set("lon", longitude.toFixed(3));
+  const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
+  const cache = globalThis.caches?.default;
+  const cached = cache ? await cache.match(cacheKey) : null;
+  if (cached) return cached;
+
+  try {
+    const stations = await fetchCurrentRealityNws(latitude, longitude);
+    const response = currentRealityResponse({
+      status: stations.length ? "ready" : "unavailable",
+      fetchedAtMs: Date.now(),
+      source: "National Weather Service observations",
+      stations
+    });
+    if (cache) {
+      const write = cache.put(cacheKey, response.clone());
+      if (ctx?.waitUntil) ctx.waitUntil(write);
+      else await write;
+    }
+    return response;
+  } catch (error) {
+    return currentRealityResponse({
+      status: "unavailable",
+      fetchedAtMs: Date.now(),
+      reason: cleanToken(error?.message || "nws-observations-unavailable", 100),
+      stations: []
+    }, { status: 200 });
   }
 }
 
