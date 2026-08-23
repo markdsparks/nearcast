@@ -351,6 +351,7 @@ const brief = buildNearcastBrief(data, {
 });
 assert.equal(brief.story.kicker, "Tonight's outlook");
 assert.equal(brief.suppressesGenericWeather, true, "the canonical Brief owns ordinary rain/wind messaging");
+assert.equal(brief.current.summary, "Partly cloudy · feels 84°F", "the current read always pairs condition with feels-like for one-glance context");
 assert.equal(brief.promotedEvent.kind, "rain");
 assert.equal(brief.promotedEvent.basis, "forecast");
 assert.equal(brief.promotedEvent.timing.dayRelation, "tomorrow");
@@ -852,6 +853,8 @@ assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /min-height:\s
 assert.match(extractCssRule(styles, ".launch-condition-button"), /min-height:\s*44px/, "the current-condition detail remains a full touch target");
 assert.match(extractCssRule(styles, ".nearcast-brief"), /grid-template-columns:\s*minmax\(0,\s*1fr\)/, "long evidence copy cannot widen the mobile briefing grid");
 assert.match(extractCssRule(styles, ".launch-meta-row"), /flex-wrap:\s*wrap/, "the compact current and evidence controls wrap safely on narrow screens");
+assert.match(extractCssRule(styles, ".launch-stage"), /--launch-top-clearance:\s*clamp\(64px,\s*8vh,\s*88px\)[\s\S]*padding:\s*var\(--launch-top-clearance\) 12px 7px/, "the Outlook arrives in the first screen without removing the hero's breathing room");
+assert.match(extractCssRule(styles, ".hourly-panel > .hero"), /padding:\s*2px 7px 9px/, "the editorial Outlook sits tightly with the hourly evidence it explains");
 assert.match(styles, /@media \(pointer: coarse\)[\s\S]*\.forecast-receipt-trigger\s*\{[\s\S]*min-height:\s*44px/, "coarse-pointer layout explicitly preserves the evidence touch target");
 assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /width:\s*auto[\s\S]*max-width:\s*min\(100%,\s*248px\)[\s\S]*min-width:\s*0/, "the compact evidence control shrinks within the phone viewport");
 const askDockRule = extractCssRule(styles, ".app-dock-ai");

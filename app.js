@@ -1,4 +1,4 @@
-const VERSION = "3.0.378";
+const VERSION = "3.0.379";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -11277,9 +11277,10 @@ function buildNearcastBrief(data, options = {}) {
       comfort,
       summary: truth?.precip?.phase === "active"
         ? activePrecipSummaryValue(truth.precip, truth.nowPrecip, truth.convective)
-        : Math.abs(feels - actual) >= 2
-          ? `${condition} · feels ${feels}${degree(tempUnit)}`
-          : condition,
+        // The hero already gives the large air temperature and H/L. Keeping
+        // feels-like beside the condition makes the current read complete at
+        // one glance, even when it happens to match the air temperature.
+        : `${condition} · feels ${feels}${degree(tempUnit)}`,
       basis: truth?.precip?.source === "radar-current" ? "observed" : "estimated",
       source: truth?.source || "forecast"
     },
