@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.379">
-    <link rel="manifest" href="manifest.json?v=3.0.379">
+    <link rel="stylesheet" href="styles.css?v=3.0.380">
+    <link rel="manifest" href="manifest.json?v=3.0.380">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.379">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.379">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.380">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.380">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -843,16 +843,17 @@
     </aside>
 
     <div class="sheet-backdrop" id="placeBackdrop" hidden></div>
-    <aside class="day-sheet place-sheet" id="placeSheet" hidden data-pull-dismiss="enabled" aria-label="Saved places" role="dialog" aria-modal="true">
+    <aside class="day-sheet place-sheet" id="placeSheet" hidden data-pull-dismiss="enabled" aria-label="Family places" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
-      <button class="sheet-close" id="placeSheetClose" type="button" aria-label="Close saved places">✕</button>
+      <button class="sheet-close" id="placeSheetClose" type="button" aria-label="Close family places">✕</button>
       <header class="sheet-head place-sheet-head">
         <span class="place-sheet-icon" aria-hidden="true">
           <svg viewBox="0 0 20 20" fill="none"><path d="M10 18s6-5.4 6-10.3A6 6 0 1 0 4 7.7C4 12.6 10 18 10 18z" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="7.8" r="2.1" fill="currentColor"/></svg>
         </span>
         <div class="sheet-head-text">
-          <h2>Places</h2>
-          <p class="place-sheet-sub">Switch locations without crowding the forecast</p>
+          <p class="sheet-kicker">Around us</p>
+          <h2>Family places</h2>
+          <p class="place-sheet-sub">A quick weather read for the places that matter.</p>
         </div>
       </header>
       <button class="place-save-button" id="placeSaveButton" type="button" aria-pressed="false" hidden>
@@ -862,8 +863,8 @@
           </svg>
         </span>
         <span class="place-save-copy">
-          <strong data-place-save-title>Save this place</strong>
-          <span data-place-save-copy>Add this place for faster switching.</span>
+          <strong data-place-save-title>Add this place</strong>
+          <span data-place-save-copy>Keep it here for faster family checks.</span>
         </span>
       </button>
       <div class="place-list" id="savedPlaces"></div>
@@ -1176,19 +1177,19 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.379"></script>
-    <script src="current-reality.js?v=3.0.379"></script>
-    <script src="planner.js?v=3.0.379"></script>
-    <script src="forecast-confidence.js?v=3.0.379"></script>
-    <script src="app.js?v=3.0.379"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.379"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.379"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.379"></script>
-    <script src="radar-seam-engine.js?v=3.0.379"></script>
-    <script src="raw-map-runtime.js?v=3.0.379"></script>
-    <script src="map.js?v=3.0.379"></script>
-    <script src="sky.js?v=3.0.379"></script>
-    <script src="daygraph.js?v=3.0.379"></script>
-    <script src="boot.js?v=3.0.379"></script>
+    <script src="weather-truth.js?v=3.0.380"></script>
+    <script src="current-reality.js?v=3.0.380"></script>
+    <script src="planner.js?v=3.0.380"></script>
+    <script src="forecast-confidence.js?v=3.0.380"></script>
+    <script src="app.js?v=3.0.380"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.380"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.380"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.380"></script>
+    <script src="radar-seam-engine.js?v=3.0.380"></script>
+    <script src="raw-map-runtime.js?v=3.0.380"></script>
+    <script src="map.js?v=3.0.380"></script>
+    <script src="sky.js?v=3.0.380"></script>
+    <script src="daygraph.js?v=3.0.380"></script>
+    <script src="boot.js?v=3.0.380"></script>
   </body>
 </html>

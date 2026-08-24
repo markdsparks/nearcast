@@ -1,4 +1,4 @@
-const VERSION = "3.0.379";
+const VERSION = "3.0.380";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -7699,15 +7699,161 @@ function updatePlaceSaveButton() {
     alreadySaved ? `${placeName} is saved` : `Save ${placeName}`
   );
   els.placeSaveButton.querySelector("[data-place-save-title]").textContent =
-    alreadySaved ? "Saved" : "Save this place";
+    alreadySaved ? "In family places" : "Add this place";
   els.placeSaveButton.querySelector("[data-place-save-copy]").textContent =
-    alreadySaved ? `${placeName} is in your places.` : `Add ${placeName} for faster switching.`;
+    alreadySaved ? `${placeFamilyName(state.activePlace)} is ready for quick family checks.` : `Keep ${placeName} here for faster family checks.`;
 }
 
-// Lightweight current-conditions for the saved-places glance row.
-// Cached per place + unit so re-renders and taps are instant.
+// Lightweight, decision-first reads for the family Places surface. These are
+// intentionally separate from the selected-place truth engine: opening a
+// place still loads its full canonical forecast, radar, alerts, and evidence.
+// Cached per place + unit so the sheet stays immediate on repeat visits.
 const glanceData = {};
-const GLANCE_CACHE_VERSION = "v2";
+const GLANCE_CACHE_VERSION = "v3";
+let editingSavedPlaceId = null;
+
+function placeFamilyAlias(place) {
+  const direct = String(place?.alias || "").trim();
+  if (direct) return direct;
+  const saved = (state.savedPlaces || []).find((candidate) => (
+    String(candidate?.id || "") === String(place?.id || "") || (
+      Math.abs(Number(candidate?.latitude) - Number(place?.latitude)) < 0.001 &&
+      Math.abs(Number(candidate?.longitude) - Number(place?.longitude)) < 0.001
+    )
+  ));
+  return String(saved?.alias || "").trim();
+}
+
+function placeFamilyName(place) {
+  const alias = placeFamilyAlias(place);
+  return alias || canonicalPlaceName(place);
+}
+
+function placeFamilyContext(place) {
+  const locality = placeLabel(place);
+  return placeFamilyAlias(place) ? locality : (formatPlaceResultMeta(place) || locality);
+}
+
+function familyPlacesForOverview() {
+  const places = [];
+  const add = (place) => {
+    if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return;
+    const duplicate = places.some((candidate) => (
+      String(candidate.id || "") === String(place.id || "") || (
+        Math.abs(Number(candidate.latitude) - Number(place.latitude)) < 0.001 &&
+        Math.abs(Number(candidate.longitude) - Number(place.longitude)) < 0.001
+      )
+    ));
+    if (!duplicate) places.push(place);
+  };
+  add(state.activePlace);
+  state.savedPlaces.forEach(add);
+  return places.slice(0, 6);
+}
+
+function familyPlaceClock(value) {
+  const match = String(value || "").match(/T(\d{2}):(\d{2})/);
+  if (!match) return "later";
+  return formatClock(Number(match[1]), Number(match[2]), false, false);
+}
+
+function familyPlaceDate(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function familyPlacePrecipKind(code) {
+  const value = Number(code);
+  if (!Number.isFinite(value)) return "";
+  if (value >= 95) return "storm";
+  if ((value >= 71 && value <= 77) || value === 85 || value === 86) return "snow";
+  if (value >= 51 && value <= 82) return "rain";
+  return "";
+}
+
+function familyPlaceEventCopy(kind, probability, time, currentDate) {
+  const noun = kind === "storm" ? "Storms" : kind === "snow" ? "Snow" : "Rain";
+  const likely = Number(probability) >= 60;
+  const eventDate = familyPlaceDate(time);
+  const sameDay = Boolean(eventDate && currentDate && eventDate === currentDate);
+  const hourMatch = String(time || "").match(/T(\d{2})/);
+  const hour = hourMatch ? Number(hourMatch[1]) : NaN;
+  const when = sameDay
+    ? `after ${familyPlaceClock(time)}`
+    : Number.isFinite(hour) && hour >= 5 && hour < 12
+      ? "tomorrow morning"
+      : `tomorrow ${familyPlaceClock(time)}`;
+  return `${noun} ${likely ? "likely" : "chance"} ${when}`;
+}
+
+function familyPlaceOutlook(json) {
+  const current = json?.current || {};
+  const hourly = json?.hourly || {};
+  const times = Array.isArray(hourly.time) ? hourly.time : [];
+  const currentHour = String(current.time || "").slice(0, 13);
+  const exactIndex = times.findIndex((time) => String(time).slice(0, 13) === currentHour);
+  const startIndex = Math.max(0, exactIndex >= 0 ? exactIndex : 0);
+  const endIndex = Math.min(times.length, startIndex + 25);
+  const rows = [];
+  for (let index = startIndex; index < endIndex; index += 1) {
+    rows.push({
+      index,
+      time: times[index],
+      temperature: Number(hourly.temperature_2m?.[index]),
+      probability: Number(hourly.precipitation_probability?.[index]),
+      code: Number(hourly.weather_code?.[index]),
+      gust: Number(hourly.wind_gusts_10m?.[index])
+    });
+  }
+  const unit = state.unit === "fahrenheit" ? "F" : "C";
+  const currentTemp = Number(current.temperature_2m);
+  const currentDate = familyPlaceDate(current.time);
+  const wetNow = familyPlacePrecipKind(effectiveCurrentCode(current));
+  if (wetNow) {
+    const dry = rows.slice(1).find((row) => !familyPlacePrecipKind(row.code) && Number(row.probability) < 45);
+    const noun = wetNow === "storm" ? "Storms" : wetNow === "snow" ? "Snow" : "Rain";
+    return dry ? `${noun} now · easing after ${familyPlaceClock(dry.time)}` : `${noun} now`;
+  }
+  const precipitation = rows.slice(1).find((row) => (
+    Boolean(familyPlacePrecipKind(row.code)) || Number(row.probability) >= 45
+  ));
+  if (precipitation) {
+    return familyPlaceEventCopy(
+      familyPlacePrecipKind(precipitation.code) || "rain",
+      precipitation.probability,
+      precipitation.time,
+      currentDate
+    );
+  }
+  const gustThreshold = unit === "F" ? 25 : 40;
+  const gust = rows.slice(1).find((row) => Number.isFinite(row.gust) && row.gust >= gustThreshold);
+  if (gust) return `Gusty after ${familyPlaceClock(gust.time)}`;
+  const temperatures = rows.map((row) => row.temperature).filter(Number.isFinite);
+  if (Number.isFinite(currentTemp) && temperatures.length) {
+    const low = Math.round(Math.min(...temperatures));
+    const high = Math.round(Math.max(...temperatures));
+    if (currentTemp - low >= (unit === "F" ? 4 : 2)) return `Cooling to ${low}${degree(unit)} tonight`;
+    if (high - currentTemp >= (unit === "F" ? 4 : 2)) return `Warming to ${high}${degree(unit)} later`;
+  }
+  return "Quiet through tonight";
+}
+
+function familyPlaceAlertSummary(alerts) {
+  const alert = Array.isArray(alerts) ? alerts[0] : null;
+  if (!alert?.event) return null;
+  return { event: String(alert.event), tone: alertTone(alert) };
+}
+
+function familyPlaceAria(place, glance, active) {
+  const parts = [
+    active ? "Current place" : "Saved place",
+    placeFamilyName(place),
+    glance ? `${glance.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : "Weather loading",
+    glance?.condition || "",
+    glance?.alert?.event || glance?.outlook || "",
+    "Open full forecast"
+  ];
+  return parts.filter(Boolean).join(". ");
+}
 
 async function fetchGlance(place) {
   const key = `glance:${GLANCE_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
@@ -7718,17 +7864,24 @@ async function fetchGlance(place) {
     latitude: place.latitude,
     longitude: place.longitude,
     current: "temperature_2m,precipitation,weather_code,cloud_cover,is_day",
+    hourly: "temperature_2m,precipitation_probability,weather_code,wind_gusts_10m",
+    forecast_hours: "30",
     temperature_unit: state.unit,
+    wind_speed_unit: state.unit === "fahrenheit" ? "mph" : "kmh",
     timezone: "auto"
   });
-  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-  if (!response.ok) throw new Error("Glance failed.");
-  const json = await response.json();
+  const [json, alerts] = await Promise.all([
+    fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, 2800),
+    placeSupportsNwsAlerts(place) ? fetchAlerts(place).catch(() => []) : Promise.resolve([])
+  ]);
   const code = effectiveCurrentCode(json.current);
   const data = {
     temp: Math.round(json.current.temperature_2m),
     code,
-    isDay: Boolean(json.current.is_day)
+    isDay: Boolean(json.current.is_day),
+    condition: weatherCodes[code] || "Weather",
+    outlook: familyPlaceOutlook(json),
+    alert: familyPlaceAlertSummary(alerts)
   };
   localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
   return data;
@@ -7741,24 +7894,25 @@ function renderSavedPlaces() {
   renderWatchingSwitcher();
   updateInstallPromptUI();
 
-  if (state.savedPlaces.length && typeof renderSavedPlaceWatchNotificationPanel === "function") {
-    els.savedPlaces.insertAdjacentHTML("beforeend", renderSavedPlaceWatchNotificationPanel());
-  }
-
-  if (!state.savedPlaces.length) {
+  const places = familyPlacesForOverview();
+  if (!places.length) {
     els.savedPlaces.innerHTML = `
       <div class="place-empty">
         <strong>No saved places yet</strong>
-        <span>Use Save this place above to make switching faster.</span>
+        <span>Add a place to keep a quick family weather read here.</span>
       </div>
     `;
   }
 
-  state.savedPlaces.forEach((place) => {
+  places.forEach((place) => {
     const g = glanceData[place.id];
     const isActive = state.activePlace && state.activePlace.id === place.id;
-    const placeName = escapeHtml(place.name);
-    const watchCopy = typeof placeWatchNotificationPlaceCopy === "function"
+    const isSaved = state.savedPlaces.some((saved) => saved.id === place.id);
+    const savedIndex = state.savedPlaces.findIndex((saved) => saved.id === place.id);
+    const isEditing = isSaved && editingSavedPlaceId === place.id;
+    const placeName = escapeHtml(placeFamilyName(place));
+    const placeContext = escapeHtml(placeFamilyContext(place));
+    const watchCopy = isSaved && typeof placeWatchNotificationPlaceCopy === "function"
       ? placeWatchNotificationPlaceCopy(place.id)
       : null;
     const watchButton = watchCopy ? `
@@ -7772,28 +7926,80 @@ function renderSavedPlaces() {
         ${watchCopy.disabled ? "disabled" : ""}
       >${escapeHtml(watchCopy.label)}</button>
     ` : "";
+    const editButton = isSaved ? `
+      <button class="place-item-edit" type="button" aria-label="Edit ${placeName}" aria-expanded="${isEditing ? "true" : "false"}">
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4 14.8 1.1-3.6L13.8 2.5a2 2 0 0 1 2.8 2.8l-8.7 8.7L4 14.8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m11.9 4.4 3.7 3.7M4.2 17h11.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    ` : "";
+    const outlook = g?.alert?.event || g?.outlook || "Loading local outlook…";
+    const outlookTone = g?.alert?.tone ? ` is-alert is-${escapeHtml(g.alert.tone)}` : "";
     const item = document.createElement("article");
-    item.className = `place-item${isActive ? " active" : ""}${watchCopy ? " has-watch-control" : ""}`;
+    item.className = `place-item${isActive ? " active" : ""}${watchCopy ? " has-watch-control" : ""}${isEditing ? " is-editing" : ""}`;
     item.dataset.placeId = place.id;
     item.innerHTML = `
-      <button class="place-item-main" type="button" aria-label="Load ${placeName}">
+      <button class="place-item-main" type="button" aria-label="${escapeHtml(familyPlaceAria(place, g, isActive))}">
         <span class="place-item-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay, { density: "dense" }) : ""}</span>
         <span class="place-item-copy">
           <strong>${placeName}</strong>
-          <span>${escapeHtml(formatPlaceResultMeta(place) || (isActive ? "Current place" : "Saved place"))}</span>
+          <span class="place-item-location">${placeContext}</span>
+          <span class="place-item-condition">${escapeHtml(g?.condition || (isActive ? "Current place" : "Saved place"))}</span>
         </span>
         <span class="place-item-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
+        <span class="place-item-outlook${outlookTone}">${escapeHtml(outlook)}</span>
       </button>
       ${watchButton}
-      <button class="place-item-remove" type="button" aria-label="Remove ${placeName}">×</button>
+      ${editButton}
+      ${isEditing ? `
+        <form class="place-item-editor" aria-label="Edit ${placeName}">
+          <label>
+            <span>Name for your family</span>
+            <input type="text" value="${escapeHtml(String(place.alias || ""))}" maxlength="36" placeholder="e.g. Home or Grandma’s">
+          </label>
+          <div class="place-item-editor-actions">
+            <button class="place-editor-save" type="submit">Save name</button>
+            <button class="place-editor-cancel" type="button">Cancel</button>
+            <span class="place-editor-order">
+              <button class="place-editor-move" type="button" data-direction="-1" ${isActive || savedIndex <= 0 ? "disabled" : ""} aria-label="Move ${placeName} earlier">↑</button>
+              <button class="place-editor-move" type="button" data-direction="1" ${isActive || savedIndex >= state.savedPlaces.length - 1 ? "disabled" : ""} aria-label="Move ${placeName} later">↓</button>
+            </span>
+            <button class="place-editor-remove" type="button">Remove</button>
+          </div>
+        </form>
+      ` : ""}
     `;
     bindTapAction(item.querySelector(".place-item-main"), () => {
       closePlaceSheet();
       loadPlace(place);
     });
-    bindTapAction(item.querySelector(".place-item-remove"), () => removeSavedPlace(place.id));
+    bindTapAction(item.querySelector(".place-item-edit"), () => {
+      editingSavedPlaceId = isEditing ? null : place.id;
+      renderSavedPlaces();
+      if (!isEditing) requestAnimationFrame(() => {
+        [...els.savedPlaces.querySelectorAll(".place-item")]
+          .find((candidate) => candidate.dataset.placeId === place.id)
+          ?.querySelector("input")?.focus();
+      });
+    });
+    const editor = item.querySelector(".place-item-editor");
+    if (editor) {
+      editor.addEventListener("submit", (event) => {
+        event.preventDefault();
+        renameSavedPlace(place.id, editor.querySelector("input")?.value || "");
+      });
+      bindTapAction(editor.querySelector(".place-editor-cancel"), () => {
+        editingSavedPlaceId = null;
+        renderSavedPlaces();
+      });
+      editor.querySelectorAll(".place-editor-move").forEach((button) => {
+        bindTapAction(button, () => moveSavedPlace(place.id, Number(button.dataset.direction)));
+      });
+      bindTapAction(editor.querySelector(".place-editor-remove"), () => removeSavedPlace(place.id));
+    }
     els.savedPlaces.appendChild(item);
   });
+  if (state.savedPlaces.length && typeof renderSavedPlaceWatchNotificationPanel === "function") {
+    els.savedPlaces.insertAdjacentHTML("beforeend", renderSavedPlaceWatchNotificationPanel());
+  }
   renderMapMarkers();
   hydrateGlances();
 }
@@ -7812,7 +8018,7 @@ function updatePlaceSwitcher() {
     "aria-label",
     `${place ? placeLabel(place) : "Current place"}, change place`
   );
-  els.placeSwitcherName.textContent = place ? place.name : "Places";
+  els.placeSwitcherName.textContent = place ? placeFamilyName(place) : "Places";
   els.placeSwitcherMeta.textContent =
     `${count} saved${g ? ` · ${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}`;
 }
@@ -7820,7 +8026,7 @@ function updatePlaceSwitcher() {
 // Fill in temp + condition icon on each saved chip; runs after the
 // synchronous render so cached chips show instantly and the rest fill in.
 function hydrateGlances() {
-  state.savedPlaces.forEach(async (place) => {
+  familyPlacesForOverview().forEach(async (place) => {
     if (glanceData[place.id]) return;
     try {
       glanceData[place.id] = await fetchGlance(place);
@@ -7832,13 +8038,26 @@ function hydrateGlances() {
 }
 
 function updatePlaceGlance(placeId) {
-  const chip = els.savedPlaces.querySelector(`[data-place-id="${placeId}"]`);
+  const chip = [...els.savedPlaces.querySelectorAll(".place-item")]
+    .find((candidate) => candidate.dataset.placeId === placeId) || null;
   const g = glanceData[placeId];
   if (!g) return;
   const icon = chip?.querySelector(".place-item-icon");
   const temp = chip?.querySelector(".place-item-temp");
+  const condition = chip?.querySelector(".place-item-condition");
+  const outlook = chip?.querySelector(".place-item-outlook");
   if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay, { density: "dense" });
   if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
+  if (condition) condition.textContent = g.condition || "Weather";
+  if (outlook) {
+    outlook.textContent = g.alert?.event || g.outlook || "";
+    outlook.className = `place-item-outlook${g.alert?.tone ? ` is-alert is-${g.alert.tone}` : ""}`;
+  }
+  const place = familyPlacesForOverview().find((candidate) => candidate.id === placeId);
+  if (chip && place) chip.querySelector(".place-item-main")?.setAttribute(
+    "aria-label",
+    familyPlaceAria(place, g, chip.classList.contains("active"))
+  );
   updatePlaceSwitcher();
 }
 
@@ -16244,6 +16463,7 @@ function savePlace(place) {
 
 function removeSavedPlace(id) {
   state.savedPlaces = state.savedPlaces.filter((place) => place.id !== id);
+  if (editingSavedPlaceId === id) editingSavedPlaceId = null;
   localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
   if (typeof prunePlaceWatchNotificationPlaces === "function") {
     prunePlaceWatchNotificationPlaces();
@@ -16253,6 +16473,37 @@ function removeSavedPlace(id) {
   if (typeof syncPlanWatchNotificationSubscription === "function") {
     syncPlanWatchNotificationSubscription({ force: true, reason: "saved-place-removed" });
   }
+}
+
+function normalizedPlaceAlias(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 36);
+}
+
+function renameSavedPlace(id, value) {
+  const alias = normalizedPlaceAlias(value);
+  state.savedPlaces = state.savedPlaces.map((place) => (
+    place.id === id ? { ...place, alias } : place
+  ));
+  if (state.activePlace?.id === id) {
+    state.activePlace = { ...state.activePlace, ...(alias ? { alias } : { alias: "" }) };
+  }
+  localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
+  editingSavedPlaceId = null;
+  renderSavedPlaces();
+}
+
+function moveSavedPlace(id, direction) {
+  const from = state.savedPlaces.findIndex((place) => place.id === id);
+  const to = from + Number(direction);
+  if (from < 0 || to < 0 || to >= state.savedPlaces.length) return;
+  const next = [...state.savedPlaces];
+  [next[from], next[to]] = [next[to], next[from]];
+  state.savedPlaces = next;
+  localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
+  renderSavedPlaces();
 }
 
 let glanceDetailReturnFocus = null;
@@ -16862,6 +17113,8 @@ function normalizePlace(place) {
   if (typeof place.followsCurrentLocation === "boolean") {
     normalized.followsCurrentLocation = place.followsCurrentLocation;
   }
+  const alias = normalizedPlaceAlias(place.alias);
+  if (alias) normalized.alias = alias;
   return normalized;
 }
 

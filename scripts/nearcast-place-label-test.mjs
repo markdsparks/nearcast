@@ -64,6 +64,7 @@ const functionNames = [
   "queryRoutePlace",
   "reactiveSkyIsCurrentLocation",
   "normalizeQualifierKey",
+  "normalizedPlaceAlias",
   "normalizePlace",
   "canonicalPlaceName",
   "placeLabel",

@@ -9096,6 +9096,9 @@ body.map-immersive-active .app-dock {
 .place-sheet-head {
   margin-bottom: 12px;
 }
+.place-sheet-head .sheet-kicker {
+  margin-bottom: 3px;
+}
 .place-sheet-icon {
   display: grid;
   place-items: center;
@@ -9114,11 +9117,12 @@ body.map-immersive-active .app-dock {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 0.8rem;
+  font-weight: 700;
 }
 .place-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .place-save-button {
   display: grid;
@@ -9190,46 +9194,53 @@ body.map-immersive-active .app-dock {
 }
 .place-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: stretch;
   gap: 8px;
 }
 .place-item.has-watch-control {
-  grid-template-columns: minmax(0, 1fr) minmax(74px, auto) 38px;
+  grid-template-columns: minmax(0, 1fr) minmax(74px, auto) 42px;
 }
 .place-item-main {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon copy temp"
+    "icon outlook outlook";
   align-items: center;
-  gap: 11px;
-  min-height: 58px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  column-gap: 11px;
+  row-gap: 4px;
+  min-height: 78px;
+  padding: 11px 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--semantic-blue) 15%, var(--line));
+  border-radius: 15px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--semantic-blue) 7%, transparent), transparent 46%),
+    var(--panel);
   color: var(--ink);
   text-align: left;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 .place-item.active .place-item-main {
-  border-color: rgba(29, 122, 87, 0.55);
-  box-shadow: inset 3px 0 0 var(--green);
+  border-color: color-mix(in srgb, var(--semantic-green) 46%, var(--line));
+  box-shadow: inset 3px 0 0 var(--semantic-green), 0 8px 20px rgba(27, 92, 73, 0.08);
 }
 .place-item-main:hover {
-  border-color: var(--blue);
+  border-color: color-mix(in srgb, var(--semantic-blue) 56%, var(--line));
 }
 .place-item-icon {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  grid-area: icon;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
   background: var(--panel-soft);
 }
 .place-item-icon svg {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
 }
 .place-item-icon:empty::before {
   content: "";
@@ -9239,6 +9250,7 @@ body.map-immersive-active .app-dock {
   background: var(--line);
 }
 .place-item-copy {
+  grid-area: copy;
   min-width: 0;
 }
 .place-item-copy strong,
@@ -9259,7 +9271,12 @@ body.map-immersive-active .app-dock {
   font-size: 0.76rem;
   font-weight: 700;
 }
+.place-item-copy .place-item-condition {
+  color: color-mix(in srgb, var(--muted) 78%, var(--ink));
+  font-size: 0.71rem;
+}
 .place-item-temp {
+  grid-area: temp;
   font-size: 1rem;
   font-weight: 850;
   font-variant-numeric: tabular-nums;
@@ -9267,20 +9284,105 @@ body.map-immersive-active .app-dock {
 .place-item-temp:empty {
   display: none;
 }
-.place-item-remove {
-  width: 38px;
+.place-item-outlook {
+  grid-area: outlook;
+  min-width: 0;
+  overflow-wrap: break-word;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 820;
+  line-height: 1.22;
+}
+.place-item-outlook.is-alert {
+  color: var(--semantic-gold);
+}
+.place-item-outlook.is-alert.is-warning {
+  color: var(--semantic-red);
+}
+.place-item-edit {
+  width: 42px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--panel-soft);
   color: var(--muted);
-  font-size: 1.1rem;
-  font-weight: 900;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
-.place-item-remove:hover {
+.place-item-edit svg {
+  width: 18px;
+  height: 18px;
+}
+.place-item-edit:hover,
+.place-item.is-editing .place-item-edit {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--semantic-blue) 42%, var(--line));
+}
+.place-item-editor {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid color-mix(in srgb, var(--semantic-blue) 22%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-soft) 78%, transparent);
+}
+.place-item-editor label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.place-item-editor input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 760;
+}
+.place-item-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.place-item-editor-actions button {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 830;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.place-item-editor-actions .place-editor-save {
+  border-color: color-mix(in srgb, var(--semantic-blue) 40%, var(--line));
+  background: color-mix(in srgb, var(--semantic-blue) 11%, var(--panel));
+  color: color-mix(in srgb, var(--semantic-blue) 82%, var(--ink));
+}
+.place-editor-order {
+  display: inline-flex;
+  gap: 5px;
+  margin-left: auto;
+}
+.place-item-editor-actions .place-editor-move {
+  min-width: 36px;
+  padding-inline: 7px;
+}
+.place-item-editor-actions .place-editor-remove {
   color: var(--red);
-  border-color: rgba(190, 56, 56, 0.45);
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+}
+.place-item-editor-actions button:disabled {
+  opacity: 0.42;
 }
 .place-watch-toggle {
   min-width: 74px;
@@ -9309,6 +9411,20 @@ body.map-immersive-active .app-dock {
   border-color: var(--blue);
   color: var(--ink);
   outline: none;
+}
+@media (max-width: 420px) {
+  .place-item.has-watch-control {
+    grid-template-columns: minmax(0, 1fr) 42px;
+  }
+  .place-item.has-watch-control .place-item-edit {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .place-item.has-watch-control .place-watch-toggle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-height: 38px;
+  }
 }
 .place-empty {
   display: flex;
