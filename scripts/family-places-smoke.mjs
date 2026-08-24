@@ -56,16 +56,18 @@ vm.runInContext(`
   function effectiveCurrentCode(current) { return Number(current.weather_code); }
   ${extractFunction(app, "placeFamilyAlias")}
   ${extractFunction(app, "placeFamilyName")}
+  ${extractFunction(app, "familyPlaceLocalTime")}
+  ${extractFunction(app, "familyPlaceConditionLine")}
   ${extractFunction(app, "familyPlacesForOverview")}
   ${extractFunction(app, "familyPlaceClock")}
   ${extractFunction(app, "familyPlaceDate")}
   ${extractFunction(app, "familyPlacePrecipKind")}
   ${extractFunction(app, "familyPlaceEventCopy")}
   ${extractFunction(app, "familyPlaceOutlook")}
-  globalThis.subject = { state, placeFamilyName, familyPlacesForOverview, familyPlaceOutlook };
+  globalThis.subject = { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlaceOutlook };
 `, sandbox);
 
-const { state, placeFamilyName, familyPlacesForOverview, familyPlaceOutlook } = sandbox.subject;
+const { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlaceOutlook } = sandbox.subject;
 const home = { id: "home", name: "Nokomis", admin1: "Illinois", latitude: 39.3, longitude: -89.2, alias: "Home" };
 const school = { id: "school", name: "Nokomis", admin1: "Illinois", latitude: 39.31, longitude: -89.21, alias: "School" };
 state.activePlace = home;
@@ -75,6 +77,9 @@ const overviewPlaces = familyPlacesForOverview();
 assert.equal(overviewPlaces[0].id, "home", "the active place is always first");
 assert.equal(overviewPlaces.filter((place) => place.id === "home").length, 1, "active and saved copies of the same place are deduplicated");
 assert.equal(overviewPlaces.length, 6, "the family overview stays intentionally short");
+const chicagoTime = familyPlaceLocalTime("America/Chicago", new Date("2026-08-24T18:14:00Z"));
+assert.match(chicagoTime, /local$/, "every family place can carry a quiet local-time cue");
+assert.match(familyPlaceConditionLine({ condition: "Clear", timeZone: "America/Chicago" }), /^Clear · .* local$/, "the local time sits with the condition rather than taking another crowded row");
 
 const clearCooling = familyPlaceOutlook({
   current: { time: "2026-08-24T15:10", temperature_2m: 79, weather_code: 0 },
@@ -116,6 +121,7 @@ assert.match(html, /aria-label="Family places"/, "the sheet identifies the new f
 assert.match(html, /<h2>Family places<\/h2>/, "the Places surface has a clear, human-facing title");
 assert.match(app, /function familyPlacesForOverview\([\s\S]*?return places\.slice\(0, 6\)/, "the overview is intentionally limited instead of becoming a location dashboard");
 assert.match(app, /function familyPlaceOutlook\(/, "each family place has its own compact next-change reader");
+assert.match(app, /function refreshFamilyPlaceLocalTimes\(/, "open Family Places refreshes local clocks on the app's minute cadence");
 assert.match(app, /function renameSavedPlace\(/, "saved places can be named for the family");
 assert.match(app, /function moveSavedPlace\(/, "saved places can be reordered");
 assert.match(app, /place-item-outlook/, "the rendered card exposes one meaningful next line");

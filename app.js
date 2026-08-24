@@ -1,4 +1,4 @@
-const VERSION = "3.0.380";
+const VERSION = "3.0.381";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -7709,7 +7709,7 @@ function updatePlaceSaveButton() {
 // place still loads its full canonical forecast, radar, alerts, and evidence.
 // Cached per place + unit so the sheet stays immediate on repeat visits.
 const glanceData = {};
-const GLANCE_CACHE_VERSION = "v3";
+const GLANCE_CACHE_VERSION = "v4";
 let editingSavedPlaceId = null;
 
 function placeFamilyAlias(place) {
@@ -7732,6 +7732,26 @@ function placeFamilyName(place) {
 function placeFamilyContext(place) {
   const locality = placeLabel(place);
   return placeFamilyAlias(place) ? locality : (formatPlaceResultMeta(place) || locality);
+}
+
+function familyPlaceLocalTime(timeZone, date = new Date()) {
+  const zone = String(timeZone || "").trim();
+  if (!zone) return "";
+  try {
+    return `${new Intl.DateTimeFormat(undefined, {
+      timeZone: zone,
+      hour: "numeric",
+      minute: "2-digit"
+    }).format(date)} local`;
+  } catch {
+    return "";
+  }
+}
+
+function familyPlaceConditionLine(glance) {
+  const condition = String(glance?.condition || "Weather").trim();
+  const localTime = familyPlaceLocalTime(glance?.timeZone);
+  return localTime ? `${condition} · ${localTime}` : condition;
 }
 
 function familyPlacesForOverview() {
@@ -7849,6 +7869,7 @@ function familyPlaceAria(place, glance, active) {
     placeFamilyName(place),
     glance ? `${glance.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : "Weather loading",
     glance?.condition || "",
+    familyPlaceLocalTime(glance?.timeZone),
     glance?.alert?.event || glance?.outlook || "",
     "Open full forecast"
   ];
@@ -7880,6 +7901,7 @@ async function fetchGlance(place) {
     code,
     isDay: Boolean(json.current.is_day),
     condition: weatherCodes[code] || "Weather",
+    timeZone: String(json.timezone || "").trim() || null,
     outlook: familyPlaceOutlook(json),
     alert: familyPlaceAlertSummary(alerts)
   };
@@ -7942,7 +7964,7 @@ function renderSavedPlaces() {
         <span class="place-item-copy">
           <strong>${placeName}</strong>
           <span class="place-item-location">${placeContext}</span>
-          <span class="place-item-condition">${escapeHtml(g?.condition || (isActive ? "Current place" : "Saved place"))}</span>
+          <span class="place-item-condition">${escapeHtml(g ? familyPlaceConditionLine(g) : (isActive ? "Current place" : "Saved place"))}</span>
         </span>
         <span class="place-item-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
         <span class="place-item-outlook${outlookTone}">${escapeHtml(outlook)}</span>
@@ -8048,7 +8070,7 @@ function updatePlaceGlance(placeId) {
   const outlook = chip?.querySelector(".place-item-outlook");
   if (icon) icon.innerHTML = weatherIcon(g.code, g.isDay, { density: "dense" });
   if (temp) temp.textContent = `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}`;
-  if (condition) condition.textContent = g.condition || "Weather";
+  if (condition) condition.textContent = familyPlaceConditionLine(g);
   if (outlook) {
     outlook.textContent = g.alert?.event || g.outlook || "";
     outlook.className = `place-item-outlook${g.alert?.tone ? ` is-alert is-${g.alert.tone}` : ""}`;
@@ -8059,6 +8081,15 @@ function updatePlaceGlance(placeId) {
     familyPlaceAria(place, g, chip.classList.contains("active"))
   );
   updatePlaceSwitcher();
+}
+
+function refreshFamilyPlaceLocalTimes() {
+  if (els.placeSheet?.hidden) return;
+  [...els.savedPlaces.querySelectorAll(".place-item")].forEach((item) => {
+    const glance = glanceData[item.dataset.placeId];
+    const condition = item.querySelector(".place-item-condition");
+    if (glance && condition) condition.textContent = familyPlaceConditionLine(glance);
+  });
 }
 
 const sheetPullDismissStates = new WeakMap();
@@ -8580,6 +8611,7 @@ function liveForecastRenderKey(data = state.forecast) {
 
 function refreshForecastForLiveClock({ forceRender = false, skipNetwork = false } = {}) {
   if (document.visibilityState === "hidden" || !state.forecast || !state.activePlace || welcomeIsActive()) return;
+  refreshFamilyPlaceLocalTimes();
   const nextKey = liveForecastRenderKey(state.forecast);
   if (forceRender || nextKey !== forecastClockRenderKey) {
     forecastClockRenderKey = nextKey;
