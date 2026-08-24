@@ -46,7 +46,7 @@ function extractFunction(source, name) {
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`
-  const state = { unit: "fahrenheit", activePlace: null, savedPlaces: [] };
+  const state = { unit: "fahrenheit", timeFormat: "auto", activePlace: null, savedPlaces: [] };
   function degree(unit) { return "°" + unit; }
   function formatClock(hour, minute) {
     const suffix = hour >= 12 ? "PM" : "AM";
@@ -56,6 +56,8 @@ vm.runInContext(`
   function effectiveCurrentCode(current) { return Number(current.weather_code); }
   ${extractFunction(app, "placeFamilyAlias")}
   ${extractFunction(app, "placeFamilyName")}
+  ${extractFunction(app, "userClockPreference")}
+  ${extractFunction(app, "timeFormatOptions")}
   ${extractFunction(app, "familyPlaceLocalTime")}
   ${extractFunction(app, "familyPlaceConditionLine")}
   ${extractFunction(app, "familyPlacesForOverview")}
@@ -79,6 +81,9 @@ assert.equal(overviewPlaces.filter((place) => place.id === "home").length, 1, "a
 assert.equal(overviewPlaces.length, 6, "the family overview stays intentionally short");
 const chicagoTime = familyPlaceLocalTime("America/Chicago", new Date("2026-08-24T18:14:00Z"));
 assert.match(chicagoTime, /local$/, "every family place can carry a quiet local-time cue");
+state.timeFormat = "24";
+assert.match(familyPlaceLocalTime("America/Chicago", new Date("2026-08-24T18:14:00Z")), /^13:14 local$/, "Family Places honors Nearcast's explicit 24-hour clock preference");
+state.timeFormat = "auto";
 assert.match(familyPlaceConditionLine({ condition: "Clear", timeZone: "America/Chicago" }), /^Clear · .* local$/, "the local time sits with the condition rather than taking another crowded row");
 
 const clearCooling = familyPlaceOutlook({
@@ -122,6 +127,7 @@ assert.match(html, /<h2>Family places<\/h2>/, "the Places surface has a clear, h
 assert.match(app, /function familyPlacesForOverview\([\s\S]*?return places\.slice\(0, 6\)/, "the overview is intentionally limited instead of becoming a location dashboard");
 assert.match(app, /function familyPlaceOutlook\(/, "each family place has its own compact next-change reader");
 assert.match(app, /function refreshFamilyPlaceLocalTimes\(/, "open Family Places refreshes local clocks on the app's minute cadence");
+assert.match(app, /secondary:\s*`Air \$\{temp\}°`/, "Feels-like hourly cards use a compact, complete air-temperature comparison");
 assert.match(app, /function renameSavedPlace\(/, "saved places can be named for the family");
 assert.match(app, /function moveSavedPlace\(/, "saved places can be reordered");
 assert.match(app, /place-item-outlook/, "the rendered card exposes one meaningful next line");
