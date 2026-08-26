@@ -8611,7 +8611,7 @@ body.map-immersive-active .app-dock {
 
 /* Hourly is a destination, not a dead-end explainer. Reuse the exact Home
    dock rather than introducing a second sheet-only navigation system. */
-body:has(#dayDetail.show.is-hourly-mode) .app-dock {
+body:has(#dayDetail.show.is-hourly-mode):not(:has(.ai-sheet.show)):not(:has(.memory-sheet.show)):not(:has(.memory-detail-sheet.show)):not(:has(.memory-edit-sheet.show)):not(:has(.place-sheet.show)) .app-dock {
   z-index: 302;
   opacity: 1;
   filter: blur(0);
@@ -8621,6 +8621,17 @@ body:has(#dayDetail.show.is-hourly-mode) .app-dock {
     opacity 280ms cubic-bezier(.22, 1, .36, 1) 35ms,
     filter 320ms ease-out 20ms,
     transform 380ms cubic-bezier(.22, 1, .36, 1);
+}
+
+body:has(#dayDetail.show.is-hourly-mode.is-dock-tucked) .app-dock {
+  opacity: 0;
+  filter: blur(4px);
+  pointer-events: none;
+  transform: translate3d(-50%, calc(100% + 18px), 0) scale(0.94);
+  transition:
+    opacity 180ms ease-in,
+    filter 220ms ease-in,
+    transform 340ms cubic-bezier(.4, 0, 1, 1);
 }
 
 #dayDetail.is-hourly-mode {

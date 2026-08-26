@@ -3,29 +3,8 @@
 /* ---------- Day-detail bottom sheet ---------- */
 
 let dayDetailNavState = null;
-let dayDetailDockRestorePoint = null;
 const ROLLING_HOURLY_PAGE_SIZE = 24;
 const ROLLING_HOURLY_LOAD_AHEAD_PX = 420;
-
-// The dock is one shared navigation control, not a visual copy. Moving it
-// inside the modal keeps its buttons available to VoiceOver and the dialog
-// focus trap while it floats above the Hourly detail.
-function mountDayDetailDock(isHourly) {
-  const dock = document.getElementById("appDock");
-  const sheet = document.getElementById("dayDetail");
-  if (!dock || !sheet) return;
-  if (isHourly) {
-    if (!dayDetailDockRestorePoint) {
-      dayDetailDockRestorePoint = { parent: dock.parentNode, nextSibling: dock.nextSibling };
-    }
-    if (!sheet.contains(dock)) sheet.appendChild(dock);
-    return;
-  }
-  if (!dayDetailDockRestorePoint) return;
-  const { parent, nextSibling } = dayDetailDockRestorePoint;
-  if (parent) parent.insertBefore(dock, nextSibling?.parentNode === parent ? nextSibling : null);
-  dayDetailDockRestorePoint = null;
-}
 
 // Collect a single day's hours from the retained forecast and open the sheet.
 function dayDetailIndicesForDay(data, dayIndex, candidateIndices = null) {
@@ -383,7 +362,8 @@ function setDayDetailMode(mode, persist = true) {
   const metricToggle = document.getElementById("graphMetricToggle");
   if (metricToggle) metricToggle.hidden = isHourly; // Temp/Wind only applies to the graph
   sheet?.classList.toggle("is-hourly-mode", isHourly);
-  mountDayDetailDock(isHourly);
+  if (sheet) sheet.setAttribute("aria-modal", isHourly ? "false" : "true");
+  if (typeof resetHourlyDetailDockVisibility === "function") resetHourlyDetailDockVisibility();
   // The shared floating dock follows the user only in the scannable Hourly
   // mode. It remains absent from the more focused graph explanation.
   if (typeof setAppDockCurrent === "function") setAppDockCurrent(isHourly ? "hourly" : "today");
@@ -620,6 +600,7 @@ function openDayDetail({
     onPullDismiss: closeDayDetail,
     resetScroll: true
   });
+  if (initialMode === "hourly") sheet.setAttribute("aria-modal", "false");
   document.body.style.overflow = "hidden";
   maybeExtendRollingTimeline();
 }
@@ -793,7 +774,7 @@ function closeDayDetail() {
   plannerReturnAfterDayDetail = null;
   dayDetailNavState = null;
   sheet.classList.remove("is-hourly-mode");
-  mountDayDetailDock(false);
+  if (typeof resetHourlyDetailDockVisibility === "function") resetHourlyDetailDockVisibility();
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   document.getElementById("sheetTimelineFooter")?.setAttribute("hidden", "");
   backdrop.classList.remove("show");
@@ -1572,6 +1553,7 @@ function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
 }
 
 function handleDayDetailScroll() {
+  if (typeof updateHourlyDetailDockVisibility === "function") updateHourlyDetailDockVisibility();
   maybeExtendRollingTimeline();
   updateSheetNowJump();
 }

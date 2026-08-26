@@ -1,4 +1,4 @@
-const VERSION = "3.0.383";
+const VERSION = "3.0.385";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1057,6 +1057,9 @@ let floatingChromeScrollY = 0;
 let floatingChromeRaf = 0;
 let floatingChromeUpTravel = 0;
 let floatingChromeDownTravel = 0;
+let hourlyDetailDockScrollTop = 0;
+let hourlyDetailDockDownTravel = 0;
+let hourlyDetailDockSettleTimer = 0;
 
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 18; // street-level basemap zoom; weather sources stay capped separately.
@@ -4015,6 +4018,38 @@ function updateFloatingChrome(options = {}) {
   floatingChromeScrollY = y;
 }
 
+function resetHourlyDetailDockVisibility() {
+  if (hourlyDetailDockSettleTimer) clearTimeout(hourlyDetailDockSettleTimer);
+  hourlyDetailDockSettleTimer = 0;
+  hourlyDetailDockScrollTop = document.getElementById("dayDetail")?.scrollTop || 0;
+  hourlyDetailDockDownTravel = 0;
+  document.getElementById("dayDetail")?.classList.remove("is-dock-tucked");
+}
+
+function updateHourlyDetailDockVisibility() {
+  const sheet = document.getElementById("dayDetail");
+  const active = Boolean(sheet && !sheet.hidden && sheet.classList.contains("show") && sheet.classList.contains("is-hourly-mode"));
+  if (!active) {
+    resetHourlyDetailDockVisibility();
+    return;
+  }
+  const delta = sheet.scrollTop - hourlyDetailDockScrollTop;
+  if (delta > 0.5) {
+    hourlyDetailDockDownTravel += delta;
+    if (sheet.scrollTop > 18 && hourlyDetailDockDownTravel > 18) sheet.classList.add("is-dock-tucked");
+  } else if (delta < -0.5) {
+    hourlyDetailDockDownTravel = 0;
+    sheet.classList.remove("is-dock-tucked");
+  }
+  hourlyDetailDockScrollTop = sheet.scrollTop;
+  if (hourlyDetailDockSettleTimer) clearTimeout(hourlyDetailDockSettleTimer);
+  hourlyDetailDockSettleTimer = setTimeout(() => {
+    sheet.classList.remove("is-dock-tucked");
+    hourlyDetailDockDownTravel = 0;
+    hourlyDetailDockSettleTimer = 0;
+  }, 180);
+}
+
 function arrangeForecastHierarchy() {
   const launch = document.querySelector(".launch-stage");
   const hourlyPanel = document.querySelector(".hourly-panel");
@@ -4534,6 +4569,12 @@ function setAppDockCurrent(action = "today") {
 function handleAppDockAction(action) {
   if (action === "today") {
     setAppDockCurrent("today");
+    const dayDetail = document.getElementById("dayDetail");
+    if (dayDetail && !dayDetail.hidden && dayDetail.classList.contains("show") && dayDetail.classList.contains("is-hourly-mode")) {
+      closeDayDetail();
+      scrollForecastToTop();
+      return;
+    }
     resetTransientViewToForecastTop();
     return;
   }
@@ -8190,7 +8231,13 @@ function trapTopmostSheetFocus(event) {
   const sheet = topmostShownSheet();
   // Nearcast AI has composer-specific focus behavior of its own.
   if (!sheet || sheet.id === "aiSheet") return;
-  const focusables = visibleSheetFocusables(sheet);
+  const hourlyDock = sheet.id === "dayDetail" && sheet.classList.contains("is-hourly-mode")
+    ? els.appDock
+    : null;
+  const focusables = [
+    ...(hourlyDock ? visibleSheetFocusables(hourlyDock) : []),
+    ...visibleSheetFocusables(sheet)
+  ];
   if (!focusables.length) {
     event.preventDefault();
     focusShownSheet(sheet);
@@ -8199,7 +8246,7 @@ function trapTopmostSheetFocus(event) {
   const first = focusables[0];
   const last = focusables[focusables.length - 1];
   const active = document.activeElement;
-  if (!sheet.contains(active)) {
+  if (!sheet.contains(active) && !hourlyDock?.contains(active)) {
     event.preventDefault();
     (event.shiftKey ? last : first).focus({ preventScroll: true });
   } else if (event.shiftKey && active === first) {
