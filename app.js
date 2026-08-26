@@ -1,4 +1,4 @@
-const VERSION = "3.0.382";
+const VERSION = "3.0.383";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -4543,6 +4543,11 @@ function handleAppDockAction(action) {
     return;
   }
   if (action === "map") {
+    // The map is a true replacement surface, unlike Ask/Plans which can sit
+    // above Hourly and return to the same detail. Dismiss Hourly first so its
+    // sheet cannot compete with the full-screen radar stacking context.
+    const dayDetail = document.getElementById("dayDetail");
+    if (dayDetail && !dayDetail.hidden && dayDetail.classList.contains("show")) closeDayDetail();
     setAppDockCurrent("map");
     if (typeof ensureInlineMapReady === "function") ensureInlineMapReady(true);
     openNearcastMapIntent(nearcastMapIntentForNow());

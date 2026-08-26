@@ -185,6 +185,11 @@ assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later ins
 assert.match(extractFunction(app, "handleAppDockAction"), /openNearcastMapIntent\(nearcastMapIntentForNow\(\)\)/, "the Map destination opens immersive current radar with an explicit typed intent");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
 assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
+assert.match(extractFunction(daygraph, "mountDayDetailDock"), /sheet\.appendChild\(dock\)[\s\S]*parent\.insertBefore\(dock/, "Hourly moves the one shared dock inside the modal so its navigation remains accessible");
+assert.match(extractFunction(daygraph, "setDayDetailMode"), /is-hourly-mode[\s\S]*mountDayDetailDock\(isHourly\)[\s\S]*setAppDockCurrent\(isHourly \? "hourly" : "today"\)/, "the shared dock follows the Hourly detail mode and keeps its selected state honest");
+assert.match(styles, /body:has\(#dayDetail\.show\.is-hourly-mode\) \.app-dock[\s\S]*z-index:\s*302[\s\S]*pointer-events:\s*auto/, "Hourly detail reuses the familiar floating dock above the sheet");
+assert.match(styles, /#dayDetail\.is-hourly-mode[\s\S]*padding-bottom:\s*max\(112px/, "the final hourly rows remain reachable above the floating dock");
+assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*dayDetail[\s\S]*closeDayDetail\(\)[\s\S]*openNearcastMapIntent/, "Map dismisses Hourly before opening a true full-screen surface");
 assert.match(extractFunction(app, "noteSheetShown"), /prepareSheetAccessibility\(sheet\)/, "every shared modal sheet enters the common focus lifecycle");
 assert.match(extractFunction(app, "trapTopmostSheetFocus"), /event\.key !== "Tab"[\s\S]*topmostShownSheet\(\)[\s\S]*focus\(/, "non-AI modal sheets keep keyboard focus inside the active surface");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
