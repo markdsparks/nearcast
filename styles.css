@@ -8623,7 +8623,7 @@ body:has(#dayDetail.show.is-hourly-mode):not(:has(.ai-sheet.show)):not(:has(.mem
     transform 380ms cubic-bezier(.22, 1, .36, 1);
 }
 
-body:has(#dayDetail.show.is-hourly-mode.is-dock-tucked) .app-dock {
+body:has(#dayDetail.show.is-hourly-mode.is-dock-tucked):not(:has(.ai-sheet.show)):not(:has(.memory-sheet.show)):not(:has(.memory-detail-sheet.show)):not(:has(.memory-edit-sheet.show)):not(:has(.place-sheet.show)) .app-dock {
   opacity: 0;
   filter: blur(4px);
   pointer-events: none;

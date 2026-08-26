@@ -190,6 +190,7 @@ assert.match(extractFunction(daygraph, "handleDayDetailScroll"), /updateHourlyDe
 assert.match(extractFunction(app, "updateHourlyDetailDockVisibility"), /is-dock-tucked[\s\S]*setTimeout\([\s\S]*180/, "the Hourly dock tucks while scrolling and returns after the scroll settles");
 assert.match(styles, /body:has\(#dayDetail\.show\.is-hourly-mode\)[\s\S]*z-index:\s*302[\s\S]*pointer-events:\s*auto/, "Hourly detail reuses the familiar floating dock above the sheet");
 assert.match(styles, /is-hourly-mode\.is-dock-tucked[\s\S]*pointer-events:\s*none/, "the Hourly dock leaves the timeline unobstructed while it is being read");
+assert.match(styles, /is-hourly-mode\.is-dock-tucked\):not\(:has\(\.ai-sheet\.show\)\)[\s\S]*pointer-events:\s*none/, "the tucked Hourly rule is at least as specific as the visible rule");
 assert.match(styles, /#dayDetail\.is-hourly-mode[\s\S]*padding-bottom:\s*max\(112px/, "the final hourly rows remain reachable above the floating dock");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*dayDetail[\s\S]*closeDayDetail\(\)[\s\S]*openNearcastMapIntent/, "Map dismisses Hourly before opening a true full-screen surface");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "today"[\s\S]*is-hourly-mode[\s\S]*closeDayDetail\(\)[\s\S]*scrollForecastToTop\(\)/, "Today has an explicit, dependable return path from Hourly detail");
