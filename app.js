@@ -1,4 +1,4 @@
-const VERSION = "3.0.386";
+const VERSION = "3.0.387";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -8541,6 +8541,7 @@ function warmStartForecast(place) {
     startCurrentRealityProbe(normalized, cached.data);
     startNwsConvectiveProbe(normalized, cached.data);
     startForecastConfidenceProbe(normalized, cached.data);
+    startForecastTemperatureGuidanceProbe(normalized, cached.data);
     setLoadingStatus("");
     return true;
   } catch {
@@ -8588,6 +8589,7 @@ async function loadPlace(place, force = false) {
     startCurrentRealityProbe(nextPlace, data, force);
     startNwsConvectiveProbe(nextPlace, data, force);
     startForecastConfidenceProbe(nextPlace, data, force);
+    startForecastTemperatureGuidanceProbe(nextPlace, data, force);
     setStatus("");
     lastLoadedAt = Date.now();
     lastLoadUsedForecastFallback = forecastUsedCacheFallback(data);
@@ -8613,6 +8615,7 @@ async function loadPlace(place, force = false) {
       startCurrentRealityProbe(previousPlace, previousForecast, true);
       startNwsConvectiveProbe(previousPlace, previousForecast, true);
       startForecastConfidenceProbe(previousPlace, previousForecast, true);
+      startForecastTemperatureGuidanceProbe(previousPlace, previousForecast, true);
       setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
     } else {
       clearForecastLaunchLoading();
@@ -8999,6 +9002,19 @@ const FORECAST_CONFIDENCE_MODELS = Object.freeze([
 const forecastConfidenceGuidanceByForecast = new WeakMap();
 const forecastConfidenceInflightByKey = new Map();
 let forecastConfidenceProbeSequence = 0;
+// The primary Open-Meteo response may resolve to one deterministic model. That
+// is useful raw guidance, but it must not let a single long-range outlier own
+// the family-facing temperature forecast. This independent, compact request is
+// only temperature guidance; precipitation, sky, and alerts retain their
+// established forecast-truth paths.
+const FORECAST_TEMPERATURE_GUIDANCE_CACHE_VERSION = "v1";
+const FORECAST_TEMPERATURE_GUIDANCE_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const FORECAST_TEMPERATURE_GUIDANCE_CACHE_FALLBACK_MS = 3 * 60 * 60 * 1000;
+const FORECAST_TEMPERATURE_GUIDANCE_FETCH_TIMEOUT_MS = 6500;
+const forecastTemperatureGuidanceByForecast = new WeakMap();
+const forecastTemperatureGuidanceInflightByKey = new Map();
+const forecastTemperatureBaselineByForecast = new WeakMap();
+let forecastTemperatureGuidanceProbeSequence = 0;
 const AIR_QUALITY_FIELDS = [
   "us_aqi",
   "pm2_5",
@@ -9019,6 +9035,10 @@ function forecastConfidenceCacheKey(place, unit = state.unit) {
   return `nearcast-confidence-guidance:${FORECAST_CONFIDENCE_CACHE_VERSION}:${unit}:${Number(place.latitude).toFixed(3)}:${Number(place.longitude).toFixed(3)}`;
 }
 
+function forecastTemperatureGuidanceCacheKey(place, unit = state.unit) {
+  return `nearcast-temperature-guidance:${FORECAST_TEMPERATURE_GUIDANCE_CACHE_VERSION}:${unit}:${Number(place.latitude).toFixed(3)}:${Number(place.longitude).toFixed(3)}`;
+}
+
 function forecastConfidenceNumber(value) {
   if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const number = Number(value);
@@ -9028,6 +9048,17 @@ function forecastConfidenceNumber(value) {
 function readForecastConfidenceCache(place, maxAge = FORECAST_CONFIDENCE_CACHE_FALLBACK_MS) {
   try {
     const cached = JSON.parse(localStorage.getItem(forecastConfidenceCacheKey(place)) || "null");
+    const savedAt = Number(cached?.savedAt);
+    if (!cached?.bundle || !Number.isFinite(savedAt) || Date.now() - savedAt > maxAge) return null;
+    return { savedAt, bundle: cached.bundle };
+  } catch {
+    return null;
+  }
+}
+
+function readForecastTemperatureGuidanceCache(place, maxAge = FORECAST_TEMPERATURE_GUIDANCE_CACHE_FALLBACK_MS) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(forecastTemperatureGuidanceCacheKey(place)) || "null");
     const savedAt = Number(cached?.savedAt);
     if (!cached?.bundle || !Number.isFinite(savedAt) || Date.now() - savedAt > maxAge) return null;
     return { savedAt, bundle: cached.bundle };
@@ -9170,6 +9201,201 @@ async function startForecastConfidenceProbe(place, data, force = false) {
     renderForecastConfidenceSurfaces(data, place);
   } catch {
     // Confidence is supplemental evidence. Canonical weather remains available.
+  }
+}
+
+function forecastTemperatureGuidanceBaseline(data) {
+  let baseline = forecastTemperatureBaselineByForecast.get(data);
+  if (baseline) return baseline;
+  baseline = {
+    hourlyTemperature: Array.isArray(data?.hourly?.temperature_2m) ? [...data.hourly.temperature_2m] : [],
+    hourlyApparent: Array.isArray(data?.hourly?.apparent_temperature) ? [...data.hourly.apparent_temperature] : [],
+    dailyHigh: Array.isArray(data?.daily?.temperature_2m_max) ? [...data.daily.temperature_2m_max] : [],
+    dailyLow: Array.isArray(data?.daily?.temperature_2m_min) ? [...data.daily.temperature_2m_min] : [],
+    dailyApparentHigh: Array.isArray(data?.daily?.apparent_temperature_max) ? [...data.daily.apparent_temperature_max] : [],
+    dailyApparentLow: Array.isArray(data?.daily?.apparent_temperature_min) ? [...data.daily.apparent_temperature_min] : []
+  };
+  forecastTemperatureBaselineByForecast.set(data, baseline);
+  return baseline;
+}
+
+function medianForecastTemperature(values) {
+  const sorted = values.map(forecastConfidenceNumber).filter((value) => value !== null).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function normalizeForecastTemperatureGuidance(json, place) {
+  const times = Array.isArray(json?.hourly?.time) ? json.hourly.time : [];
+  const sources = FORECAST_CONFIDENCE_MODELS.map((model) => {
+    const temperatures = json?.hourly?.[`temperature_2m_${model.suffix}`];
+    const hours = Array.isArray(temperatures) ? times.map((time, index) => ({
+      atMs: parseForecastTimestamp(time, json),
+      temperature: forecastConfidenceNumber(temperatures[index])
+    })).filter((hour) => hour.atMs !== null && hour.temperature !== null) : [];
+    return { id: model.id, status: hours.length >= 24 ? "ready" : "missing", hours };
+  });
+  return {
+    version: 1,
+    placeKey: continuityPlaceKey(place),
+    fetchedAtMs: Date.now(),
+    status: sources.filter((source) => source.status === "ready").length >= 2 ? "ready" : "failed",
+    sources
+  };
+}
+
+async function fetchForecastTemperatureGuidance(place) {
+  const params = new URLSearchParams({
+    latitude: Number(place.latitude).toFixed(3),
+    longitude: Number(place.longitude).toFixed(3),
+    hourly: "temperature_2m",
+    models: FORECAST_CONFIDENCE_MODELS.map((model) => model.suffix).join(","),
+    forecast_days: "10",
+    temperature_unit: state.unit,
+    timezone: "auto"
+  });
+  const json = await fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, FORECAST_TEMPERATURE_GUIDANCE_FETCH_TIMEOUT_MS);
+  const bundle = normalizeForecastTemperatureGuidance(json, place);
+  try {
+    localStorage.setItem(forecastTemperatureGuidanceCacheKey(place), JSON.stringify({ savedAt: bundle.fetchedAtMs, bundle }));
+  } catch {
+    // This calibration may improve the rendered forecast, but storage never blocks weather.
+  }
+  return bundle;
+}
+
+function sharedForecastTemperatureGuidanceRequest(place) {
+  const key = `${forecastTemperatureGuidanceCacheKey(place)}:${continuityPlaceKey(place)}`;
+  const existing = forecastTemperatureGuidanceInflightByKey.get(key);
+  if (existing) return existing;
+  const request = fetchForecastTemperatureGuidance(place).finally(() => {
+    if (forecastTemperatureGuidanceInflightByKey.get(key) === request) forecastTemperatureGuidanceInflightByKey.delete(key);
+  });
+  forecastTemperatureGuidanceInflightByKey.set(key, request);
+  return request;
+}
+
+function guidanceTemperatureAt(bundle, atMs) {
+  const values = (bundle?.sources || []).map((source) => (
+    source.hours?.find((hour) => Number(hour.atMs) === Number(atMs))?.temperature
+  ));
+  const usable = values.map(forecastConfidenceNumber).filter((value) => value !== null);
+  // Two independent model families are enough to temper a long-range outlier;
+  // with one, the original forecast remains the honest fallback.
+  return usable.length >= 2 ? medianForecastTemperature(usable) : null;
+}
+
+function nwsTemperatureGuidanceForDate(data, date) {
+  const evidence = nwsConvectiveEvidenceByForecast.get(data);
+  return evidence?.daily?.find((item) => item.date === date) || null;
+}
+
+function rebuildForecastTemperatures(data) {
+  if (!data?.hourly || !data?.daily) return false;
+  const baseline = forecastTemperatureGuidanceBaseline(data);
+  const hourlyTimes = data.hourly.time || [];
+  if (!baseline.hourlyTemperature.length || !hourlyTimes.length) return false;
+
+  data.hourly.temperature_2m = [...baseline.hourlyTemperature];
+  if (baseline.hourlyApparent.length) data.hourly.apparent_temperature = [...baseline.hourlyApparent];
+  data.daily.temperature_2m_max = [...baseline.dailyHigh];
+  data.daily.temperature_2m_min = [...baseline.dailyLow];
+  if (baseline.dailyApparentHigh.length) data.daily.apparent_temperature_max = [...baseline.dailyApparentHigh];
+  if (baseline.dailyApparentLow.length) data.daily.apparent_temperature_min = [...baseline.dailyApparentLow];
+
+  const bundle = forecastTemperatureGuidanceByForecast.get(data);
+  const nowMs = forecastNowMs(data);
+  if (bundle?.status === "ready") {
+    hourlyTimes.forEach((time, index) => {
+      const atMs = parseForecastTimestamp(time, data);
+      // Current observations retain priority. Consensus begins with the next
+      // unobserved hourly bucket, where it can prevent a lone model spike.
+      if (!Number.isFinite(atMs) || atMs <= nowMs) return;
+      const consensus = guidanceTemperatureAt(bundle, atMs);
+      const raw = forecastConfidenceNumber(baseline.hourlyTemperature[index]);
+      if (consensus === null || raw === null) return;
+      data.hourly.temperature_2m[index] = consensus;
+      const rawApparent = forecastConfidenceNumber(baseline.hourlyApparent[index]);
+      if (rawApparent !== null) data.hourly.apparent_temperature[index] = rawApparent + (consensus - raw);
+    });
+  }
+
+  const indicesByDate = new Map();
+  hourlyTimes.forEach((time, index) => {
+    const date = String(time || "").slice(0, 10);
+    if (!date) return;
+    const indices = indicesByDate.get(date) || [];
+    indices.push(index);
+    indicesByDate.set(date, indices);
+  });
+
+  (data.daily.time || []).forEach((date, dayIndex) => {
+    const indices = indicesByDate.get(date) || [];
+    const nws = nwsTemperatureGuidanceForDate(data, date);
+    const rawTemps = indices.map((index) => forecastConfidenceNumber(data.hourly.temperature_2m[index])).filter((value) => value !== null);
+    if (!rawTemps.length) return;
+    const sourceLow = Math.min(...rawTemps);
+    const sourceHigh = Math.max(...rawTemps);
+    const targetLow = forecastConfidenceNumber(nws?.low);
+    const targetHigh = forecastConfidenceNumber(nws?.high);
+
+    if (targetLow !== null || targetHigh !== null) {
+      indices.forEach((index) => {
+        const value = forecastConfidenceNumber(data.hourly.temperature_2m[index]);
+        if (value === null) return;
+        let adjusted = value;
+        if (targetLow !== null && targetHigh !== null && sourceHigh - sourceLow >= 1) {
+          adjusted = targetLow + ((value - sourceLow) * (targetHigh - targetLow) / (sourceHigh - sourceLow));
+        } else if (targetHigh !== null) {
+          adjusted = value + (targetHigh - sourceHigh);
+        } else if (targetLow !== null) {
+          adjusted = value + (targetLow - sourceLow);
+        }
+        const previous = forecastConfidenceNumber(data.hourly.temperature_2m[index]);
+        data.hourly.temperature_2m[index] = adjusted;
+        const apparent = forecastConfidenceNumber(data.hourly.apparent_temperature?.[index]);
+        if (apparent !== null && previous !== null) data.hourly.apparent_temperature[index] = apparent + (adjusted - previous);
+      });
+    }
+
+    const adjustedTemps = indices.map((index) => forecastConfidenceNumber(data.hourly.temperature_2m[index])).filter((value) => value !== null);
+    const adjustedApparent = indices.map((index) => forecastConfidenceNumber(data.hourly.apparent_temperature?.[index])).filter((value) => value !== null);
+    data.daily.temperature_2m_max[dayIndex] = targetHigh ?? Math.max(...adjustedTemps);
+    data.daily.temperature_2m_min[dayIndex] = targetLow ?? Math.min(...adjustedTemps);
+    if (adjustedApparent.length) {
+      data.daily.apparent_temperature_max[dayIndex] = Math.max(...adjustedApparent);
+      data.daily.apparent_temperature_min[dayIndex] = Math.min(...adjustedApparent);
+    }
+  });
+  return true;
+}
+
+function refreshForecastAfterTemperatureGuidance(data, place, reason) {
+  if (!rebuildForecastTemperatures(data) || state.forecast !== data || !samePlanPlace(state.activePlace, place)) return;
+  state.weatherTruth = null;
+  state.forecastPresentation = null;
+  renderForecast(data, place, { skip: ["map", "continuity"], reason });
+}
+
+async function startForecastTemperatureGuidanceProbe(place, data, force = false) {
+  if (!place || !data) return;
+  const sequence = ++forecastTemperatureGuidanceProbeSequence;
+  const cached = readForecastTemperatureGuidanceCache(place);
+  const cachedAge = cached ? Date.now() - cached.savedAt : Infinity;
+  if (cached?.bundle?.placeKey === continuityPlaceKey(place)) {
+    forecastTemperatureGuidanceByForecast.set(data, cached.bundle);
+    refreshForecastAfterTemperatureGuidance(data, place, "temperature-guidance-cache");
+  }
+  if ((!force && cachedAge <= FORECAST_TEMPERATURE_GUIDANCE_CACHE_MAX_AGE_MS) || (force && cachedAge <= 10 * 60 * 1000)) return;
+  try {
+    const bundle = await sharedForecastTemperatureGuidanceRequest(place);
+    if (sequence !== forecastTemperatureGuidanceProbeSequence || state.forecast !== data || !samePlanPlace(state.activePlace, place)) return;
+    if (bundle.status !== "ready") return;
+    forecastTemperatureGuidanceByForecast.set(data, bundle);
+    refreshForecastAfterTemperatureGuidance(data, place, "temperature-guidance");
+  } catch {
+    // The primary forecast stays available when independent model guidance is unavailable.
   }
 }
 
@@ -17730,7 +17956,7 @@ function nwsPeriodCallsForThunder(period) {
   return /\bthunderstorms?\b|\bt-?storms?\b|\btsra\b/i.test(text);
 }
 
-function normalizeNwsConvectiveEvidence(json, place) {
+function normalizeNwsConvectiveEvidence(json, place, dailyJson = null) {
   const periods = (json?.properties?.periods || [])
     .filter(nwsPeriodCallsForThunder)
     .map((period) => ({
@@ -17740,7 +17966,25 @@ function normalizeNwsConvectiveEvidence(json, place) {
       probability: Number(period.probabilityOfPrecipitation?.value || 0)
     }))
     .filter((period) => Number.isFinite(period.startMs) && Number.isFinite(period.endMs) && period.endMs > period.startMs);
-  return { placeId: place.id, checkedAt: Date.now(), periods };
+  // Keep this normalization self-contained: it is also exercised independently
+  // from the network layer by the forecast-truth fixtures.
+  const byDate = new Map();
+  (dailyJson?.properties?.periods || []).forEach((period) => {
+    const rawTemperature = Number(period?.temperature);
+    if (!Number.isFinite(rawTemperature)) return;
+    const sourceUnit = String(period?.temperatureUnit || "F").toUpperCase();
+    const temperature = state.unit === "celsius"
+      ? (sourceUnit === "C" ? rawTemperature : (rawTemperature - 32) * 5 / 9)
+      : (sourceUnit === "C" ? (rawTemperature * 9 / 5) + 32 : rawTemperature);
+    const rawDate = period?.isDaytime ? period?.startTime : period?.endTime;
+    const date = String(rawDate || "").slice(0, 10);
+    if (!date) return;
+    const entry = byDate.get(date) || { date, high: null, low: null };
+    if (period.isDaytime) entry.high = temperature;
+    else entry.low = temperature;
+    byDate.set(date, entry);
+  });
+  return { placeId: place.id, checkedAt: Date.now(), periods, daily: [...byDate.values()] };
 }
 
 async function fetchNwsConvectiveEvidence(place, force = false) {
@@ -17761,10 +18005,15 @@ async function fetchNwsConvectiveEvidence(place, force = false) {
 
   const hourlyUrl = String(point?.properties?.forecastHourly || "");
   if (!/^https:\/\/api\.weather\.gov\//.test(hourlyUrl)) throw new Error("NWS hourly forecast unavailable.");
-  const hourly = await fetchJsonWithTimeout(hourlyUrl, NWS_CONVECTIVE_FETCH_TIMEOUT_MS, null, {
+  const dailyUrl = String(point?.properties?.forecast || "");
+  const hourlyRequest = fetchJsonWithTimeout(hourlyUrl, NWS_CONVECTIVE_FETCH_TIMEOUT_MS, null, {
     headers: { Accept: "application/geo+json" }
   });
-  const evidence = normalizeNwsConvectiveEvidence(hourly, place);
+  const dailyRequest = /^https:\/\/api\.weather\.gov\//.test(dailyUrl)
+    ? fetchJsonWithTimeout(dailyUrl, NWS_CONVECTIVE_FETCH_TIMEOUT_MS, null, { headers: { Accept: "application/geo+json" } }).catch(() => null)
+    : Promise.resolve(null);
+  const [hourly, daily] = await Promise.all([hourlyRequest, dailyRequest]);
+  const evidence = normalizeNwsConvectiveEvidence(hourly, place, daily);
   saveNwsConvectiveCache(hourlyKey, evidence);
   return evidence;
 }
@@ -17780,6 +18029,7 @@ async function startNwsConvectiveProbe(place, data, force = false) {
       state.activePlace?.id !== place.id
     ) return;
     nwsConvectiveEvidenceByForecast.set(data, evidence);
+    refreshForecastAfterTemperatureGuidance(data, place, "nws-local-forecast");
     state.weatherTruth = null;
     renderForecast(data, place, {
       // NWS periods now contribute timing/badges to the daily outlook as well

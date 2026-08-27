@@ -195,6 +195,9 @@ assert.match(styles, /#dayDetail\.is-hourly-mode[\s\S]*padding-bottom:\s*max\(11
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*dayDetail[\s\S]*closeDayDetail\(\)[\s\S]*openNearcastMapIntent/, "Map dismisses Hourly before opening a true full-screen surface");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "today"[\s\S]*is-hourly-mode[\s\S]*closeDayDetail\(\)[\s\S]*scrollForecastToTop\(\)/, "Today has an explicit, dependable return path from Hourly detail");
 assert.match(extractFunction(app, "trapTopmostSheetFocus"), /is-hourly-mode[\s\S]*visibleSheetFocusables\(hourlyDock\)/, "the external dock stays in the Hourly detail keyboard loop");
+assert.match(extractFunction(app, "fetchForecastTemperatureGuidance"), /models:[\s\S]*FORECAST_CONFIDENCE_MODELS[\s\S]*forecast_days:\s*"10"/, "extended temperatures use independent multi-model guidance instead of a single default model");
+assert.match(extractFunction(app, "rebuildForecastTemperatures"), /guidanceTemperatureAt[\s\S]*nwsTemperatureGuidanceForDate[\s\S]*temperature_2m_max/, "daily highs are rebuilt from consensus and anchored to local NWS guidance when available");
+assert.match(extractFunction(app, "fetchNwsConvectiveEvidence"), /dailyUrl[\s\S]*Promise\.all\([\s\S]*hourlyRequest[\s\S]*dailyRequest/, "the existing NWS enrichment also retrieves local daily temperature guidance without blocking its thunder evidence");
 assert.match(extractFunction(app, "noteSheetShown"), /prepareSheetAccessibility\(sheet\)/, "every shared modal sheet enters the common focus lifecycle");
 assert.match(extractFunction(app, "trapTopmostSheetFocus"), /event\.key !== "Tab"[\s\S]*topmostShownSheet\(\)[\s\S]*focus\(/, "non-AI modal sheets keep keyboard focus inside the active surface");
 assert.ok(alertIndex >= 0 && invitationIndex > alertIndex, "the earned invitation follows safety alerts");
