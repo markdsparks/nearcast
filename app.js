@@ -1,4 +1,4 @@
-const VERSION = "3.0.391";
+const VERSION = "3.0.392";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_INTERVAL_KEY = "nearcast-hourly-hero-interval-v1";
