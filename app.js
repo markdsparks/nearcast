@@ -1,4 +1,4 @@
-const VERSION = "3.0.388";
+const VERSION = "3.0.389";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -1418,6 +1418,7 @@ const els = {
   placeSearch: document.querySelector("#placeSearch"),
   searchResults: document.querySelector("#searchResults"),
   savedPlaces: document.querySelector("#savedPlaces"),
+  familyPlacesPeek: document.querySelector("#familyPlacesPeek"),
   status: document.querySelector("#status"),
   loadingStatuses: document.querySelectorAll("[data-loading-status]"),
   locationName: document.querySelector("#locationName"),
@@ -4068,7 +4069,7 @@ function arrangeForecastHierarchy() {
   // scan before personalized guidance: Now -> Hourly -> Daily -> Map. Plans
   // and recommendations remain available below it, but no longer interrupt
   // the forecast people came here to verify.
-  launch.after(nowcast, hourlyPanel, dailyPanel, map, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
+  launch.after(nowcast, els.familyPlacesPeek, hourlyPanel, dailyPanel, map, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -7817,6 +7818,20 @@ function familyPlacesForOverview() {
   return places.slice(0, 6);
 }
 
+// Home is a weather read, not a location dashboard. It earns this small
+// horizontal glance only for other places the family has deliberately saved;
+// the selected place is already the hero above it.
+function familyPlacesForHome() {
+  const active = state.activePlace;
+  return (state.savedPlaces || []).filter((place) => {
+    if (!active) return true;
+    return String(place?.id || "") !== String(active?.id || "") && (
+      Math.abs(Number(place?.latitude) - Number(active?.latitude)) >= 0.001 ||
+      Math.abs(Number(place?.longitude) - Number(active?.longitude)) >= 0.001
+    );
+  }).slice(0, 4);
+}
+
 function familyPlaceClock(value) {
   const match = String(value || "").match(/T(\d{2}):(\d{2})/);
   if (!match) return "later";
@@ -8069,7 +8084,54 @@ function renderSavedPlaces() {
     els.savedPlaces.insertAdjacentHTML("beforeend", renderSavedPlaceWatchNotificationPanel());
   }
   renderMapMarkers();
+  renderFamilyPlacesPeek();
   hydrateGlances();
+}
+
+function renderFamilyPlacesPeek() {
+  const root = els.familyPlacesPeek;
+  if (!root) return;
+  const places = familyPlacesForHome();
+  root.hidden = !places.length;
+  if (!places.length) {
+    root.innerHTML = "";
+    return;
+  }
+  root.innerHTML = `
+    <div class="family-places-peek-head">
+      <span>Family places</span>
+      <button type="button" class="family-places-peek-all">All places <span aria-hidden="true">›</span></button>
+    </div>
+    <div class="family-places-peek-strip" role="list">
+      ${places.map((place) => {
+        const g = glanceData[place.id];
+        const name = escapeHtml(placeFamilyName(place));
+        const condition = g ? familyPlaceConditionLine(g) : "Loading local weather…";
+        const outlook = g?.alert?.event || g?.outlook || "";
+        const tone = g?.alert?.tone ? ` is-${escapeHtml(g.alert.tone)}` : "";
+        return `
+          <button class="family-place-peek-card" type="button" role="listitem" data-family-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(familyPlaceAria(place, g, false))}">
+            <span class="family-place-peek-top">
+              <strong>${name}</strong>
+              <span class="family-place-peek-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
+            </span>
+            <span class="family-place-peek-weather">
+              <span class="family-place-peek-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay, { density: "dense" }) : ""}</span>
+              <span>${escapeHtml(condition)}</span>
+            </span>
+            <span class="family-place-peek-outlook${tone}">${escapeHtml(outlook)}</span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+  bindTapAction(root.querySelector(".family-places-peek-all"), openPlaceSheet);
+  root.querySelectorAll("[data-family-place-id]").forEach((card) => {
+    bindTapAction(card, () => {
+      const place = places.find((candidate) => candidate.id === card.dataset.familyPlaceId);
+      if (place) loadPlace(place);
+    });
+  });
 }
 
 function updatePlaceSwitcher() {
@@ -8126,14 +8188,35 @@ function updatePlaceGlance(placeId) {
     "aria-label",
     familyPlaceAria(place, g, chip.classList.contains("active"))
   );
+  updateFamilyPlacePeek(placeId);
   updatePlaceSwitcher();
 }
 
+function updateFamilyPlacePeek(placeId) {
+  const root = els.familyPlacesPeek;
+  const card = root?.querySelector(`[data-family-place-id="${CSS.escape(String(placeId))}"]`);
+  const g = glanceData[placeId];
+  const place = familyPlacesForHome().find((candidate) => candidate.id === placeId);
+  if (!card || !g || !place) return;
+  const unit = state.unit === "fahrenheit" ? "F" : "C";
+  card.querySelector(".family-place-peek-temp").textContent = `${g.temp}${degree(unit)}`;
+  card.querySelector(".family-place-peek-icon").innerHTML = weatherIcon(g.code, g.isDay, { density: "dense" });
+  card.querySelector(".family-place-peek-weather > span:last-child").textContent = familyPlaceConditionLine(g);
+  const outlook = card.querySelector(".family-place-peek-outlook");
+  outlook.textContent = g.alert?.event || g.outlook || "";
+  outlook.className = `family-place-peek-outlook${g.alert?.tone ? ` is-${g.alert.tone}` : ""}`;
+  card.setAttribute("aria-label", familyPlaceAria(place, g, false));
+}
+
 function refreshFamilyPlaceLocalTimes() {
-  if (els.placeSheet?.hidden) return;
-  [...els.savedPlaces.querySelectorAll(".place-item")].forEach((item) => {
+  if (!els.placeSheet?.hidden) [...els.savedPlaces.querySelectorAll(".place-item")].forEach((item) => {
     const glance = glanceData[item.dataset.placeId];
     const condition = item.querySelector(".place-item-condition");
+    if (glance && condition) condition.textContent = familyPlaceConditionLine(glance);
+  });
+  [...(els.familyPlacesPeek?.querySelectorAll("[data-family-place-id]") || [])].forEach((card) => {
+    const glance = glanceData[card.dataset.familyPlaceId];
+    const condition = card.querySelector(".family-place-peek-weather > span:last-child");
     if (glance && condition) condition.textContent = familyPlaceConditionLine(glance);
   });
 }
@@ -8987,7 +9070,7 @@ function resetTransientViewToForecastTop() {
   scrollForecastToTop();
 }
 
-const FORECAST_CACHE_VERSION = "v4";
+const FORECAST_CACHE_VERSION = "v5";
 const AIR_QUALITY_CACHE_VERSION = "v1";
 const FORECAST_CONFIDENCE_CACHE_VERSION = "v1";
 const FORECAST_CONFIDENCE_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
@@ -9251,7 +9334,7 @@ async function fetchForecastTemperatureGuidance(place) {
     longitude: Number(place.longitude).toFixed(3),
     hourly: "temperature_2m",
     models: FORECAST_CONFIDENCE_MODELS.map((model) => model.suffix).join(","),
-    forecast_days: "10",
+    forecast_days: "14",
     temperature_unit: state.unit,
     timezone: "auto"
   });
@@ -10373,7 +10456,7 @@ async function fetchForecast(place, force = false) {
     wind_speed_unit: state.unit === "fahrenheit" ? "mph" : "kmh",
     precipitation_unit: state.unit === "fahrenheit" ? "inch" : "mm",
     timezone: "auto",
-    forecast_days: "10"
+    forecast_days: "14"
   });
 
   try {

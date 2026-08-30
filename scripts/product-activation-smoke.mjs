@@ -150,7 +150,7 @@ for (const destination of ["today", "hourly", "map", "plans"]) {
 }
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, hourlyPanel, dailyPanel, map, els\.planPulse, els\.goodWindow/, "the universal hourly-to-daily scan and map evidence stay ahead of personalized recommendations");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.familyPlacesPeek, hourlyPanel, dailyPanel, map, els\.planPulse, els\.goodWindow/, "the optional family-place glance sits ahead of the universal hourly-to-daily scan, which still stays ahead of personalized recommendations");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /presentation\?\.brief \|\| buildNearcastBrief[\s\S]*brief\.current\.summary[\s\S]*brief\.evidence\.label/, "the launch condition consumes the canonical Brief instead of constructing a competing next-change story");
 assert.doesNotMatch(extractFunction(app, "renderLaunchSummaryStrip"), /launch-next-change-button/, "the obsolete generic next-change chip cannot duplicate the promoted Brief event");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
@@ -195,7 +195,7 @@ assert.match(styles, /#dayDetail\.is-hourly-mode[\s\S]*padding-bottom:\s*max\(11
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*dayDetail[\s\S]*closeDayDetail\(\)[\s\S]*openNearcastMapIntent/, "Map dismisses Hourly before opening a true full-screen surface");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "today"[\s\S]*is-hourly-mode[\s\S]*closeDayDetail\(\)[\s\S]*scrollForecastToTop\(\)/, "Today has an explicit, dependable return path from Hourly detail");
 assert.match(extractFunction(app, "trapTopmostSheetFocus"), /is-hourly-mode[\s\S]*visibleSheetFocusables\(hourlyDock\)/, "the external dock stays in the Hourly detail keyboard loop");
-assert.match(extractFunction(app, "fetchForecastTemperatureGuidance"), /models:[\s\S]*FORECAST_CONFIDENCE_MODELS[\s\S]*forecast_days:\s*"10"/, "extended temperatures use independent multi-model guidance instead of a single default model");
+assert.match(extractFunction(app, "fetchForecastTemperatureGuidance"), /models:[\s\S]*FORECAST_CONFIDENCE_MODELS[\s\S]*forecast_days:\s*"14"/, "the full 14-day temperature outlook uses independent multi-model guidance instead of a single default model");
 assert.match(extractFunction(app, "rebuildForecastTemperatures"), /guidanceTemperatureAt[\s\S]*nwsTemperatureGuidanceForDate[\s\S]*temperature_2m_max/, "daily highs are rebuilt from consensus and anchored to local NWS guidance when available");
 assert.match(extractFunction(app, "fetchNwsConvectiveEvidence"), /dailyUrl[\s\S]*Promise\.all\([\s\S]*hourlyRequest[\s\S]*dailyRequest/, "the existing NWS enrichment also retrieves local daily temperature guidance without blocking its thunder evidence");
 assert.match(extractFunction(app, "noteSheetShown"), /prepareSheetAccessibility\(sheet\)/, "every shared modal sheet enters the common focus lifecycle");

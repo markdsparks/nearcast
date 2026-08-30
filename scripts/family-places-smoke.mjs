@@ -61,15 +61,16 @@ vm.runInContext(`
   ${extractFunction(app, "familyPlaceLocalTime")}
   ${extractFunction(app, "familyPlaceConditionLine")}
   ${extractFunction(app, "familyPlacesForOverview")}
+  ${extractFunction(app, "familyPlacesForHome")}
   ${extractFunction(app, "familyPlaceClock")}
   ${extractFunction(app, "familyPlaceDate")}
   ${extractFunction(app, "familyPlacePrecipKind")}
   ${extractFunction(app, "familyPlaceEventCopy")}
   ${extractFunction(app, "familyPlaceOutlook")}
-  globalThis.subject = { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlaceOutlook };
+  globalThis.subject = { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlacesForHome, familyPlaceOutlook };
 `, sandbox);
 
-const { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlaceOutlook } = sandbox.subject;
+const { state, placeFamilyName, familyPlaceLocalTime, familyPlaceConditionLine, familyPlacesForOverview, familyPlacesForHome, familyPlaceOutlook } = sandbox.subject;
 const home = { id: "home", name: "Nokomis", admin1: "Illinois", latitude: 39.3, longitude: -89.2, alias: "Home" };
 const school = { id: "school", name: "Nokomis", admin1: "Illinois", latitude: 39.31, longitude: -89.21, alias: "School" };
 state.activePlace = home;
@@ -79,6 +80,8 @@ const overviewPlaces = familyPlacesForOverview();
 assert.equal(overviewPlaces[0].id, "home", "the active place is always first");
 assert.equal(overviewPlaces.filter((place) => place.id === "home").length, 1, "active and saved copies of the same place are deduplicated");
 assert.equal(overviewPlaces.length, 6, "the family overview stays intentionally short");
+assert.equal(familyPlacesForHome().some((place) => place.id === "home"), false, "Home never repeats the selected place in the Home glance rail");
+assert.equal(familyPlacesForHome().length, 4, "the Home glance rail remains a compact family check, not a dashboard");
 const chicagoTime = familyPlaceLocalTime("America/Chicago", new Date("2026-08-24T18:14:00Z"));
 assert.match(chicagoTime, /local$/, "every family place can carry a quiet local-time cue");
 state.timeFormat = "24";
@@ -124,7 +127,9 @@ assert.equal(rainNow, "Rain now · easing after 10 AM", "current precipitation o
 
 assert.match(html, /aria-label="Family places"/, "the sheet identifies the new family-oriented destination");
 assert.match(html, /<h2>Family places<\/h2>/, "the Places surface has a clear, human-facing title");
+assert.match(html, /id="familyPlacesPeek"/, "Home has an intentionally optional Family Places glance rail");
 assert.match(app, /function familyPlacesForOverview\([\s\S]*?return places\.slice\(0, 6\)/, "the overview is intentionally limited instead of becoming a location dashboard");
+assert.match(app, /function familyPlacesForHome\([\s\S]*?\.slice\(0, 4\)/, "Home limits family places so the primary weather read stays first");
 assert.match(app, /function familyPlaceOutlook\(/, "each family place has its own compact next-change reader");
 assert.match(app, /function refreshFamilyPlaceLocalTimes\(/, "open Family Places refreshes local clocks on the app's minute cadence");
 assert.match(app, /secondary:\s*`Air \$\{temp\}°`/, "Feels-like hourly cards use a compact, complete air-temperature comparison");

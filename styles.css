@@ -9226,6 +9226,163 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
   font-size: 0.76rem;
   font-weight: 700;
 }
+
+/* A quiet, opt-in family glance. These are intentionally smaller than the
+   forecast cards: place, local clock, current temperature, then one next
+   change. The horizontal rail lets Home remain a weather-first screen. */
+.family-places-peek {
+  width: min(100%, 760px);
+  margin: 8px auto 12px;
+  padding: 0 14px;
+}
+.family-places-peek[hidden] {
+  display: none;
+}
+.family-places-peek-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 3px 7px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.family-places-peek-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+  margin: -5px -2px -5px 0;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: color-mix(in srgb, var(--semantic-blue) 72%, var(--ink));
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.family-places-peek-all:hover,
+.family-places-peek-all:focus-visible {
+  background: color-mix(in srgb, var(--semantic-blue) 9%, var(--panel));
+  outline: none;
+}
+.family-places-peek-all span {
+  font-size: 1.1rem;
+  line-height: 0;
+}
+.family-places-peek-strip {
+  display: grid;
+  grid-auto-columns: minmax(174px, 1fr);
+  grid-auto-flow: column;
+  grid-template-columns: repeat(auto-fit, minmax(174px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding: 1px 1px 5px;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.family-places-peek-strip::-webkit-scrollbar { display: none; }
+.family-place-peek-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  min-height: 100px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--semantic-blue) 17%, var(--line));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--semantic-blue) 8%, transparent), transparent 50%),
+    color-mix(in srgb, var(--panel) 86%, transparent);
+  color: var(--ink);
+  text-align: left;
+  scroll-snap-align: start;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.family-place-peek-card:hover,
+.family-place-peek-card:focus-visible {
+  border-color: color-mix(in srgb, var(--semantic-blue) 50%, var(--line));
+  outline: none;
+}
+.family-place-peek-top,
+.family-place-peek-weather {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.family-place-peek-top {
+  justify-content: space-between;
+  gap: 8px;
+}
+.family-place-peek-top strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+.family-place-peek-temp {
+  flex: 0 0 auto;
+  font-size: 1rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.family-place-peek-weather {
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.15;
+}
+.family-place-peek-weather > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.family-place-peek-icon {
+  display: grid;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+}
+.family-place-peek-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.family-place-peek-outlook {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 2.35em;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.18;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.family-place-peek-outlook.is-warning { color: var(--semantic-red); }
+.family-place-peek-outlook.is-advisory { color: var(--semantic-gold); }
+
+@media (max-width: 560px) {
+  .family-places-peek { padding-inline: 14px; }
+  .family-places-peek-strip {
+    grid-template-columns: none;
+    grid-auto-columns: minmax(176px, 62vw);
+  }
+}
+
 .place-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;

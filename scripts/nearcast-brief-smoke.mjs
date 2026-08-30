@@ -862,7 +862,7 @@ assert.doesNotMatch(askDockRule, /linear-gradient|margin:\s*-/, "Ask stays avail
 assert.match(askDockRule, /background:\s*transparent[\s\S]*box-shadow:\s*none/, "Ask uses the same quiet dock treatment as the weather destinations");
 assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*trigger = radarObserved/, "saved-forecast warnings remain stronger than the compact live evidence copy");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /launchSummaryItems[\s\S]*launchSummaryTargets = detailItems\.map/, "forecast-change cards retain their exact hidden detail targets");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, dailyPanel, map, els\.planPulse/, "the stable scan stays current, urgent nowcast, hourly proof, daily forecast, then map evidence");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, els\.familyPlacesPeek, hourlyPanel, dailyPanel, map, els\.planPulse/, "the stable scan keeps the optional family-place glance quiet ahead of hourly proof, daily forecast, and map evidence");
 
 const rollingBlockSource = extractFunction(daygraph, "rollingWindowBlockForEvent");
 const rollingBlockSandbox = {};
