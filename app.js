@@ -1,4 +1,4 @@
-const VERSION = "3.0.387";
+const VERSION = "3.0.388";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -15380,44 +15380,80 @@ function capitalize(str) {
 
 /* ---------- Precipitation nowcast ("rain in ~X min") ---------- */
 
-// Analyze the next ~2 hours of 15-minute precipitation into a plain-language
-// headline + a timeline. Returns null when it's dry (so the strip stays hidden).
+// Analyze the next six hours of precipitation into one plain-language answer.
+// The first two hours retain 15-minute precision; the later bridge is hourly
+// forecast guidance. The card stays hidden when the entire useful horizon is dry.
 function analyzeNowcast(data) {
-  const m = data.minutely_15;
-  if (!m || !m.time || !m.precipitation) return null;
-
   const now = forecastNowMs(data);
   const inch = (state.unit === "fahrenheit");
-  const wetThreshold = inch ? 0.002 : 0.05; // measurable precip per 15 min
+  const horizonMs = 6 * 60 * 60 * 1000;
+  const minuteHorizonMs = 2 * 60 * 60 * 1000;
+  const minuteThreshold = inch ? 0.002 : 0.05; // measurable precip per 15 min
+  const hourlyThreshold = inch ? 0.01 : 0.25; // measurable precip per hour
+  const m = data.minutely_15 || {};
+  const minuteTimes = Array.isArray(m.time) ? m.time : [];
+  const minutePrecipitation = Array.isArray(m.precipitation) ? m.precipitation : [];
+  const minuteSnowfall = Array.isArray(m.snowfall) ? m.snowfall : [];
+  const minuteProbability = Array.isArray(m.precipitation_probability) ? m.precipitation_probability : [];
 
-  // Keep the current slot through the next ~2 hours.
+  // Keep the current 15-minute slot through the next two hours when the
+  // provider offers it. This is the portion we can speak about most precisely.
   const slots = [];
-  for (let i = 0; i < m.time.length; i++) {
-    const t = parseForecastTimestamp(m.time[i], data);
+  for (let i = 0; i < Math.min(minuteTimes.length, minutePrecipitation.length); i++) {
+    const t = parseForecastTimestamp(minuteTimes[i], data);
     if (t === null) continue;
     if (t < now - 15 * 60 * 1000) continue; // drop fully-past slots
+    if (t > now + minuteHorizonMs) continue;
     slots.push({
       t,
-      time: m.time[i],
-      precip: m.precipitation[i] || 0,
-      snow: (m.snowfall && m.snowfall[i]) || 0,
-      prob: (m.precipitation_probability && m.precipitation_probability[i]) || 0
+      time: minuteTimes[i],
+      precip: minutePrecipitation[i] || 0,
+      snow: minuteSnowfall[i] || 0,
+      prob: minuteProbability[i] || 0,
+      intervalMinutes: 15,
+      source: "minute"
     });
-    if (slots.length >= 8) break;
   }
+
+  // Bridge the remaining useful window with the ordinary hourly forecast.
+  // We intentionally do not pretend that hour 5 has the same precision as a
+  // 15-minute nowcast; copy below says “possible” when it is model guidance.
+  const bridgeAfterMs = Math.max(now + minuteHorizonMs, slots.at(-1)?.t || now);
+  (data.hourly?.time || []).forEach((time, index) => {
+    const t = parseForecastTimestamp(time, data);
+    if (!Number.isFinite(t) || t <= bridgeAfterMs || t > now + horizonMs) return;
+    slots.push({
+      t,
+      time,
+      precip: Number(data.hourly.precipitation?.[index]) || 0,
+      snow: 0,
+      prob: Number(data.hourly.precipitation_probability?.[index]) || 0,
+      code: Number(data.hourly.weather_code?.[index]),
+      intervalMinutes: 60,
+      source: "hourly"
+    });
+  });
+  slots.sort((a, b) => a.t - b.t);
   if (!slots.length) return null;
 
-  const wet = slots.map((s) => s.precip > wetThreshold);
+  const precipCode = (code) => (code >= 51 && code <= 86) || code >= 95;
+  const wet = slots.map((slot) => {
+    const threshold = slot.intervalMinutes === 15 ? minuteThreshold : hourlyThreshold;
+    return slot.precip > threshold || (
+      slot.source === "hourly" && slot.prob >= 35 && precipCode(Number(slot.code))
+    );
+  });
   if (!wet.some(Boolean)) return null; // dry → hide
 
   const wetSlots = slots.filter((_, i) => wet[i]);
-  const peak = Math.max(...wetSlots.map((s) => s.precip));
-  const perHour = peak * 4;
+  const rateFor = (slot) => (slot.precip || 0) * (60 / Math.max(1, slot.intervalMinutes || 60));
+  const peak = Math.max(...wetSlots.map(rateFor));
+  const perHour = peak;
   const isSnow = wetSlots.some((s) => s.snow > 0);
   const heavy = inch ? perHour > 0.3 : perHour > 7.6;
   const moderate = inch ? perHour > 0.1 : perHour > 2.5;
   const intensity = heavy ? "Heavy " : moderate ? "Moderate " : "Light ";
-  const peakFrac = nowcastFrac(perHour, inch);
+  const peakFrac = nowcastFrac(perHour || (inch ? 0.025 : 0.65), inch);
   const word = isSnow ? "snow" : "rain";
   const label = `${intensity}${word}`.trim();
   const Label = capitalize(label);
@@ -15430,30 +15466,34 @@ function analyzeNowcast(data) {
 
   let title;
   let detail;
-  if (wet[0]) {
+  const firstWet = wet.indexOf(true);
+  const firstWetSlot = slots[firstWet];
+  const immediate = wet[0] && firstWetSlot.t <= now + 20 * 60 * 1000;
+  if (immediate) {
     // Raining now — when does it ease?
-    const firstDry = wet.indexOf(false);
+    const firstDry = wet.indexOf(false, firstWet);
     title = `${Label} now`;
     if (firstDry === -1) {
-      detail = "Likely for at least the next 2 hours";
+      detail = `Likely through ${formatTime(slots.at(-1).time)}`;
     } else {
       detail = `Easing around ${formatTime(slots[firstDry].time)}`;
     }
   } else {
-    // Dry now — when does it start?
-    const startIdx = wet.indexOf(true);
-    const mins = roundMin(slots[startIdx].t - now);
-    title = `${Label} soon`;
-    detail = `Starting in about ${mins} min`;
-    const dryAfter = wet.indexOf(false, startIdx);
+    // A 15-minute signal can earn “soon”; later hourly guidance remains a
+    // calibrated possibility rather than a false precise arrival promise.
+    const mins = roundMin(firstWetSlot.t - now);
+    const nearTerm = firstWetSlot.source === "minute" || mins <= 120;
+    title = nearTerm ? `${Label} soon` : `${capitalize(word)} possible later`;
+    detail = nearTerm ? `Starting in about ${mins} min` : `First chance near ${formatTime(firstWetSlot.time)}`;
+    const dryAfter = wet.indexOf(false, firstWet);
     if (dryAfter !== -1) {
-      const dur = roundMin(slots[dryAfter].t - slots[startIdx].t);
-      detail += `, lasting about ${dur} min`;
+      const dur = roundMin(slots[dryAfter].t - firstWetSlot.t);
+      detail += nearTerm ? `, lasting about ${dur} min` : `, easing around ${formatTime(slots[dryAfter].time)}`;
     }
   }
 
   const headline = `${title}, ${detail.charAt(0).toLowerCase()}${detail.slice(1)}`;
-  return { headline, title, detail, slots, wet, peak, peakFrac, isSnow };
+  return { headline, title, detail, slots, wet, peak, peakFrac, isSnow, nowMs: now, horizonMs };
 }
 
 function nowcastConflictsWithActivePrecip(analysis, truth = weatherTruth()) {
@@ -15543,7 +15583,7 @@ function shortClock(t) {
 }
 
 function buildNowcastGraph(analysis) {
-  const { slots } = analysis;
+  const { slots, nowMs, horizonMs } = analysis;
   const inch = state.unit === "fahrenheit";
 
   const VW = 320, H = 72;
@@ -15552,20 +15592,31 @@ function buildNowcastGraph(analysis) {
   const plotH = baseY - topY;
   const n = slots.length;
 
-  const fr = (i) => nowcastFrac((slots[i].precip || 0) * 4, inch);
-  const x = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const rateFor = (slot) => (slot.precip || 0) * (60 / Math.max(1, slot.intervalMinutes || 60));
+  const fr = (i) => {
+    const rate = rateFor(slots[i]);
+    // An hourly rain code with meaningful odds can be a useful “possible”
+    // event even when the modeled amount rounds to zero. Give it a restrained
+    // visual pulse instead of drawing a dishonest flat dry line.
+    const supportedChance = slots[i].source === "hourly" && analysis.wet[i] && rate <= 0;
+    return nowcastFrac(supportedChance ? (inch ? 0.02 : 0.5) : rate, inch);
+  };
+  const x = (i) => padL + Math.min(1, Math.max(0, (slots[i].t - nowMs) / horizonMs)) * plotW;
   const pts = slots.map((s, i) => ({ x: x(i), y: baseY - fr(i) * plotH }));
   const line = smoothPath(pts);
   const area = `${line} L ${pts[n - 1].x.toFixed(1)} ${baseY} L ${pts[0].x.toFixed(1)} ${baseY} Z`;
 
   // Horizontal gradient coloring the curve by intensity at each moment.
   const gradStops = pts.map((p, i) =>
-    `<stop offset="${((i / Math.max(n - 1, 1)) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
+    `<stop offset="${(((p.x - padL) / plotW) * 100).toFixed(1)}%" stop-color="${nowcastIntensityColor(fr(i))}"/>`
   ).join("");
 
-  const idxEnd = n - 1;
   const botTime = (i, anchor, t) => `<text x="${x(i).toFixed(1)}" y="${H - 2}" text-anchor="${anchor}" class="nowcast-axis">${t}</text>`;
-  const botLabels = botTime(0, "start", "Now") + botTime(idxEnd, "end", "2 hr");
+  const markerX = (fraction) => padL + fraction * plotW;
+  const botLabels = botTime(0, "start", "Now") +
+    `<text x="${markerX(1 / 3).toFixed(1)}" y="${H - 2}" text-anchor="middle" class="nowcast-axis">2h</text>` +
+    `<text x="${markerX(2 / 3).toFixed(1)}" y="${H - 2}" text-anchor="middle" class="nowcast-axis">4h</text>` +
+    `<text x="${markerX(1).toFixed(1)}" y="${H - 2}" text-anchor="end" class="nowcast-axis">6h</text>`;
 
   return `<svg viewBox="0 0 ${VW} ${H}" class="nowcast-svg">
     <defs>

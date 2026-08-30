@@ -44,6 +44,7 @@ run_portable_checks() {
     hourly-alert-detail-smoke.mjs \
     alert-geometry-smoke.mjs \
     hourly-precip-graph-smoke.mjs \
+    precipitation-outlook-smoke.mjs \
     hourly-hero-label-smoke.mjs \
     hourly-row-layout-smoke.mjs \
     daily-row-layout-smoke.mjs \
