@@ -10022,6 +10022,87 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
   -webkit-tap-highlight-color: transparent;
 }
 
+.hourly-interval-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 36px;
+  margin: 1px 2px 3px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--brief-accent) 17%, var(--border-glass));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-heavy) 64%, transparent);
+}
+
+.hourly-interval-tabs button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 860;
+  line-height: 1;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hourly-interval-tabs button span {
+  color: inherit;
+  font-size: 0.62rem;
+  font-weight: 760;
+  opacity: 0.72;
+}
+
+.hourly-interval-tabs button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--semantic-blue) 16%, var(--panel));
+  color: color-mix(in srgb, var(--semantic-blue) 88%, var(--ink));
+  box-shadow: 0 2px 7px rgba(18, 39, 59, 0.10);
+}
+
+.hourly-interval-tabs button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--semantic-blue) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.hourly.is-quarter-hourly {
+  grid-auto-columns: 60px;
+}
+
+.hourly.is-quarter-hourly .hour-card {
+  min-height: 184px;
+  padding-inline: 3px;
+}
+
+.hourly.is-quarter-hourly .hour-label {
+  font-size: 0.67rem;
+  white-space: nowrap;
+}
+
+.hourly.is-quarter-hourly .hour-icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.hourly.is-quarter-hourly .hour-trend-value {
+  min-width: 38px;
+  font-size: 0.9rem;
+}
+
+.hourly.is-quarter-hourly .hour-condition {
+  margin-top: 59px;
+  font-size: 0.65rem;
+}
+
+.hourly.is-quarter-hourly .hour-secondary {
+  font-size: 0.65rem;
+}
+
 .hourly-trend {
   position: absolute;
   z-index: 1;

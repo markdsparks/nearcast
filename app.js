@@ -1,7 +1,9 @@
-const VERSION = "3.0.390";
+const VERSION = "3.0.391";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
+const HOURLY_HERO_INTERVAL_KEY = "nearcast-hourly-hero-interval-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
+const HOURLY_HERO_INTERVALS = new Set(["hourly", "quarter-hour"]);
 const OUTDOOR_WINDOW_PROFILE = Object.freeze({
   duration: 2,
   idealFeelsF: 70,
@@ -1531,6 +1533,7 @@ const els = {
   placeSheet: document.querySelector("#placeSheet"),
   placeBackdrop: document.querySelector("#placeBackdrop"),
   hourly: document.querySelector("#hourly"),
+  hourlyIntervalTabs: document.querySelector("#hourlyIntervalTabs"),
   hourlyMetricTabs: document.querySelector("#hourlyMetricTabs"),
   uvForecastExplainer: document.querySelector("#uvForecastExplainer"),
   goodWindow: document.querySelector("#goodWindow"),
@@ -5158,6 +5161,9 @@ function bindEvents() {
   });
   bindTapDelegate(els.hourlyMetricTabs, "[data-hourly-metric]", (event, button) => {
     setHourlyHeroMetric(button.dataset.hourlyMetric);
+  });
+  bindTapDelegate(els.hourlyIntervalTabs, "[data-hourly-interval]", (event, button) => {
+    setHourlyHeroInterval(button.dataset.hourlyInterval);
   });
   els.hourly.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -10450,8 +10456,8 @@ async function fetchForecast(place, force = false) {
       "sunrise",
       "sunset"
     ].join(","),
-    minutely_15: "precipitation,precipitation_probability,snowfall",
-    forecast_minutely_15: "8",
+    minutely_15: "temperature_2m,apparent_temperature,precipitation,precipitation_probability,snowfall,weather_code,wind_speed_10m,wind_gusts_10m,is_day",
+    forecast_minutely_15: "24",
     temperature_unit: state.unit,
     wind_speed_unit: state.unit === "fahrenheit" ? "mph" : "kmh",
     precipitation_unit: state.unit === "fahrenheit" ? "inch" : "mm",
@@ -10524,6 +10530,8 @@ function convertForecastUnits(data, fromUnit, toUnit) {
   ], temp);
   convertFields(converted.daily, ["wind_speed_10m_max", "wind_gusts_10m_max"], wind);
   convertFields(converted.daily, ["precipitation_sum"], precip);
+  convertFields(converted.minutely_15, ["temperature_2m", "apparent_temperature"], temp);
+  convertFields(converted.minutely_15, ["wind_speed_10m", "wind_gusts_10m"], wind);
   convertFields(converted.minutely_15, ["precipitation", "snowfall"], precip);
   updateForecastUnitLabels(converted, toUnit);
 
@@ -16122,6 +16130,62 @@ function savedHourlyHeroMetric() {
   return HOURLY_HERO_METRICS.has(saved) ? saved : "temperature";
 }
 
+function savedHourlyHeroInterval() {
+  const saved = localStorage.getItem(HOURLY_HERO_INTERVAL_KEY);
+  return HOURLY_HERO_INTERVALS.has(saved) ? saved : "hourly";
+}
+
+function hasQuarterHourlyData(data) {
+  const minutely = data?.minutely_15 || {};
+  return Array.isArray(minutely.time) && minutely.time.length >= 8 && (
+    Array.isArray(minutely.temperature_2m) ||
+    Array.isArray(minutely.precipitation_probability) ||
+    Array.isArray(minutely.wind_speed_10m)
+  );
+}
+
+function quarterHourRows(data) {
+  const times = data?.minutely_15?.time || [];
+  const now = forecastNowMs(data);
+  return times.map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.ms >= now - (15 * 60 * 1000))
+    .slice(0, 24);
+}
+
+function quarterHourLabel(time) {
+  const match = String(time || "").match(/T(\d{2}):(\d{2})/);
+  if (!match) return "Soon";
+  return formatClock(Number(match[1]), Number(match[2]), false, true);
+}
+
+function hourlyIndexForQuarterHour(data, ms) {
+  const rows = (data?.hourly?.time || []).map((time, index) => ({ index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null);
+  if (!rows.length) return -1;
+  return rows.reduce((closest, row) => (
+    Math.abs(row.ms - ms) < Math.abs(closest.ms - ms) ? row : closest
+  ), rows[0]).index;
+}
+
+function quarterHourCondition(code, probability, fallback = "Weather") {
+  const wet = familyPlacePrecipKind(code);
+  const pop = Math.max(0, Math.min(100, Math.round(Number(probability) || 0)));
+  if (wet === "storm" && pop < 60) return "Storms possible";
+  if (wet && pop < 20) return "Mostly dry";
+  if (wet && pop < 60) return "Rain possible";
+  return weatherCodes[code] || fallback;
+}
+
+function quarterHourDisplayCode(code, probability, fallbackCode = 3) {
+  const wet = familyPlacePrecipKind(code);
+  const pop = Math.max(0, Math.min(100, Math.round(Number(probability) || 0)));
+  // Provider weather codes describe a possible condition. A 15-minute card
+  // must not paint a storm icon for a low-probability model blip.
+  if (wet && pop < 20) return fallbackCode;
+  if (wet === "storm" && pop < 60) return fallbackCode;
+  return Number.isFinite(Number(code)) ? Number(code) : fallbackCode;
+}
+
 function hourlyMetricValue(data, index, metric, isCurrent = false, truth = null, presentation = null) {
   const current = isCurrent ? canonicalCurrentSnapshot(data) : null;
   if (metric === "precipitation") {
@@ -16147,8 +16211,7 @@ function hourlyMetricValue(data, index, metric, isCurrent = false, truth = null,
   return Math.round(Number(value) || 0);
 }
 
-function hourlyTrendGeometry(values, metric) {
-  const pitch = 80;
+function hourlyTrendGeometry(values, metric, pitch = 80) {
   const width = Math.max(pitch, values.length * pitch - 4);
   const top = 8;
   const bottom = 42;
@@ -16310,8 +16373,142 @@ function setHourlyHeroMetric(metric) {
   requestAnimationFrame(() => { els.hourly.scrollLeft = scrollLeft; });
 }
 
-function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation = null) {
+function setHourlyHeroInterval(interval) {
+  if (!HOURLY_HERO_INTERVALS.has(interval) || !state.forecast) return;
+  if (interval === "quarter-hour" && !hasQuarterHourlyData(state.forecast)) return;
+  localStorage.setItem(HOURLY_HERO_INTERVAL_KEY, interval);
+  const scrollLeft = els.hourly.scrollLeft;
+  renderHourly(state.forecast, state.unit, weatherTruth(state.forecast));
+  requestAnimationFrame(() => { els.hourly.scrollLeft = scrollLeft; });
+}
+
+function renderQuarterHourly(data, tempUnit, truth) {
   const perf = perfStart();
+  const rows = quarterHourRows(data);
+  if (!rows.length) return renderHourly(data, tempUnit, truth, null, { forceHourly: true });
+  const metric = savedHourlyHeroMetric();
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const currentHour = currentHourlyIndex(data);
+  const currentHourPresentation = currentHour >= 0
+    ? forecastHourPresentation(data, currentHour, { isCurrent: true, truth })
+    : null;
+  const minutely = data.minutely_15;
+  const details = rows.map((row, position) => {
+    const hourIndex = hourlyIndexForQuarterHour(data, row.ms);
+    const hourly = hourIndex >= 0 ? forecastHourPresentation(data, hourIndex, {
+      isCurrent: position === 0,
+      truth: position === 0 ? truth : null
+    }) : null;
+    const isCurrent = position === 0;
+    const fallback = hourly?.label || "Weather";
+    const rawCode = Number(minutely.weather_code?.[row.index]);
+    const probability = Number(minutely.precipitation_probability?.[row.index]);
+    const code = isCurrent
+      ? (currentHourPresentation?.code ?? rawCode)
+      : quarterHourDisplayCode(rawCode, probability, hourly?.code ?? 3);
+    const minuteTemperature = Number(minutely.temperature_2m?.[row.index]);
+    const fallbackTemperature = Number(data.hourly.temperature_2m?.[hourIndex]);
+    const currentTemperature = Number(canonicalCurrentSnapshot(data)?.temperature_2m);
+    const temperature = isCurrent && Number.isFinite(currentTemperature)
+      ? currentTemperature
+      : (Number.isFinite(minuteTemperature) ? minuteTemperature : fallbackTemperature);
+    const minuteFeels = Number(minutely.apparent_temperature?.[row.index]);
+    const fallbackFeels = Number(data.hourly.apparent_temperature?.[hourIndex] ?? fallbackTemperature);
+    const currentFeels = Number(canonicalCurrentSnapshot(data)?.apparent_temperature);
+    const feels = isCurrent && Number.isFinite(currentFeels)
+      ? currentFeels
+      : (Number.isFinite(minuteFeels) ? minuteFeels : fallbackFeels);
+    const minuteWind = Number(minutely.wind_speed_10m?.[row.index]);
+    const fallbackWind = Number(data.hourly.wind_speed_10m?.[hourIndex]);
+    const currentWind = Number(canonicalCurrentSnapshot(data)?.wind_speed_10m);
+    const wind = isCurrent && Number.isFinite(currentWind)
+      ? currentWind
+      : (Number.isFinite(minuteWind) ? minuteWind : fallbackWind);
+    const minuteGust = Number(minutely.wind_gusts_10m?.[row.index]);
+    const gust = Number.isFinite(minuteGust) ? minuteGust : wind;
+    const uv = hourIndex >= 0 ? Number(data.hourly.uv_index?.[hourIndex]) : null;
+    return {
+      ...row,
+      hourIndex,
+      isCurrent,
+      code: Number.isFinite(code) ? code : (hourly?.code ?? 3),
+      label: isCurrent ? (currentHourPresentation?.label || quarterHourCondition(rawCode, probability, fallback)) : quarterHourCondition(rawCode, probability, fallback),
+      isDay: isCurrent ? Boolean(canonicalCurrentSnapshot(data)?.is_day ?? minutely.is_day?.[row.index]) : Boolean(minutely.is_day?.[row.index]),
+      temperature: Math.round(temperature),
+      feels: Math.round(feels),
+      wind: Math.max(0, Math.round(wind)),
+      gust: Math.max(0, Math.round(gust)),
+      probability: Number.isFinite(probability) ? Math.max(0, Math.min(100, Math.round(probability))) : null,
+      uv: Number.isFinite(uv) ? Math.max(0, Math.round(uv)) : null,
+      precipDisplay: isCurrent ? currentHourPresentation?.precipDisplay : null
+    };
+  });
+  const metricValues = details.map((item) => {
+    if (metric === "precipitation") return item.probability;
+    if (metric === "wind") return item.wind;
+    if (metric === "uv") return item.uv;
+    return metric === "feels" ? item.feels : item.temperature;
+  });
+  const trend = hourlyTrendGeometry(metricValues, metric, 64);
+  const trendSegments = hourlyTrendSegments(trend.points);
+  const trendLines = trendSegments.filter((segment) => segment.length > 1)
+    .map((segment) => `<polyline points="${segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}"></polyline>`).join("");
+  const areaPaths = ["precipitation", "uv"].includes(metric)
+    ? trendSegments.filter((segment) => segment.length > 1)
+      .map((segment) => `<path class="hourly-trend-area" d="M ${segment[0].x.toFixed(1)} 48 L ${segment.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${segment.at(-1).x.toFixed(1)} 48 Z"></path>`).join("")
+    : "";
+  els.hourly.classList.add("is-quarter-hourly");
+  els.hourly.setAttribute("aria-label", "15-minute forecast for the next six hours");
+  const cards = details.map((item, position) => {
+    const metricValue = metricValues[position];
+    const metricPresentation = hourlyMetricPresentation({
+      metric,
+      value: metricValue,
+      temp: item.temperature,
+      rainChance: item.probability ?? 0,
+      gust: item.gust,
+      windUnit,
+      precipDisplay: item.precipDisplay || { displayMode: "forecast-probability", forecastPopAvailable: item.probability !== null },
+      isCurrent: item.isCurrent
+    });
+    if (metric === "uv") metricPresentation.secondary = "Hourly UV";
+    const style = metricPresentation.temperatureColor
+      ? ` style="--t-h:${tempOklchHue(metricValue).toFixed(0)}"`
+      : "";
+    const label = item.isCurrent ? "Now" : quarterHourLabel(item.time);
+    const rainAria = item.probability === null ? "precipitation guidance unavailable" : `${item.probability}% precipitation forecast guidance`;
+    return `
+      <article class="hour-card quarter-hour-card metric-${metric}${item.isCurrent ? " current" : ""}" style="--trend-y:${Number.isFinite(trend.points[position].y) ? trend.points[position].y.toFixed(1) : "25"}px" role="button" tabindex="0" data-hour-index="${Math.max(0, item.hourIndex)}" aria-label="${escapeHtml(`${label}: ${item.label}, ${metricPresentation.aria}, ${rainAria}. Open hourly details.`)}">
+        <span class="hour-label">${label}</span>
+        <div class="hour-icon" aria-hidden="true">${weatherIcon(item.code, item.isDay, { density: "dense" })}</div>
+        <strong class="hour-temp hour-trend-value"${style}>${metricPresentation.trendLabel}</strong>
+        <span class="hour-condition" aria-hidden="true">${escapeHtml(hourlyConditionCardLabel(item.label))}</span>
+        <span class="hour-secondary${metric === "temperature" ? ` has-rain${(item.probability || 0) >= 20 ? " wet" : " is-low"}` : ""}">${metricPresentation.secondary}</span>
+      </article>
+    `;
+  }).join("");
+  els.hourly.innerHTML = `
+    <svg class="hourly-trend metric-${metric}" style="width:${trend.width}px" viewBox="0 0 ${trend.width} 50" preserveAspectRatio="none" aria-hidden="true">
+      ${areaPaths}${trendLines}${trend.points.filter((point) => point.available).map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3"></circle>`).join("")}
+    </svg>
+    ${cards}
+  `;
+  renderUvForecastExplainer(data, metric);
+  perfEnd("renderQuarterHourly", perf);
+}
+
+function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation = null, options = {}) {
+  const interval = savedHourlyHeroInterval();
+  const useQuarterHourly = !options.forceHourly && interval === "quarter-hour" && hasQuarterHourlyData(data);
+  els.hourlyIntervalTabs?.querySelectorAll("[data-hourly-interval]").forEach((button) => {
+    const available = button.dataset.hourlyInterval !== "quarter-hour" || hasQuarterHourlyData(data);
+    button.hidden = !available;
+    button.setAttribute("aria-pressed", String(button.dataset.hourlyInterval === (useQuarterHourly ? "quarter-hour" : "hourly")));
+  });
+  if (useQuarterHourly) return renderQuarterHourly(data, tempUnit, truth);
+  const perf = perfStart();
+  els.hourly.classList.remove("is-quarter-hourly");
+  els.hourly.setAttribute("aria-label", "Hourly forecast for the next 24 hours");
   const now = forecastNowMs(data);
   const currentIndex = currentHourlyIndex(data);
   const rows = data.hourly.time
