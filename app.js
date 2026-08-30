@@ -1,4 +1,4 @@
-const VERSION = "3.0.392";
+const VERSION = "3.0.394";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_INTERVAL_KEY = "nearcast-hourly-hero-interval-v1";
@@ -5174,6 +5174,9 @@ function bindEvents() {
   });
   bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
   bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
+  bindTapDelegate(document.getElementById("sheetHourlyInterval"), "[data-sheet-hourly-interval]", (event, button) => {
+    if (typeof setSheetHourlyInterval === "function") setSheetHourlyInterval(button.dataset.sheetHourlyInterval);
+  });
   bindTapAction(document.getElementById("sheetPrevDay"), () => navigateSheetDay(-1));
   bindTapAction(document.getElementById("sheetNextDay"), () => navigateSheetDay(1));
   bindTapAction(document.getElementById("sheetNowJump"), scrollDayDetailToNow);

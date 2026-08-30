@@ -15970,6 +15970,68 @@ body.map-immersive-active .day-sheet.show {
   white-space: nowrap;
 }
 
+/* The full Hourly sheet starts broad. On the current rolling window, this
+   deliberately quiet lens earns exact timing without introducing another
+   chunky segmented control above the list. */
+.sheet-hourly-interval {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 32px;
+  margin: -3px 4px 7px;
+}
+.sheet-hourly-interval[hidden] {
+  display: none;
+}
+.sheet-hourly-interval button {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-height: 30px;
+  padding: 3px 0 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.77rem;
+  font-weight: 860;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-hourly-interval button small {
+  color: inherit;
+  font-size: 0.66rem;
+  font-weight: 760;
+  opacity: 0.68;
+}
+.sheet-hourly-interval button::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transform: scaleX(0.6);
+  transition: background 0.16s ease, transform 0.16s ease;
+}
+.sheet-hourly-interval button[aria-pressed="true"] {
+  color: color-mix(in srgb, var(--semantic-blue) 88%, var(--ink));
+}
+.sheet-hourly-interval button[aria-pressed="true"]::after {
+  background: var(--semantic-blue);
+  transform: scaleX(1);
+}
+.sheet-hourly-interval button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--semantic-blue) 34%, transparent);
+  outline-offset: 3px;
+}
+
 .graph-metric {
   display: flex;
   align-items: center;
@@ -16427,6 +16489,24 @@ body.map-immersive-active .sheet-now-jump {
 }
 .sheet-hour-row:last-child {
   border-bottom: 0;
+}
+.sheet-quarter-hour-transition {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 0 9px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.sheet-quarter-hour-transition::before,
+.sheet-quarter-hour-transition::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 .sheet-hour-row::before {
   content: "";

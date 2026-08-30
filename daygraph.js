@@ -368,12 +368,77 @@ function setDayDetailMode(mode, persist = true) {
   // mode. It remains absent from the more focused graph explanation.
   if (typeof setAppDockCurrent === "function") setAppDockCurrent(isHourly ? "hourly" : "today");
   updateSheetDayNav(normalized);
+  updateSheetHourlyInterval();
 
   if (!isHourly) scheduleGraphCalloutReflow();
   renderRollingTimelineFooter();
   updateSheetNowJump();
   if (isHourly) maybeExtendRollingTimeline();
   if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
+}
+
+function sheetQuarterHourlyRows(data = state.forecast) {
+  const times = data?.minutely_15?.time;
+  if (!Array.isArray(times) || !times.length) return [];
+  const now = forecastNowMs(data);
+  return times
+    .map((time, index) => ({ time, index, ms: parseForecastTimestamp(time, data) }))
+    .filter((row) => row.ms !== null && row.ms >= now - 15 * 60 * 1000)
+    .slice(0, 24);
+}
+
+function sheetQuarterHourlyAvailable(nav = dayDetailNavState) {
+  return Boolean(
+    nav?.source === "rolling" &&
+    Number(nav.block || 0) === 0 &&
+    sheetQuarterHourlyRows(nav.data || state.forecast).length >= 4
+  );
+}
+
+function updateSheetHourlyInterval() {
+  const control = document.getElementById("sheetHourlyInterval");
+  if (!control) return;
+  const isHourly = isSheetHourlyModeActive();
+  const available = isHourly && sheetQuarterHourlyAvailable();
+  control.hidden = !available;
+  if (!available) return;
+  const selected = dayDetailNavState?.hourlyInterval === "quarter-hour" ? "quarter-hour" : "hourly";
+  control.querySelectorAll("[data-sheet-hourly-interval]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.sheetHourlyInterval === selected));
+  });
+}
+
+function setSheetHourlyInterval(interval) {
+  if (!dayDetailNavState || !sheetQuarterHourlyAvailable()) return;
+  const selected = interval === "quarter-hour" ? "quarter-hour" : "hourly";
+  if (dayDetailNavState.hourlyInterval === selected) return;
+  dayDetailNavState.hourlyInterval = selected;
+  const data = dayDetailNavState.data || state.forecast;
+  const rows = dayDetailRowsForState(dayDetailNavState);
+  if (!data || !rows.length) return;
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const precipUnit = detailPrecipUnit(data);
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const rawHours = detailHoursForIndices(rows.map((row) => row.index), {
+    data,
+    alerts: activeAlerts,
+    eventWindow: dayDetailNavState.eventWindow,
+    showNow: Boolean(dayDetailNavState.showNow)
+  });
+  const hours = dayDetailReconcileRollingThunder(rawHours, dayDetailNavState.materialEvent, dayDetailNavState.source);
+  const result = renderHourlyList(hours, tempUnit, windUnit, precipUnit, {
+    showNow: Boolean(dayDetailNavState.showNow),
+    data,
+    eventWindow: dayDetailNavState.eventWindow,
+    showInitialDayDivider: dayDetailNavState.source === "rolling"
+  });
+  if (dayDetailNavState.timeline) {
+    dayDetailNavState.timeline.lastDay = result?.lastDay || null;
+    dayDetailNavState.timeline.lastAlertKey = result?.lastAlertKey || "";
+  }
+  updateSheetHourlyInterval();
+  renderRollingTimelineFooter();
+  updateSheetNowJump();
 }
 
 function updateSheetDayNav(mode = getDayDetailMode()) {
@@ -570,6 +635,7 @@ function openDayDetail({
     sunriseISO,
     sunsetISO,
     contextLabel,
+    hourlyInterval: "hourly",
     ...(navState || {})
   };
   if (dayDetailNavState.timeline) {
@@ -1478,9 +1544,10 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       : "";
     prevAlertKey = alertKey;
     const condition = weatherCodes[hour.code] || "Weather";
+    const timeLabel = hour.isMinuteDetail ? formatTime(hour.time) : formatHour(hour.time);
     const badges = hourlyRowBadges(hour, tempUnit, windUnit, precipUnit);
     const detailNote = hourlyDetailNote(hour, tempUnit, windUnit);
-    const now = showNow && isCurrentHour(hour.time, data);
+    const now = Boolean(hour.isMinuteNow) || (showNow && isCurrentHour(hour.time, data));
     const rainClass = hour.activePrecip || hour.precipPrimary ? " is-rainy" : "";
     const uvClass = hour.uv >= 6 ? " is-sunny" : "";
     const windClass = hour.gust >= 25 ? " is-windy" : "";
@@ -1507,13 +1574,13 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
     const windSpeed = Math.max(0, Math.round(Number(hour.wind) || 0));
     const windDirection = hourlyRowWindDirection(hour);
     const rainAria = hour.activePrecip ? rainAriaText : `rain chance ${rainAriaText}`;
-    const rowLabel = `${formatHour(hour.time)} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${rainAria}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
+    const rowLabel = `${timeLabel} ${condition}${showEventBadge && hour.eventLabel ? `, memory ${hour.eventLabel}` : ""}${hour.stormPotential ? ", thunder possible" : ""}${hour.alert ? `, ${hour.alert.event}` : ""}, ${rainAria}, ${Math.round(hour.temp)}${deg}, wind ${windText}, ${windDirection.label}${badges.length ? `, ${badges.map((badge) => badge.label).join(", ")}` : ""}`;
     const precipText = hour.precipText || (hour.precipAvailable === false
       ? "Unavailable"
       : hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}${alertDivider}
       <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
-        <div class="sheet-hour-time">${formatHour(hour.time)}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
+        <div class="sheet-hour-time">${timeLabel}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-temp">
           <strong>${Math.round(hour.temp)}°</strong>
@@ -1547,9 +1614,103 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
 
 function renderHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
   const list = document.getElementById("sheetHourlyList");
+  if (dayDetailNavState?.hourlyInterval === "quarter-hour" && sheetQuarterHourlyAvailable()) {
+    return renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options);
+  }
   const result = renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options);
   list.innerHTML = result.html;
   return result;
+}
+
+function hourlyIndexForSheetMinute(data, minuteMs) {
+  const times = data?.hourly?.time || [];
+  for (let index = 0; index < times.length; index += 1) {
+    const start = parseForecastTimestamp(times[index], data);
+    const end = times[index + 1] ? parseForecastTimestamp(times[index + 1], data) : null;
+    if (start !== null && minuteMs >= start && (end === null || minuteMs < end)) return index;
+  }
+  return -1;
+}
+
+function renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options = {}) {
+  const data = options.data || dayDetailNavState?.data || state.forecast;
+  const minutely = data?.minutely_15 || {};
+  const minuteRows = sheetQuarterHourlyRows(data);
+  const hourlyByIndex = new Map(hrs.map((hour) => [hour.index, hour]));
+  const minuteHours = minuteRows.map((row, position) => {
+    const hourlyIndex = hourlyIndexForSheetMinute(data, row.ms);
+    const fallback = hourlyByIndex.get(hourlyIndex) || detailHoursForIndices([hourlyIndex], {
+      data,
+      alerts: activeAlerts,
+      eventWindow: dayDetailNavState?.eventWindow,
+      showNow: false
+    })[0];
+    if (!fallback) return null;
+    const value = (field, fallbackValue) => {
+      const candidate = Number(minutely[field]?.[row.index]);
+      return Number.isFinite(candidate) ? candidate : fallbackValue;
+    };
+    const minuteCode = Number(minutely.weather_code?.[row.index]);
+    const probability = Number(minutely.precipitation_probability?.[row.index]);
+    const precipitation = Number(minutely.precipitation?.[row.index]);
+    return {
+      ...fallback,
+      index: hourlyIndex,
+      time: row.time,
+      ms: row.ms,
+      endMs: row.ms + 15 * 60 * 1000,
+      temp: value("temperature_2m", fallback.temp),
+      feels: value("apparent_temperature", fallback.feels),
+      wind: value("wind_speed_10m", fallback.wind),
+      gust: value("wind_gusts_10m", fallback.gust),
+      pop: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : fallback.pop,
+      forecastPop: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : fallback.forecastPop,
+      popAvailable: Number.isFinite(probability) || fallback.popAvailable,
+      precip: Number.isFinite(precipitation) ? Math.max(0, precipitation) : fallback.precip,
+      forecastPrecip: Number.isFinite(precipitation) ? Math.max(0, precipitation) : fallback.forecastPrecip,
+      precipAvailable: Number.isFinite(precipitation) || fallback.precipAvailable,
+      code: Number.isFinite(minuteCode) ? minuteCode : fallback.code,
+      rawCode: Number.isFinite(minuteCode) ? minuteCode : fallback.rawCode,
+      isDay: Boolean(minutely.is_day?.[row.index] ?? fallback.isDay),
+      isMinuteDetail: true,
+      isMinuteNow: position === 0,
+      precipPrimary: Number.isFinite(probability) ? probability >= 20 : fallback.precipPrimary,
+      precipChance: Number.isFinite(probability) ? probability >= 20 : fallback.precipChance,
+      activePrecip: position === 0 ? fallback.activePrecip : false,
+      rainText: position === 0 && fallback.activePrecip ? fallback.rainText : "",
+      precipDisplay: position === 0 ? fallback.precipDisplay : null,
+      observation: position === 0 ? fallback.observation : null
+    };
+  }).filter(Boolean);
+  if (!minuteHours.length) {
+    const fallback = renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options);
+    document.getElementById("sheetHourlyList").innerHTML = fallback.html;
+    return fallback;
+  }
+  const throughMs = minuteHours.at(-1).endMs;
+  const minuteMarkup = renderHourlyRowsMarkup(minuteHours, tempUnit, windUnit, precipUnit, {
+    ...options,
+    showNow: false,
+    allowEventFocus: false,
+    showInitialDayDivider: false
+  });
+  const hourlyAfter = hrs.filter((hour) => hour.ms !== null && hour.ms >= throughMs);
+  const continuingMarkup = renderHourlyRowsMarkup(hourlyAfter, tempUnit, windUnit, precipUnit, {
+    ...options,
+    showNow: false,
+    startRowIndex: minuteHours.length,
+    previousDay: minuteMarkup.lastDay,
+    previousAlertKey: minuteMarkup.lastAlertKey,
+    allowEventFocus: false
+  });
+  const transition = hourlyAfter.length
+    ? `<div class="sheet-quarter-hour-transition"><span>Hourly forecast from ${escapeHtml(formatForecastMs(throughMs, data))}</span></div>`
+    : "";
+  document.getElementById("sheetHourlyList").innerHTML = `${minuteMarkup.html}${transition}${continuingMarkup.html}`;
+  return {
+    lastDay: continuingMarkup.lastDay || minuteMarkup.lastDay,
+    lastAlertKey: continuingMarkup.lastAlertKey || minuteMarkup.lastAlertKey
+  };
 }
 
 function handleDayDetailScroll() {
