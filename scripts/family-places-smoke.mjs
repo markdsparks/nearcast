@@ -82,6 +82,7 @@ assert.equal(overviewPlaces.filter((place) => place.id === "home").length, 1, "a
 assert.equal(overviewPlaces.length, 6, "the family overview stays intentionally short");
 assert.equal(familyPlacesForHome().some((place) => place.id === "home"), false, "Home never repeats the selected place in the Home glance rail");
 assert.equal(familyPlacesForHome().length, 4, "the Home glance rail remains a compact family check, not a dashboard");
+assert.equal(String(familyPlacesForHome()[0].id), "school", "Home cards keep the source place identity even when it will later be serialized through data attributes");
 const chicagoTime = familyPlaceLocalTime("America/Chicago", new Date("2026-08-24T18:14:00Z"));
 assert.match(chicagoTime, /local$/, "every family place can carry a quiet local-time cue");
 state.timeFormat = "24";
@@ -130,6 +131,7 @@ assert.match(html, /<h2>Family places<\/h2>/, "the Places surface has a clear, h
 assert.match(html, /id="familyPlacesPeek"/, "Home has an intentionally optional Family Places glance rail");
 assert.match(app, /function familyPlacesForOverview\([\s\S]*?return places\.slice\(0, 6\)/, "the overview is intentionally limited instead of becoming a location dashboard");
 assert.match(app, /function familyPlacesForHome\([\s\S]*?\.slice\(0, 4\)/, "Home limits family places so the primary weather read stays first");
+assert.match(app, /String\(candidate\.id\) === String\(card\.dataset\.familyPlaceId\)/, "Home family-place cards resolve numeric and string place IDs after DOM serialization");
 assert.match(app, /function familyPlaceOutlook\(/, "each family place has its own compact next-change reader");
 assert.match(app, /function refreshFamilyPlaceLocalTimes\(/, "open Family Places refreshes local clocks on the app's minute cadence");
 assert.match(app, /secondary:\s*`Air \$\{temp\}°`/, "Feels-like hourly cards use a compact, complete air-temperature comparison");

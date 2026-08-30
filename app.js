@@ -1,4 +1,4 @@
-const VERSION = "3.0.389";
+const VERSION = "3.0.390";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -8128,7 +8128,7 @@ function renderFamilyPlacesPeek() {
   bindTapAction(root.querySelector(".family-places-peek-all"), openPlaceSheet);
   root.querySelectorAll("[data-family-place-id]").forEach((card) => {
     bindTapAction(card, () => {
-      const place = places.find((candidate) => candidate.id === card.dataset.familyPlaceId);
+      const place = places.find((candidate) => String(candidate.id) === String(card.dataset.familyPlaceId));
       if (place) loadPlace(place);
     });
   });
@@ -8196,7 +8196,7 @@ function updateFamilyPlacePeek(placeId) {
   const root = els.familyPlacesPeek;
   const card = root?.querySelector(`[data-family-place-id="${CSS.escape(String(placeId))}"]`);
   const g = glanceData[placeId];
-  const place = familyPlacesForHome().find((candidate) => candidate.id === placeId);
+  const place = familyPlacesForHome().find((candidate) => String(candidate.id) === String(placeId));
   if (!card || !g || !place) return;
   const unit = state.unit === "fahrenheit" ? "F" : "C";
   card.querySelector(".family-place-peek-temp").textContent = `${g.temp}${degree(unit)}`;
