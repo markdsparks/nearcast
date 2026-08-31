@@ -1,5 +1,7 @@
-const VERSION = "3.0.395";
-const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
+const VERSION = "3.0.396";
+// Kept only long enough to remove the old persisted Home lens. Home is the
+// family's stable first look, so every fresh app/location visit begins with
+// Hourly + Temperature. The full Hourly surface owns its separate controls.
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_INTERVAL_KEY = "nearcast-hourly-hero-interval-v1";
 const HOURLY_HERO_METRICS = new Set(["temperature", "feels", "precipitation", "wind", "uv"]);
@@ -581,6 +583,8 @@ const state = {
   radarPrecipSeq: 0,
   locationIsDay: null,
   forecastUnit: null,
+  hourlyHeroMetric: "temperature",
+  hourlyHeroInterval: "hourly",
   continuityBaseline: { key: "", store: null },
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
@@ -1538,6 +1542,9 @@ const els = {
   uvForecastExplainer: document.querySelector("#uvForecastExplainer"),
   goodWindow: document.querySelector("#goodWindow"),
   daily: document.querySelector("#daily"),
+  extendedDailyPanel: document.querySelector("#extendedDailyPanel"),
+  extendedDaily: document.querySelector("#extendedDaily"),
+  extendedDailyList: document.querySelector("#extendedDailyList"),
   updatedAt: document.querySelector("#updatedAt"),
   metricTip: document.querySelector("#metricTip"),
   glanceDetailBackdrop: document.querySelector("#glanceDetailBackdrop"),
@@ -4061,23 +4068,25 @@ function arrangeForecastHierarchy() {
   const nowcast = document.querySelector("#nowcast");
   const dailyPanel = document.querySelector(".daily-panel");
   const map = document.querySelector("#mapView");
-  if (!launch || !hourlyPanel || !hero || !dailyPanel || !map || !els.goodWindow) return;
+  const extendedDailyPanel = document.querySelector("#extendedDailyPanel");
+  if (!launch || !hourlyPanel || !hero || !dailyPanel || !map || !extendedDailyPanel || !els.goodWindow) return;
 
   // The outlook and its hourly evidence are one hero. Keeping them in a single
   // surface makes the prose explain the trend instead of competing with it.
   hourlyPanel.prepend(hero);
   // An active 15-minute nowcast is the most time-sensitive forecast on the
   // page. It stays hidden when dry, but when rain or snow is imminent it must
-  // appear before the broad hourly outlook. Preserve the universal weather
-  // scan before personalized guidance: Now -> Hourly -> Daily -> Map. Plans
-  // and recommendations remain available below it, but no longer interrupt
-  // the forecast people came here to verify.
-  launch.after(nowcast, els.familyPlacesPeek, hourlyPanel, dailyPanel, map, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
+  // appear before the broad hourly outlook. The stable family scan is then:
+  // Now -> Outlook/Hourly -> seven useful days -> Map -> lower-confidence
+  // extended days. Another family place only interrupts after that universal
+  // forecast when it has earned attention with a material exception.
+  launch.after(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els.familyPlacesPeek, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
   initPerfDiagnostics();
   initViewportGeometrySync();
+  resetHomeHourlyLens();
   // Plan memories are loaded synchronously into state before init. Only now is
   // it safe for planner.js to prune stale notification selections and enforce
   // the server's three-plan cap without mistaking startup for an empty list.
@@ -4570,6 +4579,19 @@ function setAppDockCurrent(action = "today") {
   });
 }
 
+function activeAppDockDestination() {
+  if (els.placeSheet?.classList.contains("show")) return "places";
+  if (els.memorySheet?.classList.contains("show")) return "plans";
+  if (mapState.immersive) return "map";
+  const dayDetail = document.getElementById("dayDetail");
+  if (dayDetail?.classList.contains("show") && dayDetail.classList.contains("is-hourly-mode")) return "hourly";
+  return "today";
+}
+
+function syncAppDockCurrent() {
+  setAppDockCurrent(activeAppDockDestination());
+}
+
 function handleAppDockAction(action) {
   if (action === "today") {
     setAppDockCurrent("today");
@@ -4585,6 +4607,13 @@ function handleAppDockAction(action) {
   if (action === "hourly") {
     setAppDockCurrent("hourly");
     if (typeof openNext24Detail === "function") openNext24Detail();
+    return;
+  }
+  if (action === "places") {
+    const dayDetail = document.getElementById("dayDetail");
+    if (dayDetail && !dayDetail.hidden && dayDetail.classList.contains("show")) closeDayDetail();
+    setAppDockCurrent("places");
+    openPlaceSheet();
     return;
   }
   if (action === "map") {
@@ -4909,7 +4938,11 @@ function bindEvents() {
     submitAskForm();
   });
   bindTapAction(els.aiLauncher, openAISheet);
-  bindTapAction(els.aiAgentButton, () => openAISheet({ autoBrief: false }));
+  bindTapAction(els.aiAgentButton, () => openAISheet({ autoBrief: false, surface: "forecast" }));
+  document.querySelectorAll("[data-context-ask]").forEach((button) => {
+    if (button === els.aiAgentButton) return;
+    bindTapAction(button, () => openAISheet({ autoBrief: false, surface: button.dataset.askContext || "forecast" }));
+  });
   bindTapAction(els.planInvitationOpen, () => openPlanInvitation(""));
   bindTapAction(els.planInvitationDismiss, dismissPlanInvitation);
   bindTapDelegate(els.planInvitation, "[data-plan-invitation-template]", (event, target) => {
@@ -5148,6 +5181,17 @@ function bindEvents() {
       openDayFromIndex(Number(row.dataset.index));
     }
   });
+  bindTapDelegate(els.extendedDailyList, ".day-row", (event, row) => {
+    if (row && row.dataset.index !== undefined) openDayFromIndex(Number(row.dataset.index));
+  });
+  els.extendedDailyList?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest(".day-row");
+    if (row && row.dataset.index !== undefined) {
+      event.preventDefault();
+      openDayFromIndex(Number(row.dataset.index));
+    }
+  });
   bindTapDelegate(els.nowSummary, "[data-summary-index]", (event, target) => {
     openLaunchSummaryDetail(Number(target.dataset.summaryIndex));
   }, { preventDefault: false });
@@ -5172,8 +5216,6 @@ function bindEvents() {
     event.preventDefault();
     openHourlyStripDetail(Number(card.dataset.hourIndex));
   });
-  bindTapAction(document.getElementById("sheetGraphMode"), () => setDayDetailMode("graph"));
-  bindTapAction(document.getElementById("sheetHourlyMode"), () => setDayDetailMode("hourly"));
   bindTapDelegate(document.getElementById("sheetHourlyInterval"), "[data-sheet-hourly-interval]", (event, button) => {
     if (typeof setSheetHourlyInterval === "function") setSheetHourlyInterval(button.dataset.sheetHourlyInterval);
   });
@@ -7765,7 +7807,10 @@ function updatePlaceSaveButton() {
 // place still loads its full canonical forecast, radar, alerts, and evidence.
 // Cached per place + unit so the sheet stays immediate on repeat visits.
 const glanceData = {};
+const glanceHydratedAt = {};
+const glanceHydrationTasks = {};
 const GLANCE_CACHE_VERSION = "v4";
+const GLANCE_REFRESH_MS = 15 * 60 * 1000;
 let editingSavedPlaceId = null;
 
 function placeFamilyAlias(place) {
@@ -7827,6 +7872,23 @@ function familyPlacesForOverview() {
   return places.slice(0, 6);
 }
 
+function familyPlacesForHydration() {
+  const places = [];
+  const add = (place) => {
+    if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return;
+    const duplicate = places.some((candidate) => (
+      String(candidate.id || "") === String(place.id || "") || (
+        Math.abs(Number(candidate.latitude) - Number(place.latitude)) < 0.001 &&
+        Math.abs(Number(candidate.longitude) - Number(place.longitude)) < 0.001
+      )
+    ));
+    if (!duplicate) places.push(place);
+  };
+  add(state.activePlace);
+  state.savedPlaces.forEach(add);
+  return places;
+}
+
 // Home is a weather read, not a location dashboard. It earns this small
 // horizontal glance only for other places the family has deliberately saved;
 // the selected place is already the hero above it.
@@ -7838,7 +7900,64 @@ function familyPlacesForHome() {
       Math.abs(Number(place?.latitude) - Number(active?.latitude)) >= 0.001 ||
       Math.abs(Number(place?.longitude) - Number(active?.longitude)) >= 0.001
     );
-  }).slice(0, 4);
+  });
+}
+
+function activeHomeTemperature() {
+  const current = state.forecast ? Number(canonicalCurrentSnapshot(state.forecast)?.temperature_2m) : NaN;
+  if (Number.isFinite(current)) return Math.round(current);
+  const activeGlance = state.activePlace ? glanceData[state.activePlace.id] : null;
+  return Number.isFinite(Number(activeGlance?.temp)) ? Math.round(Number(activeGlance.temp)) : null;
+}
+
+function familyPlaceHomeException(place) {
+  const glance = glanceData[place?.id];
+  if (!glance) return null;
+  if (glance.alert?.event) {
+    return {
+      reason: String(glance.alert.event),
+      tone: glance.alert.tone || "advisory",
+      kind: "alert",
+      priority: 3
+    };
+  }
+
+  const precipKind = familyPlacePrecipKind(glance.code);
+  const outlook = String(glance.outlook || "").trim();
+  const hasStorm = precipKind === "storm" || /\b(?:thunder|storm)/i.test(outlook);
+  const hasPrecip = Boolean(precipKind) || /\b(?:rain|snow|sleet|showers?)\b/i.test(outlook);
+  if (hasStorm || hasPrecip) {
+    return {
+      reason: outlook || (hasStorm ? "Storms now" : precipKind === "snow" ? "Snow now" : "Rain now"),
+      // Red is reserved for official warnings. A forecast storm signal is
+      // important, but it remains forecast guidance rather than an alert.
+      tone: "weather",
+      kind: hasStorm ? "storm" : "precipitation",
+      priority: 2
+    };
+  }
+
+  const here = activeHomeTemperature();
+  const there = Number(glance.temp);
+  const threshold = state.unit === "fahrenheit" ? 12 : 7;
+  if (Number.isFinite(here) && Number.isFinite(there) && Math.abs(there - here) >= threshold) {
+    const difference = Math.abs(Math.round(there - here));
+    return {
+      reason: `${difference}${degree(state.unit === "fahrenheit" ? "F" : "C")} ${there > here ? "warmer" : "cooler"} than here`,
+      tone: "temperature",
+      kind: "temperature",
+      priority: 1
+    };
+  }
+  return null;
+}
+
+function familyPlacesForHomeExceptions() {
+  return familyPlacesForHome()
+    .map((place, savedIndex) => ({ place, savedIndex, glance: glanceData[place.id], exception: familyPlaceHomeException(place) }))
+    .filter((item) => Boolean(item.exception))
+    .sort((a, b) => b.exception.priority - a.exception.priority || a.savedIndex - b.savedIndex)
+    .slice(0, 4);
 }
 
 function familyPlaceClock(value) {
@@ -7949,7 +8068,9 @@ function familyPlaceAria(place, glance, active) {
 async function fetchGlance(place) {
   const key = `glance:${GLANCE_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
   const cached = JSON.parse(localStorage.getItem(key) || "null");
-  if (cached && Date.now() - cached.savedAt < 15 * 60 * 1000) return cached.data;
+  if (cached && Date.now() - cached.savedAt < GLANCE_REFRESH_MS) {
+    return { ...cached.data, _savedAt: Number(cached.savedAt) || Date.now() };
+  }
 
   const params = new URLSearchParams({
     latitude: place.latitude,
@@ -7975,8 +8096,9 @@ async function fetchGlance(place) {
     outlook: familyPlaceOutlook(json),
     alert: familyPlaceAlertSummary(alerts)
   };
-  localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
-  return data;
+  const savedAt = Date.now();
+  localStorage.setItem(key, JSON.stringify({ savedAt, data }));
+  return { ...data, _savedAt: savedAt };
 }
 
 function renderSavedPlaces() {
@@ -8100,26 +8222,24 @@ function renderSavedPlaces() {
 function renderFamilyPlacesPeek() {
   const root = els.familyPlacesPeek;
   if (!root) return;
-  const places = familyPlacesForHome();
-  root.hidden = !places.length;
-  if (!places.length) {
+  const exceptions = familyPlacesForHomeExceptions();
+  root.hidden = !exceptions.length;
+  if (!exceptions.length) {
     root.innerHTML = "";
     return;
   }
   root.innerHTML = `
     <div class="family-places-peek-head">
-      <span>Family places</span>
+      <span>Around us</span>
       <button type="button" class="family-places-peek-all">All places <span aria-hidden="true">›</span></button>
     </div>
     <div class="family-places-peek-strip" role="list">
-      ${places.map((place) => {
-        const g = glanceData[place.id];
+      ${exceptions.map(({ place, glance: g, exception }) => {
         const name = escapeHtml(placeFamilyName(place));
         const condition = g ? familyPlaceConditionLine(g) : "Loading local weather…";
-        const outlook = g?.alert?.event || g?.outlook || "";
-        const tone = g?.alert?.tone ? ` is-${escapeHtml(g.alert.tone)}` : "";
+        const tone = exception?.tone ? ` is-${escapeHtml(exception.tone)}` : "";
         return `
-          <button class="family-place-peek-card" type="button" role="listitem" data-family-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(familyPlaceAria(place, g, false))}">
+          <button class="family-place-peek-card" type="button" role="listitem" data-family-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(`${familyPlaceAria(place, g, false)}. ${exception.reason}`)}">
             <span class="family-place-peek-top">
               <strong>${name}</strong>
               <span class="family-place-peek-temp">${g ? `${g.temp}${degree(state.unit === "fahrenheit" ? "F" : "C")}` : ""}</span>
@@ -8128,7 +8248,7 @@ function renderFamilyPlacesPeek() {
               <span class="family-place-peek-icon" aria-hidden="true">${g ? weatherIcon(g.code, g.isDay, { density: "dense" }) : ""}</span>
               <span>${escapeHtml(condition)}</span>
             </span>
-            <span class="family-place-peek-outlook${tone}">${escapeHtml(outlook)}</span>
+            <span class="family-place-peek-outlook${tone}">${escapeHtml(exception.reason)}</span>
           </button>
         `;
       }).join("")}
@@ -8137,7 +8257,7 @@ function renderFamilyPlacesPeek() {
   bindTapAction(root.querySelector(".family-places-peek-all"), openPlaceSheet);
   root.querySelectorAll("[data-family-place-id]").forEach((card) => {
     bindTapAction(card, () => {
-      const place = places.find((candidate) => String(candidate.id) === String(card.dataset.familyPlaceId));
+      const place = exceptions.find((candidate) => String(candidate.place.id) === String(card.dataset.familyPlaceId))?.place;
       if (place) loadPlace(place);
     });
   });
@@ -8165,15 +8285,34 @@ function updatePlaceSwitcher() {
 // Fill in temp + condition icon on each saved chip; runs after the
 // synchronous render so cached chips show instantly and the rest fill in.
 function hydrateGlances() {
-  familyPlacesForOverview().forEach(async (place) => {
-    if (glanceData[place.id]) return;
-    try {
-      glanceData[place.id] = await fetchGlance(place);
-      updatePlaceGlance(place.id);
-    } catch {
-      /* leave chip as name-only on failure */
+  const now = Date.now();
+  const queue = familyPlacesForHydration().filter((place) => (
+    !glanceHydrationTasks[place.id] && (
+      !glanceData[place.id] || now - Number(glanceHydratedAt[place.id] || 0) >= GLANCE_REFRESH_MS
+    )
+  ));
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const place = queue[cursor++];
+      const requestUnit = state.unit;
+      const task = fetchGlance(place);
+      glanceHydrationTasks[place.id] = task;
+      try {
+        const glance = await task;
+        if (state.unit !== requestUnit) continue;
+        glanceData[place.id] = glance;
+        glanceHydratedAt[place.id] = Number(glance?._savedAt) || Date.now();
+        updatePlaceGlance(place.id);
+      } catch {
+        /* leave the last known glance in place on failure */
+      } finally {
+        if (glanceHydrationTasks[place.id] === task) delete glanceHydrationTasks[place.id];
+        if (state.unit !== requestUnit) void hydrateGlances();
+      }
     }
-  });
+  };
+  return Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
 }
 
 function updatePlaceGlance(placeId) {
@@ -8202,19 +8341,11 @@ function updatePlaceGlance(placeId) {
 }
 
 function updateFamilyPlacePeek(placeId) {
-  const root = els.familyPlacesPeek;
-  const card = root?.querySelector(`[data-family-place-id="${CSS.escape(String(placeId))}"]`);
-  const g = glanceData[placeId];
-  const place = familyPlacesForHome().find((candidate) => String(candidate.id) === String(placeId));
-  if (!card || !g || !place) return;
-  const unit = state.unit === "fahrenheit" ? "F" : "C";
-  card.querySelector(".family-place-peek-temp").textContent = `${g.temp}${degree(unit)}`;
-  card.querySelector(".family-place-peek-icon").innerHTML = weatherIcon(g.code, g.isDay, { density: "dense" });
-  card.querySelector(".family-place-peek-weather > span:last-child").textContent = familyPlaceConditionLine(g);
-  const outlook = card.querySelector(".family-place-peek-outlook");
-  outlook.textContent = g.alert?.event || g.outlook || "";
-  outlook.className = `family-place-peek-outlook${g.alert?.tone ? ` is-${g.alert.tone}` : ""}`;
-  card.setAttribute("aria-label", familyPlaceAria(place, g, false));
+  if (!glanceData[placeId]) return;
+  // A place can enter or leave the Home peek as a new alert, precipitation
+  // event, or material temperature difference arrives. Re-evaluate the small
+  // exception set instead of trying to update a card that may not exist yet.
+  renderFamilyPlacesPeek();
 }
 
 function refreshFamilyPlaceLocalTimes() {
@@ -8569,11 +8700,13 @@ function openPlaceSheet() {
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
+  setAppDockCurrent("places");
 }
 
 function closePlaceSheet() {
   els.placeBackdrop.classList.remove("show");
   els.placeSheet.classList.remove("show");
+  syncAppDockCurrent();
   document.body.style.overflow = mapState.immersive ? "hidden" : "";
   setTimeout(() => {
     els.placeBackdrop.hidden = true;
@@ -8601,6 +8734,7 @@ function warmStartForecast(place) {
     const cached = readForecastCache(normalized, { maxAge: FORECAST_WARM_START_MAX_AGE_MS });
     if (!cached) return false;
 
+    resetHomeHourlyLens();
     state.welcomeOverride = false;
     state.activePlace = normalized;
     state.radarPrecipSeq += 1;
@@ -8647,6 +8781,7 @@ async function loadPlace(place, force = false) {
   const previousPlace = state.activePlace;
   const previousForecast = state.forecast;
   const nextPlace = normalizePlace(place);
+  if (!previousPlace || !samePlanPlace(previousPlace, nextPlace)) resetHomeHourlyLens();
   state.activePlace = nextPlace;
   const shouldShowLaunchLoading = !previousForecast || !samePlanPlace(previousPlace, nextPlace);
   state.radarPrecipSeq += 1;
@@ -8815,6 +8950,7 @@ function handleForegroundResume(event = {}) {
   lastBackgroundedAt = null;
   clearRestoredWelcomeLoading(event, idleMs);
   refreshForecastForLiveClock({ forceRender: true, skipNetwork: true });
+  void hydrateGlances();
   refreshOnForeground();
 }
 
@@ -10771,6 +10907,7 @@ function renderForecastLaunch(ctx) {
   renderForYouToday(ctx.data, ctx.place, ctx.tempUnit, ctx.windUnit, ctx.truth);
   renderAppDock(ctx.data, ctx.place);
   renderInlineMapPreviewVisibility(ctx.data, ctx.truth);
+  renderFamilyPlacesPeek();
   renderWatchingSwitcher();
   renderPlanInvitation();
 }
@@ -13320,7 +13457,7 @@ function renderAppDock(data, place) {
   if (!els.appDock) return;
   els.appDock.hidden = !(data && place) || welcomeIsActive();
   if (!els.appDock.hidden) {
-    setAppDockCurrent("today");
+    syncAppDockCurrent();
     const attentionCount = actionableWatchingPlanCount();
     if (els.appDockPlansBadge) {
       els.appDockPlansBadge.hidden = attentionCount === 0;
@@ -16129,18 +16266,38 @@ function buildHeadsUp(data, uv1, gust1, rain1, high1, low0, windUnit) {
 }
 
 function savedHourlyHeroMetric() {
-  const saved = localStorage.getItem(HOURLY_HERO_METRIC_KEY);
-  return HOURLY_HERO_METRICS.has(saved) ? saved : "temperature";
+  return HOURLY_HERO_METRICS.has(state.hourlyHeroMetric)
+    ? state.hourlyHeroMetric
+    : "temperature";
 }
 
 function savedHourlyHeroInterval() {
-  const saved = localStorage.getItem(HOURLY_HERO_INTERVAL_KEY);
-  return HOURLY_HERO_INTERVALS.has(saved) ? saved : "hourly";
+  return HOURLY_HERO_INTERVALS.has(state.hourlyHeroInterval)
+    ? state.hourlyHeroInterval
+    : "hourly";
+}
+
+function resetHomeHourlyLens(options) {
+  options = options || {};
+  state.hourlyHeroMetric = "temperature";
+  state.hourlyHeroInterval = "hourly";
+  // Migrate returning users away from the earlier sticky Home behavior. A
+  // refresh, relaunch, or newly selected place must never unexpectedly open on
+  // Wind, UV, Rain, or the denser 15-minute inspection lens.
+  try {
+    localStorage.removeItem(HOURLY_HERO_METRIC_KEY);
+    localStorage.removeItem(HOURLY_HERO_INTERVAL_KEY);
+  } catch {
+    /* Home defaults remain deterministic when storage is unavailable. */
+  }
+  if (options.collapseExtended !== false && els.extendedDaily) {
+    els.extendedDaily.open = false;
+  }
 }
 
 function hasQuarterHourlyData(data) {
   const minutely = data?.minutely_15 || {};
-  return Array.isArray(minutely.time) && minutely.time.length >= 8 && (
+  return quarterHourRows(data).length >= 24 && (
     Array.isArray(minutely.temperature_2m) ||
     Array.isArray(minutely.precipitation_probability) ||
     Array.isArray(minutely.wind_speed_10m)
@@ -16370,7 +16527,7 @@ function renderUvForecastExplainer(data, metric) {
 
 function setHourlyHeroMetric(metric) {
   if (!HOURLY_HERO_METRICS.has(metric) || !state.forecast) return;
-  localStorage.setItem(HOURLY_HERO_METRIC_KEY, metric);
+  state.hourlyHeroMetric = metric;
   const scrollLeft = els.hourly.scrollLeft;
   renderHourly(state.forecast, state.unit, weatherTruth(state.forecast));
   requestAnimationFrame(() => { els.hourly.scrollLeft = scrollLeft; });
@@ -16385,7 +16542,7 @@ function syncHourlyHeroMetricButtons(metric = savedHourlyHeroMetric()) {
 function setHourlyHeroInterval(interval) {
   if (!HOURLY_HERO_INTERVALS.has(interval) || !state.forecast) return;
   if (interval === "quarter-hour" && !hasQuarterHourlyData(state.forecast)) return;
-  localStorage.setItem(HOURLY_HERO_INTERVAL_KEY, interval);
+  state.hourlyHeroInterval = interval;
   const scrollLeft = els.hourly.scrollLeft;
   renderHourly(state.forecast, state.unit, weatherTruth(state.forecast));
   requestAnimationFrame(() => { els.hourly.scrollLeft = scrollLeft; });
@@ -16902,6 +17059,22 @@ function tempOklchHue(value, unit = state.unit) {
   return s[s.length - 1][1];
 }
 
+function dailyEditorialConditionLabel(data, day, dayIndex) {
+  const base = String(day?.label || "Weather").trim();
+  const event = day?.materialEvent;
+  if (!event || !["rain", "storm", "snow", "ice"].includes(event.kind)) return base;
+  if (["rain", "storm", "snow"].includes(day?.family)) return base;
+  const startMs = Number(event.startMs);
+  const dayDate = data?.daily?.time?.[dayIndex];
+  if (!Number.isFinite(startMs) || !dayDate || forecastLocalDateAtMs(data, startMs) !== dayDate) return base;
+  const hour = new Date(startMs + forecastOffsetMs(data)).getUTCHours();
+  if (hour >= 17 || hour < 5) return `${base} most of day`;
+  if (hour >= 11) return `${base} early`;
+  // An event arriving in the morning makes an unqualified calm condition too
+  // confident, while "mixed" accurately leaves the timing line to explain it.
+  return "Mixed conditions";
+}
+
 function renderDaily(data, tempUnit, precipUnit, presentation = null) {
   const perf = perfStart();
   const todayIndex = forecastDailyIndex(data);
@@ -16913,7 +17086,7 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
   const maxTemp = Math.max(...visibleHighs);
   const spread = Math.max(maxTemp - minTemp, 1);
 
-  els.daily.innerHTML = data.daily.time.map((time, index) => {
+  const dayRows = data.daily.time.map((time, index) => {
     if (index < todayIndex) return "";
     const low = Math.round(lows[index]);
     const high = Math.round(highs[index]);
@@ -16926,7 +17099,7 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
     const day = presentation?.days?.find((item) => item.dayIndex === index) || forecastDayPresentation(data, index);
     const wcode = day.code;
     const precipProfile = day.precip;
-    const code = day.label;
+    const code = dailyEditorialConditionLabel(data, day, index);
     const stormPotential = day.stormPotential;
     const stormLabel = day.convective?.label || "Thunder possible";
     const memoryItems = activePlanMemoryEventsForDay(index, data);
@@ -16979,7 +17152,14 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
         ` : ""}
       </article>
     `;
-  }).join("");
+  }).filter(Boolean);
+  const primaryRows = dayRows.slice(0, 7);
+  const extendedRows = dayRows.slice(7, 14);
+  els.daily.innerHTML = primaryRows.join("");
+  if (els.extendedDailyList) els.extendedDailyList.innerHTML = extendedRows.join("");
+  if (els.extendedDailyPanel) {
+    els.extendedDailyPanel.hidden = extendedRows.length === 0;
+  }
   perfEnd("renderDaily", perf);
 }
 

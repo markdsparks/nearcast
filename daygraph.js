@@ -333,48 +333,43 @@ function notificationHourlyScopeLabel(timeScope = "") {
 }
 
 function getDayDetailMode() {
-  return localStorage.getItem(DAY_DETAIL_MODE_KEY) === "hourly" ? "hourly" : "graph";
+  // Day detail is one forecast journey: story, trend, then rows. Keep the
+  // legacy "hourly" return value for callers that still pass an initialMode,
+  // but never restore the removed Graph/Hourly fork from local storage.
+  return "hourly";
 }
 
 function isSheetHourlyModeActive() {
-  const list = document.getElementById("sheetHourlyList");
-  if (list) return !list.hidden;
-  return document.getElementById("sheetHourlyMode")?.classList.contains("active") || getDayDetailMode() === "hourly";
+  const sheet = document.getElementById("dayDetail");
+  return Boolean(sheet?.classList.contains("is-forecast-journey"));
 }
 
-function setDayDetailMode(mode, persist = true) {
-  const normalized = mode === "hourly" ? "hourly" : "graph";
-  const graphBtn = document.getElementById("sheetGraphMode");
-  const hourlyBtn = document.getElementById("sheetHourlyMode");
+function setDayDetailMode(_mode, _persist = true) {
   const graphWrap = document.getElementById("sheetGraphWrap");
   const hourlyList = document.getElementById("sheetHourlyList");
   const uvExplainer = document.getElementById("sheetUvForecastExplainer");
-  const isHourly = normalized === "hourly";
   const sheet = document.getElementById("dayDetail");
 
-  graphBtn.classList.toggle("active", !isHourly);
-  hourlyBtn.classList.toggle("active", isHourly);
-  graphBtn.setAttribute("aria-pressed", String(!isHourly));
-  hourlyBtn.setAttribute("aria-pressed", String(isHourly));
-  graphWrap.hidden = isHourly;
-  hourlyList.hidden = !isHourly;
-  if (uvExplainer) uvExplainer.hidden = isHourly || graphMetric !== "sun";
+  // The graph is the overview and the rows are the detail. They belong on one
+  // continuous surface rather than asking people to choose which forecast to
+  // open. The only remaining mode choice is hourly vs. 15-minute resolution
+  // for the current six-hour timeline.
+  if (graphWrap) graphWrap.hidden = false;
+  if (hourlyList) hourlyList.hidden = false;
+  if (uvExplainer) uvExplainer.hidden = graphMetric !== "sun";
   const metricToggle = document.getElementById("graphMetricToggle");
-  if (metricToggle) metricToggle.hidden = isHourly; // Temp/Wind only applies to the graph
-  sheet?.classList.toggle("is-hourly-mode", isHourly);
-  if (sheet) sheet.setAttribute("aria-modal", isHourly ? "false" : "true");
+  if (metricToggle) metricToggle.hidden = false;
+  sheet?.classList.add("is-hourly-mode", "is-forecast-journey");
+  if (sheet) sheet.setAttribute("aria-modal", "false");
   if (typeof resetHourlyDetailDockVisibility === "function") resetHourlyDetailDockVisibility();
-  // The shared floating dock follows the user only in the scannable Hourly
-  // mode. It remains absent from the more focused graph explanation.
-  if (typeof setAppDockCurrent === "function") setAppDockCurrent(isHourly ? "hourly" : "today");
-  updateSheetDayNav(normalized);
+  if (typeof setAppDockCurrent === "function") setAppDockCurrent("hourly");
+  updateSheetDayNav("hourly");
   updateSheetHourlyInterval();
 
-  if (!isHourly) scheduleGraphCalloutReflow();
+  scheduleGraphCalloutReflow();
   renderRollingTimelineFooter();
   updateSheetNowJump();
-  if (isHourly) maybeExtendRollingTimeline();
-  if (persist) localStorage.setItem(DAY_DETAIL_MODE_KEY, normalized);
+  maybeExtendRollingTimeline();
 }
 
 function sheetQuarterHourlyRows(data = state.forecast) {
@@ -391,7 +386,7 @@ function sheetQuarterHourlyAvailable(nav = dayDetailNavState) {
   return Boolean(
     nav?.source === "rolling" &&
     Number(nav.block || 0) === 0 &&
-    sheetQuarterHourlyRows(nav.data || state.forecast).length >= 4
+    sheetQuarterHourlyRows(nav.data || state.forecast).length >= 24
   );
 }
 
@@ -666,7 +661,7 @@ function openDayDetail({
     onPullDismiss: closeDayDetail,
     resetScroll: true
   });
-  if (initialMode === "hourly") sheet.setAttribute("aria-modal", "false");
+  sheet.setAttribute("aria-modal", "false");
   document.body.style.overflow = "hidden";
   maybeExtendRollingTimeline();
 }
@@ -836,15 +831,16 @@ function closeDayDetail() {
   const backdrop = document.getElementById("dayDetailBackdrop");
   const sheet = document.getElementById("dayDetail");
   const returnToPlanner = plannerReturnAfterDayDetail;
-  if (!returnToPlanner && typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   plannerReturnAfterDayDetail = null;
   dayDetailNavState = null;
-  sheet.classList.remove("is-hourly-mode");
+  sheet.classList.remove("is-hourly-mode", "is-forecast-journey");
+  sheet.setAttribute("aria-modal", "true");
   if (typeof resetHourlyDetailDockVisibility === "function") resetHourlyDetailDockVisibility();
   document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
   document.getElementById("sheetTimelineFooter")?.setAttribute("hidden", "");
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
+  if (!returnToPlanner && typeof syncAppDockCurrent === "function") syncAppDockCurrent();
   document.body.style.overflow = returnToPlanner ? "hidden" : "";
   setTimeout(() => {
     backdrop.hidden = true;
@@ -1005,7 +1001,13 @@ function dayFocusStory(hrs, tempUnit, windUnit, options = {}) {
     else segments.push({ family, label: forecastStoryCondition(hour.code), hours: [hour] });
   });
   const first = segments[0];
-  const transition = segments.slice(1).find((segment) => segment.hours.length >= 2) || segments[1];
+  // A brief interlude followed by a return to the opening condition is not a
+  // useful "then" story ("Clear, then clear"). Promote only a sustained,
+  // genuinely different condition; material one-hour rain/storm events are
+  // still carried by the canonical event sentence below.
+  const transition = segments.slice(1).find((segment) => (
+    segment.family !== first.family && segment.hours.length >= 2
+  ));
   let changeText = `${first.label} through most of the day.`;
   if (transition) {
     const at = dayFocusHourLabel(transition.hours[0]);
@@ -1639,7 +1641,13 @@ function renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options = 
   const hourlyByIndex = new Map(hrs.map((hour) => [hour.index, hour]));
   const minuteHours = minuteRows.map((row, position) => {
     const hourlyIndex = hourlyIndexForSheetMinute(data, row.ms);
-    const fallback = hourlyByIndex.get(hourlyIndex) || detailHoursForIndices([hourlyIndex], {
+    const isMinuteNow = position === 0;
+    const fallback = (isMinuteNow ? detailHoursForIndices([hourlyIndex], {
+      data,
+      alerts: activeAlerts,
+      eventWindow: dayDetailNavState?.eventWindow,
+      showNow: true
+    })[0] : hourlyByIndex.get(hourlyIndex)) || detailHoursForIndices([hourlyIndex], {
       data,
       alerts: activeAlerts,
       eventWindow: dayDetailNavState?.eventWindow,
@@ -1653,33 +1661,41 @@ function renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options = 
     const minuteCode = Number(minutely.weather_code?.[row.index]);
     const probability = Number(minutely.precipitation_probability?.[row.index]);
     const precipitation = Number(minutely.precipitation?.[row.index]);
+    const displayProbability = Number.isFinite(probability)
+      ? Math.max(0, Math.min(100, probability))
+      : fallback.forecastPop ?? fallback.pop;
+    const displayCode = isMinuteNow
+      ? fallback.code
+      : Number.isFinite(minuteCode)
+      ? quarterHourDisplayCode(minuteCode, displayProbability, fallback.code)
+      : fallback.code;
     return {
       ...fallback,
       index: hourlyIndex,
       time: row.time,
       ms: row.ms,
       endMs: row.ms + 15 * 60 * 1000,
-      temp: value("temperature_2m", fallback.temp),
-      feels: value("apparent_temperature", fallback.feels),
-      wind: value("wind_speed_10m", fallback.wind),
-      gust: value("wind_gusts_10m", fallback.gust),
+      temp: isMinuteNow ? fallback.temp : value("temperature_2m", fallback.temp),
+      feels: isMinuteNow ? fallback.feels : value("apparent_temperature", fallback.feels),
+      wind: isMinuteNow ? fallback.wind : value("wind_speed_10m", fallback.wind),
+      gust: isMinuteNow ? fallback.gust : value("wind_gusts_10m", fallback.gust),
       pop: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : fallback.pop,
       forecastPop: Number.isFinite(probability) ? Math.max(0, Math.min(100, probability)) : fallback.forecastPop,
       popAvailable: Number.isFinite(probability) || fallback.popAvailable,
       precip: Number.isFinite(precipitation) ? Math.max(0, precipitation) : fallback.precip,
       forecastPrecip: Number.isFinite(precipitation) ? Math.max(0, precipitation) : fallback.forecastPrecip,
       precipAvailable: Number.isFinite(precipitation) || fallback.precipAvailable,
-      code: Number.isFinite(minuteCode) ? minuteCode : fallback.code,
+      code: displayCode,
       rawCode: Number.isFinite(minuteCode) ? minuteCode : fallback.rawCode,
-      isDay: Boolean(minutely.is_day?.[row.index] ?? fallback.isDay),
+      isDay: isMinuteNow ? fallback.isDay : Boolean(minutely.is_day?.[row.index] ?? fallback.isDay),
       isMinuteDetail: true,
-      isMinuteNow: position === 0,
+      isMinuteNow,
       precipPrimary: Number.isFinite(probability) ? probability >= 20 : fallback.precipPrimary,
       precipChance: Number.isFinite(probability) ? probability >= 20 : fallback.precipChance,
-      activePrecip: position === 0 ? fallback.activePrecip : false,
-      rainText: position === 0 && fallback.activePrecip ? fallback.rainText : "",
-      precipDisplay: position === 0 ? fallback.precipDisplay : null,
-      observation: position === 0 ? fallback.observation : null
+      activePrecip: isMinuteNow ? fallback.activePrecip : false,
+      rainText: isMinuteNow && fallback.activePrecip ? fallback.rainText : "",
+      precipDisplay: isMinuteNow ? fallback.precipDisplay : null,
+      observation: isMinuteNow ? fallback.observation : null
     };
   }).filter(Boolean);
   if (!minuteHours.length) {
@@ -1695,6 +1711,7 @@ function renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options = 
     showInitialDayDivider: false
   });
   const hourlyAfter = hrs.filter((hour) => hour.ms !== null && hour.ms >= throughMs);
+  const handoffMs = hourlyAfter[0]?.ms ?? throughMs;
   const continuingMarkup = renderHourlyRowsMarkup(hourlyAfter, tempUnit, windUnit, precipUnit, {
     ...options,
     showNow: false,
@@ -1704,7 +1721,7 @@ function renderQuarterHourlyList(hrs, tempUnit, windUnit, precipUnit, options = 
     allowEventFocus: false
   });
   const transition = hourlyAfter.length
-    ? `<div class="sheet-quarter-hour-transition"><span>Hourly forecast from ${escapeHtml(formatForecastMs(throughMs, data))}</span></div>`
+    ? `<div class="sheet-quarter-hour-transition"><span>Hourly forecast from ${escapeHtml(formatForecastMs(handoffMs, data))}</span></div>`
     : "";
   document.getElementById("sheetHourlyList").innerHTML = `${minuteMarkup.html}${transition}${continuingMarkup.html}`;
   return {
@@ -1878,7 +1895,7 @@ function drawHourlyGraph() {
   const isWind = graphMetric === "wind";
   const isSun = graphMetric === "sun";
   const isFeels = graphMetric === "feels";
-  renderSheetUvForecastExplainer(data, graphCtx.dayIndex, isSun && !isSheetHourlyModeActive());
+  renderSheetUvForecastExplainer(data, graphCtx.dayIndex, isSun);
 
   // Reflect the active metric in the toggle + hint.
   const tempBtn = document.getElementById("graphTempBtn");

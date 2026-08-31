@@ -857,12 +857,12 @@ assert.match(extractCssRule(styles, ".launch-stage"), /--launch-top-clearance:\s
 assert.match(extractCssRule(styles, ".hourly-panel > .hero"), /padding:\s*2px 7px 9px/, "the editorial Outlook sits tightly with the hourly evidence it explains");
 assert.match(styles, /@media \(pointer: coarse\)[\s\S]*\.forecast-receipt-trigger\s*\{[\s\S]*min-height:\s*44px/, "coarse-pointer layout explicitly preserves the evidence touch target");
 assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /width:\s*auto[\s\S]*max-width:\s*min\(100%,\s*248px\)[\s\S]*min-width:\s*0/, "the compact evidence control shrinks within the phone viewport");
-const askDockRule = extractCssRule(styles, ".app-dock-ai");
-assert.doesNotMatch(askDockRule, /linear-gradient|margin:\s*-/, "Ask stays available without overpowering the weather hierarchy");
-assert.match(askDockRule, /background:\s*transparent[\s\S]*box-shadow:\s*none/, "Ask uses the same quiet dock treatment as the weather destinations");
+assert.doesNotMatch(html.match(/<nav class="app-dock"[\s\S]*?<\/nav>/)?.[0] || "", /Ask|app-dock-ai/, "Ask no longer competes with the five weather destinations");
+assert.match(html, /class="launch-context-ask"[^>]*id="aiAgentButton"[^>]*data-context-ask[^>]*data-ask-context="forecast"/, "Ask remains available beside the active-place forecast context");
+assert.match(extractCssRule(styles, ".launch-context-ask"), /min-height:\s*44px[\s\S]*background:\s*color-mix/, "contextual Ask is quiet but remains a complete touch target");
 assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*trigger = radarObserved/, "saved-forecast warnings remain stronger than the compact live evidence copy");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /launchSummaryItems[\s\S]*launchSummaryTargets = detailItems\.map/, "forecast-change cards retain their exact hidden detail targets");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, els\.familyPlacesPeek, hourlyPanel, dailyPanel, map, els\.planPulse/, "the stable scan keeps the optional family-place glance quiet ahead of hourly proof, daily forecast, and map evidence");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse/, "the stable scan keeps hourly proof, seven useful days, map evidence, and qualified extended days ahead of earned family-place exceptions");
 
 const rollingBlockSource = extractFunction(daygraph, "rollingWindowBlockForEvent");
 const rollingBlockSandbox = {};

@@ -2263,6 +2263,38 @@ h2 {
   color: var(--ink);
 }
 
+.launch-context-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-light) 62%, transparent);
+  color: var(--semantic-blue);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 850;
+  cursor: pointer;
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  touch-action: manipulation;
+}
+
+.launch-place-row:has(.launch-context-ask:not([hidden])) .launch-location {
+  max-width: min(520px, calc(100vw - 132px));
+}
+
+.launch-context-ask[hidden] {
+  display: none;
+}
+
+.launch-context-ask > span:first-child {
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
 :root[data-theme="dark"] .launch-location,
 :root[data-theme="dark"] .hero-range {
   color: rgba(229, 242, 249, 0.84);
@@ -8501,7 +8533,7 @@ html[data-welcome] .app-dock {
   height: 21px;
 }
 
-.app-dock-item > span:not(.app-dock-ai-mark):not(.app-dock-badge) {
+.app-dock-item > span:not(.app-dock-badge) {
   overflow: hidden;
   max-width: 100%;
   font-size: 0.69rem;
@@ -8550,29 +8582,6 @@ html[data-welcome] .app-dock {
 .app-dock-item:focus-visible {
   outline: 2px solid var(--semantic-blue);
   outline-offset: -2px;
-}
-
-.app-dock-ai {
-  align-self: stretch;
-  min-height: 54px;
-  margin: 0;
-  border: 0;
-  border-radius: 17px;
-  background: transparent;
-  color: var(--semantic-muted);
-  box-shadow: none;
-}
-
-.app-dock-ai:hover,
-.app-dock-ai:focus-visible {
-  background: color-mix(in srgb, var(--semantic-blue) 13%, transparent);
-  color: var(--semantic-blue);
-}
-
-.app-dock-ai-mark {
-  color: var(--semantic-blue);
-  font-size: 1.08rem;
-  line-height: 1;
 }
 
 body:has(.shell.chrome-tucked) .app-dock {
@@ -9374,6 +9383,9 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
 }
 .family-place-peek-outlook.is-warning { color: var(--semantic-red); }
 .family-place-peek-outlook.is-advisory { color: var(--semantic-gold); }
+.family-place-peek-outlook.is-watch { color: var(--semantic-gold); }
+.family-place-peek-outlook.is-weather { color: var(--semantic-blue); }
+.family-place-peek-outlook.is-temperature { color: color-mix(in srgb, var(--semantic-gold) 76%, var(--ink)); }
 
 @media (max-width: 560px) {
   .family-places-peek { padding-inline: 14px; }
@@ -10003,6 +10015,87 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
 .daily-panel .section-head span {
   color: var(--daily-section-meta);
   text-shadow: var(--daily-text-shadow);
+}
+
+/* First Look: seven decision-useful days stay in the main scan. Days 8–14
+   remain available after the map, but their lower confidence is explicit and
+   they do not make the forecast feel longer than its useful horizon. */
+.extended-daily-panel {
+  width: min(100%, 760px);
+  margin: 0 auto 22px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.extended-daily-panel[hidden] {
+  display: none;
+}
+
+.extended-daily > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 58px;
+  padding: 9px 8px 9px 12px;
+  border-block: 1px solid var(--daily-row-border);
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.extended-daily > summary::-webkit-details-marker {
+  display: none;
+}
+
+.extended-daily > summary:focus-visible {
+  border-radius: 12px;
+  outline: 3px solid color-mix(in srgb, var(--semantic-blue) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.extended-daily-copy {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+}
+
+.extended-daily-copy strong {
+  font-size: 0.94rem;
+  font-weight: 900;
+}
+
+.extended-daily-copy small {
+  color: var(--daily-section-meta);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.extended-daily-chevron {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  color: color-mix(in srgb, var(--semantic-blue) 72%, var(--ink));
+  font-size: 1.15rem;
+  font-weight: 900;
+  transform: rotate(0deg);
+  transition: transform 180ms ease;
+}
+
+.extended-daily[open] .extended-daily-chevron {
+  transform: rotate(180deg);
+}
+
+.extended-daily-list {
+  border-bottom: 1px solid var(--daily-row-border);
 }
 
 .hourly {
@@ -11515,6 +11608,22 @@ body.map-immersive-active #mapLegend {
   width: 25px;
   height: 25px;
   filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.24));
+}
+
+.imm-btn.imm-context-ask {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(16, 24, 35, 0.64);
+  color: rgba(151, 198, 255, 0.94);
+  font-size: 1.05rem;
+}
+
+.imm-btn.imm-context-ask[hidden] {
+  display: none;
 }
 
 .imm-storm-entry[data-tone="ready"] {
@@ -15184,6 +15293,55 @@ body.map-immersive-active .day-sheet.show {
   -webkit-tap-highlight-color: transparent;
 }
 
+.sheet-context-ask {
+  position: absolute;
+  top: clamp(14px, calc(env(safe-area-inset-top, 0px) + 10px), 28px);
+  right: max(52px, calc(env(safe-area-inset-right, 0px) + 48px));
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--semantic-blue);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 850;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.sheet-context-ask > span:last-child {
+  display: none;
+}
+
+.sheet-context-ask[hidden] {
+  display: none;
+}
+
+#dayDetail:has(.sheet-context-ask:not([hidden])) > .sheet-head,
+#memorySheet:has(.sheet-context-ask:not([hidden])) > .sheet-head {
+  padding-right: 96px;
+}
+
+@media (max-width: 380px) {
+  .launch-context-ask {
+    width: 44px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .launch-context-ask > span:last-child {
+    display: none;
+  }
+
+  .launch-place-row:has(.launch-context-ask:not([hidden])) .launch-location {
+    max-width: calc(100vw - 102px);
+  }
+}
+
 .sheet-head {
   display: flex;
   align-items: center;
@@ -15884,61 +16042,28 @@ body.map-immersive-active .day-sheet.show {
   font-weight: 850;
 }
 
-.sheet-mode {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  padding: 0;
-  margin: 14px 0 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--border-glass);
-  overflow: hidden;
-}
-.sheet-mode-btn {
-  min-height: 38px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 800;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.sheet-mode-btn + .sheet-mode-btn {
-  border-left: 1px solid var(--border-glass);
-}
-.sheet-mode-btn.active {
-  background: var(--glass-heavy);
-  color: var(--ink);
-  box-shadow: inset 0 -2px 0 var(--blue);
-}
-
 .sheet-day-nav {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
   align-items: center;
-  gap: 8px;
-  margin: -2px 0 12px;
+  gap: 4px;
+  margin: 10px 0 2px;
 }
 .sheet-day-nav.is-rolling {
-  grid-template-columns: minmax(68px, auto) minmax(0, 1fr) minmax(68px, auto);
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr) minmax(64px, auto);
 }
 .sheet-day-nav[hidden] {
   display: none;
 }
 .sheet-day-nav-btn {
-  width: 38px;
-  min-height: 34px;
-  border: 1px solid var(--border-glass);
-  border-radius: 9px;
-  background: var(--glass-light);
-  color: var(--ink);
+  width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--blue);
   font: inherit;
-  font-size: 1.28rem;
+  font-size: 1.18rem;
   font-weight: 900;
   line-height: 1;
   cursor: pointer;
@@ -15947,8 +16072,8 @@ body.map-immersive-active .day-sheet.show {
 }
 .sheet-day-nav.is-rolling .sheet-day-nav-btn {
   width: auto;
-  padding: 0 11px;
-  font-size: 0.78rem;
+  padding: 0 8px;
+  font-size: 0.74rem;
 }
 .sheet-day-nav-btn:disabled {
   opacity: 0.34;
@@ -15956,18 +16081,45 @@ body.map-immersive-active .day-sheet.show {
 }
 .sheet-day-nav-btn:not(:disabled):hover,
 .sheet-day-nav-btn:not(:disabled):focus-visible {
-  border-color: var(--blue);
-  outline: none;
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--blue) 46%, transparent);
+  outline-offset: -2px;
 }
 .sheet-day-nav-label {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink);
-  font-size: 0.82rem;
-  font-weight: 900;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 820;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* One Forecast Journey: the trend is the overview and the timeline is its
+   detail. Section labels create hierarchy without another boxed mode switch. */
+.sheet-trend-head,
+.sheet-timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sheet-trend-head {
+  margin-top: 14px;
+}
+.sheet-timeline-head {
+  margin: 2px 0 0;
+  padding-top: 3px;
+}
+.sheet-trend-head h3,
+.sheet-timeline-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 920;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
 }
 
 /* The full Hourly sheet starts broad. On the current rolling window, this
@@ -15978,7 +16130,7 @@ body.map-immersive-active .day-sheet.show {
   align-items: center;
   gap: 14px;
   min-height: 32px;
-  margin: -3px 4px 7px;
+  margin: 0;
 }
 .sheet-hourly-interval[hidden] {
   display: none;
@@ -16038,7 +16190,7 @@ body.map-immersive-active .day-sheet.show {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin: 0 0 4px;
+  margin: 4px 0 2px;
 }
 .graph-metric[hidden] {
   display: none;
@@ -16208,8 +16360,8 @@ body.map-immersive-active .day-sheet.show {
    ABOVE the chart — out of the path of your thumb while scrubbing. */
 .sheet-graph-wrap {
   position: relative;
-  padding-top: 48px;
-  margin: 6px 0 18px;
+  padding-top: 44px;
+  margin: 2px 0 13px;
   border-bottom: 1px solid var(--line);
 }
 .sheet-graph-wrap[hidden],
@@ -16416,7 +16568,7 @@ body.map-immersive-active .day-sheet.show {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin: 8px 0 18px;
+  margin: 3px 0 18px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -18051,16 +18203,22 @@ body.map-immersive-active .day-sheet.alert-sheet {
     right: max(10px, calc(env(safe-area-inset-right, 0px) + 10px));
   }
 
+  .sheet-context-ask {
+    top: clamp(24px, calc(env(safe-area-inset-top, 0px) + 12px), 34px);
+    right: max(64px, calc(env(safe-area-inset-right, 0px) + 64px));
+  }
+
+  #dayDetail:has(.sheet-context-ask:not([hidden])) > .sheet-head,
+  #memorySheet:has(.sheet-context-ask:not([hidden])) > .sheet-head {
+    padding-right: 112px;
+  }
+
   .day-sheet.sheet-keyboard-active .sheet-close {
     top: clamp(28px, calc(env(safe-area-inset-top, 0px) + 12px), 36px);
   }
 
   .sheet-head {
     padding-right: 52px;
-  }
-
-  .sheet-mode-btn {
-    min-height: 44px;
   }
 
   .graph-metric {
@@ -18079,6 +18237,14 @@ body.map-immersive-active .day-sheet.alert-sheet {
 
   .sheet-hour-row {
     min-height: 64px;
+  }
+}
+
+@media (max-width: 370px) {
+  .sheet-timeline-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
   }
 }
 
@@ -18255,7 +18421,6 @@ body.map-immersive-active .day-sheet.alert-sheet {
   .home-plan-kicker,
   .home-plan-advice b,
   .home-plan-footer em,
-  .app-dock-ai-mark,
   .alert-bar-icon,
   .alert-bar-chevron {
     color: LinkText;

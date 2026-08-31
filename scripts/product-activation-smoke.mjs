@@ -45,6 +45,21 @@ function extractFunction(source, name) {
   assert.fail(`Could not extract ${name}`);
 }
 
+function extractCssRule(source, selector) {
+  const start = source.indexOf(`${selector} {`);
+  assert.notEqual(start, -1, `Found ${selector} CSS rule`);
+  const bodyStart = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  assert.fail(`Could not extract ${selector} CSS rule`);
+}
+
 const completionSandbox = {
   NEARCAST_AGENT_ARTIFACT_KINDS: {
     dayView: "nearcast.view.day",
@@ -145,12 +160,19 @@ assert.equal(correctedPlaceOptions.matches[0].place.admin1, "Kentucky", "an expl
 const invitationIndex = html.indexOf('id="planInvitation"');
 const alertIndex = html.indexOf('id="alertBar"');
 assert.match(html, /id="appDock"[^>]*aria-label="Nearcast navigation"/, "the primary forecast destinations live in one floating app dock");
-for (const destination of ["today", "hourly", "map", "plans"]) {
+for (const destination of ["today", "hourly", "map", "places", "plans"]) {
   assert.ok(html.includes(`data-app-dock="${destination}"`), `${destination} is available from the app dock`);
 }
+const appDockMarkup = html.match(/<nav class="app-dock"[\s\S]*?<\/nav>/)?.[0] || "";
+assert.deepEqual(
+  [...appDockMarkup.matchAll(/data-app-dock="([^"]+)"/g)].map((match) => match[1]),
+  ["today", "hourly", "map", "places", "plans"],
+  "the dock is one consistent destination sequence"
+);
+assert.doesNotMatch(appDockMarkup, /data-app-dock="ask"|app-dock-ai/, "Ask is contextual rather than a sixth navigation destination");
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, els\.familyPlacesPeek, hourlyPanel, dailyPanel, map, els\.planPulse, els\.goodWindow/, "the optional family-place glance sits ahead of the universal hourly-to-daily scan, which still stays ahead of personalized recommendations");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse, els\.goodWindow/, "the universal hourly, seven-day, and map scan stays ahead of extended detail and earned family-place exceptions");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /presentation\?\.brief \|\| buildNearcastBrief[\s\S]*brief\.current\.summary[\s\S]*brief\.evidence\.label/, "the launch condition consumes the canonical Brief instead of constructing a competing next-change story");
 assert.doesNotMatch(extractFunction(app, "renderLaunchSummaryStrip"), /launch-next-change-button/, "the obsolete generic next-change chip cannot duplicate the promoted Brief event");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
@@ -161,11 +183,19 @@ assert.match(html, /id="hourlyIntervalTabs"[\s\S]*data-hourly-interval="hourly"[
 assert.match(app, /function hasQuarterHourlyData\([\s\S]*minutely_15[\s\S]*function renderQuarterHourly\([\s\S]*quarterHourRows[\s\S]*slice\(0, 24\)/, "the 15-minute timeline is available only when forecast data exists and is bounded to six hours");
 assert.match(extractFunction(app, "renderQuarterHourly"), /const metric = savedHourlyHeroMetric\(\);[\s\S]*syncHourlyHeroMetricButtons\(metric\)/, "the 15-minute renderer keeps the selected metric control synchronized with its chart");
 assert.match(html, /id="sheetHourlyInterval"[\s\S]*data-sheet-hourly-interval="hourly"[\s\S]*data-sheet-hourly-interval="quarter-hour"[\s\S]*Next 6 hours/, "the full Hourly surface offers the same bounded 15-minute lens");
+assert.doesNotMatch(html, /id="sheetGraphMode"|id="sheetHourlyMode"|class="sheet-mode"/, "day detail no longer forks the forecast into separate Graph and Hourly modes");
+assert.match(html, /class="sheet-trend-head"[\s\S]*id="sheetGraphWrap"[\s\S]*class="sheet-timeline-head"[\s\S]*id="sheetHourlyList"/, "day detail presents the story, trend, and timeline as one continuous journey");
+assert.match(extractFunction(daygraph, "setDayDetailMode"), /graphWrap\.hidden = false[\s\S]*hourlyList\.hidden = false[\s\S]*is-forecast-journey/, "the unified day journey keeps its overview graph and detailed rows visible together");
+assert.doesNotMatch(daygraph, /localStorage\.setItem\(DAY_DETAIL_MODE_KEY|localStorage\.getItem\(DAY_DETAIL_MODE_KEY/, "the removed Graph\/Hourly fork cannot be restored from a stale preference");
 assert.match(extractFunction(daygraph, "sheetQuarterHourlyAvailable"), /source === "rolling"[\s\S]*block \|\| 0\) === 0[\s\S]*sheetQuarterHourlyRows/, "full Hourly keeps quarter-hour precision only for the current rolling window");
 assert.match(extractFunction(daygraph, "sheetQuarterHourlyRows"), /minutely_15[\s\S]*slice\(0, 24\)/, "full Hourly uses the same six-hour 15-minute forecast inputs");
-assert.match(extractFunction(daygraph, "renderQuarterHourlyList"), /minuteRows[\s\S]*hourlyAfter[\s\S]*Hourly forecast from/, "full Hourly renders six hours of exact timing before continuing into ordinary hourly rows");
+assert.match(extractFunction(daygraph, "renderQuarterHourlyList"), /minuteRows[\s\S]*const throughMs = minuteHours\.at\(-1\)\.endMs[\s\S]*hourlyAfter = hrs\.filter\(\(hour\) => hour\.ms !== null && hour\.ms >= throughMs\)[\s\S]*handoffMs = hourlyAfter\[0\]\?\.ms \?\? throughMs[\s\S]*Hourly forecast from \$\{escapeHtml\(formatForecastMs\(handoffMs, data\)\)\}/, "full Hourly names the actual first ordinary hourly row at its non-overlapping handoff");
+assert.match(extractFunction(daygraph, "sheetQuarterHourlyAvailable"), /sheetQuarterHourlyRows[\s\S]*length >= 24/, "full Hourly promises six-hour precision only with all 24 quarter-hour rows");
+assert.match(extractFunction(app, "hasQuarterHourlyData"), /quarterHourRows\(data\)\.length >= 24/, "Home promises six-hour precision only with all 24 quarter-hour rows");
 assert.match(app, /minutely_15:\s*"temperature_2m,apparent_temperature,precipitation,precipitation_probability,snowfall,weather_code,wind_speed_10m,wind_gusts_10m,is_day"[\s\S]*forecast_minutely_15:\s*"24"/, "the primary forecast requests real 15-minute temperature, rain, condition, and wind inputs for the six-hour mode");
 assert.match(app, /function quarterHourDisplayCode\([\s\S]*wet && pop < 20[\s\S]*wet === "storm" && pop < 60/, "low-probability 15-minute provider codes cannot paint a misleading rain or storm icon");
+assert.match(extractFunction(daygraph, "renderQuarterHourlyList"), /displayProbability[\s\S]*quarterHourDisplayCode\(minuteCode, displayProbability, fallback\.code\)[\s\S]*code: displayCode[\s\S]*rawCode: Number\.isFinite\(minuteCode\) \? minuteCode/, "full Hourly applies the same low-probability precipitation truth guard while retaining the raw provider code");
+assert.match(extractFunction(daygraph, "renderQuarterHourlyList"), /isMinuteNow = position === 0[\s\S]*showNow: true[\s\S]*displayCode = isMinuteNow[\s\S]*temp: isMinuteNow \? fallback\.temp[\s\S]*feels: isMinuteNow \? fallback\.feels[\s\S]*wind: isMinuteNow \? fallback\.wind[\s\S]*gust: isMinuteNow \? fallback\.gust/, "full Hourly preserves canonical live conditions in its first 15-minute row while future rows use minutely guidance");
 assert.match(app, /HOURLY_HERO_METRICS = new Set\(\["temperature", "feels", "precipitation", "wind", "uv"\]\)/, "Wind and UV are valid persisted hourly metrics");
 assert.match(extractFunction(app, "hourlyMetricValue"), /metric === "uv"[\s\S]*uv_index[\s\S]*metric === "wind"[\s\S]*wind_speed_10m/, "UV and wind use their hourly forecast series");
 assert.match(extractFunction(app, "hourlyMetricPresentation"), /UV index[\s\S]*gusts up to/, "UV risk and wind gust context are included in accessible hourly cards");
@@ -182,8 +212,8 @@ assert.match(extractFunction(daygraph, "renderSheetUvForecastExplainer"), /uvFor
 assert.match(extractFunction(daygraph, "drawHourlyGraph"), /renderSheetUvForecastExplainer\(data, graphCtx\.dayIndex, isSun/, "the day-detail explainer only appears with the Sun graph");
 assert.doesNotMatch(extractFunction(app, "renderHourly"), /tempOklchHue\(metric ===/, "UV and wind values are not routed through temperature color semantics");
 assert.match(styles, /@media \(max-width: 520px\)[\s\S]*hourly-metric-label-full[\s\S]*hourly-metric-label-short/, "phone-sized metric chips use concise visible labels while preserving full accessible names");
-assert.match(extractFunction(app, "savedHourlyHeroMetric"), /return HOURLY_HERO_METRICS\.has\(saved\) \? saved : "temperature"/, "temperature remains the stable hourly default");
-assert.match(extractFunction(app, "setHourlyHeroMetric"), /localStorage\.setItem\(HOURLY_HERO_METRIC_KEY, metric\)/, "an explicit hourly lens selection persists on device");
+assert.match(extractFunction(app, "savedHourlyHeroMetric"), /HOURLY_HERO_METRICS\.has\(state\.hourlyHeroMetric\)[\s\S]*"temperature"/, "temperature remains the stable hourly default");
+assert.doesNotMatch(extractFunction(app, "setHourlyHeroMetric"), /localStorage/, "temporary Home trend inspection does not change the next launch's stable Temperature default");
 assert.match(extractFunction(app, "renderHourly"), /slice\(0, 24\)/, "the primary hourly forecast can scroll across the next 24 hours");
 assert.match(extractFunction(app, "buildForecastStory"), /This morning's outlook[\s\S]*This afternoon's outlook[\s\S]*Tonight's outlook/, "the forecast narrative changes with the local time of day");
 assert.match(extractFunction(planner, "agendaPlanItems"), /refreshPlanRoutineOccurrences[\s\S]*?startDate <= lastDate[\s\S]*?Number\(b\.active\) - Number\(a\.active\)/, "Agenda rolls routines forward, stays within seven days, and prioritizes an active plan before chronological order");
@@ -194,7 +224,7 @@ assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later ins
 assert.match(extractFunction(app, "handleAppDockAction"), /openNearcastMapIntent\(nearcastMapIntentForNow\(\)\)/, "the Map destination opens immersive current radar with an explicit typed intent");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
 assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
-assert.match(extractFunction(daygraph, "setDayDetailMode"), /is-hourly-mode[\s\S]*resetHourlyDetailDockVisibility\(\)[\s\S]*setAppDockCurrent\(isHourly \? "hourly" : "today"\)/, "the shared dock follows the Hourly detail mode and keeps its selected state honest");
+assert.match(extractFunction(daygraph, "setDayDetailMode"), /is-hourly-mode[\s\S]*is-forecast-journey[\s\S]*resetHourlyDetailDockVisibility\(\)[\s\S]*setAppDockCurrent\("hourly"\)/, "the shared dock follows the unified forecast journey and keeps its selected state honest");
 assert.match(extractFunction(daygraph, "handleDayDetailScroll"), /updateHourlyDetailDockVisibility\(\)/, "the Hourly sheet drives its own dock visibility instead of relying on Home page scrolling");
 assert.match(extractFunction(app, "updateHourlyDetailDockVisibility"), /is-dock-tucked[\s\S]*setTimeout\([\s\S]*180/, "the Hourly dock tucks while scrolling and returns after the scroll settles");
 assert.match(styles, /body:has\(#dayDetail\.show\.is-hourly-mode\)[\s\S]*z-index:\s*302[\s\S]*pointer-events:\s*auto/, "Hourly detail reuses the familiar floating dock above the sheet");
@@ -270,6 +300,23 @@ assert.match(app, /function retirePlanInvitationForPlanCheckEntry\([\s\S]*record
 assert.match(app, /function retirePlanInvitationForPlanCheckEntry\([\s\S]*forYouSignalState\("plan"\)\.count === 0/, "a deliberate first Plan Check visit persists even while the invitation is ineligible or snoozed");
 assert.match(planner, /function openAISheet\([\s\S]*retirePlanInvitationForPlanCheckEntry\(\)/, "every Plan Check entry path shares the invitation retirement transition");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "plans"[\s\S]*openGlobalMemorySheet\(\)/, "Plans opens its overview from the permanent dock destination");
+assert.match(extractFunction(app, "handleAppDockAction"), /action === "places"[\s\S]*closeDayDetail\(\)[\s\S]*openPlaceSheet\(\)/, "Places dismisses Hourly before opening its full family-place surface");
+assert.match(extractFunction(app, "renderAppDock"), /syncAppDockCurrent\(\)/, "forecast refreshes preserve the selected destination beneath an open surface");
+assert.match(extractFunction(app, "activeAppDockDestination"), /placeSheet[\s\S]*"places"[\s\S]*memorySheet[\s\S]*"plans"[\s\S]*mapState\.immersive[\s\S]*"map"[\s\S]*is-hourly-mode[\s\S]*"hourly"/, "dock selection derives from the actual visible destination");
+
+for (const [id, surface] of [["aiAgentButton", "forecast"], ["mapAskButton", "map"], ["hourlyAskButton", "hourly"], ["plansAskButton", "plans"]]) {
+  assert.match(html, new RegExp(`id="${id}"[^>]*data-context-ask[^>]*data-ask-context="${surface}"`), `${id} carries its visible surface into Ask`);
+}
+const rememberSurfaceContextSource = extractFunction(planner, "rememberNearcastSurfaceContext");
+for (const helper of ["nearcastPlaceArtifact", "nearcastWindowArtifact", "nearcastViewArtifact", "rememberNearcastAgentArtifacts"]) {
+  assert.ok(rememberSurfaceContextSource.includes(helper), `contextual Ask uses ${helper} to ground the visible surface`);
+}
+assert.match(extractFunction(planner, "openAISheet"), /options\.surface[\s\S]*rememberNearcastSurfaceContext/, "opening contextual Ask grounds the conversation before input");
+assert.match(extractFunction(planner, "closeAISheet"), /dayDetail[\s\S]*memorySheet[\s\S]*memoryEditSheet[\s\S]*alertSheet[\s\S]*placeSheet[\s\S]*mapState\.immersive[\s\S]*keepLocked \? "hidden" : ""/, "closing contextual Ask preserves the scroll lock of the Hourly, Plans, Places, alert, or Map surface beneath it");
+assert.match(extractFunction(planner, "renderAsk"), /Ask about this map…[\s\S]*Ask about this forecast…[\s\S]*Ask about your plans…/, "the composer makes its inherited context visible in plain language");
+assert.match(extractCssRule(styles, ".launch-context-ask"), /min-height:\s*44px/, "Home Ask is a full touch target");
+assert.match(extractCssRule(styles, ".sheet-context-ask"), /width:\s*44px[\s\S]*height:\s*44px/, "sheet Ask is a full touch target");
+assert.match(styles, /body\.map-immersive-active \.sheet-backdrop\s*\{[\s\S]*?z-index:\s*1100[\s\S]*?body\.map-immersive-active \.day-sheet\s*\{[\s\S]*?z-index:\s*1101/, "contextual Ask stacks above the immersive map instead of opening behind it");
 
 assert.match(planner, /if \(option\.confirmPlan\) \{[\s\S]*recordForYouSignal\("plan-check-confirmed"\)/, "confirmation is measured at the actual Looks right transition");
 assert.match(planner, /normalized\.event[\s\S]*recordForYouSignal\("plan-check-completed"\)/, "only a valid plan result completes the check funnel");

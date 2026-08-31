@@ -11214,6 +11214,7 @@ function openGlobalMemorySheet(options = {}) {
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
+  if (typeof setAppDockCurrent === "function") setAppDockCurrent("plans");
   scrollFocusedPlanWatchCard();
   refreshPlanWatchForecasts();
 }
@@ -11241,7 +11242,6 @@ function refreshPlanMemorySurfaces() {
 
 function closeGlobalMemorySheet() {
   if (!els.memorySheet || !els.memoryBackdrop || els.memorySheet.hidden) return;
-  if (typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   if (planWatchFocusMemoryId) {
     markPlanWatchFocusedChangeReviewed(planWatchFocusMemoryId, planWatchVisibleReceiptSignature);
   }
@@ -11249,6 +11249,7 @@ function closeGlobalMemorySheet() {
   planWatchVisibleReceiptSignature = "";
   els.memoryBackdrop.classList.remove("show");
   els.memorySheet.classList.remove("show");
+  if (typeof syncAppDockCurrent === "function") syncAppDockCurrent();
   const keepLocked =
     !document.getElementById("dayDetail")?.hidden ||
     !els.memoryDetailSheet?.hidden ||
@@ -13353,7 +13354,13 @@ function renderAsk() {
   const place = state.activePlace ? placeLabel(state.activePlace) : "this place";
   const placeholder = editing
     ? "What would you like to change?"
-    : "Ask Nearcast anything…";
+    : nearcastAISurfaceContext === "map"
+      ? "Ask about this map…"
+      : nearcastAISurfaceContext === "hourly"
+        ? "Ask about this forecast…"
+        : nearcastAISurfaceContext === "plans"
+          ? "Ask about your plans…"
+          : "Ask Nearcast anything…";
   const clarification = renderPlannerClarification(dis);
   const agentKicker = busy
     ? (nearcastAgentProgress || "Working locally")
@@ -13542,6 +13549,31 @@ function plannerEventContextLabel(event) {
   return ["Plan Check", place, title].filter(Boolean).join(" · ");
 }
 
+let nearcastAISurfaceContext = "forecast";
+
+function rememberNearcastSurfaceContext(surface = "forecast") {
+  const place = state.activePlace;
+  if (!place) return;
+  const selected = ["forecast", "hourly", "map", "plans"].includes(surface) ? surface : "forecast";
+  let windowArtifact = null;
+  if (selected === "hourly" && typeof dayDetailNavState !== "undefined" && dayDetailNavState) {
+    const dayIndex = Number(dayDetailNavState.dayIndex);
+    if (Number.isInteger(dayIndex) && dayIndex >= 0) {
+      windowArtifact = nearcastWindowArtifact(place, {
+        dayIdx: dayIndex,
+        startHour: 0,
+        endHour: 24,
+        period: "day"
+      }, null, { dayText: dayDetailNavState.label || dayDetailNavState.contextLabel || "this forecast" });
+    }
+  }
+  rememberNearcastAgentArtifacts([
+    nearcastPlaceArtifact(place),
+    windowArtifact,
+    nearcastViewArtifact(selected, place, null, windowArtifact)
+  ].filter(Boolean));
+}
+
 /* ---------- Planner launcher + sheet ---------- */
 function renderAILauncher() {
   const btn = els.aiLauncher;
@@ -13549,10 +13581,15 @@ function renderAILauncher() {
   const show = state.forecast && state.activePlace &&
     aiState.phase !== "unknown";
   if (btn) btn.hidden = !show;
-  if (agentButton) {
-    agentButton.hidden = aiState.phase === "unknown";
-    agentButton.setAttribute("aria-label", aiState.phase === "ready" ? "Open Nearcast AI" : "Set up Nearcast AI");
-  }
+  document.querySelectorAll("[data-context-ask]").forEach((button) => {
+    button.hidden = !show;
+    button.setAttribute(
+      "aria-label",
+      aiState.phase === "ready"
+        ? (button.dataset.askLabel || "Open Nearcast AI")
+        : "Set up Nearcast AI"
+    );
+  });
   if (show && els.aiLauncherSub) {
     els.aiLauncherSub.textContent =
       aiState.phase === "error" ? "App tools work · local AI needs attention"
@@ -13564,6 +13601,10 @@ function renderAILauncher() {
 
 function openAISheet(options = {}) {
   const { restoreScroll = null, autoBrief = false } = options;
+  nearcastAISurfaceContext = ["forecast", "hourly", "map", "plans"].includes(options.surface)
+    ? options.surface
+    : nearcastAISurfaceContext || "forecast";
+  if (options.surface) rememberNearcastSurfaceContext(nearcastAISurfaceContext);
   if (nearcastAICloseTimer) {
     clearTimeout(nearcastAICloseTimer);
     nearcastAICloseTimer = 0;
@@ -13607,7 +13648,15 @@ function closeAISheet(options = {}) {
   els.aiSheet.classList.remove("show");
   clearSheetScrollAnchor(els.aiSheet);
   clearSheetKeyboardGuard(els.aiSheet);
-  document.body.style.overflow = "";
+  const keepLocked =
+    !document.getElementById("dayDetail")?.hidden ||
+    !els.memoryDetailSheet?.hidden ||
+    !els.memorySheet?.hidden ||
+    !els.memoryEditSheet?.hidden ||
+    !document.getElementById("alertSheet")?.hidden ||
+    !els.placeSheet?.hidden ||
+    mapState.immersive;
+  document.body.style.overflow = keepLocked ? "hidden" : "";
   if (nearcastAICloseTimer) clearTimeout(nearcastAICloseTimer);
   nearcastAICloseTimer = setTimeout(() => {
     nearcastAICloseTimer = 0;

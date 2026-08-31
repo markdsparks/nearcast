@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Nearcast</title>
-    <link rel="stylesheet" href="styles.css?v=3.0.395">
-    <link rel="manifest" href="manifest.json?v=3.0.395">
+    <link rel="stylesheet" href="styles.css?v=3.0.396">
+    <link rel="manifest" href="manifest.json?v=3.0.396">
     <meta name="theme-color" content="#04080f">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nearcast">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.395">
-    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.395">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=3.0.396">
+    <link rel="apple-touch-icon" href="icons/icon-192.png?v=3.0.396">
   </head>
   <body>
     <div id="skyCanvas" aria-hidden="true"></div>
@@ -29,13 +29,13 @@
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.2v5.1l3.4 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>Hourly</span>
       </button>
-      <button class="app-dock-item app-dock-ai" id="aiAgentButton" type="button" hidden aria-label="Open Nearcast AI">
-        <span class="app-dock-ai-mark" aria-hidden="true">✦</span>
-        <span>Ask</span>
-      </button>
       <button class="app-dock-item" type="button" data-app-dock="map" aria-label="Weather map">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m3.5 5.5 5-2 7 2 5-2v15l-5 2-7-2-5 2v-15Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8.5 3.5v15M15.5 5.5v15" stroke="currentColor" stroke-width="1.5"/></svg>
         <span>Map</span>
+      </button>
+      <button class="app-dock-item" type="button" data-app-dock="places" aria-label="Family places">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21s6.5-5.7 6.5-11A6.5 6.5 0 1 0 5.5 10C5.5 15.3 12 21 12 21Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="10" r="2.3" fill="currentColor"/></svg>
+        <span>Places</span>
       </button>
       <button class="app-dock-item" type="button" data-app-dock="plans" aria-label="Plans">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5.5" width="16" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h3M8 17h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
@@ -295,6 +295,10 @@
             <button class="launch-location" id="launchPlaceButton" type="button" aria-label="Open saved places">
               <span id="locationName">Pick a place</span>
             </button>
+            <button class="launch-context-ask" id="aiAgentButton" type="button" hidden data-context-ask data-ask-context="forecast" data-ask-label="Ask Nearcast about this forecast" aria-label="Ask Nearcast about this forecast">
+              <span aria-hidden="true">✦</span>
+              <span>Ask</span>
+            </button>
           </div>
           <div class="launch-current">
             <div class="launch-main-weather">
@@ -546,10 +550,23 @@
 
         <section class="panel daily-panel">
           <div class="section-head">
-            <h2>14-Day Outlook</h2>
+            <h2>7-Day Outlook</h2>
             <span class="sr-only">Tap a day for hourly detail</span>
           </div>
           <div class="daily" id="daily"></div>
+        </section>
+
+        <section class="panel extended-daily-panel" id="extendedDailyPanel" hidden>
+          <details class="extended-daily" id="extendedDaily">
+            <summary>
+              <span class="extended-daily-copy">
+                <strong>Extended outlook</strong>
+                <small>Lower confidence · Days 8–14</small>
+              </span>
+              <span class="extended-daily-chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="daily extended-daily-list" id="extendedDailyList" aria-label="Extended forecast days 8 through 14"></div>
+          </details>
         </section>
       </div>
 
@@ -593,6 +610,9 @@
                 <path d="M5.4 17.7c1.6-3.3 4.6-5 8.2-5 1.8 0 3.4.3 4.8 1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".72"/>
                 <path d="m13.2 3.8-3 6h3.1l-2.4 6.3 6-8h-3.2l2.1-4.3h-2.6Z" fill="currentColor"/>
               </svg>
+            </button>
+            <button class="imm-btn imm-context-ask" id="mapAskButton" type="button" hidden data-context-ask data-ask-context="map" data-ask-label="Ask Nearcast about this map" aria-label="Ask Nearcast about this map" title="Ask Nearcast">
+              <span aria-hidden="true">✦</span>
             </button>
             <button class="imm-btn imm-lightning-toggle" id="immLightningToggle" type="button" hidden aria-label="Show recent lightning" title="Show recent lightning">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -881,6 +901,7 @@
     <aside class="day-sheet" id="dayDetail" hidden data-pull-dismiss="enabled" aria-label="Day detail" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="dayDetailClose" type="button" aria-label="Close detail">✕</button>
+      <button class="sheet-context-ask" id="hourlyAskButton" type="button" hidden data-context-ask data-ask-context="hourly" data-ask-label="Ask Nearcast about this forecast" aria-label="Ask Nearcast about this forecast"><span aria-hidden="true">✦</span><span>Ask</span></button>
       <header class="sheet-head">
         <div class="sheet-icon" id="sheetIcon" aria-hidden="true"></div>
         <div class="sheet-head-text">
@@ -893,20 +914,15 @@
       <p class="sheet-summary" id="sheetSummary"></p>
       <div class="sheet-focus-signal" id="sheetFocusSignal" hidden aria-live="polite"></div>
       <div class="sheet-forecast-pulse" id="sheetForecastPulse" hidden aria-live="polite"></div>
-      <div class="sheet-mode" role="group" aria-label="Day detail display">
-        <button class="sheet-mode-btn active" id="sheetGraphMode" type="button" aria-pressed="true" aria-controls="sheetGraphWrap">Graph</button>
-        <button class="sheet-mode-btn" id="sheetHourlyMode" type="button" aria-pressed="false" aria-controls="sheetHourlyList">Hourly</button>
-      </div>
       <div class="sheet-day-nav" id="sheetDayNav" hidden aria-label="Hourly day navigation">
         <button class="sheet-day-nav-btn" id="sheetPrevDay" type="button" aria-label="Previous day">‹</button>
         <span class="sheet-day-nav-label" id="sheetDayNavLabel">Day</span>
         <button class="sheet-day-nav-btn" id="sheetNextDay" type="button" aria-label="Next day">›</button>
       </div>
-      <div class="sheet-hourly-interval" id="sheetHourlyInterval" hidden role="group" aria-label="Hourly forecast detail">
-        <button type="button" data-sheet-hourly-interval="hourly" aria-pressed="true">Hourly</button>
-        <button type="button" data-sheet-hourly-interval="quarter-hour" aria-pressed="false"><span>15 min</span><small>Next 6 hours</small></button>
+      <div class="sheet-trend-head">
+        <h3>Trend</h3>
       </div>
-      <div class="graph-metric" id="graphMetricToggle" role="group" aria-label="Graph metric">
+      <div class="graph-metric" id="graphMetricToggle" role="group" aria-label="Trend metric">
         <div class="graph-metric-tabs">
           <button class="graph-metric-btn active" id="graphTempBtn" type="button" aria-pressed="true">Temp</button>
           <button class="graph-metric-btn" id="graphFeelsBtn" type="button" aria-pressed="false">Feels</button>
@@ -921,6 +937,13 @@
         <div class="sheet-graph" id="sheetGraph"></div>
       </div>
       <aside class="uv-forecast-explainer sheet-uv-forecast-explainer" id="sheetUvForecastExplainer" hidden aria-live="polite"></aside>
+      <div class="sheet-timeline-head">
+        <h3 id="sheetTimelineTitle">Timeline</h3>
+        <div class="sheet-hourly-interval" id="sheetHourlyInterval" hidden role="group" aria-label="Timeline resolution">
+          <button type="button" data-sheet-hourly-interval="hourly" aria-pressed="true">Hourly</button>
+          <button type="button" data-sheet-hourly-interval="quarter-hour" aria-pressed="false"><span>15 min</span><small>Next 6 hours</small></button>
+        </div>
+      </div>
       <div class="sheet-hourly-list" id="sheetHourlyList" hidden></div>
       <div class="sheet-timeline-footer" id="sheetTimelineFooter" hidden></div>
       <div class="sheet-stats" id="sheetStats"></div>
@@ -992,6 +1015,7 @@
     <aside class="day-sheet memory-sheet" id="memorySheet" hidden data-pull-dismiss="enabled" aria-label="Plans" role="dialog" aria-modal="true">
       <div class="sheet-grabber" aria-hidden="true"></div>
       <button class="sheet-close" id="memorySheetClose" type="button" aria-label="Close plans">✕</button>
+      <button class="sheet-context-ask" id="plansAskButton" type="button" hidden data-context-ask data-ask-context="plans" data-ask-label="Ask Nearcast about plans" aria-label="Ask Nearcast about plans"><span aria-hidden="true">✦</span><span>Ask</span></button>
       <header class="sheet-head memory-sheet-head">
         <span class="memory-sheet-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 21s7-6.1 7-11.6A7 7 0 1 0 5 9.4C5 14.9 12 21 12 21Z" stroke="currentColor" stroke-width="1.7"/><path d="M8.6 10.1h6.8M8.6 13.2h4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
@@ -1187,19 +1211,19 @@
       </div>
     </aside>
 
-    <script src="weather-truth.js?v=3.0.395"></script>
-    <script src="current-reality.js?v=3.0.395"></script>
-    <script src="planner.js?v=3.0.395"></script>
-    <script src="forecast-confidence.js?v=3.0.395"></script>
-    <script src="app.js?v=3.0.395"></script>
-    <script src="hrrr-zarr-adapter.js?v=3.0.395"></script>
-    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.395"></script>
-    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.395"></script>
-    <script src="radar-seam-engine.js?v=3.0.395"></script>
-    <script src="raw-map-runtime.js?v=3.0.395"></script>
-    <script src="map.js?v=3.0.395"></script>
-    <script src="sky.js?v=3.0.395"></script>
-    <script src="daygraph.js?v=3.0.395"></script>
-    <script src="boot.js?v=3.0.395"></script>
+    <script src="weather-truth.js?v=3.0.396"></script>
+    <script src="current-reality.js?v=3.0.396"></script>
+    <script src="planner.js?v=3.0.396"></script>
+    <script src="forecast-confidence.js?v=3.0.396"></script>
+    <script src="app.js?v=3.0.396"></script>
+    <script src="hrrr-zarr-adapter.js?v=3.0.396"></script>
+    <script src="experimental/raw-weather/hrrr-subhourly-adapter.js?v=3.0.396"></script>
+    <script src="experimental/raw-weather/mrms-browser-adapter.js?v=3.0.396"></script>
+    <script src="radar-seam-engine.js?v=3.0.396"></script>
+    <script src="raw-map-runtime.js?v=3.0.396"></script>
+    <script src="map.js?v=3.0.396"></script>
+    <script src="sky.js?v=3.0.396"></script>
+    <script src="daygraph.js?v=3.0.396"></script>
+    <script src="boot.js?v=3.0.396"></script>
   </body>
 </html>

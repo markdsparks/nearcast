@@ -76,6 +76,7 @@ run_portable_checks() {
     current-reality-worker-smoke.mjs \
     current-reality-ui-smoke.mjs \
     family-places-smoke.mjs \
+    first-look-home-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
     nearcast-place-label-test.mjs
