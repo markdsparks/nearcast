@@ -1,4 +1,4 @@
-const VERSION = "3.0.394";
+const VERSION = "3.0.395";
 const DAY_DETAIL_MODE_KEY = "nearcast-day-detail-mode";
 const HOURLY_HERO_METRIC_KEY = "nearcast-hourly-hero-metric-v1";
 const HOURLY_HERO_INTERVAL_KEY = "nearcast-hourly-hero-interval-v1";
@@ -16376,6 +16376,12 @@ function setHourlyHeroMetric(metric) {
   requestAnimationFrame(() => { els.hourly.scrollLeft = scrollLeft; });
 }
 
+function syncHourlyHeroMetricButtons(metric = savedHourlyHeroMetric()) {
+  els.hourlyMetricTabs?.querySelectorAll("[data-hourly-metric]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.hourlyMetric === metric));
+  });
+}
+
 function setHourlyHeroInterval(interval) {
   if (!HOURLY_HERO_INTERVALS.has(interval) || !state.forecast) return;
   if (interval === "quarter-hour" && !hasQuarterHourlyData(state.forecast)) return;
@@ -16390,6 +16396,10 @@ function renderQuarterHourly(data, tempUnit, truth) {
   const rows = quarterHourRows(data);
   if (!rows.length) return renderHourly(data, tempUnit, truth, null, { forceHourly: true });
   const metric = savedHourlyHeroMetric();
+  // The 15-minute path returns before the regular hourly renderer. Keep the
+  // selector in the same authoritative state as the chart instead of leaving
+  // the last full-hour selection visually stuck on screen.
+  syncHourlyHeroMetricButtons(metric);
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const currentHour = currentHourlyIndex(data);
   const currentHourPresentation = currentHour >= 0
@@ -16503,6 +16513,8 @@ function renderQuarterHourly(data, tempUnit, truth) {
 function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation = null, options = {}) {
   const interval = savedHourlyHeroInterval();
   const useQuarterHourly = !options.forceHourly && interval === "quarter-hour" && hasQuarterHourlyData(data);
+  const metric = savedHourlyHeroMetric();
+  syncHourlyHeroMetricButtons(metric);
   els.hourlyIntervalTabs?.querySelectorAll("[data-hourly-interval]").forEach((button) => {
     const available = button.dataset.hourlyInterval !== "quarter-hour" || hasQuarterHourlyData(data);
     button.hidden = !available;
@@ -16519,7 +16531,6 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
     .filter((row) => row.ms !== null && (currentIndex >= 0 ? row.index >= currentIndex : row.ms >= now - 30 * 60 * 1000))
     .slice(0, 24);
   const planMemory = hourlyPlanMemoryContext(rows, data);
-  const metric = savedHourlyHeroMetric();
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const resolvedBrief = presentation?.brief || buildNearcastBrief(data, { truth, tempUnit, windUnit });
   const canonicalEvent = presentation?.materialEvent || resolvedBrief.materialEvent || resolvedBrief.promotedEvent || null;
@@ -16545,10 +16556,6 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       .map((segment) => `<path class="hourly-trend-area" d="M ${segment[0].x.toFixed(1)} 48 L ${segment.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${segment.at(-1).x.toFixed(1)} 48 Z"></path>`)
       .join("")
     : "";
-
-  els.hourlyMetricTabs?.querySelectorAll("[data-hourly-metric]").forEach((button) => {
-    button.setAttribute("aria-pressed", String(button.dataset.hourlyMetric === metric));
-  });
 
   // Values, icons, and line share the same 80px rhythm and scroll together.
   const cards = rows.map(({ time, index }, position) => {
