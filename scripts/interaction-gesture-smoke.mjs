@@ -22,6 +22,7 @@ assert.doesNotMatch(map, /document\.addEventListener\("(?:pointerup|touchend)", 
 assert.doesNotMatch(map, /hitbox\.addEventListener\("(?:pointerup|touchend)"/, "the GL hitbox does not add a competing release path");
 assert.match(styles, /\.hourly\s*\{[\s\S]*?touch-action: pan-x pan-y;/, "the hero timeline permits both horizontal exploration and vertical page scrolling");
 assert.match(styles, /\.hour-card\s*\{[\s\S]*?touch-action: pan-x pan-y;/, "hour cards do not steal vertical touch gestures");
+assert.match(styles, /\.graph-callout\s*\{[\s\S]*?width:\s*max-content;[\s\S]*?max-width:\s*calc\(100% - 4px\);/, "graph callouts keep a stable intrinsic width while clamping to the chart");
 
 assert.match(app, /function bindSheetPullToDismiss\(sheet, dismiss, canDismiss = null\)/, "sheets share one configurable pull-dismiss gesture");
 assert.match(app, /function showSheet\(backdrop, sheet, options = \{\}\)[\s\S]*?onPullDismiss[\s\S]*?bindSheetPullToDismiss/, "the shared show contract registers pull dismissal");
