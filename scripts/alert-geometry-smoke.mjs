@@ -70,6 +70,7 @@ vm.runInContext(`
   const ALERTS_FETCH_TIMEOUT_MS = 1000;
   let activeAlerts = [];
   let alertTrustState = { state: "unknown", checkedAt: null, reason: "" };
+  let alertSheetReturnFocus = null;
   let mapIntents = [];
   let alertCloseCount = 0;
   const window = {
@@ -245,7 +246,8 @@ assert.deepEqual(
     source: "alert",
     alertKey: `id:${normalized.id}`,
     alertId: `id:${normalized.id}`,
-    event: "Severe Thunderstorm Warning"
+    event: "Severe Thunderstorm Warning",
+    returnFocus: null
   },
   "the alert action sends stable identity through the map-intent bridge"
 );

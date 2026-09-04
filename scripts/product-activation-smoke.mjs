@@ -221,7 +221,7 @@ assert.match(extractFunction(planner, "renderPlanPulse"), /home-plan-decision[\s
 assert.match(extractFunction(app, "forYouWatchingCard"), /homePlanDecisionCandidate[\s\S]*?Do not repeat a lower-value Watching card below/, "promoted plans are not duplicated later on the homepage");
 assert.doesNotMatch(html, /class="ai-launcher"/, "the redundant in-feed Nearcast AI launcher is removed");
 assert.match(html, /id="insightCards" hidden/, "the duplicate now-next-later insight band is retired");
-assert.match(extractFunction(app, "handleAppDockAction"), /openNearcastMapIntent\(nearcastMapIntentForNow\(\)\)/, "the Map destination opens immersive current radar with an explicit typed intent");
+assert.match(extractFunction(app, "handleAppDockAction"), /nearcastDayDetailMapIntent[\s\S]*nearcastMapIntentForNow[\s\S]*openNearcastMapIntent\(focusedIntent \|\| nearcastMapIntentForNow\(\)\)/, "the Map destination keeps an explicit Hourly focus and otherwise opens honest current radar");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "hourly"[\s\S]*?openNext24Detail\(\)/, "the Hourly destination opens the full next-24-hours experience");
 assert.doesNotMatch(extractFunction(app, "handleAppDockAction"), /handleLaunchShortcut\("hourly"\)/, "the Hourly destination is no longer an in-page scroll shortcut");
 assert.match(extractFunction(daygraph, "setDayDetailMode"), /is-hourly-mode[\s\S]*is-forecast-journey[\s\S]*resetHourlyDetailDockVisibility\(\)[\s\S]*setAppDockCurrent\("hourly"\)/, "the shared dock follows the unified forecast journey and keeps its selected state honest");
@@ -231,7 +231,7 @@ assert.match(styles, /body:has\(#dayDetail\.show\.is-hourly-mode\)[\s\S]*z-index
 assert.match(styles, /is-hourly-mode\.is-dock-tucked[\s\S]*pointer-events:\s*none/, "the Hourly dock leaves the timeline unobstructed while it is being read");
 assert.match(styles, /is-hourly-mode\.is-dock-tucked\):not\(:has\(\.ai-sheet\.show\)\)[\s\S]*pointer-events:\s*none/, "the tucked Hourly rule is at least as specific as the visible rule");
 assert.match(styles, /#dayDetail\.is-hourly-mode[\s\S]*padding-bottom:\s*max\(112px/, "the final hourly rows remain reachable above the floating dock");
-assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*dayDetail[\s\S]*closeDayDetail\(\)[\s\S]*openNearcastMapIntent/, "Map dismisses Hourly before opening a true full-screen surface");
+assert.match(extractFunction(app, "handleAppDockAction"), /action === "map"[\s\S]*nearcastSuspendDayDetailForMap[\s\S]*openNearcastMapIntent/, "Map temporarily layers over Hourly so the same forecast context can return");
 assert.match(extractFunction(app, "handleAppDockAction"), /action === "today"[\s\S]*is-hourly-mode[\s\S]*closeDayDetail\(\)[\s\S]*scrollForecastToTop\(\)/, "Today has an explicit, dependable return path from Hourly detail");
 assert.match(extractFunction(app, "trapTopmostSheetFocus"), /is-hourly-mode[\s\S]*visibleSheetFocusables\(hourlyDock\)/, "the external dock stays in the Hourly detail keyboard loop");
 assert.match(extractFunction(app, "fetchForecastTemperatureGuidance"), /models:[\s\S]*FORECAST_CONFIDENCE_MODELS[\s\S]*forecast_days:\s*"14"/, "the full 14-day temperature outlook uses independent multi-model guidance instead of a single default model");

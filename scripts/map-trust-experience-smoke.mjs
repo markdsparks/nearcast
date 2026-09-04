@@ -55,7 +55,7 @@ function extractFunction(source, name) {
 assert.match(map, /window\.nearcastSetMapIntent\s*=/, "Home and alert surfaces can set a typed map intent");
 assert.match(map, /window\.nearcastOpenMapIntent\s*=/, "Home and alert surfaces can atomically open a typed map intent");
 assert.match(app, /window\.nearcastInlineMapIntent\s*=/, "the inline evidence card exposes its exact typed map intent");
-assert.match(extractFunction(app, "handleAppDockAction"), /nearcastMapIntentForNow/, "the Map tab always opens honest current radar rather than retaining an old forecast time");
+assert.match(extractFunction(app, "handleAppDockAction"), /nearcastDayDetailMapIntent[\s\S]*nearcastMapIntentForNow/, "the Map tab preserves an explicit Hourly focus and otherwise opens honest current radar");
 assert.doesNotMatch(extractFunction(app, "nearcastMapIntentForNow"), /event:/, "a routine Map-tab visit does not add a redundant Weather now context card");
 assert.match(extractFunction(app, "nearcastMapIntentForPreview"), /leadMs <= 3 \* 60 \* 60 \* 1000/, "the home preview only deep-links to forecast guidance inside the map's high-resolution horizon");
 assert.match(extractFunction(map, "openInlineMapPreviewIntent"), /nearcastInlineMapIntent/, "pointer, keyboard, and assistive activation preserve the preview context");

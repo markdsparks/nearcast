@@ -191,7 +191,7 @@ assert.match(daygraph, /minLabelWidth: Infinity/, "Precip memory bands stay inte
 assert.match(daygraph, /role="group" aria-labelledby="precipGraphTitle precipGraphDescription"/, "the interactive chart is exposed as a labelled group");
 assert.match(daygraph, /role="slider"[\s\S]*aria-valuetext/, "the precipitation scrubber exposes accessible slider values");
 assert.match(daygraph, /setAttribute\("aria-live", isPrecip \? "off" : "polite"\)/, "the slider owns Precip announcements without pointer-move chatter");
-assert.match(daygraph, /hit\.addEventListener\("pointerdown"[\s\S]*event\.preventDefault\(\)[\s\S]*update\(nearest\(event\.clientX\)\)/, "pointer inspection does not leave keyboard focus styling behind");
+assert.match(daygraph, /hit\.addEventListener\("pointerdown"[\s\S]*event\.preventDefault\(\)[\s\S]*update\(nearest\(event\.clientX\)\)[\s\S]*hit\.addEventListener\("pointerup"[\s\S]*commitFocus: true/, "pointer inspection avoids persistent keyboard styling and commits forecast focus on release");
 assert.match(daygraph, /event\.key === "ArrowLeft" \|\| event\.key === "ArrowDown"[\s\S]*event\.key === "ArrowRight" \|\| event\.key === "ArrowUp"[\s\S]*event\.key === "Home"[\s\S]*event\.key === "End"/, "keyboard users can scrub the graph in either axis");
 assert.match(daygraph, /points\.findIndex\(\(point\) => isCurrentHour\(point\.time, data\)\)/, "current-day graphs default to the current hourly row for the whole hour");
 assert.match(daygraph, /forecastAmounts\.length < hrs\.length[\s\S]*≥\$\{formatPrecipGraphTotal/, "partial precipitation totals preserve known accumulation without appearing complete");

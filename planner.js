@@ -6470,11 +6470,11 @@ async function runNearcastDirectConfidenceAnswer(question, signal = null, rowInd
 async function scheduleNearcastAgentNavigation(navigation) {
   const type = typeof navigation === "string" ? navigation : navigation?.type;
   if (!type) return;
-  closeAISheet({ restoreFocus: false });
+  const navigationReturnFocus = closeAISheet({ restoreFocus: false });
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   if (type === "map") {
     ensureInlineMapReady(true);
-    await enterImmersiveMap();
+    await enterImmersiveMap({ returnFocus: navigationReturnFocus });
   } else if (type === "hourly") {
     const dayIndex = Number(navigation.dayIndex);
     const focusEvent = navigation.focusWindow
@@ -13641,9 +13641,13 @@ function openAISheet(options = {}) {
 }
 
 function closeAISheet(options = {}) {
+  const returnFocus = nearcastAIFocusReturn instanceof HTMLElement ? nearcastAIFocusReturn : null;
   if (nearcastVoice.phase !== "idle") cancelNearcastVoice({ keepTranscript: nearcastVoice.mode === "tap" });
   const log = document.getElementById("askChatLog");
   if (log) nearcastAITranscriptScrollTop = log.scrollTop;
+  if (options?.restoreFocus === false && typeof suppressSheetFocusRestore === "function") {
+    suppressSheetFocusRestore(els.aiSheet);
+  }
   els.aiBackdrop.classList.remove("show");
   els.aiSheet.classList.remove("show");
   clearSheetScrollAnchor(els.aiSheet);
@@ -13667,4 +13671,5 @@ function closeAISheet(options = {}) {
       try { nearcastAIFocusReturn.focus({ preventScroll: true }); } catch {}
     }
   }, 280);
+  return returnFocus;
 }

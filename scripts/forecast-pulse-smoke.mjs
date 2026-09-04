@@ -165,8 +165,9 @@ assert.equal(shifting.label, "Still shifting");
 
 assert.match(app, /saveForecastPulseSnapshot\(ctx\.data, ctx\.place\)/, "Records one bounded run after rendering");
 const renderDailySource = extractFunction(app, "renderDaily");
+const dailyStorySource = extractFunction(app, "dailyRowWeatherStory");
 assert.match(renderDailySource, /nearcastForecastDisclosureForDay/, "Daily rows consume the shared calm disclosure policy");
-assert.match(renderDailySource, /nearcastCalmDailyTiming/, "Daily uncertainty changes the timing wording instead of adding a confidence grade");
+assert.match(dailyStorySource, /nearcastCalmDailyTiming/, "Daily uncertainty changes the shared two-phase timing wording instead of adding a confidence grade");
 assert.doesNotMatch(renderDailySource, /day-pulse|Timing uncertain|High confidence|Some uncertainty/, "Daily rows never add a separate diagnostic confidence chip");
 
 console.log("PASS  Forecast Pulse detects meaningful movement, stays quiet on noise, and distinguishes settled from shifting forecasts");

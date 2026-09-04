@@ -55,6 +55,7 @@ run_portable_checks() {
     map-aerial-smoke.mjs \
     map-satellite-smoke.mjs \
     map-trust-experience-smoke.mjs \
+    forecast-journey-map-smoke.mjs \
     map-radar-experience-smoke.mjs \
     radar-capability-smoke.mjs \
     live-activity-smoke.mjs \

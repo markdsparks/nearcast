@@ -252,7 +252,10 @@ window.nearcastRadarCapability = (options = {}) => resolveRadarViewportCapabilit
 window.nearcastRequestRadarGeneration = (options = {}) => requestRadarViewportGeneration(options);
 window.nearcastUseRadarPreviewIndex = (enabled = true) => setGeneratedMrmsIndexUrlOverride(enabled ? "preview" : "");
 window.nearcastSetMapIntent = (options = {}) => setMapOpenIntent(options);
-window.nearcastOpenMapIntent = (options = {}) => enterImmersiveMap(setMapOpenIntent(options));
+window.nearcastOpenMapIntent = (options = {}) => enterImmersiveMap({
+  ...setMapOpenIntent(options),
+  returnFocus: options?.returnFocus instanceof HTMLElement ? options.returnFocus : null
+});
 
 function mapIntentTimestamp(value) {
   if (value == null || value === "") return null;
@@ -273,6 +276,7 @@ function normalizeMapOpenIntent(value) {
         ? "alert"
         : "";
   const timestamp = mapIntentTimestamp(value.timestamp ?? value.time ?? value.validTime ?? value.startTime);
+  const endTimestamp = mapIntentTimestamp(value.endTimestamp ?? value.endTime ?? value.endMs);
   const place = value.place && typeof value.place === "object" ? value.place : null;
   const latitude = Number(value.latitude ?? place?.latitude);
   const longitude = Number(value.longitude ?? place?.longitude);
@@ -284,6 +288,7 @@ function normalizeMapOpenIntent(value) {
   return {
     source: source || (alertId ? "alert" : timestamp != null && timestamp > Date.now() + 5 * 60 * 1000 ? "forecast" : "radar"),
     timestamp,
+    endTimestamp,
     alertId,
     event,
     placeId,
@@ -305,6 +310,7 @@ function takeMapOpenIntent(options = {}) {
   const intent = explicit || mapState.pendingOpenIntent || null;
   mapState.pendingOpenIntent = null;
   mapState.openIntent = intent;
+  mapState.intentResolution = null;
   return intent;
 }
 
@@ -451,6 +457,39 @@ function mapIntentTimeText(intent = mapState.openIntent) {
   return formatTimelineTime(Number(intent.timestamp), { showMinutes: true, dayStyle: "compact" });
 }
 
+function mapIntentCoverageText(intent = mapState.openIntent) {
+  const requested = Number(intent?.timestamp);
+  if (intent?.source !== "forecast" || !Number.isFinite(requested)) return "";
+  const resolution = mapState.intentResolution;
+  if (!resolution || resolution.requestedMs !== requested) return "";
+  if (resolution && resolution.requestedMs === requested) {
+    if (!resolution.sourceMatched) {
+      if (!Number.isFinite(resolution.resolvedMs)) return "Forecast map unavailable for that time";
+      return `Forecast map unavailable for that time; showing ${resolution.resolvedSource === "radar" ? "the nearest radar frame" : "the nearest available frame"}`;
+    }
+    if (resolution.inRange && Number.isFinite(resolution.deltaMs) && resolution.deltaMs > 20 * 60 * 1000 && Number.isFinite(resolution.resolvedMs)) {
+      return `Nearest map guidance is ${formatTimelineTime(resolution.resolvedMs, { showMinutes: true, dayStyle: "compact" })}`;
+    }
+  }
+  if (!mapState.frames.length) return "Forecast map unavailable for that time";
+  const forecastTimes = mapState.frames
+    .filter((frame) => activeMapSource(frame) === "forecast")
+    .map(rawMapTimelineTimestamp)
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  if (!forecastTimes.length) return "Forecast map timing is not available for this hour";
+  const first = forecastTimes[0];
+  const last = forecastTimes.at(-1);
+  const tolerance = 20 * 60 * 1000;
+  if (requested < first - tolerance) {
+    return `Forecast map begins ${formatTimelineTime(first, { showMinutes: true, dayStyle: "compact" })}`;
+  }
+  if (requested > last + tolerance) {
+    return `Forecast map available through ${formatTimelineTime(last, { showMinutes: true, dayStyle: "compact" })}; selected time is later`;
+  }
+  return "";
+}
+
 function syncMapIntentPresentation() {
   const card = document.getElementById("immMapContext");
   if (!card) return;
@@ -497,7 +536,7 @@ function syncMapIntentPresentation() {
     card.dataset.tone = "forecast";
     if (kicker) kicker.textContent = intent.source === "radar" ? "Radar focus" : "Forecast focus";
     if (title) title.textContent = intent.event || (intent.source === "radar" ? "Observed weather" : "Forecast weather");
-    if (meta) meta.textContent = [mapIntentPlaceText(intent), mapIntentTimeText(intent)].filter(Boolean).join(" · ");
+    if (meta) meta.textContent = [mapIntentPlaceText(intent), mapIntentTimeText(intent), mapIntentCoverageText(intent)].filter(Boolean).join(" · ");
     return;
   }
 
@@ -6591,7 +6630,10 @@ function refreshInlineMap(forceFrames = false, options = {}) {
   initMap();
   syncMapToPlace();
   if (mapState.immersive) {
-    loadMapFrames(forceFrames, { timelineKind: "precip", focusNow: true });
+    const intentOptions = mapState.openIntent
+      ? mapIntentLoadOptions(mapState.openIntent)
+      : { timelineKind: "precip", focusNow: true };
+    loadMapFrames(forceFrames, intentOptions);
   } else {
     loadMapFrames(forceFrames, { timelineKind: "radar", focusLatest: true });
   }
@@ -6724,11 +6766,22 @@ async function loadMapFrames(force = false, options = {}) {
     ) return;
 
     if (!timeline.frames.length) {
+      const requestedMs = mapIntentTimestamp(options.targetTimestamp);
+      mapState.intentResolution = requestedMs == null ? null : {
+        requestedMs,
+        requestedSource: ["radar", "forecast"].includes(options.targetSource) ? options.targetSource : "",
+        resolvedMs: null,
+        resolvedSource: "",
+        sourceMatched: false,
+        inRange: false,
+        deltaMs: null
+      };
       if (["radar", "precip"].includes(timelineKind)) mapState.radarLoadState = timeline.radarState || "unavailable";
       if (!preserveExisting) {
         setFrameLabel(timeline.emptyLabel || "No frames");
         updateTimelineEraVisuals();
       }
+      if (mapState.immersive) syncMapIntentPresentation();
       return;
     }
 
@@ -6744,14 +6797,30 @@ async function loadMapFrames(force = false, options = {}) {
     syncStandardTimelineSlider(mapState.frameIndex);
     updateTimelineEraVisuals();
     showFrame(mapState.frameIndex);
+    if (mapState.immersive) syncMapIntentPresentation();
     if (shouldResumePlayback) startRadarPlayback();
     else maybeAutoPlayRadar(); // frames just became available — play if the map is on screen
     scheduleRawMapEnhancement(timelineKind);
   } catch (error) {
-    if (loadSeq === mapState.frameLoadSeq && !preserveExisting) {
-      if (["radar", "precip"].includes(timelineKind)) mapState.radarLoadState = "unavailable";
-      setFrameLabel("Weather map unavailable");
-      updateTimelineEraVisuals();
+    if (loadSeq === mapState.frameLoadSeq) {
+      const requestedMs = mapIntentTimestamp(options.targetTimestamp);
+      if (requestedMs != null) {
+        mapState.intentResolution = {
+          requestedMs,
+          requestedSource: ["radar", "forecast"].includes(options.targetSource) ? options.targetSource : "",
+          resolvedMs: null,
+          resolvedSource: "",
+          sourceMatched: false,
+          inRange: false,
+          deltaMs: null
+        };
+      }
+      if (!preserveExisting) {
+        if (["radar", "precip"].includes(timelineKind)) mapState.radarLoadState = "unavailable";
+        setFrameLabel("Weather map unavailable");
+        updateTimelineEraVisuals();
+      }
+      if (mapState.immersive) syncMapIntentPresentation();
     }
   } finally {
     if (loadSeq === mapState.frameLoadSeq && loadingElement) loadingElement.hidden = true;
@@ -6783,23 +6852,48 @@ async function fetchMapTimeline(timelineKind) {
 function initialMapFrameIndex(timeline, timelineKind, options, shouldResumePlayback) {
   const last = Math.max(0, timeline.frames.length - 1);
   const targetTimestamp = mapIntentTimestamp(options.targetTimestamp);
+  const targetSource = ["radar", "forecast"].includes(options.targetSource) ? options.targetSource : "";
+  let selectedIndex = null;
+  let matchingCandidates = [];
   if (targetTimestamp != null) {
-    const targetSource = ["radar", "forecast"].includes(options.targetSource) ? options.targetSource : "";
-    const candidates = timeline.frames
+    matchingCandidates = timeline.frames
       .map((frame, index) => ({ frame, index, timestamp: rawMapTimelineTimestamp(frame) }))
       .filter((item) => Number.isFinite(item.timestamp))
       .filter((item) => !targetSource || activeMapSource(item.frame) === targetSource);
-    if (candidates.length) {
-      return candidates.reduce((closest, item) => (
+    if (matchingCandidates.length) {
+      selectedIndex = matchingCandidates.reduce((closest, item) => (
         Math.abs(item.timestamp - targetTimestamp) < Math.abs(closest.timestamp - targetTimestamp) ? item : closest
       )).index;
     }
   }
-  if (options.focusNow && Number.isFinite(timeline.nowIndex)) return clamp(timeline.nowIndex, 0, last);
-  if (options.focusLatest || timelineKind === "radar") return last;
-  if (shouldResumePlayback || timelineKind === "forecast") return 0;
-  if (timelineKind === "precip" && Number.isFinite(timeline.nowIndex)) return clamp(timeline.nowIndex, 0, last);
-  return last;
+  if (selectedIndex === null) {
+    if (options.focusNow && Number.isFinite(timeline.nowIndex)) selectedIndex = clamp(timeline.nowIndex, 0, last);
+    else if (options.focusLatest || timelineKind === "radar") selectedIndex = last;
+    else if (shouldResumePlayback || timelineKind === "forecast") selectedIndex = 0;
+    else if (timelineKind === "precip" && Number.isFinite(timeline.nowIndex)) selectedIndex = clamp(timeline.nowIndex, 0, last);
+    else selectedIndex = last;
+  }
+  if (targetTimestamp != null) {
+    const frame = timeline.frames[selectedIndex];
+    const resolvedMs = rawMapTimelineTimestamp(frame);
+    const resolvedSource = activeMapSource(frame);
+    const firstMatchingMs = matchingCandidates.length ? Math.min(...matchingCandidates.map((item) => item.timestamp)) : null;
+    const lastMatchingMs = matchingCandidates.length ? Math.max(...matchingCandidates.map((item) => item.timestamp)) : null;
+    mapState.intentResolution = {
+      requestedMs: targetTimestamp,
+      requestedSource: targetSource,
+      resolvedMs: Number.isFinite(resolvedMs) ? resolvedMs : null,
+      resolvedSource,
+      sourceMatched: !targetSource || resolvedSource === targetSource,
+      inRange: Number.isFinite(firstMatchingMs) && Number.isFinite(lastMatchingMs)
+        ? targetTimestamp >= firstMatchingMs && targetTimestamp <= lastMatchingMs
+        : false,
+      deltaMs: Number.isFinite(resolvedMs) ? Math.abs(resolvedMs - targetTimestamp) : null
+    };
+  } else {
+    mapState.intentResolution = null;
+  }
+  return selectedIndex;
 }
 
 function standardTimelineTimeRange(frames = mapState.frames) {
@@ -9813,6 +9907,8 @@ function getNoaaRegion() {
 
 let timelineBubbleHideTimer = null;
 let immersiveCreditHideTimer = 0;
+let immersiveExitResetTimer = 0;
+let immersiveReturnFocus = null;
 let standardTimelineScrubRaf = 0;
 let standardTimelinePendingScrubValue = null;
 let standardTimelineScrubActive = false;
@@ -11657,9 +11753,18 @@ function nextMapPaint() {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
-async function waitForImmersiveMapReady(timeoutMs = 8000) {
+function focusImmersiveMapSurface() {
+  const root = document.getElementById("immersiveMap");
+  if (!root || root.hidden || root.contains(document.activeElement)) return;
+  const topSheet = typeof topmostShownSheet === "function" ? topmostShownSheet() : null;
+  if (topSheet && topSheet.dataset?.suspendedForMap !== "true") return;
+  document.getElementById("collapseMap")?.focus({ preventScroll: true });
+}
+
+async function waitForImmersiveMapReady(timeoutMs = 8000, expectedSession = mapState.immersiveSession) {
   const startedAt = performance.now();
   while (performance.now() - startedAt < timeoutMs) {
+    if (!mapState.immersive || expectedSession !== mapState.immersiveSession) return false;
     const canvas = document.getElementById("immersiveMapCanvas");
     const rect = canvas?.getBoundingClientRect();
     const surfaceReady = Boolean(rect?.width && rect?.height);
@@ -11705,14 +11810,37 @@ async function ensureMapIntentPlace(intent) {
 }
 
 async function enterImmersiveMap(options = {}) {
+  const firstEntry = !mapState.immersive;
+  const requestedReturnFocus = options?.returnFocus instanceof HTMLElement ? options.returnFocus : null;
+  const suspendedDayDetail = firstEntry && typeof window.nearcastSuspendDayDetailForMap === "function"
+    ? window.nearcastSuspendDayDetailForMap(requestedReturnFocus)
+    : false;
   const intent = takeMapOpenIntent(options);
-  await ensureMapIntentPlace(intent);
+  try {
+    await ensureMapIntentPlace(intent);
+  } catch (error) {
+    if (suspendedDayDetail) {
+      const restored = window.nearcastRestoreDayDetailAfterMap?.();
+      document.body.style.overflow = restored ? "hidden" : "";
+      if (typeof syncAppDockCurrent === "function") syncAppDockCurrent();
+    }
+    throw error;
+  }
   if (mapState.immersive) {
+    const immersiveSession = mapState.immersiveSession;
     syncMapIntentPresentation();
     syncMapAlertOverlays();
     if (intent) await loadMapFrames(true, mapIntentLoadOptions(intent));
-    return waitForImmersiveMapReady();
+    if (!mapState.immersive || immersiveSession !== mapState.immersiveSession) return false;
+    return waitForImmersiveMapReady(8000, immersiveSession);
   }
+  const immersiveSession = ++mapState.immersiveSession;
+  if (immersiveExitResetTimer) {
+    clearTimeout(immersiveExitResetTimer);
+    immersiveExitResetTimer = 0;
+  }
+  immersiveReturnFocus = requestedReturnFocus
+    || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
   cancelStandardTimelineScrub();
   stopRadarPlayback({ renderStatic: false });
   clearMapLibreInteractionState();
@@ -11748,6 +11876,7 @@ async function enterImmersiveMap(options = {}) {
 
   document.getElementById("immersiveMap").hidden = false;
   document.body.style.overflow = "hidden";
+  requestAnimationFrame(focusImmersiveMapSurface);
 
   // Sync slider range before rendering so scrubbing works immediately
   syncStandardTimelineSlider(mapState.frameIndex);
@@ -11779,27 +11908,33 @@ async function enterImmersiveMap(options = {}) {
   document.addEventListener("keydown", onImmersiveKey);
 
   await nextMapPaint();
+  if (!mapState.immersive || immersiveSession !== mapState.immersiveSession) return false;
   renderImmersiveFrame();
   await loadMapFrames(true, mapIntentLoadOptions(intent));
+  if (!mapState.immersive || immersiveSession !== mapState.immersiveSession) return false;
   renderImmersiveFrame();
-  const ready = await waitForImmersiveMapReady();
+  const ready = await waitForImmersiveMapReady(8000, immersiveSession);
+  if (!mapState.immersive || immersiveSession !== mapState.immersiveSession) return false;
   if (!ready && mapRendererIsGl()) {
     // A loaded-but-never-painted GL surface is the failure mode users perceive
     // as a stuck map. The existing classic renderer is a safe in-session fallback.
     fallbackMapLibreRenderer("Immersive map did not reach its ready postcondition");
     await nextMapPaint();
+    if (!mapState.immersive || immersiveSession !== mapState.immersiveSession) return false;
     renderImmersiveFrame();
   }
   showImmersiveMapCreditBriefly();
   syncMapIntentPresentation();
   syncMapAlertOverlays();
+  focusImmersiveMapSurface();
   return true;
 }
 
 function exitImmersiveMap() {
-  if (typeof setAppDockCurrent === "function") setAppDockCurrent("today");
   if (!mapState.immersive || !mapState._normalEls) return;
 
+  mapState.immersiveSession += 1;
+  mapState.frameLoadSeq += 1;
   cancelStandardTimelineScrub();
   closeImmersiveMapCredit();
   clearMapLibreInteractionState();
@@ -11818,6 +11953,7 @@ function exitImmersiveMap() {
   stopMapTrustClock();
   mapState.openIntent = null;
   mapState.pendingOpenIntent = null;
+  mapState.intentResolution = null;
   syncMapIntentPresentation();
   document.getElementById("immersiveMap")?.classList.remove("is-satellite-mode");
   syncSkyMotionForMap();
@@ -11826,21 +11962,77 @@ function exitImmersiveMap() {
   syncGeneratedRadarStatusChip();
 
   document.getElementById("immersiveMap").hidden = true;
-  document.body.style.overflow = "";
   document.body.classList.remove("map-immersive-active");
+  const restoredDayDetail = typeof window.nearcastRestoreDayDetailAfterMap === "function"
+    ? window.nearcastRestoreDayDetailAfterMap()
+    : false;
+  document.body.style.overflow = restoredDayDetail ? "hidden" : "";
+  if (typeof syncAppDockCurrent === "function") syncAppDockCurrent();
+  else if (typeof setAppDockCurrent === "function") setAppDockCurrent(restoredDayDetail ? "hourly" : "today");
   syncXweatherStormActivationControl();
+  const returnFocus = immersiveReturnFocus;
+  immersiveReturnFocus = null;
+  if (!restoredDayDetail && returnFocus instanceof HTMLElement) {
+    requestAnimationFrame(() => {
+      if (returnFocus.isConnected && !returnFocus.closest("[hidden], [inert], [aria-hidden='true']")) {
+        returnFocus.focus({ preventScroll: true });
+      }
+    });
+  }
 
   if (immersiveDragAbort) { immersiveDragAbort.abort(); immersiveDragAbort = null; }
   document.removeEventListener("keydown", onImmersiveKey);
 
-  setTimeout(() => {
+  if (immersiveExitResetTimer) clearTimeout(immersiveExitResetTimer);
+  immersiveExitResetTimer = setTimeout(() => {
+    immersiveExitResetTimer = 0;
+    if (mapState.immersive) return;
     loadMapFrames(true, { timelineKind: "radar", focusLatest: true });
     renderMapLegend();
   }, 40);
 }
 
+function immersiveMapFocusables() {
+  const root = document.getElementById("immersiveMap");
+  if (!root || root.hidden) return [];
+  return [...root.querySelectorAll("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((element) => {
+      if (!(element instanceof HTMLElement) || element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    });
+}
+
+function trapImmersiveMapFocus(event) {
+  if (event.defaultPrevented || event.key !== "Tab") return false;
+  const topSheet = typeof topmostShownSheet === "function" ? topmostShownSheet() : null;
+  if (topSheet && topSheet.dataset?.suspendedForMap !== "true") return false;
+  const focusables = immersiveMapFocusables();
+  if (!focusables.length) return false;
+  const first = focusables[0];
+  const last = focusables.at(-1);
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !focusables.includes(active))) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && (active === last || !focusables.includes(active))) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
 function onImmersiveKey(e) {
+  if (e.key === "Tab") {
+    trapImmersiveMapFocus(e);
+    return;
+  }
   if (e.key !== "Escape") return;
+  const topSheet = typeof topmostShownSheet === "function" ? topmostShownSheet() : null;
+  if (topSheet && !["stormReceiptSheet", "stormViewSheet"].includes(topSheet.id)) return;
   if (!document.getElementById("immCreditPanel")?.hidden) {
     closeImmersiveMapCredit({ focusToggle: true });
     return;

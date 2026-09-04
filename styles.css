@@ -10254,6 +10254,60 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
   stroke: color-mix(in srgb, var(--semantic-blue) 58%, var(--semantic-green));
 }
 
+/* A canonical weather window quietly sits behind the default temperature
+   line. It adds timing context without another label, card, or touch target. */
+.hourly-event-overlay {
+  --event-color: var(--semantic-blue);
+  pointer-events: none;
+}
+
+.hourly-event-overlay.is-snow,
+.hourly-event-overlay.is-ice {
+  --event-color: color-mix(in srgb, var(--semantic-blue) 62%, white);
+}
+
+.hourly-event-overlay.is-storm {
+  --event-color: color-mix(in srgb, var(--semantic-blue) 65%, var(--semantic-gold));
+}
+
+.hourly-event-overlay.is-fog,
+.hourly-event-overlay.is-wind {
+  --event-color: color-mix(in srgb, var(--semantic-blue) 58%, var(--semantic-green));
+}
+
+.hourly-event-window {
+  fill: color-mix(in srgb, var(--event-color) 7%, transparent);
+}
+
+.hourly-event-rail {
+  fill: color-mix(in srgb, var(--event-color) 34%, transparent);
+}
+
+.hourly-event-peak {
+  fill: color-mix(in srgb, var(--semantic-gold) 9%, transparent);
+}
+
+.hourly-event-onset,
+.hourly-event-peak-onset {
+  stroke: color-mix(in srgb, var(--event-color) 48%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.hourly-event-peak-onset {
+  stroke: color-mix(in srgb, var(--semantic-gold) 64%, transparent);
+  stroke-dasharray: none;
+  stroke-width: 2;
+}
+
+.hourly-trend .hourly-event-dot {
+  fill: var(--event-color);
+  stroke: color-mix(in srgb, var(--glass-heavy) 86%, transparent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .hourly-trend-area {
   fill: color-mix(in srgb, var(--semantic-blue) 15%, transparent);
 }
@@ -10790,6 +10844,19 @@ body:has(#dayDetail.show.is-hourly-mode) .sheet-now-jump {
   gap: 3px 12px;
   padding-left: 42px;
   padding-right: 2px;
+}
+
+.day-story-relation {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--semantic-blue) 82%, var(--daily-secondary));
+  font-size: 0.72rem;
+  font-weight: 950;
+  line-height: 1.1;
+}
+
+.day-story-relation.is-with {
+  color: var(--daily-secondary);
+  opacity: 0.72;
 }
 
 .day-memory {
@@ -14539,6 +14606,12 @@ body.map-immersive-active .day-sheet {
 
 body.map-immersive-active .day-sheet.show {
   transform: translateY(var(--sheet-drag-y, 0px));
+}
+
+#dayDetail.is-suspended-for-map,
+#dayDetailBackdrop.is-suspended-for-map {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .day-sheet.storm-view-sheet {

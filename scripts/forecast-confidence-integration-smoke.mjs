@@ -521,6 +521,10 @@ const receiptSandbox = {
   activeAlerts: [],
   alertTrustState: { state: "ready", checkedAt: null, reason: "" },
   radarFixture: null,
+  profileFixture: { rawCode: 3, pop: 10, primary: false },
+  modeledNowFixture: { isWetNow: false, isSnow: false, code: null },
+  pulseFixture: { status: "learning" },
+  forecastNowFixture: Date.now(),
   provenanceFixture: { source: "network", savedAt: Date.now() - 5 * 60 * 1000, cacheFallback: false, reason: "" },
   confidenceFixture: {
     level: "high",
@@ -535,7 +539,15 @@ const receiptSandbox = {
   forecastProvenance() { return receiptSandbox.provenanceFixture; },
   forecastAgeLabel(ms) { return `${Math.max(0, Math.round(ms / 60000))} min ago`; },
   radarSignalForForecastData() { return receiptSandbox.radarFixture; },
-  forecastPulseDayPresentation() { return { status: "learning", tone: "neutral", label: "", detail: "" }; },
+  currentHourlyIndex() { return 0; },
+  hourlyPrecipProfile() { return receiptSandbox.profileFixture; },
+  nowPrecipSignal() { return receiptSandbox.modeledNowFixture; },
+  isPrecipCode(code) { return Number(code) >= 51; },
+  isSnowCode(code) { return Number(code) >= 71 && Number(code) <= 86; },
+  forecastNowMs() { return receiptSandbox.forecastNowFixture; },
+  forecastLocalDateAtMs() { return "2026-08-19"; },
+  nearcastRelativeTiming() { return { timeLabel: "6:00 PM", dayLabel: "today" }; },
+  forecastPulseDayPresentation() { return receiptSandbox.pulseFixture; },
   forecastDailyIndex() { return 0; },
   nearcastForecastConfidence() { return receiptSandbox.confidenceFixture; },
   nearcastForecastDisclosure() {
@@ -555,8 +567,9 @@ const receiptSandbox = {
   alertCountLabel(count) { return `${count} alert${count === 1 ? "" : "s"}`; },
   weatherTruth() { return {}; }
 };
+receiptSandbox.PRECIP_FEATURE_POP = 30;
 vm.createContext(receiptSandbox);
-vm.runInContext(`${extractFunction(app, "forecastConfidenceSourceList")}\n${extractFunction(app, "forecastTrustPresentation")}\nglobalThis.present = forecastTrustPresentation;`, receiptSandbox);
+vm.runInContext(`${extractFunction(app, "forecastConfidenceNumber")}\n${extractFunction(app, "forecastPositiveTrustCue")}\n${extractFunction(app, "forecastConfidenceSourceList")}\n${extractFunction(app, "forecastTrustPresentation")}\nglobalThis.present = forecastTrustPresentation;`, receiptSandbox);
 const receiptOptions = { brief: { outlook: { headline: "Rain possible this evening", support: "Most likely after 6 PM" } } };
 const liveReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
 assert.equal(liveReceipt.tone, "fresh", "ordinary model agreement remains quiet on a healthy forecast");
@@ -573,17 +586,88 @@ receiptSandbox.radarFixture = {
   source: "weather radar",
   timestamp: Date.now() - 4 * 60 * 1000
 };
+receiptSandbox.profileFixture = { rawCode: 61, pop: 65, primary: true };
 const observedReceipt = plain(receiptSandbox.present({}, {
-  precip: { phase: "likely-this-hour", source: "radar-current", label: "Light rain" }
+  precip: { phase: "likely-this-hour", source: "radar-current", label: "Light rain", textCode: 61 }
 }, receiptOptions));
 assert.equal(observedReceipt.tone, "observed", "fresh direct radar keeps the observed Home treatment instead of a model-agreement color");
-assert.equal(observedReceipt.trigger, "Light rain", "the collapsed Home receipt leads with what radar observes now");
+assert.equal(observedReceipt.trigger, "Radar confirms rain now", "matching forecast guidance and fresh radar earn a simple confirmation cue");
 assert.match(observedReceipt.triggerMeta, /4 min ago/, "the collapsed observed claim keeps radar freshness visible");
 assert.equal(observedReceipt.headline, "Rain possible this evening", "the expanded receipt keeps the best weather read instead of a confidence grade");
 assert.equal(observedReceipt.source, "3 of 3 forecast systems compared", "technical comparison remains available behind the observed Home claim");
 assert.match(observedReceipt.evidence, /observed on radar/i, "the sheet separately explains the direct observation");
 
+receiptSandbox.profileFixture = { rawCode: 3, pop: 8, primary: false };
+const radarCorrectionReceipt = plain(receiptSandbox.present({}, {
+  precip: { phase: "active", source: "radar-current", label: "Light rain", textCode: 61 }
+}, receiptOptions));
+assert.equal(radarCorrectionReceipt.trigger, "Radar shows rain now", "radar correcting a dry forecast never masquerades as forecast confirmation");
+assert.doesNotMatch(radarCorrectionReceipt.trigger, /confirms/i, "confirmation requires independent forecast support");
+
+receiptSandbox.profileFixture = { rawCode: 95, pop: 70, primary: true };
+const convectiveReceipt = plain(receiptSandbox.present({}, {
+  precip: { phase: "active", source: "radar-current", label: "Rain", textCode: 61 },
+  convective: { level: "likely" }
+}, receiptOptions));
+assert.equal(convectiveReceipt.trigger, "Radar confirms precipitation now", "radar never claims to confirm thunderstorms or lightning");
+
+receiptSandbox.radarFixture.timestamp = Date.now() - 20 * 60 * 1000;
+const delayedRadarReceipt = plain(receiptSandbox.present({}, {
+  precip: { phase: "active", source: "radar-current", label: "Rain", textCode: 61 }
+}, receiptOptions));
+assert.doesNotMatch(delayedRadarReceipt.trigger, /confirms/i, "an old radar frame cannot earn a fresh confirmation cue");
+
+const timingStartMs = receiptSandbox.forecastNowFixture + 6 * 60 * 60 * 1000;
+const timingEndMs = timingStartMs + 2 * 60 * 60 * 1000;
+const timingData = { daily: { time: ["2026-08-19"] } };
 receiptSandbox.radarFixture = null;
+receiptSandbox.provenanceFixture = {
+  source: "network",
+  savedAt: receiptSandbox.forecastNowFixture - 5 * 60 * 1000,
+  cacheFallback: false,
+  reason: ""
+};
+receiptSandbox.confidenceFixture = {
+  level: "high",
+  headline: "High confidence",
+  claim: {
+    kind: "precip-window",
+    startMs: timingStartMs,
+    endMs: timingEndMs,
+    canonical: { eventKind: "rain" }
+  },
+  evidence: {
+    agreement: {
+      status: "aligned",
+      providersUsed: 3,
+      providersExpected: 3,
+      providerIds: ["gfs", "gem", "icon"],
+      timingRangeMs: 60 * 60 * 1000
+    },
+    evolution: { status: "stable", direction: null, comparedRuns: 1 }
+  },
+  limitations: []
+};
+receiptSandbox.pulseFixture = {
+  status: "settled",
+  previousCheckedAt: receiptSandbox.provenanceFixture.savedAt - 60 * 60 * 1000,
+  current: { eventKind: "rain", eventStartMs: timingStartMs },
+  previous: { eventKind: "rain", eventStartMs: timingStartMs - 30 * 60 * 1000 }
+};
+const steadyTimingReceipt = plain(receiptSandbox.present(timingData, {
+  precip: { phase: "dry" }
+}, receiptOptions));
+assert.equal(steadyTimingReceipt.trigger, "Timing steady", "an aligned near-term event that held across meaningful updates earns a calm timing cue");
+assert.equal(steadyTimingReceipt.triggerMeta, "Rain near 6:00 PM today", "the cue stays concrete and user-facing");
+
+receiptSandbox.pulseFixture.previousCheckedAt = receiptSandbox.provenanceFixture.savedAt - 10 * 60 * 1000;
+const prematureTimingReceipt = plain(receiptSandbox.present(timingData, {
+  precip: { phase: "dry" }
+}, receiptOptions));
+assert.match(prematureTimingReceipt.trigger, /^Updated /, "two nearly simultaneous checks do not manufacture a meaningful steady claim");
+
+receiptSandbox.radarFixture = null;
+receiptSandbox.pulseFixture.previousCheckedAt = receiptSandbox.provenanceFixture.savedAt - 60 * 60 * 1000;
 
 receiptSandbox.provenanceFixture = {
   source: "cache",
@@ -591,7 +675,7 @@ receiptSandbox.provenanceFixture = {
   cacheFallback: true,
   reason: "forecast-fetch-failed"
 };
-const staleReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
+const staleReceipt = plain(receiptSandbox.present(timingData, { precip: { phase: "dry" } }, receiptOptions));
 assert.equal(staleReceipt.tone, "stale", "an old canonical fallback preempts a reassuring confidence color");
 assert.equal(staleReceipt.trigger, "Using saved forecast", "canonical refresh failure stays visible in the collapsed receipt");
 assert.equal(staleReceipt.headline, "Rain possible this evening", "the sheet preserves the best read while explaining the stale limitation separately");
@@ -600,7 +684,7 @@ assert.equal(staleReceipt.source, "Open-Meteo Best Match", "supplemental models 
 
 receiptSandbox.provenanceFixture = { source: "network", savedAt: Date.now() - 5 * 60 * 1000, cacheFallback: false, reason: "" };
 receiptSandbox.alertTrustState = { state: "failed", checkedAt: Date.now(), reason: "timeout" };
-const alertFailureReceipt = plain(receiptSandbox.present({}, { precip: { phase: "dry" } }, receiptOptions));
+const alertFailureReceipt = plain(receiptSandbox.present(timingData, { precip: { phase: "dry" } }, receiptOptions));
 assert.equal(alertFailureReceipt.tone, "issue", "an alert-check failure preempts a reassuring confidence color");
 assert.equal(alertFailureReceipt.headline, "Rain possible this evening");
 assert.doesNotMatch(alertFailureReceipt.trigger, /high confidence/i, "the compact line cannot conceal failed official-alert verification");

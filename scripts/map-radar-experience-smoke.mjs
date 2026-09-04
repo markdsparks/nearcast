@@ -248,7 +248,7 @@ assert.match(enterSource, /await loadMapFrames\(true, mapIntentLoadOptions\(inte
 const mapIntentLoadSource = extractFunction(map, "mapIntentLoadOptions");
 assert.match(mapIntentLoadSource, /timelineKind:\s*"precip"/, "ordinary immersive entry keeps the unified radar-to-forecast timeline");
 assert.match(mapIntentLoadSource, /focusNow:\s*targetTimestamp == null/, "ordinary immersive entry still starts at Now");
-assert.match(enterSource, /await waitForImmersiveMapReady\(\)/, "immersive entry waits for a rendered surface postcondition");
+assert.match(enterSource, /await waitForImmersiveMapReady\([^)]*immersiveSession\)/, "immersive entry waits for a rendered surface postcondition tied to the current map session");
 assert.match(map, /fallbackMapLibreRenderer\("Immersive map did not reach its ready postcondition"\)/, "a stuck GL surface falls back to the classic map");
 
 const activationSource = extractFunction(map, "startXweatherStormActivation");

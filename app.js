@@ -1,4 +1,4 @@
-const VERSION = "3.0.396";
+const VERSION = "3.0.397";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -975,12 +975,14 @@ const mapState = {
   timer: null,
   mode: "radar",
   immersive: false,
+  immersiveSession: 0,
   userPausedRadar: false,
   playAccum: 0,
   playClock: 0,
   frameWaitIndex: null,
   frameWaitStart: 0,
   frameLoadSeq: 0,
+  intentResolution: null,
   xfadeFrames: [null, null],
   _normalEls: null,
   timelineKind: "radar",
@@ -4617,14 +4619,29 @@ function handleAppDockAction(action) {
     return;
   }
   if (action === "map") {
-    // The map is a true replacement surface, unlike Ask/Plans which can sit
-    // above Hourly and return to the same detail. Dismiss Hourly first so its
-    // sheet cannot compete with the full-screen radar stacking context.
     const dayDetail = document.getElementById("dayDetail");
-    if (dayDetail && !dayDetail.hidden && dayDetail.classList.contains("show")) closeDayDetail();
+    const returningToHourly = Boolean(
+      dayDetail && !dayDetail.hidden && dayDetail.classList.contains("show") && dayDetail.classList.contains("is-hourly-mode")
+    );
+    const focusedIntent = returningToHourly && typeof window.nearcastDayDetailMapIntent === "function"
+      ? window.nearcastDayDetailMapIntent()
+      : nearcastMapIntentForNow();
+    if (returningToHourly && typeof window.nearcastSuspendDayDetailForMap === "function") {
+      window.nearcastSuspendDayDetailForMap();
+    }
     setAppDockCurrent("map");
     if (typeof ensureInlineMapReady === "function") ensureInlineMapReady(true);
-    openNearcastMapIntent(nearcastMapIntentForNow());
+    const opening = openNearcastMapIntent(focusedIntent || nearcastMapIntentForNow());
+    if (opening && typeof opening.catch === "function") {
+      opening.catch(() => {
+        if (mapState.immersive && typeof exitImmersiveMap === "function") exitImmersiveMap();
+        else {
+          const restored = window.nearcastRestoreDayDetailAfterMap?.();
+          document.body.style.overflow = restored ? "hidden" : "";
+          syncAppDockCurrent();
+        }
+      });
+    }
     return;
   }
   if (action === "plans") {
@@ -5275,10 +5292,16 @@ function bindEvents() {
     if (event.key === "Escape" && !sheet.hidden && isTopmostShownSheet(sheet)) closeDayDetail();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.placeSheet.hidden) closePlaceSheet();
+    if (event.key === "Escape" && !els.placeSheet.hidden && isTopmostShownSheet(els.placeSheet)) {
+      event.stopImmediatePropagation();
+      closePlaceSheet();
+    }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.glanceDetailSheet.hidden) closeGlanceDetail();
+    if (event.key === "Escape" && !els.glanceDetailSheet.hidden && isTopmostShownSheet(els.glanceDetailSheet)) {
+      event.stopImmediatePropagation();
+      closeGlanceDetail();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.installSheet && !els.installSheet.hidden) {
@@ -5321,7 +5344,10 @@ function bindEvents() {
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.aiSheet.hidden) closeAISheet();
+    if (event.key === "Escape" && !els.aiSheet.hidden && isTopmostShownSheet(els.aiSheet)) {
+      event.stopImmediatePropagation();
+      closeAISheet();
+    }
   });
 }
 
@@ -8386,9 +8412,12 @@ function topmostShownSheet() {
     const candidate = shownSheetStack[index];
     if (!candidate?.isConnected || candidate.hidden || !candidate.classList.contains("show")) {
       shownSheetStack.splice(index, 1);
+      continue;
     }
+    if (candidate?.dataset?.suspendedForMap === "true") continue;
+    return candidate;
   }
-  return shownSheetStack[shownSheetStack.length - 1] || null;
+  return null;
 }
 
 function focusShownSheet(sheet) {
@@ -8412,10 +8441,12 @@ function restoreFocusAfterSheet(sheet) {
   if (!state?.active) return;
   state.active = false;
   const returnFocus = state.returnFocus;
+  state.restoreVersion = Number(state.restoreVersion || 0) + 1;
+  const restoreVersion = state.restoreVersion;
   setTimeout(() => {
     // A quick reopen starts a new focus lifecycle; the stale close must not
     // pull focus out of the newly opened sheet.
-    if (state.active) return;
+    if (state.active || state.restoreVersion !== restoreVersion) return;
     const topSheet = topmostShownSheet();
     if (topSheet) {
       if (canRestoreSheetFocus(returnFocus, topSheet)) {
@@ -8429,10 +8460,18 @@ function restoreFocusAfterSheet(sheet) {
   }, 280);
 }
 
+function suppressSheetFocusRestore(sheet) {
+  const state = sheetAccessibilityStates.get(sheet);
+  if (!state) return;
+  state.active = false;
+  state.returnFocus = null;
+  state.restoreVersion = Number(state.restoreVersion || 0) + 1;
+}
+
 function prepareSheetAccessibility(sheet) {
   let state = sheetAccessibilityStates.get(sheet);
   if (!state) {
-    state = { active: false, returnFocus: null, observer: null };
+    state = { active: false, returnFocus: null, observer: null, restoreVersion: 0 };
     state.observer = new MutationObserver(() => {
       if (state.active && (sheet.hidden || !sheet.classList.contains("show"))) {
         restoreFocusAfterSheet(sheet);
@@ -10212,6 +10251,118 @@ window.nearcastEnsureForecastConfidence = async (place = state.activePlace, data
   return nearcastForecastConfidence(data, state.weatherTruth || weatherTruth(data), place);
 };
 
+// Positive trust belongs in the existing evidence receipt, and only when the
+// evidence supports a concrete user-facing claim. This deliberately avoids a
+// generic confidence grade: radar can verify what is happening now, while
+// forecast history can show that a meaningful event's timing has held.
+function forecastPositiveTrustCue(data, truth, confidence, disclosure, options = {}) {
+  if (!data || !truth) return null;
+  const provenance = options.provenance || forecastProvenance(data);
+  const alertState = options.alertState || (
+    typeof alertTrustState === "undefined" ? { state: "unknown" } : alertTrustState
+  );
+  if (
+    provenance.cacheFallback ||
+    alertState.state === "failed" ||
+    disclosure?.mode === "interrupt"
+  ) return null;
+
+  const radar = options.radar === undefined ? radarSignalForForecastData(data) : options.radar;
+  const wallNowMs = Number.isFinite(Number(options.wallNowMs)) ? Number(options.wallNowMs) : Date.now();
+  const radarTimestamp = forecastConfidenceNumber(radar?.timestamp);
+  const radarAgeMs = radarTimestamp === null ? null : Math.max(0, wallNowMs - radarTimestamp);
+  const radarIsFresh = radarAgeMs !== null &&
+    radarTimestamp <= wallNowMs + 5 * 60 * 1000 &&
+    radarAgeMs <= 15 * 60 * 1000;
+  const radarIsCurrentPrecip = Boolean(
+    radarIsFresh &&
+    radar?.phase === "active" &&
+    truth?.precip?.source === "radar-current"
+  );
+
+  if (radarIsCurrentPrecip) {
+    const currentIndex = currentHourlyIndex(data);
+    const profile = options.currentProfile || (currentIndex >= 0 ? hourlyPrecipProfile(data, currentIndex) : null);
+    const modeledNow = options.modeledNow || nowPrecipSignal(data);
+    const forecastSupportsPrecip = Boolean(
+      modeledNow?.isWetNow ||
+      profile?.primary ||
+      (isPrecipCode(profile?.rawCode) && Number(profile?.pop || 0) >= PRECIP_FEATURE_POP)
+    );
+    const observedCode = truth?.precip?.textCode ?? truth?.precip?.visualCode ?? modeledNow?.code;
+    // Radar reflectivity confirms precipitation, not lightning. Keep the cue
+    // within that source's capability when the main story is convective.
+    const noun = truth?.convective?.level
+      ? "precipitation"
+      : (modeledNow?.isSnow || isSnowCode(observedCode)) ? "snow" : "rain";
+    return {
+      kind: "radar-now",
+      tone: "observed",
+      trigger: `Radar ${forecastSupportsPrecip ? "confirms" : "shows"} ${noun} now`,
+      triggerMeta: `Radar · ${forecastAgeLabel(radarAgeMs)}`
+    };
+  }
+
+  const claim = confidence?.claim || null;
+  const agreement = confidence?.evidence?.agreement || {};
+  const evolution = confidence?.evidence?.evolution || {};
+  const eventStartMs = forecastConfidenceNumber(claim?.startMs);
+  const eventEndMs = forecastConfidenceNumber(claim?.endMs);
+  const forecastNow = forecastNowMs(data);
+  const leadMs = eventStartMs === null ? null : eventStartMs - forecastNow;
+  const completeAgreement = Number(agreement.providersUsed) >= 3 &&
+    Number(agreement.providersUsed) === Number(agreement.providersExpected);
+  if (
+    claim?.kind !== "precip-window" ||
+    eventStartMs === null ||
+    eventEndMs === null ||
+    leadMs === null ||
+    leadMs < 30 * 60 * 1000 ||
+    leadMs > 36 * 60 * 60 * 1000 ||
+    agreement.status !== "aligned" ||
+    !completeAgreement ||
+    evolution.status !== "stable" ||
+    Number(evolution.comparedRuns) < 1 ||
+    disclosure?.mode !== "silent" ||
+    disclosure?.reason !== "settled"
+  ) return null;
+
+  const localDate = forecastLocalDateAtMs(data, eventStartMs);
+  const dayIndex = (data?.daily?.time || []).indexOf(localDate);
+  if (dayIndex < 0) return null;
+  const pulse = options.pulse || forecastPulseDayPresentation(data, dayIndex, state.activePlace);
+  const currentEventStart = forecastConfidenceNumber(pulse?.current?.eventStartMs ?? pulse?.current?.precipStartMs);
+  const previousEventStart = forecastConfidenceNumber(pulse?.previous?.eventStartMs ?? pulse?.previous?.precipStartMs);
+  const currentCheckedAt = forecastConfidenceNumber(provenance.savedAt);
+  const previousCheckedAt = forecastConfidenceNumber(pulse?.previousCheckedAt);
+  const claimEventKind = String(claim?.canonical?.eventKind || "");
+  if (
+    pulse?.status !== "settled" ||
+    currentEventStart === null ||
+    previousEventStart === null ||
+    Math.abs(currentEventStart - eventStartMs) >= 90 * 60 * 1000 ||
+    Math.abs(currentEventStart - previousEventStart) >= 90 * 60 * 1000 ||
+    !claimEventKind ||
+    String(pulse?.current?.eventKind || "") !== claimEventKind ||
+    String(pulse?.previous?.eventKind || "") !== claimEventKind ||
+    currentCheckedAt === null ||
+    previousCheckedAt === null ||
+    currentCheckedAt - previousCheckedAt < 30 * 60 * 1000
+  ) return null;
+
+  const eventKind = claimEventKind;
+  const eventName = eventKind === "storm" ? "Storms"
+    : eventKind === "snow" ? "Snow"
+      : eventKind === "ice" ? "Ice" : "Rain";
+  const timing = nearcastRelativeTiming(data, eventStartMs, eventEndMs);
+  return {
+    kind: "timing-steady",
+    tone: "fresh",
+    trigger: "Timing steady",
+    triggerMeta: `${eventName} near ${timing.timeLabel} ${timing.dayLabel}`
+  };
+}
+
 function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(data), options = {}) {
   const provenance = forecastProvenance(data);
   const savedAt = provenance.savedAt;
@@ -10246,6 +10397,11 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
   const brief = options.brief || (state.forecastPresentation?.brief && state.forecast === data
     ? state.forecastPresentation.brief
     : null);
+  const positiveCue = forecastPositiveTrustCue(data, truth, confidence, disclosure, {
+    provenance,
+    alertState: alerts,
+    radar
+  });
 
   let tone = radarObserved ? "observed" : "fresh";
   let headline = brief?.outlook?.headline || brief?.story?.headline || "Latest forecast";
@@ -10262,7 +10418,11 @@ function forecastTrustPresentation(data = state.forecast, truth = weatherTruth(d
     trigger = "Official alerts unavailable";
     triggerMeta = "Forecast still available";
   } else {
-    if (!radarObserved && radar?.phase !== "nearby" && !radarClear && reality?.applied) {
+    if (positiveCue) {
+      tone = positiveCue.tone;
+      trigger = positiveCue.trigger;
+      triggerMeta = positiveCue.triggerMeta;
+    } else if (!radarObserved && radar?.phase !== "nearby" && !radarClear && reality?.applied) {
       tone = "localized";
       trigger = "Local reading";
       triggerMeta = `${reality.stationLabel || "Nearby observations"}${realityAge === "time unavailable" ? "" : ` · ${realityAge}`}`;
@@ -16411,6 +16571,87 @@ function hourlyTrendSegments(points) {
   }, []);
 }
 
+// Project the one canonical forecast event onto the temperature runway. This
+// is deliberately geometry-only: event selection and likelihood already live
+// in forecastMaterialEvent(), so the chart cannot promote a raw provider code
+// or invent a second weather story.
+function hourlyEventOverlayGeometry(rows, event, trend, pitch = 80) {
+  if (!Array.isArray(rows) || !rows.length || !nearcastBriefMaterialEvent(event)) return null;
+  const firstMs = Number(rows[0]?.ms);
+  const lastMs = Number(rows.at(-1)?.ms);
+  const stepMs = rows.slice(1).reduce((step, row, index) => {
+    if (Number.isFinite(step)) return step;
+    const difference = Number(row?.ms) - Number(rows[index]?.ms);
+    return Number.isFinite(difference) && difference > 0 ? difference : null;
+  }, null) || 60 * 60 * 1000;
+  const viewportEndMs = lastMs + stepMs;
+  const startMs = Number(event?.startMs);
+  const endMs = Number(event?.endMs);
+  const chartWidth = Number(trend?.width);
+  const chartPitch = Number(pitch);
+  if (
+    !Number.isFinite(firstMs) || !Number.isFinite(lastMs) ||
+    !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs ||
+    !Number.isFinite(chartWidth) || chartWidth <= 0 ||
+    !Number.isFinite(chartPitch) || chartPitch <= 0 ||
+    endMs <= firstMs || startMs >= viewportEndMs
+  ) return null;
+
+  const clampX = (value) => Math.max(0, Math.min(chartWidth, value));
+  const boundaryX = (ms) => clampX(((ms - firstMs) / stepMs) * chartPitch);
+  const clippedSpan = (fromMs, toMs) => {
+    const from = Math.max(firstMs, Number(fromMs));
+    const to = Math.min(viewportEndMs, Number(toMs));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null;
+    const x = boundaryX(from);
+    const endX = boundaryX(to);
+    return endX - x >= 1 ? { x, width: endX - x } : null;
+  };
+
+  const span = clippedSpan(startMs, endMs);
+  if (!span) return null;
+  const safeKind = ["rain", "storm", "snow", "ice", "fog", "wind"].includes(event.kind)
+    ? event.kind
+    : "rain";
+  const stormPhase = Array.isArray(event.phases)
+    ? event.phases.find((phase) => phase?.kind === "storm" && (
+      Number(phase.startMs) !== startMs || Number(phase.endMs) !== endMs || safeKind !== "storm"
+    ))
+    : null;
+  const peak = stormPhase ? clippedSpan(stormPhase.startMs, stormPhase.endMs) : null;
+  return {
+    kind: safeKind,
+    mode: safeKind === "wind" ? "marker" : "window",
+    ...span,
+    peak,
+    onsetX: boundaryX(startMs),
+    peakOnsetX: peak && Number(stormPhase.startMs) >= firstMs && Number(stormPhase.startMs) < viewportEndMs
+      ? boundaryX(Number(stormPhase.startMs))
+      : null,
+    startsInside: startMs >= firstMs && startMs < viewportEndMs,
+    endsInside: endMs > firstMs && endMs < viewportEndMs
+  };
+}
+
+function hourlyEventOverlayMarkup(overlay) {
+  if (!overlay) return "";
+  const kindClass = `is-${overlay.kind}`;
+  if (overlay.mode === "marker") {
+    if (!overlay.startsInside) return "";
+    return `<g class="hourly-event-overlay ${kindClass} is-marker">
+      <line class="hourly-event-onset" x1="${overlay.onsetX.toFixed(1)}" y1="4" x2="${overlay.onsetX.toFixed(1)}" y2="48"></line>
+      <circle class="hourly-event-dot" cx="${overlay.onsetX.toFixed(1)}" cy="46" r="3"></circle>
+    </g>`;
+  }
+  return `<g class="hourly-event-overlay ${kindClass}">
+    <rect class="hourly-event-window" x="${overlay.x.toFixed(1)}" y="1" width="${overlay.width.toFixed(1)}" height="47" rx="8"></rect>
+    <rect class="hourly-event-rail" x="${overlay.x.toFixed(1)}" y="45" width="${overlay.width.toFixed(1)}" height="3" rx="1.5"></rect>
+    ${overlay.peak ? `<rect class="hourly-event-peak" x="${overlay.peak.x.toFixed(1)}" y="1" width="${overlay.peak.width.toFixed(1)}" height="47" rx="8"></rect>` : ""}
+    ${overlay.startsInside ? `<line class="hourly-event-onset" x1="${overlay.onsetX.toFixed(1)}" y1="5" x2="${overlay.onsetX.toFixed(1)}" y2="48"></line>` : ""}
+    ${Number.isFinite(overlay.peakOnsetX) ? `<line class="hourly-event-peak-onset" x1="${overlay.peakOnsetX.toFixed(1)}" y1="34" x2="${overlay.peakOnsetX.toFixed(1)}" y2="48"></line>` : ""}
+  </g>`;
+}
+
 function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windUnit, precipDisplay = null, isCurrent = false }) {
   if (metric === "precipitation") {
     const currentClaim = isCurrent && precipDisplay?.displayMode !== "forecast-probability";
@@ -16713,6 +16954,9 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
       .map((segment) => `<path class="hourly-trend-area" d="M ${segment[0].x.toFixed(1)} 48 L ${segment.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L ")} L ${segment.at(-1).x.toFixed(1)} 48 Z"></path>`)
       .join("")
     : "";
+  const eventOverlay = metric === "temperature"
+    ? hourlyEventOverlayMarkup(hourlyEventOverlayGeometry(rows, canonicalEvent, trend))
+    : "";
 
   // Values, icons, and line share the same 80px rhythm and scroll together.
   const cards = rows.map(({ time, index }, position) => {
@@ -16780,6 +17024,7 @@ function renderHourly(data, tempUnit, truth = weatherTruth(data), presentation =
   }).join("");
   els.hourly.innerHTML = `
     <svg class="hourly-trend metric-${metric}" style="width:${trend.width}px" viewBox="0 0 ${trend.width} 50" preserveAspectRatio="none" aria-hidden="true">
+      ${eventOverlay}
       ${areaPaths}
       ${trendLines}
       ${trend.points.filter((point) => point.available).map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3"></circle>`).join("")}
@@ -17068,11 +17313,95 @@ function dailyEditorialConditionLabel(data, day, dayIndex) {
   const dayDate = data?.daily?.time?.[dayIndex];
   if (!Number.isFinite(startMs) || !dayDate || forecastLocalDateAtMs(data, startMs) !== dayDate) return base;
   const hour = new Date(startMs + forecastOffsetMs(data)).getUTCHours();
-  if (hour >= 17 || hour < 5) return `${base} most of day`;
+  if (hour >= 17) return `${base} most of day`;
   if (hour >= 11) return `${base} early`;
   // An event arriving in the morning makes an unqualified calm condition too
   // confident, while "mixed" accurately leaves the timing line to explain it.
   return "Mixed conditions";
+}
+
+// Turn the representative condition and the one canonical material event into
+// a chronological, at-most-two-part row. The event's timing has already been
+// selected by forecastMaterialEvent(); this helper only decides how to tell it.
+function dailyRowWeatherStory(data, day, dayIndex, disclosure = null) {
+  const base = String(day?.label || "Weather").trim();
+  const single = { primary: base, secondary: "", relation: null, aria: base };
+  const event = day?.materialEvent;
+  if (!nearcastBriefMaterialEvent(event)) return single;
+
+  const date = data?.daily?.time?.[dayIndex];
+  const dayStartMs = date ? parseForecastTimestamp(date, data) : null;
+  const nextDate = data?.daily?.time?.[dayIndex + 1];
+  const dayEndMs = nextDate
+    ? parseForecastTimestamp(nextDate, data)
+    : Number(dayStartMs) + 24 * 60 * 60 * 1000;
+  const eventStartMs = Number(event.startMs);
+  const eventEndMs = Number(event.endMs);
+  if (
+    !Number.isFinite(dayStartMs) || !Number.isFinite(dayEndMs) ||
+    !Number.isFinite(eventStartMs) || !Number.isFinite(eventEndMs) ||
+    eventEndMs <= dayStartMs || eventStartMs >= dayEndMs
+  ) return single;
+
+  const fallbackTiming = day?.timing || forecastMaterialEventDailyTiming(data, event);
+  const eventCopy = nearcastCalmDailyTiming(data, event, disclosure, fallbackTiming, dayIndex);
+  if (!eventCopy) return single;
+
+  const eventFamily = event.kind === "ice" ? "snow" : event.kind;
+  const wetFamilies = new Set(["rain", "storm", "snow"]);
+  const baseOwnsEvent = day?.family === eventFamily || (
+    wetFamilies.has(day?.family) && wetFamilies.has(eventFamily)
+  );
+  if (baseOwnsEvent) {
+    return {
+      primary: base,
+      secondary: eventCopy,
+      relation: "detail",
+      aria: `${base}, ${eventCopy}`
+    };
+  }
+
+  // Wind modifies a condition rather than replacing it, so an arrow would
+  // incorrectly imply that clear/cloudy weather ended when the breeze began.
+  if (event.kind === "wind") {
+    return {
+      primary: base,
+      secondary: eventCopy,
+      relation: "with",
+      aria: `${base}, with ${eventCopy}`
+    };
+  }
+
+  const overlapStartMs = Math.max(dayStartMs, eventStartMs);
+  const overlapEndMs = Math.min(dayEndMs, eventEndMs);
+  const startsEarly = overlapStartMs <= dayStartMs + 10 * 60 * 60 * 1000;
+  const finishesByMidday = overlapEndMs <= dayStartMs + 12 * 60 * 60 * 1000;
+  const eventFirst = Boolean(event.active || (startsEarly && finishesByMidday));
+  if (eventFirst) {
+    const canNameEnd = (!disclosure || disclosure.precision === "exact") &&
+      eventEndMs > dayStartMs && eventEndMs < dayEndMs - 30 * 60 * 1000;
+    const later = canNameEnd
+      ? `${base} after ${formatForecastMs(eventEndMs, data)}`
+      : `${base} later`;
+    return {
+      primary: eventCopy,
+      secondary: later,
+      relation: "then",
+      aria: `${eventCopy}, then ${later}`
+    };
+  }
+
+  const startsLater = overlapStartMs >= dayStartMs + 11 * 60 * 60 * 1000;
+  const primary = startsLater
+    ? dailyEditorialConditionLabel(data, day, dayIndex)
+    : "Mixed conditions";
+  const relation = startsLater ? "then" : "with";
+  return {
+    primary,
+    secondary: eventCopy,
+    relation,
+    aria: relation === "then" ? `${primary}, then ${eventCopy}` : `${primary}, with ${eventCopy}`
+  };
 }
 
 function renderDaily(data, tempUnit, precipUnit, presentation = null) {
@@ -17099,26 +17428,25 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
     const day = presentation?.days?.find((item) => item.dayIndex === index) || forecastDayPresentation(data, index);
     const wcode = day.code;
     const precipProfile = day.precip;
-    const code = dailyEditorialConditionLabel(data, day, index);
+    const dayDisclosure = nearcastForecastDisclosureForDay(data, index, day, state.activePlace);
+    const weatherStory = dailyRowWeatherStory(data, day, index, dayDisclosure);
+    const code = weatherStory.primary || dailyEditorialConditionLabel(data, day, index);
     const stormPotential = day.stormPotential;
     const stormLabel = day.convective?.label || "Thunder possible";
     const memoryItems = activePlanMemoryEventsForDay(index, data);
     const memoryCue = planMemoryDayCue(memoryItems);
-    const dayDisclosure = nearcastForecastDisclosureForDay(data, index, day, state.activePlace);
     // The dense list earns a second line only for a material event. Routine
     // cloud transitions and low-rain notes already have a condition and PoP
     // in this row; richer narration remains available in day detail.
-    const precipNote = day.materialEvent
-      ? nearcastCalmDailyTiming(data, day.materialEvent, dayDisclosure, day.timing, index)
-      : "";
+    const precipNote = weatherStory.secondary;
+    const storyMentionsStorm = /\b(?:storm|thunder)/i.test(weatherStory.aria);
     const dayAria = [
       formatDay(time, index),
-      code,
+      weatherStory.aria,
       `low ${low} degrees`,
       `high ${high} degrees`,
       `${rain}% chance of rain${precip > 0 ? ` with ${formatAmount(precip)} ${precipUnit} precipitation` : ""}`,
-      stormPotential ? stormLabel : "",
-      precipNote,
+      stormPotential && !storyMentionsStorm ? stormLabel : "",
       memoryCue ? `watched plan ${memoryCue}` : "",
       "Open day details"
     ].filter(Boolean).join(", ");
@@ -17146,7 +17474,7 @@ function renderDaily(data, tempUnit, precipUnit, presentation = null) {
         </div>
         ${(precipNote || memoryCue) ? `
           <div class="day-story">
-            ${precipNote ? `<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
+            ${precipNote ? `${weatherStory.relation === "then" ? `<span class="day-story-relation" aria-hidden="true">→</span>` : weatherStory.relation === "with" ? `<span class="day-story-relation is-with" aria-hidden="true">·</span>` : ""}<span class="day-precip-note">${escapeHtml(precipNote)}</span>` : ""}
             ${memoryCue ? `<span class="day-memory">${escapeHtml(memoryCue)}</span>` : ""}
           </div>
         ` : ""}
@@ -18993,9 +19321,10 @@ function openAlertAffectedArea(alertKey) {
       source: "alert",
       alertKey: key,
       alertId: key,
-      event: alert.event || "Weather alert"
+      event: alert.event || "Weather alert",
+      returnFocus: alertSheetReturnFocus
     });
-    closeAlertSheet();
+    closeAlertSheet({ restoreFocus: false });
     if (result && typeof result.catch === "function") result.catch(() => {});
     return true;
   } catch {
@@ -19109,10 +19438,11 @@ function canRestoreAlertSheetFocus(element) {
   return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
 }
 
-function closeAlertSheet() {
+function closeAlertSheet(options = {}) {
   const backdrop = document.getElementById("alertBackdrop");
   const sheet = document.getElementById("alertSheet");
   if (!sheet || !backdrop || sheet.hidden) return;
+  if (options?.restoreFocus === false) suppressSheetFocusRestore(sheet);
   backdrop.classList.remove("show");
   sheet.classList.remove("show");
   const keepLocked = Boolean(document.querySelector(
@@ -19123,7 +19453,7 @@ function closeAlertSheet() {
     backdrop.hidden = true;
     sheet.hidden = true;
     const underlyingDayDetail = alertSheetUnderlyingDayDetail;
-    if (underlyingDayDetail?.isConnected) {
+    if (underlyingDayDetail?.isConnected && underlyingDayDetail.dataset.suspendedForMap !== "true") {
       underlyingDayDetail.inert = alertSheetUnderlyingWasInert;
       if (alertSheetUnderlyingAriaHidden === null) underlyingDayDetail.removeAttribute("aria-hidden");
       else underlyingDayDetail.setAttribute("aria-hidden", alertSheetUnderlyingAriaHidden);
@@ -19139,7 +19469,7 @@ function closeAlertSheet() {
       !returnSheet || (!returnSheet.hidden && returnSheet.classList.contains("show"))
     );
     const underlyingClose = underlyingDayDetail?.querySelector?.("#dayDetailClose");
-    const focusTarget = canRestoreFocus
+    const focusTarget = options?.restoreFocus === false ? null : canRestoreFocus
       ? returnFocus
       : (canRestoreAlertSheetFocus(underlyingClose) ? underlyingClose : null);
     focusTarget?.focus({ preventScroll: true });

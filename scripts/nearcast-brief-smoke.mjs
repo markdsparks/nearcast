@@ -148,6 +148,8 @@ vm.runInContext(`
   ${extractFunction(app, "forecastStoryTransitionSegment")}
   ${extractFunction(app, "forecastPrecipStorySentence")}
   ${extractFunction(app, "nearcastEvidencePresentation")}
+  ${extractFunction(app, "forecastConfidenceNumber")}
+  ${extractFunction(app, "forecastPositiveTrustCue")}
   ${extractFunction(app, "forecastTrustPresentation")}
   ${extractFunction(app, "nearcastPromotedEvent")}
   ${extractFunction(app, "nearcastBriefPeriod")}
@@ -860,7 +862,7 @@ assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /width:\s*auto
 assert.doesNotMatch(html.match(/<nav class="app-dock"[\s\S]*?<\/nav>/)?.[0] || "", /Ask|app-dock-ai/, "Ask no longer competes with the five weather destinations");
 assert.match(html, /class="launch-context-ask"[^>]*id="aiAgentButton"[^>]*data-context-ask[^>]*data-ask-context="forecast"/, "Ask remains available beside the active-place forecast context");
 assert.match(extractCssRule(styles, ".launch-context-ask"), /min-height:\s*44px[\s\S]*background:\s*color-mix/, "contextual Ask is quiet but remains a complete touch target");
-assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*trigger = radarObserved/, "saved-forecast warnings remain stronger than the compact live evidence copy");
+assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*if \(positiveCue\)/, "saved-forecast warnings remain stronger than compact positive evidence copy");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /launchSummaryItems[\s\S]*launchSummaryTargets = detailItems\.map/, "forecast-change cards retain their exact hidden detail targets");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse/, "the stable scan keeps hourly proof, seven useful days, map evidence, and qualified extended days ahead of earned family-place exceptions");
 

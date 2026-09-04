@@ -687,6 +687,8 @@ const trust = contextWith(`
   ${extractFunction(app, "forecastProvenance")}
   ${extractFunction(app, "forecastAgeLabel")}
   ${extractFunction(app, "nearcastEvidencePresentation")}
+  ${extractFunction(app, "forecastConfidenceNumber")}
+  ${extractFunction(app, "forecastPositiveTrustCue")}
   ${extractFunction(app, "forecastTrustPresentation")}
   ${extractFunction(app, "markForecastProvenance")}
   ${extractFunction(app, "markForecastCacheFallback")}

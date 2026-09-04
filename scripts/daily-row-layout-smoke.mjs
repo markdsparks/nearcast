@@ -70,6 +70,11 @@ assert.match(
 );
 assert.match(
   renderDaily,
+  /day-story-relation" aria-hidden="true">→<\/span>[\s\S]*day-precip-note/,
+  "chronological daily stories use a visual-only transition marker before the full timing"
+);
+assert.match(
+  renderDaily,
   /aria-label="\$\{escapeHtml\(dayAria\)}/,
   "the complete condition and timing remain available to assistive technology"
 );
@@ -81,6 +86,7 @@ assert.doesNotMatch(rowCss, /max-height\s*:/, "daily rows can grow for wrapped a
 const conditionCss = combinedCssFor(".day-condition");
 const storyCss = combinedCssFor(".day-story");
 const timingCss = combinedCssFor(".day-precip-note");
+const relationCss = combinedCssFor(".day-story-relation");
 const sharedTextCss = styles.match(/\.day-condition\s*,\s*\.day-precip-note\s*,\s*\.day-memory\s*\{([^}]*)\}/)?.[1] || "";
 assert.ok(sharedTextCss, "daily condition and story text share a responsive wrapping rule");
 const wrappingCss = `${sharedTextCss}\n${conditionCss}\n${storyCss}\n${timingCss}`;
@@ -100,6 +106,7 @@ assert.ok(
   "the story receives the full daily-row width"
 );
 assert.match(storyCss, /min-width\s*:\s*0/, "the story can shrink safely inside 320px and 390px layouts");
+assert.match(relationCss, /flex\s*:\s*0\s+0\s+auto/, "the phase marker stays intact while the forecast copy receives the wrapping width");
 
 const phoneCss = styles.match(/@media \(max-width: 600px\)\s*\{[\s\S]*?\n\}/)?.[0]
   || styles.match(/@media \(max-width: 480px\)\s*\{[\s\S]*?\n\}/)?.[0]

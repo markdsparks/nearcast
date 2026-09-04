@@ -3,6 +3,7 @@
 /* ---------- Day-detail bottom sheet ---------- */
 
 let dayDetailNavState = null;
+let dayDetailMapSuspension = null;
 const ROLLING_HOURLY_PAGE_SIZE = 24;
 const ROLLING_HOURLY_LOAD_AHEAD_PX = 420;
 
@@ -196,12 +197,17 @@ function openHourlyStripDetail(hourIndex) {
     ? parseForecastTimestamp(data.hourly.time[index + 1], data)
     : null;
   const label = isCurrentHour(data.hourly.time[index], data) ? "Now" : formatHour(data.hourly.time[index]);
+  const hour = forecastHourPresentation(data, index, {
+    isCurrent: isCurrentHour(data.hourly.time[index], data),
+    truth: isCurrentHour(data.hourly.time[index], data) ? state.weatherTruth : null
+  });
   openNext24Detail({
     eventWindow: {
       startMs,
       endMs: nextMs && nextMs > startMs ? nextMs : startMs + 60 * 60 * 1000,
       badgeLabel: label,
-      label: `${label} detail`
+      label: `${hour.label || "Weather"} at ${label}`,
+      kind: hour.stormPotential ? "storm" : isSnowCode(hour.code) ? "snow" : isPrecipCode(hour.code) ? "rain" : "weather"
     },
     contextLabel: `${label} focus`
   });
@@ -623,6 +629,10 @@ function openDayDetail({
   dayDetailNavState = {
     source,
     dayIndex,
+    dayDate: data.daily?.time?.[dayIndex] || "",
+    placeKey: data === state.forecast && typeof continuityPlaceKey === "function"
+      ? continuityPlaceKey(state.activePlace)
+      : "",
     data,
     eventWindow,
     materialEvent: sharedEvent,
@@ -633,6 +643,11 @@ function openDayDetail({
     hourlyInterval: "hourly",
     ...(navState || {})
   };
+  dayDetailNavState.forecastFocus = dayDetailForecastFocusFromWindow(eventWindow || sharedEvent, {
+    dayIndex,
+    source,
+    data
+  });
   if (dayDetailNavState.timeline) {
     dayDetailNavState.timeline.lastDay = null;
     dayDetailNavState.timeline.lastAlertKey = "";
@@ -738,6 +753,7 @@ function refreshedDayDetailMemoryContext(rows, nav = dayDetailNavState) {
 function refreshOpenDayDetailMemorySurfaces() {
   const sheet = document.getElementById("dayDetail");
   if (!sheet || sheet.hidden || !dayDetailNavState) return;
+  rebaseDayDetailForecastData();
   const data = dayDetailNavState.data || state.forecast;
   const rows = dayDetailRowsForState(dayDetailNavState);
   if (!data || !rows.length) return;
@@ -832,6 +848,7 @@ function closeDayDetail() {
   const sheet = document.getElementById("dayDetail");
   const returnToPlanner = plannerReturnAfterDayDetail;
   plannerReturnAfterDayDetail = null;
+  dayDetailMapSuspension = null;
   dayDetailNavState = null;
   sheet.classList.remove("is-hourly-mode", "is-forecast-journey");
   sheet.setAttribute("aria-modal", "true");
@@ -1478,11 +1495,204 @@ function hourlyAlertDividerHtml(alert) {
 function toggleSheetHourRow(row) {
   const list = document.getElementById("sheetHourlyList");
   const shouldOpen = !row.classList.contains("is-expanded");
+  setDayDetailForecastFocusFromRow(row);
   list.querySelectorAll(".sheet-hour-row.is-expanded").forEach((openRow) => {
     setSheetHourRowExpanded(openRow, false);
   });
   if (shouldOpen) setSheetHourRowExpanded(row, true);
 }
+
+function dayDetailForecastFocusFromWindow(window, options = {}) {
+  if (!window || typeof window !== "object") return null;
+  const startMs = Number(window.peakStartMs ?? window.startMs);
+  const endMs = Number(window.peakEndMs ?? window.endMs);
+  if (!Number.isFinite(startMs)) return null;
+  const safeEndMs = Number.isFinite(endMs) && endMs > startMs ? endMs : startMs + 60 * 60 * 1000;
+  return {
+    startMs,
+    endMs: safeEndMs,
+    dayIndex: Number.isInteger(options.dayIndex) ? options.dayIndex : null,
+    kind: String(window.kind || "weather"),
+    label: String(window.headline || window.label || window.badgeLabel || "Forecast weather"),
+    source: String(options.source || "hourly")
+  };
+}
+
+function setDayDetailForecastFocusFromRow(row) {
+  if (!dayDetailNavState || !row) return null;
+  if (!row.dataset.forecastStart) return null;
+  const startMs = Number(row.dataset.forecastStart);
+  const endMs = Number(row.dataset.forecastEnd);
+  if (!Number.isFinite(startMs)) return null;
+  const focus = {
+    startMs,
+    endMs: Number.isFinite(endMs) && endMs > startMs ? endMs : startMs + 60 * 60 * 1000,
+    dayIndex: dayDetailNavState.dayIndex,
+    kind: String(row.dataset.forecastKind || "weather"),
+    label: String(row.dataset.forecastLabel || "Forecast weather"),
+    source: "hour-row"
+  };
+  dayDetailNavState.forecastFocus = focus;
+  return focus;
+}
+
+function dayDetailDefaultForecastFocus(nav = dayDetailNavState) {
+  if (!nav) return null;
+  if (nav.forecastFocus) return nav.forecastFocus;
+  const windowFocus = dayDetailForecastFocusFromWindow(nav.eventWindow || nav.materialEvent, {
+    dayIndex: nav.dayIndex,
+    source: nav.source,
+    data: nav.data
+  });
+  if (windowFocus) return windowFocus;
+  // A quiet future day has no map-worthy precipitation focus until the person
+  // explicitly selects an hour. Defaulting it to an arbitrary morning frame
+  // would make the map look related when it is not.
+  if (!nav.showNow) return null;
+  const rows = dayDetailRowsForState(nav);
+  if (!rows.length) return null;
+  const data = nav.data || state.forecast;
+  const now = forecastNowMs(data);
+  const currentOrFirst = rows.find((row) => row.ms <= now && row.ms + 60 * 60 * 1000 > now) || rows[0];
+  const hour = forecastHourPresentation(data, currentOrFirst.index, {
+    isCurrent: currentOrFirst.ms <= now && currentOrFirst.ms + 60 * 60 * 1000 > now,
+    truth: data === state.forecast ? state.weatherTruth : null
+  });
+  return {
+    startMs: currentOrFirst.ms,
+    endMs: currentOrFirst.ms + 60 * 60 * 1000,
+    dayIndex: nav.dayIndex,
+    kind: hour.stormPotential ? "storm" : isSnowCode(hour.code) ? "snow" : isPrecipCode(hour.code) ? "rain" : "weather",
+    label: hour.label || "Forecast weather",
+    source: nav.source
+  };
+}
+
+function nearcastDayDetailMapIntent() {
+  const data = dayDetailNavState?.data || state.forecast;
+  const focus = dayDetailDefaultForecastFocus();
+  if (!data || !focus) return typeof nearcastMapIntentForNow === "function" ? nearcastMapIntentForNow() : {};
+  const now = forecastNowMs(data);
+  const current = focus.startMs <= now + 20 * 60 * 1000 && focus.endMs > now - 20 * 60 * 1000;
+  const radarRelevant = ["rain", "storm", "snow", "ice"].includes(focus.kind);
+  if (current && !radarRelevant) {
+    return typeof nearcastMapIntentForNow === "function" ? nearcastMapIntentForNow() : { source: "radar" };
+  }
+  return {
+    source: current ? "radar" : "forecast",
+    ...(current ? {} : { timestamp: focus.startMs, endTimestamp: focus.endMs }),
+    eventKind: focus.kind,
+    event: focus.label,
+    ...(typeof nearcastMapIntentPlace === "function" ? nearcastMapIntentPlace(state.activePlace) : {})
+  };
+}
+
+function rebaseDayDetailForecastData() {
+  const nav = dayDetailNavState;
+  const latest = state.forecast;
+  if (!nav?.placeKey || !latest || nav.data === latest || typeof continuityPlaceKey !== "function") return false;
+  if (nav.placeKey !== continuityPlaceKey(state.activePlace)) return false;
+  nav.data = latest;
+  if (nav.source === "day") {
+    const nextDayIndex = latest.daily?.time?.indexOf(nav.dayDate) ?? -1;
+    if (nextDayIndex >= 0) nav.dayIndex = nextDayIndex;
+  } else if (nav.source === "rolling" && nav.timeline) {
+    const rows = rollingHourlyRows(latest);
+    const block = rollingWindowBlockForEvent(rows, { startMs: nav.forecastFocus?.startMs });
+    const start = block * ROLLING_HOURLY_PAGE_SIZE;
+    nav.block = block;
+    nav.canPrev = block > 0;
+    nav.canNext = start + ROLLING_HOURLY_PAGE_SIZE < rows.length;
+    nav.label = rollingWindowNavLabel(block);
+    nav.timeline.allRows = rows;
+    nav.timeline.start = start;
+    nav.timeline.renderedCount = Math.min(start + ROLLING_HOURLY_PAGE_SIZE, rows.length);
+    const first = rows[start];
+    if (first) {
+      const date = forecastLocalDateFromMs(first.ms, latest);
+      const index = latest.daily?.time?.indexOf(date) ?? -1;
+      if (index >= 0) {
+        nav.dayIndex = index;
+        nav.dayDate = date;
+      }
+    }
+  }
+  return true;
+}
+
+function suspendDayDetailForMap(returnFocus = null) {
+  const sheet = document.getElementById("dayDetail");
+  const backdrop = document.getElementById("dayDetailBackdrop");
+  if (!sheet || sheet.hidden || !sheet.classList.contains("show")) return false;
+  if (sheet.dataset.suspendedForMap === "true") return true;
+  const nowJump = document.getElementById("sheetNowJump");
+  dayDetailMapSuspension = {
+    focusedElement: returnFocus instanceof HTMLElement
+      ? returnFocus
+      : (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  };
+  // The sheet can still represent the prior place when Ask has already
+  // switched the app's active place. Preserve the place that owns the visible
+  // Hourly data so restore can discard it instead of rebadging stale weather.
+  const detailPlace = String(dayDetailNavState?.placeKey || "");
+  sheet.dataset.suspendedForMap = "true";
+  sheet.dataset.suspendedPlace = detailPlace || (typeof continuityPlaceKey === "function"
+    ? continuityPlaceKey(state.activePlace)
+    : String(state.activePlace?.id || ""));
+  sheet.classList.add("is-suspended-for-map");
+  backdrop.classList.add("is-suspended-for-map");
+  sheet.setAttribute("aria-hidden", "true");
+  if ("inert" in sheet) sheet.inert = true;
+  if (nowJump) nowJump.hidden = true;
+  return true;
+}
+
+function restoreDayDetailAfterMap() {
+  const sheet = document.getElementById("dayDetail");
+  const backdrop = document.getElementById("dayDetailBackdrop");
+  if (!sheet || sheet.dataset.suspendedForMap !== "true") return false;
+  const suspendedPlace = String(sheet.dataset.suspendedPlace || "");
+  const activePlace = typeof continuityPlaceKey === "function"
+    ? continuityPlaceKey(state.activePlace)
+    : String(state.activePlace?.id || "");
+  delete sheet.dataset.suspendedForMap;
+  delete sheet.dataset.suspendedPlace;
+  if (suspendedPlace && activePlace && suspendedPlace !== activePlace) {
+    dayDetailNavState = null;
+    dayDetailMapSuspension = null;
+    sheet.classList.remove("show", "is-hourly-mode", "is-forecast-journey", "is-suspended-for-map");
+    backdrop.classList.remove("show", "is-suspended-for-map");
+    sheet.hidden = true;
+    backdrop.hidden = true;
+    sheet.removeAttribute("aria-hidden");
+    if ("inert" in sheet) sheet.inert = false;
+    document.getElementById("sheetNowJump")?.setAttribute("hidden", "");
+    if (typeof resetHourlyDetailDockVisibility === "function") resetHourlyDetailDockVisibility();
+    return false;
+  }
+  const suspension = dayDetailMapSuspension;
+  dayDetailMapSuspension = null;
+  sheet.classList.remove("is-suspended-for-map");
+  backdrop.classList.remove("is-suspended-for-map");
+  sheet.removeAttribute("aria-hidden");
+  if ("inert" in sheet) sheet.inert = false;
+  rebaseDayDetailForecastData();
+  refreshOpenDayDetailMemorySurfaces();
+  updateSheetNowJump();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const target = suspension?.focusedElement;
+    if (target instanceof HTMLElement && target.isConnected && !target.closest("[hidden], [inert], [aria-hidden='true']")) {
+      target.focus({ preventScroll: true });
+    } else {
+      document.getElementById("dayDetailClose")?.focus({ preventScroll: true });
+    }
+  }));
+  return true;
+}
+
+window.nearcastDayDetailMapIntent = nearcastDayDetailMapIntent;
+window.nearcastSuspendDayDetailForMap = suspendDayDetailForMap;
+window.nearcastRestoreDayDetailAfterMap = restoreDayDetailAfterMap;
 
 function setSheetHourRowExpanded(row, expanded) {
   row.classList.toggle("is-expanded", expanded);
@@ -1581,7 +1791,7 @@ function renderHourlyRowsMarkup(hrs, tempUnit, windUnit, precipUnit, options = {
       ? "Unavailable"
       : hour.precip > 0 ? `${formatAmount(hour.precip)} ${precipUnit}` : `0 ${precipUnit}`);
     return `${divider}${alertDivider}
-      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
+      <article class="sheet-hour-row${rainClass}${uvClass}${windClass}${stormClass}${alertClass}${nowClass}${eventClass}${expanded ? " is-expanded" : ""}" role="button" tabindex="0" data-forecast-start="${Number.isFinite(hour.ms) ? Math.round(hour.ms) : ""}" data-forecast-end="${Number.isFinite(hour.endMs) ? Math.round(hour.endMs) : ""}" data-forecast-kind="${hour.stormPotential ? "storm" : isSnowCode(hour.code) ? "snow" : isPrecipCode(hour.code) ? "rain" : "weather"}" data-forecast-label="${escapeHtml(condition)}" aria-label="${escapeHtml(rowLabel)}" aria-expanded="${expanded}" aria-controls="${detailId}">
         <div class="sheet-hour-time">${timeLabel}${now ? `<span class="sheet-now-badge">Now</span>` : ""}${eventBadgeHtml}</div>
         <div class="sheet-hour-icon weather-icon-with-badge" aria-hidden="true">${weatherIcon(hour.code, hour.isDay, { density: "dense" })}${hour.stormPotential ? thunderBadgeHtml() : ""}</div>
         <div class="sheet-hour-temp">
@@ -1860,6 +2070,34 @@ let graphPts = [];
 let graphActiveIndex = 0;
 let graphUpdateActive = null;
 
+function dayDetailGraphFocusIndex(points, data = dayDetailNavState?.data || state.forecast) {
+  const anchorMs = Number(dayDetailNavState?.forecastFocus?.startMs);
+  if (!Number.isFinite(anchorMs) || !points?.length) return -1;
+  return points.reduce((best, point, index) => {
+    const pointMs = Number(point?.ms ?? parseForecastTimestamp(point?.time, data));
+    const distance = Number.isFinite(pointMs) ? Math.abs(pointMs - anchorMs) : Infinity;
+    return distance < best.distance ? { index, distance } : best;
+  }, { index: -1, distance: Infinity }).index;
+}
+
+function setDayDetailForecastFocusFromGraphPoint(point, data = dayDetailNavState?.data || state.forecast) {
+  if (!dayDetailNavState || !point) return null;
+  const startMs = Number(point.ms ?? parseForecastTimestamp(point.time, data));
+  if (!Number.isFinite(startMs)) return null;
+  const endMs = Number(point.endMs);
+  const condition = weatherCodes?.[point.code] || "Forecast weather";
+  const focus = {
+    startMs,
+    endMs: Number.isFinite(endMs) && endMs > startMs ? endMs : startMs + (point.isMinuteDetail ? 15 : 60) * 60 * 1000,
+    dayIndex: dayDetailNavState.dayIndex,
+    kind: point.stormPotential ? "storm" : isSnowCode(point.code) ? "snow" : isPrecipCode(point.code) ? "rain" : "weather",
+    label: condition,
+    source: "day-graph"
+  };
+  dayDetailNavState.forecastFocus = focus;
+  return focus;
+}
+
 function scheduleGraphCalloutReflow() {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -2096,10 +2334,11 @@ function drawHourlyGraph() {
   const callout = document.getElementById("sheetReadout");
   const wrap = document.getElementById("sheetGraphWrap");
 
-  function update(i) {
+  function update(i, { commitFocus = false } = {}) {
     const p = graphPts[i];
     if (!p) return;
     graphActiveIndex = i;
+    if (commitFocus) setDayDetailForecastFocusFromGraphPoint(p, data);
     guide.setAttribute("x1", p.x);
     guide.setAttribute("x2", p.x);
     guide.style.display = "";
@@ -2150,10 +2389,12 @@ function drawHourlyGraph() {
 
   svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
+  svg.addEventListener("pointerup", (e) => update(nearest(e.clientX), { commitFocus: true }));
 
   // Default readout: the hour nearest "now" if present, else the first point.
   const now = forecastNowMs(data);
-  let def = hrs.findIndex((h) => {
+  let def = dayDetailGraphFocusIndex(graphPts, data);
+  if (def < 0) def = hrs.findIndex((h) => {
     const ms = parseForecastTimestamp(h.time, data);
     return ms !== null && Math.abs(ms - now) < 1800000;
   });
@@ -2473,10 +2714,11 @@ function drawPrecipGraph() {
   const hit = svg.querySelector("#graphPrecipHit");
   let selectedBar = null;
 
-  function update(index) {
+  function update(index, { commitFocus = false } = {}) {
     const point = graphPts[index];
     if (!point) return;
     graphActiveIndex = index;
+    if (commitFocus) setDayDetailForecastFocusFromGraphPoint(point, data);
     guide.setAttribute("x1", point.x);
     guide.setAttribute("x2", point.x);
     guide.style.display = "";
@@ -2534,6 +2776,7 @@ function drawPrecipGraph() {
     event.preventDefault();
     update(nearest(event.clientX));
   });
+  hit.addEventListener("pointerup", (event) => update(nearest(event.clientX), { commitFocus: true }));
   hit.addEventListener("keydown", (event) => {
     let next = graphActiveIndex;
     if (event.key === "ArrowLeft" || event.key === "ArrowDown") next -= 1;
@@ -2542,10 +2785,11 @@ function drawPrecipGraph() {
     else if (event.key === "End") next = graphPts.length - 1;
     else return;
     event.preventDefault();
-    update(Math.max(0, Math.min(graphPts.length - 1, next)));
+    update(Math.max(0, Math.min(graphPts.length - 1, next)), { commitFocus: true });
   });
 
-  let defaultIndex = showNow
+  let defaultIndex = dayDetailGraphFocusIndex(graphPts, data);
+  if (defaultIndex < 0) defaultIndex = showNow
     ? points.findIndex((point) => isCurrentHour(point.time, data))
     : -1;
   if (showNow && defaultIndex < 0) {
@@ -2604,7 +2848,10 @@ function drawSunGraph() {
   const uvMarker = peakPoint && uv.showMarker ? `
     <circle cx="${roundSvg(peakPoint.x)}" cy="${roundSvg(peakPoint.y)}" r="3.2" class="sun-uv-dot"/>
   ` : "";
-  const activeMs = showNow ? nowMs : parseForecastTimestamp(hrs[0]?.time, data) ?? chart.daylightStartMs;
+  const focusedMs = Number(dayDetailNavState?.forecastFocus?.startMs);
+  const activeMs = Number.isFinite(focusedMs)
+    ? focusedMs
+    : showNow ? nowMs : parseForecastTimestamp(hrs[0]?.time, data) ?? chart.daylightStartMs;
   const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
   const sunXForMs = (ms) => sunPathPoint(chart, clamp(ms, chart.dayStartMs, chart.dayEndMs)).x;
   const memoryBands = renderGraphMemoryBands(memoryWindows, sunXForMs, {
@@ -2640,10 +2887,11 @@ function drawSunGraph() {
   const guide = svg.querySelector("#graphGuide");
   const dot = svg.querySelector("#graphDot");
 
-  function update(i) {
+  function update(i, { commitFocus = false } = {}) {
     const p = graphPts[i];
     if (!p) return;
     graphActiveIndex = i;
+    if (commitFocus) setDayDetailForecastFocusFromGraphPoint(p, data);
     guide.setAttribute("x1", p.x);
     guide.setAttribute("x2", p.x);
     guide.style.display = "";
@@ -2684,6 +2932,7 @@ function drawSunGraph() {
 
   svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
+  svg.addEventListener("pointerup", (e) => update(nearest(e.clientX), { commitFocus: true }));
   scheduleGraphCalloutReflow();
   perfEnd("drawSunGraph", perf);
 }
