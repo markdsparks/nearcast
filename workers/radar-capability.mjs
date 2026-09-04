@@ -28,6 +28,7 @@ const PRODUCT_EVENTS_ENDPOINT_PATH = "/api/product/events";
 const LIVE_ACTIVITY_REGISTER_ENDPOINT_PATH = "/api/live-activities/register";
 const LIVE_ACTIVITY_END_ENDPOINT_PATH = "/api/live-activities/end";
 const XWEATHER_CONFIG_ENDPOINT_PATH = "/api/xweather/config";
+const MAP_CONFIG_ENDPOINT_PATH = "/api/map/config";
 const CURRENT_REALITY_ENDPOINT_PATH = "/api/observations/current";
 const RADAR_INDEX_PATH = "/radar/mrms/index.json";
 const RADAR_GENERATION_INDEX_URL_ENV = "RADAR_GENERATION_INDEX_URL";
@@ -73,6 +74,7 @@ const XWEATHER_SESSION_ACCESS_COST_ENV = "XWEATHER_SESSION_ACCESS_COST";
 const XWEATHER_BYPASS_BUDGET_CHECKS_ENV = "XWEATHER_BYPASS_BUDGET_CHECKS";
 const XWEATHER_USAGE_PROBE_URL_ENV = "XWEATHER_USAGE_PROBE_URL";
 const XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV = "XWEATHER_USAGE_PROBE_CACHE_SECONDS";
+const CARTO_BASEMAP_KEY_ENV = "CARTO_BASEMAP_KEY";
 const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
 const DEFAULT_XWEATHER_STORM_MODE = "beta";
 const DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM = 7.5;
@@ -196,6 +198,9 @@ export default {
     }
     if (url.pathname === XWEATHER_CONFIG_ENDPOINT_PATH) {
       return handleXweatherConfigRequest(request, env);
+    }
+    if (url.pathname === MAP_CONFIG_ENDPOINT_PATH) {
+      return handleMapConfigRequest(request, env);
     }
     if (url.pathname === CURRENT_REALITY_ENDPOINT_PATH) {
       return handleCurrentRealityRequest(request, env, ctx);
@@ -524,6 +529,20 @@ export async function handleXweatherConfigRequest(request, env = {}) {
     limits: gate.limits,
     usage: gate.usage,
     context: gate.context
+  });
+}
+
+export async function handleMapConfigRequest(request, env = {}) {
+  if (request.method === "OPTIONS") return jsonResponse({}, { status: 204 });
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
+  }
+  const apiKey = String(env?.[CARTO_BASEMAP_KEY_ENV] || "").trim();
+  return jsonResponse({
+    provider: "nearcast-map-config",
+    version: 1,
+    state: apiKey ? "ready" : "unavailable",
+    carto: { apiKey }
   });
 }
 

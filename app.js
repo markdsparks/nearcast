@@ -1,4 +1,4 @@
-const VERSION = "3.0.397";
+const VERSION = "3.0.398";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -39,6 +39,8 @@ const XWEATHER_LAYER_CODES_KEY = "nearcast-xweather-layer-codes";
 const XWEATHER_USAGE_KEY = "nearcast-xweather-usage-v1";
 const XWEATHER_CLIENT_INSTANCE_KEY = "nearcast-xweather-client-instance-v1";
 const XWEATHER_CONFIG_ENDPOINT = "/api/xweather/config";
+const CARTO_BASEMAP_CONFIG_ENDPOINT = "/api/map/config";
+const CARTO_BASEMAP_CONFIG_TIMEOUT_MS = 6000;
 const XWEATHER_MAPSGL_SCRIPT_ID = "xweatherMapsglScript";
 const XWEATHER_MAPSGL_CSS_ID = "xweatherMapsglCss";
 const XWEATHER_MAPSGL_SCRIPT_URL = "https://unpkg.com/@xweather/mapsgl@1.8.4/dist/mapsgl.js";
@@ -610,6 +612,8 @@ let xweatherStormConfigPromise = null;
 let xweatherStormConfigPromiseKey = "";
 let xweatherStormActivatedUntil = 0;
 let xweatherStormActivationTimer = 0;
+let cartoBasemapConfigRecord = { status: "unknown", checkedAt: 0, apiKey: "" };
+let cartoBasemapConfigPromise = null;
 
 if (state.mapDiagnosticMode !== "full" && state.mapRenderer !== "gl") {
   state.mapRenderer = "gl";
@@ -4108,6 +4112,7 @@ function init() {
   updateRadarSourceZoomControl();
   updateRawMapExperimentControl();
   updateXweatherStormControl();
+  void loadCartoBasemapConfig();
   loadXweatherStormConfig();
   if (state.mapRenderer === "gl") ensureMapLibreAssets({ renderAfterLoad: true });
   bindEvents();
@@ -6262,6 +6267,57 @@ function xweatherClientInstanceId() {
     return `xw-session-${Date.now().toString(36)}`;
   }
 }
+
+function cleanCartoBasemapKey(value) {
+  const key = String(value || "").trim();
+  if (!key || key.length > 512 || /[\s\u0000-\u001f]/.test(key)) return "";
+  return key;
+}
+
+function normalizeCartoBasemapConfig(payload) {
+  const apiKey = cleanCartoBasemapKey(payload?.carto?.apiKey);
+  const ready = payload?.provider === "nearcast-map-config"
+    && Number(payload?.version) === 1
+    && String(payload?.state || "").toLowerCase() === "ready"
+    && Boolean(apiKey);
+  return {
+    status: ready ? "ready" : "unavailable",
+    checkedAt: Date.now(),
+    apiKey: ready ? apiKey : ""
+  };
+}
+
+function cartoBasemapApiKey() {
+  return cartoBasemapConfigRecord?.status === "ready"
+    ? cleanCartoBasemapKey(cartoBasemapConfigRecord.apiKey)
+    : "";
+}
+
+async function loadCartoBasemapConfig(options = {}) {
+  if (cartoBasemapApiKey() && !options.force) return cartoBasemapConfigRecord;
+  if (cartoBasemapConfigPromise) return cartoBasemapConfigPromise;
+  cartoBasemapConfigRecord = { status: "loading", checkedAt: Date.now(), apiKey: "" };
+  cartoBasemapConfigPromise = fetchJsonWithTimeout(
+    CARTO_BASEMAP_CONFIG_ENDPOINT,
+    CARTO_BASEMAP_CONFIG_TIMEOUT_MS,
+    null,
+    { method: "GET", cache: "no-store", headers: { Accept: "application/json" } }
+  )
+    .then((payload) => {
+      cartoBasemapConfigRecord = normalizeCartoBasemapConfig(payload);
+      return cartoBasemapConfigRecord;
+    })
+    .catch(() => {
+      cartoBasemapConfigRecord = { status: "error", checkedAt: Date.now(), apiKey: "" };
+      return cartoBasemapConfigRecord;
+    })
+    .finally(() => {
+      cartoBasemapConfigPromise = null;
+    });
+  return cartoBasemapConfigPromise;
+}
+
+window.nearcastBasemapConfigured = () => Boolean(cartoBasemapApiKey());
 
 function xweatherStormConfigErrorMessage(error) {
   const name = String(error?.name || "").toLowerCase();

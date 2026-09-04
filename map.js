@@ -24,6 +24,7 @@ const MAP_LOCATION_RENDER_MIN_METERS = 50;
 const MAPLIBRE_LOAD_TIMEOUT_MS = 3600;
 const MAPLIBRE_IMMERSIVE_LOAD_TIMEOUT_MS = 4800;
 const MAPLIBRE_RADAR_SETTLE_MS = 90;
+let mapBasemapConfigPromise = null;
 const XWEATHER_MAPSGL_SLOW_READY_MS = 7000;
 const XWEATHER_MAPSGL_ASSET_TIMEOUT_MS = 12000;
 const XWEATHER_MAPSGL_READY_TIMEOUT_MS = 30000;
@@ -2657,14 +2658,48 @@ function radarDecisionFrameSummary(frames) {
   };
 }
 
+function mapBasemapConfigured() {
+  return typeof cartoBasemapApiKey === "function" && Boolean(cartoBasemapApiKey());
+}
+
+function setMapBasemapStatus(message = "") {
+  const loading = mapState.immersive
+    ? document.getElementById("immersiveLoading")
+    : document.getElementById("mapLoading");
+  if (!loading) return;
+  loading.textContent = message || "Loading map data...";
+  loading.hidden = !message;
+}
+
+async function ensureMapBasemapConfigured() {
+  if (mapBasemapConfigured()) return true;
+  if (mapBasemapConfigPromise) return mapBasemapConfigPromise;
+  if (typeof loadCartoBasemapConfig !== "function") return false;
+  setMapBasemapStatus("Loading map...");
+  mapBasemapConfigPromise = loadCartoBasemapConfig()
+    .then(() => mapBasemapConfigured())
+    .catch(() => false)
+    .then((ready) => {
+      setMapBasemapStatus(ready ? "" : "Map temporarily unavailable");
+      return ready;
+    })
+    .finally(() => {
+      mapBasemapConfigPromise = null;
+    });
+  return mapBasemapConfigPromise;
+}
+
 function initMap() {
-  if (mapState.initialized || !els.weatherMap) return;
+  if (!els.weatherMap) return false;
+  if (mapState.initialized) return true;
+  if (typeof cartoBasemapApiKey !== "function" || !cartoBasemapApiKey()) return false;
   mapState.initialized = true;
   window.addEventListener("resize", renderTileMap);
   bindMapDrag();
   renderMapLegend();
   renderTileMap();
   initMapAutoPlay();
+  return true;
 }
 
 function bindMapDrag() {
@@ -3175,11 +3210,17 @@ function mapLibreTileStyle() {
   };
 }
 
+function mapCartoTileTemplate(host, style) {
+  const apiKey = typeof cartoBasemapApiKey === "function" ? cartoBasemapApiKey() : "";
+  if (!apiKey) return "";
+  return `https://${host}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png?key=${encodeURIComponent(apiKey)}`;
+}
+
 function mapLibreCartoTileUrls(style) {
   const hosts = Array.isArray(CARTO_TILE_HOSTS) && CARTO_TILE_HOSTS.length
     ? CARTO_TILE_HOSTS
     : ["a"];
-  return hosts.map((host) => `https://${host}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}.png`);
+  return hosts.map((host) => mapCartoTileTemplate(host, style)).filter(Boolean);
 }
 
 function mapAerialSupported(place = state.activePlace) {
@@ -6627,7 +6668,13 @@ function refreshInlineMap(forceFrames = false, options = {}) {
     inlineMapRefreshObserver = null;
   }
   inlineMapRefreshQueuedForce = false;
-  initMap();
+  if (!mapBasemapConfigured()) {
+    void ensureMapBasemapConfigured().then((ready) => {
+      if (ready) refreshInlineMap(forceFrames, { ...options, defer: false });
+    });
+    return;
+  }
+  if (!initMap()) return;
   syncMapToPlace();
   if (mapState.immersive) {
     const intentOptions = mapState.openIntent
@@ -11127,7 +11174,11 @@ function labelTileUrl({ z, x, y }) {
 
 function cartoTileUrl(style, z, x, y) {
   const host = CARTO_TILE_HOSTS[Math.abs((x + y) % CARTO_TILE_HOSTS.length)];
-  return `https://${host}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`;
+  const template = mapCartoTileTemplate(host, style);
+  return template
+    .replace("{z}", z)
+    .replace("{x}", x)
+    .replace("{y}", y);
 }
 
 function weatherTileUrl(template, z, x, y) {
@@ -11812,10 +11863,19 @@ async function ensureMapIntentPlace(intent) {
 async function enterImmersiveMap(options = {}) {
   const firstEntry = !mapState.immersive;
   const requestedReturnFocus = options?.returnFocus instanceof HTMLElement ? options.returnFocus : null;
+  const intent = takeMapOpenIntent(options);
+  const basemapReady = await ensureMapBasemapConfigured();
+  if (!basemapReady) {
+    mapState.openIntent = null;
+    mapState.pendingOpenIntent = null;
+    const restored = window.nearcastRestoreDayDetailAfterMap?.();
+    document.body.style.overflow = restored ? "hidden" : "";
+    if (typeof syncAppDockCurrent === "function") syncAppDockCurrent();
+    return false;
+  }
   const suspendedDayDetail = firstEntry && typeof window.nearcastSuspendDayDetailForMap === "function"
     ? window.nearcastSuspendDayDetailForMap(requestedReturnFocus)
     : false;
-  const intent = takeMapOpenIntent(options);
   try {
     await ensureMapIntentPlace(intent);
   } catch (error) {

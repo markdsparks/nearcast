@@ -88,6 +88,16 @@ jobs:
       - name: Deploy app and radar capability Worker
         run: npx --yes wrangler deploy
 
+      - name: Refresh CARTO basemap Worker secret
+        env:
+          CARTO_BASEMAP_KEY: ${{ secrets.CARTO_BASEMAP_KEY }}
+        run: |
+          if [ -z "$CARTO_BASEMAP_KEY" ]; then
+            echo "Missing CARTO_BASEMAP_KEY secret."
+            exit 1
+          fi
+          printf '%s' "$CARTO_BASEMAP_KEY" | npx --yes wrangler secret put CARTO_BASEMAP_KEY
+
       - name: Refresh plan watch Worker secrets
         continue-on-error: true
         env:

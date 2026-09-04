@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import worker, {
+  handleMapConfigRequest,
   handleRadarCapabilityRequest,
   handleXweatherConfigRequest,
   planWatchPersistedEvaluationTargets
@@ -170,6 +171,35 @@ const passthrough = await worker.fetch(new Request("https://getnearcast.app/inde
 }, {});
 assert.equal(passthrough.status, 200);
 assert.equal(await passthrough.text(), "asset passthrough");
+
+const mapConfig = await mapConfiguration({ CARTO_BASEMAP_KEY: "  smoke-carto-key  " });
+assert.equal(mapConfig.status, 200);
+assert.equal(mapConfig.body.provider, "nearcast-map-config");
+assert.equal(mapConfig.body.version, 1);
+assert.equal(mapConfig.body.state, "ready");
+assert.deepEqual(mapConfig.body.carto, { apiKey: "smoke-carto-key" });
+assert.equal(mapConfig.headers.get("Cache-Control"), "no-store");
+
+const workerMapConfigResponse = await worker.fetch(
+  new Request("https://getnearcast.app/api/map/config"),
+  { CARTO_BASEMAP_KEY: "worker-carto-key" },
+  {}
+);
+assert.equal(workerMapConfigResponse.status, 200);
+assert.equal(workerMapConfigResponse.headers.get("Cache-Control"), "no-store");
+assert.deepEqual((await workerMapConfigResponse.json()).carto, { apiKey: "worker-carto-key" });
+
+const missingMapConfig = await mapConfiguration({});
+assert.equal(missingMapConfig.status, 200);
+assert.equal(missingMapConfig.body.state, "unavailable");
+assert.deepEqual(missingMapConfig.body.carto, { apiKey: "" });
+
+const rejectedMapConfigResponse = await handleMapConfigRequest(
+  new Request("https://getnearcast.app/api/map/config", { method: "POST" }),
+  { CARTO_BASEMAP_KEY: "must-not-leak" }
+);
+assert.equal(rejectedMapConfigResponse.status, 405);
+assert.deepEqual(await rejectedMapConfigResponse.json(), { error: "method-not-allowed" });
 
 const workerPlanStore = createR2PlanBucket();
 const workerQueueMessage = createQueueMessage({
@@ -883,6 +913,7 @@ console.log(JSON.stringify({
   workerReady: workerReady.body.enhanced.state,
   partialViewport: partialViewport.body.enhanced.state,
   workerQueue: workerQueue.accepted,
+  mapConfig: mapConfig.body.state,
   external: externalReady.body.enhanced.packId,
   frameIndex: routedFrameReady.body.enhanced.reason,
   deepFrameIndex: deepFrameReady.body.enhanced.score.viewportGate.maxClientOverzoom,
@@ -914,6 +945,18 @@ async function capability(payload, capabilityEnv = env) {
   }), capabilityEnv, {});
   return {
     status: response.status,
+    body: await response.json()
+  };
+}
+
+async function mapConfiguration(configEnv) {
+  const response = await handleMapConfigRequest(
+    new Request("https://getnearcast.app/api/map/config"),
+    configEnv
+  );
+  return {
+    status: response.status,
+    headers: response.headers,
     body: await response.json()
   };
 }

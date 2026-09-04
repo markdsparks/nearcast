@@ -52,6 +52,7 @@ run_portable_checks() {
     interaction-gesture-smoke.mjs \
     reactive-sky-smoke.mjs \
     map-location-smoke.mjs \
+    carto-basemap-smoke.mjs \
     map-aerial-smoke.mjs \
     map-satellite-smoke.mjs \
     map-trust-experience-smoke.mjs \
