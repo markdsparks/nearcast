@@ -29,7 +29,7 @@ async function json(url, fetcher, { headers, timeout = 6500 } = {}) {
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
     const result = await fetcher(url, { headers, signal: controller.signal });
-    if (!result.ok) throw new Error("forecast-provider-unavailable");
+    if (!result.ok) throw new Error(`forecast-provider-${result.status}`);
     return await result.json();
   } finally {
     clearTimeout(timer);
@@ -152,7 +152,10 @@ export async function handleSharedForecastRequest(request, env = {}, ctx = {}, d
       else await write;
     }
     return result;
-  } catch {
-    return response({ error: "forecast-unavailable" }, 503);
+  } catch (error) {
+    const reason = error?.name === "AbortError" ? "forecast-provider-timeout"
+      : /^forecast-(provider-\d{3}|provider-invalid|current-incomplete)$/.test(error?.message || "") ? error.message
+      : "forecast-provider-unavailable";
+    return response({ error: "forecast-unavailable", reason }, 503);
   }
 }
