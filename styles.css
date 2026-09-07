@@ -2716,21 +2716,26 @@ h2 {
 }
 
 .weather-essentials {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-.weather-essentials[hidden] { display: none; }
-.weather-essential {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-width: 0;
-  padding: 17px 16px;
-  border: 1px solid var(--border-glass);
+  padding: 18px 20px 6px;
   border-radius: 24px;
   background: var(--glass-light);
+  margin-bottom: 18px;
+}
+.weather-essentials h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.weather-essentials[hidden] { display: none; }
+.weather-essential {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 10px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   text-align: left;
   font: inherit;
@@ -2739,21 +2744,42 @@ h2 {
   -webkit-tap-highlight-color: transparent;
 }
 .weather-essential:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
-.essential-heading { display: flex; justify-content: space-between; gap: 6px; font-size: .8rem; font-weight: 800; }
-.essential-heading > span { color: var(--muted); }
-.essential-value { font-size: clamp(1.15rem, 3vw, 1.5rem); line-height: 1.15; overflow-wrap: anywhere; }
-.essential-aqi { display: flex; align-items: center; gap: 7px; font-size: 1.35rem; font-weight: 800; flex-wrap: wrap; }
+.essential-copy { display: grid; gap: 3px; min-width: 0; }
+.essential-heading { font-size: .82rem; font-weight: 750; }
+.essential-value { color: var(--muted); font-size: .85rem; line-height: 1.35; overflow-wrap: anywhere; }
+.essential-aqi { display: flex; align-items: center; gap: 7px; max-width: 110px; font-size: 1.2rem; font-weight: 800; flex-wrap: wrap; }
+.essential-chevron { color: var(--blue); font-size: 1.3rem; }
 .essential-aqi small { color: var(--muted); font-size: .7rem; font-weight: 700; }
 .essential-aqi i { width: 8px; height: 8px; border-radius: 50%; background: var(--aqi-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--aqi-color) 18%, transparent); }
-.essential-note { margin-top: auto; color: var(--muted); font-size: .74rem; font-weight: 650; line-height: 1.35; }
-.essential-sun-times { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; }
+.essential-daylight { grid-template-columns: minmax(0, 1fr) 10px; }
+.essential-sun-times { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .essential-sun-times > span { display: grid; gap: 3px; color: var(--muted); font-size: .7rem; }
 .essential-sun-times strong { color: var(--ink); font-size: .96rem; font-weight: 850; font-variant-numeric: tabular-nums; }
-.essential-sun-arc { display: block; width: 100%; height: 38px; color: var(--semantic-gold); flex-shrink: 0; }
-.glance-detail-body > .essential-sun-arc { height: 100px; }
+.outlook-air-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  margin: 8px 0 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: .86rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  touch-action: pan-x pan-y;
+}
+.outlook-air-notice[hidden] { display: none; }
+.outlook-air-notice > span:last-child { color: var(--blue); }
+.outlook-air-notice:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
 @media (max-width: 360px) {
-  .weather-essentials { gap: 8px; }
-  .weather-essential { padding: 14px 12px; border-radius: 20px; }
+  .weather-essentials { padding: 16px 14px 4px; }
 }
 
 .hero-copy,

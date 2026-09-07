@@ -1,4 +1,4 @@
-const VERSION = "3.0.401";
+const VERSION = "3.0.402";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -4084,10 +4084,10 @@ function arrangeForecastHierarchy() {
   // An active 15-minute nowcast is the most time-sensitive forecast on the
   // page. It stays hidden when dry, but when rain or snow is imminent it must
   // appear before the broad hourly outlook. The stable family scan is then:
-  // Now -> Outlook/Hourly -> Air/Sun -> seven useful days -> Map -> lower-confidence
+  // Now -> Outlook/Hourly -> seven useful days -> Map -> Air/Sun -> lower-confidence
   // extended days. Another family place only interrupts after that universal
   // forecast when it has earned attention with a material exception.
-  launch.after(nowcast, hourlyPanel, essentials, dailyPanel, map, extendedDailyPanel, els.familyPlacesPeek, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
+  launch.after(nowcast, hourlyPanel, dailyPanel, map, essentials, extendedDailyPanel, els.familyPlacesPeek, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -4105,6 +4105,8 @@ function init() {
   bindTapDelegate(document.getElementById("weatherEssentials"), "[data-essential-detail]", (event, button) => {
     openGlanceDetail(button.dataset.essentialDetail, button);
   });
+  const outlookAirNotice = document.getElementById("outlookAirNotice");
+  bindTapAction(outlookAirNotice, () => openGlanceDetail("air", outlookAirNotice));
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
@@ -12756,37 +12758,38 @@ function daylightSummaryForHome(data) {
   };
 }
 
-function daylightPreviewHtml(sun) {
-  const x = 12 + sun.progress * 176;
-  const y = 44 - 136 * sun.progress * (1 - sun.progress);
-  return `<svg class="essential-sun-arc" viewBox="0 0 200 52" fill="none" aria-hidden="true">
-    <path d="M12 44H188" stroke="currentColor" opacity=".2"/>
-    <path d="M12 44Q100 -24 188 44" stroke="currentColor" stroke-width="2" opacity=".55"/>
-    ${sun.isDay ? `<circle cx="${x}" cy="${y}" r="5" fill="currentColor"/>` : ""}
-  </svg>`;
+function outlookAirNoticeCopy(air) {
+  // Use the existing US AQI categories, never a missing reading or a distant
+  // forecast peak. The permanent entry below the map is available at every level.
+  if (air?.aqi == null || !air.band || air.band.rank < 2) return "";
+  return `Air quality · ${air.band.label} · US AQI ${air.aqi}`;
 }
 
 function renderWeatherEssentials(data) {
+  const air = data ? airQualitySummary(data) : null;
+  const notice = document.getElementById("outlookAirNotice");
+  if (notice) {
+    const copy = outlookAirNoticeCopy(air);
+    notice.hidden = !copy;
+    notice.innerHTML = copy ? `<span>${escapeHtml(copy)}</span><span aria-hidden="true">›</span>` : "";
+  }
   const surface = document.getElementById("weatherEssentials");
   if (!surface) return;
   surface.hidden = !data;
   if (!data) return;
-  const air = airQualitySummary(data);
   const hasAqi = air?.aqi != null && Boolean(air.band);
   const sun = daylightSummaryForHome(data);
   const airValue = hasAqi ? air.band.label : "Unavailable";
   surface.innerHTML = `
+    <h2>Air &amp; daylight</h2>
     <button type="button" class="weather-essential" data-essential-detail="air" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
-      <span class="essential-heading">Air quality <span aria-hidden="true">›</span></span>
-      <strong class="essential-value">${escapeHtml(airValue)}</strong>
+      <span class="essential-copy"><span class="essential-heading">Air quality</span><span class="essential-value">${escapeHtml(airValue)}</span></span>
       <span class="essential-aqi">${hasAqi ? `<i style="--aqi-color:${escapeHtml(air.band.color)}" aria-hidden="true"></i>${air.aqi} <small>US AQI</small>` : "No current estimate"}</span>
-      <span class="essential-note">${escapeHtml(hasAqi ? "Current estimate" : "Check back shortly")}</span>
+      <span class="essential-chevron" aria-hidden="true">›</span>
     </button>
     <button type="button" class="weather-essential essential-daylight" data-essential-detail="sun" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
-      <span class="essential-heading">Sun &amp; daylight <span aria-hidden="true">›</span></span>
       <span class="essential-sun-times"><span>Sunrise<strong>${escapeHtml(sun.sunrise)}</strong></span><span>Sunset<strong>${escapeHtml(sun.sunset)}</strong></span></span>
-      ${daylightPreviewHtml(sun)}
-      <span class="essential-note">${escapeHtml(sun.context)}</span>
+      <span class="essential-chevron" aria-hidden="true">›</span>
     </button>`;
 }
 

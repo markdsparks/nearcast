@@ -17,7 +17,19 @@ const harness = vm.createContext({
   durationBrief: (ms) => `${Math.round(ms / 60000)} min`,
   sunExposureRows: (data) => data.rows || []
 });
-vm.runInContext(["finiteAirValue", "airQualityIndexAt", "airValueAt", "airPeakValue", "daylightSummaryForHome"].map(source).join("\n"), harness);
+vm.runInContext(["finiteAirValue", "airQualityIndexAt", "airValueAt", "airPeakValue", "daylightSummaryForHome", "aqiBand", "outlookAirNoticeCopy"].map(source).join("\n"), harness);
+for (const value of [0, 42, 50, 51, 100]) {
+  assert.equal(harness.outlookAirNoticeCopy({ aqi: value, band: harness.aqiBand(value) }), "", "ordinary air stays in its permanent section");
+}
+for (const value of [101, 150, 151, 201, 301]) {
+  assert.match(harness.outlookAirNoticeCopy({ aqi: value, band: harness.aqiBand(value) }), new RegExp(`US AQI ${value}`), "attention-worthy current air is also discoverable in Outlook");
+}
+assert.equal(harness.outlookAirNoticeCopy(null), "");
+assert.equal(harness.outlookAirNoticeCopy({ aqi: null, band: harness.aqiBand(200) }), "", "missing data cannot promote stale guidance");
+assert.equal(harness.outlookAirNoticeCopy({ aqi: 42, band: harness.aqiBand(42), peakAqi: 160 }), "", "future peak is not described as current air");
+assert.match(source("renderWeatherEssentials"), /notice\.hidden = !copy/, "notice clears as conditions improve or disappear");
+assert.match(source("arrangeForecastHierarchy"), /hourlyPanel, dailyPanel, map, essentials, extendedDailyPanel/, "essentials stays after daily and map");
+assert.match(source("renderWeatherEssentials"), /data-essential-detail="air"/, "air detail remains available at all AQI levels");
 const now = Date.parse("2026-09-06T12:00:00Z");
 const data = { now, airQuality: {
   current: { time: "2026-09-06T12:00:00Z", us_aqi: null },

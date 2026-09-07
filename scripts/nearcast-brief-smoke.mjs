@@ -864,7 +864,7 @@ assert.match(html, /class="launch-context-ask"[^>]*id="aiAgentButton"[^>]*data-c
 assert.match(extractCssRule(styles, ".launch-context-ask"), /min-height:\s*44px[\s\S]*background:\s*color-mix/, "contextual Ask is quiet but remains a complete touch target");
 assert.match(extractFunction(app, "forecastTrustPresentation"), /if \(provenance\.cacheFallback\)[\s\S]*trigger = "Using saved forecast"[\s\S]*else \{[\s\S]*if \(positiveCue\)/, "saved-forecast warnings remain stronger than compact positive evidence copy");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /launchSummaryItems[\s\S]*launchSummaryTargets = detailItems\.map/, "forecast-change cards retain their exact hidden detail targets");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, essentials, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse/, "the stable scan keeps hourly proof, essentials, seven useful days, and map evidence ahead of earned family-place exceptions");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)[\s\S]*launch\.after\(nowcast, hourlyPanel, dailyPanel, map, essentials, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse/, "the stable scan keeps hourly proof, seven useful days, map evidence, and essentials ahead of earned family-place exceptions");
 
 const rollingBlockSource = extractFunction(daygraph, "rollingWindowBlockForEvent");
 const rollingBlockSandbox = {};

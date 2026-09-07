@@ -172,7 +172,7 @@ assert.deepEqual(
 assert.doesNotMatch(appDockMarkup, /data-app-dock="ask"|app-dock-ai/, "Ask is contextual rather than a sixth navigation destination");
 assert.doesNotMatch(html, /id="nextFour"/, "the fixed four-hour preview no longer duplicates the scrollable hourly forecast");
 assert.match(extractFunction(app, "arrangeForecastHierarchy"), /hourlyPanel\.prepend\(hero\)/, "the contextual outlook is part of the hourly hero");
-assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, hourlyPanel, essentials, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse, els\.goodWindow/, "the universal forecast and essentials scan stays ahead of extended detail and earned family-place exceptions");
+assert.match(extractFunction(app, "arrangeForecastHierarchy"), /launch\.after\(nowcast, hourlyPanel, dailyPanel, map, essentials, extendedDailyPanel, els\.familyPlacesPeek, els\.planPulse, els\.goodWindow/, "the universal forecast and essentials scan stays ahead of extended detail and earned family-place exceptions");
 assert.match(extractFunction(app, "renderLaunchSummaryStrip"), /presentation\?\.brief \|\| buildNearcastBrief[\s\S]*brief\.current\.summary[\s\S]*brief\.evidence\.label/, "the launch condition consumes the canonical Brief instead of constructing a competing next-change story");
 assert.doesNotMatch(extractFunction(app, "renderLaunchSummaryStrip"), /launch-next-change-button/, "the obsolete generic next-change chip cannot duplicate the promoted Brief event");
 assert.match(extractFunction(app, "launchLaterItem"), /currentFeels[\s\S]*Cooling near[\s\S]*meaningful: true/, "hot conditions promote the next meaningful cooling transition instead of a generic clock fact");
