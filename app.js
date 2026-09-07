@@ -1,4 +1,4 @@
-const VERSION = "3.0.399";
+const VERSION = "3.0.400";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -4075,6 +4075,7 @@ function arrangeForecastHierarchy() {
   const dailyPanel = document.querySelector(".daily-panel");
   const map = document.querySelector("#mapView");
   const extendedDailyPanel = document.querySelector("#extendedDailyPanel");
+  const essentials = document.getElementById("weatherEssentials");
   if (!launch || !hourlyPanel || !hero || !dailyPanel || !map || !extendedDailyPanel || !els.goodWindow) return;
 
   // The outlook and its hourly evidence are one hero. Keeping them in a single
@@ -4083,10 +4084,10 @@ function arrangeForecastHierarchy() {
   // An active 15-minute nowcast is the most time-sensitive forecast on the
   // page. It stays hidden when dry, but when rain or snow is imminent it must
   // appear before the broad hourly outlook. The stable family scan is then:
-  // Now -> Outlook/Hourly -> seven useful days -> Map -> lower-confidence
+  // Now -> Outlook/Hourly -> Air/Sun -> seven useful days -> Map -> lower-confidence
   // extended days. Another family place only interrupts after that universal
   // forecast when it has earned attention with a material exception.
-  launch.after(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els.familyPlacesPeek, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
+  launch.after(nowcast, hourlyPanel, essentials, dailyPanel, map, extendedDailyPanel, els.familyPlacesPeek, els.planPulse, els.goodWindow, els.forYouToday, els.planInvitation, els.insights);
 }
 
 function init() {
@@ -4101,6 +4102,9 @@ function init() {
   }
   document.getElementById("appVersion").textContent = `v${VERSION}`;
   arrangeForecastHierarchy();
+  bindTapDelegate(document.getElementById("weatherEssentials"), "[data-essential-detail]", (event, button) => {
+    openGlanceDetail(button.dataset.essentialDetail, button);
+  });
   applyTheme();
   renderSavedPlaces();
   updateUnitButton();
@@ -11154,6 +11158,7 @@ function renderForecastCurrentReadouts(ctx) {
 function renderForecastGlance(ctx) {
   renderForecastCurrentReadouts(ctx);
   renderTodayGlance(ctx.data, ctx.tempUnit, ctx.windUnit, ctx.todayIndex, ctx.truth, ctx.presentation);
+  renderWeatherEssentials(ctx.data);
   renderForecastTrust(ctx.data, ctx.truth);
 }
 
@@ -12712,6 +12717,94 @@ function pollenBand(value) {
   return { label: "very high", rank: 4 };
 }
 
+function daylightSummaryForHome(data) {
+  const index = forecastDailyIndex(data);
+  const sunrise = data?.daily?.sunrise?.[index];
+  const sunset = data?.daily?.sunset?.[index];
+  const riseMs = sunrise ? parseForecastTimestamp(sunrise, data) : null;
+  const setMs = sunset ? parseForecastTimestamp(sunset, data) : null;
+  const now = forecastNowMs(data);
+  if (Number.isFinite(riseMs) && Number.isFinite(setMs) && setMs > riseMs) {
+    const nextRise = data?.daily?.sunrise?.[index + 1];
+    const nextRiseMs = nextRise ? parseForecastTimestamp(nextRise, data) : null;
+    const context = now < riseMs
+      ? `Sunrise in ${durationBrief(riseMs - now)}`
+      : now < setMs
+        ? `${durationBrief(setMs - now)} daylight left`
+        : Number.isFinite(nextRiseMs) && nextRiseMs > now
+          ? `Tomorrow's sunrise ${formatTime(nextRise)}`
+          : "Sun has set for today";
+    return {
+      sunrise: formatTime(sunrise), sunset: formatTime(sunset), context,
+      duration: durationBrief(setMs - riseMs),
+      progress: Math.max(0, Math.min(1, (now - riseMs) / (setMs - riseMs))),
+      isDay: now >= riseMs && now < setMs, mode: "normal"
+    };
+  }
+  // Only a complete day's day/night flags can establish polar conditions.
+  // Missing sunrise data alone must never become "no sunrise".
+  const rows = sunExposureRows(data);
+  const polarDay = rows.length >= 23 && rows.every((row) => row.isDay === true);
+  const polarNight = rows.length >= 23 && rows.every((row) => row.isDay === false);
+  return {
+    sunrise: polarDay ? "Sun stays up" : polarNight ? "No sunrise" : "Unavailable",
+    sunset: polarDay || polarNight ? "No sunset" : "Unavailable",
+    context: polarDay ? "Daylight all day" : polarNight ? "No daylight today" : "Sun times unavailable",
+    duration: polarDay ? "24 hr" : polarNight ? "0 hr" : "Unavailable",
+    progress: 0.5, isDay: polarDay,
+    mode: polarDay ? "polar-day" : polarNight ? "polar-night" : "unavailable"
+  };
+}
+
+function daylightPreviewHtml(sun) {
+  const x = 12 + sun.progress * 176;
+  const y = 44 - 136 * sun.progress * (1 - sun.progress);
+  return `<svg class="essential-sun-arc" viewBox="0 0 200 52" fill="none" aria-hidden="true">
+    <path d="M12 44H188" stroke="currentColor" opacity=".2"/>
+    <path d="M12 44Q100 -24 188 44" stroke="currentColor" stroke-width="2" opacity=".55"/>
+    ${sun.isDay ? `<circle cx="${x}" cy="${y}" r="5" fill="currentColor"/>` : ""}
+  </svg>`;
+}
+
+function renderWeatherEssentials(data) {
+  const surface = document.getElementById("weatherEssentials");
+  if (!surface) return;
+  surface.hidden = !data;
+  if (!data) return;
+  const air = airQualitySummary(data);
+  const hasAqi = air?.aqi != null && Boolean(air.band);
+  const sun = daylightSummaryForHome(data);
+  const airValue = hasAqi ? air.band.label : "Unavailable";
+  surface.innerHTML = `
+    <button type="button" class="weather-essential" data-essential-detail="air" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
+      <span class="essential-heading">Air quality <span aria-hidden="true">›</span></span>
+      <strong class="essential-value">${escapeHtml(airValue)}</strong>
+      <span class="essential-aqi">${hasAqi ? `<i style="--aqi-color:${escapeHtml(air.band.color)}" aria-hidden="true"></i>${air.aqi} <small>US AQI</small>` : "No current estimate"}</span>
+      <span class="essential-note">${escapeHtml(hasAqi ? "Current estimate" : "Check back shortly")}</span>
+    </button>
+    <button type="button" class="weather-essential essential-daylight" data-essential-detail="sun" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
+      <span class="essential-heading">Sun &amp; daylight <span aria-hidden="true">›</span></span>
+      <span class="essential-sun-times"><span>Sunrise<strong>${escapeHtml(sun.sunrise)}</strong></span><span>Sunset<strong>${escapeHtml(sun.sunset)}</strong></span></span>
+      ${daylightPreviewHtml(sun)}
+      <span class="essential-note">${escapeHtml(sun.context)}</span>
+    </button>`;
+}
+
+function buildSunGlanceDetail(data) {
+  const sun = daylightSummaryForHome(data);
+  return {
+    kind: "sun", icon: `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="8" fill="currentColor"/><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l4 4M28 28l4 4M8 32l4-4M28 12l4-4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`, title: "Sun & daylight",
+    context: "Today · Times at this location", summary: sun.context,
+    body: `${daylightPreviewHtml(sun)}
+      <div class="glance-detail-facts">
+        ${glanceDetailFactHtml("Sunrise", sun.sunrise, "Today")}
+        ${glanceDetailFactHtml("Sunset", sun.sunset, "Today")}
+        ${glanceDetailFactHtml("Daylight", sun.duration, "Between sunrise and sunset")}
+      </div>
+      ${glanceDetailNoteHtml("About these times", "Sunrise and sunset use the selected place's local time and your clock setting. There can still be light before sunrise and after sunset; clouds and terrain affect how bright it feels.")}`
+  };
+}
+
 function airQualityIndexAt(data, airQuality = data?.airQuality) {
   const hourly = airQuality?.hourly || {};
   const times = hourly.time || [];
@@ -12732,10 +12825,17 @@ function airQualityIndexAt(data, airQuality = data?.airQuality) {
 }
 
 function airValueAt(data, key, airQuality = data?.airQuality) {
-  const currentValue = finiteValue(airQuality?.current?.[key]);
-  if (currentValue !== null) return currentValue;
+  const currentValue = finiteAirValue(airQuality?.current?.[key]);
+  const currentMs = parseForecastTimestamp(airQuality?.current?.time, airQuality);
+  if (currentValue !== null && currentMs !== null && Math.abs(forecastNowMs(data) - currentMs) <= 90 * 60 * 1000) return currentValue;
   const index = airQualityIndexAt(data, airQuality);
-  return index >= 0 ? finiteValue(airQuality?.hourly?.[key]?.[index]) : null;
+  return index >= 0 ? finiteAirValue(airQuality?.hourly?.[key]?.[index]) : null;
+}
+
+function finiteAirValue(value) {
+  if (value == null || value === "" || typeof value === "boolean") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function airPeakValue(data, key, hoursAhead = 12, airQuality = data?.airQuality) {
@@ -12749,7 +12849,7 @@ function airPeakValue(data, key, hoursAhead = 12, airQuality = data?.airQuality)
   times.forEach((time, index) => {
     const ms = parseForecastTimestamp(time, airQuality);
     if (ms === null || ms < now - 30 * 60 * 1000 || ms > end) return;
-    const value = finiteValue(values[index]);
+    const value = finiteAirValue(values[index]);
     if (value === null) return;
     if (peak === null || value > peak) {
       peak = value;
@@ -17777,6 +17877,7 @@ function buildGlanceDetail(kind, data, tempUnit, windUnit, truth = weatherTruth(
   if (kind === "rain") return buildRainGlanceDetail(data, tempUnit, windUnit, truth);
   if (kind === "wind") return buildWindGlanceDetail(data, windUnit);
   if (kind === "air") return buildAirGlanceDetail(data);
+  if (kind === "sun") return buildSunGlanceDetail(data);
   return null;
 }
 
@@ -17943,8 +18044,8 @@ function buildAirGlanceDetail(data) {
     return {
       kind: "air",
       icon: glanceDetailIconHtml("air"),
-      title: summary.visualLabel || summary.display || "Air quality",
-      context: [summary.band?.advice || summary.context, summary.source].filter(Boolean).join(" · "),
+      title: "Air quality",
+      context: "US AQI · Current estimate · Open-Meteo/CAMS",
       summary: air.context || summary.band?.advice || summary.context,
       body: `
         <section class="glance-detail-air">
@@ -17958,6 +18059,7 @@ function buildAirGlanceDetail(data) {
           </div>
           <ol>${scale}</ol>
         </section>
+        ${glanceDetailNoteHtml("About this estimate", "Air quality comes from the CAMS atmospheric forecast through Open-Meteo. It is a regional estimate, not a reading from a monitor at your exact location. Nearby smoke, traffic and other local sources can differ.")}
       `
     };
   }
@@ -17965,20 +18067,10 @@ function buildAirGlanceDetail(data) {
   return {
     kind: "air",
     icon: glanceDetailIconHtml("air"),
-    title: `Humidity ${humidity}%`,
-    context: humidityContext(humidity),
-    summary: metricTipHumidity(humidity),
-    body: `
-      <section class="glance-detail-hero is-air">
-        <b>${escapeHtml(`${humidity}%`)}</b>
-        <span>${escapeHtml(humidityContext(humidity))}</span>
-      </section>
-      <div class="glance-detail-facts">
-        ${glanceDetailFactHtml("Humidity", `${humidity}%`, humidityContext(humidity))}
-        ${glanceDetailFactHtml("Feels like", els.feelsLike?.textContent || "--", "Humidity can change comfort")}
-      </div>
-      ${glanceDetailNoteHtml("Why it matters", "Humidity becomes glance-worthy when it pushes comfort noticeably muggy or unusually dry.")}
-    `
+    title: "Air quality unavailable",
+    context: "For this location",
+    summary: "A current air quality estimate is unavailable. Try refreshing the forecast shortly.",
+    body: glanceDetailNoteHtml("About air quality", "Nearcast uses the US AQI scale with regional estimates from Open-Meteo/CAMS. Missing data does not mean the air is good.")
   };
 }
 

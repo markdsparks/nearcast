@@ -1,6 +1,54 @@
-# Nearcast roadmap — from beautiful to dependable
+# Nearcast roadmap — the family's first weather check
 
-Living product roadmap, current for **v3.0.285+**.
+Updated September 7, 2026 for **v3.0.400**. The priorities below supersede the earlier roadmap retained afterward for reference.
+
+## What this release fixes
+
+Air quality and daylight had working data but no visible Home entry point after the earlier simplification. A permanent, compact pair now follows the outlook/hourly surface, before the daily forecast. AQI includes its category, numeric US AQI, and a one-tap explanation. Sunrise and sunset are both readable immediately, with daylight remaining or tomorrow's sunrise as context. Missing AQI is never substituted with humidity or zero. Sun times respect the place and clock preference.
+
+## The next product goal
+
+Someone should open Nearcast, answer their weather question, and feel finished. A beautiful screen does not achieve that if a familiar fact is missing, the next screen loses their place, or two surfaces tell different stories.
+
+The Weather Company's own [navigation inventory](https://developer.weather.com/docs/openapi/links-3-0) includes hourly, daily, radar, alerts, air quality, UV, humidity, sunrise, sunset, and wind. This is evidence of the ordinary questions to cover, not a reason to reproduce its screen density or infer which features the family values most.
+
+## 1. Finish the everyday details — next implementation
+
+Give every familiar fact a predictable home. Add a small Weather details section after the daily forecast and map, with wind/gusts/direction, humidity/dew point, visibility, and UV using existing data. Keep air quality and sun in their new permanent position. Each detail opens directly and returns to exactly the same scroll position. No rotating controls, additional top-level tabs, or empty decorative cards.
+
+For a selected future day, show that day's sunrise/sunset, UV peak, wind/gusts, and precipitation total. Do not copy today's AQI into a future date. For missing coverage, say unavailable in the relevant detail.
+
+Acceptance: on a small phone, a family member can find AQI, sunset, tomorrow's rain timing, wind gusts, and the weekend forecast without instructions. Labels remain complete with larger text. A tap opens the expected detail; scrolling across the control does not activate it.
+
+## 2. Make the day answer complete
+
+Refine the existing day overview around morning, afternoon, evening, and overnight. Each period gets a short condition, temperature range, and the meaningful rain/storm window. Tapping opens the exact hours. Keep the existing detailed hourly and 15-minute capabilities, with clearly bounded coverage. All icons, period copy, numbers, and map handoffs must consume the same weather interpretation.
+
+Acceptance: “Can we eat outside at six?” and “What changes tomorrow?” are answerable in one day screen. Test an afternoon storm after a clear morning, overnight rain, an all-day wet forecast, and a dry day. A late-day storm must not turn a sunny morning into a misleading all-day storm icon.
+
+## 3. Improve the evidence where it changes the answer
+
+Audit actual disagreements in the family's saved places before adding more sources. Log a small manual test matrix of place, valid time, Nearcast forecast, subsequent observation, and the discrepancy; keep personal notes local. Prioritize current temperature, rain onset, thunder wording, and daily highs. Make stale-state recovery and resume-from-background part of each scenario.
+
+Air quality deserves a separate follow-up: current US coverage is a regional CAMS estimate, approximately 45 km, per [Open-Meteo's documentation](https://open-meteo.com/en/docs/air-quality-api). Evaluate an observation-based US source for smoke events before promising neighborhood precision. Only add it after coverage, freshness, usage terms, station representativeness, and failure behavior are established. Keep that source detail behind the AQI tap.
+
+Acceptance: a source can fail without an old number being labeled current, a storm going missing, or the user having to reconcile competing datasets. Record known gaps and resolve the highest-impact one first.
+
+## 4. Earn the first check outside the app
+
+Polish the existing iPhone widget and Watch around the same current condition and next meaningful change as Home. A tap should open the relevant hourly window, alert, or radar time. Verify real-device refresh behavior, long background intervals, place switches, and large text before adding new widget variants. Continue purposeful opt-in notifications for existing watched places/plans.
+
+Acceptance: widget, Watch, Home, Hourly, and notifications agree about place, time, and weather story; old data is recognizable; the destination answers why the user tapped.
+
+## How we decide whether it worked
+
+Run a one-week family trial. Ask for the exact question whenever someone opens another weather app: “What were you trying to find or confirm?” Classify it as findability, missing information, trust, or speed. Prioritize repeated unanswered questions over new feature ideas. Target the five everyday lookup tasks above at under ten seconds each, with no explanation from us; measure observed completion rather than claiming success from a passing smoke test.
+
+Keep plans, AI, and further visual experiments behind these basics until the core lookup trial passes. This roadmap does not authorize new data subscriptions or notification behavior.
+
+---
+
+## Earlier roadmap — historical context (v3.0.285+)
 
 Nearcast already has a distinctive product: an unusually beautiful current
 weather experience, a capable radar map, useful iPhone widgets and Apple Watch

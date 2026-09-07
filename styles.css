@@ -2715,6 +2715,47 @@ h2 {
   mix-blend-mode: screen;
 }
 
+.weather-essentials {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.weather-essentials[hidden] { display: none; }
+.weather-essential {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  padding: 17px 16px;
+  border: 1px solid var(--border-glass);
+  border-radius: 24px;
+  background: var(--glass-light);
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+.weather-essential:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+.essential-heading { display: flex; justify-content: space-between; gap: 6px; font-size: .8rem; font-weight: 800; }
+.essential-heading > span { color: var(--muted); }
+.essential-value { font-size: clamp(1.15rem, 3vw, 1.5rem); line-height: 1.15; overflow-wrap: anywhere; }
+.essential-aqi { display: flex; align-items: center; gap: 7px; font-size: 1.35rem; font-weight: 800; flex-wrap: wrap; }
+.essential-aqi small { color: var(--muted); font-size: .7rem; font-weight: 700; }
+.essential-aqi i { width: 8px; height: 8px; border-radius: 50%; background: var(--aqi-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--aqi-color) 18%, transparent); }
+.essential-note { margin-top: auto; color: var(--muted); font-size: .74rem; font-weight: 650; line-height: 1.35; }
+.essential-sun-times { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; }
+.essential-sun-times > span { display: grid; gap: 3px; color: var(--muted); font-size: .7rem; }
+.essential-sun-times strong { color: var(--ink); font-size: .96rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+.essential-sun-arc { display: block; width: 100%; height: 38px; color: var(--semantic-gold); flex-shrink: 0; }
+.glance-detail-body > .essential-sun-arc { height: 100px; }
+@media (max-width: 360px) {
+  .weather-essentials { gap: 8px; }
+  .weather-essential { padding: 14px 12px; border-radius: 20px; }
+}
+
 .hero-copy,
 .today-glance {
   position: relative;

@@ -57,7 +57,7 @@ assert.match(extractFunction(app, "loadPlace"), /!previousPlace \|\| !samePlanPl
 assert.match(html, /<h2>7-Day Outlook<\/h2>/, "the primary planning horizon is seven days");
 assert.match(html, /id="extendedDailyPanel"[^>]*hidden[\s\S]*<details[^>]*id="extendedDaily"[\s\S]*Extended outlook[\s\S]*Lower confidence · Days 8–14[\s\S]*id="extendedDailyList"/, "days 8–14 live in a collapsed, plainly qualified section");
 const hierarchy = extractFunction(app, "arrangeForecastHierarchy");
-assert.match(hierarchy, /launch\.after\(nowcast, hourlyPanel, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek/, "Home reads Outlook/Hourly, seven days, Map, extended days, then earned family exceptions");
+assert.match(hierarchy, /launch\.after\(nowcast, hourlyPanel, essentials, dailyPanel, map, extendedDailyPanel, els\.familyPlacesPeek/, "Home keeps air quality and daylight discoverable below Outlook/Hourly, before seven days and Map");
 const renderDaily = extractFunction(app, "renderDaily");
 const renderHourly = extractFunction(app, "renderHourly");
 assert.match(renderDaily, /const primaryRows = dayRows\.slice\(0, 7\)[\s\S]*const extendedRows = dayRows\.slice\(7, 14\)[\s\S]*els\.daily\.innerHTML = primaryRows\.join[\s\S]*els\.extendedDailyList\.innerHTML = extendedRows\.join/, "daily rendering splits the first seven days from the lower-confidence horizon");
