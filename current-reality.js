@@ -31,6 +31,10 @@
       : celsius * 9 / 5 + 32;
   }
 
+  function fahrenheitDeltaToUnit(value, unit) {
+    return /c/i.test(String(unit || "")) ? value * 5 / 9 : value;
+  }
+
   function weightedMean(items) {
     let total = 0;
     let weight = 0;
@@ -103,21 +107,22 @@
     })).filter((station) => station.value !== null);
     const values = temperatures.map((station) => station.value);
     const spread = values.length > 1 ? Math.max(...values) - Math.min(...values) : 0;
-    const qualifies = (temperatures.length >= 2 || close.length >= 1) && spread <= MAX_SPREAD_F;
+    const maxSpread = fahrenheitDeltaToUnit(MAX_SPREAD_F, unit);
+    const qualifies = (temperatures.length >= 2 || close.length >= 1) && spread <= maxSpread;
     if (!qualifies) {
       return {
         status: "estimated",
         basis: "modeled-current",
         stations: temperatures,
-        reason: spread > MAX_SPREAD_F ? "nearby-observations-disagree" : "nearby-observations-too-distant"
+        reason: spread > maxSpread ? "nearby-observations-disagree" : "nearby-observations-too-distant"
       };
     }
 
     const observedTemperature = weightedMean(temperatures);
-    const cap = temperatures.length >= 2 ? MULTI_STATION_CAP_F : SINGLE_STATION_CAP_F;
+    const cap = fahrenheitDeltaToUnit(temperatures.length >= 2 ? MULTI_STATION_CAP_F : SINGLE_STATION_CAP_F, unit);
     const rawAdjustment = observedTemperature - modelTemperature;
     const adjustment = clamp(rawAdjustment, -cap, cap);
-    const applyCalibration = Math.abs(adjustment) >= MIN_USEFUL_DELTA_F;
+    const applyCalibration = Math.abs(adjustment) >= fahrenheitDeltaToUnit(MIN_USEFUL_DELTA_F, unit);
     const freshest = temperatures.reduce((latest, station) => (
       !latest || station.observedAtMs > latest.observedAtMs ? station : latest
     ), null);

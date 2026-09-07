@@ -31,6 +31,10 @@
 		C10000000000000000000002 /* NearcastStormActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* NearcastStormActivityAttributes.swift */; };
 		C10000000000000000000003 /* NearcastWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* NearcastWidgetSnapshot.swift */; };
 		C10000000000000000000004 /* NearcastWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* NearcastWidgetSnapshot.swift */; };
+		C10000000000000000000005 /* NearcastSharedForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* NearcastSharedForecast.swift */; };
+		C10000000000000000000006 /* NearcastSharedForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* NearcastSharedForecast.swift */; };
+		D10000000000000000000008 /* NearcastSharedForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* NearcastSharedForecast.swift */; };
+		E10000000000000000000005 /* NearcastSharedForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* NearcastSharedForecast.swift */; };
 		D10000000000000000000001 /* NearcastWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* NearcastWatchApp.swift */; };
 		D10000000000000000000002 /* NearcastWatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* NearcastWatchRootView.swift */; };
 		D10000000000000000000003 /* NearcastWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* NearcastWidgetSnapshot.swift */; };
@@ -132,6 +136,7 @@
 		C20000000000000000000001 /* NearcastStormActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastStormActivityAttributes.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* NearcastWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWidgetSnapshot.swift; sourceTree = "<group>"; };
 		C20000000000000000000003 /* NearcastWatchVisualSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWatchVisualSignal.swift; sourceTree = "<group>"; };
+		C20000000000000000000004 /* NearcastSharedForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastSharedForecast.swift; sourceTree = "<group>"; };
 		D20000000000000000000001 /* NearcastWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWatchApp.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* NearcastWatchRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWatchRootView.swift; sourceTree = "<group>"; };
 		D20000000000000000000003 /* NearcastWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NearcastWatch.entitlements; sourceTree = "<group>"; };
@@ -276,6 +281,7 @@
 				C20000000000000000000001 /* NearcastStormActivityAttributes.swift */,
 				C20000000000000000000002 /* NearcastWidgetSnapshot.swift */,
 				C20000000000000000000003 /* NearcastWatchVisualSignal.swift */,
+				C20000000000000000000004 /* NearcastSharedForecast.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -509,6 +515,7 @@
 				A1000000000000000000000F /* NativeOperonController.swift in Sources */,
 				C10000000000000000000001 /* NearcastStormActivityAttributes.swift in Sources */,
 				C10000000000000000000003 /* NearcastWidgetSnapshot.swift in Sources */,
+				C10000000000000000000005 /* NearcastSharedForecast.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -519,6 +526,7 @@
 				B10000000000000000000001 /* NearcastWidget.swift in Sources */,
 				C10000000000000000000002 /* NearcastStormActivityAttributes.swift in Sources */,
 				C10000000000000000000004 /* NearcastWidgetSnapshot.swift in Sources */,
+				C10000000000000000000006 /* NearcastSharedForecast.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -531,6 +539,7 @@
 				D10000000000000000000004 /* NearcastWatchSnapshotReceiver.swift in Sources */,
 				D10000000000000000000003 /* NearcastWidgetSnapshot.swift in Sources */,
 				D10000000000000000000007 /* NearcastWatchVisualSignal.swift in Sources */,
+				D10000000000000000000008 /* NearcastSharedForecast.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -541,6 +550,7 @@
 				E10000000000000000000001 /* NearcastWatchComplications.swift in Sources */,
 				E10000000000000000000002 /* NearcastWidgetSnapshot.swift in Sources */,
 				E10000000000000000000004 /* NearcastWatchVisualSignal.swift in Sources */,
+				E10000000000000000000005 /* NearcastSharedForecast.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -689,7 +699,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -718,7 +728,7 @@
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -746,7 +756,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -776,7 +786,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -806,7 +816,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -839,7 +849,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -872,7 +882,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -901,7 +911,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 98;
+				CURRENT_PROJECT_VERSION = 99;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;

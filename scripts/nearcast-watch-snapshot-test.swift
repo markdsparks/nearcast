@@ -46,6 +46,7 @@ legacyObject.removeValue(forKey: "alertStartsAt")
 legacyObject.removeValue(forKey: "alertSource")
 legacyObject.removeValue(forKey: "alertUrgency")
 legacyObject.removeValue(forKey: "alertCertainty")
+legacyObject.removeValue(forKey: "uses24HourClock")
 
 let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
 let legacy = try decoder.decode(NearcastWidgetSnapshot.self, from: legacyData)
@@ -54,6 +55,11 @@ require(legacy.weatherAge >= 9 * 60, "V4 savedAt remains the weather freshness f
 require(!legacy.hasPlan, "V4 snapshots without plan fields do not invent a plan")
 require(legacy.planStartAt == nil && legacy.planEndAt == nil, "V4 snapshots decode without a plan window")
 require(legacy.canonicalEventBrief(at: now) == nil, "V4 snapshots decode without inventing a canonical event")
+require(legacy.uses24HourClock == nil, "legacy snapshots leave the clock preference to the system")
+require(!nearcastResolved24HourClock(nil, locale: Locale(identifier: "en_US")), "legacy US clock fallback uses 12-hour time")
+require(nearcastResolved24HourClock(nil, locale: Locale(identifier: "en_GB")), "legacy UK clock fallback uses 24-hour time")
+require(nearcastResolved24HourClock(true, locale: Locale(identifier: "en_US")), "explicit 24-hour preference wins over the companion locale")
+require(!nearcastResolved24HourClock(false, locale: Locale(identifier: "en_GB")), "explicit 12-hour preference wins over the companion locale")
 
 var canonicalSnapshot = legacy
 canonicalSnapshot.version = 8
@@ -94,14 +100,16 @@ let compactStormStory = NearcastCompanionStory(
 let activeCompactStorm = nearcastCompactStoryCopy(
     compactStormStory,
     at: compactNow,
-    timeZoneIdentifier: "America/Chicago"
+    timeZoneIdentifier: "America/Chicago",
+    uses24HourClock: false
 )
 require(activeCompactStorm.title == "Storms possible", "Watch copy preserves likelihood without repeating the phone headline")
 require(activeCompactStorm.timing == "Until 2 AM", "an active overnight event becomes one useful clock cue")
 let upcomingCompactStorm = nearcastCompactStoryCopy(
     compactStormStory,
     at: compactStart - 60 * 60,
-    timeZoneIdentifier: "America/Chicago"
+    timeZoneIdentifier: "America/Chicago",
+    uses24HourClock: false
 )
 require(upcomingCompactStorm.timing == "6 PM–2 AM", "an upcoming overnight event uses a compact non-redundant range")
 require(activeCompactStorm.title.count <= nearcastCompactStoryTitleMaximumCharacters, "Watch story titles honor the complication budget")
@@ -129,12 +137,37 @@ let compactOfficialAlert = NearcastCompanionStory(
 let compactAlertCopy = nearcastCompactStoryCopy(
     compactOfficialAlert,
     at: compactStart,
-    timeZoneIdentifier: "America/Chicago"
+    timeZoneIdentifier: "America/Chicago",
+    uses24HourClock: false
 )
 require(compactAlertCopy.title == "Severe storm warning", "long official titles become a bounded but specific Watch warning")
 require(compactAlertCopy.timing == "Until 8:15 PM", "official alert timing keeps its exact useful end time")
 require(compactOfficialAlert.headline.contains("Madison County"), "the complete official title remains available to accessibility and detail surfaces")
 require(compactOfficialAlert.source?.contains("National Weather Service") == true, "the complete official source remains available to accessibility and detail surfaces")
+
+let activeCompactStorm24 = nearcastCompactStoryCopy(compactStormStory, at: compactNow, timeZoneIdentifier: "America/Chicago", uses24HourClock: true)
+require(activeCompactStorm24.timing == "Until 02:00", "24-hour event timing retains midnight-side hours with no AM/PM")
+let upcomingCompactStorm24 = nearcastCompactStoryCopy(compactStormStory, at: compactStart - 3600, timeZoneIdentifier: "America/Chicago", uses24HourClock: true)
+require(upcomingCompactStorm24.timing == "18:00–02:00", "24-hour overnight event ranges retain both exact local times")
+require(nearcastCompactStoryCopy(compactOfficialAlert, at: compactStart, timeZoneIdentifier: "America/Chicago", uses24HourClock: true).timing == "Until 20:15", "official alert compact timing honors 24-hour preference")
+require(nearcastLocalClockLabel("2026-09-07T14:15", uses24HourClock: true) == "14:15", "native hourly refresh formats the selected place's 24-hour clock")
+require(nearcastLocalClockLabel("2026-09-07T14:15", uses24HourClock: false) == "2:15p", "native hourly refresh preserves minutes in compact 12-hour time")
+require(nearcastLocalClockLabel("2026-09-07T00:00", uses24HourClock: true) == "00:00", "midnight stays 00:00 under the explicit 24-hour setting")
+require(nearcastLocalClockLabel("2026-09-07T12:00", uses24HourClock: true) == "12:00", "noon stays 12:00 under the explicit 24-hour setting")
+require(nearcastLocalClockLabel("not a time", uses24HourClock: true) == nil, "invalid provider times never become a fabricated clock time")
+require(nearcastClockLabel(Date(timeIntervalSince1970: compactStart), timeZone: TimeZone(identifier: "Europe/London")!, uses24HourClock: true) == "00:00", "remote place clocks use their own timezone across midnight")
+require(nearcastClockRange(start: Date(timeIntervalSince1970: compactStart), end: Date(timeIntervalSince1970: compactEnd), timeZone: compactCalendar.timeZone, uses24HourClock: true) == "18:00–02:00", "plan ranges use the same preference-aware formatter")
+
+var clockAlertSnapshot = canonicalSnapshot
+clockAlertSnapshot.uses24HourClock = true
+clockAlertSnapshot.placeTimezone = "America/Chicago"
+clockAlertSnapshot.alertTitle = "Severe Thunderstorm Warning"
+clockAlertSnapshot.alertStartsAt = compactStart
+clockAlertSnapshot.alertExpiresAt = compactStart + 2.25 * 3600
+clockAlertSnapshot.alertSavedAt = compactStart
+require(clockAlertSnapshot.officialAlertTiming(at: compactStart) == "Until 20:15", "full native alert timing honors the same clock preference")
+let clockRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(clockAlertSnapshot))
+require(clockRoundTrip.uses24HourClock == true, "the phone clock preference survives snapshot serialization")
 
 var confidenceSnapshot = canonicalRoundTrip
 confidenceSnapshot.confidenceLevel = "high"
@@ -735,6 +768,29 @@ newestPhoneSnapshot.temperature = 74
 newestPhoneSnapshot.weatherSavedAt = now + 1
 let newestPhoneResolved = newestPhoneSnapshot.preservingNewerWeather(from: freshWatchSnapshot)
 require(newestPhoneResolved.temperature == 74, "newer incoming weather still replaces the Watch cache")
+
+var newClockPreference = newestPlan
+newClockPreference.uses24HourClock = true
+newClockPreference.placeTimezone = "America/Chicago"
+var oldClockWeather = inFlightWeather
+oldClockWeather.uses24HourClock = false
+oldClockWeather.placeTimezone = "America/Chicago"
+oldClockWeather.timeline = [hour(0, "6p", startsAt: compactStart)]
+let clockMerged = newClockPreference.mergingWeather(from: oldClockWeather)
+require(clockMerged.uses24HourClock == true, "in-flight weather cannot overwrite the latest phone clock preference")
+require(clockMerged.timeline?.first?.timeLabel == "18:00", "weather merges reformat timestamped rows to the winning clock preference")
+newClockPreference.uses24HourClock = false
+oldClockWeather.uses24HourClock = true
+oldClockWeather.timeline = [hour(0, "18:00", startsAt: compactStart)]
+let clockMerged12 = newClockPreference.mergingWeather(from: oldClockWeather)
+require(clockMerged12.uses24HourClock == false && clockMerged12.timeline?.first?.timeLabel == "6p", "switching back to 12-hour time survives a concurrent refresh")
+newClockPreference.uses24HourClock = nil
+require(newClockPreference.mergingWeather(from: oldClockWeather).uses24HourClock == true, "a legacy receiver preserves an available explicit clock setting")
+var newerLegacyWeather = newestPhoneSnapshot
+newerLegacyWeather.uses24HourClock = nil
+var storedClockPreference = freshWatchSnapshot
+storedClockPreference.uses24HourClock = true
+require(newerLegacyWeather.preservingNewerWeather(from: storedClockPreference).uses24HourClock == true, "a legacy refresh cannot erase a stored explicit clock preference")
 
 var projectionSnapshot = visual
 projectionSnapshot.temperature = 72

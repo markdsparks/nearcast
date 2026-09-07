@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30403";
-const ASSET_VERSION = "3.0.403";
+const CACHE = "nearcast-v30404";
+const ASSET_VERSION = "3.0.404";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -9,6 +9,8 @@ const SHELL = [
   `${BASE}index.html`,
   `${BASE}styles.css?v=${ASSET_VERSION}`,
   `${BASE}weather-truth.js?v=${ASSET_VERSION}`,
+  `${BASE}current-reality.js?v=${ASSET_VERSION}`,
+  `${BASE}shared-forecast.js?v=${ASSET_VERSION}`,
   `${BASE}planner.js?v=${ASSET_VERSION}`,
   `${BASE}forecast-confidence.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,

@@ -16,3 +16,11 @@ xcrun swiftc \
   -o "$WORK/nearcast-watch-snapshot-test"
 
 "$WORK/nearcast-watch-snapshot-test"
+
+xcrun swiftc \
+  -module-cache-path "$WORK/ModuleCache" \
+  "$ROOT/native/ios/Shared/NearcastSharedForecast.swift" \
+  "$ROOT/scripts/nearcast-native-shared-forecast-test.swift" \
+  -o "$WORK/nearcast-native-shared-forecast-test"
+
+"$WORK/nearcast-native-shared-forecast-test"

@@ -4,6 +4,7 @@ import {
   handleRadarGenerationQueue
 } from "./radar-generation-consumer.mjs";
 import "../weather-truth.js";
+import { handleSharedForecastRequest } from "./shared-forecast-service.mjs";
 
 const {
   planWeatherWatchCurrentState: sharedPlanWeatherWatchCurrentState,
@@ -204,6 +205,16 @@ export default {
     }
     if (url.pathname === CURRENT_REALITY_ENDPOINT_PATH) {
       return handleCurrentRealityRequest(request, env, ctx);
+    }
+    if (url.pathname === "/api/forecast") {
+      return handleSharedForecastRequest(request, env, ctx, {
+        observationsLoader: async (latitude, longitude) => {
+          const observationsUrl = new URL(CURRENT_REALITY_ENDPOINT_PATH, url.origin);
+          observationsUrl.search = new URLSearchParams({ lat: latitude, lon: longitude }).toString();
+          const result = await handleCurrentRealityRequest(new Request(observationsUrl), env, ctx);
+          return result.ok ? result.json() : null;
+        }
+      });
     }
     if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });

@@ -52,6 +52,13 @@ namespace_id = "11004"
 limit = 2000
 period = 60
 
+[[ratelimits]]
+name = "FORECAST_RATE_LIMITER"
+namespace_id = "11005"
+[ratelimits.simple]
+limit = 30
+period = 60
+
 [[queues.producers]]
 binding = "RADAR_GENERATION_QUEUE"
 queue = "nearcast-radar-generation-preview"

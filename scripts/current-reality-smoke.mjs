@@ -46,6 +46,46 @@ const celsius = currentRealityPresentation({
   current: { temperature_2m: 22, apparent_temperature: 24 }
 });
 assert.equal(Math.round(celsius.temperature_2m), 20, "Celsius forecasts keep nearby NWS observations in Celsius");
+assert.ok(Math.abs(celsius.adjustment + 3 * 5 / 9) < 1e-9, "single-station cap is 3°F, not 3°C");
+
+const physicalMetricInput = (input) => ({
+  ...input,
+  unit: "celsius",
+  current: {
+    ...input.current,
+    temperature_2m: (input.current.temperature_2m - 32) * 5 / 9,
+    apparent_temperature: (input.current.apparent_temperature - 32) * 5 / 9
+  }
+});
+const assertPhysicalParity = (input, label) => {
+  const imperial = currentRealityPresentation(input);
+  const metric = currentRealityPresentation(physicalMetricInput(input));
+  assert.equal(metric.status, imperial.status, `${label}: unit choice cannot change evidence status`);
+  assert.equal(metric.applied, imperial.applied, `${label}: unit choice cannot change whether correction applies`);
+  if (imperial.temperature_2m !== undefined) {
+    assert.ok(Math.abs(metric.temperature_2m - (imperial.temperature_2m - 32) * 5 / 9) < 1e-9, `${label}: physically equal calibrated temperature`);
+    assert.ok(Math.abs(metric.apparent_temperature - (imperial.apparent_temperature - 32) * 5 / 9) < 1e-9, `${label}: physically equal feels-like`);
+  }
+};
+assertPhysicalParity(base, "single-station maximum adjustment");
+assertPhysicalParity({ ...base, current: { temperature_2m: 68.9, apparent_temperature: 70.9 } }, "small useful adjustment");
+assertPhysicalParity({ ...base, current: { temperature_2m: 68.5, apparent_temperature: 70.5 } }, "negligible adjustment");
+assertPhysicalParity({
+  ...base,
+  observations: { stations: [
+    { ...base.observations.stations[0], id: "A", temperatureC: 20 },
+    { ...base.observations.stations[0], id: "B", temperatureC: 20.5 }
+  ] }
+}, "multiple-station maximum adjustment");
+const metricSpread = {
+  ...base,
+  observations: { stations: [
+    { ...base.observations.stations[0], id: "A", temperatureC: 20 },
+    { ...base.observations.stations[0], id: "B", temperatureC: 23 }
+  ] }
+};
+assertPhysicalParity(metricSpread, "3°C station disagreement exceeds the 4°F guard");
+assert.equal(currentRealityPresentation(physicalMetricInput(metricSpread)).reason, "nearby-observations-disagree");
 
 const agreeing = currentRealityPresentation({
   ...base,

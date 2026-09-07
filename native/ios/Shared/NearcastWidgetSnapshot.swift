@@ -11,6 +11,9 @@ struct NearcastWidgetSnapshot: Codable {
     var savedAt: TimeInterval
     var placeName: String
     var placeTimezone: String? = nil
+    // Resolved phone preference (including Auto). Older payloads omit this and
+    // follow the companion's system clock; weather refreshes never own it.
+    var uses24HourClock: Bool? = nil
     var temperature: Int
     var feelsLike: Int
     var high: Int?
@@ -136,6 +139,7 @@ struct NearcastWidgetHour: Codable, Identifiable {
     var precipitationBasis: String? = nil
     var precipitationObserved: Bool? = nil
     var precipitationDetail: String? = nil
+    var thunderPossible: Bool? = nil
 }
 
 struct NearcastWidgetTimelineProjection {
@@ -241,13 +245,15 @@ let nearcastCompactStoryTimingMaximumCharacters = 22
 func nearcastCompactStoryCopy(
     _ story: NearcastCompanionStory,
     at timestamp: TimeInterval = Date().timeIntervalSince1970,
-    timeZoneIdentifier: String? = nil
+    timeZoneIdentifier: String? = nil,
+    uses24HourClock: Bool? = nil
 ) -> NearcastCompactStoryCopy {
     let title = nearcastCompactStoryTitle(story)
     let timing = nearcastCompactStoryTiming(
         story,
         at: timestamp,
-        timeZoneIdentifier: timeZoneIdentifier
+        timeZoneIdentifier: timeZoneIdentifier,
+        uses24HourClock: uses24HourClock
     )
     return NearcastCompactStoryCopy(
         title: nearcastCompactWords(title, maximumCharacters: nearcastCompactStoryTitleMaximumCharacters),
@@ -323,7 +329,8 @@ private func nearcastCompactStoryTitle(_ story: NearcastCompanionStory) -> Strin
 private func nearcastCompactStoryTiming(
     _ story: NearcastCompanionStory,
     at timestamp: TimeInterval,
-    timeZoneIdentifier: String?
+    timeZoneIdentifier: String?,
+    uses24HourClock: Bool?
 ) -> String? {
     let start = story.startsAt.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
     let end = story.endsAt.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
@@ -335,7 +342,7 @@ private func nearcastCompactStoryTiming(
     calendar.timeZone = timeZone
 
     if let end, end > now, start.map({ $0 <= now }) ?? true {
-        return "Until \(nearcastCompactClock(end, calendar: calendar))"
+        return "Until \(nearcastCompactClock(end, calendar: calendar, uses24HourClock: uses24HourClock))"
     }
 
     guard let start, start > now else { return nil }
@@ -344,22 +351,33 @@ private func nearcastCompactStoryTiming(
         : nearcastCompactWeekday(start, calendar: calendar)
 
     if let end, end > start {
-        let range = nearcastCompactClockRange(start: start, end: end, calendar: calendar)
+        let range = nearcastClockRange(start: start, end: end, timeZone: timeZone, uses24HourClock: uses24HourClock, namedNoonMidnight: true)
         return [dayPrefix, range].compactMap { $0 }.joined(separator: " · ")
     }
 
-    let point = "Near \(nearcastCompactClock(start, calendar: calendar))"
+    let point = "Near \(nearcastCompactClock(start, calendar: calendar, uses24HourClock: uses24HourClock))"
     return [dayPrefix, point].compactMap { $0 }.joined(separator: " · ")
 }
 
-private func nearcastCompactClockRange(start: Date, end: Date, calendar: Calendar) -> String {
+func nearcastClockRange(
+    start: Date,
+    end: Date,
+    timeZone: TimeZone,
+    uses24HourClock: Bool? = nil,
+    namedNoonMidnight: Bool = false
+) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
     let startParts = nearcastCompactClockParts(start, calendar: calendar)
     let endParts = nearcastCompactClockParts(end, calendar: calendar)
-    if endParts.hour24 == 0 && endParts.minute == 0 {
-        return "\(nearcastCompactClock(start, calendar: calendar))–midnight"
+    if nearcastResolved24HourClock(uses24HourClock) {
+        return "\(nearcastClockLabel(start, timeZone: timeZone, uses24HourClock: true))–\(nearcastClockLabel(end, timeZone: timeZone, uses24HourClock: true))"
     }
-    if endParts.hour24 == 12 && endParts.minute == 0 {
-        return "\(nearcastCompactClock(start, calendar: calendar))–noon"
+    if namedNoonMidnight && endParts.hour24 == 0 && endParts.minute == 0 {
+        return "\(nearcastCompactClock(start, calendar: calendar, uses24HourClock: false))–midnight"
+    }
+    if namedNoonMidnight && endParts.hour24 == 12 && endParts.minute == 0 {
+        return "\(nearcastCompactClock(start, calendar: calendar, uses24HourClock: false))–noon"
     }
     if startParts.meridiem == endParts.meridiem {
         return "\(startParts.clock)–\(endParts.clock) \(endParts.meridiem)"
@@ -367,8 +385,11 @@ private func nearcastCompactClockRange(start: Date, end: Date, calendar: Calenda
     return "\(startParts.clock) \(startParts.meridiem)–\(endParts.clock) \(endParts.meridiem)"
 }
 
-private func nearcastCompactClock(_ date: Date, calendar: Calendar) -> String {
+private func nearcastCompactClock(_ date: Date, calendar: Calendar, uses24HourClock: Bool?) -> String {
     let parts = nearcastCompactClockParts(date, calendar: calendar)
+    if nearcastResolved24HourClock(uses24HourClock) {
+        return nearcastClockLabel(date, timeZone: calendar.timeZone, uses24HourClock: true)
+    }
     if parts.hour24 == 0 && parts.minute == 0 { return "midnight" }
     if parts.hour24 == 12 && parts.minute == 0 { return "noon" }
     return "\(parts.clock) \(parts.meridiem)"
@@ -384,6 +405,45 @@ private func nearcastCompactClockParts(
     let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
     let clock = minute == 0 ? "\(hour12)" : String(format: "%d:%02d", hour12, minute)
     return (clock, hour24 < 12 ? "AM" : "PM", hour24, minute)
+}
+
+/// One clock policy for phone-authored snapshots and independent native
+/// refreshes. A nil preference is only the legacy/system fallback.
+func nearcastResolved24HourClock(_ preference: Bool?, locale: Locale = .current) -> Bool {
+    if let preference { return preference }
+    let format = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? "h a"
+    return format.contains("H") || format.contains("k")
+}
+
+func nearcastClockLabel(
+    _ date: Date,
+    timeZone: TimeZone,
+    uses24HourClock: Bool? = nil,
+    compact: Bool = false
+) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let parts = calendar.dateComponents([.hour, .minute], from: date)
+    return nearcastClockLabel(hour: parts.hour ?? 0, minute: parts.minute ?? 0, uses24HourClock: uses24HourClock, compact: compact)
+}
+
+func nearcastClockLabel(hour: Int, minute: Int, uses24HourClock: Bool? = nil, compact: Bool = false) -> String {
+    if nearcastResolved24HourClock(uses24HourClock) {
+        return String(format: "%02d:%02d", hour, minute)
+    }
+    let hour12 = hour % 12 == 0 ? 12 : hour % 12
+    let clock = minute == 0 ? "\(hour12)" : String(format: "%d:%02d", hour12, minute)
+    return compact ? "\(clock)\(hour < 12 ? "a" : "p")" : "\(clock) \(hour < 12 ? "AM" : "PM")"
+}
+
+/// Provider timestamps without a zone already describe the selected place's
+/// local clock. Do not accidentally interpret them in the device timezone.
+func nearcastLocalClockLabel(_ value: String, uses24HourClock: Bool? = nil, compact: Bool = true) -> String? {
+    let raw = value.split(separator: "T").last.map(String.init) ?? value
+    let parts = raw.split(separator: ":")
+    guard parts.count >= 2, let hour = Int(parts[0]), let minute = Int(parts[1].prefix(2)),
+          (0...23).contains(hour), (0...59).contains(minute) else { return nil }
+    return nearcastClockLabel(hour: hour, minute: minute, uses24HourClock: uses24HourClock, compact: compact)
 }
 
 private func nearcastCompactWeekday(_ date: Date, calendar: Calendar) -> String {
@@ -412,6 +472,7 @@ struct NearcastWidgetDay: Codable, Identifiable {
     var low: Int
     var rainChance: Int
     var conditionCode: Int
+    var thunderPossible: Bool? = nil
 }
 
 /// The provider's raw weather code describes the most significant condition
@@ -699,10 +760,11 @@ extension NearcastWidgetSnapshot {
         guard
             let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
             let data = defaults.data(forKey: nearcastWidgetSnapshotKey),
-            let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data)
+            var snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data)
         else {
             return nil
         }
+        snapshot.refreshTimelineClockLabels()
         return snapshot
     }
 
@@ -829,7 +891,8 @@ extension NearcastWidgetSnapshot {
         return companionAlertTiming(
             alert,
             at: timestamp,
-            timeZoneIdentifier: placeTimezone
+            timeZoneIdentifier: placeTimezone,
+            uses24HourClock: uses24HourClock
         )
     }
 
@@ -1015,7 +1078,10 @@ extension NearcastWidgetSnapshot {
     func preservingNewerWeather(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
         guard stored.hasWeatherData,
               !hasWeatherData || stored.weatherSavedTime > weatherSavedTime else {
-            return self
+            var resolved = self
+            resolved.uses24HourClock = uses24HourClock ?? stored.uses24HourClock
+            resolved.refreshTimelineClockLabels()
+            return resolved
         }
         return mergingWeather(from: stored)
     }
@@ -1129,7 +1195,10 @@ extension NearcastWidgetSnapshot {
         var merged = self
         merged.version = max(minimumVersion, max(version, weather.version))
         merged.placeName = weather.placeName
-        merged.placeTimezone = weather.placeTimezone
+        merged.placeTimezone = weather.placeTimezone ?? placeTimezone
+        // Settings belong to the receiving (latest phone-authored) snapshot,
+        // not to a weather request that may have started before they changed.
+        merged.uses24HourClock = uses24HourClock ?? weather.uses24HourClock
         merged.temperature = weather.temperature
         merged.feelsLike = weather.feelsLike
         merged.high = weather.high
@@ -1173,7 +1242,23 @@ extension NearcastWidgetSnapshot {
         merged.sunsetAt = weather.sunsetAt
         merged.isAvailable = weather.isAvailable
         merged.weatherSavedAt = weather.weatherSavedAt
+        merged.refreshTimelineClockLabels()
         return merged
+    }
+
+    mutating func refreshTimelineClockLabels() {
+        guard let timezone = placeTimezone.flatMap(TimeZone.init(identifier:)), let timeline else { return }
+        self.timeline = timeline.map { row in
+            guard let startsAt = row.startsAt, startsAt.isFinite, startsAt > 0 else { return row }
+            var formatted = row
+            formatted.timeLabel = nearcastClockLabel(
+                Date(timeIntervalSince1970: startsAt),
+                timeZone: timezone,
+                uses24HourClock: uses24HourClock,
+                compact: true
+            )
+            return formatted
+        }
     }
 }
 
@@ -1188,28 +1273,26 @@ private func cleanCompanionText(_ value: String?) -> String? {
 private func companionAlertTiming(
     _ alert: NearcastOfficialAlertBrief,
     at timestamp: TimeInterval,
-    timeZoneIdentifier: String?
+    timeZoneIdentifier: String?,
+    uses24HourClock: Bool?
 ) -> String? {
     let timeZone = timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) ?? .current
     let now = Date(timeIntervalSince1970: timestamp)
 
     if let startsAt = alert.startsAt, startsAt > timestamp + 60 {
-        return "Starts \(companionDateLabel(Date(timeIntervalSince1970: startsAt), relativeTo: now, timeZone: timeZone))"
+        return "Starts \(companionDateLabel(Date(timeIntervalSince1970: startsAt), relativeTo: now, timeZone: timeZone, uses24HourClock: uses24HourClock))"
     }
     if let expiresAt = alert.expiresAt {
-        return "Until \(companionDateLabel(Date(timeIntervalSince1970: expiresAt), relativeTo: now, timeZone: timeZone))"
+        return "Until \(companionDateLabel(Date(timeIntervalSince1970: expiresAt), relativeTo: now, timeZone: timeZone, uses24HourClock: uses24HourClock))"
     }
     return "Active now"
 }
 
-private func companionDateLabel(_ date: Date, relativeTo now: Date, timeZone: TimeZone) -> String {
+private func companionDateLabel(_ date: Date, relativeTo now: Date, timeZone: TimeZone, uses24HourClock: Bool?) -> String {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = timeZone
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = timeZone
-    formatter.dateFormat = calendar.isDate(date, inSameDayAs: now) ? "h:mm a" : "EEE h:mm a"
-    return formatter.string(from: date).replacingOccurrences(of: ":00", with: "")
+    let clock = nearcastClockLabel(date, timeZone: timeZone, uses24HourClock: uses24HourClock)
+    return calendar.isDate(date, inSameDayAs: now) ? clock : "\(nearcastCompactWeekday(date, calendar: calendar)) \(clock)"
 }
 
 extension NearcastWidgetPlace {

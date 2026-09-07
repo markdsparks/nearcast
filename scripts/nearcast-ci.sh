@@ -13,6 +13,7 @@ run_portable_checks() {
     planner.js \
     weather-truth.js \
     current-reality.js \
+    shared-forecast.js \
     forecast-confidence.js \
     map.js \
     sky.js \
@@ -25,6 +26,7 @@ run_portable_checks() {
     raw-map-runtime.js \
     radar-seam-engine.js \
     workers/radar-capability.mjs \
+    workers/shared-forecast-service.mjs \
     workers/radar-generation-consumer.mjs
   do
     node --check "$ROOT/$source"
@@ -75,6 +77,9 @@ run_portable_checks() {
     forecast-disclosure-contract-smoke.mjs \
     forecast-confidence-integration-smoke.mjs \
     current-reality-smoke.mjs \
+    shared-forecast-smoke.mjs \
+    shared-forecast-service-smoke.mjs \
+    shared-forecast-integration-smoke.mjs \
     current-reality-worker-smoke.mjs \
     current-reality-ui-smoke.mjs \
     family-places-smoke.mjs \

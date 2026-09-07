@@ -1,4 +1,4 @@
-const VERSION = "3.0.403";
+const VERSION = "3.0.404";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -6077,6 +6077,7 @@ async function fetchCurrentReality(place, force = false) {
 
 async function startCurrentRealityProbe(place, data, force = false) {
   if (!place || !data || !placeSupportsNwsAlerts(place)) return;
+  if (sharedForecastSourceIsFresh(data, place, "observations", CURRENT_REALITY_CACHE_MS)) return;
   const sequence = ++currentRealityProbeSequence;
   try {
     const response = await fetchCurrentReality(place, force);
@@ -6101,45 +6102,9 @@ async function startCurrentRealityProbe(place, data, force = false) {
 }
 
 function canonicalCurrentSnapshot(data = state.forecast, options = {}) {
-  const current = data?.current || {};
-  const hourly = data?.hourly || {};
-  const index = currentHourlyIndex(data);
-  const now = forecastNowMs(data);
-  const currentAt = parseForecastTimestamp(current.time, data);
-  const rowAt = index >= 0 ? parseForecastTimestamp(hourly.time?.[index], data) : null;
-  const currentMatchesLiveHour = Number.isFinite(currentAt) && Number.isFinite(rowAt) &&
-    currentAt >= rowAt && currentAt < rowAt + 60 * 60 * 1000;
-  const currentIsFresh = currentMatchesLiveHour && Math.abs(now - currentAt) <= FORECAST_CURRENT_FRESH_MS;
-  const useHourly = !currentIsFresh && index >= 0;
-  const pick = (key, fallback = null) => {
-    const hourlyValue = index >= 0 ? hourly[key]?.[index] : undefined;
-    const currentValue = current[key];
-    const selected = useHourly ? hourlyValue : currentValue;
-    if (selected !== undefined && selected !== null) return selected;
-    if (hourlyValue !== undefined && hourlyValue !== null) return hourlyValue;
-    if (currentValue !== undefined && currentValue !== null) return currentValue;
-    return fallback;
-  };
-  const rowTime = index >= 0 ? hourly.time?.[index] : null;
-  const snapshot = {
-    ...current,
-    time: useHourly && rowTime ? rowTime : current.time,
-    temperature_2m: pick("temperature_2m", 0),
-    apparent_temperature: pick("apparent_temperature", pick("temperature_2m", 0)),
-    relative_humidity_2m: pick("relative_humidity_2m", null),
-    precipitation: useHourly ? 0 : Number(current.precipitation || 0),
-    weather_code: pick("weather_code", current.weather_code),
-    cloud_cover: pick("cloud_cover", current.cloud_cover),
-    wind_speed_10m: pick("wind_speed_10m", 0),
-    wind_direction_10m: pick("wind_direction_10m", current.wind_direction_10m),
-    wind_gusts_10m: pick("wind_gusts_10m", pick("wind_speed_10m", 0)),
-    is_day: pick("is_day", current.is_day),
-    interval: useHourly ? 3600 : (current.interval || 900),
-    hourlyIndex: index,
-    basis: useHourly ? "hourly-forecast" : "modeled-current",
-    asOfMs: useHourly && rowTime ? parseForecastTimestamp(rowTime, data) : currentAt,
-    evaluationMs: now
-  };
+  const snapshot = NearcastSharedForecast.canonicalCurrentSnapshot(data, {
+    nowMs: forecastNowMs(data), hourlyIndex: currentHourlyIndex(data), parseTimestamp: parseForecastTimestamp
+  });
   const reality = options.skipReality || typeof currentRealityForForecast !== "function"
     ? null
     : currentRealityForForecast(data);
@@ -9535,16 +9500,10 @@ async function startForecastConfidenceProbe(place, data, force = false) {
 
 function forecastTemperatureGuidanceBaseline(data) {
   let baseline = forecastTemperatureBaselineByForecast.get(data);
-  if (baseline) return baseline;
-  baseline = {
-    hourlyTemperature: Array.isArray(data?.hourly?.temperature_2m) ? [...data.hourly.temperature_2m] : [],
-    hourlyApparent: Array.isArray(data?.hourly?.apparent_temperature) ? [...data.hourly.apparent_temperature] : [],
-    dailyHigh: Array.isArray(data?.daily?.temperature_2m_max) ? [...data.daily.temperature_2m_max] : [],
-    dailyLow: Array.isArray(data?.daily?.temperature_2m_min) ? [...data.daily.temperature_2m_min] : [],
-    dailyApparentHigh: Array.isArray(data?.daily?.apparent_temperature_max) ? [...data.daily.apparent_temperature_max] : [],
-    dailyApparentLow: Array.isArray(data?.daily?.apparent_temperature_min) ? [...data.daily.apparent_temperature_min] : []
-  };
-  forecastTemperatureBaselineByForecast.set(data, baseline);
+  if (!baseline) {
+    baseline = NearcastSharedForecast.temperatureBaseline(data);
+    forecastTemperatureBaselineByForecast.set(data, baseline);
+  }
   return baseline;
 }
 
@@ -9556,22 +9515,7 @@ function medianForecastTemperature(values) {
 }
 
 function normalizeForecastTemperatureGuidance(json, place) {
-  const times = Array.isArray(json?.hourly?.time) ? json.hourly.time : [];
-  const sources = FORECAST_CONFIDENCE_MODELS.map((model) => {
-    const temperatures = json?.hourly?.[`temperature_2m_${model.suffix}`];
-    const hours = Array.isArray(temperatures) ? times.map((time, index) => ({
-      atMs: parseForecastTimestamp(time, json),
-      temperature: forecastConfidenceNumber(temperatures[index])
-    })).filter((hour) => hour.atMs !== null && hour.temperature !== null) : [];
-    return { id: model.id, status: hours.length >= 24 ? "ready" : "missing", hours };
-  });
-  return {
-    version: 1,
-    placeKey: continuityPlaceKey(place),
-    fetchedAtMs: Date.now(),
-    status: sources.filter((source) => source.status === "ready").length >= 2 ? "ready" : "failed",
-    sources
-  };
+  return NearcastSharedForecast.normalizeTemperatureGuidance(json, { placeKey: continuityPlaceKey(place) });
 }
 
 async function fetchForecastTemperatureGuidance(place) {
@@ -9620,84 +9564,14 @@ function nwsTemperatureGuidanceForDate(data, date) {
   return evidence?.daily?.find((item) => item.date === date) || null;
 }
 
-function rebuildForecastTemperatures(data) {
-  if (!data?.hourly || !data?.daily) return false;
-  const baseline = forecastTemperatureGuidanceBaseline(data);
-  const hourlyTimes = data.hourly.time || [];
-  if (!baseline.hourlyTemperature.length || !hourlyTimes.length) return false;
-
-  data.hourly.temperature_2m = [...baseline.hourlyTemperature];
-  if (baseline.hourlyApparent.length) data.hourly.apparent_temperature = [...baseline.hourlyApparent];
-  data.daily.temperature_2m_max = [...baseline.dailyHigh];
-  data.daily.temperature_2m_min = [...baseline.dailyLow];
-  if (baseline.dailyApparentHigh.length) data.daily.apparent_temperature_max = [...baseline.dailyApparentHigh];
-  if (baseline.dailyApparentLow.length) data.daily.apparent_temperature_min = [...baseline.dailyApparentLow];
-
-  const bundle = forecastTemperatureGuidanceByForecast.get(data);
-  const nowMs = forecastNowMs(data);
-  if (bundle?.status === "ready") {
-    hourlyTimes.forEach((time, index) => {
-      const atMs = parseForecastTimestamp(time, data);
-      // Current observations retain priority. Consensus begins with the next
-      // unobserved hourly bucket, where it can prevent a lone model spike.
-      if (!Number.isFinite(atMs) || atMs <= nowMs) return;
-      const consensus = guidanceTemperatureAt(bundle, atMs);
-      const raw = forecastConfidenceNumber(baseline.hourlyTemperature[index]);
-      if (consensus === null || raw === null) return;
-      data.hourly.temperature_2m[index] = consensus;
-      const rawApparent = forecastConfidenceNumber(baseline.hourlyApparent[index]);
-      if (rawApparent !== null) data.hourly.apparent_temperature[index] = rawApparent + (consensus - raw);
-    });
-  }
-
-  const indicesByDate = new Map();
-  hourlyTimes.forEach((time, index) => {
-    const date = String(time || "").slice(0, 10);
-    if (!date) return;
-    const indices = indicesByDate.get(date) || [];
-    indices.push(index);
-    indicesByDate.set(date, indices);
+function rebuildForecastTemperatures(data, nowMs = forecastNowMs(data)) {
+  return NearcastSharedForecast.applyTemperatureGuidance(data, {
+    baseline: forecastTemperatureGuidanceBaseline(data),
+    guidance: forecastTemperatureGuidanceByForecast.get(data),
+    nwsDaily: nwsConvectiveEvidenceByForecast.get(data)?.daily || [],
+    nowMs,
+    parseTimestamp: parseForecastTimestamp
   });
-
-  (data.daily.time || []).forEach((date, dayIndex) => {
-    const indices = indicesByDate.get(date) || [];
-    const nws = nwsTemperatureGuidanceForDate(data, date);
-    const rawTemps = indices.map((index) => forecastConfidenceNumber(data.hourly.temperature_2m[index])).filter((value) => value !== null);
-    if (!rawTemps.length) return;
-    const sourceLow = Math.min(...rawTemps);
-    const sourceHigh = Math.max(...rawTemps);
-    const targetLow = forecastConfidenceNumber(nws?.low);
-    const targetHigh = forecastConfidenceNumber(nws?.high);
-
-    if (targetLow !== null || targetHigh !== null) {
-      indices.forEach((index) => {
-        const value = forecastConfidenceNumber(data.hourly.temperature_2m[index]);
-        if (value === null) return;
-        let adjusted = value;
-        if (targetLow !== null && targetHigh !== null && sourceHigh - sourceLow >= 1) {
-          adjusted = targetLow + ((value - sourceLow) * (targetHigh - targetLow) / (sourceHigh - sourceLow));
-        } else if (targetHigh !== null) {
-          adjusted = value + (targetHigh - sourceHigh);
-        } else if (targetLow !== null) {
-          adjusted = value + (targetLow - sourceLow);
-        }
-        const previous = forecastConfidenceNumber(data.hourly.temperature_2m[index]);
-        data.hourly.temperature_2m[index] = adjusted;
-        const apparent = forecastConfidenceNumber(data.hourly.apparent_temperature?.[index]);
-        if (apparent !== null && previous !== null) data.hourly.apparent_temperature[index] = apparent + (adjusted - previous);
-      });
-    }
-
-    const adjustedTemps = indices.map((index) => forecastConfidenceNumber(data.hourly.temperature_2m[index])).filter((value) => value !== null);
-    const adjustedApparent = indices.map((index) => forecastConfidenceNumber(data.hourly.apparent_temperature?.[index])).filter((value) => value !== null);
-    data.daily.temperature_2m_max[dayIndex] = targetHigh ?? Math.max(...adjustedTemps);
-    data.daily.temperature_2m_min[dayIndex] = targetLow ?? Math.min(...adjustedTemps);
-    if (adjustedApparent.length) {
-      data.daily.apparent_temperature_max[dayIndex] = Math.max(...adjustedApparent);
-      data.daily.apparent_temperature_min[dayIndex] = Math.min(...adjustedApparent);
-    }
-  });
-  return true;
 }
 
 function refreshForecastAfterTemperatureGuidance(data, place, reason) {
@@ -9709,6 +9583,7 @@ function refreshForecastAfterTemperatureGuidance(data, place, reason) {
 
 async function startForecastTemperatureGuidanceProbe(place, data, force = false) {
   if (!place || !data) return;
+  if (sharedForecastSourceIsFresh(data, place, "temperature", FORECAST_TEMPERATURE_GUIDANCE_CACHE_MAX_AGE_MS)) return;
   const sequence = ++forecastTemperatureGuidanceProbeSequence;
   const cached = readForecastTemperatureGuidanceCache(place);
   const cachedAge = cached ? Date.now() - cached.savedAt : Infinity;
@@ -9741,6 +9616,7 @@ function readForecastCache(place, options = {}) {
     cacheFallback: false,
     reason: ""
   });
+  hydrateSharedForecast(cached.data, place, options.unit || state.unit);
   return cached;
 }
 
@@ -10747,8 +10623,41 @@ function forecastUsedCacheFallback(data) {
   return Boolean(data?._nearcastMeta?.cacheFallback);
 }
 
+function sharedForecastMetadata(data, place, unit = state.unit) {
+  const meta = data?._nearcastForecast;
+  if (meta?.version !== 1 || meta.unit !== unit || !place) return null;
+  if (Number(meta.latitude).toFixed(3) !== Number(place.latitude).toFixed(3) ||
+      Number(meta.longitude).toFixed(3) !== Number(place.longitude).toFixed(3)) return null;
+  if (!Number.isFinite(meta.generatedAtMs) || meta.generatedAtMs > Date.now() + 5 * 60000) return null;
+  return meta;
+}
+
+function sharedForecastSourceIsFresh(data, place, source, maxAge) {
+  const meta = sharedForecastMetadata(data, place);
+  return Boolean(meta && meta.sources?.[source] === "ready" && Date.now() - meta.generatedAtMs <= maxAge);
+}
+
+function hydrateSharedForecast(data, place, unit = state.unit) {
+  const meta = sharedForecastMetadata(data, place, unit);
+  if (!meta) return data;
+  // The transport carries resolved native values and the original baseline.
+  // Home restores that baseline before using the exact same shared algorithm,
+  // so later evidence cannot compound a correction or localize current twice.
+  if (meta.rawCurrent) data.current = { ...meta.rawCurrent };
+  if (meta.baseline) forecastTemperatureBaselineByForecast.set(data, meta.baseline);
+  if (Date.now() - meta.generatedAtMs > FORECAST_TEMPERATURE_GUIDANCE_CACHE_FALLBACK_MS) return data;
+  if (meta.temperatureGuidance) {
+    forecastTemperatureGuidanceByForecast.set(data, { ...meta.temperatureGuidance, placeKey: continuityPlaceKey(place) });
+  }
+  if (meta.nws) nwsConvectiveEvidenceByForecast.set(data, { ...meta.nws, placeId: place.id });
+  rebuildForecastTemperatures(data, meta.generatedAtMs);
+  if (meta.observations) bindCurrentReality(place, data, meta.observations);
+  return data;
+}
+
 async function fetchForecast(place, force = false) {
-  const cacheKey = forecastCacheKey(place);
+  const requestedUnit = state.unit;
+  const cacheKey = forecastCacheKey(place, requestedUnit);
   const cached = readForecastCache(place, { maxAge: FORECAST_CACHE_MAX_AGE_MS });
   const fallbackCached = cached || readForecastCache(place, { maxAge: FORECAST_CACHE_FALLBACK_MAX_AGE_MS });
 
@@ -10829,10 +10738,22 @@ async function fetchForecast(place, force = false) {
   });
 
   try {
-    const forecastPromise = fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, FORECAST_FETCH_TIMEOUT_MS);
+    const sharedUrl = new URL("/api/forecast", window.location.origin);
+    sharedUrl.search = new URLSearchParams({
+      lat: Number(place.latitude).toFixed(3), lon: Number(place.longitude).toFixed(3),
+      unit: state.unit, precipitation_unit: state.unit === "fahrenheit" ? "inch" : "mm"
+    }).toString();
+    const forecastPromise = fetchJsonWithTimeout(sharedUrl.toString(), FORECAST_FETCH_TIMEOUT_MS)
+      .then(data => {
+        if (!sharedForecastMetadata(data, place, requestedUnit)) throw new Error("shared-forecast-invalid");
+        return hydrateSharedForecast(data, place, requestedUnit);
+      })
+      // Keep the existing direct-provider path for offline/local development
+      // and service outages. Its usual local evidence probes still run.
+      .catch(() => fetchJsonWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, FORECAST_FETCH_TIMEOUT_MS));
     const airQualityPromise = fetchAirQuality(place, force).catch(() => null);
     const data = await forecastPromise;
-    const savedAt = Date.now();
+    const savedAt = sharedForecastMetadata(data, place, requestedUnit)?.generatedAtMs || Date.now();
     data.airQuality = await airQualityPromise;
     markForecastProvenance(data, {
       source: "network",
@@ -10841,10 +10762,11 @@ async function fetchForecast(place, force = false) {
       reason: ""
     });
     localStorage.setItem(cacheKey, JSON.stringify({ savedAt, data }));
-    return data;
+    return requestedUnit === state.unit ? data : convertForecastUnits(data, requestedUnit, state.unit);
   } catch (error) {
     if (fallbackCached?.data) {
-      return markForecastCacheFallback(fallbackCached.data, fallbackCached, error?.name || "forecast-fetch-failed");
+      const fallback = markForecastCacheFallback(fallbackCached.data, fallbackCached, error?.name || "forecast-fetch-failed");
+      return requestedUnit === state.unit ? fallback : convertForecastUnits(fallback, requestedUnit, state.unit);
     }
     throw error;
   }
@@ -10879,10 +10801,10 @@ function convertForecastUnits(data, fromUnit, toUnit) {
   const wind = converterForUnit(fromUnit, toUnit, "wind");
   const precip = converterForUnit(fromUnit, toUnit, "precip");
 
-  convertFields(converted.current, ["temperature_2m", "apparent_temperature"], temp);
+  convertFields(converted.current, ["temperature_2m", "apparent_temperature", "dew_point_2m"], temp);
   convertFields(converted.current, ["wind_speed_10m", "wind_gusts_10m"], wind);
   convertFields(converted.current, ["precipitation"], precip);
-  convertFields(converted.hourly, ["temperature_2m", "apparent_temperature"], temp);
+  convertFields(converted.hourly, ["temperature_2m", "apparent_temperature", "dew_point_2m"], temp);
   convertFields(converted.hourly, ["wind_speed_10m", "wind_gusts_10m"], wind);
   convertFields(converted.hourly, ["precipitation"], precip);
   convertFields(converted.daily, [
@@ -10898,20 +10820,42 @@ function convertForecastUnits(data, fromUnit, toUnit) {
   convertFields(converted.minutely_15, ["precipitation", "snowfall"], precip);
   updateForecastUnitLabels(converted, toUnit);
 
+  // Transport metadata is expressed in the fetched unit. Do not let an old
+  // Fahrenheit baseline be reattached after a Celsius toggle (or vice versa).
+  const baseline = forecastTemperatureBaselineByForecast.get(data) || data._nearcastForecast?.baseline;
+  if (baseline) forecastTemperatureBaselineByForecast.set(converted, Object.fromEntries(
+    Object.entries(baseline).map(([key, values]) => [key, values.map(value => convertNumber(value, temp))])
+  ));
+  const guidance = forecastTemperatureGuidanceByForecast.get(data);
+  if (guidance) forecastTemperatureGuidanceByForecast.set(converted, {
+    ...guidance, sources: guidance.sources.map(source => ({ ...source,
+      hours: source.hours.map(hour => ({ ...hour, temperature: convertNumber(hour.temperature, temp) }))
+    }))
+  });
+  const nws = nwsConvectiveEvidenceByForecast.get(data);
+  if (nws) nwsConvectiveEvidenceByForecast.set(converted, {
+    ...nws, daily: (nws.daily || []).map(day => ({ ...day,
+      high: convertNumber(day.high, temp), low: convertNumber(day.low, temp)
+    }))
+  });
+  delete converted._nearcastForecast;
+
   // The observation response remains in Celsius, but the resolved calibration
   // is already in the forecast's display unit. Carry it across an in-app unit
   // toggle rather than briefly snapping the hero back to the raw model value.
   if (reality) {
     const convertTemperature = converterForUnit(fromUnit, toUnit, "temp");
-    const convertRealityValue = (value) => Number.isFinite(Number(value)) ? convertTemperature(Number(value)) : value;
+    const convertRealityValue = (value) => typeof value === "number" && Number.isFinite(value) ? convertTemperature(value) : value;
+    const convertRealityDelta = (value) => typeof value === "number" && Number.isFinite(value)
+      ? value * (fromUnit === "fahrenheit" ? 5 / 9 : 9 / 5) : value;
     currentRealityByForecast.set(converted, {
       ...reality,
       temperature_2m: convertRealityValue(reality.temperature_2m),
       apparent_temperature: convertRealityValue(reality.apparent_temperature),
       modelTemperature: convertRealityValue(reality.modelTemperature),
       observedTemperature: convertRealityValue(reality.observedTemperature),
-      adjustment: convertRealityValue(reality.adjustment),
-      spread: convertRealityValue(reality.spread)
+      adjustment: convertRealityDelta(reality.adjustment),
+      spread: convertRealityDelta(reality.spread)
     });
   }
 
@@ -10958,6 +10902,7 @@ function updateForecastUnitLabels(data, unit) {
     [
       "temperature_2m",
       "apparent_temperature",
+      "dew_point_2m",
       "temperature_2m_max",
       "temperature_2m_min",
       "apparent_temperature_max",
@@ -14012,6 +13957,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
       savedAt: snapshotSavedAt,
       placeName: widgetPlaceDisplayName,
       placeTimezone: String(data?.timezone || "").trim() || null,
+      uses24HourClock: prefersTwentyFourHourClock(),
       temperature: Math.round(current.temperature_2m),
       feelsLike: Math.round(current.apparent_temperature),
       high: Number.isFinite(high) ? Math.round(high) : null,
@@ -14141,6 +14087,7 @@ function nativeWidgetTimeline(data = state.forecast) {
       uv: roundOrNull(hourly.uv_index?.[index]),
       conditionCode: nativeWeatherCode(presentation.code),
       isDay: presentation.isDay,
+      thunderPossible: Boolean(presentation.stormPotential || presentation.convective),
       startsAt: Number.isFinite(startsAt)
         ? startsAt / 1000
         : null
@@ -14168,7 +14115,8 @@ function nativeWidgetDaily(data = state.forecast) {
       low: Math.round(low),
       rainChance: numberOrZero(daily.precipitation_probability_max?.[index]),
       conditionCode: nativeWeatherCode(presentation.code),
-      timing: presentation.timing || null
+      timing: presentation.timing || null,
+      thunderPossible: Boolean(presentation.stormPotential || presentation.convective)
     });
   }
   return rows;
@@ -19098,34 +19046,7 @@ function nwsPeriodCallsForThunder(period) {
 }
 
 function normalizeNwsConvectiveEvidence(json, place, dailyJson = null) {
-  const periods = (json?.properties?.periods || [])
-    .filter(nwsPeriodCallsForThunder)
-    .map((period) => ({
-      startMs: new Date(period.startTime).getTime(),
-      endMs: new Date(period.endTime).getTime(),
-      shortForecast: String(period.shortForecast || "Thunderstorms"),
-      probability: Number(period.probabilityOfPrecipitation?.value || 0)
-    }))
-    .filter((period) => Number.isFinite(period.startMs) && Number.isFinite(period.endMs) && period.endMs > period.startMs);
-  // Keep this normalization self-contained: it is also exercised independently
-  // from the network layer by the forecast-truth fixtures.
-  const byDate = new Map();
-  (dailyJson?.properties?.periods || []).forEach((period) => {
-    const rawTemperature = Number(period?.temperature);
-    if (!Number.isFinite(rawTemperature)) return;
-    const sourceUnit = String(period?.temperatureUnit || "F").toUpperCase();
-    const temperature = state.unit === "celsius"
-      ? (sourceUnit === "C" ? rawTemperature : (rawTemperature - 32) * 5 / 9)
-      : (sourceUnit === "C" ? (rawTemperature * 9 / 5) + 32 : rawTemperature);
-    const rawDate = period?.isDaytime ? period?.startTime : period?.endTime;
-    const date = String(rawDate || "").slice(0, 10);
-    if (!date) return;
-    const entry = byDate.get(date) || { date, high: null, low: null };
-    if (period.isDaytime) entry.high = temperature;
-    else entry.low = temperature;
-    byDate.set(date, entry);
-  });
-  return { placeId: place.id, checkedAt: Date.now(), periods, daily: [...byDate.values()] };
+  return NearcastSharedForecast.normalizeNwsEvidence(json, dailyJson, { unit: state.unit, placeId: place.id });
 }
 
 async function fetchNwsConvectiveEvidence(place, force = false) {
@@ -19161,6 +19082,7 @@ async function fetchNwsConvectiveEvidence(place, force = false) {
 
 async function startNwsConvectiveProbe(place, data, force = false) {
   if (!place || !data || !placeSupportsNwsAlerts(place)) return;
+  if (sharedForecastSourceIsFresh(data, place, "nws", NWS_CONVECTIVE_CACHE_MS)) return;
   const sequence = ++nwsConvectiveProbeSequence;
   try {
     const evidence = await fetchNwsConvectiveEvidence(place, force);

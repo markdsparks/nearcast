@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import "../shared-forecast.js";
 import {
   hourBoundaryFixtures,
   sourceTaxonomyFixtures,
@@ -81,8 +82,8 @@ function extractFunction(source, name) {
   return extractBalancedBlock(source, start, name, signatureEnd + 2);
 }
 
-function contextWith(source) {
-  const sandbox = {};
+function contextWith(source, additions = {}) {
+  const sandbox = { NearcastSharedForecast: globalThis.NearcastSharedForecast, ...additions };
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
   return sandbox;
@@ -189,10 +190,11 @@ check("the Now receipt names the same canonical condition as the hero and hourly
 });
 
 const nws = contextWith(`
+  const NearcastSharedForecast = globalThis.sharedForecast;
   ${extractFunction(app, "nwsPeriodCallsForThunder")}
   ${extractFunction(app, "normalizeNwsConvectiveEvidence")}
   globalThis.subject = { nwsPeriodCallsForThunder, normalizeNwsConvectiveEvidence };
-`).subject;
+`, { sharedForecast: globalThis.NearcastSharedForecast, state: { unit: "fahrenheit" } }).subject;
 
 check("NWS convective parsing accepts TSRA wording and ignores ordinary rain", () => {
   const evidence = nws.normalizeNwsConvectiveEvidence({

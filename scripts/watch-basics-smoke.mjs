@@ -27,6 +27,9 @@ assert.match(phoneWidget, /isAuthorizedForWidgetUpdates[\s\S]*2_500_000_000[\s\S
 assert.match(phoneWidget, /resolveWidgetPlace[\s\S]*selected\.tracksCurrentLocation/, "only an explicitly marked Current Location requests a live coordinate");
 assert.match(phoneWidget, /resolution\.meaningfullyMoved \|\| shouldRefreshWidgetWeather[\s\S]*NearcastWidgetForecastClient\.fetchSnapshot/, "meaningful movement forces a new forecast regardless of cache age");
 assert.match(phoneWidget, /sameWidgetSelection[\s\S]*tracksCurrentLocation[\s\S]*latitude[\s\S]*longitude/, "widget refreshes discard a result after the selected place changes");
+assert.match(phoneWidget, /nearcast\?\.matchesRequest\(latitude: place\.latitude/, "widget rejects response coordinate or unit mismatches");
+assert.match(phoneWidget, /unitsMatch\(latest\.windUnit, requestedMetric: widgetUsesMetricUnits\(response\)\)[\s\S]*refreshedWeather = nil/, "widget drops an in-flight old-unit response before merging");
+assert.match(phoneWidget, /unitsMatch\(latestSnapshot\.windUnit, requestedMetric: widgetUsesMetricUnits\(snapshot\)\)[\s\S]*return latestSnapshot/, "widget rechecks the unit preference immediately before saving");
 assert.match(phoneWidget, /canRefreshResolvedPlace[\s\S]*resolution\.usedLiveLocation[\s\S]*refreshWidgetAlert[\s\S]*allowed: canRefreshResolvedPlace/, "Current Location cannot stamp an unconfirmed old coordinate as freshly updated");
 assert.match(phoneWidget, /nearcastWidgetResolvedLocationKey[\s\S]*saveWidgetRefreshResult[\s\S]*sameWidgetSelection/, "the widget keeps a separately guarded live-location fallback");
 assert.match(phoneWidgetInfo, /<key>NSWidgetWantsLocation<\/key>\s*<true\/>/, "the iPhone widget opts into user-approved WidgetKit location access");
@@ -37,6 +40,16 @@ assert.match(app, /typeof place\.followsCurrentLocation === "boolean"[\s\S]*norm
 assert.match(app, /refreshCurrentLocationAfterNativeReopen[\s\S]*requestDeviceLocationOnce[\s\S]*loadPlace\(resolved, true\)/, "the native app quietly re-resolves Current Location on an ordinary reopen");
 assert.match(nativeBridge, /resolvedWidgetLocationMeaningfullyDiffers[\s\S]*incoming\.mergingWeather\(from: destination\)/, "a stale web warm start cannot overwrite newer extension-resolved Current Location weather");
 assert.match(snapshot, /var followsCurrentLocation: Bool\?[\s\S]*var tracksCurrentLocation: Bool/, "shared place data defaults legacy places to fixed behavior");
+assert.match(app, /uses24HourClock: prefersTwentyFourHourClock\(\)/, "the phone snapshot sends its resolved clock preference");
+assert.match(snapshot, /var uses24HourClock: Bool\? = nil/, "clock preference is backward-compatible with older snapshots");
+assert.match(snapshot, /merged\.uses24HourClock = uses24HourClock \?\? weather\.uses24HourClock/, "weather-only merges preserve the receiving phone clock preference");
+assert.match(snapshot, /merged\.refreshTimelineClockLabels\(\)/, "in-flight weather labels are reformatted using the winning clock preference");
+assert.match(watchApp, /WatchCompanionStorySummary\([\s\S]*uses24HourClock: snapshot\.uses24HourClock/, "Watch event copy receives the phone clock preference");
+assert.match(complications, /nearcastCompactStoryCopy\([\s\S]*uses24HourClock: snapshot\.uses24HourClock/, "complication event copy receives the phone clock preference");
+assert.match(phoneWidget, /compactPlanTimeRange\([\s\S]*uses24HourClock: snapshot\.uses24HourClock/, "widget plan timing receives the phone clock preference");
+assert.match(phoneWidget, /nearcastLocalClockLabel\(value, uses24HourClock: uses24HourClock\)/, "widget refreshes use the shared local-clock formatter");
+assert.match(watchApp, /nearcastLocalClockLabel\(raw, uses24HourClock: uses24HourClock\)/, "Watch refreshes use the shared local-clock formatter");
+assert.match(complications, /nearcastLocalClockLabel\(raw, uses24HourClock: uses24HourClock\)/, "complication refreshes use the shared local-clock formatter");
 assert.match(phoneWidget, /weatherValidUntil[\s\S]*weatherExpired:[\s\S]*date >= weatherValidUntil/, "the iPhone widget appends an explicit expired-weather state");
 assert.match(phoneWidget, /NearcastWidgetUpdateNeededView[\s\S]*Weather needs an update/, "expired iPhone widget entries visibly ask for an update");
 assert.match(snapshot, /func weatherTimelineValidUntil[\s\S]*lastOffset \+ 1/, "shared forecast validity honors timestamped and legacy offset-only horizons");
@@ -103,16 +116,23 @@ assert.match(watchApp, /updated\.windLabel = nil/, "watch refresh cannot retain 
 assert.match(watchApp, /safeWatchSurface/, "conditionally absent Plan pages cannot leave the pager on a blank selection");
 assert.match(watchApp, /-nearcastPreviewWeather/, "populated Watch layouts can be exercised in the simulator");
 assert.doesNotMatch(watchApp, /Text\("RAIN"\)|Text\("TEMP"\)|Text\("WIND"\)/, "hourly weather does not use redundant table headings");
-assert.match(watchApp, /forecast_hours", value: "96"/, "watch app fetches enough hourly context to derive four honest daily conditions");
-assert.match(complications, /forecast_hours", value: "96"/, "complications fetch enough hourly context to derive four honest daily conditions");
+for (const [label, client] of [["Watch", watchApp], ["Complications", complications]]) {
+  assert.match(client, /https:\/\/getnearcast\.app\/api\/forecast/, `${label} consumes the full shared calibrated forecast`);
+  assert.doesNotMatch(client, /api\.open-meteo\.com\/v1\/forecast|forecast_hours/, `${label} cannot silently bypass Nearcast's shared forecast`);
+  assert.match(client, /NearcastSharedForecastClock\.currentIndex/, `${label} finds Now within the full-day payload`);
+  assert.match(client, /weatherSavedAt = weatherSavedAt/, `${label} preserves the source forecast generation time`);
+  assert.match(client, /current\.thunderPossible == true/, `${label} preserves qualified thunder during forecast projection`);
+  assert.match(client, /nearcast\?\.matchesRequest\(latitude:/, `${label} rejects response identity or unit mismatches`);
+  assert.match(client, /NearcastSharedForecastClock\.unitsMatch\(latestSnapshot\.windUnit, requestedMetric:/, `${label} rechecks the current unit setting immediately before saving`);
+}
 assert.match(complications, /complicationTimelineDates[\s\S]*24 \* 60 \* 60[\s\S]*compactMap\(\\\.startsAt\)/, "complications advance on cached forecast boundaries across the available day");
 assert.match(complications, /let staleDate = complicationWeatherValidUntil\(snapshot\)[\s\S]*dates\.append\(staleDate\)/, "the complication timeline ends with an explicit stale state");
-assert.match(complications, /timeoutInterval: 8/, "complication networking leaves time for a cached fallback");
+assert.match(complications, /timeoutInterval: 15/, "complication networking uses the bounded shared-forecast budget before cached fallback");
 assert.match(complications, /shouldPromoteCurrentWeather\(from: projection\)/, "the current complication entry preserves a newer observation but advances an old one");
 assert.match(complications, /latest\.weatherSavedTime >= weather\.weatherSavedTime[\s\S]*return latest/, "cached complication weather cannot overwrite a newer shared snapshot");
 assert.match(complications, /let snapshot = NearcastWidgetSnapshot\.stored\(\) \?\? refreshed/, "the complication re-reads the shared winner after an asynchronous refresh");
 assert.match(complications, /guard !requestedPlace\.tracksCurrentLocation else \{ return nil \}/, "complications never stamp the phone's old Current Location coordinate as fresh weather");
-assert.match(watchApp, /timeoutInterval: 8/, "watch app networking uses a bounded background-safe timeout");
+assert.match(watchApp, /timeoutInterval: 15/, "watch app networking uses the bounded shared-forecast budget");
 const watchAppInitializer = watchEntry.match(/init\(\)\s*\{([\s\S]*?)\n\s*\}\n\n\s*var body/)?.[1] ?? "";
 assert.doesNotMatch(watchAppInitializer, /NearcastWatchBackgroundRefresh\.schedule\(\)/, "watch app never schedules refresh before SwiftUI installs its background-task handler");
 assert.match(watchEntry, /backgroundTask\(\.appRefresh\(NearcastWatchBackgroundRefresh\.identifier\)\)/, "watch app handles scheduled app refreshes");

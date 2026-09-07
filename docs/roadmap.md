@@ -1,6 +1,6 @@
 # Nearcast roadmap — the family's first weather check
 
-Updated September 7, 2026 for **v3.0.403**. The priorities below supersede the earlier roadmap retained afterward for reference.
+Updated September 7, 2026 for **v3.0.404 / native build 99**. The priorities below supersede the earlier roadmap retained afterward for reference.
 
 ## Phase one — complete the everyday forecast journey
 
@@ -8,7 +8,7 @@ Home keeps a stable order: Now, outlook/hourly, seven days, map, weather details
 
 An ordinary selected day now has a compact, tappable day-at-a-glance list. Overnight (00–06), morning (06–12), afternoon (12–18), and evening (18–24) describe that civil date in chronological order. Today omits elapsed periods and labels the current one as the rest of the period. Each uses canonical hourly conditions, temperature ranges, and meaningful precipitation/thunder context, and opens its exact hourly window without another sheet. Rolling hourly and focused plan/event views retain their existing focused flow. Selected-day facts label remaining-day scope and preserve missing-data states.
 
-This is a web release, not a claim that all cross-surface work is complete. The native audit found two follow-ups: widget/Watch independent refreshes still fetch the raw provider rather than the full web correction pipeline, and native clock labels do not carry the app's clock preference. Fixing these needs native changes and real-device verification.
+Phase one shipped in v3.0.403. The next release (v3.0.404 / native build 99) adds a shared phone/widget/Watch forecast service and carries the app's clock preference through native refreshes. Real-device refresh verification and the family lookup trial remain necessary; compilation and fixture tests do not substitute for those.
 
 ## The next product goal
 
@@ -40,7 +40,11 @@ Acceptance: a source can fail without an old number being labeled current, a sto
 
 ## 4. Earn the first check outside the app
 
-Next engineering priority: extract a shared forecast pipeline for web and native consumers, including the existing temperature and thunder corrections, with source/freshness metadata and place isolation. There is no shared forecast endpoint suitable for a simple native URL swap today. Add a backward-compatible clock preference to the native snapshot and preserve it through independent refreshes. Then verify the existing iPhone widget and Watch around the same current condition and next meaningful change as Home. A tap should open the relevant hourly window, alert, or radar time. Verify real-device refresh behavior, long background intervals, place switches, and large text before adding new widget variants. Continue purposeful opt-in notifications for existing watched places/plans.
+Implemented: `/api/forecast` uses existing Open-Meteo, multi-model temperature guidance, NWS daily/hourly guidance, and nearby NWS observations. The pure temperature calibration and current-reading selection are shared with Home. Native refreshes receive resolved values, original generation time, and qualified thunder possibility metadata. Full civil days are calibrated before native hourly slicing. Missing supplemental sources remain missing; native service failures retain last-known weather under existing freshness rules. Home keeps its direct-provider fallback and local evidence probes when the shared service is unavailable.
+
+The native snapshot carries an optional resolved 12/24-hour preference, including plan/alert timing and row labels. An in-flight refresh cannot revert a newer phone clock setting. Older payloads use device preference.
+
+Still to verify with family devices: phone-closed independent refreshes, midnight, remote-place timezones, clock/unit changes, place switches, and large text. Radar corroboration remains phone-side; a native NWS-only thunder signal says possible, not observed or likely. Confidence comparison remains separate supplemental evidence. Notification/live-activity evaluation paths and their policy are unchanged in this release; do not claim that their independent provider fetches have been migrated. No new widget variants until the core real-device trial passes.
 
 Acceptance: widget, Watch, Home, Hourly, and notifications agree about place, time, and weather story; old data is recognizable; the destination answers why the user tapped.
 
