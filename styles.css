@@ -16621,9 +16621,17 @@ body.map-immersive-active .day-sheet.show {
   width: calc(100% - 4px);
   max-width: 14rem;
 }
+#sunDetailReadout {
+  width: calc(100% - 4px);
+  max-width: 14rem;
+}
 .graph-callout.is-sun {
   min-width: 156px;
 }
+.sun-detail-hint { margin: 0; color: var(--muted); font-size: .8rem; }
+#sunDetailGraphWrap { padding-top: 62px; }
+.sun-graph { touch-action: pan-y; }
+.sun-graph [role="slider"]:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .callout-main {
   max-width: 100%;
   overflow-wrap: anywhere;

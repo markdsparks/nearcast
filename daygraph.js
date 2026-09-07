@@ -2809,8 +2809,25 @@ function drawPrecipGraph() {
 
 function drawSunGraph() {
   if (!graphCtx) return;
+  const chart = mountSunGraph(graphCtx, {
+    graph: document.getElementById("sheetGraph"),
+    wrap: document.getElementById("sheetGraphWrap"),
+    callout: document.getElementById("sheetReadout"),
+    focusMs: dayDetailNavState?.forecastFocus?.startMs,
+    onSelect: (point) => setDayDetailForecastFocusFromGraphPoint(point, graphCtx.data || state.forecast),
+    onActive: (index) => { graphActiveIndex = index; }
+  });
+  graphPts = chart?.points || [];
+  graphActiveIndex = chart?.index || 0;
+  graphUpdateActive = chart?.update || null;
+  scheduleGraphCalloutReflow();
+}
+
+// Shared by the Hourly Sun lens and the dedicated Home daylight sheet. Each
+// mounted chart owns its selection, so inspecting one never changes the other.
+function mountSunGraph(context, options) {
   const perf = perfStart();
-  const { hrs, dayIndex = 0, sunriseISO, sunsetISO, showNow, data = state.forecast } = graphCtx;
+  const { hrs = [], dayIndex = 0, sunriseISO, sunsetISO, showNow, data = state.forecast } = context;
   const sunriseMs = sunriseISO ? parseForecastTimestamp(sunriseISO, data) : null;
   const sunsetMs = sunsetISO ? parseForecastTimestamp(sunsetISO, data) : null;
   const tomorrowSunriseISO = data?.daily?.sunrise?.[dayIndex + 1];
@@ -2818,9 +2835,8 @@ function drawSunGraph() {
   const fallbackUv = Math.round(data?.daily?.uv_index_max?.[dayIndex] || Math.max(...hrs.map((h) => h.uv || 0), 0));
   const uv = sunRiskWindow(data, sunriseMs, sunsetMs, fallbackUv, dayIndex);
   const chart = sunChartGeometry(data, sunriseMs, sunsetMs, tomorrowSunriseMs, dayIndex);
-  const callout = document.getElementById("sheetReadout");
-  const wrap = document.getElementById("sheetGraphWrap");
-  const graph = document.getElementById("sheetGraph");
+  const { callout, wrap, graph } = options;
+  const idPrefix = options.idPrefix || "graph";
   if (!chart) {
     graph.innerHTML = `<div class="sheet-empty">Sun data unavailable.</div>`;
     callout.innerHTML = "";
@@ -2848,11 +2864,11 @@ function drawSunGraph() {
   const uvMarker = peakPoint && uv.showMarker ? `
     <circle cx="${roundSvg(peakPoint.x)}" cy="${roundSvg(peakPoint.y)}" r="3.2" class="sun-uv-dot"/>
   ` : "";
-  const focusedMs = Number(dayDetailNavState?.forecastFocus?.startMs);
+  const focusedMs = options.focusMs == null ? NaN : Number(options.focusMs);
   const activeMs = Number.isFinite(focusedMs)
     ? focusedMs
     : showNow ? nowMs : parseForecastTimestamp(hrs[0]?.time, data) ?? chart.daylightStartMs;
-  const memoryWindows = graphMemoryWindows(hrs, data, graphCtx.eventWindow);
+  const memoryWindows = graphMemoryWindows(hrs, data, context.eventWindow);
   const sunXForMs = (ms) => sunPathPoint(chart, clamp(ms, chart.dayStartMs, chart.dayEndMs)).x;
   const memoryBands = renderGraphMemoryBands(memoryWindows, sunXForMs, {
     top: 12,
@@ -2862,9 +2878,9 @@ function drawSunGraph() {
     data
   });
 
-  graphPts = buildDaylightScrubPoints(data, chart);
-  graphActiveIndex = nearestGraphSunIndexByMs(activeMs);
-  graphUpdateActive = null;
+  const points = buildDaylightScrubPoints(data, chart);
+  let activeIndex = points.reduce((best, point, index) =>
+    Math.abs(point.ms - activeMs) < Math.abs(points[best].ms - activeMs) ? index : best, 0);
 
   graph.innerHTML = `
     <svg viewBox="0 0 ${VW} 152" class="hourly-graph sun-graph uv-${uv.severity}">
@@ -2876,22 +2892,29 @@ function drawSunGraph() {
       ${nowMarker}
       <text x="${chart.left}" y="148" text-anchor="start" class="graph-axis">${escapeHtml(chart.mode === "normal" && sunriseISO ? formatTime(sunriseISO) : chart.mode === "polar-day" ? "All day" : "No sunrise")}</text>
       <text x="${chart.right}" y="148" text-anchor="end" class="graph-axis">${escapeHtml(chart.mode === "normal" && sunsetISO ? formatTime(sunsetISO) : chart.mode === "polar-day" ? "No sunset" : "No sunset")}</text>
-      <line id="graphGuide" x1="0" y1="12" x2="0" y2="122" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
-      <circle id="graphDot" r="4.5" fill="var(--ink)" style="display:none"/>
-      <rect id="graphHit" x="0" y="0" width="${VW}" height="136" fill="transparent" style="cursor:crosshair"/>
+      <line id="${idPrefix}Guide" x1="0" y1="12" x2="0" y2="122" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3" opacity="0.4" style="display:none"/>
+      <circle id="${idPrefix}Dot" r="4.5" fill="var(--ink)" style="display:none"/>
+      <rect id="${idPrefix}Hit" x="0" y="0" width="${VW}" height="136" fill="transparent" style="cursor:crosshair"/>
       ${memoryBands}
     </svg>
   `;
 
   const svg = graph.querySelector("svg");
-  const guide = svg.querySelector("#graphGuide");
-  const dot = svg.querySelector("#graphDot");
+  const guide = svg.querySelector(`#${idPrefix}Guide`);
+  const dot = svg.querySelector(`#${idPrefix}Dot`);
+  const hit = svg.querySelector(`#${idPrefix}Hit`);
+  hit.setAttribute("role", "slider");
+  hit.setAttribute("tabindex", "0");
+  hit.setAttribute("aria-label", "Inspect daylight and UV by time");
+  hit.setAttribute("aria-valuemin", "0");
+  hit.setAttribute("aria-valuemax", String(points.length - 1));
 
   function update(i, { commitFocus = false } = {}) {
-    const p = graphPts[i];
+    const p = points[i];
     if (!p) return;
-    graphActiveIndex = i;
-    if (commitFocus) setDayDetailForecastFocusFromGraphPoint(p, data);
+    activeIndex = i;
+    options.onActive?.(i);
+    if (commitFocus) options.onSelect?.(p);
     guide.setAttribute("x1", p.x);
     guide.setAttribute("x2", p.x);
     guide.style.display = "";
@@ -2902,6 +2925,8 @@ function drawSunGraph() {
     const copy = daylightReadoutCopy(p, data, chart, uv);
     const activeMemory = graphMemoryAtMs(p.ms, memoryWindows);
     const meta = activeMemory ? `During ${activeMemory.label} · ${copy.meta}` : copy.meta;
+    hit.setAttribute("aria-valuenow", String(i));
+    hit.setAttribute("aria-valuetext", `${copy.time}, ${copy.title}, ${meta}`);
     callout.classList.add("is-sun");
     callout.innerHTML =
       `<span class="callout-main">${escapeHtml(copy.time)} · ${escapeHtml(copy.title)}</span><span class="callout-sub">${escapeHtml(meta)}</span>`;
@@ -2917,13 +2942,12 @@ function drawSunGraph() {
     callout.style.left = `${left}px`;
     callout.style.setProperty("--pointer-x", `${pointerX}px`);
   }
-  graphUpdateActive = update;
 
   function nearest(clientX) {
     const rect = svg.getBoundingClientRect();
     const vbX = ((clientX - rect.left) / rect.width) * VW;
     let best = 0, bd = Infinity;
-    graphPts.forEach((p, idx) => {
+    points.forEach((p, idx) => {
       const d = Math.abs(p.x - vbX);
       if (d < bd) { bd = d; best = idx; }
     });
@@ -2933,8 +2957,19 @@ function drawSunGraph() {
   svg.addEventListener("pointermove", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerdown", (e) => update(nearest(e.clientX)));
   svg.addEventListener("pointerup", (e) => update(nearest(e.clientX), { commitFocus: true }));
-  scheduleGraphCalloutReflow();
+  hit.addEventListener("keydown", (event) => {
+    let index = activeIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") index += 1;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowDown") index -= 1;
+    else if (event.key === "Home") index = 0;
+    else if (event.key === "End") index = points.length - 1;
+    else return;
+    event.preventDefault();
+    update(clamp(index, 0, points.length - 1), { commitFocus: true });
+  });
+  update(activeIndex);
   perfEnd("drawSunGraph", perf);
+  return { points, index: activeIndex, update, reflow: () => update(activeIndex) };
 }
 
 function nearestGraphSunIndexByMs(ms) {

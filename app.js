@@ -1,4 +1,4 @@
-const VERSION = "3.0.400";
+const VERSION = "3.0.401";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -12795,7 +12795,12 @@ function buildSunGlanceDetail(data) {
   return {
     kind: "sun", icon: `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="8" fill="currentColor"/><path d="M20 3v5M20 32v5M3 20h5M32 20h5M8 8l4 4M28 28l4 4M8 32l4-4M28 12l4-4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`, title: "Sun & daylight",
     context: "Today · Times at this location", summary: sun.context,
-    body: `${daylightPreviewHtml(sun)}
+    body: `<p class="sun-detail-hint">Slide across the chart to explore daylight and UV.</p>
+      <div class="sheet-graph-wrap" id="sunDetailGraphWrap">
+        <div class="graph-callout" id="sunDetailReadout" aria-live="off"></div>
+        <div class="sheet-graph" id="sunDetailGraph"></div>
+      </div>
+      <aside class="uv-forecast-explainer" id="sunDetailUvExplainer"></aside>
       <div class="glance-detail-facts">
         ${glanceDetailFactHtml("Sunrise", sun.sunrise, "Today")}
         ${glanceDetailFactHtml("Sunset", sun.sunset, "Today")}
@@ -17824,6 +17829,34 @@ function moveSavedPlace(id, direction) {
 }
 
 let glanceDetailReturnFocus = null;
+let glanceSunGraphCleanup = null;
+
+function mountGlanceSunGraph(data) {
+  const dayIndex = forecastDailyIndex(data);
+  const wrap = document.getElementById("sunDetailGraphWrap");
+  if (!wrap || typeof mountSunGraph !== "function") return;
+  document.getElementById("sunDetailUvExplainer").innerHTML = uvForecastExplainerHtml(uvForecastInsight(data, dayIndex));
+  if (daylightSummaryForHome(data).mode === "unavailable") {
+    document.getElementById("sunDetailGraph").innerHTML = `<p class="sheet-empty">Sun data unavailable.</p>`;
+    return;
+  }
+  const chart = mountSunGraph({
+    data, dayIndex, showNow: true,
+    sunriseISO: data.daily?.sunrise?.[dayIndex],
+    sunsetISO: data.daily?.sunset?.[dayIndex]
+  }, {
+    graph: document.getElementById("sunDetailGraph"), wrap,
+    callout: document.getElementById("sunDetailReadout"), idPrefix: "sunDetail"
+  });
+  if (!chart) return;
+  const observer = new ResizeObserver(() => chart.reflow());
+  observer.observe(wrap);
+  const frame = requestAnimationFrame(() => chart.reflow());
+  glanceSunGraphCleanup = () => {
+    observer.disconnect();
+    cancelAnimationFrame(frame);
+  };
+}
 
 function openGlanceDetail(kind, returnFocus = null) {
   const data = state.forecast;
@@ -17832,6 +17865,8 @@ function openGlanceDetail(kind, returnFocus = null) {
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const detail = buildGlanceDetail(kind, data, tempUnit, windUnit, weatherTruth(data));
   if (!detail) return;
+  glanceSunGraphCleanup?.();
+  glanceSunGraphCleanup = null;
 
   glanceDetailReturnFocus = returnFocus instanceof HTMLElement
     ? returnFocus
@@ -17855,11 +17890,14 @@ function openGlanceDetail(kind, returnFocus = null) {
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
+  if (kind === "sun") mountGlanceSunGraph(data);
   requestAnimationFrame(() => els.glanceDetailClose?.focus({ preventScroll: true }));
 }
 
 function closeGlanceDetail() {
   if (!els.glanceDetailSheet || !els.glanceDetailBackdrop || els.glanceDetailSheet.hidden) return;
+  glanceSunGraphCleanup?.();
+  glanceSunGraphCleanup = null;
   els.glanceDetailBackdrop.classList.remove("show");
   els.glanceDetailSheet.classList.remove("show");
   document.body.style.overflow = mapState.immersive ? "hidden" : "";
