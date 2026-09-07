@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
-import { buildSharedForecast, handleSharedForecastRequest } from "../workers/shared-forecast-service.mjs";
+import { buildSharedForecast, handleSharedForecastRequest, fetchPrimaryForecast } from "../workers/shared-forecast-service.mjs";
 
 const nowMs = Date.parse("2026-09-07T10:30:00-05:00");
+let attempts = 0;
+assert.deepEqual(await fetchPrimaryForecast("https://api.open-meteo.com/test", async () => {
+  if (++attempts === 1) throw new DOMException("timeout", "AbortError");
+  return Response.json({ ready: true });
+}), { ready: true });
+assert.equal(attempts, 2, "one short retry recovers a cold timeout");
+attempts = 0;
+await assert.rejects(fetchPrimaryForecast("https://api.open-meteo.com/test", async () => {
+  attempts++; return new Response("limited", { status: 429 });
+}), /429/);
+assert.equal(attempts, 1, "provider throttling is never retried");
+attempts = 0;
+await assert.rejects(fetchPrimaryForecast("https://api.open-meteo.com/test", async () => {
+  attempts++; throw new DOMException("timeout", "AbortError");
+}), { name: "AbortError" });
+assert.equal(attempts, 2, "persistent timeouts stay bounded");
 const time = Array.from({ length: 48 }, (_, i) => `2026-09-${i < 24 ? "07" : "08"}T${String(i % 24).padStart(2, "0")}:00`);
 const base = () => ({
   timezone: "America/Chicago", utc_offset_seconds: -18000,

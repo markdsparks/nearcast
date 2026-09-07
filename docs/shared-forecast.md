@@ -11,7 +11,7 @@ Home and independent widget/Watch/complication refreshes now share temperature c
 - Native always requests millimeters: its precipitation semantics use mm thresholds even in Fahrenheit mode.
 - The response retains the Open-Meteo shape with 14 full local days and six hours of 15-minute inputs. Model median and NWS daily bounds are applied before native clients select their current-hour window.
 - `_nearcastForecast` version 1 carries generation time, requested coordinate/units, source readiness, original temperature/current baselines, NWS periods, and nearby observation evidence. Generation time is preserved across the five-minute response cache.
-- Source requests are bounded; missing supplemental sources never mean agreement. A missing primary forecast or required current reading fails the request. Native keeps its prior snapshot and existing stale/unavailable treatment; Home can use its existing provider fallback.
+- Source requests are bounded; missing supplemental sources never mean agreement. The primary request has a 6.5-second deadline and one additional 2-second attempt only on timeout (never on throttling). A missing primary forecast or required current reading fails the request. Native keeps its prior snapshot and existing stale/unavailable treatment; Home can use its existing provider fallback.
 - NWS thunder language remains qualified evidence, separate from WMO codes. It does not prove lightning or rain at the selected place. Radar confirmation is not provided by this endpoint.
 - No plan names, place names, saved-place IDs, accounts, calendar data, or notification targets are requested or included. The coordinate cache is an ordinary weather-response cache, not user history. Cache misses are rate-limited per requester.
 

@@ -47,6 +47,18 @@ async function optionalWithin(promise, timeout = 7500) {
   }
 }
 
+export async function fetchPrimaryForecast(url, fetcher) {
+  try {
+    return await json(url, fetcher);
+  } catch (error) {
+    // A cold provider request can finish just beyond our first deadline. One
+    // short retry fits inside the phone/native budgets; never retry throttling
+    // or malformed responses and never extend this into an unbounded loop.
+    if (error?.name !== "AbortError") throw error;
+    return json(url, fetcher, { timeout: 2000 });
+  }
+}
+
 async function nwsEvidence(latitude, longitude, unit, fetcher, nowMs) {
   const point = await json(`https://api.weather.gov/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`, fetcher, {
     headers: NWS_HEADERS, timeout: 3500
@@ -71,7 +83,7 @@ export async function buildSharedForecast({ latitude, longitude, unit, precipita
   });
   // Existing providers only. Independent guidance is optional and bounded;
   // a missing source is represented as missing, never as agreement.
-  const primary = json(`https://api.open-meteo.com/v1/forecast?${params}`, fetcher);
+  const primary = fetchPrimaryForecast(`https://api.open-meteo.com/v1/forecast?${params}`, fetcher);
   const guidance = optionalWithin(json(`https://api.open-meteo.com/v1/forecast?${guidanceParams}`, fetcher));
   const nws = optionalWithin(nwsEvidence(latitude, longitude, unit, fetcher, nowMs));
   const observations = observationsLoader
