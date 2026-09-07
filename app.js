@@ -1,4 +1,4 @@
-const VERSION = "3.0.402";
+const VERSION = "3.0.403";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -10762,6 +10762,7 @@ async function fetchForecast(place, force = false) {
     current: [
       "temperature_2m",
       "relative_humidity_2m",
+      "dew_point_2m",
       "apparent_temperature",
       "precipitation",
       "weather_code",
@@ -10782,6 +10783,7 @@ async function fetchForecast(place, force = false) {
       "temperature_2m",
       "apparent_temperature",
       "relative_humidity_2m",
+      "dew_point_2m",
       "precipitation_probability",
       "precipitation",
       "weather_code",
@@ -12765,6 +12767,47 @@ function outlookAirNoticeCopy(air) {
   return `Air quality · ${air.band.label} · US AQI ${air.aqi}`;
 }
 
+function weatherDetailNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function currentWeatherDetailValue(data, key) {
+  const now = forecastNowMs(data);
+  const currentMs = parseForecastTimestamp(data?.current?.time, data);
+  const current = weatherDetailNumber(data?.current?.[key]);
+  if (current !== null && currentMs !== null && currentMs <= now + 5 * 60000 && now - currentMs <= 90 * 60000) return current;
+  const index = currentHourlyIndex(data);
+  const hourMs = parseForecastTimestamp(data?.hourly?.time?.[index], data);
+  if (hourMs === null || hourMs > now || now >= hourMs + 3600000) return null;
+  return weatherDetailNumber(data?.hourly?.[key]?.[index]);
+}
+
+function weatherDetailVisibility(value, unit = state.unit) {
+  if (weatherDetailNumber(value) === null || value < 0) return "Unavailable";
+  const distance = value / (unit === "fahrenheit" ? 1609.344 : 1000);
+  const suffix = unit === "fahrenheit" ? "mi" : "km";
+  if (distance > 0 && distance < .1) return `<0.1 ${suffix}`;
+  return `${Number(distance.toFixed(distance < 10 ? 1 : 0))} ${suffix}`;
+}
+
+function homeWeatherDetailItems(data) {
+  const tempUnit = state.unit === "fahrenheit" ? "F" : "C";
+  const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
+  const wind = currentWeatherDetailValue(data, "wind_speed_10m");
+  const gust = currentWeatherDetailValue(data, "wind_gusts_10m");
+  const humidity = currentWeatherDetailValue(data, "relative_humidity_2m");
+  const dew = currentWeatherDetailValue(data, "dew_point_2m");
+  const visibility = currentWeatherDetailValue(data, "visibility");
+  const uv = currentWeatherDetailValue(data, "uv_index");
+  const format = (value, suffix) => value === null ? "Unavailable" : `${Math.round(value)}${suffix}`;
+  return [
+    { kind: "wind", label: "Wind", value: format(wind, ` ${windUnit}`), note: gust === null ? "Gusts unavailable" : `Gusts ${Math.round(gust)} ${windUnit}` },
+    { kind: "humidity", label: "Humidity", value: format(humidity, "%"), note: dew === null ? "Dew point unavailable" : `Dew point ${Math.round(dew)}${degree(tempUnit)}` },
+    { kind: "uv", label: "UV index", value: uv === null ? "Unavailable" : `${Math.round(uv)} · ${uvRisk(uv).label}`, note: "Current hour" },
+    { kind: "visibility", label: "Visibility", value: weatherDetailVisibility(visibility), note: "Forecast estimate" }
+  ];
+}
+
 function renderWeatherEssentials(data) {
   const air = data ? airQualitySummary(data) : null;
   const notice = document.getElementById("outlookAirNotice");
@@ -12781,7 +12824,7 @@ function renderWeatherEssentials(data) {
   const sun = daylightSummaryForHome(data);
   const airValue = hasAqi ? air.band.label : "Unavailable";
   surface.innerHTML = `
-    <h2>Air &amp; daylight</h2>
+    <h2>Weather details</h2>
     <button type="button" class="weather-essential" data-essential-detail="air" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
       <span class="essential-copy"><span class="essential-heading">Air quality</span><span class="essential-value">${escapeHtml(airValue)}</span></span>
       <span class="essential-aqi">${hasAqi ? `<i style="--aqi-color:${escapeHtml(air.band.color)}" aria-hidden="true"></i>${air.aqi} <small>US AQI</small>` : "No current estimate"}</span>
@@ -12790,7 +12833,13 @@ function renderWeatherEssentials(data) {
     <button type="button" class="weather-essential essential-daylight" data-essential-detail="sun" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
       <span class="essential-sun-times"><span>Sunrise<strong>${escapeHtml(sun.sunrise)}</strong></span><span>Sunset<strong>${escapeHtml(sun.sunset)}</strong></span></span>
       <span class="essential-chevron" aria-hidden="true">›</span>
-    </button>`;
+    </button>
+    <div class="weather-detail-grid">${homeWeatherDetailItems(data).map((item) => `
+      <button type="button" class="weather-detail-link" data-essential-detail="${item.kind}" aria-haspopup="dialog" aria-controls="glanceDetailSheet">
+        <span class="essential-heading">${escapeHtml(item.label)}<span class="essential-chevron" aria-hidden="true">›</span></span>
+        <strong>${escapeHtml(item.value)}</strong>
+        <span class="essential-value">${escapeHtml(item.note)}</span>
+      </button>`).join("")}</div>`;
 }
 
 function buildSunGlanceDetail(data) {
@@ -16879,8 +16928,10 @@ function hourlyMetricPresentation({ metric, value, temp, rainChance, gust, windU
 }
 
 function uvForecastInsight(data, dayIndex = forecastDailyIndex(data)) {
-  const forecastPeak = Number(data?.daily?.uv_index_max?.[dayIndex]);
-  const clearSkyPeak = Number(data?.daily?.uv_index_clear_sky_max?.[dayIndex]);
+  const rawPeak = data?.daily?.uv_index_max?.[dayIndex];
+  const rawClearSkyPeak = data?.daily?.uv_index_clear_sky_max?.[dayIndex];
+  const forecastPeak = typeof rawPeak === "number" ? rawPeak : NaN;
+  const clearSkyPeak = typeof rawClearSkyPeak === "number" ? rawClearSkyPeak : NaN;
   const dayLabel = dayIndex === forecastDailyIndex(data)
     ? "today"
     : (data?.daily?.time?.[dayIndex] ? formatDay(data.daily.time[dayIndex], dayIndex) : "that day");
@@ -17833,6 +17884,7 @@ function moveSavedPlace(id, direction) {
 
 let glanceDetailReturnFocus = null;
 let glanceSunGraphCleanup = null;
+let glanceDetailCloseTimer = null;
 
 function mountGlanceSunGraph(data) {
   const dayIndex = forecastDailyIndex(data);
@@ -17868,6 +17920,8 @@ function openGlanceDetail(kind, returnFocus = null) {
   const windUnit = state.unit === "fahrenheit" ? "mph" : "km/h";
   const detail = buildGlanceDetail(kind, data, tempUnit, windUnit, weatherTruth(data));
   if (!detail) return;
+  if (glanceDetailCloseTimer) clearTimeout(glanceDetailCloseTimer);
+  glanceDetailCloseTimer = null;
   glanceSunGraphCleanup?.();
   glanceSunGraphCleanup = null;
 
@@ -17893,7 +17947,7 @@ function openGlanceDetail(kind, returnFocus = null) {
     resetScroll: true
   });
   document.body.style.overflow = "hidden";
-  if (kind === "sun") mountGlanceSunGraph(data);
+  if (kind === "sun" || kind === "uv") mountGlanceSunGraph(data);
   requestAnimationFrame(() => els.glanceDetailClose?.focus({ preventScroll: true }));
 }
 
@@ -17904,7 +17958,9 @@ function closeGlanceDetail() {
   els.glanceDetailBackdrop.classList.remove("show");
   els.glanceDetailSheet.classList.remove("show");
   document.body.style.overflow = mapState.immersive ? "hidden" : "";
-  setTimeout(() => {
+  if (glanceDetailCloseTimer) clearTimeout(glanceDetailCloseTimer);
+  glanceDetailCloseTimer = setTimeout(() => {
+    glanceDetailCloseTimer = null;
     els.glanceDetailBackdrop.hidden = true;
     els.glanceDetailSheet.hidden = true;
     const returnFocus = glanceDetailReturnFocus;
@@ -17919,7 +17975,54 @@ function buildGlanceDetail(kind, data, tempUnit, windUnit, truth = weatherTruth(
   if (kind === "wind") return buildWindGlanceDetail(data, windUnit);
   if (kind === "air") return buildAirGlanceDetail(data);
   if (kind === "sun") return buildSunGlanceDetail(data);
+  if (kind === "humidity") return buildHumidityGlanceDetail(data, tempUnit);
+  if (kind === "visibility") return buildVisibilityGlanceDetail(data);
+  if (kind === "uv") return buildUvGlanceDetail(data);
   return null;
+}
+
+function buildHumidityGlanceDetail(data, tempUnit) {
+  const humidity = currentWeatherDetailValue(data, "relative_humidity_2m");
+  const dew = currentWeatherDetailValue(data, "dew_point_2m");
+  const temperature = currentWeatherDetailValue(data, "temperature_2m");
+  const formatTemp = (value) => value === null ? "Unavailable" : `${Math.round(value)}${degree(tempUnit)}`;
+  return {
+    kind: "humidity", icon: raindropGlyph(), title: "Humidity & dew point",
+    context: "At this location · Current forecast estimate",
+    summary: humidity === null ? "Current humidity is unavailable." : `${Math.round(humidity)}% relative humidity`,
+    body: `<div class="glance-detail-facts">
+      ${glanceDetailFactHtml("Humidity", humidity === null ? "Unavailable" : `${Math.round(humidity)}%`, "Relative to the current air temperature")}
+      ${glanceDetailFactHtml("Dew point", formatTemp(dew), "A measure of moisture in the air")}
+      ${glanceDetailFactHtml("Air temperature", formatTemp(temperature))}
+    </div>${glanceDetailNoteHtml("Reading the two together", "Relative humidity changes as the air warms or cools. Dew point helps compare how moist the air is across different temperatures; a higher dew point means more moisture. These are forecast estimates for this location.")}`
+  };
+}
+
+function buildVisibilityGlanceDetail(data) {
+  const visibility = currentWeatherDetailValue(data, "visibility");
+  const now = forecastNowMs(data);
+  const rows = (data.hourly?.time || []).map((time, index) => ({
+    time, ms: parseForecastTimestamp(time, data), value: weatherDetailNumber(data.hourly?.visibility?.[index])
+  })).filter((row) => row.ms !== null && row.ms >= now && row.ms < now + 12 * 3600000 && row.value !== null && row.value >= 0);
+  const lowest = rows.reduce((best, row) => !best || row.value < best.value ? row : best, null);
+  return {
+    kind: "visibility", icon: `<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M4 20s6-10 16-10 16 10 16 10-6 10-16 10S4 20 4 20Z" stroke="currentColor" stroke-width="2.4"/><circle cx="20" cy="20" r="5" stroke="currentColor" stroke-width="2.4"/></svg>`, title: "Visibility",
+    context: "At this location · Forecast estimate",
+    summary: visibility === null ? "Current visibility is unavailable." : `Visibility around ${weatherDetailVisibility(visibility)}`,
+    body: `<div class="glance-detail-facts">
+      ${glanceDetailFactHtml("Current visibility", weatherDetailVisibility(visibility))}
+      ${glanceDetailFactHtml("Lowest ahead", lowest ? weatherDetailVisibility(lowest.value) : "Unavailable", lowest ? `Near ${formatTime(lowest.time)} · Available hours in the next 12h` : "Next 12 hours")}
+    </div>${glanceDetailNoteHtml("What this means", "Visibility estimates how far you can see through the air. Low clouds, humidity and airborne particles can reduce it. This is not a road-level observation; conditions along a route can differ.")}`
+  };
+}
+
+function buildUvGlanceDetail(data) {
+  const detail = buildSunGlanceDetail(data);
+  const uv = currentWeatherDetailValue(data, "uv_index");
+  return {
+    ...detail, title: "UV & daylight",
+    summary: uv === null ? "Current UV is unavailable. Explore the day's forecast below." : `UV ${Math.round(uv)} · ${uvRisk(uv).label}`
+  };
 }
 
 function buildFeelsGlanceDetail(data, tempUnit, windUnit) {
@@ -18031,12 +18134,12 @@ function buildRainGlanceDetail(data, tempUnit, windUnit, truth = weatherTruth(da
 }
 
 function buildWindGlanceDetail(data, windUnit) {
-  const current = data.current || {};
-  const speed = Math.round(current.wind_speed_10m || 0);
-  const gust = Number.isFinite(current.wind_gusts_10m) ? Math.round(current.wind_gusts_10m) : null;
+  const speed = currentWeatherDetailValue(data, "wind_speed_10m");
+  const gust = currentWeatherDetailValue(data, "wind_gusts_10m");
   const peakIndex = futureMaxHourlyIndex(data, "wind_gusts_10m", 12);
-  const peakGust = peakIndex >= 0 ? Math.round(data.hourly.wind_gusts_10m[peakIndex] || 0) : null;
-  const wind = windGlance(speed, windUnit, current.wind_direction_10m);
+  const peakGust = peakIndex >= 0 ? weatherDetailNumber(data.hourly.wind_gusts_10m[peakIndex]) : null;
+  const wind = windGlance(speed ?? 0, windUnit, currentWeatherDetailValue(data, "wind_direction_10m"));
+  const formatWind = (value) => value === null ? "Unavailable" : `${Math.round(value)} ${windUnit}`;
   const direction = wind.direction;
   const directionText = direction ? capitalize(direction.label) : "Direction unavailable";
   const towardText = direction ? capitalize(direction.towardLabel) : "";
@@ -18044,18 +18147,18 @@ function buildWindGlanceDetail(data, windUnit) {
   return {
     kind: "wind",
     icon: glanceDetailIconHtml("wind"),
-    title: `${speed} ${windUnit} wind`,
-    context: [directionText, wind.context].filter(Boolean).join(" · "),
-    summary: metricTipWind(speed, windUnit),
+    title: speed === null ? "Wind unavailable" : `${formatWind(speed)} wind`,
+    context: [directionText, speed === null ? "" : wind.context].filter(Boolean).join(" · "),
+    summary: speed === null ? "A current wind estimate is unavailable." : metricTipWind(speed, windUnit),
     body: `
       <section class="glance-detail-wind">
-        ${windVisualHtml(speed, windUnit, wind)}
+        ${speed === null ? "" : windVisualHtml(Math.round(speed), windUnit, wind)}
       </section>
       <div class="glance-detail-facts">
         ${glanceDetailFactHtml("Coming from", directionText, towardText ? `Blowing ${direction.towardLabel}` : "")}
-        ${glanceDetailFactHtml("Current speed", `${speed} ${windUnit}`, wind.context)}
-        ${glanceDetailFactHtml("Gusts now", gust !== null ? `${gust} ${windUnit}` : "--", "Short bursts")}
-        ${glanceDetailFactHtml("Peak next 12h", peakGust !== null ? `${peakGust} ${windUnit}` : "--", peakIndex >= 0 ? `Near ${formatTime(data.hourly.time[peakIndex])}` : "")}
+        ${glanceDetailFactHtml("Current speed", formatWind(speed), speed === null ? "" : wind.context)}
+        ${glanceDetailFactHtml("Gusts now", formatWind(gust), "Short bursts")}
+        ${glanceDetailFactHtml("Peak next 12h", formatWind(peakGust), peakGust !== null ? `Near ${formatTime(data.hourly.time[peakIndex])}` : "")}
       </div>
       ${glanceDetailNoteHtml("How to read it", "The dot marks where the wind is coming from. The arrow points where it is blowing, while the label keeps the standard weather convention.")}
     `

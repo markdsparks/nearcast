@@ -80,6 +80,8 @@ run_portable_checks() {
     family-places-smoke.mjs \
     first-look-home-smoke.mjs \
     weather-essentials-smoke.mjs \
+    weather-details-smoke.mjs \
+    day-overview-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
     nearcast-place-label-test.mjs

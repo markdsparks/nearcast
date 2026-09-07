@@ -543,6 +543,7 @@ function detailHoursForIndices(indices, {
       ms,
       endMs: nextMs,
       temp: presentation.temperature,
+      tempAvailable: dayOverviewNumber(isNowHour ? data.current?.temperature_2m ?? data.hourly.temperature_2m?.[h] : data.hourly.temperature_2m?.[h]) !== null,
       feels: presentation.feels,
       pop: forecastPop ?? 0,
       forecastPop,
@@ -552,10 +553,14 @@ function detailHoursForIndices(indices, {
       precip: forecastPrecip ?? 0,
       wind: presentation.wind,
       gust: presentation.gust,
+      windAvailable: dayOverviewNumber(isNowHour ? data.current?.wind_speed_10m ?? data.hourly.wind_speed_10m?.[h] : data.hourly.wind_speed_10m?.[h]) !== null,
+      gustAvailable: dayOverviewNumber(isNowHour ? data.current?.wind_gusts_10m ?? data.hourly.wind_gusts_10m?.[h] : data.hourly.wind_gusts_10m?.[h]) !== null,
       windDirection: data.hourly.wind_direction_10m?.[h] ?? (isNowHour ? data.current?.wind_direction_10m : null),
-      uv: data.hourly.uv_index[h] || 0,
+      uv: data.hourly.uv_index?.[h] || 0,
+      uvAvailable: dayOverviewNumber(data.hourly.uv_index?.[h]) !== null,
       rawCode,
       code: presentation.code,
+      codeAvailable: dayOverviewNumber(isNowHour ? data.current?.weather_code ?? data.hourly.weather_code?.[h] : data.hourly.weather_code?.[h]) !== null,
       activePrecip,
       rainText: activePrecip ? (precipDisplay?.displayLabel || "Rain now") : "",
       precipText: "",
@@ -608,10 +613,6 @@ function openDayDetail({
   const sharedEvent = dayDetailSharedEvent(data, rawHrs, { dayIndex, source, showNow });
   const hrs = dayDetailReconcileRollingThunder(rawHrs, sharedEvent, source);
 
-  const temps = hrs.map((h) => h.temp);
-  const high = Math.round(Math.max(...temps));
-  const low = Math.round(Math.min(...temps));
-
   document.getElementById("sheetTitle").textContent = title;
   const sheetContext = document.getElementById("sheetContext");
   if (sheetContext) {
@@ -620,8 +621,7 @@ function openDayDetail({
   }
   document.getElementById("sheetIcon").classList.toggle("weather-icon-with-badge", stormPotential);
   document.getElementById("sheetIcon").innerHTML = weatherIcon(code, isDay) + (stormPotential ? thunderBadgeHtml() : "");
-  document.getElementById("sheetHigh").textContent = `${high}${degree(tempUnit)}`;
-  document.getElementById("sheetLow").textContent = `${low}${degree(tempUnit)}`;
+  renderDayTemperatureRange(hrs, tempUnit);
   renderDayFocus(hrs, { tempUnit, windUnit, source, showNow, data, dayIndex, sharedEvent });
   renderDayForecastPulse(data, dayIndex, source, eventWindow, sharedEvent);
 
@@ -648,6 +648,7 @@ function openDayDetail({
     source,
     data
   });
+  renderDayOverviewPeriods(hrs, { data, dayIndex, source, showNow, eventWindow, tempUnit });
   if (dayDetailNavState.timeline) {
     dayDetailNavState.timeline.lastDay = null;
     dayDetailNavState.timeline.lastAlertKey = "";
@@ -663,7 +664,7 @@ function openDayDetail({
     dayDetailNavState.timeline.lastDay = listRender?.lastDay || null;
     dayDetailNavState.timeline.lastAlertKey = listRender?.lastAlertKey || "";
   }
-  renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit });
+  renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit, data, source, showNow });
   setDayDetailMode(initialMode, persistInitialMode);
   renderRollingTimelineFooter();
   updateSheetNowJump();
@@ -791,6 +792,15 @@ function refreshOpenDayDetailMemorySurfaces() {
   });
   const hrs = dayDetailReconcileRollingThunder(rawHrs, sharedEvent, dayDetailNavState.source);
   dayDetailNavState.materialEvent = sharedEvent;
+  renderDayTemperatureRange(hrs, tempUnit);
+  renderDayOverviewPeriods(hrs, {
+    data,
+    dayIndex: dayDetailNavState.dayIndex,
+    source: dayDetailNavState.source,
+    showNow: Boolean(dayDetailNavState.showNow),
+    eventWindow: memoryContext.eventWindow,
+    tempUnit
+  });
 
   renderDayFocus(hrs, {
     tempUnit,
@@ -831,7 +841,10 @@ function refreshOpenDayDetailMemorySurfaces() {
     sunriseISO: dayDetailNavState.sunriseISO,
     sunsetISO: dayDetailNavState.sunsetISO,
     windUnit,
-    precipUnit
+    precipUnit,
+    data,
+    source: dayDetailNavState.source,
+    showNow: Boolean(dayDetailNavState.showNow)
   });
   expandedIds.forEach((id) => {
     const row = [...document.querySelectorAll("#sheetHourlyList .sheet-hour-row")]
@@ -927,6 +940,163 @@ function dayFocusPeriodHours(hrs, start, end) {
     const hourOfDay = forecastLocalHour(hour.time);
     return hourOfDay >= start && hourOfDay < end;
   });
+}
+
+function dayOverviewNumber(value) {
+  return (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value))
+    ? Number(value)
+    : null;
+}
+
+function renderDayTemperatureRange(hrs, tempUnit) {
+  const temps = hrs.filter((hour) => hour.tempAvailable !== false)
+    .map((hour) => dayOverviewNumber(hour.temp)).filter((value) => value !== null);
+  const high = temps.length ? Math.round(Math.max(...temps)) : null;
+  const low = temps.length ? Math.round(Math.min(...temps)) : null;
+  document.getElementById("sheetHigh").textContent = high === null ? "—" : `${high}${degree(tempUnit)}`;
+  document.getElementById("sheetLow").textContent = low === null ? "—" : `${low}${degree(tempUnit)}`;
+}
+
+function dayOverviewPeriods(hrs, { data, dayIndex = 0, showNow = false } = {}) {
+  const day = data?.daily?.time?.[dayIndex];
+  if (!day) return [];
+  const now = forecastNowMs(data);
+  const periods = [
+    { key: "overnight", label: "Overnight", from: 0, to: 6 },
+    { key: "morning", label: "Morning", from: 6, to: 12 },
+    { key: "afternoon", label: "Afternoon", from: 12, to: 18 },
+    { key: "evening", label: "Evening", from: 18, to: 24 }
+  ];
+  return periods.flatMap((period) => {
+    const startISO = `${day}T${String(period.from).padStart(2, "0")}:00`;
+    const endDay = period.to === 24 ? addDaysToDateString(day, 1) : day;
+    const endISO = `${endDay}T${String(period.to % 24).padStart(2, "0")}:00`;
+    const boundaryStart = parseForecastTimestamp(startISO, data);
+    const endMs = parseForecastTimestamp(endISO, data);
+    if (boundaryStart === null || endMs === null || (showNow && endMs <= now)) return [];
+    const current = showNow && now > boundaryStart && now < endMs;
+    const startMs = current ? now : boundaryStart;
+    const hours = (hrs || []).filter((hour) => (
+      hour.time?.startsWith(day) &&
+      Number.isFinite(hour.ms) && Number.isFinite(hour.endMs) &&
+      hour.ms < endMs && hour.endMs > startMs
+    ));
+    if (!hours.length) return [];
+    const temperatures = hours
+      .filter((hour) => hour.tempAvailable !== false)
+      .map((hour) => dayOverviewNumber(hour.temp)).filter((value) => value !== null);
+    const counts = new Map();
+    hours.forEach((hour) => {
+      if (hour.codeAvailable === false || typeof hour.code !== "number" || !Number.isFinite(hour.code)) return;
+      counts.set(hour.code, (counts.get(hour.code) || 0) + 1);
+    });
+    const code = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const storm = hours.some((hour) => hour.stormPotential || isThunderCode(hour.code));
+    const likelyStorm = hours.some((hour) => hour.convective?.level === "likely" || isThunderCode(hour.code));
+    const pops = hours.filter((hour) => hour.popAvailable !== false)
+      .map((hour) => dayOverviewNumber(hour.forecastPop ?? hour.pop)).filter((value) => value !== null);
+    const maxPop = pops.length ? Math.max(...pops) : null;
+    const active = hours.find((hour) => hour.activePrecip);
+    const snow = hours.some((hour) => isSnowCode(hour.code));
+    const noun = snow ? "Snow" : "Rain";
+    const relevantWetHours = storm
+      ? hours.filter((hour) => likelyStorm
+          ? hour.convective?.level === "likely" || isThunderCode(hour.code)
+          : hour.stormPotential || isThunderCode(hour.code))
+      : hours.filter((hour) => hour.popAvailable !== false && dayOverviewNumber(hour.forecastPop ?? hour.pop) >= (maxPop >= 50 ? 50 : 20));
+    let timing = "";
+    if (relevantWetHours.length && relevantWetHours.length < hours.length) {
+      const groups = [];
+      relevantWetHours.forEach((hour) => {
+        const previous = groups.at(-1);
+        if (previous && hour.ms <= previous.at(-1).endMs) previous.push(hour);
+        else groups.push([hour]);
+      });
+      const windowHours = groups.sort((a, b) => b.length - a.length)[0];
+      timing = windowHours.length === 1
+        ? ` near ${formatTime(windowHours[0].time)}`
+        : ` ${formatTime(windowHours[0].time)}–${formatForecastMs(Math.min(endMs, windowHours.at(-1).endMs), data)}`;
+      if (groups.length > 1) timing += "; other spells possible";
+    }
+    const cue = active
+      ? active.precipDisplay?.displayLabel || "Precipitation now"
+      : storm
+        ? `${likelyStorm ? "Thunderstorms likely" : "Thunder possible"}${timing}`
+        : maxPop !== null && maxPop >= 20
+          ? `${noun} ${maxPop >= 50 ? "likely" : "possible"}${timing} · ${Math.round(maxPop)}%`
+          : !pops.length ? "Rain chance unavailable" : "";
+    const availableMinutes = hours.reduce((sum, hour) => sum + Math.max(0,
+      Math.min(endMs, hour.endMs) - Math.max(startMs, hour.ms)), 0);
+    const partial = availableMinutes < endMs - startMs - 1000;
+    return [{
+      ...period,
+      label: current ? `Rest of ${period.label.toLowerCase()}` : period.label,
+      startMs,
+      endMs,
+      range: `${current ? "Now" : formatTime(startISO)}–${formatTime(endISO)}`,
+      code,
+      condition: code === null ? "Conditions unavailable" : forecastStoryCondition(code),
+      isDay: hours[Math.floor(hours.length / 2)]?.isDay ?? (period.from >= 6 && period.from < 18),
+      storm,
+      cue,
+      partial,
+      low: temperatures.length ? Math.round(Math.min(...temperatures)) : null,
+      high: temperatures.length ? Math.round(Math.max(...temperatures)) : null
+    }];
+  });
+}
+
+function renderDayOverviewPeriods(hrs, options = {}) {
+  const host = document.getElementById("sheetDayPeriods");
+  if (!host) return;
+  // Focused plan/event windows already have their own summary. This overview
+  // belongs to an ordinary selected date, never the rolling hourly journey.
+  const periods = options.source === "day" && !options.eventWindow
+    ? dayOverviewPeriods(hrs, options)
+    : [];
+  host.hidden = !periods.length;
+  host.innerHTML = periods.length ? `<h3>Day at a glance</h3><div class="sheet-day-periods-list">${periods.map((period) => {
+    const temperature = period.low === null ? "—" : period.low === period.high
+      ? `${period.high}${degree(options.tempUnit)}`
+      : `${period.low}–${period.high}${degree(options.tempUnit)}`;
+    const detail = [period.condition, period.cue, period.partial ? "Partial forecast" : ""].filter(Boolean).join(" · ");
+    const icon = period.code === null ? "" : weatherIcon(period.code, period.isDay);
+    const kind = period.storm ? "storm" : isSnowCode(period.code) ? "snow" : isPrecipCode(period.code) || period.cue.startsWith("Rain ") ? "rain" : "weather";
+    return `<button type="button" class="sheet-day-period" data-day-period="${period.key}" data-period-start="${period.startMs}" data-period-end="${period.endMs}" data-period-kind="${kind}" data-period-label="${escapeHtml(period.label)}" aria-label="${escapeHtml(`${period.label}, ${period.range}. ${detail}. ${temperature}. Show these hours.`)}">
+      <span class="sheet-day-period-icon${period.storm && !isThunderCode(period.code) ? " weather-icon-with-badge" : ""}" aria-hidden="true">${icon}${period.storm && !isThunderCode(period.code) ? thunderBadgeHtml() : ""}</span>
+      <span class="sheet-day-period-copy"><span class="sheet-day-period-title"><strong>${escapeHtml(period.label)}</strong><small>${escapeHtml(period.range)}</small></span><span class="sheet-day-period-description">${escapeHtml(detail)}</span></span>
+      <span class="sheet-day-period-value">${escapeHtml(temperature)}<span aria-hidden="true">›</span></span>
+    </button>`;
+  }).join("")}</div>` : "";
+  if (!host.dataset.tapBound) {
+    host.dataset.tapBound = "true";
+    bindTapDelegate(host, "[data-day-period]", (_event, button) => jumpToDayOverviewPeriod(button));
+  }
+}
+
+function jumpToDayOverviewPeriod(button) {
+  const nav = dayDetailNavState;
+  if (!nav || nav.source !== "day" || !button) return;
+  const startMs = Number(button.dataset.periodStart);
+  const endMs = Number(button.dataset.periodEnd);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return;
+  const rows = [...document.querySelectorAll("#sheetHourlyList .sheet-hour-row")];
+  const target = rows.find((row) => (
+    Number(row.dataset.forecastStart) < endMs && Number(row.dataset.forecastEnd) > startMs
+  ));
+  if (!target) return;
+  rows.forEach((row) => setSheetHourRowExpanded(row, row === target));
+  nav.forecastFocus = {
+    startMs,
+    endMs,
+    dayIndex: nav.dayIndex,
+    kind: button.dataset.periodKind || "weather",
+    label: button.dataset.periodLabel || "Selected part of the day",
+    source: "day-period"
+  };
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  target.focus({ preventScroll: true });
 }
 
 function dayDetailSharedEvent(data, hrs, {
@@ -2982,10 +3152,15 @@ function nearestGraphSunIndexByMs(ms) {
   return best;
 }
 
-function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) {
-  const maxWind = Math.round(Math.max(...hrs.map((h) => h.wind)));
-  const maxGust = Math.round(Math.max(...hrs.map((h) => h.gust)));
-  const maxUv = Math.round(Math.max(...hrs.map((h) => h.uv)));
+function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit, source = "day", showNow = false }) {
+  const maximum = (key) => {
+    const values = hrs.filter((hour) => hour[`${key}Available`] !== false)
+      .map((hour) => dayOverviewNumber(hour[key])).filter((value) => value !== null);
+    return values.length ? `${Math.round(Math.max(...values))}${values.length < hrs.length ? "+" : ""}` : "—";
+  };
+  const maxWind = maximum("wind");
+  const maxGust = maximum("gust");
+  const maxUv = maximum("uv");
   const forecastAmounts = hrs.map((hour) => precipGraphAmount(hour)).filter((value) => value != null);
   const totalPrecip = forecastAmounts.reduce((sum, value) => sum + value, 0);
   const precipStat = !forecastAmounts.length
@@ -3002,15 +3177,17 @@ function renderSheetStats(hrs, { sunriseISO, sunsetISO, windUnit, precipUnit }) 
     { label: "Sunrise", value: sunriseISO ? formatTime(sunriseISO) : "--" },
     { label: "Sunset", value: sunsetISO ? formatTime(sunsetISO) : "--" },
     { label: "UV Peak", value: maxUv },
-    { label: "Wind", value: `${maxWind} ${windUnit}` },
-    { label: "Gusts", value: `${maxGust} ${windUnit}` },
+    { label: "Wind peak", value: maxWind === "—" ? "—" : `${maxWind} ${windUnit}` },
+    { label: "Gusts", value: maxGust === "—" ? "—" : `${maxGust} ${windUnit}` },
     { label: "Precip", value: precipStat }
   ];
 
-  document.getElementById("sheetStats").innerHTML = tiles.map((t) => `
+  const scope = source === "rolling" ? "Forecast window details" : showNow ? "Rest of today · weather details" : "Day details";
+  const partial = [maxWind, maxGust, maxUv].some((value) => value.endsWith("+"));
+  document.getElementById("sheetStats").innerHTML = `<h3 class="sheet-stats-title">${escapeHtml(scope)}</h3>` + tiles.map((t) => `
     <div class="sheet-stat">
-      <span>${t.label}</span>
-      <strong>${t.value}</strong>
+      <span>${escapeHtml(t.label)}</span>
+      <strong>${escapeHtml(String(t.value))}</strong>
     </div>
-  `).join("");
+  `).join("") + (partial ? `<p class="sheet-stats-note">+ Peak of available hours; some data is missing.</p>` : "");
 }

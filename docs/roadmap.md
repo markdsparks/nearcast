@@ -1,10 +1,14 @@
 # Nearcast roadmap — the family's first weather check
 
-Updated September 7, 2026 for **v3.0.400**. The priorities below supersede the earlier roadmap retained afterward for reference.
+Updated September 7, 2026 for **v3.0.403**. The priorities below supersede the earlier roadmap retained afterward for reference.
 
-## What this release fixes
+## Phase one — complete the everyday forecast journey
 
-Air quality and daylight had working data but no visible Home entry point after the earlier simplification. A permanent, compact pair now follows the outlook/hourly surface, before the daily forecast. AQI includes its category, numeric US AQI, and a one-tap explanation. Sunrise and sunset are both readable immediately, with daylight remaining or tomorrow's sunrise as context. Missing AQI is never substituted with humidity or zero. Sun times respect the place and clock preference.
+Home keeps a stable order: Now, outlook/hourly, seven days, map, weather details. The lower details section keeps air quality and sunrise/sunset permanently available and adds wind/gusts, humidity/dew point, visibility, and current UV. Each opens directly and returns to its entry point. UV and daylight share the interactive Sun chart. Missing current readings are not replaced with zero or a future daily peak. Air quality only adds a compact Outlook notice when the existing US AQI category reaches unhealthy for sensitive groups or worse.
+
+An ordinary selected day now has a compact, tappable day-at-a-glance list. Overnight (00–06), morning (06–12), afternoon (12–18), and evening (18–24) describe that civil date in chronological order. Today omits elapsed periods and labels the current one as the rest of the period. Each uses canonical hourly conditions, temperature ranges, and meaningful precipitation/thunder context, and opens its exact hourly window without another sheet. Rolling hourly and focused plan/event views retain their existing focused flow. Selected-day facts label remaining-day scope and preserve missing-data states.
+
+This is a web release, not a claim that all cross-surface work is complete. The native audit found two follow-ups: widget/Watch independent refreshes still fetch the raw provider rather than the full web correction pipeline, and native clock labels do not carry the app's clock preference. Fixing these needs native changes and real-device verification.
 
 ## The next product goal
 
@@ -12,17 +16,17 @@ Someone should open Nearcast, answer their weather question, and feel finished. 
 
 The Weather Company's own [navigation inventory](https://developer.weather.com/docs/openapi/links-3-0) includes hourly, daily, radar, alerts, air quality, UV, humidity, sunrise, sunset, and wind. This is evidence of the ordinary questions to cover, not a reason to reproduce its screen density or infer which features the family values most.
 
-## 1. Finish the everyday details — next implementation
+## 1. Validate the everyday details — implemented, family trial next
 
-Give every familiar fact a predictable home. Add a small Weather details section after the daily forecast and map, with wind/gusts/direction, humidity/dew point, visibility, and UV using existing data. Keep air quality and sun in their new permanent position. Each detail opens directly and returns to exactly the same scroll position. No rotating controls, additional top-level tabs, or empty decorative cards.
+The existing lower section now contains these details; dew point is requested from the existing forecast provider. Keep air quality and sun in this permanent position. Do not add rotating controls, additional top-level tabs, or empty decorative cards. Check the real family lookup tasks before changing their arrangement again.
 
 For a selected future day, show that day's sunrise/sunset, UV peak, wind/gusts, and precipitation total. Do not copy today's AQI into a future date. For missing coverage, say unavailable in the relevant detail.
 
 Acceptance: on a small phone, a family member can find AQI, sunset, tomorrow's rain timing, wind gusts, and the weekend forecast without instructions. Labels remain complete with larger text. A tap opens the expected detail; scrolling across the control does not activate it.
 
-## 2. Make the day answer complete
+## 2. Validate the day answer — implemented, family trial next
 
-Refine the existing day overview around morning, afternoon, evening, and overnight. Each period gets a short condition, temperature range, and the meaningful rain/storm window. Tapping opens the exact hours. Keep the existing detailed hourly and 15-minute capabilities, with clearly bounded coverage. All icons, period copy, numbers, and map handoffs must consume the same weather interpretation.
+The existing day view now includes the civil-date period overview above the trend. Keep the detailed hourly and 15-minute capabilities, with clearly bounded coverage. All icons, period copy, numbers, and map handoffs must consume the same weather interpretation. Overnight belongs to the selected date (00–06), not an unlabeled extension into tomorrow.
 
 Acceptance: “Can we eat outside at six?” and “What changes tomorrow?” are answerable in one day screen. Test an afternoon storm after a clear morning, overnight rain, an all-day wet forecast, and a dry day. A late-day storm must not turn a sunny morning into a misleading all-day storm icon.
 
@@ -36,9 +40,13 @@ Acceptance: a source can fail without an old number being labeled current, a sto
 
 ## 4. Earn the first check outside the app
 
-Polish the existing iPhone widget and Watch around the same current condition and next meaningful change as Home. A tap should open the relevant hourly window, alert, or radar time. Verify real-device refresh behavior, long background intervals, place switches, and large text before adding new widget variants. Continue purposeful opt-in notifications for existing watched places/plans.
+Next engineering priority: extract a shared forecast pipeline for web and native consumers, including the existing temperature and thunder corrections, with source/freshness metadata and place isolation. There is no shared forecast endpoint suitable for a simple native URL swap today. Add a backward-compatible clock preference to the native snapshot and preserve it through independent refreshes. Then verify the existing iPhone widget and Watch around the same current condition and next meaningful change as Home. A tap should open the relevant hourly window, alert, or radar time. Verify real-device refresh behavior, long background intervals, place switches, and large text before adding new widget variants. Continue purposeful opt-in notifications for existing watched places/plans.
 
 Acceptance: widget, Watch, Home, Hourly, and notifications agree about place, time, and weather story; old data is recognizable; the destination answers why the user tapped.
+
+## Later releases — useful AI and family coordination
+
+After the core lookup trial: improve AI comparisons of exact requested time windows using the deterministic planning evaluator, then add a user-initiated share of one precise forecast window with clear snapshot freshness. Plan watching, routine rollover, and family-place nicknames already exist. Do not present them as new AI features. Shared household accounts, permissioned plan participation, and synchronization are separate future infrastructure, not part of this release. No automatic calendar import, live-location sharing, or new notification behavior is authorized by this phase.
 
 ## How we decide whether it worked
 
