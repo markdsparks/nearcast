@@ -1243,7 +1243,7 @@ button {
 .topbar {
   position: fixed;
   top: max(14px, env(safe-area-inset-top, 0px));
-  left: max(14px, calc((100vw - 1120px) / 2));
+  left: max(14px, env(safe-area-inset-left, 0px), calc((100vw - 1120px) / 2));
   z-index: 80;
   display: flex;
   align-items: flex-start;
@@ -2218,21 +2218,26 @@ h2 {
 }
 
 .launch-place-row {
-  display: inline-flex;
+  /* The menu floats while this row scrolls. Keep a real control lane on
+     both sides so neither long names nor a revealed menu can collide. */
+  --launch-control-width: clamp(46px, 3.75rem, 80px);
+  --launch-safe-side: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+  display: grid;
+  grid-template-columns: var(--launch-control-width) minmax(0, 1fr) var(--launch-control-width);
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  max-width: min(620px, 92vw);
+  max-width: min(620px, calc(100vw - 52px - var(--launch-safe-side) * 2));
 }
 
 .launch-location {
+  grid-column: 2;
+  grid-row: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
   min-height: 44px;
-  max-width: min(520px, 88vw);
-  overflow: hidden;
+  width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2241,6 +2246,7 @@ h2 {
   font-size: clamp(0.95rem, 2vw, 1.2rem);
   font-weight: 850;
   letter-spacing: 0.01em;
+  line-height: 1.3;
   text-align: center;
   text-shadow: 0 1px 14px rgba(255, 255, 255, 0.36);
   touch-action: manipulation;
@@ -2250,9 +2256,9 @@ h2 {
 #locationName {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .launch-location:not(:disabled) {
@@ -2264,6 +2270,9 @@ h2 {
 }
 
 .launch-context-ask {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: center;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2276,14 +2285,11 @@ h2 {
   font: inherit;
   font-size: 0.72rem;
   font-weight: 850;
+  white-space: nowrap;
   cursor: pointer;
   backdrop-filter: blur(12px) saturate(1.08);
   -webkit-backdrop-filter: blur(12px) saturate(1.08);
   touch-action: manipulation;
-}
-
-.launch-place-row:has(.launch-context-ask:not([hidden])) .launch-location {
-  max-width: min(520px, calc(100vw - 132px));
 }
 
 .launch-context-ask[hidden] {
@@ -14124,7 +14130,7 @@ body.map-immersive-active #mapLegend {
 
   .topbar {
     top: calc(env(safe-area-inset-top, 0px) + 12px);
-    left: 12px;
+    left: max(12px, env(safe-area-inset-left, 0px));
   }
 
   /* Four action icons need to fit beside the title on phones */
@@ -14159,14 +14165,6 @@ body.map-immersive-active #mapLegend {
     --launch-top-clearance: clamp(64px, calc(env(safe-area-inset-top, 0px) + 48px), 82px);
     min-height: 0;
     padding: var(--launch-top-clearance) 8px 4px;
-  }
-
-  .launch-place-row {
-    max-width: min(620px, calc(100vw - 52px));
-  }
-
-  .launch-location {
-    max-width: 100%;
   }
 
   .launch-current {
@@ -15487,6 +15485,10 @@ body.map-immersive-active .day-sheet.show {
 }
 
 @media (max-width: 380px) {
+  .launch-place-row {
+    --launch-control-width: 46px;
+  }
+
   .launch-context-ask {
     width: 44px;
     padding-inline: 0;
@@ -15495,10 +15497,6 @@ body.map-immersive-active .day-sheet.show {
 
   .launch-context-ask > span:last-child {
     display: none;
-  }
-
-  .launch-place-row:has(.launch-context-ask:not([hidden])) .launch-location {
-    max-width: calc(100vw - 102px);
   }
 }
 
@@ -18356,11 +18354,6 @@ body.map-immersive-active .day-sheet.alert-sheet {
 }
 
 @media (pointer: coarse) {
-  .launch-location {
-    min-height: 44px;
-    padding: 0 8px;
-  }
-
   .forecast-receipt-trigger {
     min-height: 44px;
   }

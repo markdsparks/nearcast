@@ -1,4 +1,4 @@
-const VERSION = "3.0.404";
+const VERSION = "3.0.405";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.

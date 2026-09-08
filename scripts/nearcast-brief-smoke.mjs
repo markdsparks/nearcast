@@ -855,6 +855,10 @@ assert.match(extractCssRule(styles, ".forecast-receipt-trigger"), /min-height:\s
 assert.match(extractCssRule(styles, ".launch-condition-button"), /min-height:\s*44px/, "the current-condition detail remains a full touch target");
 assert.match(extractCssRule(styles, ".nearcast-brief"), /grid-template-columns:\s*minmax\(0,\s*1fr\)/, "long evidence copy cannot widen the mobile briefing grid");
 assert.match(extractCssRule(styles, ".launch-meta-row"), /flex-wrap:\s*wrap/, "the compact current and evidence controls wrap safely on narrow screens");
+assert.match(extractCssRule(styles, ".launch-place-row"), /grid-template-columns:\s*var\(--launch-control-width\) minmax\(0,\s*1fr\) var\(--launch-control-width\)/, "the scrolling place name reserves both control lanes, including the floating menu");
+assert.match(extractCssRule(styles, ".launch-location"), /grid-column:\s*2/, "the location stays in the protected middle lane");
+assert.match(extractCssRule(styles, "#locationName"), /white-space:\s*normal[\s\S]*overflow-wrap:\s*anywhere/, "long place names wrap in full instead of truncating their identity");
+assert.doesNotMatch(styles, /\.launch-place-row:has\(\.launch-context-ask/, "Ask visibility cannot reinstate the old competing label width");
 assert.match(extractCssRule(styles, ".launch-stage"), /--launch-top-clearance:\s*clamp\(64px,\s*8vh,\s*88px\)[\s\S]*padding:\s*var\(--launch-top-clearance\) 12px 7px/, "the Outlook arrives in the first screen without removing the hero's breathing room");
 assert.match(extractCssRule(styles, ".hourly-panel > .hero"), /padding:\s*2px 7px 9px/, "the editorial Outlook sits tightly with the hourly evidence it explains");
 assert.match(styles, /@media \(pointer: coarse\)[\s\S]*\.forecast-receipt-trigger\s*\{[\s\S]*min-height:\s*44px/, "coarse-pointer layout explicitly preserves the evidence touch target");
