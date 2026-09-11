@@ -1,4 +1,4 @@
-const VERSION = "3.0.405";
+const VERSION = "3.0.406";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -4174,6 +4174,17 @@ function readStorageJson(key) {
   }
 }
 
+function writeStorageJsonBestEffort(key, value) {
+  // Downloaded weather remains usable when WebKit's local storage is full
+  // or unavailable. Never clear saved places, plans, or preferences to cache it.
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function userHasWeatherContext() {
   return Boolean(state.activePlace || state.savedPlaces.length || readStorageJson("weather-last-place"));
 }
@@ -7417,6 +7428,29 @@ function clearForecastLaunchLoading() {
   els.shell?.classList.remove("is-loading-place");
 }
 
+function showForecastLaunchFailure() {
+  clearForecastLaunchLoading();
+  if (els.nowSummary) {
+    els.nowSummary.removeAttribute("aria-label");
+    els.nowSummary.classList.remove("summary-strip");
+    els.nowSummary.replaceChildren();
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "launch-condition-button";
+    retry.textContent = "Retry weather";
+    bindTapAction(retry, () => {
+      if (state.activePlace) void loadPlace(state.activePlace, true);
+    });
+    els.nowSummary.append(retry);
+  }
+  if (els.glanceKicker) els.glanceKicker.textContent = "Weather";
+  if (els.glanceTitle) els.glanceTitle.textContent = "Forecast unavailable";
+  if (els.glanceSupport) {
+    els.glanceSupport.textContent = "";
+    els.glanceSupport.hidden = true;
+  }
+}
+
 function browserApproximateIsDay(date = new Date()) {
   const hour = date.getHours();
   return hour >= 6 && hour < 19;
@@ -8120,7 +8154,7 @@ function familyPlaceAria(place, glance, active) {
 
 async function fetchGlance(place) {
   const key = `glance:${GLANCE_CACHE_VERSION}:${state.unit}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
-  const cached = JSON.parse(localStorage.getItem(key) || "null");
+  const cached = readStorageJson(key);
   if (cached && Date.now() - cached.savedAt < GLANCE_REFRESH_MS) {
     return { ...cached.data, _savedAt: Number(cached.savedAt) || Date.now() };
   }
@@ -8150,7 +8184,7 @@ async function fetchGlance(place) {
     alert: familyPlaceAlertSummary(alerts)
   };
   const savedAt = Date.now();
-  localStorage.setItem(key, JSON.stringify({ savedAt, data }));
+  writeStorageJsonBestEffort(key, { savedAt, data });
   return { ...data, _savedAt: savedAt };
 }
 
@@ -8856,7 +8890,7 @@ async function loadPlace(place, force = false) {
   state.weatherTruth = null;
   state.forecastPresentation = null;
   if (typeof clearStormImpact === "function") clearStormImpact();
-  localStorage.setItem("weather-last-place", JSON.stringify(state.activePlace));
+  writeStorageJsonBestEffort("weather-last-place", state.activePlace);
   updateMode();
   if (shouldShowLaunchLoading) setForecastLaunchLoading(nextPlace);
   else clearForecastLaunchLoading();
@@ -8895,7 +8929,7 @@ async function loadPlace(place, force = false) {
       clearForecastLaunchLoading();
       state.activePlace = previousPlace;
       state.radarPrecipPlaceId = previousPlace.id;
-      localStorage.setItem("weather-last-place", JSON.stringify(previousPlace));
+      writeStorageJsonBestEffort("weather-last-place", previousPlace);
       updatePlaceSwitcher();
       renderSavedPlaces();
       updateMapPlace();
@@ -8912,6 +8946,7 @@ async function loadPlace(place, force = false) {
       setStatus(`Could not update ${nextPlace.name}. Still showing ${placeLabel(previousPlace)}.`, true);
     } else {
       clearForecastLaunchLoading();
+      if (shouldShowLaunchLoading) showForecastLaunchFailure();
       setStatus("Could not load weather data. Try another place or reload the page.", true);
     }
   }
@@ -10761,7 +10796,7 @@ async function fetchForecast(place, force = false) {
       cacheFallback: false,
       reason: ""
     });
-    localStorage.setItem(cacheKey, JSON.stringify({ savedAt, data }));
+    writeStorageJsonBestEffort(cacheKey, { savedAt, data });
     return requestedUnit === state.unit ? data : convertForecastUnits(data, requestedUnit, state.unit);
   } catch (error) {
     if (fallbackCached?.data) {
@@ -10774,7 +10809,7 @@ async function fetchForecast(place, force = false) {
 
 async function fetchAirQuality(place, force = false) {
   const cacheKey = `air-quality:${AIR_QUALITY_CACHE_VERSION}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
-  const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+  const cached = readStorageJson(cacheKey);
   const maxCacheAge = 30 * 60 * 1000;
   if (!force && cached && Date.now() - cached.savedAt < maxCacheAge) return cached.data;
 
@@ -10787,7 +10822,7 @@ async function fetchAirQuality(place, force = false) {
     timezone: "auto"
   });
   const data = await fetchJsonWithTimeout(`https://air-quality-api.open-meteo.com/v1/air-quality?${params}`, AIR_QUALITY_FETCH_TIMEOUT_MS);
-  localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data }));
+  writeStorageJsonBestEffort(cacheKey, { savedAt: Date.now(), data });
   return data;
 }
 

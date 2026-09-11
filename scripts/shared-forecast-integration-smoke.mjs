@@ -49,7 +49,7 @@ const context = {
   fetchJsonWithTimeout: () => new Promise(resolve => { resolveFetch = resolve; })
 };
 vm.createContext(context);
-const names = ["sharedForecastMetadata", "sharedForecastSourceIsFresh", "hydrateSharedForecast", "forecastTemperatureGuidanceBaseline", "rebuildForecastTemperatures", "canonicalCurrentSnapshot", "bindCurrentReality", "fetchForecast", "convertForecastUnits", "convertFields", "convertNumber", "converterForUnit", "updateForecastUnitLabels"];
+const names = ["writeStorageJsonBestEffort", "sharedForecastMetadata", "sharedForecastSourceIsFresh", "hydrateSharedForecast", "forecastTemperatureGuidanceBaseline", "rebuildForecastTemperatures", "canonicalCurrentSnapshot", "bindCurrentReality", "fetchForecast", "convertForecastUnits", "convertFields", "convertNumber", "converterForUnit", "updateForecastUnitLabels"];
 for (const name of names) {
   const start = app.search(new RegExp(`^(?:async )?function ${name}\\(`, "m"));
   assert.ok(start >= 0, name);
@@ -87,5 +87,18 @@ const changedUnits = await pending;
 assert.ok(Math.abs(changedUnits.current.temperature_2m - (80 - 32) * 5 / 9) < 1e-8, "in-flight F response is rendered in latest C preference");
 assert.equal(changedUnits.current_units.temperature_2m, "°C");
 assert.equal(JSON.parse(storage.get("home:fahrenheit")).savedAt, realNow, "cache age is generation age, not receipt age");
+context.state.unit = "fahrenheit";
+const savedBefore = [...storage.entries()];
+for (const name of ["QuotaExceededError", "SecurityError"]) {
+  context.localStorage.setItem = () => { const error = new Error("Storage unavailable"); error.name = name; throw error; };
+  assert.equal(context.writeStorageJsonBestEffort("weather-last-place", place), false, "remembering a place is optional");
+  const fresh = context.fetchForecast(place, true);
+  resolveFetch(structuredClone(wire));
+  const result = await fresh;
+  assert.equal(result.current.temperature_2m, 80, `${name} cannot discard downloaded weather`);
+  assert.equal(result._nearcastMeta.source, "network");
+  assert.equal(result._nearcastMeta.cacheFallback, false, "failed save does not relabel fresh weather as stale");
+  assert.deepEqual([...storage.entries()], savedBefore, "no other cached or personal data is removed");
+}
 assert.match(app, /uses24HourClock:\s*prefersTwentyFourHourClock\(\)/);
 console.log("PASS Shared forecast web integration: same values, boundary, place isolation, old cache, unit race, clock bridge");
