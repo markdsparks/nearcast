@@ -1,5 +1,13 @@
 # Nearcast iOS
 
+## Direction update — September 18, 2026
+
+Nearcast is moving to a fully native main iPhone experience through the [phased native migration plan](../../docs/native-migration-plan.md). That plan supersedes the web-first development policy below; the existing shell and its release instructions remain the operational baseline until replacements pass their family TestFlight gates. No native migration phase is complete merely because this direction is documented.
+
+The first preview is read-only Today/Hourly/selected-day weather. Durable-data ownership, compatibility fallback, and later removal of the main web runtime follow explicit migration gates. Preserve existing forecast services, user records, notification selections, and native Watch/widget/AI investments.
+
+## Existing shell — current implementation and operational reference
+
 This is the native iOS platform layer for Nearcast. It intentionally starts thin:
 
 - `Debug` loads a local Nearcast web server by default.

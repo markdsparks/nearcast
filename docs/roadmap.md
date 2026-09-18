@@ -1,5 +1,15 @@
 # Nearcast roadmap — the family's first weather check
 
+## Current priority — native migration (September 18, 2026)
+
+The approved direction is a fully native main iPhone experience, delivered in tested phases while retaining the weather services and existing native platform work. The authoritative sequencing, ownership/rollback rules, and intermediate family TestFlight gates are in [Native migration plan](native-migration-plan.md).
+
+Primary acceptance devices are iPhone 17 Pro and iPhone 17 Pro Max on iOS 27, plus Apple Watch Ultra 2. Implementation/device acceptance is still pending. The first milestone is a read-only native Today → Hourly/15-minute → selected-day journey; the current app remains available during testing. Urgent fixes continue, but major new web-only UI features pause. No new provider, account, permission, or notification policy is introduced by the migration.
+
+The roadmap below records the pre-migration product priorities and shipped baseline. It does not override the phased migration plan.
+
+---
+
 Updated September 7, 2026 for **v3.0.404 / native build 99**. The priorities below supersede the earlier roadmap retained afterward for reference.
 
 ## Phase one — complete the everyday forecast journey
