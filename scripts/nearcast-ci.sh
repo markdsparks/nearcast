@@ -40,6 +40,7 @@ run_portable_checks() {
     material-event-surfaces-smoke.mjs \
     product-activation-smoke.mjs \
     ai-operon-smoke.mjs \
+    ai-conversation-reliability-smoke.mjs \
     trust-loop-smoke.mjs \
     trust-loop-backend-smoke.mjs \
     trust-loop-report-smoke.mjs \

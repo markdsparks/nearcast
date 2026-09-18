@@ -2,9 +2,28 @@ import Foundation
 
 #if canImport(FoundationModels)
 import FoundationModels
+import OperonKit
+import OperonFoundationModels
 
 @available(iOS 26.0, *)
 enum NativeLanguageModelController {
+    static var capabilities: [String: Any] {
+        var result: [String: Any] = [
+            "execution": "on-device",
+            "systemVersion": ProcessInfo.processInfo.operatingSystemVersionString,
+            "contextTokens": SystemLanguageModel.default.contextSize,
+            "tokenCounting": false
+        ]
+        if #available(iOS 26.4, *) { result["tokenCounting"] = true }
+        return result
+    }
+
+    // Operon's character budget controls evidence selection, not model capacity.
+    // The exact serialized request is checked separately immediately before inference.
+    static var evidenceCharacterBudget: Int {
+        min(12_000, max(2_000, SystemLanguageModel.default.contextSize))
+    }
+
     static func availability() -> [String: Any] {
         let model = SystemLanguageModel.default
         switch model.availability {
@@ -13,14 +32,16 @@ enum NativeLanguageModelController {
                 "ok": true,
                 "available": true,
                 "reason": "available",
-                "model": "apple-system-language-model"
+                "model": "apple-system-language-model",
+                "capabilities": capabilities
             ]
         case .unavailable(let reason):
             return [
                 "ok": true,
                 "available": false,
                 "reason": availabilityReason(reason),
-                "model": "apple-system-language-model"
+                "model": "apple-system-language-model",
+                "capabilities": capabilities
             ]
         }
     }
@@ -30,7 +51,7 @@ enum NativeLanguageModelController {
         guard case .available = model.availability else {
             var result = availability()
             result["ok"] = false
-            result["message"] = "Apple's on-device language model is unavailable."
+            result["message"] = unavailableMessage(result["reason"] as? String ?? "")
             return result
         }
 
@@ -60,26 +81,82 @@ enum NativeLanguageModelController {
             let schema = try generationSchema(from: rawSchema)
             let temperature = options["temperature"] as? Double ?? 0.1
             let maximumTokens = options["maximumResponseTokens"] as? Int
-            let session = LanguageModelSession(model: model, tools: [], instructions: instructions)
-            let response = try await session.respond(
-                to: prompt,
-                schema: schema,
-                includeSchemaInPrompt: true,
-                options: GenerationOptions(
-                    temperature: temperature,
-                    maximumResponseTokens: maximumTokens
-                )
-            )
+            let response = try await respond(instructions: instructions, prompt: prompt,
+                schema: schema, temperature: temperature, maximumTokens: maximumTokens)
             return [
                 "ok": true,
                 "available": true,
                 "model": "apple-system-language-model",
-                "text": response.content.jsonString,
+                "text": response.text,
                 "finishReason": "stop"
             ]
         } catch {
-            return failure("generation-failed", nativeErrorMessage(error))
+            let issue = modelIssue(error)
+            return failure(issue.reason, issue.message)
         }
+    }
+
+    static func respond(instructions: String, prompt: String, schema: GenerationSchema,
+                        temperature: Double, maximumTokens: Int?) async throws -> OperonGenerationResponse {
+        let model = SystemLanguageModel.default
+        try Task.checkCancellation()
+        if case .unavailable(let reason) = model.availability {
+            let code = availabilityReason(reason)
+            throw NearcastModelIssue(reason: code, message: unavailableMessage(code))
+        }
+        let outputBudget = min(max(128, maximumTokens ?? 768), max(128, model.contextSize / 3))
+        var inputTokens: Int?
+        if #available(iOS 26.4, *) {
+            let instructionTokens = try await model.tokenCount(for: Instructions(instructions))
+            let promptTokens = try await model.tokenCount(for: prompt)
+            let schemaTokens = try await model.tokenCount(for: schema)
+            let count = instructionTokens + promptTokens + schemaTokens
+            // Reserve framing overhead as well as output. Never truncate a place,
+            // state, date, or requested action to squeeze a command into context.
+            guard count + outputBudget + 256 <= model.contextSize else {
+                throw NearcastModelIssue(reason: "context-limit", message: "This request has more detail than on-device AI can handle at once. Try one question at a time or start a new chat.")
+            }
+            inputTokens = count
+        }
+        let session = LanguageModelSession(model: model, tools: [], instructions: instructions)
+        do {
+            let response = try await session.respond(to: prompt, schema: schema,
+                includeSchemaInPrompt: true,
+                options: GenerationOptions(temperature: temperature, maximumResponseTokens: outputBudget))
+            return OperonGenerationResponse(text: response.content.jsonString, promptTokens: inputTokens)
+        } catch {
+            throw modelIssue(error)
+        }
+    }
+
+    static func unavailableMessage(_ reason: String) -> String {
+        switch reason.replacingOccurrences(of: "_", with: "-") {
+        case "model-not-ready": return "Apple’s on-device AI is still getting ready. You can keep using the forecast and try Ask again later."
+        case "apple-intelligence-not-enabled": return "Enable Apple Intelligence in Settings to use on-device AI. The forecast is still available."
+        case "device-not-eligible": return "This device doesn’t support Apple’s on-device AI. You can still use the forecast, hourly view, and map."
+        default: return "On-device AI is unavailable right now. The forecast is still available."
+        }
+    }
+
+    static func modelIssue(_ error: Error) -> NearcastModelIssue {
+        if let issue = error as? NearcastModelIssue { return issue }
+        if error is CancellationError { return .init(reason: "cancelled", message: "Request cancelled.") }
+        if let error = error as? LanguageModelSession.GenerationError {
+            switch error {
+            case .exceededContextWindowSize:
+                return .init(reason: "context-limit", message: "This conversation is too long for on-device AI. Start a new chat or ask one question at a time.")
+            case .assetsUnavailable:
+                return .init(reason: "model-not-ready", message: unavailableMessage("model-not-ready"))
+            case .unsupportedLanguageOrLocale:
+                return .init(reason: "unsupported-language", message: "On-device AI doesn’t support this request’s language yet. The forecast is still available.")
+            case .rateLimited, .concurrentRequests:
+                return .init(reason: "model-busy", message: "On-device AI is busy. Please try again in a moment.")
+            case .guardrailViolation, .refusal:
+                return .init(reason: "model-refusal", message: "On-device AI couldn’t answer that request. Try asking a specific weather question.")
+            default: break
+            }
+        }
+        return .init(reason: "generation-failed", message: "On-device AI couldn’t finish this request. Please try again. The forecast is still available.")
     }
 
     private static func failure(_ reason: String, _ message: String) -> [String: Any] {
@@ -92,9 +169,82 @@ enum NativeLanguageModelController {
         ]
     }
 
-    private static func nativeErrorMessage(_ error: Error) -> String {
-        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? "Apple's on-device language model could not complete the request." : message
+}
+
+struct NearcastModelIssue: LocalizedError {
+    let reason: String
+    let message: String
+    var errorDescription: String? { message }
+}
+
+actor NearcastModelIssueStore {
+    private var issue: NearcastModelIssue?
+    func set(_ value: NearcastModelIssue?) { issue = value }
+    func current() -> NearcastModelIssue? { issue }
+}
+
+// Keep Operon responsible for tools, validation, and completion. This adapter
+// changes only inference budgeting and error reporting, never weather authority.
+@available(iOS 26.0, *)
+struct NearcastFoundationModelsProvider: OperonModelProvider {
+    let issues: NearcastModelIssueStore
+    func availability() async -> OperonAvailability {
+        await AppleFoundationModelsProvider().availability()
+    }
+
+    func generate(_ request: OperonGenerationRequest) async throws -> OperonGenerationResponse {
+        let instructions = request.messages.filter { $0.role == .system }.map(\.content).joined(separator: "\n\n")
+        let prompt = request.messages.filter { $0.role != .system }
+            .map { "\($0.role.rawValue.uppercased()):\n\($0.content)" }.joined(separator: "\n\n")
+        do {
+            let response = try await NativeLanguageModelController.respond(instructions: instructions, prompt: prompt,
+                schema: operonGenerationSchema(request.schema), temperature: request.temperature,
+                maximumTokens: request.maximumResponseTokens)
+            await issues.set(nil)
+            return response
+        } catch {
+            let issue = NativeLanguageModelController.modelIssue(error)
+            await issues.set(issue)
+            throw issue
+        }
+    }
+}
+
+@available(iOS 26.0, *)
+private func operonGenerationSchema(_ schema: OperonSchema) throws -> GenerationSchema {
+    if case .definitions(let root, let values) = schema {
+        return try GenerationSchema(root: operonDynamicSchema(root, name: "Root"),
+            dependencies: values.keys.sorted().map { operonDynamicSchema(values[$0]!, name: $0) })
+    }
+    return try GenerationSchema(root: operonDynamicSchema(schema, name: "Root"), dependencies: [])
+}
+
+@available(iOS 26.0, *)
+private func operonDynamicSchema(_ schema: OperonSchema, name: String) -> DynamicGenerationSchema {
+    switch schema {
+    case .object(let title, let description, let properties):
+        return DynamicGenerationSchema(name: title, description: description, properties: properties.map {
+            .init(name: $0.name, description: $0.description,
+                  schema: operonDynamicSchema($0.schema, name: name + "_" + $0.name), isOptional: $0.isOptional)
+        })
+    case .array(let items, let minimum, let maximum):
+        return DynamicGenerationSchema(arrayOf: operonDynamicSchema(items, name: name + "_Item"), minimumElements: minimum, maximumElements: maximum)
+    case .string(_, let choices):
+        if let choices { return DynamicGenerationSchema(name: sanitizedSchemaName(name) + "Choice", anyOf: choices) }
+        return DynamicGenerationSchema(type: String.self)
+    case .number(_, let minimum, let maximum):
+        var guides: [GenerationGuide<Double>] = []
+        if let minimum { guides.append(.minimum(minimum)) }
+        if let maximum { guides.append(.maximum(maximum)) }
+        return DynamicGenerationSchema(type: Double.self, guides: guides)
+    case .integer(_, let minimum, let maximum):
+        var guides: [GenerationGuide<Int>] = []
+        if let minimum { guides.append(.minimum(minimum)) }
+        if let maximum { guides.append(.maximum(maximum)) }
+        return DynamicGenerationSchema(type: Int.self, guides: guides)
+    case .boolean: return DynamicGenerationSchema(type: Bool.self)
+    case .reference(let reference): return DynamicGenerationSchema(referenceTo: reference)
+    case .definitions(let root, _): return operonDynamicSchema(root, name: name)
     }
 }
 

@@ -24,6 +24,22 @@ terminal outcome.
 
 ## Context and memory
 
+- The app-owned Foundation Models adapter measures instructions, prompt, and
+  structured schema tokens on iOS 26.4+, reserving response and framing space
+  against the runtime model's context size. Earlier systems retain the SDK's
+  context-limit error handling. Evidence selection uses a bounded character
+  budget; it is not represented as an exact token budget.
+- Commands are no longer silently truncated at 1,800 characters. Oversized
+  requests fail explicitly before execution. Exact selected-place and window
+  artifacts take priority over conversational prose when context is limited.
+- Provider failures retain typed recovery reasons through Operon's terminal
+  envelope. A zero-call failure can still use deterministic weather/navigation
+  handlers; a failure after a skill invocation never replays actions. Model
+  infrastructure failures do not become requests for a missing city or date.
+- Model capabilities are inspected at runtime, not guessed from an iOS version.
+  The adapter uses the default system model and does not select a named model
+  variant, enable cloud inference, or install a second orchestration loop.
+
 - Conversation referents are bounded, typed Operon session artifacts. They are
   replaced when conversational focus changes and cleared by New chat.
 - Durable facts come only from current Nearcast application state: active and

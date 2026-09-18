@@ -27,6 +27,7 @@ enum NativeOperonController {
             return [
                 "ok": true,
                 "available": true,
+                "capabilities": NativeLanguageModelController.capabilities,
                 "model": "apple-system-language-model",
                 "operon": true,
                 "operonVersion": "0.4.0",
@@ -54,6 +55,16 @@ enum NativeOperonController {
         guard let query = options["query"] as? String, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return failure("invalid-request", "The native Operon request is missing a query.")
         }
+        guard query.count <= 12_000 else {
+            return failure("context-limit", "Please split this request into shorter questions. No actions were taken.")
+        }
+        let status = NativeLanguageModelController.availability()
+        guard status["available"] as? Bool == true else {
+            let reason = status["reason"] as? String ?? "unavailable"
+            var result = failure(reason, NativeLanguageModelController.unavailableMessage(reason))
+            result["available"] = false
+            return result
+        }
         do {
             let descriptors = try skillDescriptors(from: options["skills"] as? [[String: Any]] ?? [])
             let sessionID = nonempty(options["sessionId"] as? String)
@@ -67,14 +78,15 @@ enum NativeOperonController {
                 : NativeOperonMemoryProvider(runID: runID, bridge: bridge)
             let completion = decodeCompletion(options["completion"])
             let maxReplans = min(3, max(0, number(options["maxReplans"])?.intValue ?? 1))
+            let modelIssues = NearcastModelIssueStore()
             let driver = OperonCoreDriver(
-                model: AppleFoundationModelsProvider(),
+                model: NearcastFoundationModelsProvider(issues: modelIssues),
                 memory: memory,
                 memoryScope: memoryScope,
                 policy: OperonPolicy(
                     planning: .always,
                     maximumSources: 3,
-                    maximumContextCharacters: 6_000,
+                    maximumContextCharacters: NativeLanguageModelController.evidenceCharacterBudget,
                     maximumRepairAttempts: 1,
                     maximumReplans: maxReplans,
                     requireSkillOrClarification: true,
@@ -88,7 +100,7 @@ enum NativeOperonController {
                 completion: completion
             )
             var terminalJSON: String?
-            for try await event in driver.stream(String(query.prefix(1_800))) {
+            for try await event in driver.stream(query) {
                 try Task.checkCancellation()
                 if case .finished(let completion) = event {
                     terminalJSON = completion.json
@@ -102,6 +114,14 @@ enum NativeOperonController {
                   let result = try JSONSerialization.jsonObject(with: Data(terminalJSON.utf8)) as? [String: Any] else {
                 return failure("invalid-result", "Operon returned an invalid terminal result.")
             }
+            // Operon converts provider errors into terminal events. Preserve the
+            // actionable model reason instead of presenting a false clarification.
+            let outcome = result["result"] as? [String: Any]
+            if let issue = await modelIssues.current(),
+               outcome?["status"] as? String != "completed",
+               outcome?["status"] as? String != "cancelled" {
+                return failure(issue.reason, issue.message)
+            }
             return [
                 "ok": true,
                 "available": true,
@@ -114,7 +134,8 @@ enum NativeOperonController {
         } catch is CancellationError {
             return failure("cancelled", "The native Operon request was cancelled.")
         } catch {
-            return failure("agent-failed", error.localizedDescription)
+            let issue = NativeLanguageModelController.modelIssue(error)
+            return failure(issue.reason, issue.message)
         }
     }
 

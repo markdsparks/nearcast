@@ -4582,8 +4582,14 @@ function nearcastAgentArtifactsForTurn(rowIndex, limit = NEARCAST_AGENT_ARTIFACT
     value: { place: activePlace, place_label: placeLabel(activePlace) },
     turn_id: null
   } : null;
-  return [...stored, ...(activePlaceArtifact ? [activePlaceArtifact] : []), ...nearcastRecentTurnArtifacts(rowIndex)]
-    .slice(-Math.max(1, Math.min(16, Number(limit) || NEARCAST_AGENT_ARTIFACT_LIMIT)));
+  const capacity = Math.max(1, Math.min(16, Number(limit) || NEARCAST_AGENT_ARTIFACT_LIMIT));
+  // Exact place/window facts outrank prose when the session budget is small.
+  const priority = [
+    ...(activePlaceArtifact ? [activePlaceArtifact] : []),
+    ...stored.slice().reverse(),
+    ...nearcastRecentTurnArtifacts(rowIndex).reverse()
+  ];
+  return priority.slice(0, capacity).reverse();
 }
 
 function loadNearcastAgentSession(sessionId, limit, rowIndex) {
@@ -6792,6 +6798,7 @@ async function runAsk(question, intent) {
   // lets it choose from a typed Nearcast skill catalog; every selected skill is
   // still executed by the deterministic application host below.
   const row = beginAskResponse(question);
+  let modelFailure = null;
   try {
     try {
       const agent = await runNearcastAgent(question, row, runSignal);
@@ -6804,6 +6811,17 @@ async function runAsk(question, intent) {
     } catch (agentError) {
       if (!runIsCurrent()) return;
       planIntentDiagnostics.agentError = cleanError(agentError);
+      modelFailure = agentError?.code ? agentError : null;
+      // Oversized commands must not be partly interpreted or executed by a
+      // fallback after the model has rejected them intact.
+      if (modelFailure?.code === "context-limit" || modelFailure?.invokedSkills > 0) {
+        // An action may already have completed. Never replay it automatically.
+        const message = modelFailure.invokedSkills > 0
+          ? "I couldn’t finish every step. Some actions may already be complete; check the current place or plan before retrying."
+          : modelFailure.message;
+        finishAskResponse(row, message, { captureArtifacts: false });
+        return;
+      }
     }
     const directNavigation = await runNearcastDirectNavigation(question, runSignal, row);
     if (!runIsCurrent()) return;
@@ -6830,6 +6848,10 @@ async function runAsk(question, intent) {
     if (directWeather) {
       if (directWeather.clarification) setPlannerClarification(directWeather.clarification, row);
       finishAskResponse(row, directWeather, { captureArtifacts: false });
+      return;
+    }
+    if (modelFailure) {
+      finishAskResponse(row, modelFailure.message, { captureArtifacts: false });
       return;
     }
     const plan = await answerPlanRequest(question);

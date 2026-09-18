@@ -48,7 +48,8 @@ export async function nativeAvailability() {
     return {
       available: result?.available === true,
       reason: String(result?.reason || (result?.available ? "available" : "unknown")),
-      model: String(result?.model || "apple-system-language-model")
+      model: String(result?.model || "apple-system-language-model"),
+      capabilities: result?.capabilities || null
     };
   } catch (error) {
     return { available: false, reason: error instanceof Error ? error.message : String(error) };
@@ -229,11 +230,17 @@ export async function runAgent({
   signal,
   onProgress = null
 }) {
+  if (String(query || "").length > 12000) {
+    const error = new Error("Please split this request into shorter questions. No actions were taken.");
+    error.code = "context-limit";
+    throw error;
+  }
   await load();
   const native = nativeAI();
   if (provider?.kind === "apple" && typeof native?.runAgent === "function") {
+    let invokedSkills = 0;
     const nativeResult = await native.runAgent({
-      query: String(query || "").slice(0, 1800),
+      query: String(query || ""),
       skills: Array.isArray(skills) ? skills : [],
       sessionId: sessionId || null,
       memoryScope: memoryScope || null,
@@ -249,18 +256,32 @@ export async function runAgent({
         : { kind: "ready", arguments: command.partialArguments || {} },
       invokeSkill: (command) => {
         if (typeof invokeSkill !== "function") throw new Error(`No Nearcast handler is registered for ${command.skillId || "this skill"}`);
+        invokedSkills += 1;
         return invokeSkill(command);
       },
       onProgress
-    }, signal);
+    }, signal).catch(() => {
+      const error = new Error("The connection to on-device AI was interrupted. Please try again.");
+      error.code = signal?.aborted ? "cancelled" : "bridge-failed";
+      error.invokedSkills = invokedSkills;
+      throw error;
+    });
     if (!nativeResult?.ok) {
       if (nativeResult?.reason === "cancelled" || signal?.aborted) {
         return { status: "cancelled", cancellation: { reason: nativeResult?.message || "cancelled by caller" } };
       }
-      throw new Error(nativeResult?.message || nativeResult?.reason || "Native Operon agent failed");
+      const error = new Error(nativeResult?.message || "On-device AI couldn’t finish this request. Please try again.");
+      error.code = nativeResult?.reason || "generation-failed";
+      error.invokedSkills = invokedSkills;
+      throw error;
     }
     const result = nativeResult?.terminal?.result || null;
-    if (!result || typeof result !== "object") throw new Error("Native Operon returned no terminal result");
+    if (!result || typeof result !== "object") {
+      const error = new Error("On-device AI couldn’t finish this request. Please try again.");
+      error.code = "invalid-result";
+      error.invokedSkills = invokedSkills;
+      throw error;
+    }
     lastRun = {
       task: "agent",
       provider: provider?.kind,
@@ -272,7 +293,7 @@ export async function runAgent({
     return result;
   }
   const result = await runOperon({
-    query: String(query || "").slice(0, 1800),
+    query: String(query || ""),
     generate: (request) => generate(request, signal),
     planning: "always",
     skills,
