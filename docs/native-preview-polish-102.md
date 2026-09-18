@@ -26,11 +26,12 @@ No new provider, server endpoint, AI submission, notification permission, saved-
 ## Verification and release record
 
 - Portable and native-model suites: PASS, including new outlook fixtures and midnight/DST presentation-window tests.
-- Simulator project build: PASS during development; final release archive/upload still pending at preparation time.
+- Simulator project build: PASS. Signed release archive and package validation: PASS for the iPhone app, widget, Watch app, and complications, all with build number 102.
 - Observed on Pro/Pro Max simulators: denser timeline, day arrows, selected-day copy, long place name, local nighttime outlook, larger-text layout. A larger-text tab-label issue found during QA was corrected.
 - Device Hub's automated drag did not establish physical scrolling behavior. Touch feel, full VoiceOver operation, and performance remain family/device acceptance checks; they are not inferred passes.
 - Watch/widget delivery is not newly established by this refinement. Their existing publication path is unchanged.
-- Source commit: pending release.
-- TestFlight: build 102 candidate; upload not yet recorded.
+- Source commit: `a177253` (pushed to `main`).
+- TestFlight: build 102 uploaded successfully on September 18, 2026 at 15:33 CDT. Apple reported the package is processing; tester availability has not yet been verified.
+- No web asset deployment is required for this native-only refinement; the existing 3.0.409 preview bridge remains compatible.
 
 Do not treat the functional feedback on build 101 as approval to replace the existing app. The next decision is whether this refinement feels materially better before expanding native feature scope.
