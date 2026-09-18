@@ -5696,7 +5696,9 @@ async function executeNearcastAnswerSkill(args, context, definition) {
       }
     }
   }
-  context.receipt.answer = String(fallback || "I need a loaded place and forecast to answer that.");
+  context.receipt.answer = String(fallback || (buildAIContext()
+    ? "What would you like to know about the weather for that day?"
+    : "I couldn’t load the forecast for that place. Please try again."));
   context.receipt.event = checked?.event || null;
   const artifacts = [];
   if (fallback) {
@@ -6262,7 +6264,31 @@ async function invokeRegisteredNearcastSkill(context, command) {
   return result;
 }
 
+function nearcastDayViewFollowup(question) {
+  const raw = String(question || "").trim();
+  const day = nearcastExplicitDayText(raw);
+  if (!day) return null;
+  // Only a day-only continuation inherits navigation. A question about rain,
+  // a plan, or a watch must retain its own meaning rather than opening a view.
+  const rest = raw.replace(day, "").replace(/[.!?,]/g, "").trim();
+  if (!/^(?:(?:what|how)\s+about(?:\s+on)?|and(?:\s+on)?|on)?$/i.test(rest)) return null;
+  const focused = nearcastAgentSessionArtifacts.filter((artifact) =>
+    [NEARCAST_AGENT_ARTIFACT_KINDS.window, NEARCAST_AGENT_ARTIFACT_KINDS.plan,
+      NEARCAST_AGENT_ARTIFACT_KINDS.view].includes(artifact?.kind)
+  ).slice(-1)[0];
+  if (focused?.kind !== NEARCAST_AGENT_ARTIFACT_KINDS.view ||
+      !["hourly", "day"].includes(focused.value?.view) ||
+      !focused.value?.place || !samePlanPlace(focused.value.place, state.activePlace)) return null;
+  if (focused.expires_at && Date.parse(focused.expires_at) <= Date.now()) return null;
+  return {
+    skillId: focused.value.view === "hourly" ? "nearcast.forecast_open_hourly" : "nearcast.forecast_open_day",
+    arguments: { place: placeLabel(focused.value.place), day, window_ref: "last_result" }
+  };
+}
+
 function parseNearcastDirectNavigation(question) {
+  const followup = nearcastDayViewFollowup(question);
+  if (followup) return followup;
   const raw = String(question || "").trim();
   if (/^(?:show|open|pull|bring)\s+(?:me\s+)?(?:it|that|this)\s*(?:up)?[.!?]*$/i.test(raw) ||
     /^(?:show me|open it|pull that up)[.!?]*$/i.test(raw)) {
@@ -6550,6 +6576,9 @@ function nearcastExplicitConfidenceQuestion(question) {
 
 function nearcastCompletionForQuestion(question) {
   const raw = String(question || "");
+  const followup = nearcastDayViewFollowup(raw);
+  if (followup) return { required_artifact_kinds: [followup.skillId === "nearcast.forecast_open_hourly"
+    ? NEARCAST_AGENT_ARTIFACT_KINDS.hourlyView : NEARCAST_AGENT_ARTIFACT_KINDS.dayView] };
   // Completion contracts describe the user-visible outcome, not the route.
   // Operon remains free to choose an atomic skill or a valid multi-step graph,
   // but a location-only side effect cannot complete a requested destination.
@@ -6800,6 +6829,18 @@ async function runAsk(question, intent) {
   const row = beginAskResponse(question);
   let modelFailure = null;
   try {
+    // A day-only continuation of a completed view is an exact UI operation,
+    // not a new open-ended weather question. Use the same validated skills.
+    if (nearcastDayViewFollowup(question)) {
+      const followup = await runNearcastDirectNavigation(question, runSignal, row);
+      if (!runIsCurrent()) return;
+      if (followup) {
+        if (followup.clarification) setPlannerClarification(followup.clarification, row);
+        finishAskResponse(row, followup, { captureArtifacts: false });
+        await scheduleNearcastAgentNavigation(followup.navigation);
+        return;
+      }
+    }
     try {
       const agent = await runNearcastAgent(question, row, runSignal);
       if (!runIsCurrent()) return;
@@ -12641,7 +12682,8 @@ function answerFreeform(q) {
   const metric = metricAskAnswer(q, stats, c);
   if (metric) return metric;
 
-  if (hasAny(s, ["weather", "forecast", "conditions", "look like", "going to be", "outside"])) {
+  if (hasAny(s, ["weather", "forecast", "conditions", "look like", "going to be", "outside"]) ||
+      (nearcastReferencesConversation(q) && nearcastExplicitDayText(q))) {
     return generalForecastAnswer(stats, c.units);
   }
 

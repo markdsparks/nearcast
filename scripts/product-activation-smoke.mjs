@@ -61,6 +61,7 @@ function extractCssRule(source, selector) {
 }
 
 const completionSandbox = {
+  nearcastDayViewFollowup: () => null,
   NEARCAST_AGENT_ARTIFACT_KINDS: {
     dayView: "nearcast.view.day",
     forecastView: "nearcast.view.forecast",

@@ -85,6 +85,7 @@ const ask = vm.createContext({
   nearcastRunIsCurrent: () => true, beginAskResponse: () => 0,
   finishAskResponse: (_row, response) => { answer = response; },
   cleanError: (error) => error.message,
+  nearcastDayViewFollowup: () => null,
   runNearcastDirectNavigation: async () => { fallbackCalls++; return null; },
   runNearcastDirectConfidenceAnswer: async () => null,
   runNearcastDirectWeatherAnswer: async () => null,

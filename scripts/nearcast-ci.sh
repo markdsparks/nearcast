@@ -41,6 +41,7 @@ run_portable_checks() {
     product-activation-smoke.mjs \
     ai-operon-smoke.mjs \
     ai-conversation-reliability-smoke.mjs \
+    ai-day-followup-smoke.mjs \
     trust-loop-smoke.mjs \
     trust-loop-backend-smoke.mjs \
     trust-loop-report-smoke.mjs \
