@@ -1,8 +1,8 @@
 # TestFlight A — native weather preview
 
-Prepared September 18, 2026. **Candidate native build: 101. Web assets: 3.0.409.** Final release commit and signed archive identity: not yet recorded.
+Prepared September 18, 2026. **Native build: 101. Web assets: 3.0.409.** Release source: `2423a62`. Signed with the existing Apple Distribution identity matching all four profiles.
 
-**Status: engineering checks passed; release upload pending.** The signed release must still validate and upload successfully. A passing local build does not mean this candidate is available in TestFlight. Family acceptance remains pending.
+**Status: uploaded to TestFlight; Apple processing at handoff.** Upload succeeded September 18 at 14:43 CDT. The matching web assets are deployed and verified. TestFlight availability after processing and family acceptance are not yet confirmed.
 
 This is the first family comparison checkpoint in the [native migration plan](native-migration-plan.md), not completion of the native migration or acceptance of Phase 0/1.
 
@@ -74,7 +74,7 @@ These results describe the current development run, not a signed distributed rel
 | Simulator Today → Hourly → 15 min → selected day → return | Observed in engineering testing | Family acceptance, real touch behavior, or measured performance |
 | Map exact-day and unavailable-day handoff | Observed on iPhone 17 Pro simulator after correction; asynchronous range replacement covered by regressions | Physical-device routing acceptance and every provider state |
 | Long place name, nighttime palette, hourly condition width | Observed on Pro/Pro Max simulators after correction | Large-text and VoiceOver acceptance |
-| Signed archive validation and TestFlight upload | **PENDING — release blocker** | Build 101 is a candidate number, not an available build |
+| Signed archive validation and TestFlight upload | PASS for build 101; Apple accepted the upload and began processing | Completed processing, tester availability, or physical acceptance |
 | Physical launch/scroll/chart performance | **NOT TESTED** | Record comparable existing/native timings on both phones |
 | Large text, VoiceOver, reduced motion, appearance | **Physical acceptance pending** | Simulator screenshots alone are insufficient |
 | Watch/widget/notification delivery and hydration regression | **Physical acceptance pending** | Preview tests do not validate background delivery or subscriptions end to end |
@@ -84,12 +84,11 @@ Stop testing and report immediately for a wrong place/day, stale readings presen
 
 ## Release completion record
 
-Fill these only after they are verified:
-
-- Final native build / web version:
-- Final source commit:
-- Signed archive validation result:
-- TestFlight upload and processing result:
-- Exact phone and Watch OS builds / pairing:
-- Known remaining limitations communicated to testers:
-- Family acceptance or corrective-build request:
+- Final native build / web version: **101 / 3.0.409**.
+- Final source commit: **2423a62** (subsequent documentation-only commit records release results).
+- Signed archive validation result: **PASS**; iPhone, widget, Watch, and complications packaged with matching build numbers.
+- TestFlight upload and processing result: **Upload succeeded**, September 18, 2026 at 14:43 CDT; Apple reported processing, not yet confirmed available.
+- Web deployment: [successful release run](https://github.com/markdsparks/nearcast/actions/runs/35387357642); production app and update marker verified as 3.0.409.
+- Exact phone and Watch OS builds / pairing: **physical record pending**; simulator checks used iOS 27.0 on Pro/Pro Max profiles.
+- Known remaining limitations communicated to testers: read-only preview, existing app remains default, unported details/alerts/radar/AI/plans, physical behavior and Watch delivery pending.
+- Family acceptance or corrective-build request: **pending; do not promote to native default**.
