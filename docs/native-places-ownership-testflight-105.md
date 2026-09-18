@@ -40,4 +40,13 @@ Deleting a watched saved place offline queues notification cleanup. Existing bac
 - After another restart with the web server restored, the existing weather and Family places screens displayed the native location, units and offline rename. A subsequent place selection from the existing screen committed through native storage and showed the correct Celsius forecast.
 - Physical permission prompts, Watch delivery, full VoiceOver and family acceptance remain device-testing gates, not simulator claims.
 
-Web companion: **3.0.412**. Native targets: **105**. Release/upload evidence will be appended after verification.
+## Release evidence — September 18, 2026
+
+- Implementation: `3e8febf1f58120331a3c631dc3fa9b5de8af8dcb`, pushed to `main`.
+- Web companion **3.0.412** deployed successfully in [Cloudflare deployment 35403976044](https://github.com/markdsparks/nearcast/actions/runs/35403976044). Live HTML references the owner adapter; its SHA-256 matches the committed file (`f11a78353ada3f5b34c6fdd96b7204dd0ac22ef917707d78406335c972628d2f`).
+- Final Release simulator build passed. On isolated iPhone 17 Pro Max / iOS 27, Release **105** loaded the deployed companion, explicitly activated native storage, displayed “Saved on this iPhone,” and saved a 24-hour clock choice. Native hourly labels and the existing Settings screen both reflected it.
+- The Mac locked during an additional existing-control interaction; that extra check was not completed. The earlier Pro offline-edit/restart/return checks and Pro Max handover/clock checks above were completed before the lock.
+- Release preflight passed the complete portable and native shared-model suites, including the final protected-source-export tests. The signed archive validator passed app, widget, Watch app, complication, matching build-number, deep-link and metadata checks.
+- `Nearcast-105.xcarchive` exported and uploaded successfully at **18:03 CDT**. Apple reported that the uploaded package was processing. Upload success is not a claim of completed Apple processing or physical-device acceptance.
+
+Native preview remains opt-in. Next migration surface: Phase 3 native radar. Physical family/Watch/accessibility acceptance remains open.
