@@ -14,10 +14,20 @@ final class NearcastWebModel: ObservableObject {
     @Published var showingNativePreview = false
     @Published private(set) var nativePreviewContext = NativePreviewContextStore.load()
     @Published var nativePreviewError: String?
+    @Published private(set) var placesMigrationReport: NativePlacesMigrationReport?
+    @Published private(set) var placesMigrationMessage = "Not checked. The existing app still owns places and settings."
+    @Published private(set) var isCheckingPlacesMigration = false
 
     private weak var webView: WKWebView?
     private var localURL: URL
     private var loadTimeoutTask: Task<Void, Never>?
+    private var placesMigrationTask: Task<Void, Never>?
+    private var placesMigrationRevision = 0
+    private let productionMigrationStore = NativePlacesMigrationStore(directory: NativePlacesMigrationStore.defaultDirectory)
+    // Development fixtures must never replace a production migration receipt.
+    private let developmentMigrationStore = NativePlacesMigrationStore(
+        directory: NativePlacesMigrationStore.defaultDirectory.appendingPathComponent("DevelopmentOnly", isDirectory: true)
+    )
 
     init() {
         let storedMode = NativeRuntimeConfiguration.storedMode()
@@ -129,16 +139,90 @@ final class NearcastWebModel: ObservableObject {
         requestNavigation(to: deepLinkTargetURL(url, baseURL: currentBaseURL), force: shouldForceDeepLinkNavigation(url))
     }
 
-    func openNativePreview(data: Data) {
+    func openNativePreview(data: Data, migrationData: Data? = nil) {
         do {
             let context = try NativePreviewContext.decode(data)
             nativePreviewContext = context
             NativePreviewContextStore.save(context)
             nativePreviewError = nil
             showingNativePreview = true
+            rehearsePlacesMigration(migrationData, preview: context)
         } catch {
             nativePreviewError = NativePreviewError.invalidContext.localizedDescription
         }
+    }
+
+    private var placesMigrationStore: NativePlacesMigrationStore {
+        mode == .production ? productionMigrationStore : developmentMigrationStore
+    }
+
+    /// Stages an allowlisted copy only. Weather continues using the preview
+    /// context; neither this report nor the staged records are live app state.
+    private func rehearsePlacesMigration(_ data: Data?, preview: NativePreviewContext) {
+        cancelPlacesMigrationCheck()
+        placesMigrationReport = nil
+        guard let data, data.count <= 128 * 1_024,
+              let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let selected = payload["selectedPlace"] as? [String: Any],
+              selected["id"] as? String == preview.selectedPlace.id,
+              selected["latitude"] as? Double == preview.selectedPlace.latitude,
+              selected["longitude"] as? Double == preview.selectedPlace.longitude else {
+            placesMigrationMessage = "No compatible migration copy was provided. Existing records are unchanged."
+            return
+        }
+        isCheckingPlacesMigration = true
+        placesMigrationMessage = "Verifying a local copy; existing records remain authoritative."
+        let revision = placesMigrationRevision
+        let store = placesMigrationStore
+        placesMigrationTask = Task { [weak self] in
+            do {
+                let report = try await store.rehearse(data)
+                guard let self, !Task.isCancelled, revision == self.placesMigrationRevision else { return }
+                self.placesMigrationReport = report
+                self.placesMigrationMessage = report.recoveredFromBackup
+                    ? "Verified using the prior rehearsal copy. No ownership transfer."
+                    : "Local copy saved and read back successfully. No ownership transfer."
+                self.isCheckingPlacesMigration = false
+            } catch is CancellationError {
+                // A reload or a newer preview supersedes this check.
+            } catch {
+                guard let self, !Task.isCancelled, revision == self.placesMigrationRevision else { return }
+                // Never expose a decoding error that could contain private data.
+                self.placesMigrationMessage = "Migration check could not complete. Existing app records are unchanged; the rehearsal remains unverified."
+                self.isCheckingPlacesMigration = false
+            }
+        }
+    }
+
+    func refreshPlacesMigrationStatus() {
+        guard !isCheckingPlacesMigration else { return }
+        cancelPlacesMigrationCheck()
+        let revision = placesMigrationRevision
+        let store = placesMigrationStore
+        isCheckingPlacesMigration = true
+        placesMigrationTask = Task { [weak self] in
+            do {
+                let report = try await store.status()
+                guard let self, !Task.isCancelled, revision == self.placesMigrationRevision else { return }
+                self.placesMigrationReport = report
+                self.placesMigrationMessage = report == nil
+                    ? "No rehearsal copy yet. Open the native preview from a compatible page."
+                    : "Saved rehearsal only—not current ownership or a new import."
+                self.isCheckingPlacesMigration = false
+            } catch {
+                guard let self, !Task.isCancelled, revision == self.placesMigrationRevision else { return }
+                self.placesMigrationReport = nil
+                self.placesMigrationMessage = "Saved rehearsal could not be verified. Existing app records are unchanged."
+                self.isCheckingPlacesMigration = false
+            }
+        }
+    }
+
+    private func cancelPlacesMigrationCheck() {
+        placesMigrationRevision += 1
+        placesMigrationTask?.cancel()
+        placesMigrationTask = nil
+        isCheckingPlacesMigration = false
     }
 
     func openCachedNativePreview() {
@@ -184,6 +268,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     private func requestNavigation(to targetURL: URL, force: Bool) {
+        cancelPlacesMigrationCheck()
         let sameTarget = Self.normalizedURLString(targetURL) == Self.normalizedURLString(currentURL)
         currentURL = targetURL
         lastError = nil

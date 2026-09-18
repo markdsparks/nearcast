@@ -59,6 +59,22 @@ struct NativeDiagnosticsView: View {
                         .textSelection(.enabled)
                 }
 
+                Section("Places migration rehearsal") {
+                    Text(model.placesMigrationMessage)
+                        .font(.footnote)
+                    if let report = model.placesMigrationReport {
+                        LabeledContent("Owner", value: "Existing app")
+                        LabeledContent("Local copy revision", value: String(report.revision))
+                        LabeledContent("Saved places copied", value: String(report.savedPlaceCount))
+                        LabeledContent("Removed-record receipts", value: String(report.tombstoneCount))
+                    }
+                    Button("Check saved rehearsal") {
+                        model.refreshPlacesMigrationStatus()
+                    }.disabled(model.isCheckingPlacesMigration)
+                    Text("Local verification only. No place, setting, notification, widget or Watch changes. Development copies are isolated from production.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+
                 Section("Apple Watch sync") {
                     ForEach(watchSync.statusRows, id: \.0) { row in
                         LabeledContent(row.0, value: row.1)

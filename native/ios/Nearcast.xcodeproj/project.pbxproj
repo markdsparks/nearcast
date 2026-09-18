@@ -19,6 +19,7 @@
 		AA100000000000000000000A /* NativeWeatherDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000000A /* NativeWeatherDetailsView.swift */; };
 		AA100000000000000000000B /* NativeSunDaylight.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000000B /* NativeSunDaylight.swift */; };
 		AA100000000000000000000C /* NativeSunDaylightView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000000C /* NativeSunDaylightView.swift */; };
+		AA100000000000000000000D /* NativePlacesMigrationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000000D /* NativePlacesMigrationStore.swift */; };
 		A10000000000000000000100 /* NearcastForecastSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000100 /* NearcastForecastSemantics.swift */; };
 		B10000000000000000000100 /* NearcastForecastSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000100 /* NearcastForecastSemantics.swift */; };
 		D10000000000000000000100 /* NearcastForecastSemantics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000100 /* NearcastForecastSemantics.swift */; };
@@ -137,6 +138,7 @@
 		AA200000000000000000000A /* NativeWeatherDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWeatherDetailsView.swift; sourceTree = "<group>"; };
 		AA200000000000000000000B /* NativeSunDaylight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSunDaylight.swift; sourceTree = "<group>"; };
 		AA200000000000000000000C /* NativeSunDaylightView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSunDaylightView.swift; sourceTree = "<group>"; };
+		AA200000000000000000000D /* NativePlacesMigrationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlacesMigrationStore.swift; sourceTree = "<group>"; };
 		C20000000000000000000100 /* NearcastForecastSemantics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastForecastSemantics.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* NearcastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -228,6 +230,7 @@
 				AA200000000000000000000A /* NativeWeatherDetailsView.swift */,
 				AA200000000000000000000B /* NativeSunDaylight.swift */,
 				AA200000000000000000000C /* NativeSunDaylightView.swift */,
+				AA200000000000000000000D /* NativePlacesMigrationStore.swift */,
 			);
 			path = NativeWeather;
 			sourceTree = "<group>";
@@ -563,6 +566,7 @@
 				AA100000000000000000000A /* NativeWeatherDetailsView.swift in Sources */,
 				AA100000000000000000000B /* NativeSunDaylight.swift in Sources */,
 				AA100000000000000000000C /* NativeSunDaylightView.swift in Sources */,
+				AA100000000000000000000D /* NativePlacesMigrationStore.swift in Sources */,
 				A10000000000000000000100 /* NearcastForecastSemantics.swift in Sources */,
 				A10000000000000000000003 /* NativeDiagnosticsView.swift in Sources */,
 				A10000000000000000000004 /* NearcastWebView.swift in Sources */,

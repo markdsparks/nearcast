@@ -1,4 +1,4 @@
-const VERSION = "3.0.410";
+const VERSION = "3.0.411";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -591,6 +591,10 @@ const state = {
   planMemories: loadPlanMemories(),
   userContext: loadUserContext()
 };
+
+// A missing inventory must never be exported as an authoritative empty one.
+// This only gates a local migration rehearsal; legacy remains the sole writer.
+let nativePlacesMigrationInventoryReady = false;
 
 // NWS hourly wording is deliberately kept beside, not inside, the provider
 // forecast. A WeakMap makes the evidence impossible to accidentally borrow for
@@ -4163,6 +4167,7 @@ function init() {
     updateMode(); // welcome mode
     if (typeof consumeNearcastNotificationRoute === "function") consumeNearcastNotificationRoute();
   }
+  nativePlacesMigrationInventoryReady = true;
 }
 
 function readStorageJson(key) {
@@ -4616,8 +4621,22 @@ function syncAppDockCurrent() {
   setAppDockCurrent(activeAppDockDestination());
 }
 
-// This bridge exports presentation context only. The existing app remains the
-// owner of saved records, notification choices and system-surface publications.
+// The preview uses presentation context; a separate optional export rehearses
+// migration locally. The existing app still owns records and publications.
+function nativePlacesMigrationSnapshotForPreview() {
+  if (window.NearcastNative?.preview?.migrationVersion !== 1 ||
+      window.NearcastPlacesMigrationExport?.version !== 1) return null;
+  try {
+    return window.NearcastPlacesMigrationExport.build({
+      state, storage: localStorage, inventoryReady: nativePlacesMigrationInventoryReady, now: new Date()
+    });
+  } catch {
+    // Invalid/unavailable source records stop rehearsal, not weather. Never log
+    // the family's records or substitute an empty list for a failed export.
+    return null;
+  }
+}
+
 let nativePreviewContextPlaces = [];
 let nativePreviewHandoffInFlight = false;
 
@@ -4680,7 +4699,9 @@ function openNativeWeatherPreview() {
   if (window.NearcastNative?.preview?.version !== 1 || typeof window.NearcastNative.preview.open !== "function") return;
   try {
     const context = buildNativePreviewContext();
-    window.NearcastNative.preview.open(context);
+    const migration = typeof nativePlacesMigrationSnapshotForPreview === "function"
+      ? nativePlacesMigrationSnapshotForPreview() : null;
+    window.NearcastNative.preview.open(context, migration);
     closeAppMenu();
   } catch {
     setStatus("Open a place before trying the native weather preview.", true);

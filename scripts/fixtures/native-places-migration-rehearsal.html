@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nearcast migration rehearsal fixture</title>
+<style>
+  body { font: 17px system-ui; margin: 130px 24px 40px; color: #14232b; background: #f1f7fa; }
+  button { display: block; font: inherit; padding: 16px; margin: 16px 0; width: 100%; }
+  p { line-height: 1.45; }
+</style>
+<h1>Migration fixture</h1>
+<p>Debug-only public city fixtures. No browser records, notifications, widgets or Watch state are changed.</p>
+<button id="copy">Open preview and verify copy</button>
+<button id="remove">Remove the synthetic spare, then verify</button>
+<p id="status" role="status">Ready for the local Debug host.</p>
+<script src="../../native-places-migration.js"></script>
+<script>
+  const home = { id: 4243918, name: "Maryville", admin1: "Illinois", country: "United States", countryCode: "US",
+    latitude: 38.723, longitude: -89.956, alias: "Fixture home", timezone: "America/Chicago", followsCurrentLocation: false };
+  const spare = { id: "fixture-spare", name: "Leverkusen", admin1: "North Rhine-Westphalia", country: "Germany", countryCode: "DE",
+    latitude: 51.0459, longitude: 7.0192, timezone: "Europe/Berlin" };
+  const fixture = { activePlace: { ...home }, savedPlaces: [{ ...home }, { ...spare }], unit: "fahrenheit", timeFormat: "auto",
+    theme: "auto", reactiveSkyEnabled: false, reactiveSkyMotionAllowed: false };
+  const previewPlace = (place) => ({ id: String(place.id), name: `${place.name}, ${place.admin1}`, latitude: place.latitude,
+    longitude: place.longitude, timezone: place.timezone, countryCode: place.countryCode });
+  function openFixture(removeSpare) {
+    if (location.hostname !== "127.0.0.1" || window.NearcastNative?.preview?.migrationVersion !== 1) {
+      document.getElementById("status").textContent = "Use this fixture only in the configured local Debug app.";
+      return;
+    }
+    if (removeSpare) fixture.savedPlaces = [{ ...home }];
+    const values = {
+      "weather-places": JSON.stringify(fixture.savedPlaces), "weather-last-place": JSON.stringify(home),
+      "weather-unit": "fahrenheit", "weather-theme": "auto", "nearcast-time-format": "auto",
+      "nearcast-reactive-sky-v1": "0", "nearcast-reactive-sky-motion-v1": "0"
+    };
+    try {
+      const migration = window.NearcastPlacesMigrationExport.build({ state: fixture, inventoryReady: true,
+        storage: { getItem: (key) => values[key] ?? null }, now: new Date() });
+      window.NearcastNative.preview.open({ version: 1, selectedPlace: previewPlace(home),
+        savedPlaces: fixture.savedPlaces.map(previewPlace), metric: false, uses24HourClock: false, theme: "auto" }, migration);
+      document.getElementById("status").textContent = "Preview requested. Close it, then inspect the native migration diagnostic.";
+    } catch {
+      document.getElementById("status").textContent = "Fixture export did not pass validation.";
+    }
+  }
+  document.getElementById("copy").addEventListener("click", () => openFixture(false));
+  document.getElementById("remove").addEventListener("click", () => openFixture(true));
+</script>
+</html>

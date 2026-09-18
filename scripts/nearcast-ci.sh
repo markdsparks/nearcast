@@ -10,6 +10,7 @@ run_portable_checks() {
   local source
   for source in \
     app.js \
+    native-places-migration.js \
     planner.js \
     weather-truth.js \
     current-reality.js \
@@ -92,6 +93,8 @@ run_portable_checks() {
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
     native-preview-handoff-smoke.mjs \
+    native-places-migration-smoke.mjs \
+    native-places-migration-bridge-smoke.mjs \
     nearcast-place-label-test.mjs
   do
     node "$ROOT/scripts/$smoke"
@@ -116,6 +119,7 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-sun-daylight.sh"
   bash "$ROOT/scripts/test-native-weather-detail.sh"
   bash "$ROOT/scripts/test-native-radar-proof.sh"
+  bash "$ROOT/scripts/test-native-places-migration.sh"
   printf 'PASS  Native shared-model checks\n'
 }
 

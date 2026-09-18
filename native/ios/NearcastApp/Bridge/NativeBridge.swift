@@ -547,8 +547,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           // Versioned opt-in preview; no ownership transfer or permission request.
           window.NearcastNative.preview = {
             version: 1,
-            open(context) {
-              window.NearcastNative.postMessage({ type: "preview.open", context });
+            migrationVersion: 1,
+            open(context, migration) {
+              // A separate local rehearsal, never an ownership handover. Older
+              // pages still call open(context) and keep the same preview path.
+              window.NearcastNative.postMessage({ type: "preview.open", context, migration: migration || null });
             }
           };
 
@@ -572,7 +575,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
                   UIApplication.shared.applicationState == .active,
                   let context = payload["context"] as? [String: Any],
                   let data = try? JSONSerialization.data(withJSONObject: context) else { return }
-            model?.openNativePreview(data: data)
+            let migration = (payload["migration"] as? [String: Any]).flatMap {
+                try? JSONSerialization.data(withJSONObject: $0)
+            }
+            model?.openNativePreview(data: data, migrationData: migration)
             return
         }
 
