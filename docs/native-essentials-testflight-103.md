@@ -36,9 +36,9 @@ The existing app remains the default. Places/settings, Plans/Ask, notifications,
 - Supplemental-source tests cover geography/alert windows, missing/zero/stale AQI, country coverage, independent failures, cache expiry and late responses.
 - Selected-day detail tests cover 30-minute current freshness, current-hour fallback, future-day isolation, units, local dates and 12/24-hour clocks. Sun tests include 23/25-hour DST days and missing/polar evidence.
 - Physical touch, full VoiceOver, performance and Watch delivery remain device acceptance checks, not inferred passes.
-- Source commit: pending.
+- Source commit: `7efb430` (pushed to `main`).
 - Signed archive / TestFlight: not uploaded; visual gate pending.
-- Web 3.0.410 deployment: pending.
+- Web 3.0.410 deployment: prepared but held with the native candidate; current production remains unchanged.
 
 ## Radar proof, separate from this build
 
