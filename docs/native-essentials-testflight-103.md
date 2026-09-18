@@ -31,14 +31,15 @@ The existing app remains the default. Places/settings, Plans/Ask, notifications,
 
 - Portable product checks and native forecast/preview/outlook/essentials/lifecycle/sun/detail/radar-proof regression suites: PASS.
 - Full native simulator project: BUILD SUCCEEDED (iOS 27 SDK, existing iOS 17 deployment floor).
-- New-screen visual inspection: **BLOCKED**. Computer-use access reported that the Mac is locked and could not unlock automatically. No visual or touch pass is claimed. TestFlight upload is intentionally held until the candidate can be inspected.
+- New-screen visual inspection: **PASS for the inspected simulator cases**, after retrying with the Mac unlocked. On the isolated iPhone 17 Pro: details directory, current AQI/category scale, wind chart, sunrise/sunset jump, future-day AQI exclusion, and accessibility-large directory/AQI/wind layouts. Inspection caught overlapping chart times at accessibility sizes; adaptive tick density and nontruncating collision handling corrected it, and the rebuilt screen was rechecked.
+- On the isolated iPhone 17 Pro Max: nighttime preview and dark Sun & daylight, including a visible below-horizon sun and next sunrise. In the Release simulator build, normal **Menu → Native weather preview** exported the live web context, honored the 24-hour setting, and loaded Maryville's two official bulletins. Opening the Heat Advisory showed full instructions, expected event end, and the separate bulletin expiry without clipping in the inspected viewport.
 - Live public Maryville data probe: current AQI and two NWS bulletins decoded successfully. This check exposed and corrected the distinction between bulletin expiry and hazard end; synthetic regression cases preserve it. A point-in-time probe does not establish provider reliability.
 - Supplemental-source tests cover geography/alert windows, missing/zero/stale AQI, country coverage, independent failures, cache expiry and late responses.
 - Selected-day detail tests cover 30-minute current freshness, current-hour fallback, future-day isolation, units, local dates and 12/24-hour clocks. Sun tests include 23/25-hour DST days and missing/polar evidence.
-- Physical touch, full VoiceOver, performance and Watch delivery remain device acceptance checks, not inferred passes.
-- Source commit: `7efb430` (pushed to `main`).
-- Signed archive / TestFlight: not uploaded; visual gate pending.
-- Web 3.0.410 deployment: prepared but held with the native candidate; current production remains unchanged.
+- Physical touch, full VoiceOver, performance and Watch delivery remain device acceptance checks, not inferred passes. The automated simulator slider drag did not establish a reliable interaction result; sunrise/sunset jump actions were verified, but continuous scrubbing still needs family-device testing.
+- Source commit: `fb5cd6d` (pushed to `main`); includes the `7efb430` essentials implementation and the visual-QA chart correction. Full CI and Debug/Release simulator builds passed after the correction.
+- Signed archive / TestFlight: **uploaded successfully September 18, 2026 at 16:05 CDT**. Archive validation passed for the iPhone app, widget, Watch app and complications, all build 103. Export reported `EXPORT SUCCEEDED`; Apple reported that the uploaded package is processing. Tester availability is not yet confirmed. Archive: `native/ios/build/Nearcast-103.xcarchive`; upload log: `/tmp/nearcast-native-essentials-testflight-103.log`.
+- Web 3.0.410 deployment: [successful deployment](https://github.com/markdsparks/nearcast/actions/runs/35394232118); production `app.js` and service-worker version/cache identifiers verified. No default-native cutover.
 
 ## Radar proof, separate from this build
 

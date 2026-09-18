@@ -49,15 +49,16 @@ The proof is intentionally scoped to one public CONUS location. It does not requ
 | Existing live NOAA observed metadata + tile | PASS: `2026-09-18T20:38:15.000Z`, PNG, 1,670 bytes, z6/16/24 |
 | Existing live NOAA forecast metadata + tile | PASS: `2026-09-19T00:00:00.000Z`, PNG, 11,416 bytes, z6/16/24 |
 | Simulator installation and process launch | PASS on isolated iPhone 17 Pro Max simulator; process launch alone is not rendering evidence |
-| Simulator visual render and source switch | Pending: UI tool's initial DeviceHub inspection was aborted without state after approximately 308 seconds; root's subsequent inspection reported a locked Mac. No visual or interaction pass claimed |
+| Simulator visual render and source switch | PASS on retry after computer-use access became available: isolated iPhone 17 Pro Max visibly rendered observed NOAA tiles (28 received / 0 unavailable), then the **6h forecast** button switched to visible forecast accumulation (16 received / 0 unavailable). Separate source/title/timing and the accumulation explanation were displayed correctly; native MapKit attribution remained visible |
+| Simulator pan, recenter and slider gestures | NOT VERIFIED: a computer-use map drag did not visibly change the viewport. The source-button switch above is not a slider-gesture pass |
 | Physical iPhone 17 Pro / Pro Max pan, scrub, memory, background/resume | NOT RUN |
 | Enhanced numeric MRMS/HRRR seam, RainViewer fallback, non-CONUS, StormScope/lightning, alert polygons | OUT OF SCOPE / NOT PROVEN |
 
-Live results record one point-in-time probe, not service reliability or forecast-accuracy validation. The selected PNG may be partly or wholly transparent; a PNG response alone is not proof of alignment or rain/no-rain at the marker.
+Live results record point-in-time probes and a visual rendering check, not service reliability or forecast-accuracy validation. The selected PNG may be partly or wholly transparent; a PNG response alone is not proof of alignment or rain/no-rain at the marker. The simulator retry does not establish physical-device performance or enhanced radar parity.
 
 ## Next acceptance gate
 
-1. Visually inspect both selected-source states, pan and recenter in the isolated simulator. Do not count this as physical gesture/performance evidence.
+1. Complete pan, recenter and slider-gesture checks in the isolated simulator; both selected-source states and the source-button switch have now been visually inspected. Do not count this as physical gesture/performance evidence.
 2. Review and pin the full-renderer dependency separately. Validate MapLibre's desired raster/vector/custom numeric path rather than treating this MapKit spike as an architecture commitment.
 3. Compare one synthetic numeric MRMS texture and one HRRR/seam output with matched web fixtures before any claim of enhanced radar parity.
 4. Only after those checks, provision a dedicated device proof and record first visible weather tile, source-switch latency, peak memory, pan responsiveness, tile failures, offline/slow recovery and background/resume on both family phones. The current script is simulator-only and cannot satisfy this gate.
