@@ -205,7 +205,7 @@ This is the next engineering work, not work completed by writing this plan:
 - [ ] Complete Phase 0 parity/ownership inventory and physical baseline; record Watch OS and target SDK readiness.
 - [ ] Specify native route, forecast, cache, and durable-store contracts with fixture tests and the rollback boundary.
 - [ ] Run the early native radar feasibility check and record unsupported layers before choosing a renderer.
-- [ ] Add the read-only native preview entry, native weather repository, and exact-route coordinator.
+- [x] Add the read-only native preview entry, native weather repository, and exact-route coordinator (engineering implementation; acceptance tracked separately).
 - [ ] Build the complete Phase 1 Today/hourly/day journey, including 15-minute coverage and offline/stale states.
 - [ ] Run technical gates; produce TestFlight A and its family test note.
 - [ ] Wait for family results, fix issues, and record acceptance before default promotion.

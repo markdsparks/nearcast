@@ -1,0 +1,272 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+private final class ForecastProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var payload = Data()
+    nonisolated(unsafe) static var status = 200
+    nonisolated(unsafe) static var requests: [URLRequest] = []
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.requests.append(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status,
+            httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@main
+struct NativeWeatherForecastTests {
+    typealias Object = [String: Any]
+    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+        precondition(condition(), message)
+    }
+    static func instant(_ string: String) -> Date { ISO8601DateFormatter().date(from: string)! }
+    static func data(_ object: Object) throws -> Data { try JSONSerialization.data(withJSONObject: object) }
+
+    static func fixture(now: Date, timezone: String = "America/Chicago", latitude: Double = 38.72,
+                        longitude: Double = -89.95, metric: Bool = false) -> Object {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezone)!
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        let start = calendar.startOfDay(for: now)
+        let dates = (0..<48).map { calendar.date(byAdding: .hour, value: $0, to: start)! }
+        let timeStrings = dates.map { formatter.string(from: $0) }
+        let quarterStart = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970 / 900) * 900)
+        let quarterTimes = (0..<28).map { formatter.string(from: quarterStart.addingTimeInterval(Double($0) * 900)) }
+        func series(_ times: [String]) -> Object {
+            let count = times.count
+            return ["time": times, "temperature_2m": Array(repeating: 73.5, count: count),
+                "apparent_temperature": Array(repeating: 75.0, count: count),
+                "precipitation_probability": Array(repeating: 10.0, count: count),
+                "precipitation": Array(repeating: 0.0, count: count),
+                "wind_speed_10m": Array(repeating: 9.0, count: count),
+                "wind_gusts_10m": Array(repeating: 12.0, count: count),
+                "weather_code": Array(repeating: 0, count: count), "cloud_cover": Array(repeating: 0, count: count),
+                "is_day": Array(repeating: 1, count: count)]
+        }
+        let units: Object = ["temperature_2m": metric ? "°C" : "°F", "apparent_temperature": metric ? "°C" : "°F",
+            "precipitation_probability": "%", "precipitation": "mm", "wind_speed_10m": metric ? "km/h" : "mp/h",
+            "wind_gusts_10m": metric ? "km/h" : "mp/h", "weather_code": "wmo code", "is_day": ""]
+        let current: Object = ["time": formatter.string(from: now), "temperature_2m": 74.25,
+            "apparent_temperature": 76.0, "precipitation": 0.0, "weather_code": 0,
+            "cloud_cover": 0.0, "wind_speed_10m": 8.0, "wind_gusts_10m": 11.0, "is_day": 1, "interval": 900]
+        let dailyDates = (0..<3).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+        let sunrises = dailyDates.map { formatter.string(from: calendar.date(byAdding: .hour, value: 6, to: $0)!) }
+        let sunsets = dailyDates.map { formatter.string(from: calendar.date(byAdding: .hour, value: 19, to: $0)!) }
+        formatter.dateFormat = "yyyy-MM-dd"
+        return ["timezone": timezone, "_nearcastForecast": ["version": 1,
+                "generatedAtMs": now.timeIntervalSince1970 * 1000, "latitude": latitude, "longitude": longitude,
+                "unit": metric ? "celsius" : "fahrenheit", "precipitationUnit": "mm"],
+            "current": current, "current_units": units, "hourly": series(timeStrings), "hourly_units": units,
+            "minutely_15": series(quarterTimes), "minutely_15_units": units,
+            "daily": ["time": dailyDates.map { formatter.string(from: $0) }, "temperature_2m_max": [80, 81, 82],
+                "temperature_2m_min": [60, 61, 62], "precipitation_probability_max": [10, 20, 30],
+                "precipitation_sum": [0.0, 1.0, 2.0], "weather_code": [0, 3, 61], "uv_index_max": [4, 5, 6],
+                "sunrise": sunrises, "sunset": sunsets],
+            "daily_units": ["temperature_2m_max": metric ? "°C" : "°F", "temperature_2m_min": metric ? "°C" : "°F",
+                "precipitation_probability_max": "%", "precipitation_sum": "mm"]]
+    }
+
+    static func decode(_ object: Object, now: Date, latitude: Double = 38.72, longitude: Double = -89.95, metric: Bool = false) throws -> NativeWeatherForecast {
+        try NativeWeatherForecast.decode(data: data(object), latitude: latitude, longitude: longitude, metric: metric, now: now)
+    }
+
+    static func rejects(_ object: Object, now: Date, _ message: String, latitude: Double = 38.72, metric: Bool = false) {
+        do {
+            _ = try decode(object, now: now, latitude: latitude, metric: metric)
+            preconditionFailure(message)
+        } catch {}
+    }
+
+    static func main() async throws {
+        let now = instant("2026-09-18T18:17:00Z")
+        let base = fixture(now: now)
+        let forecast = try decode(base, now: now)
+        expect(forecast.current?.temperature == 74.25, "Service-calibrated current value is not adjusted again")
+        expect(forecast.hours[0].temperature == 73.5, "Service-calibrated hourly values remain exact")
+        expect(forecast.current?.date == now, "Current is not the midnight row")
+        expect(forecast.generatedAt == now, "Original generation time is retained")
+        expect(forecast.hours(on: now).count == 24, "Slice in forecast place's calendar")
+        expect(forecast.day(containing: now)?.high == 80, "Daily row uses destination calendar")
+        expect(forecast.quarterHours.count == 25, "Containing quarter plus upcoming six-hour horizon")
+        expect(forecast.quarterHours.last!.date < now.addingTimeInterval(21600), "No expanded quarter-hour horizon")
+        expect(forecast.quarterHours.allSatisfy { $0.uvIndex == nil }, "No hourly UV is fabricated for quarter-hours")
+        let metricForecast = try decode(fixture(now: now, metric: true), now: now, metric: true)
+        expect(metricForecast.metric && metricForecast.current?.temperature == 74.25,
+            "Metric payload is already in requested units and is not converted twice")
+
+        let kolkata = try decode(fixture(now: instant("2026-09-18T20:00:00Z"), timezone: "Asia/Kolkata"), now: instant("2026-09-18T20:00:00Z"))
+        expect(kolkata.calendar.component(.day, from: kolkata.days[0].date) == 19, "Half-hour timezone stays on selected place's date")
+        expect(kolkata.day(containing: instant("2026-09-18T20:00:00Z"))?.date == kolkata.days[0].date, "Device day cannot select prior daily row")
+        let dstNow = instant("2026-03-08T17:00:00Z")
+        let dst = try decode(fixture(now: dstNow), now: dstNow)
+        expect(dst.hours(on: dstNow).count == 23, "Spring-forward day is 23 hours, not an assumed 24-hour duration")
+        let fallNow = instant("2026-11-01T07:17:00Z")
+        let fall = try decode(fixture(now: fallNow), now: fallNow)
+        expect(fall.hours(on: fallNow).count == 25, "Fall-back preserves both repeated local hours")
+        expect(fall.current?.date == fallNow, "Repeated current hour resolves to the occurrence that has happened")
+        expect(fall.quarterHours.count == 25, "Quarter-hour horizon beginning after fall-back retains its correct occurrence")
+        let beforeFall = instant("2026-11-01T06:17:00Z")
+        let firstFall = try decode(fixture(now: beforeFall), now: beforeFall)
+        expect(firstFall.current?.date == beforeFall, "First repeated hour never points into the future")
+
+        rejects(base, now: now, "Another place must be rejected", latitude: 39.0)
+        rejects(base, now: now, "Unit mismatch must be rejected", metric: true)
+        var invalid = base
+        invalid["_nearcastForecast"] = nil
+        rejects(invalid, now: now, "Missing provenance must not be accepted")
+        invalid = base
+        var metadata = invalid["_nearcastForecast"] as! Object
+        metadata["generatedAtMs"] = now.addingTimeInterval(3600).timeIntervalSince1970 * 1000
+        invalid["_nearcastForecast"] = metadata
+        rejects(invalid, now: now, "Future generation time cannot look fresh")
+        invalid = base
+        invalid["timezone"] = "Missing/Zone"
+        rejects(invalid, now: now, "Unknown timezone cannot fall back to the device")
+        invalid = base
+        var units = invalid["hourly_units"] as! Object
+        units["precipitation"] = "inch"
+        invalid["hourly_units"] = units
+        rejects(invalid, now: now, "Metadata alone cannot hide incorrect precipitation units")
+
+        var missing = base
+        var hourly = missing["hourly"] as! Object
+        hourly["temperature_2m"] = [NSNull(), 12.0] as [Any]
+        hourly["precipitation_probability"] = [NSNull(), -1, 101, 0] as [Any]
+        hourly["weather_code"] = [NSNull(), 0] as [Any]
+        hourly["is_day"] = [NSNull(), 0] as [Any]
+        missing["hourly"] = hourly
+        missing["minutely_15"] = nil
+        let gaps = try decode(missing, now: now)
+        expect(gaps.hours[0].temperature == nil && gaps.hours[2].temperature == nil, "Null/short columns are missing, not zero")
+        expect(gaps.hours[0].rainProbability == nil && gaps.hours[1].rainProbability == nil && gaps.hours[2].rainProbability == nil, "Invalid probabilities remain unavailable")
+        expect(gaps.hours[3].rainProbability == 0, "A genuine zero probability survives")
+        expect(gaps.quarterHours.isEmpty, "Hourly data does not generate synthetic quarter-hours")
+        expect(NativeForecastPoint(date: now).conditionLabel == "Conditions unavailable", "Missing condition cannot look clear")
+        var nullSeries = base
+        let quarterTimes = (nullSeries["minutely_15"] as! Object)["time"] as! [String]
+        nullSeries["minutely_15"] = ["time": quarterTimes, "temperature_2m": Array(repeating: NSNull(), count: quarterTimes.count),
+            "weather_code": Array(repeating: NSNull(), count: quarterTimes.count), "is_day": Array(repeating: 1, count: quarterTimes.count)]
+        let noQuarterReadings = try decode(nullSeries, now: now)
+        expect(noQuarterReadings.quarterHours.isEmpty, "Time/daylight-only rows cannot advertise 15-minute availability")
+        nullSeries["hourly"] = ["time": (base["hourly"] as! Object)["time"]!, "weather_code": Array(repeating: 88, count: 48)]
+        let noHourlyReadings = try decode(nullSeries, now: now)
+        expect(noHourlyReadings.hours.isEmpty, "Unknown-code/time-only rows cannot masquerade as hourly weather")
+        nullSeries["current"] = ["time": "2026-09-18T13:17", "is_day": 1]
+        nullSeries["daily"] = ["time": ["2026-09-18"]]
+        rejects(nullSeries, now: now, "An entirely empty forecast cannot become a successful load")
+
+        var noCurrent = base
+        var current = noCurrent["current"] as! Object
+        current["time"] = "2026-09-18T23:30"
+        noCurrent["current"] = current
+        let resolved = try decode(noCurrent, now: now)
+        expect(resolved.current?.date == instant("2026-09-18T18:00:00Z"), "Reject future current and choose containing hour, not row zero")
+        noCurrent["hourly"] = nil
+        let unavailable = try decode(noCurrent, now: now)
+        expect(unavailable.current == nil, "Future current without an actual containing hour stays unavailable")
+
+        var storms = base
+        hourly = storms["hourly"] as! Object
+        hourly["weather_code"] = Array(repeating: 95, count: 48)
+        hourly["cloud_cover"] = Array(repeating: 80, count: 48)
+        storms["hourly"] = hourly
+        let possible = try decode(storms, now: now)
+        expect(possible.hours[0].weatherCode == 3 && possible.hours[0].thunderPossible, "Small storm chance gets qualified, not a definite storm icon")
+        expect(possible.hours[0].conditionLabel == "Thunderstorms possible", "Possibility survives dominant-sky interpretation")
+        expect(possible.hours[0].symbolName == "cloud.fill", "Possible thunder is not forced into a definite storm symbol")
+        expect(possible.days[0].weatherCode == 3, "Daily headlines reuse shared dominant-condition semantics")
+        var quarters = storms["minutely_15"] as! Object
+        quarters["weather_code"] = Array(repeating: 61, count: 28)
+        quarters["precipitation"] = Array(repeating: 0.25, count: 28)
+        quarters["precipitation_probability"] = Array(repeating: 35.0, count: 28)
+        storms["minutely_15"] = quarters
+        let wetQuarter = try decode(storms, now: now)
+        expect(wetQuarter.quarterHours[0].weatherCode == 61, "Quarter amount converted to rate for existing interpretation")
+        expect(wetQuarter.quarterHours[0].precipitationMM == 0.25, "Stored quarter accumulation is not multiplied")
+
+        var evidence = base
+        metadata = evidence["_nearcastForecast"] as! Object
+        metadata["nws"] = ["checkedAt": now.timeIntervalSince1970 * 1000, "periods": [[
+            "startMs": now.timeIntervalSince1970 * 1000, "endMs": now.addingTimeInterval(3600).timeIntervalSince1970 * 1000,
+            "shortForecast": "Chance Showers And Thunderstorms", "probability": 30]]]
+        evidence["_nearcastForecast"] = metadata
+        let freshEvidence = try decode(evidence, now: now)
+        expect(freshEvidence.current?.thunderPossible == true, "Fresh overlapping official language preserves possible thunder")
+        expect(freshEvidence.days[0].thunderPossible && freshEvidence.days[0].conditionLabel == "Thunderstorms possible",
+            "Daily outlook preserves qualified thunder already present in its scoped hours")
+        expect(freshEvidence.days[0].symbolName == "sun.max.fill",
+            "Daily thunder possibility does not override the dominant sky symbol")
+        expect(!freshEvidence.days[1].thunderPossible && freshEvidence.days[1].conditionLabel == "Clear",
+            "Today's official thunder possibility cannot leak into tomorrow's outlook")
+        let oldEvidence = try decode(evidence, now: now.addingTimeInterval(3 * 3600))
+        expect(oldEvidence.current?.thunderPossible == false, "Stale official evidence cannot add thunder possibility")
+        expect(!oldEvidence.days[0].thunderPossible, "Daily possibility cannot outlive its hourly evidence")
+        expect(oldEvidence.generatedAt == now, "Reading old payload cannot renew generation time")
+
+        try await repositoryTests()
+        print("PASS Native weather: provenance, exact values, units, nulls, civil dates/DST, current selection, authentic quarter-hours, shared weather semantics, scoped thunder, cache and request isolation")
+    }
+
+    static func repositoryTests() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("nearcast-native-forecast-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ForecastProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let repository = NativeForecastRepository(cacheDirectory: root, session: session)
+        let now = Date()
+        ForecastProtocol.payload = try data(fixture(now: now))
+        ForecastProtocol.status = 200
+        let fresh = try await repository.fetch(latitude: 38.72, longitude: -89.95, metric: false, now: now)
+        let cached = await repository.cached(latitude: 38.72, longitude: -89.95, metric: false)
+        expect(cached?.generatedAt == fresh.generatedAt, "Cache fetch preserves source timestamp")
+        let query = URLComponents(url: ForecastProtocol.requests.last!.url!, resolvingAgainstBaseURL: false)!
+        expect(query.host == "getnearcast.app" && query.path == "/api/forecast", "Only normalized service is requested")
+        expect(query.queryItems?.first(where: { $0.name == "precipitation_unit" })?.value == "mm", "Request mm independently of temperature preference")
+        let wrongPlace = await repository.cached(latitude: 39.0, longitude: -89.95, metric: false)
+        let wrongUnits = await repository.cached(latitude: 38.72, longitude: -89.95, metric: true)
+        expect(wrongPlace == nil && wrongUnits == nil, "Cache cannot cross places or unit systems")
+        ForecastProtocol.status = 503
+        do {
+            _ = try await repository.fetch(latitude: 38.72, longitude: -89.95, metric: false, now: now)
+            preconditionFailure("HTTP failure must propagate")
+        } catch {}
+        let retained = await repository.cached(latitude: 38.72, longitude: -89.95, metric: false)
+        expect(retained?.generatedAt == fresh.generatedAt, "Failed refresh preserves valid cached forecast")
+        ForecastProtocol.status = 200
+        ForecastProtocol.payload = try data(fixture(now: now.addingTimeInterval(-3600)))
+        _ = try await repository.fetch(latitude: 38.72, longitude: -89.95, metric: false, now: now)
+        let newer = await repository.cached(latitude: 38.72, longitude: -89.95, metric: false)
+        expect(newer?.generatedAt == fresh.generatedAt, "Delayed old response cannot replace a newer cached forecast")
+        let cacheFiles = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        try Data("interrupted payload".utf8).write(to: cacheFiles[0], options: .atomic)
+        let corrupt = await repository.cached(latitude: 38.72, longitude: -89.95, metric: false)
+        expect(corrupt == nil, "Corrupt cache is unavailable, not fatal")
+
+        ForecastProtocol.status = 200
+        for index in 0..<15 {
+            let latitude = 38.72 + Double(index) * 0.01
+            ForecastProtocol.payload = try data(fixture(now: now, latitude: latitude))
+            _ = try await repository.fetch(latitude: latitude, longitude: -89.95, metric: false, now: now)
+        }
+        let bounded = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        expect(bounded.count <= 12, "Disk forecast cache is bounded")
+        let stale = now.addingTimeInterval(-49 * 3600)
+        ForecastProtocol.payload = try data(fixture(now: stale, latitude: 42))
+        _ = try await repository.fetch(latitude: 42, longitude: -89.95, metric: false, now: now)
+        let expired = await repository.cached(latitude: 42, longitude: -89.95, metric: false)
+        expect(expired == nil, "Expired offline cache cannot masquerade as usable weather")
+    }
+}

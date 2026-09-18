@@ -91,6 +91,7 @@ run_portable_checks() {
     day-overview-smoke.mjs \
     nearcast-brief-smoke.mjs \
     settings-onboarding-smoke.mjs \
+    native-preview-handoff-smoke.mjs \
     nearcast-place-label-test.mjs
   do
     node "$ROOT/scripts/$smoke"
@@ -107,6 +108,8 @@ run_native_model_checks() {
     exit 1
   fi
   "$ROOT/scripts/test-nearcast-watch-snapshot.sh"
+  bash "$ROOT/scripts/test-native-weather-forecast.sh"
+  bash "$ROOT/scripts/test-native-weather-preview.sh"
   printf 'PASS  Native shared-model checks\n'
 }
 

@@ -1,4 +1,4 @@
-const VERSION = "3.0.408";
+const VERSION = "3.0.409";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -4616,6 +4616,223 @@ function syncAppDockCurrent() {
   setAppDockCurrent(activeAppDockDestination());
 }
 
+// This bridge exports presentation context only. The existing app remains the
+// owner of saved records, notification choices and system-surface publications.
+let nativePreviewContextPlaces = [];
+let nativePreviewHandoffInFlight = false;
+
+function nativePreviewPlaceRecord(place, timezone = null) {
+  if (!place || typeof place !== "object") return null;
+  const id = String(place.id || "").trim();
+  const name = placeLabel(place).trim().slice(0, 180);
+  const latitude = place.latitude;
+  const longitude = place.longitude;
+  if (!id || id.length > 160 || !name || typeof latitude !== "number" || typeof longitude !== "number" ||
+      !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  const record = { id, name, latitude, longitude };
+  const zone = timezone || place.timezone;
+  if (typeof zone === "string" && zone.length <= 100) {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: zone });
+      record.timezone = zone;
+    } catch { /* Missing/invalid zones are resolved by the native forecast. */ }
+  }
+  return record;
+}
+
+function buildNativePreviewContext() {
+  const selectedTimezone = state.forecastPlaceId === state.activePlace?.id ? state.forecast?.timezone : null;
+  const selectedPlace = nativePreviewPlaceRecord(state.activePlace, selectedTimezone);
+  if (!selectedPlace) throw new Error("Open a place before trying the native weather preview.");
+  const candidates = (Array.isArray(state.savedPlaces) ? state.savedPlaces : [])
+    .map((place) => ({ record: nativePreviewPlaceRecord(place), original: place }))
+    .filter((entry) => entry.record).slice(0, 60);
+  // Retain structured place fields locally. A qualified display name is never
+  // reparsed into a new city/state, and no private record enters the export.
+  nativePreviewContextPlaces = [
+    { record: selectedPlace, original: { ...state.activePlace } },
+    ...candidates.map((entry) => ({ record: entry.record, original: { ...entry.original } }))
+  ];
+  return {
+    version: 1,
+    selectedPlace,
+    savedPlaces: candidates.map((entry) => entry.record),
+    metric: state.unit === "celsius",
+    uses24HourClock: prefersTwentyFourHourClock(),
+    theme: ["light", "dark", "auto"].includes(state.theme) ? state.theme : "auto"
+  };
+}
+
+function updateNativePreviewEntry() {
+  const button = document.getElementById("nativeWeatherPreview");
+  if (button) {
+    button.hidden = window.NearcastNative?.preview?.version !== 1;
+    // The shared menu-button class sets display:flex, overriding UA [hidden].
+    button.style.display = button.hidden ? "none" : "";
+  }
+}
+
+function openNativeWeatherPreview() {
+  if (window.NearcastNative?.preview?.version !== 1 || typeof window.NearcastNative.preview.open !== "function") return;
+  try {
+    const context = buildNativePreviewContext();
+    window.NearcastNative.preview.open(context);
+    closeAppMenu();
+  } catch {
+    setStatus("Open a place before trying the native weather preview.", true);
+  }
+}
+
+function nativePreviewPlacesEqual(left, right) {
+  return Boolean(left && right && left.id === right.id && left.name === right.name &&
+    left.latitude === right.latitude && left.longitude === right.longitude &&
+    (left.timezone || null) === (right.timezone || null));
+}
+
+function nativePreviewHandoffRequest(payload) {
+  if (!payload || payload.version !== 1 || !["map", "plans", "ask", "details"].includes(payload.destination)) {
+    throw new Error("This preview destination is not supported. Reload Nearcast and try again.");
+  }
+  const place = payload.place;
+  const sanitizedPlace = nativePreviewPlaceRecord(place);
+  if (!place || typeof place.id !== "string" || typeof place.name !== "string" ||
+      !sanitizedPlace || place.name.length > 180 ||
+      (place.timezone != null && sanitizedPlace.timezone !== place.timezone)) {
+    throw new Error("The requested place is unavailable. Open the preview again.");
+  }
+  const date = payload.targetDate ?? null;
+  if (date !== null && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date)) {
+    throw new Error("The requested forecast date is invalid.");
+  }
+  // The cached native preview may outlive this document. In that case only a
+  // still-known active/saved place can be handed back, never an arbitrary URL.
+  const current = [state.activePlace, ...(Array.isArray(state.savedPlaces) ? state.savedPlaces : [])]
+    .filter(Boolean).flatMap((original) => {
+      const record = nativePreviewPlaceRecord(original);
+      const timezone = original.id === state.forecastPlaceId ? state.forecast?.timezone : null;
+      const withTimezone = timezone ? nativePreviewPlaceRecord(original, timezone) : null;
+      return [{ original, record }, ...(withTimezone ? [{ original, record: withTimezone }] : [])];
+    });
+  const match = [...nativePreviewContextPlaces, ...current].find((entry) => nativePreviewPlacesEqual(entry.record, place));
+  if (!match) throw new Error("The requested place is no longer available. Open the preview again.");
+  return { destination: payload.destination, place: { ...match.original }, targetDate: date };
+}
+
+function nativePreviewForecastMatches(place) {
+  return Boolean(state.forecast && state.activePlace && state.activePlace.id === place.id &&
+    state.activePlace.latitude === place.latitude && state.activePlace.longitude === place.longitude &&
+    state.forecastPlaceId === state.activePlace.id);
+}
+
+function nativePreviewMapIntent(request) {
+  if (request.targetDate === null) return nearcastMapIntentForNow(request.place);
+  const data = state.forecast;
+  const start = parseForecastTimestamp(`${request.targetDate}T00:00`, data);
+  const lastHour = parseForecastTimestamp(`${request.targetDate}T23:00`, data);
+  if (!Number.isFinite(start) || !Number.isFinite(lastHour)) throw new Error("The requested map date is unavailable.");
+  const end = lastHour + 60 * 60 * 1000;
+  const now = forecastNowMs(data);
+  if (now >= start && now < end) return nearcastMapIntentForNow(request.place);
+  return {
+    source: start > now ? "forecast" : "radar",
+    timestamp: start,
+    endTimestamp: end,
+    event: `Selected day · ${request.targetDate}`,
+    ...nearcastMapIntentPlace(request.place)
+  };
+}
+
+function nativePreviewMapCoversDate(intent) {
+  if (!Number.isFinite(intent.timestamp) || !Number.isFinite(intent.endTimestamp)) return true;
+  const frame = mapState.frames?.[mapState.frameIndex];
+  if (!frame || activeMapSource(frame) !== intent.source) return false;
+  const selected = rawMapTimelineTimestamp(frame);
+  // Read the actual visible timeline, not intentResolution: enhancement can
+  // replace the available frames after initial selection. Never accept a
+  // nearest-frame clamp from another day as this requested day's weather.
+  return Number.isFinite(selected) && selected >= intent.timestamp && selected < intent.endTimestamp;
+}
+
+async function handoffNativePreview(payload) {
+  const request = nativePreviewHandoffRequest(payload);
+  if (request.destination === "ask" && typeof askStreaming !== "undefined" && askStreaming) {
+    throw new Error("Wait for the current Nearcast reply to finish, then try again.");
+  }
+  if (nativePreviewHandoffInFlight) throw new Error("Nearcast is already opening a preview destination.");
+  nativePreviewHandoffInFlight = true;
+  try {
+    if (!nativePreviewForecastMatches(request.place)) await loadPlace(request.place);
+    // loadPlace deliberately catches errors and may restore the previous place.
+    // Do not navigate unless its completed result is the exact requested place.
+    if (!nativePreviewForecastMatches(request.place)) throw new Error("Could not load weather for the requested place. Please try again.");
+    const dayIndex = request.targetDate === null ? -1 : state.forecast.daily?.time?.indexOf(request.targetDate) ?? -1;
+    if (request.targetDate !== null && dayIndex < 0) throw new Error("That date is outside the available forecast. Choose another day.");
+    if (request.destination === "map") {
+      const intent = nativePreviewMapIntent(request);
+      // Open the requested map directly, not an intermediate day sheet plus a
+      // fire-and-forget dock tap. Map setup can fail or finish asynchronously.
+      // Initialize without launching the competing inline radar-frame request.
+      if (!await ensureMapBasemapConfigured()) throw new Error("The weather map is unavailable. Please try again.");
+      if (!nativePreviewForecastMatches(request.place)) throw new Error("The selected place changed. Please try again.");
+      if (!initMap()) throw new Error("The weather map could not start. Please try again.");
+      syncMapToPlace();
+      setAppDockCurrent("map");
+      try {
+        const opened = await openNearcastMapIntent(intent);
+        if (opened !== true || !mapState.immersive || !nativePreviewForecastMatches(request.place)) {
+          throw new Error("The requested weather map did not finish opening. Please try again.");
+        }
+        if (!nativePreviewMapCoversDate(intent)) {
+          exitImmersiveMap();
+          mapState.openIntent = null;
+          mapState.pendingOpenIntent = null;
+          mapState.intentResolution = null;
+          syncAppDockCurrent();
+          return { ok: false, reason: "map-date-unavailable" };
+        }
+      } catch (error) {
+        syncAppDockCurrent();
+        throw error;
+      }
+    } else if (request.destination === "plans") {
+      openGlobalMemorySheet();
+    } else if (request.destination === "ask") {
+      const focusDayIndex = dayIndex >= 0 ? dayIndex : forecastDailyIndex(state.forecast);
+      const targetDate = state.forecast.daily?.time?.[focusDayIndex];
+      const windowArtifact = nearcastWindowArtifact(state.activePlace, {
+        dayIdx: focusDayIndex, startHour: 0, endHour: 24, period: "day"
+      }, null, { targetDate, dayText: targetDate });
+      if (!windowArtifact) throw new Error("Forecast context for that day is unavailable. Please try again.");
+      openAISheet({ autoBrief: false, surface: "forecast" });
+      // Explicit handoff changes conversational focus, not saved plan memory.
+      // Seed after opening because openAISheet also remembers its surface; the
+      // exact selected day must outrank a prior same-place window/view artifact.
+      rememberNearcastAgentArtifacts([
+        nearcastPlaceArtifact(state.activePlace),
+        windowArtifact,
+        nearcastViewArtifact("day", state.activePlace, null, windowArtifact)
+      ].filter(Boolean));
+    } else if (dayIndex >= 0) {
+      openDayFromIndex(dayIndex, { persistInitialMode: false });
+    } else {
+      const details = document.getElementById("weatherEssentials");
+      if (!details || details.hidden) throw new Error("Weather details are not available yet. Please try again.");
+      resetTransientViewToForecastTop();
+      // The legacy reset schedules its top scroll for the next frame. Wait for
+      // it before targeting details so that it cannot undo the handoff scroll.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (!nativePreviewForecastMatches(request.place)) throw new Error("The selected place changed. Please try again.");
+      details.scrollIntoView({ block: "start", behavior: "auto" });
+    }
+    return { ok: true };
+  } finally {
+    nativePreviewHandoffInFlight = false;
+  }
+}
+
+window.NearcastNativePreview = { version: 1, handoff: handoffNativePreview };
+
 function handleAppDockAction(action) {
   if (action === "today") {
     setAppDockCurrent("today");
@@ -4699,6 +4916,9 @@ function dismissStormImpactFromControl(event) {
 function bindEvents() {
   document.addEventListener("click", blockGuardedClickThrough, true);
   installSkyWorkMotionPause();
+  bindTapAction(document.getElementById("nativeWeatherPreview"), openNativeWeatherPreview);
+  window.addEventListener("nearcast-native-ready", updateNativePreviewEntry);
+  updateNativePreviewEntry();
 
   els.searchForm.addEventListener("submit", async (event) => {
     event.preventDefault();

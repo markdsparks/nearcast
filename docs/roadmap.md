@@ -4,7 +4,7 @@
 
 The approved direction is a fully native main iPhone experience, delivered in tested phases while retaining the weather services and existing native platform work. The authoritative sequencing, ownership/rollback rules, and intermediate family TestFlight gates are in [Native migration plan](native-migration-plan.md).
 
-Primary acceptance devices are iPhone 17 Pro and iPhone 17 Pro Max on iOS 27, plus Apple Watch Ultra 2. Implementation/device acceptance is still pending. The first milestone is a read-only native Today → Hourly/15-minute → selected-day journey; the current app remains available during testing. Urgent fixes continue, but major new web-only UI features pause. No new provider, account, permission, or notification policy is introduced by the migration.
+Primary acceptance devices are iPhone 17 Pro and iPhone 17 Pro Max on iOS 27, plus Apple Watch Ultra 2 on watchOS 27. The read-only native Today → Hourly/15-minute → selected-day preview is implemented for the first comparison round; physical-device and family acceptance remain pending. See the [baseline and remaining gates](native-migration-baseline.md) and [TestFlight A notes](native-preview-testflight-a.md). The existing app remains default. Urgent fixes continue, but major new web-only UI features pause. No new provider, account, permission, or notification policy is introduced by the migration.
 
 The roadmap below records the pre-migration product priorities and shipped baseline. It does not override the phased migration plan.
 

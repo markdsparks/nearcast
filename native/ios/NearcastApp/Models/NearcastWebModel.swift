@@ -11,6 +11,9 @@ final class NearcastWebModel: ObservableObject {
     @Published var lastError: String?
     @Published var lastBridgeMessage = "No bridge messages yet"
     @Published private(set) var navigationRevision = 0
+    @Published var showingNativePreview = false
+    @Published private(set) var nativePreviewContext = NativePreviewContextStore.load()
+    @Published var nativePreviewError: String?
 
     private weak var webView: WKWebView?
     private var localURL: URL
@@ -79,6 +82,8 @@ final class NearcastWebModel: ObservableObject {
         loadTimeoutTask = nil
         isLoading = false
         hasLoadedPage = true
+        // A slow successful navigation must dismiss an earlier timeout banner.
+        lastError = nil
     }
 
     func setError(_ error: Error?) {
@@ -111,11 +116,67 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func openNotification(userInfo: [AnyHashable: Any]) {
+        showingNativePreview = false
         requestNavigation(to: notificationTargetURL(userInfo: userInfo, baseURL: currentBaseURL), force: true)
     }
 
     func openDeepLink(_ url: URL) {
+        if url.scheme == "nearcast", url.host == "native-preview" {
+            openCachedNativePreview()
+            return
+        }
+        showingNativePreview = false
         requestNavigation(to: deepLinkTargetURL(url, baseURL: currentBaseURL), force: shouldForceDeepLinkNavigation(url))
+    }
+
+    func openNativePreview(data: Data) {
+        do {
+            let context = try NativePreviewContext.decode(data)
+            nativePreviewContext = context
+            NativePreviewContextStore.save(context)
+            nativePreviewError = nil
+            showingNativePreview = true
+        } catch {
+            nativePreviewError = NativePreviewError.invalidContext.localizedDescription
+        }
+    }
+
+    func openCachedNativePreview() {
+        guard nativePreviewContext != nil else {
+            nativePreviewError = "Open a place, then choose Native weather preview from the Nearcast menu first."
+            return
+        }
+        showingNativePreview = true
+    }
+
+    /// Explicitly leaves the read-only preview. The fully hydrated existing app
+    /// owns subsequent place changes/publication and any requested mutations.
+    func handoffNativePreview(_ handoff: NativePreviewHandoff) {
+        showingNativePreview = false
+        guard hasLoadedPage, let webView,
+              let data = try? JSONEncoder().encode(handoff),
+              let payload = try? JSONSerialization.jsonObject(with: data) else {
+            nativePreviewError = "The existing app is not ready. Return to Nearcast and let it finish loading before opening this view."
+            return
+        }
+        webView.callAsyncJavaScript("""
+            if (window.NearcastNativePreview?.version !== 1) {
+                throw new Error('Reload Nearcast to enable this preview handoff.');
+            }
+            return await window.NearcastNativePreview.handoff(payload);
+            """, arguments: ["payload": payload], in: nil, in: .page) { [weak self] result in
+                switch result {
+                case .success(let value):
+                    let response = value as? [String: Any]
+                    if response?["reason"] as? String == "map-date-unavailable" {
+                        self?.nativePreviewError = "The map forecast doesn't reach that day yet. Its timeline has a shorter range than the daily forecast."
+                    } else if response?["ok"] as? Bool != true {
+                        self?.nativePreviewError = "That view did not finish opening. Return to Nearcast and try again."
+                    }
+                case .failure:
+                    self?.nativePreviewError = "Could not open that exact place and view. Reload Nearcast and try again."
+                }
+            }
     }
 
     private var currentBaseURL: URL {

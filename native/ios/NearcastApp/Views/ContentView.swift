@@ -36,6 +36,19 @@ struct ContentView: View {
             guard newPhase == .active else { return }
             model.recoverIfNeededOnActivation()
         }
+        .fullScreenCover(isPresented: $model.showingNativePreview) {
+            if let context = model.nativePreviewContext {
+                NativeWeatherPreviewContainer(context: context, webModel: model)
+            }
+        }
+        .alert("Native preview", isPresented: Binding(
+            get: { model.nativePreviewError != nil },
+            set: { if !$0 { model.nativePreviewError = nil } }
+        )) {
+            Button("OK") { model.nativePreviewError = nil }
+        } message: {
+            Text(model.nativePreviewError ?? "")
+        }
     }
 
     private var shouldShowStartupOverlay: Bool {
@@ -96,6 +109,13 @@ struct ContentView: View {
                         .tint(Color(red: 0.16, green: 0.43, blue: 0.75))
                         .padding(.top, 4)
                 }
+                if model.nativePreviewContext != nil {
+                    Button("Open native weather preview") {
+                        model.openCachedNativePreview()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.top, 4)
+                }
             }
             .padding(28)
         }
@@ -134,4 +154,31 @@ struct ContentView: View {
         .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
     }
     #endif
+}
+
+private struct NativeWeatherPreviewContainer: View {
+    @StateObject private var preview: NativeWeatherPreviewModel
+    @ObservedObject var webModel: NearcastWebModel
+
+    init(context: NativePreviewContext, webModel: NearcastWebModel) {
+        _preview = StateObject(wrappedValue: NativeWeatherPreviewModel(context: context))
+        self.webModel = webModel
+    }
+
+    var body: some View {
+        NativeWeatherPreviewView(
+            model: preview,
+            onClose: { webModel.showingNativePreview = false },
+            onLegacy: { destination in
+                webModel.handoffNativePreview(NativePreviewHandoff(
+                    destination: destination,
+                    place: preview.selectedPlace,
+                    date: preview.selectedDay,
+                    timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone
+                ))
+            }
+        )
+        .task { await preview.refresh() }
+        .onDisappear { preview.cancel() }
+    }
 }

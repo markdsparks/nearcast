@@ -91,7 +91,13 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         let frameURL = message.frameInfo.request.url
         let isMainFrame = message.frameInfo.isMainFrame
-        model?.recordBridgeMessage(message.body)
+        if let payload = message.body as? [String: Any], payload["type"] as? String == "preview.open" {
+            // The preview export contains saved-place coordinates. Diagnostics
+            // need the event, not a second copy of the family's place list.
+            model?.recordBridgeMessage(["type": "preview.open"])
+        } else {
+            model?.recordBridgeMessage(message.body)
+        }
         handleBridgeMessage(message.body, frameURL: frameURL, isMainFrame: isMainFrame)
     }
 
@@ -538,6 +544,14 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             };
           }
 
+          // Versioned opt-in preview; no ownership transfer or permission request.
+          window.NearcastNative.preview = {
+            version: 1,
+            open(context) {
+              window.NearcastNative.postMessage({ type: "preview.open", context });
+            }
+          };
+
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
             detail: { platform: "ios", version: "0.4.0" }
           }));
@@ -550,6 +564,15 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     private func handleBridgeMessage(_ body: Any, frameURL: URL?, isMainFrame: Bool) {
         guard let payload = body as? [String: Any],
               let type = payload["type"] as? String else {
+            return
+        }
+
+        if type == "preview.open" {
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame),
+                  UIApplication.shared.applicationState == .active,
+                  let context = payload["context"] as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: context) else { return }
+            model?.openNativePreview(data: data)
             return
         }
 

@@ -902,6 +902,8 @@ function createMapHarness() {
     ${extractFunction(source, "rawMapCanonicalFrame")}
     ${extractFunction(source, "rawMapTimelineTimestamp")}
     ${extractFunction(source, "rawMapClosestFrameIndex")}
+    ${extractFunction(source, "mapIntentTimestamp")}
+    ${extractFunction(source, "rawMapFramesCoverIntentWindow")}
     ${extractFunction(source, "applyRawMapEnhancement")}
     ${extractFunction(source, "standardTimelineTimeRange")}
     ${extractFunction(source, "standardTimelineNowTimestamp")}

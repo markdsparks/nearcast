@@ -7420,10 +7420,26 @@ function scheduleRawMapEnhancement(timelineKind = mapState.timelineKind) {
   });
 }
 
+function rawMapFramesCoverIntentWindow(frames, intent) {
+  const requested = mapIntentTimestamp(intent?.timestamp);
+  if (intent?.source !== "forecast" || requested === null) return false;
+  const end = mapIntentTimestamp(intent?.endTimestamp);
+  const hasWindow = end !== null && end > requested;
+  return frames.some((frame) => {
+    if (activeMapSource(frame) !== "forecast") return false;
+    const timestamp = rawMapTimelineTimestamp(frame);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
+    // A selected day is an interval: a legitimate later frame within that day
+    // satisfies it. Point-time intents retain the existing 20-minute tolerance.
+    return hasWindow
+      ? timestamp >= requested && timestamp < end
+      : Math.abs(timestamp - requested) <= 20 * 60 * 1000;
+  });
+}
+
 function applyRawMapEnhancement(result) {
   const descriptors = Array.isArray(result?.frames) ? result.frames : [];
   if (!descriptors.length || !mapState.frames.length) return 0;
-  cancelStandardTimelineScrub();
   const fallbackFrames = Array.isArray(mapState.rawMap.fallbackFrames)
     ? mapState.rawMap.fallbackFrames.map((frame) => ({ ...frame }))
     : mapState.frames.map((frame) => clearRawMapFrameDecoration(frame));
@@ -7435,6 +7451,12 @@ function applyRawMapEnhancement(result) {
   const rawForecast = rawMapCanonicalFrames(result.forecast, "forecast", fallbackFrames);
   const fallbackObserved = fallbackFrames.filter((frame) => activeMapSource(frame) === "radar");
   const fallbackForecast = fallbackFrames.filter((frame) => activeMapSource(frame) === "forecast");
+
+  // Raw guidance has a shorter horizon than the NDFD fallback. Enhancement
+  // arriving after map-open must not replace a valid requested future day with
+  // a nearest frame from today. Keep the existing genuine forecast timeline.
+  if (rawForecast.length && rawMapFramesCoverIntentWindow(fallbackForecast, mapState.openIntent)
+      && !rawMapFramesCoverIntentWindow(rawForecast, mapState.openIntent)) return 0;
 
   let observed = rawObserved.length ? rawObserved : fallbackObserved;
   let forecast = rawForecast.length ? rawForecast : fallbackForecast;
@@ -7462,6 +7484,7 @@ function applyRawMapEnhancement(result) {
   const enhancedFrames = frames.filter((frame) => frame?.rawMapIndexUrl).length;
   if (!enhancedFrames) return 0;
 
+  cancelStandardTimelineScrub();
   mapState.frames = frames;
   mapState.nowIndex = nowIndex;
   mapState.xfadeFrames = [null, null];
@@ -7471,7 +7494,13 @@ function applyRawMapEnhancement(result) {
   if (selectedWasNow && observedIndexes.length) {
     mapState.frameIndex = nowIndex;
   } else {
-    mapState.frameIndex = rawMapClosestFrameIndex(frames, selectedTimestamp);
+    const preserveIntentWindow = rawMapFramesCoverIntentWindow([selectedFrame], mapState.openIntent);
+    const candidates = preserveIntentWindow ? frames.map((frame, index) => ({ frame, index }))
+      .filter(({ frame }) => rawMapFramesCoverIntentWindow([frame], mapState.openIntent)) : [];
+    mapState.frameIndex = candidates.length
+      ? candidates.reduce((closest, item) => Math.abs(rawMapTimelineTimestamp(item.frame) - selectedTimestamp)
+          < Math.abs(rawMapTimelineTimestamp(closest.frame) - selectedTimestamp) ? item : closest).index
+      : rawMapClosestFrameIndex(frames, selectedTimestamp);
   }
   syncStandardTimelineSlider(mapState.frameIndex);
   prefetchRawMapFramesAround(mapState.frameIndex);
