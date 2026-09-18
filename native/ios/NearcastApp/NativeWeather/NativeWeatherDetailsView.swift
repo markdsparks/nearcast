@@ -335,6 +335,7 @@ private struct NativeDetailFact: View {
 private struct NativeDetailTrend: View {
     let presentation: NativeWeatherDetailPresentation
     let kind: NativeWeatherDetailKind
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private struct Sample: Identifiable { let date: Date; let value: Double; let segment: Int; var id: Date { date } }
     private var samples: [Sample] {
         guard let path = kind.keyPath else { return [] }
@@ -359,9 +360,15 @@ private struct NativeDetailTrend: View {
                         .accessibilityValue(presentation.formatted(kind == .visibility ? sample.value * (presentation.forecast.metric ? 1000 : 1609.344) : sample.value, kind: kind))
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                    AxisMarks(values: .automatic(desiredCount: dynamicTypeSize.isAccessibilitySize ? 2 : 4)) { value in
                         AxisGridLine()
-                        AxisValueLabel { if let date = value.as(Date.self) { Text(presentation.clock(date)).font(.caption2) } }
+                        // Keep clock labels at the user's text size. If an axis
+                        // is still crowded, omit a tick instead of truncating it.
+                        AxisValueLabel(collisionResolution: .greedy(minimumSpacing: 12)) {
+                            if let date = value.as(Date.self) {
+                                Text(presentation.clock(date)).font(.caption2).fixedSize()
+                            }
+                        }
                     }
                 }
                 .frame(height: 170)
