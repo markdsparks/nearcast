@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nearcast native controls QA setup</title>
+<style>
+  body { font: 17px system-ui; margin: 130px 24px 40px; color: #14232b; background: #f1f7fa; }
+  button { font: inherit; padding: 16px; width: 100%; }
+  p { line-height: 1.5; }
+</style>
+<h1>Native controls QA</h1>
+<p>Isolated simulator only. This replaces this loopback origin’s saved places with two public test cities and disables its place watches. It does not touch the production website’s records.</p>
+<button id="prepare">Prepare fixture and open Nearcast</button>
+<p><button id="refresh">Refresh test assets, keeping saved records</button></p>
+<p id="status" role="status"></p>
+<script>
+  function allowed() {
+    return location.hostname === "127.0.0.1" && window.NearcastNative?.preview?.controlsVersion === 1;
+  }
+  async function refreshAssets() {
+    if (!allowed()) throw new Error("Use the isolated local Debug simulator.");
+    const registrations = await navigator.serviceWorker?.getRegistrations() ?? [];
+    await Promise.all(registrations.map(registration => registration.unregister()));
+    if (typeof caches !== "undefined") await Promise.all((await caches.keys()).map(key => caches.delete(key)));
+  }
+  document.getElementById("refresh").addEventListener("click", async () => {
+    try { await refreshAssets(); location.href = "/"; }
+    catch { document.getElementById("status").textContent = "Use the isolated local Debug simulator."; }
+  });
+  document.getElementById("prepare").addEventListener("click", async () => {
+    if (location.hostname !== "127.0.0.1" || window.NearcastNative?.preview?.controlsVersion !== 1) {
+      document.getElementById("status").textContent = "Use the isolated local Debug simulator.";
+      return;
+    }
+    const home = { id: 4243918, name: "Maryville", admin1: "Illinois", country: "United States", countryCode: "US",
+      latitude: 38.723, longitude: -89.956, alias: "Fixture home", timezone: "America/Chicago", followsCurrentLocation: false };
+    const away = { id: 2878234, name: "Leverkusen", admin1: "North Rhine-Westphalia", country: "Germany", countryCode: "DE",
+      latitude: 51.0459, longitude: 7.0192, timezone: "Europe/Berlin", followsCurrentLocation: false };
+    const values = {
+      "weather-places": JSON.stringify([home, away]), "weather-last-place": JSON.stringify(home),
+      "weather-unit": "fahrenheit", "weather-theme": "auto", "nearcast-time-format": "24",
+      "nearcast-reactive-sky-v1": "0", "nearcast-reactive-sky-motion-v1": "0",
+      "nearcast-place-watch-notification-places-v1": JSON.stringify({ enabled: false, selectedIds: [] })
+    };
+    Object.entries(values).forEach(([key, value]) => localStorage.setItem(key, value));
+    await refreshAssets();
+    location.href = "/";
+  });
+</script>
+</html>

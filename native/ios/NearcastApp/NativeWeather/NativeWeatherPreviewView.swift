@@ -1,12 +1,14 @@
 import SwiftUI
 import Charts
 
-/// An opt-in, read-only native weather journey. Durable records and publishers
-/// remain owned by the existing app until their separate migration gate passes.
+/// An opt-in native weather journey. Explicit Places/Settings edits write
+/// through to the existing owner until the separate ownership gate passes.
 struct NativeWeatherPreviewView: View {
     @ObservedObject var model: NativeWeatherPreviewModel
     let onClose: () -> Void
     let onLegacy: (NativeLegacyDestination) -> Void
+    var onPlaces: (() -> Void)? = nil
+    var onSettings: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -119,6 +121,12 @@ struct NativeWeatherPreviewView: View {
                         .accessibilityLabel("Close native preview")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    if let onSettings {
+                        Button(action: onSettings) { Image(systemName: "gearshape") }
+                            .accessibilityLabel("Places and settings")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { weatherDetail = .overview } label: { Image(systemName: "list.bullet") }
                         .accessibilityLabel("Weather details")
                         .accessibilityHint("Air quality, sun, wind, UV and official alerts")
@@ -144,7 +152,7 @@ struct NativeWeatherPreviewView: View {
                 }
                 Button("Stay in native preview", role: .cancel) { legacyDestination = nil }
             } message: {
-                Text("Continue with \(model.selectedPlace.name) in the existing app. This may change its selected place and update its normal widget and Watch weather. Closing the preview instead leaves your selected place unchanged.")
+                Text("Continue with \(model.selectedPlace.name) in the existing app. Places and Settings changes are already saved. This view uses the existing app’s normal widget and Watch updates.")
             }
             .onChange(of: model.selectedDay) { _, _ in
                 if !offersQuarterHours { interval = .hourly }
@@ -217,7 +225,25 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var placePicker: some View {
-        Menu {
+        Group {
+          if let onPlaces {
+            Button(action: onPlaces) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(model.selectedPlace.name)
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .foregroundStyle(.primary)
+            .accessibilityLabel("Places, \(model.selectedPlace.name)")
+            .accessibilityHint("Choose, add or edit your saved places")
+          } else {
+           Menu {
             ForEach(model.places, id: \.coordinateIdentity) { place in
                 Button { model.selectPlace(place) } label: {
                     if place.coordinateIdentity == model.selectedPlace.coordinateIdentity {
@@ -247,6 +273,8 @@ struct NativeWeatherPreviewView: View {
         .disabled(model.places.isEmpty)
         .foregroundStyle(.primary)
         .accessibilityHint("Choose a temporary place for this preview. Saved places are unchanged.")
+          }
+        }
     }
 
     @ViewBuilder
@@ -975,7 +1003,9 @@ struct NativeWeatherPreviewView: View {
                 Text("Forecast updated \(relativeAge(generatedAt))")
             }
             Link("Weather data: Open-Meteo · Nearcast", destination: URL(string: "https://open-meteo.com/")!)
-            Text("Preview only · saved places, plans, notifications and Watch are unchanged")
+            Text(onPlaces == nil
+                ? "Preview only · saved places, plans, notifications and Watch are unchanged"
+                : "Native preview · Places and Settings changes are saved in Nearcast")
         }
         .font(.caption)
         .foregroundStyle(.secondary)

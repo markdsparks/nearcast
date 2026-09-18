@@ -548,6 +548,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           window.NearcastNative.preview = {
             version: 1,
             migrationVersion: 1,
+            controlsVersion: 1,
             open(context, migration) {
               // A separate local rehearsal, never an ownership handover. Older
               // pages still call open(context) and keep the same preview path.

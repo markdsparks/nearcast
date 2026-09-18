@@ -72,7 +72,7 @@ struct NativeWeatherPreviewTests {
         } catch {}
     }
 
-    static func payload(place: NativePreviewPlace, now: Date, temperature: Double) throws -> Data {
+    static func payload(place: NativePreviewPlace, now: Date, temperature: Double, metric: Bool = false) throws -> Data {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: place.timezone!)!
@@ -84,12 +84,12 @@ struct NativeWeatherPreviewTests {
         formatter.dateFormat = "yyyy-MM-dd"
         let value: [String: Any] = ["timezone": place.timezone!,
             "_nearcastForecast": ["version": 1, "latitude": place.latitude, "longitude": place.longitude,
-                "unit": "fahrenheit", "precipitationUnit": "mm", "generatedAtMs": now.timeIntervalSince1970 * 1000],
+                "unit": metric ? "celsius" : "fahrenheit", "precipitationUnit": "mm", "generatedAtMs": now.timeIntervalSince1970 * 1000],
             "current": ["time": current, "temperature_2m": temperature, "weather_code": 0, "is_day": 1],
-            "current_units": ["temperature_2m": "°F"],
+            "current_units": ["temperature_2m": metric ? "°C" : "°F"],
             "daily": ["time": dates.map { formatter.string(from: $0) },
                 "temperature_2m_max": [temperature + 5, temperature + 6, temperature + 7], "weather_code": [0, 0, 0]],
-            "daily_units": ["temperature_2m_max": "°F"]]
+            "daily_units": ["temperature_2m_max": metric ? "°C" : "°F"]]
         return try JSONSerialization.data(withJSONObject: value)
     }
 
@@ -244,6 +244,25 @@ struct NativeWeatherPreviewTests {
         await cancelledTask.value
         expect(model.forecast?.current?.temperature == 84 && !model.isLoading && model.errorMessage == nil,
             "Task cancellation does not replace weather or display a spurious failure")
-        print("PASS Native preview: allowlisted context validation, coordinate dedup, preferences, storage isolation, exact date/place handoff, route behavior, cached failure recovery, place races and cancellation")
+        model.showHourly(day: tomorrow)
+        model.applyManagedContext(context(selected: placeB, saved: [placeA], theme: "dark", clock24: false))
+        expect(model.context.theme == "dark" && !model.context.uses24HourClock &&
+            model.selectedDay == tomorrow && model.forecast?.current?.temperature == 84,
+            "Verified clock/appearance edits preserve the selected day and displayed forecast")
+        PreviewForecastProtocol.configure("39.72000", response: .init(
+            data: try payload(place: placeB, now: now, temperature: 24, metric: true), status: 200, delay: 0))
+        model.applyManagedContext(context(selected: placeB, saved: [placeA], metric: true, clock24: false))
+        expect(model.forecast == nil && model.selectedDay == tomorrow && model.context.metric,
+            "A verified units change clears old-unit weather without losing the selected day")
+        try await waitUntil("metric weather loaded") { model.forecast?.metric == true && !model.isLoading }
+        expect(model.forecast?.current?.temperature == 24, "Unit changes use the matching native forecast, not relabeled numbers")
+        PreviewForecastProtocol.configure("38.72000", response: .init(data: dataA, status: 200, delay: 0))
+        model.applyManagedContext(context(selected: placeA, saved: []))
+        expect(model.selectedPlace == placeA && model.selectedDay == nil && model.destination == .today && model.forecast == nil,
+            "A verified saved-place selection resets date and removes previous-place weather")
+        try await waitUntil("managed place loaded") { model.forecast?.current?.temperature == 71 && !model.isLoading }
+        expect(model.places == [placeA], "Verified saved-place removal updates available preview places")
+        model.cancel()
+        print("PASS Native preview: allowlisted context validation, coordinate dedup, preferences, storage isolation, exact date/place handoff, route behavior, cached failure recovery, place races, cancellation and verified Places/Settings updates")
     }
 }

@@ -128,7 +128,17 @@ struct NativeEssentialsModelTests {
         model.refreshEssentialsIfNeeded(now: Date())
         try await Task.sleep(for: .milliseconds(30))
         expect(EssentialsLifecycleProtocol.count("air:39.72000") == checkCount, "Periodic refresh is throttled after a recent attempt")
+        EssentialsLifecycleProtocol.configure("air:39.72000", data: try air(placeB, now: now, value: 30), delay: 0.2)
+        model.refreshEssentials(force: true)
+        try await waitUntil("Metadata-race request") { EssentialsLifecycleProtocol.count("air:39.72000") > checkCount }
+        let storedPlace = NativePreviewPlace(id: placeB.id, name: placeB.name, latitude: placeB.latitude,
+            longitude: placeB.longitude, timezone: nil, countryCode: "US")
+        model.applyManagedContext(NativePreviewContext(version: 1, selectedPlace: storedPlace,
+            savedPlaces: [placeA], metric: false, uses24HourClock: true, theme: "auto"))
+        try await waitUntil("Metadata-only receipt does not strand supplemental loading") { !model.isLoadingEssentials }
+        expect(model.selectedPlace == storedPlace && model.forecast?.current?.temperature == 63,
+            "Metadata-only place receipt preserves weather while safely replacing supplemental work")
         model.cancel()
-        print("PASS Native essentials model: nonblocking forecast, place changes/late replies, cancellation, independent failures, truthful stale AQI and throttled refresh")
+        print("PASS Native essentials model: nonblocking forecast, place changes/late replies, metadata-only receipt races, cancellation, independent failures, truthful stale AQI and throttled refresh")
     }
 }

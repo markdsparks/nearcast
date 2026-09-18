@@ -185,7 +185,7 @@ assert.match(trust, /scheme == "https" && host == "getnearcast\.app"/);
 assert.match(bridge, /injectionTime: \.atDocumentStart, forMainFrameOnly: true/);
 assert.doesNotMatch(handler, /recordBridgeMessage|requestCurrentLocation|requestNativeNotifications|saveWidgetSnapshot|startOrUpdateStormActivity/);
 
-const openAndRehearse = section(model, "func openNativePreview(", "\n    func openCachedNativePreview(");
+const openAndRehearse = section(model, "func openNativePreview(", "\n    /// Transitional write-through:");
 assert.ok(openAndRehearse.indexOf("NativePreviewContext.decode(data)") < openAndRehearse.indexOf("rehearsePlacesMigration(migrationData"));
 assert.ok(openAndRehearse.indexOf("showingNativePreview = true") < openAndRehearse.indexOf("rehearsePlacesMigration(migrationData"), "optional storage is not a prerequisite to show weather");
 assert.match(openAndRehearse, /data\.count <= 128 \* 1_024/);
@@ -204,4 +204,14 @@ assert.doesNotMatch(reportView, /selectedPlace|savedPlaces|latitude|longitude|di
 assert.match(contentView, /#if DEBUG\s*\.sheet\(isPresented: \$showingDiagnostics\)[\s\S]*NativeDiagnosticsView\(model: model\)[\s\S]*#endif/);
 assert.match(app, /let nativePlacesMigrationInventoryReady = false;/);
 assert.match(app, /nativePlacesMigrationInventoryReady = true;/);
+// Source guard for the WebKit overload regression; end-to-end simulator QA
+// separately verifies an actual asynchronous durable command receipt.
+const controlsTransport = section(model, "func performPlacesCommand(", "\n    func openExistingPlacesSettings(");
+assert.match(controlsTransport, /withCheckedThrowingContinuation/);
+assert.match(controlsTransport, /continuation\.resume\(with: result\)/);
+assert.doesNotMatch(controlsTransport, /response = try await webView\.callAsyncJavaScript/);
+assert.match(controlsTransport, /reply\.requestID == command\.requestID/);
+assert.match(controlsTransport, /revision == navigationRevision/);
+assert.match(controlsTransport, /isTrustedPlacesDocument\(documentURL\)/);
+assert.doesNotMatch(controlsTransport, /recordBridgeMessage|print\(|error\.localizedDescription/);
 console.log("PASS Native places migration bridge: real exporter/app/bootstrap compatibility, safe empty vs unreadable inventory, unchanged preview context, local-only allowlisted copy, no writes/publishers/permissions, and native trust/redaction/ownership guardrails");

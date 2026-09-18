@@ -51,6 +51,7 @@ Do not change providers or rewrite forecast science to change UI. Preserve local
 | --- | --- | --- |
 | Phase 0 | Existing app | No production changes |
 | Phase 1 preview | Existing app owns durable records and all publishers; native owns only its temporary forecast/navigation session | The preview itself changes no durable records or publications; an explicit handoff exits preview into ordinary legacy behavior |
+| Phase 2B1 editable preview | Existing app still owns places/settings; native controls send typed, verified commands to that owner | Committed native changes are real saved changes; returning to the existing app uses those same records |
 | Phase 2–3 | Native owns places/settings after verified handover; legacy owns plans/watch selections | Legacy place/settings actions use the native store through the adapter; remaining legacy domains retain one writer |
 | Phase 4 onward | Native owns migrated user records, product actions, and publication coordination | Compatibility UI reads the same authoritative records; it cannot restore an old copy |
 | Phase 6 | Native only for primary app journeys | Recovery uses a compatible native build; browser UI is no longer a runtime dependency |
@@ -217,6 +218,8 @@ Estimate the remaining phases after Phase 1 measures actual porting work and Pha
 Native preview builds 101 and 102 implement and refine the first read-only journey; family acceptance and physical gates remain open. [Build 103](native-essentials-testflight-103.md) adds the read-only everyday details/alerts portion of Phase 2 while that testing continues. Places/settings ownership has **not** moved. The [isolated native radar proof](native-radar-substrate-proof.md) establishes a bounded raster feasibility artifact, not full radar parity or a renderer decision. None of these changes promotes the preview to native default.
 
 The family subsequently reported that the preview is working overall and asked to continue; this does not close unmeasured device gates. [Phase 2A's places/settings rehearsal](native-places-migration-rehearsal.md) now implements a verified, local-only export/copy/recovery foundation with repeat-import and deletion receipts. It does not activate native ownership, editable Places/Settings, or new publication behavior. Phase 2B must supply the native actions, compatibility writer, verified handover, and next family TestFlight checkpoint before those domains move.
+
+[Phase 2B1 / build 104](native-places-settings-testflight-104.md) adds editable native Places and Settings using a versioned write-through adapter to the **existing owner**. Search, select, add, rename, reorder, remove, explicit current location, units, clock and appearance are implemented. This splits the original Phase 2B: family testing of native controls can proceed without prematurely transferring the saved places consumed by notifications and Watch. Native ownership activation, routing every legacy writer to that native owner, and publication coordination remain Phase 2B2 work. The final no-WebView-runtime goal is unchanged; the write-through adapter is transitional, not the completed migration.
 
 ## Out of scope
 

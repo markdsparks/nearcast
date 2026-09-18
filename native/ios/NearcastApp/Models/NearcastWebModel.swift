@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import UIKit
 
 @MainActor
 final class NearcastWebModel: ObservableObject {
@@ -225,6 +226,112 @@ final class NearcastWebModel: ObservableObject {
         isCheckingPlacesMigration = false
     }
 
+    /// Transitional write-through: the hydrated existing app is still the sole
+    /// writer and publisher. The native UI receives only a verified read-back,
+    /// never an optimistic copy or an independently mutable second database.
+    func performPlacesCommand(_ command: NativePlacesCommand) async throws -> NativePlacesReply {
+        guard showingNativePreview, hasLoadedPage, !isLoading,
+              UIApplication.shared.applicationState == .active,
+              let webView, let documentURL = webView.url,
+              isTrustedPlacesDocument(documentURL) else {
+            throw NativePlacesTransportError.unavailable
+        }
+        let revision = navigationRevision
+        let modeAtStart = mode
+        let store = placesMigrationStore
+        let bytes = try JSONEncoder().encode(command)
+        guard bytes.count <= 256 * 1_024,
+              let payload = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else {
+            throw NativePlacesTransportError.unavailable
+        }
+        let response: Any
+        do {
+            // Use the completion API explicitly. With an `Any` result Swift can
+            // otherwise select WebKit's Void-returning overload and never wait
+            // for the JavaScript promise (including its durable save receipt).
+            response = try await withCheckedThrowingContinuation { continuation in
+                webView.callAsyncJavaScript("""
+                    if (window.NearcastNative?.preview?.controlsVersion !== 1 ||
+                        window.NearcastPlacesControls?.version !== 1) {
+                        return { version: 1, requestID: payload.requestID, ok: false,
+                            code: 'unavailable', message: 'Reload Nearcast to use Places and Settings here.' };
+                    }
+                    return await window.NearcastPlacesControls.perform(payload);
+                    """, arguments: ["payload": payload], in: nil, in: .page) { result in
+                        continuation.resume(with: result)
+                    }
+            }
+        } catch {
+            // A JS failure can occur after a write. Never automatically replay.
+            throw command.action == "snapshot" || command.action == "search"
+                ? NativePlacesTransportError.unavailable : NativePlacesTransportError.unverified
+        }
+        guard !Task.isCancelled, revision == navigationRevision, modeAtStart == mode,
+              webView === self.webView, webView.url == documentURL,
+              isTrustedPlacesDocument(documentURL), UIApplication.shared.applicationState == .active else {
+            throw NativePlacesTransportError.unverified
+        }
+        guard JSONSerialization.isValidJSONObject(response) else { throw NativePlacesTransportError.unverified }
+        let replyData = try JSONSerialization.data(withJSONObject: response)
+        guard replyData.count <= 256 * 1_024 else { throw NativePlacesTransportError.unverified }
+        let reply = try JSONDecoder().decode(NativePlacesReply.self, from: replyData)
+        guard reply.version == 1, reply.requestID == command.requestID else { throw NativePlacesTransportError.unverified }
+        if let source = reply.source {
+            do {
+                let sourceData = try JSONEncoder().encode(source)
+                let report = try await store.rehearse(sourceData)
+                guard revision == navigationRevision, modeAtStart == mode, !Task.isCancelled else {
+                    throw NativePlacesTransportError.unverified
+                }
+                placesMigrationReport = report
+                placesMigrationMessage = "Verified the existing app's saved records. No ownership transfer."
+                if let context = source.toPreviewContext() {
+                    nativePreviewContext = context
+                    NativePreviewContextStore.save(context)
+                }
+            } catch {
+                // The authoritative save may already have completed. A local
+                // verification failure is not a safe instruction to repeat it.
+                throw NativePlacesTransportError.unverified
+            }
+        }
+        return reply
+    }
+
+    func openExistingPlacesSettings() {
+        showingNativePreview = false
+        guard hasLoadedPage, let webView, let url = webView.url, isTrustedPlacesDocument(url) else {
+            nativePreviewError = "Let Nearcast finish loading, then open its menu for settings."
+            return
+        }
+        webView.callAsyncJavaScript("""
+            if (typeof window.NearcastPlacesControls?.openExistingSettings !== 'function') return false;
+            return window.NearcastPlacesControls.openExistingSettings();
+            """, arguments: [:], in: nil, in: .page) { [weak self] result in
+                if case .success(let opened) = result, (opened as? Bool) == true {
+                    return
+                } else {
+                    self?.nativePreviewError = "Close any open editor, then open Nearcast’s menu to find the remaining settings."
+                }
+            }
+    }
+
+    private func isTrustedPlacesDocument(_ url: URL) -> Bool {
+        func origin(_ url: URL) -> String {
+            let scheme = url.scheme?.lowercased() ?? ""
+            let port = url.port ?? (scheme == "https" ? 443 : 80)
+            return "\(scheme)://\(url.host?.lowercased() ?? ""):\(port)"
+        }
+        if mode == .production {
+            return origin(url) == origin(NativeRuntimeConfiguration.productionURL)
+        }
+        #if DEBUG
+        return origin(url) == origin(currentURL)
+        #else
+        return false
+        #endif
+    }
+
     func openCachedNativePreview() {
         guard nativePreviewContext != nil else {
             nativePreviewError = "Open a place, then choose Native weather preview from the Nearcast menu first."
@@ -233,7 +340,7 @@ final class NearcastWebModel: ObservableObject {
         showingNativePreview = true
     }
 
-    /// Explicitly leaves the read-only preview. The fully hydrated existing app
+    /// Explicitly leaves the preview. The fully hydrated existing app
     /// owns subsequent place changes/publication and any requested mutations.
     func handoffNativePreview(_ handoff: NativePreviewHandoff) {
         showingNativePreview = false
@@ -436,5 +543,18 @@ final class NearcastWebModel: ObservableObject {
         cleanText(value, limit: limit)
             .replacingOccurrences(of: "[^a-zA-Z0-9._:-]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+}
+
+private enum NativePlacesTransportError: LocalizedError {
+    case unavailable, unverified
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            return "Places and Settings need the existing app to finish loading. Return to Nearcast, reload, and try again."
+        case .unverified:
+            return "The change may have been saved, but could not be verified. Reopen Places before trying it again."
+        }
     }
 }

@@ -4985,26 +4985,7 @@ function bindEvents() {
   document.addEventListener("keydown", trapTopmostSheetFocus, true);
 
   bindTapAction(els.unitToggle, () => {
-    const oldUnit = state.unit;
-    state.unit = state.unit === "fahrenheit" ? "celsius" : "fahrenheit";
-    localStorage.setItem("weather-unit", state.unit);
-    updateUnitButton();
-    // Cached glance temps are unit-specific — drop them so chips refetch
-    for (const id in glanceData) delete glanceData[id];
-    renderSavedPlaces();
-    if (state.forecast && state.activePlace) {
-      const forecastUnit = state.forecastUnit || oldUnit;
-      state.forecast = convertForecastUnits(state.forecast, forecastUnit, state.unit);
-      renderForecast(state.forecast, state.activePlace, {
-        refreshMap: false,
-        refreshSky: false,
-        saveContinuity: false,
-        refreshTheme: false,
-        reason: "unit-toggle"
-      });
-    } else if (state.activePlace) {
-      loadPlace(state.activePlace);
-    }
+    setUnitPreference(state.unit === "fahrenheit" ? "celsius" : "fahrenheit");
   });
 
   bindTapAction(els.themeToggle, toggleTheme);
@@ -5661,14 +5642,42 @@ function applyTheme(options = {}) {
 }
 
 function toggleTheme() {
+  let next;
   if (state.theme === "auto") {
     const currentlyDark = document.documentElement.dataset.theme === "dark";
-    state.theme = currentlyDark ? "light" : "dark";
+    next = currentlyDark ? "light" : "dark";
   } else {
-    state.theme = "auto";
+    next = "auto";
   }
-  localStorage.setItem("weather-theme", state.theme);
+  setThemePreference(next);
+}
+
+function setThemePreference(value) {
+  if (!["auto", "light", "dark"].includes(value)) throw new Error("Invalid theme preference.");
+  localStorage.setItem("weather-theme", value);
+  state.theme = value;
   applyTheme();
+}
+
+function setUnitPreference(value) {
+  if (!["fahrenheit", "celsius"].includes(value)) throw new Error("Invalid temperature preference.");
+  if (value === state.unit) return;
+  const oldUnit = state.unit;
+  localStorage.setItem("weather-unit", value);
+  state.unit = value;
+  updateUnitButton();
+  // Family-place temperatures are unit-specific, just like the main forecast.
+  for (const id in glanceData) delete glanceData[id];
+  renderSavedPlaces();
+  if (state.forecast && state.activePlace) {
+    state.forecast = convertForecastUnits(state.forecast, state.forecastUnit || oldUnit, state.unit);
+    renderForecast(state.forecast, state.activePlace, {
+      refreshMap: false, refreshSky: false, saveContinuity: false,
+      refreshTheme: false, reason: "unit-toggle"
+    });
+  } else if (state.activePlace) {
+    return loadPlace(state.activePlace);
+  }
 }
 
 function reactiveSkyIsCurrentLocation(place = state.activePlace) {
@@ -6885,8 +6894,8 @@ function updateTimeFormatButtons() {
 function setTimeFormatPreference(value) {
   const next = sanitizeTimeFormatPreference(value);
   if (next === state.timeFormat) return;
-  state.timeFormat = next;
   localStorage.setItem(TIME_FORMAT_KEY, next);
+  state.timeFormat = next;
   updateTimeFormatButtons();
   refreshTimeFormattedSurfaces();
 }
@@ -18055,8 +18064,9 @@ function savePlace(place) {
   // follow future device movement just because its historical id starts gps-.
   const normalized = { ...normalizePlace(place), followsCurrentLocation: false };
   if (!state.savedPlaces.some((saved) => saved.id === normalized.id)) {
-    state.savedPlaces = [normalized, ...state.savedPlaces].slice(0, 8);
-    localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
+    const next = [normalized, ...state.savedPlaces].slice(0, 8);
+    localStorage.setItem("weather-places", JSON.stringify(next));
+    state.savedPlaces = next;
     renderSavedPlaces();
     updateMode();
     if (typeof syncPlanWatchNotificationSubscription === "function") {
@@ -18066,9 +18076,10 @@ function savePlace(place) {
 }
 
 function removeSavedPlace(id) {
-  state.savedPlaces = state.savedPlaces.filter((place) => place.id !== id);
+  const next = state.savedPlaces.filter((place) => place.id !== id);
+  localStorage.setItem("weather-places", JSON.stringify(next));
+  state.savedPlaces = next;
   if (editingSavedPlaceId === id) editingSavedPlaceId = null;
-  localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
   if (typeof prunePlaceWatchNotificationPlaces === "function") {
     prunePlaceWatchNotificationPlaces();
   }
@@ -18088,13 +18099,18 @@ function normalizedPlaceAlias(value) {
 
 function renameSavedPlace(id, value) {
   const alias = normalizedPlaceAlias(value);
-  state.savedPlaces = state.savedPlaces.map((place) => (
+  const next = state.savedPlaces.map((place) => (
     place.id === id ? { ...place, alias } : place
   ));
+  localStorage.setItem("weather-places", JSON.stringify(next));
+  state.savedPlaces = next;
   if (state.activePlace?.id === id) {
     state.activePlace = { ...state.activePlace, ...(alias ? { alias } : { alias: "" }) };
   }
-  localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
+  const lastPlace = readStorageJson("weather-last-place");
+  if (lastPlace?.id === id) {
+    localStorage.setItem("weather-last-place", JSON.stringify({ ...lastPlace, alias }));
+  }
   editingSavedPlaceId = null;
   renderSavedPlaces();
 }
@@ -18105,8 +18121,8 @@ function moveSavedPlace(id, direction) {
   if (from < 0 || to < 0 || to >= state.savedPlaces.length) return;
   const next = [...state.savedPlaces];
   [next[from], next[to]] = [next[to], next[from]];
+  localStorage.setItem("weather-places", JSON.stringify(next));
   state.savedPlaces = next;
-  localStorage.setItem("weather-places", JSON.stringify(state.savedPlaces));
   renderSavedPlaces();
 }
 
@@ -18793,6 +18809,12 @@ function normalizePlace(place) {
   // unsaved gps-* last-place without mistaking a saved gps-* place for live.
   if (typeof place.followsCurrentLocation === "boolean") {
     normalized.followsCurrentLocation = place.followsCurrentLocation;
+  }
+  if (typeof place.timezone === "string" && place.timezone.length <= 100) {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: place.timezone });
+      normalized.timezone = place.timezone;
+    } catch { /* Invalid historical metadata is not a usable time zone. */ }
   }
   const alias = normalizedPlaceAlias(place.alias);
   if (alias) normalized.alias = alias;

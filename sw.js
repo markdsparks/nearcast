@@ -15,6 +15,7 @@ const SHELL = [
   `${BASE}forecast-confidence.js?v=${ASSET_VERSION}`,
   `${BASE}native-places-migration.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
+  `${BASE}native-places-controls.js?v=${ASSET_VERSION}`,
   `${BASE}hrrr-zarr-adapter.js?v=${ASSET_VERSION}`,
   `${BASE}experimental/raw-weather/hrrr-subhourly-adapter.js?v=${ASSET_VERSION}`,
   `${BASE}experimental/raw-weather/hrrr-subhourly-worker.js?v=${ASSET_VERSION}`,

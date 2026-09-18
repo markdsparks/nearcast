@@ -158,10 +158,16 @@ struct ContentView: View {
 
 private struct NativeWeatherPreviewContainer: View {
     @StateObject private var preview: NativeWeatherPreviewModel
+    @StateObject private var placesControls: NativePlacesControlsModel
     @ObservedObject var webModel: NearcastWebModel
+    @State private var placesSettingsTab: NativePlacesSettingsTab = .places
+    @State private var showingPlacesSettings = false
 
     init(context: NativePreviewContext, webModel: NearcastWebModel) {
         _preview = StateObject(wrappedValue: NativeWeatherPreviewModel(context: context))
+        _placesControls = StateObject(wrappedValue: NativePlacesControlsModel { command in
+            try await webModel.performPlacesCommand(command)
+        })
         self.webModel = webModel
     }
 
@@ -176,8 +182,29 @@ private struct NativeWeatherPreviewContainer: View {
                     date: preview.selectedDay,
                     timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone
                 ))
+            },
+            onPlaces: {
+                placesSettingsTab = .places
+                showingPlacesSettings = true
+            },
+            onSettings: {
+                placesSettingsTab = .settings
+                showingPlacesSettings = true
             }
         )
+        .sheet(isPresented: $showingPlacesSettings) {
+            NativePlacesSettingsSheet(model: placesControls, initialTab: placesSettingsTab,
+                onDone: { showingPlacesSettings = false },
+                onOpenExisting: {
+                    showingPlacesSettings = false
+                    webModel.openExistingPlacesSettings()
+                })
+        }
+        .onChange(of: placesControls.source) { _, source in
+            guard let context = source?.toPreviewContext() else { return }
+            preview.applyManagedContext(context)
+            NativePreviewContextStore.save(context)
+        }
         .task { await preview.refresh() }
         .onDisappear { preview.cancel() }
     }

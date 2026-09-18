@@ -3,8 +3,8 @@ import Combine
 
 @MainActor
 final class NativeWeatherPreviewModel: ObservableObject {
-    let context: NativePreviewContext
-    let places: [NativePreviewPlace]
+    @Published private(set) var context: NativePreviewContext
+    @Published private(set) var places: [NativePreviewPlace]
     @Published private(set) var selectedPlace: NativePreviewPlace
     @Published private(set) var forecast: NativeWeatherForecast?
     @Published private(set) var isLoading = false
@@ -32,6 +32,47 @@ final class NativeWeatherPreviewModel: ObservableObject {
     }
 
     deinit { placeTask?.cancel(); essentialsTask?.cancel() }
+
+    /// Called only after Places/Settings has received a verified owner reply.
+    /// Display-only changes preserve the current day; location changes reset it.
+    func applyManagedContext(_ next: NativePreviewContext) {
+        guard next != context else { return }
+        let placeChanged = next.selectedPlace.id != selectedPlace.id ||
+            next.selectedPlace.coordinateIdentity != selectedPlace.coordinateIdentity
+        let unitsChanged = next.metric != context.metric
+        let placeMetadataChanged = next.selectedPlace != selectedPlace
+        context = next
+        places = next.places
+        selectedPlace = next.selectedPlace
+        guard placeChanged || unitsChanged else {
+            if placeMetadataChanged {
+                // A receipt may enrich or omit a stored time zone/country while
+                // keeping the same coordinates. Replace that supplemental task
+                // so its strict identity guard cannot leave loading stuck true.
+                essentialsTask?.cancel()
+                essentialsRevision += 1
+                isLoadingEssentials = false
+                lastEssentialsAttempt = nil
+                essentials = nil
+                refreshEssentials()
+            }
+            return
+        }
+        placeTask?.cancel()
+        essentialsTask?.cancel()
+        requestRevision += 1
+        essentialsRevision += 1
+        isLoadingEssentials = false
+        lastEssentialsAttempt = nil
+        forecast = nil
+        essentials = nil
+        errorMessage = nil
+        if placeChanged {
+            selectedDay = nil
+            destination = .today
+        }
+        placeTask = Task { [weak self] in await self?.refresh() }
+    }
 
     func selectPlace(_ place: NativePreviewPlace) {
         guard places.contains(place), place != selectedPlace else { return }
