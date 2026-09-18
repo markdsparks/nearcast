@@ -110,6 +110,25 @@ struct NativeWeatherForecast: Codable, Sendable {
         days.first { calendar.isDate($0.date, inSameDayAs: date) }
     }
 
+    // Presentation windows retain actual service timestamps, including local
+    // midnight and the 25th hour of a fall-back day. No samples are synthesized.
+    func previewTrendHours(on day: Date, now: Date) -> [NativeForecastPoint] {
+        guard calendar.isDate(day, inSameDayAs: now) else { return hours(on: day) }
+        let start = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        return Array(hours.filter { $0.date >= start }.prefix(24))
+    }
+
+    func previewQuarterHours(on day: Date, now: Date) -> [NativeForecastPoint] {
+        let today = calendar.isDate(day, inSameDayAs: now)
+        return quarterHours.filter {
+            (today || calendar.isDate($0.date, inSameDayAs: day)) && $0.date.addingTimeInterval(900) > now
+        }
+    }
+
+    func startsPreviewDaySection(_ date: Date, after previous: Date?, selectedDay: Date) -> Bool {
+        !calendar.isDate(date, inSameDayAs: previous ?? selectedDay)
+    }
+
     static func decode(data: Data, latitude: Double, longitude: Double, metric: Bool, now: Date) throws -> Self {
         try NativeForecastDecoder.decode(data: data, latitude: latitude, longitude: longitude, metric: metric, now: now)
     }

@@ -110,6 +110,7 @@ run_native_model_checks() {
   "$ROOT/scripts/test-nearcast-watch-snapshot.sh"
   bash "$ROOT/scripts/test-native-weather-forecast.sh"
   bash "$ROOT/scripts/test-native-weather-preview.sh"
+  bash "$ROOT/scripts/test-native-weather-outlook.sh"
   printf 'PASS  Native shared-model checks\n'
 }
 

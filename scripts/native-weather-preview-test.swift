@@ -135,6 +135,32 @@ struct NativeWeatherPreviewTests {
         expect(NativePreviewHandoff(destination: .map, place: placeA, date: nil, timezone: placeA.timezone).targetDate == nil,
             "No date is fabricated for a date-free handoff")
 
+        let lateNight = ISO8601DateFormatter().date(from: "2026-09-19T04:50:00Z")! // Sep 18, 23:50 Chicago
+        let nightStart = ISO8601DateFormatter().date(from: "2026-09-19T04:00:00Z")!
+        let actualHours = (0..<30).map { NativeForecastPoint(date: nightStart.addingTimeInterval(Double($0) * 3600), temperature: 60) }
+        let actualQuarters = (0..<6).map { NativeForecastPoint(date: nightStart.addingTimeInterval(2700 + Double($0) * 900), temperature: 60) }
+        let nightForecast = NativeWeatherForecast(generatedAt: lateNight, timezoneID: "America/Chicago", metric: false,
+            current: nil, hours: actualHours, quarterHours: actualQuarters, days: [])
+        expect(nightForecast.previewTrendHours(on: lateNight, now: lateNight).count == 24,
+            "Tonight's trend continues across midnight instead of collapsing to one hour")
+        expect(nightForecast.previewQuarterHours(on: lateNight, now: lateNight).count == 6,
+            "Actual quarter-hour coverage continues across midnight")
+        let midnight = actualQuarters[1].date
+        expect(nightForecast.startsPreviewDaySection(midnight, after: nil, selectedDay: lateNight),
+            "If the first available interval is tomorrow, it gets a date heading")
+        expect(nightForecast.startsPreviewDaySection(midnight, after: actualQuarters[0].date, selectedDay: lateNight),
+            "Crossing midnight adds a date heading")
+        expect(!nightForecast.startsPreviewDaySection(actualQuarters[2].date, after: midnight, selectedDay: lateNight),
+            "Rows within the same new day do not repeat the heading")
+        expect(nightForecast.previewTrendHours(on: midnight, now: lateNight).allSatisfy { nightForecast.calendar.isDate($0.date, inSameDayAs: midnight) },
+            "A selected-day trend stays bounded to that local day")
+        let fallDay = ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z")!
+        let fallHours = (0..<25).map { NativeForecastPoint(date: fallDay.addingTimeInterval(Double($0) * 3600), temperature: 50) }
+        let fallForecast = NativeWeatherForecast(generatedAt: lateNight, timezoneID: "America/Chicago", metric: false,
+            current: nil, hours: fallHours, quarterHours: [], days: [])
+        expect(fallForecast.previewTrendHours(on: fallDay, now: lateNight).count == 25,
+            "Selected-day trends preserve all 25 actual hours on fall-back day")
+
         let suite = "nearcast-native-preview-tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }

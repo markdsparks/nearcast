@@ -19,6 +19,7 @@ struct NativeWeatherPreviewView: View {
     @State private var confirmingLegacy = false
     @State private var showEarlierHours = false
     @State private var now = Date()
+    @State private var scrollToTopRevision = 0
 
     private var isDark: Bool { (preferredScheme ?? colorScheme) == .dark }
     private var accent: Color { isDark ? Color(red: 0.57, green: 0.77, blue: 1) : Color(red: 0.16, green: 0.37, blue: 0.63) }
@@ -48,10 +49,7 @@ struct NativeWeatherPreviewView: View {
         return Array((model.forecast?.days ?? []).filter { $0.date >= today }.prefix(14))
     }
     private var usableQuarterHours: [NativeForecastPoint] {
-        guard let forecast = model.forecast else { return [] }
-        return forecast.quarterHours.filter {
-            calendar.isDate($0.date, inSameDayAs: displayedDay) && $0.date.addingTimeInterval(15 * 60) > now
-        }
+        model.forecast?.previewQuarterHours(on: displayedDay, now: now) ?? []
     }
     private var offersQuarterHours: Bool { !usableQuarterHours.isEmpty }
     private var showingQuarterHours: Bool { interval == .quarterHour && offersQuarterHours }
@@ -61,8 +59,7 @@ struct NativeWeatherPreviewView: View {
     }
     private var trendPoints: [NativeForecastPoint] {
         if showingQuarterHours { return Array(usableQuarterHours.prefix(25)) }
-        let points = isToday ? dayHours.filter { $0.date >= currentHourStart } : dayHours
-        return Array(points.prefix(24))
+        return model.forecast?.previewTrendHours(on: displayedDay, now: now) ?? []
     }
 
     var body: some View {
@@ -71,7 +68,7 @@ struct NativeWeatherPreviewView: View {
                 skyBackground
                 ScrollViewReader { scroll in
                     ScrollView {
-                        VStack(spacing: 24) {
+                        VStack(spacing: 20) {
                             placePicker.id("native-preview-top")
                             if let forecast = model.forecast {
                                 freshness(forecast)
@@ -91,8 +88,8 @@ struct NativeWeatherPreviewView: View {
                                 loadingOrUnavailable
                             }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 2)
                         .padding(.bottom, 24)
                         .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity)
@@ -107,10 +104,15 @@ struct NativeWeatherPreviewView: View {
                     .onChange(of: model.selectedPlace.coordinateIdentity) { _, _ in
                         scroll.scrollTo("native-preview-top", anchor: .top)
                     }
+                    .onChange(of: scrollToTopRevision) { _, _ in
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                            scroll.scrollTo("native-preview-top", anchor: .top)
+                        }
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { bottomNavigation }
-            .navigationTitle("Native preview")
+            .navigationTitle("Nearcast")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -125,6 +127,7 @@ struct NativeWeatherPreviewView: View {
                     .accessibilityLabel("Refresh forecast")
                 }
             }
+            .toolbarBackground(.hidden, for: .navigationBar)
             .tint(accent)
             .confirmationDialog("Open in existing Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
                 Button("Open in existing Nearcast") {
@@ -181,18 +184,21 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var skyBackground: some View {
-        LinearGradient(
+        let code = model.forecast?.current?.weatherCode
+        let clear = code.map { [0, 1].contains($0) } ?? false
+        return LinearGradient(
             colors: isDark
-                ? [Color(red: 0.08, green: 0.15, blue: 0.24), Color(red: 0.08, green: 0.11, blue: 0.16)]
-                : [Color(red: 0.73, green: 0.86, blue: 0.95), Color(red: 0.93, green: 0.96, blue: 0.97)],
-            startPoint: .topLeading, endPoint: .bottomTrailing
+                ? [Color(red: 0.065, green: 0.14, blue: 0.23), Color(red: 0.075, green: 0.105, blue: 0.15)]
+                : (clear ? [Color(red: 0.62, green: 0.80, blue: 0.94), Color(red: 0.92, green: 0.95, blue: 0.94)]
+                    : [Color(red: 0.74, green: 0.82, blue: 0.86), Color(red: 0.93, green: 0.95, blue: 0.95)]),
+            startPoint: .top, endPoint: .bottom
         )
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .top) {
             Circle()
-                .fill(isDark ? Color.blue.opacity(0.08) : Color.white.opacity(0.28))
-                .frame(width: 300, height: 300)
-                .blur(radius: 60)
-                .offset(x: 110, y: -100)
+                .fill(isDark ? Color.blue.opacity(0.14) : (clear ? Color(red: 1, green: 0.91, blue: 0.63).opacity(0.55) : Color.white.opacity(0.4)))
+                .frame(width: 280, height: 250)
+                .blur(radius: 70)
+                .offset(x: 45, y: 50)
                 .accessibilityHidden(true)
         }
         .ignoresSafeArea()
@@ -215,7 +221,7 @@ struct NativeWeatherPreviewView: View {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(model.selectedPlace.name)
-                    .font(.headline)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 if model.places.count > 1 {
@@ -223,7 +229,7 @@ struct NativeWeatherPreviewView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .disabled(model.places.isEmpty)
@@ -259,13 +265,9 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var hero: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 6) {
             if !isToday {
-                Button { model.showToday() } label: {
-                    Label("Back to Today", systemImage: "arrow.left")
-                        .font(.subheadline.weight(.semibold))
-                }
-                Text(dayName(displayedDay, full: true)).font(.title2.weight(.bold))
+                selectedDayNavigation
             } else if currentReadingIsStale {
                 Text("Last reading · \(currentReadingTime)")
                     .font(.subheadline.weight(.semibold))
@@ -274,7 +276,7 @@ struct NativeWeatherPreviewView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 20) {
+                HStack(alignment: .center, spacing: 18) {
                     heroTemperature
                     heroIcon
                 }
@@ -283,60 +285,110 @@ struct NativeWeatherPreviewView: View {
                     heroIcon
                 }
             }
-            if let day = selectedForecastDay {
-                Text("H \(temperature(day.high)) · L \(temperature(day.low))")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
             if isToday, let current = model.forecast?.current {
-                VStack(spacing: 5) {
-                    Text(current.conditionLabel).font(.title3.weight(.semibold))
-                    if let apparent = current.apparentTemperature,
-                       let actual = current.temperature, abs(apparent - actual) >= 2 {
-                        Text("Feels like \(temperature(apparent))")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .multilineTextAlignment(.center)
+                Text(heroCondition(current))
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if let day = selectedForecastDay {
                 Text(day.conditionLabel)
-                    .font(.title3.weight(.semibold))
+                    .font(.headline)
                     .multilineTextAlignment(.center)
+            }
+            if let day = selectedForecastDay {
+                Text("High \(temperature(day.high))  ·  Low \(temperature(day.low))")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(.bottom, 12)
+    }
+
+    private func heroCondition(_ point: NativeForecastPoint) -> String {
+        guard let apparent = point.apparentTemperature, let actual = point.temperature,
+              abs(apparent - actual) >= (model.context.metric ? 1 : 2) else { return point.conditionLabel }
+        return "\(point.conditionLabel) · feels \(temperature(apparent))"
+    }
+
+    private var selectedDayNavigation: some View {
+        HStack(spacing: 6) {
+            dayStepButton(-1)
+            VStack(spacing: 3) {
+                Text(dayName(displayedDay)).font(.title2.weight(.bold))
+                Text(dayName(displayedDay, full: true))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            dayStepButton(1)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func adjacentDay(_ offset: Int) -> NativeForecastDay? {
+        guard let index = previewDays.firstIndex(where: { calendar.isDate($0.date, inSameDayAs: displayedDay) }),
+              previewDays.indices.contains(index + offset) else { return nil }
+        return previewDays[index + offset]
+    }
+
+    private func dayStepButton(_ offset: Int) -> some View {
+        let day = adjacentDay(offset)
+        return Button {
+            if let day { model.showDay(day.date) }
+        } label: {
+            Image(systemName: offset < 0 ? "chevron.left" : "chevron.right")
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .background(.primary.opacity(isDark ? 0.07 : 0.04), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(day == nil)
+        .opacity(day == nil ? 0.25 : 1)
+        .accessibilityLabel(day.map { "Open \(dayName($0.date))" } ?? (offset < 0 ? "Previous day" : "Next day"))
     }
 
     private var heroTemperature: some View {
         Text(temperature(isToday ? model.forecast?.current?.temperature : selectedForecastDay?.high))
-            .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 68 : 92, weight: .bold, design: .rounded))
-            .tracking(-4)
+            .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 76 : 100, weight: .semibold, design: .rounded))
+            .tracking(-5)
+            .contentTransition(.numericText())
             .accessibilityLabel(isToday ? (currentReadingIsStale ? "Last reading temperature, \(currentReadingTime)" : "Current temperature") : "Forecast high")
             .accessibilityValue(temperature(isToday ? model.forecast?.current?.temperature : selectedForecastDay?.high, withUnit: true))
     }
 
     private var heroIcon: some View {
-        weatherSymbol(isToday ? (model.forecast?.current?.symbolName ?? "questionmark.circle") : (selectedForecastDay?.symbolName ?? "questionmark.circle"), size: 64)
-            .frame(minWidth: 70, minHeight: 74)
+        weatherSymbol(isToday ? (model.forecast?.current?.symbolName ?? "questionmark.circle") : (selectedForecastDay?.symbolName ?? "questionmark.circle"), size: 60)
+            .frame(minWidth: 70, minHeight: 70)
             .accessibilityHidden(true)
     }
 
     private var outlookCard: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                Text(isToday ? (remainingHours.isEmpty ? "DAILY OUTLOOK" : "REST OF TODAY") : "\(dayName(displayedDay).uppercased())’S OUTLOOK")
-                    .font(.caption.weight(.heavy))
-                    .tracking(1.5)
-                    .foregroundStyle(accent)
+                HStack(alignment: .center) {
+                    Text(outlook?.eyebrow ?? "OUTLOOK")
+                        .font(.caption.weight(.heavy))
+                        .tracking(1.2)
+                    Spacer(minLength: 8)
+                    Button { model.showHourly(day: model.selectedDay) } label: {
+                        Image(systemName: "arrow.up.right")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Open hourly details for \(dayName(displayedDay))")
+                }
+                .foregroundStyle(accent)
                 Text(outlookHeadline)
                     .font(.title2.weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail = outlookDetail {
                     Text(detail)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary.opacity(isDark ? 0.82 : 0.78))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -348,101 +400,75 @@ struct NativeWeatherPreviewView: View {
             } else {
                 trendChart
                 metricPicker
-                Button {
-                    model.showHourly(day: model.selectedDay)
-                } label: {
-                    HStack {
-                        Text("Explore \(showingQuarterHours ? "15-minute" : "hourly") details")
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
-                }
             }
         }
-        .padding(20)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardFill, in: RoundedRectangle(cornerRadius: 28))
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.primary.opacity(0.07)) }
+        .shadow(color: .black.opacity(isDark ? 0.10 : 0.045), radius: 18, y: 8)
     }
 
-    private var outlookHeadline: String {
-        if isToday, !remainingHours.isEmpty {
-            // Use the already-resolved hourly evidence, never a raw severe
-            // code that the shared semantics qualified as only a possibility.
-            if let storm = remainingHours.first(where: { [95, 96, 99].contains($0.weatherCode ?? -1) }) {
-                return timedHeadline(storm)
-            }
-            if let possibleStorm = remainingHours.first(where: \.thunderPossible) {
-                return timedHeadline(possibleStorm)
-            }
-            let precipitationCodes: Set<Int> = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86]
-            if let wet = remainingHours.first(where: { precipitationCodes.contains($0.weatherCode ?? -1) }) {
-                return timedHeadline(wet)
-            }
-            if let next = remainingHours.first { return timedHeadline(next) }
+    private var outlook: NativeWeatherOutlook? {
+        model.forecast.map {
+            NativeWeatherOutlook.make(forecast: $0, day: displayedDay, now: now, uses24HourClock: model.context.uses24HourClock)
         }
-        if let day = selectedForecastDay { return day.conditionLabel }
-        return "Daily forecast unavailable"
     }
 
-    private func timedHeadline(_ point: NativeForecastPoint) -> String {
-        if point.date < currentHourStart.addingTimeInterval(60 * 60) {
-            return "\(point.conditionLabel) this hour"
-        }
-        return "\(point.conditionLabel) around \(clock(point.date))"
-    }
+    private var outlookHeadline: String { keepClockTogether(outlook?.headline ?? "Daily forecast unavailable") }
+    private var outlookDetail: String? { outlook?.detail.map(keepClockTogether) }
 
-    private var outlookDetail: String? {
-        var parts: [String] = []
-        if isToday && !remainingHours.isEmpty {
-            let temperatures = remainingHours.compactMap(\.temperature)
-            if let low = temperatures.min(), let high = temperatures.max() {
-                if Int(low.rounded()) == Int(high.rounded()) {
-                    parts.append("Near \(temperature(high)) in the remaining hours")
-                } else {
-                    parts.append("\(temperature(low))–\(temperature(high)) in the remaining hours")
-                }
-            }
-            if let probability = remainingHours.compactMap(\.rainProbability).max() {
-                parts.append("Precipitation chance up to \(Int(probability.rounded()))%")
-            }
-        } else if let day = selectedForecastDay {
-            if let high = day.high { parts.append("High near \(temperature(high))") }
-            if let probability = day.rainProbability { parts.append("\(Int(probability.rounded()))% precipitation chance") }
-        }
-        if parts.isEmpty { return nil }
-        return parts.joined(separator: " · ")
+    private func keepClockTogether(_ text: String) -> String {
+        text.replacingOccurrences(of: " AM", with: "\u{00a0}AM")
+            .replacingOccurrences(of: " PM", with: "\u{00a0}PM")
     }
 
     private var intervalPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             if offersQuarterHours {
-                Picker("Forecast interval", selection: $interval) {
-                    Text("Hourly").tag(NativePreviewInterval.hourly)
-                    Text("15 min").tag(NativePreviewInterval.quarterHour)
+                HStack(spacing: 20) {
+                    intervalButton("Hourly", value: .hourly)
+                    intervalButton("15 min", value: .quarterHour)
+                    Spacer(minLength: 0)
                 }
-                .pickerStyle(.segmented)
                 if showingQuarterHours, let first = usableQuarterHours.first, let last = usableQuarterHours.last {
-                    Text("Available \(clock(first.date))–\(clock(last.date)) · local time")
+                    let firstDay = calendar.isDate(first.date, inSameDayAs: displayedDay) ? "" : "\(dayName(first.date)), "
+                    let lastDay = calendar.isDate(first.date, inSameDayAs: last.date) ? "" : "\(dayName(last.date)), "
+                    Text("\(firstDay)\(clock(first.date))–\(lastDay)\(clock(last.date)) · local time")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text("Hourly · local time")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
         }
     }
 
+    private func intervalButton(_ title: String, value: NativePreviewInterval) -> some View {
+        Button { interval = value } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(interval == value ? accent : Color.secondary)
+                .frame(minHeight: 44)
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(interval == value ? accent : Color.clear).frame(height: 2)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value == .hourly ? "Hourly intervals" : "15-minute intervals")
+        .accessibilityAddTraits(interval == value ? .isSelected : [])
+    }
+
     private var metricPicker: some View {
         VStack(alignment: .leading, spacing: 7) {
             ScrollView(.horizontal) {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     ForEach(NativePreviewMetric.allCases) { item in
                         Button {
                             if reduceMotion { metric = item }
@@ -450,9 +476,9 @@ struct NativeWeatherPreviewView: View {
                         } label: {
                             Text(item.label)
                                 .font(.subheadline.weight(.semibold))
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 12)
-                                .foregroundStyle(metric == item ? accent : Color.secondary)
+                                .padding(.horizontal, 11)
+                                .frame(minHeight: 44)
+                                .foregroundStyle(metric == item ? accent : Color.primary.opacity(0.72))
                                 .background(metric == item ? accent.opacity(isDark ? 0.18 : 0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(.plain)
@@ -487,21 +513,25 @@ struct NativeWeatherPreviewView: View {
 
     private var trendChart: some View {
         let points = trendPoints
-        let columnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 150 : 104
+        let columnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 152 : (dynamicTypeSize >= .xxxLarge ? 108 : 78)
         let plotWidth = max(columnWidth, CGFloat(points.count) * columnWidth)
         let step = showingQuarterHours ? 15.0 * 60 : 60.0 * 60
         let samples = chartSamples(points, step: step)
+        let domain = metric.domain(points)
+        let span = max(1, domain.upperBound - domain.lowerBound)
         return ScrollView(.horizontal) {
-            VStack(spacing: 10) {
+            VStack(spacing: 4) {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(points, id: \.id) { point in
-                        VStack(spacing: 12) {
+                        VStack(spacing: 8) {
                             Text(clock(point.date, compact: !showingQuarterHours))
-                                .font(.subheadline.weight(.semibold))
-                            weatherSymbol(point.symbolName, size: 29)
-                                .frame(height: 38)
+                                .font(.caption.weight(.semibold))
+                                .monospacedDigit()
+                            weatherSymbol(point.symbolName, size: 27)
+                                .frame(height: 32)
                                 .accessibilityHidden(true)
                         }
+                        .padding(.top, 10)
                         .frame(width: columnWidth)
                     }
                 }
@@ -511,41 +541,66 @@ struct NativeWeatherPreviewView: View {
                             .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                             .foregroundStyle(accent)
                         PointMark(x: .value("Interval", sample.index), y: .value(metric.accessibleLabel, value))
-                            .symbolSize(27)
+                            .symbolSize(23)
                             .foregroundStyle(accent)
+                            .annotation(position: .top, spacing: 5) {
+                                Text(metric.formatted(sample.point, metricUnits: model.context.metric))
+                                    .font(.system(.body, design: .rounded, weight: .bold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(accent)
+                                    .fixedSize()
+                            }
                     }
                 }
                 .chartXScale(domain: -0.5...max(0.5, Double(points.count) - 0.5))
-                .chartYScale(domain: metric.domain(points))
+                // Annotation headroom is real layout space, not clipped text
+                // at 100% rain or the top of a temperature curve.
+                .chartYScale(domain: (domain.lowerBound - span * 0.08)...(domain.upperBound + span * 0.30))
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
                 .chartLegend(.hidden)
-                .frame(width: plotWidth, height: 72)
+                .frame(width: plotWidth, height: dynamicTypeSize.isAccessibilitySize ? 120 : 92)
                 .accessibilityHidden(true)
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(points, id: \.id) { point in
-                        VStack(spacing: 8) {
-                            Text(metric.formatted(point, metricUnits: model.context.metric))
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(accent)
-                            Text(point.conditionLabel)
+                        VStack(spacing: 5) {
+                            if metric.value(point) == nil {
+                                Text("—").font(.body.weight(.bold)).foregroundStyle(.secondary)
+                            }
+                            Text(point.conditionLabel.replacingOccurrences(of: "Thunderstorms", with: "Storms"))
                                 .font(.caption.weight(.semibold))
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .frame(minHeight: 32, alignment: .top)
                             Text(secondaryRead(point))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
+                            if !calendar.isDate(point.date, inSameDayAs: displayedDay) {
+                                Text(dayName(point.date))
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(accent)
+                            }
                         }
-                        .padding(.horizontal, 7)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 10)
                         .frame(width: columnWidth)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(clock(point.date)), \(point.conditionLabel), \(metric.accessibleLabel) \(metric.formatted(point, metricUnits: model.context.metric)), \(secondaryRead(point))")
+                        .accessibilityLabel("\(dayName(point.date)), \(clock(point.date)), \(point.conditionLabel), \(metric.accessibleLabel) \(metric.formatted(point, metricUnits: model.context.metric)), \(secondaryRead(point))")
                     }
                 }
             }
-            .padding(.vertical, 6)
+            .background {
+                HStack(spacing: 0) {
+                    ForEach(Array(points.enumerated()), id: \.element.id) { index, _ in
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(index == 0 && isToday ? accent.opacity(isDark ? 0.11 : 0.055) : Color.clear)
+                            .frame(width: columnWidth)
+                    }
+                }
+                .accessibilityHidden(true)
+            }
         }
         .scrollIndicators(.hidden)
         .accessibilityLabel("Scrollable \(showingQuarterHours ? "15-minute" : "hourly") forecast")
@@ -565,9 +620,13 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var dailyList: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Daily outlook")
-                .font(.title3.weight(.bold))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Daily outlook").font(.title3.weight(.bold))
+                Spacer()
+                Text("Low / High").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 12)
             if !previewDays.isEmpty {
                 ForEach(Array(previewDays.prefix(7)), id: \.id) { day in
                     dailyRow(day)
@@ -588,26 +647,73 @@ struct NativeWeatherPreviewView: View {
     }
 
     private func dailyRow(_ day: NativeForecastDay) -> some View {
-        Button { model.showDay(day.date) } label: {
-            VStack(alignment: .leading, spacing: 8) {
+        let selected = !isToday && calendar.isDate(day.date, inSameDayAs: displayedDay)
+        return Button { model.showDay(day.date) } label: {
+            VStack(alignment: .leading, spacing: 7) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        dailyIdentity(day)
-                        Spacer(minLength: 8)
-                        dailyValues(day)
+                    HStack(spacing: 8) {
+                        Text(dayName(day.date))
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minWidth: 94, alignment: .leading)
+                            .fixedSize(horizontal: true, vertical: false)
+                        weatherSymbol(day.symbolName, size: 23)
+                            .frame(width: 28)
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                        Text(temperature(day.low))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 27, alignment: .trailing)
+                        dailyRange(day).frame(minWidth: 40, idealWidth: 64, maxWidth: 80, minHeight: 6, maxHeight: 6)
+                        Text(temperature(day.high)).fontWeight(.bold)
+                            .frame(minWidth: 29, alignment: .leading)
+                        Text(day.rainProbability.map { "\(Int($0.rounded()))%" } ?? "—")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(accent)
+                            .frame(minWidth: 34, alignment: .trailing)
                     }
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
                     VStack(alignment: .leading, spacing: 10) {
                         dailyIdentity(day)
                         dailyValues(day)
                     }
                 }
-                Divider().padding(.top, 9)
+                Text(day.conditionLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.top, 4)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 5)
+            .background(selected ? accent.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(dayName(day.date)), \(day.conditionLabel), low \(temperature(day.low)), high \(temperature(day.high)), precipitation chance \(percentage(day.rainProbability))")
+        .accessibilityAddTraits(.isButton)
         .accessibilityHint("Open this day’s native forecast")
+        .overlay(alignment: .bottom) { Divider().allowsHitTesting(false) }
+    }
+
+    private func dailyRange(_ day: NativeForecastDay) -> some View {
+        GeometryReader { geometry in
+            if let low = day.low, let high = day.high, low <= high {
+                let minimum = previewDays.compactMap(\.low).min() ?? low
+                let maximum = previewDays.compactMap(\.high).max() ?? high
+                let span = max(1, maximum - minimum)
+                let start = max(0, min(1, (low - minimum) / span))
+                let end = max(start, min(1, (high - minimum) / span))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.primary.opacity(0.10))
+                    Capsule().fill(LinearGradient(colors: [accent.opacity(0.65), accent], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(3, geometry.size.width * (end - start)))
+                        .offset(x: min(geometry.size.width - 3, geometry.size.width * start))
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 
     private func dailyIdentity(_ day: NativeForecastDay) -> some View {
@@ -615,13 +721,7 @@ struct NativeWeatherPreviewView: View {
             weatherSymbol(day.symbolName, size: 26)
                 .frame(width: 34)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(dayName(day.date)).font(.headline)
-                Text(day.conditionLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(dayName(day.date)).font(.headline)
         }
     }
 
@@ -643,12 +743,12 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var hourlyContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(showingQuarterHours ? "15-minute forecast" : "Hourly forecast")
-                    .font(.largeTitle.weight(.bold))
+                Text(showingQuarterHours ? "Every 15 minutes" : "Hour by hour")
+                    .font(.title.weight(.bold))
                 Text(dayName(displayedDay, full: true))
-                    .font(.title3)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             dayPicker
@@ -663,8 +763,16 @@ struct NativeWeatherPreviewView: View {
             if listPoints.isEmpty {
                 ContentUnavailableView("No hours available", systemImage: "clock.badge.questionmark", description: Text("Choose another day or refresh the forecast."))
             } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(listPoints, id: \.id) { point in
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(listPoints.enumerated()), id: \.element.id) { index, point in
+                        if model.forecast?.startsPreviewDaySection(point.date, after: index == 0 ? nil : listPoints[index - 1].date, selectedDay: displayedDay) == true {
+                            Text(dayName(point.date, full: true))
+                                .font(.headline)
+                                .foregroundStyle(accent)
+                                .padding(.top, 22)
+                                .padding(.bottom, 8)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         hourlyRow(point)
                         Divider()
                     }
@@ -697,7 +805,6 @@ struct NativeWeatherPreviewView: View {
     private func hourlyRow(_ point: NativeForecastPoint) -> some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 12) {
-                Text(point.conditionLabel).font(.headline)
                 detailPair("Temperature", temperature(point.temperature, withUnit: true))
                 detailPair("Feels like", temperature(point.apparentTemperature, withUnit: true))
                 detailPair("Precipitation chance", percentage(point.rainProbability))
@@ -767,12 +874,14 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var bottomNavigation: some View {
-        HStack(spacing: 0) {
-            navigationButton("Today", symbol: "sun.max", selected: !isHourly) { model.showToday() }
-            navigationButton("Hourly", symbol: "clock", selected: isHourly) { model.showHourly(day: model.selectedDay) }
-            navigationButton("Ask", symbol: "sparkle", selected: false) { requestLegacy(.ask) }
-            navigationButton("Map", symbol: "map", selected: false) { requestLegacy(.map) }
-            navigationButton("Plans", symbol: "calendar", selected: false) { requestLegacy(.plans) }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 4)], spacing: 6) {
+                    navigationButtons
+                }
+            } else {
+                HStack(spacing: 0) { navigationButtons }
+            }
         }
         .padding(7)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 27))
@@ -784,18 +893,36 @@ struct NativeWeatherPreviewView: View {
         .frame(maxWidth: .infinity)
     }
 
+    @ViewBuilder
+    private var navigationButtons: some View {
+        navigationButton("Today", symbol: "sun.max", selected: !isHourly && isToday) {
+            model.showToday()
+            scrollToTopRevision += 1
+        }
+        navigationButton("Hourly", symbol: "clock", selected: isHourly) {
+            model.showHourly(day: model.selectedDay)
+            scrollToTopRevision += 1
+        }
+        navigationButton("Ask", symbol: "sparkle", selected: false) { requestLegacy(.ask) }
+        navigationButton("Map", symbol: "map", selected: false) { requestLegacy(.map) }
+        navigationButton("Plans", symbol: "calendar", selected: false) { requestLegacy(.plans) }
+    }
+
     private func navigationButton(_ title: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 5) {
                 Image(systemName: symbol).font(.system(size: 20, weight: selected ? .semibold : .regular))
                 Text(title).font(.caption2.weight(.semibold))
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .frame(maxWidth: .infinity, minHeight: 49)
+            .frame(width: dynamicTypeSize.isAccessibilitySize ? 112 : nil)
+            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? nil : .infinity, minHeight: 49)
             .foregroundStyle(selected ? accent : Color.secondary)
             .background(selected ? accent.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 21))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -886,7 +1013,7 @@ struct NativeWeatherPreviewView: View {
 
     private func secondaryRead(_ point: NativeForecastPoint) -> String {
         if metric == .temperature {
-            return point.rainProbability.map { "\(Int($0.rounded()))% precip." } ?? "Precip. unavailable"
+            return point.rainProbability.map { "\(Int($0.rounded()))% precip." } ?? "Chance unavailable"
         }
         return "Air \(temperature(point.temperature))"
     }

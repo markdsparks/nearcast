@@ -6,6 +6,8 @@ Prepared September 18, 2026. **Native build: 101. Web assets: 3.0.409.** Release
 
 This is the first family comparison checkpoint in the [native migration plan](native-migration-plan.md), not completion of the native migration or acceptance of Phase 0/1.
 
+Follow-up: the family confirmed build 101 works but needs a better experience. [Build 102 refinement notes](native-preview-polish-102.md) track the next iteration within this same checkpoint.
+
 ## What changes in this candidate
 
 The existing Nearcast app remains the default. On a build that supports the new bridge contract, open the menu and choose **Native weather preview**. Older installed builds must not show a working preview entry merely because the live website has newer assets.
