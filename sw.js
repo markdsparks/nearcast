@@ -1,5 +1,5 @@
-const CACHE = "nearcast-v30411";
-const ASSET_VERSION = "3.0.411";
+const CACHE = "nearcast-v30412";
+const ASSET_VERSION = "3.0.412";
 const NAVIGATION_TIMEOUT_MS = 1600;
 
 // App shell — everything needed to render offline
@@ -14,6 +14,7 @@ const SHELL = [
   `${BASE}planner.js?v=${ASSET_VERSION}`,
   `${BASE}forecast-confidence.js?v=${ASSET_VERSION}`,
   `${BASE}native-places-migration.js?v=${ASSET_VERSION}`,
+  `${BASE}native-places-owner.js?v=${ASSET_VERSION}`,
   `${BASE}app.js?v=${ASSET_VERSION}`,
   `${BASE}native-places-controls.js?v=${ASSET_VERSION}`,
   `${BASE}hrrr-zarr-adapter.js?v=${ASSET_VERSION}`,

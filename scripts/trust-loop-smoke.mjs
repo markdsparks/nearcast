@@ -75,11 +75,28 @@ const migrationEnd = planner.indexOf("function planWatchNotificationPlanEnabled(
 assert.ok(migrationStart >= 0 && migrationEnd > migrationStart, "notification migration functions can be isolated for runtime testing");
 const migrationSource = planner.slice(migrationStart, migrationEnd);
 const migrationKey = "nearcast-plan-watch-notification-plans-v1";
+const memoryKey = "nearcast-plan-memory-v1";
+const generationKey = "nearcast-plan-watch-sync-generation-v1";
+const inventoryStart = planner.indexOf("function planWatchSyncGeneration(");
+const inventoryEnd = planner.indexOf("const PLACE_WATCH_MAX_SYNC_PLACES", inventoryStart);
+const memoryLoadStart = planner.indexOf("function loadPlanMemories(");
+const memoryLoadEnd = planner.indexOf("function savePlanMemories(", memoryLoadStart);
+const memoryNormalizeStart = planner.indexOf("function planIsoDateOffset(");
+const memoryNormalizeEnd = planner.indexOf("function planMemoryFromEvent(", memoryNormalizeStart);
+assert.ok(inventoryStart >= 0 && inventoryEnd > inventoryStart && memoryLoadStart >= 0 && memoryLoadEnd > memoryLoadStart &&
+  memoryNormalizeStart >= 0 && memoryNormalizeEnd > memoryNormalizeStart, "notification inventory dependencies can be isolated");
+const migrationMemories = ["one", "two", "three", "four"].map((id) => ({
+  id, kind: "plan", title: "Test plan", scheduleType: "single",
+  place: { id: "home", name: "Home", latitude: 38.72, longitude: -89.95 },
+  targetDate: "2030-08-03", startHour: 17, endHour: 19
+}));
 const migrationStorage = new Map([
-  [migrationKey, JSON.stringify({ plans: { stale: true, one: true, two: true, three: true, four: true } })]
+  [migrationKey, JSON.stringify({ plans: { stale: true, one: true, two: true, three: true, four: true } })],
+  [memoryKey, JSON.stringify(migrationMemories)]
 ]);
 const migrationSandbox = {
-  state: { planMemories: [] },
+  window: {},
+  state: { planMemories: [], savedPlaces: [] },
   localStorage: {
     getItem(key) {
       return migrationStorage.get(key) ?? null;
@@ -90,13 +107,29 @@ const migrationSandbox = {
   },
   planWatchMemoryIsPast() {
     return false;
+  },
+  // The fixture place is already normalized; this harness exercises the real
+  // plan normalizer/inventory checks without loading the unrelated weather UI.
+  normalizePlace(place) {
+    return { ...place };
+  },
+  planWatchNotificationPermission() {
+    return "default";
   }
 };
 vm.createContext(migrationSandbox);
 vm.runInContext(`
+  const PLAN_MEMORY_KEY = ${JSON.stringify(memoryKey)};
   const PLAN_WATCH_NOTIFICATION_PLANS_KEY = ${JSON.stringify(migrationKey)};
+  const PLACE_WATCH_NOTIFICATION_PLACES_KEY = "nearcast-place-watch-notification-places-v1";
+  const PLAN_WATCH_NOTIFICATION_PREF_KEY = "nearcast-plan-watch-notifications-v1";
+  const PLAN_WATCH_SYNC_GENERATION_KEY = ${JSON.stringify(generationKey)};
   const PLAN_WATCH_MAX_NOTIFICATION_PLANS = 3;
+  let planWatchMemoryStorageValid = false;
   let planWatchMemoryInventoryReady = false;
+  ${planner.slice(inventoryStart, inventoryEnd)}
+  ${planner.slice(memoryNormalizeStart, memoryNormalizeEnd)}
+  ${planner.slice(memoryLoadStart, memoryLoadEnd)}
   ${migrationSource}
 `, migrationSandbox);
 
@@ -112,13 +145,26 @@ assert.equal(
   "pre-hydration migration does not rewrite storage from an empty state"
 );
 
-migrationSandbox.state.planMemories = ["one", "two", "three", "four"].map((id) => ({ id }));
 migrationSandbox.markPlanWatchMemoryInventoryReady();
+assert.equal(migrationSandbox.planWatchInventoryIsKnown(), false, "an unvalidated memory load cannot declare notification inventory ready");
+assert.equal(JSON.parse(migrationStorage.get(migrationKey)).plans.stale, true, "an early readiness call preserves persisted intent");
+migrationSandbox.state.planMemories = migrationSandbox.loadPlanMemories();
+migrationSandbox.markPlanWatchMemoryInventoryReady();
+assert.equal(migrationSandbox.planWatchInventoryIsKnown(), true, "matching validated plan storage, hydrated places and known permission complete the inventory");
 assert.equal(
   Object.keys(JSON.parse(migrationStorage.get(migrationKey)).plans).join(","),
   "one,two,three",
   "post-hydration migration removes stale entries before retaining three active plans"
 );
+assert.equal(JSON.parse(migrationStorage.get(generationKey)).generation, 1, "intent migration durably marks the notification sync generation dirty");
+const validMemoryStorage = migrationStorage.get(memoryKey);
+migrationStorage.set(memoryKey, "{unreadable");
+assert.equal(migrationSandbox.planWatchInventoryIsKnown(), false, "corrupt persisted plans are unknown, never an authoritative empty inventory");
+migrationStorage.set(memoryKey, validMemoryStorage);
+migrationSandbox.window.NearcastNative = { notificationStatusKnown: false };
+assert.equal(migrationSandbox.planWatchInventoryIsKnown(), false, "pending native notification status cannot authorize synchronization");
+migrationSandbox.window.NearcastNative.notificationStatusKnown = true;
+assert.equal(migrationSandbox.planWatchInventoryIsKnown(), true, "known native status restores the otherwise complete inventory");
 
 assert.match(app, /const unreviewed = ranked\.filter\([\s\S]*watch\?\.change/, "Today explicitly finds unreviewed watched-plan changes");
 assert.match(app, /New forecast change[\s\S]*unreviewed/, "Today labels an unseen meaningful change rather than a generic plan warning");

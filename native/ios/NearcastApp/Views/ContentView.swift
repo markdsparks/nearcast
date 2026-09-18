@@ -39,6 +39,16 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $model.showingNativePreview) {
             if let context = model.nativePreviewContext {
                 NativeWeatherPreviewContainer(context: context, webModel: model)
+            } else if model.placesOwner.status == "owned" {
+                NativePlacesEmptyContainer(webModel: model)
+            } else {
+                VStack(spacing: 18) {
+                    ContentUnavailableView("Saved places unavailable", systemImage: "externaldrive.badge.exclamationmark",
+                        description: Text(model.placesOwner.message ?? "Your saved records could not be verified. Nothing was replaced."))
+                    Button("Back to Nearcast") { model.showingNativePreview = false }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding()
             }
         }
         .alert("Native preview", isPresented: Binding(
@@ -109,7 +119,7 @@ struct ContentView: View {
                         .tint(Color(red: 0.16, green: 0.43, blue: 0.75))
                         .padding(.top, 4)
                 }
-                if model.nativePreviewContext != nil {
+                if model.nativePreviewContext != nil || model.placesOwner.status == "owned" {
                     Button("Open native weather preview") {
                         model.openCachedNativePreview()
                     }
@@ -156,10 +166,31 @@ struct ContentView: View {
     #endif
 }
 
+/// An empty inventory must not require a web forecast to reach native search.
+private struct NativePlacesEmptyContainer: View {
+    @ObservedObject var webModel: NearcastWebModel
+    @StateObject private var controls: NativePlacesControlsModel
+
+    init(webModel: NearcastWebModel) {
+        self.webModel = webModel
+        _controls = StateObject(wrappedValue: NativePlacesControlsModel { command in
+            try await webModel.performPlacesCommand(command)
+        })
+    }
+
+    var body: some View {
+        NativePlacesSettingsSheet(model: controls, initialTab: .places,
+            onDone: { webModel.showingNativePreview = false },
+            onOpenExisting: { webModel.openExistingPlacesSettings() },
+            nativeStorageMessage: webModel.placesOwner.message)
+    }
+}
+
 private struct NativeWeatherPreviewContainer: View {
     @StateObject private var preview: NativeWeatherPreviewModel
     @StateObject private var placesControls: NativePlacesControlsModel
     @ObservedObject var webModel: NearcastWebModel
+    @ObservedObject private var placesOwner: NativePlacesOwnerController
     @State private var placesSettingsTab: NativePlacesSettingsTab = .places
     @State private var showingPlacesSettings = false
 
@@ -169,6 +200,7 @@ private struct NativeWeatherPreviewContainer: View {
             try await webModel.performPlacesCommand(command)
         })
         self.webModel = webModel
+        self.placesOwner = webModel.placesOwner
     }
 
     var body: some View {
@@ -198,14 +230,23 @@ private struct NativeWeatherPreviewContainer: View {
                 onOpenExisting: {
                     showingPlacesSettings = false
                     webModel.openExistingPlacesSettings()
-                })
+                },
+                onEnableNativeStorage: { Task { await webModel.enableNativePlacesStorage() } },
+                nativeStorageMessage: placesOwner.message,
+                isEnablingNativeStorage: placesOwner.isActivating)
         }
         .onChange(of: placesControls.source) { _, source in
             guard let context = source?.toPreviewContext() else { return }
             preview.applyManagedContext(context)
             NativePreviewContextStore.save(context)
         }
-        .task { await preview.refresh() }
+        .onChange(of: placesOwner.snapshot) { _, value in
+            if let source = value?.source { placesControls.adoptVerifiedSource(source) }
+        }
+        .task {
+            if let source = placesOwner.snapshot?.source { placesControls.adoptVerifiedSource(source) }
+            await preview.refresh()
+        }
         .onDisappear { preview.cancel() }
     }
 }

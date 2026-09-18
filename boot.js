@@ -18,4 +18,15 @@ if ('serviceWorker' in navigator) {
 
 // Start the app last, after every module-level declaration is initialized,
 // so the synchronous startup path can't hit a temporal-dead-zone reference.
-init();
+void (async () => {
+  // The document-start seed can race a native edit. Wait for the host to
+  // confirm this document before choosing its canonical launch inventory.
+  await window.NearcastNative?.placesOwner?.ready;
+  window.NearcastNativePlacesOwner?.bootstrap();
+  init();
+  await window.NearcastNativePlacesOwner?.finishInitialization();
+})().catch(() => {
+  // Unknown owner state is not permission to resume the historical writer.
+  if (window.NearcastNative?.placesOwner) window.NearcastNative.placesOwner.compatibleReady = false;
+  if (typeof setStatus === "function") setStatus("Places could not be verified. Reopen Places before making changes.", true);
+});

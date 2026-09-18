@@ -2885,8 +2885,7 @@ enum NearcastWatchWeatherClient {
                !NearcastSharedForecastClock.unitsMatch(latestSnapshot.windUnit, requestedMetric: metric) {
                 return .success(latestSnapshot)
             }
-            NearcastWidgetSnapshotStore.save(updated)
-            return .success(updated)
+            return .success(NearcastWidgetSnapshotStore.saveRefreshResult(updated))
         } catch {
             return .failed
         }

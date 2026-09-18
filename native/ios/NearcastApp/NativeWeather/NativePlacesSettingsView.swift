@@ -8,12 +8,15 @@ enum NativePlacesSettingsTab: String, CaseIterable, Identifiable {
     var title: String { self == .places ? "Places" : "Settings" }
 }
 
-/// Native controls for the existing saved records. The confirmed source is
+/// Native controls for the verified owner's saved records. The confirmed source is
 /// always the UI's truth; tapping a row never moves a checkmark optimistically.
 struct NativePlacesSettingsSheet: View {
     @ObservedObject var model: NativePlacesControlsModel
     let onDone: () -> Void
     let onOpenExisting: () -> Void
+    let onEnableNativeStorage: (() -> Void)?
+    let nativeStorageMessage: String?
+    let isEnablingNativeStorage: Bool
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var tab: NativePlacesSettingsTab
@@ -24,16 +27,23 @@ struct NativePlacesSettingsSheet: View {
     @State private var showingRename = false
     @State private var removeTarget: NativeManagedPlace?
     @State private var showingRemove = false
+    @State private var showingNativeStorageConfirmation = false
 
     init(
         model: NativePlacesControlsModel,
         initialTab: NativePlacesSettingsTab = .places,
         onDone: @escaping () -> Void,
-        onOpenExisting: @escaping () -> Void
+        onOpenExisting: @escaping () -> Void,
+        onEnableNativeStorage: (() -> Void)? = nil,
+        nativeStorageMessage: String? = nil,
+        isEnablingNativeStorage: Bool = false
     ) {
         self.model = model
         self.onDone = onDone
         self.onOpenExisting = onOpenExisting
+        self.onEnableNativeStorage = onEnableNativeStorage
+        self.nativeStorageMessage = nativeStorageMessage
+        self.isEnablingNativeStorage = isEnablingNativeStorage
         _tab = State(initialValue: initialTab)
     }
 
@@ -58,6 +68,7 @@ struct NativePlacesSettingsSheet: View {
                     settingsList
                 }
             }
+            .disabled(isEnablingNativeStorage)
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(tab.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -65,7 +76,7 @@ struct NativePlacesSettingsSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", action: onDone)
                         .fontWeight(.semibold)
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || isEnablingNativeStorage)
                 }
             }
             .task { await model.reload() }
@@ -105,10 +116,21 @@ struct NativePlacesSettingsSheet: View {
                 }
                 Button("Cancel", role: .cancel) { removeTarget = nil }
             } message: { _ in
-                Text("Your plans stay saved. Watching this saved place for weather changes will stop.")
+                Text(model.source?.owner == "native"
+                    ? "Your plans stay saved. Watching this saved place will stop after notification settings finish syncing."
+                    : "Your plans stay saved. Watching this saved place for weather changes will stop.")
+            }
+            .confirmationDialog("Use native storage?", isPresented: $showingNativeStorageConfirmation, titleVisibility: .visible) {
+                Button("Use native storage") {
+                    guard !model.isBusy, !isEnablingNativeStorage else { return }
+                    onEnableNativeStorage?()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Saved places and these settings will move to native storage on this iPhone. Plans and notification choices stay in the existing app. This handover has no automatic rollback.")
             }
         }
-        .interactiveDismissDisabled(model.isBusy)
+        .interactiveDismissDisabled(model.isBusy || isEnablingNativeStorage)
     }
 
     private var tabPicker: some View {
@@ -382,6 +404,7 @@ struct NativePlacesSettingsSheet: View {
     private var settingsList: some View {
         List {
             statusSection
+            nativeStorageSection
             Section {
                 ForEach(PreferenceKind.allCases) { kind in
                     NavigationLink {
@@ -404,11 +427,30 @@ struct NativePlacesSettingsSheet: View {
                 Text("Changes are saved in Nearcast.")
             }
             Section {
+                Toggle("Reactive sky", isOn: Binding(
+                    get: { model.source?.preferences.reactiveSkyEnabled ?? false },
+                    set: { value in Task { _ = await model.setPreference(reactiveSkyEnabled: value) } }
+                ))
+                .frame(minHeight: 44)
+                Toggle("Device motion for sky", isOn: Binding(
+                    get: { model.source?.preferences.reactiveSkyMotionAllowed ?? false },
+                    set: { value in Task { _ = await model.setPreference(reactiveSkyMotionAllowed: value) } }
+                ))
+                .frame(minHeight: 44)
+            } header: {
+                Text("Sky effects")
+            } footer: {
+                Text(model.source?.owner == "native"
+                    ? "These settings save your sky preferences. Motion access is requested separately when you use sky effects in existing Nearcast."
+                    : "Move Places and Settings to native storage to edit sky preferences here. Until then, use existing settings.")
+            }
+            .disabled(model.isBusy || model.source?.owner != "native")
+            Section {
                 Button(action: onOpenExisting) {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Open existing settings").font(.body.weight(.semibold))
-                            Text("Sky effects, motion and other options.")
+                            Text("Plans, notifications and other options.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -424,6 +466,48 @@ struct NativePlacesSettingsSheet: View {
             }
         }
         .listStyle(.insetGrouped)
+    }
+
+    @ViewBuilder private var nativeStorageSection: some View {
+        if model.source?.owner == "native" {
+            Section {
+                Label("Saved on this iPhone", systemImage: "iphone")
+                    .font(.subheadline)
+                if let nativeStorageMessage, !nativeStorageMessage.isEmpty {
+                    Text(nativeStorageMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Storage")
+            }
+        } else if model.source?.owner == "legacy", onEnableNativeStorage != nil {
+            Section {
+                Text("Move saved places and these settings onto this iPhone. Existing screens will use the same records.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    showingNativeStorageConfirmation = true
+                } label: {
+                    HStack(spacing: 10) {
+                        if isEnablingNativeStorage { ProgressView() }
+                        Text(isEnablingNativeStorage ? "Moving saved settings…" : "Use native storage")
+                    }
+                    .frame(minHeight: 44)
+                }
+                .disabled(model.isBusy || isEnablingNativeStorage)
+                if let nativeStorageMessage, !nativeStorageMessage.isEmpty {
+                    Text(nativeStorageMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Native migration")
+            }
+        }
     }
 
     private enum PreferenceKind: String, CaseIterable, Identifiable {

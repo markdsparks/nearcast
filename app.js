@@ -1,4 +1,4 @@
-const VERSION = "3.0.411";
+const VERSION = "3.0.412";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -282,7 +282,7 @@ async function refreshCurrentLocationAfterNativeReopen(startingPlace) {
   // Always complete one live Current Location load. Even when the device has
   // returned near the canonical coordinate, a widget may have last resolved a
   // different travel destination that the web view cannot see directly.
-  loadPlace(resolved, true);
+  await loadPlace(resolved, true);
 }
 
 function debugSettingsEnabled() {
@@ -4146,7 +4146,9 @@ function init() {
   const notificationRoutePlace = typeof nearcastNotificationRoutePlace === "function"
     ? nearcastNotificationRoutePlace()
     : null;
-  const startingPlace = deepLinkRoutePlace && deepLinkRoutePlace.latitude != null
+  const startingPlace = window.NearcastNativePlacesOwner?.owned() && !deepLinkRoutePlace && !notificationRoutePlace
+    ? state.activePlace
+    : deepLinkRoutePlace && deepLinkRoutePlace.latitude != null
     ? deepLinkRoutePlace
     : notificationRoutePlace && notificationRoutePlace.latitude != null
     ? notificationRoutePlace
@@ -4155,12 +4157,12 @@ function init() {
     : state.savedPlaces.length ? state.savedPlaces[0] : null;
   if (startingPlace) {
     warmStartForecast(startingPlace);
-    loadPlace(startingPlace);
+    runVerifiedUserAction(() => loadPlace(startingPlace));
     // Current Location is an intent, not a frozen coordinate. On an ordinary
     // native reopen (there is no widget route carrying the extension's newer
     // coordinate), quietly re-resolve it using the already-authorized native
     // location bridge and replace the initial load only after meaningful travel.
-    if (!deepLinkRoutePlace && !notificationRoutePlace) {
+    if (!deepLinkRoutePlace && !notificationRoutePlace && !window.NearcastNativePlacesOwner?.managed()) {
       void refreshCurrentLocationAfterNativeReopen(startingPlace);
     }
   } else {
@@ -4493,6 +4495,14 @@ function initTactileFeedback() {
   document.addEventListener("scroll", () => clearTactilePress(), { capture: true, passive: true });
 }
 
+function runVerifiedUserAction(action) {
+  try {
+    Promise.resolve(action()).catch(() => setStatus("Could not verify that change. Reopen Places to review the saved result before trying again.", true));
+  } catch {
+    setStatus("Could not verify that change. Reopen Places and try again.", true);
+  }
+}
+
 function bindTapAction(element, action, options = {}) {
   if (!element) return;
   element.classList.add("tap-action-target");
@@ -4519,7 +4529,7 @@ function bindTapAction(element, action, options = {}) {
     if (moved > moveTolerance) return;
     suppressClick = true;
     if (preventDefault && event.cancelable) event.preventDefault();
-    action(event);
+    runVerifiedUserAction(() => action(event));
     setTimeout(() => { suppressClick = false; }, 350);
   }, { signal: abort.signal });
 
@@ -4529,7 +4539,7 @@ function bindTapAction(element, action, options = {}) {
       event.preventDefault();
       return;
     }
-    action(event);
+    runVerifiedUserAction(() => action(event));
   }, { signal: abort.signal });
 }
 
@@ -4560,7 +4570,7 @@ function bindTapDelegate(container, selector, action, options = {}) {
     if (moved > moveTolerance || !container.contains(start.target)) return;
     suppressClick = true;
     if (preventDefault && event.cancelable) event.preventDefault();
-    action(event, start.target);
+    runVerifiedUserAction(() => action(event, start.target));
     setTimeout(() => { suppressClick = false; }, 350);
   });
 
@@ -4573,7 +4583,7 @@ function bindTapDelegate(container, selector, action, options = {}) {
     const target = matchingTarget(event.target);
     if (target) {
       target.classList.add("tap-action-target");
-      action(event, target);
+      runVerifiedUserAction(() => action(event, target));
     }
   });
 }
@@ -4985,7 +4995,7 @@ function bindEvents() {
   document.addEventListener("keydown", trapTopmostSheetFocus, true);
 
   bindTapAction(els.unitToggle, () => {
-    setUnitPreference(state.unit === "fahrenheit" ? "celsius" : "fahrenheit");
+    return setUnitPreference(state.unit === "fahrenheit" ? "celsius" : "fahrenheit");
   });
 
   bindTapAction(els.themeToggle, toggleTheme);
@@ -5225,7 +5235,7 @@ function bindEvents() {
       const place = state.savedPlaces.find((item) => item.id === notificationPlace.dataset.notificationPlace);
       if (place) {
         closeGlobalMemorySheet();
-        loadPlace(place);
+        return loadPlace(place);
       }
       return;
     }
@@ -5417,7 +5427,7 @@ function bindEvents() {
     if (!state.activePlace) return;
     const alreadySaved = state.savedPlaces.some((place) => place.id === state.activePlace.id);
     if (alreadySaved) return;
-    savePlace(state.activePlace);
+    return savePlace(state.activePlace);
   });
   bindTapAction(els.radarMode, () => setMapMode("radar"));
   bindTapAction(els.futureMode, () => setMapMode("future"));
@@ -5649,11 +5659,12 @@ function toggleTheme() {
   } else {
     next = "auto";
   }
-  setThemePreference(next);
+  return setThemePreference(next);
 }
 
 function setThemePreference(value) {
   if (!["auto", "light", "dark"].includes(value)) throw new Error("Invalid theme preference.");
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("preferences", { preferences: { theme: value } });
   localStorage.setItem("weather-theme", value);
   state.theme = value;
   applyTheme();
@@ -5661,6 +5672,7 @@ function setThemePreference(value) {
 
 function setUnitPreference(value) {
   if (!["fahrenheit", "celsius"].includes(value)) throw new Error("Invalid temperature preference.");
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("preferences", { preferences: { unit: value } });
   if (value === state.unit) return;
   const oldUnit = state.unit;
   localStorage.setItem("weather-unit", value);
@@ -5827,6 +5839,7 @@ function rerenderReactiveSky() {
 }
 
 function toggleReactiveSky() {
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("preferences", { preferences: { reactiveSkyEnabled: !state.reactiveSkyEnabled } });
   state.reactiveSkyEnabled = !state.reactiveSkyEnabled;
   localStorage.setItem(REACTIVE_SKY_KEY, state.reactiveSkyEnabled ? "1" : "0");
   updateReactiveSkyControls();
@@ -5953,8 +5966,7 @@ async function startReactiveSkyNativeMotion(options = {}) {
     const result = await bridge.start({ frequencyHz: 8, userInitiated: options.userInitiated === true });
     if (!reactiveSkyNativeStartSucceeded(result)) {
       if (options.userInitiated) {
-        state.reactiveSkyMotionAllowed = false;
-        localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+        await setReactiveSkyMotionAllowed(false);
         setReactiveSkyMotionStatus(result?.state === "denied" || result?.reason === "denied" ? "denied" : "unsupported");
       }
       return false;
@@ -5965,8 +5977,7 @@ async function startReactiveSkyNativeMotion(options = {}) {
     return true;
   } catch {
     if (options.userInitiated) {
-      state.reactiveSkyMotionAllowed = false;
-      localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+      await setReactiveSkyMotionAllowed(false);
       setReactiveSkyMotionStatus("unsupported");
     }
     return false;
@@ -6004,8 +6015,7 @@ async function requestReactiveSkyWebMotion() {
 
 async function toggleReactiveSkyDeviceMotion() {
   if (state.reactiveSkyMotionAllowed) {
-    state.reactiveSkyMotionAllowed = false;
-    localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+    await setReactiveSkyMotionAllowed(false);
     await stopReactiveSkyMotion("idle");
     updateReactiveSkyControls();
     return;
@@ -6028,16 +6038,21 @@ async function toggleReactiveSkyDeviceMotion() {
   }
   reactiveSkyMotionState.requestInFlight = false;
   if (granted) {
-    state.reactiveSkyMotionAllowed = true;
-    localStorage.setItem(REACTIVE_SKY_MOTION_KEY, "1");
+    await setReactiveSkyMotionAllowed(true);
     setReactiveSkyMotionStatus("ready");
   } else {
-    state.reactiveSkyMotionAllowed = false;
-    localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+    await setReactiveSkyMotionAllowed(false);
     await stopReactiveSkyMotion("denied");
   }
   updateReactiveSkyControls();
   scheduleReactiveSkyMotionSync(0);
+}
+
+function setReactiveSkyMotionAllowed(value) {
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("preferences", { preferences: { reactiveSkyMotionAllowed: value === true } });
+  if (value) localStorage.setItem(REACTIVE_SKY_MOTION_KEY, "1");
+  else localStorage.removeItem(REACTIVE_SKY_MOTION_KEY);
+  state.reactiveSkyMotionAllowed = value === true;
 }
 
 function resetReactiveSkyPose() {
@@ -6893,6 +6908,7 @@ function updateTimeFormatButtons() {
 
 function setTimeFormatPreference(value) {
   const next = sanitizeTimeFormatPreference(value);
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("preferences", { preferences: { timeFormat: next } });
   if (next === state.timeFormat) return;
   localStorage.setItem(TIME_FORMAT_KEY, next);
   state.timeFormat = next;
@@ -7693,7 +7709,7 @@ function showForecastLaunchFailure() {
     retry.className = "launch-condition-button";
     retry.textContent = "Retry weather";
     bindTapAction(retry, () => {
-      if (state.activePlace) void loadPlace(state.activePlace, true);
+      if (state.activePlace) return loadPlace(state.activePlace, true);
     });
     els.nowSummary.append(retry);
   }
@@ -8117,7 +8133,7 @@ function renderSearchResults() {
     `;
     bindTapAction(button, () => {
       toggleSearch(false);
-      loadPlace(normalizePlace(place));
+      return loadPlace(normalizePlace(place));
     });
     els.searchResults.appendChild(button);
   });
@@ -8522,9 +8538,9 @@ function renderSavedPlaces() {
         </form>
       ` : ""}
     `;
-    bindTapAction(item.querySelector(".place-item-main"), () => {
+    bindTapAction(item.querySelector(".place-item-main"), async () => {
+      await loadPlace(place);
       closePlaceSheet();
-      loadPlace(place);
     });
     bindTapAction(item.querySelector(".place-item-edit"), () => {
       editingSavedPlaceId = isEditing ? null : place.id;
@@ -8539,7 +8555,11 @@ function renderSavedPlaces() {
     if (editor) {
       editor.addEventListener("submit", (event) => {
         event.preventDefault();
-        renameSavedPlace(place.id, editor.querySelector("input")?.value || "");
+        runVerifiedUserAction(async () => {
+          await renameSavedPlace(place.id, editor.querySelector("input")?.value || "");
+          editingSavedPlaceId = null;
+          renderSavedPlaces();
+        });
       });
       bindTapAction(editor.querySelector(".place-editor-cancel"), () => {
         editingSavedPlaceId = null;
@@ -8599,7 +8619,7 @@ function renderFamilyPlacesPeek() {
   root.querySelectorAll("[data-family-place-id]").forEach((card) => {
     bindTapAction(card, () => {
       const place = exceptions.find((candidate) => String(candidate.place.id) === String(card.dataset.familyPlaceId))?.place;
-      if (place) loadPlace(place);
+      if (place) return loadPlace(place);
     });
   });
 }
@@ -9070,7 +9090,8 @@ function closePlaceSheet() {
 
 function showWelcomeFromPlaces() {
   state.welcomeOverride = true;
-  state.activePlace = null;
+  // Opening the place picker is presentation, not a canonical deselection.
+  if (!window.NearcastNativePlacesOwner?.managed()) state.activePlace = null;
   closePlaceSheet();
   clearSearchResults();
   setStatus("");
@@ -9083,6 +9104,7 @@ function showWelcomeFromPlaces() {
 }
 
 function warmStartForecast(place) {
+  if (window.NearcastNativePlacesOwner?.managed() && !window.NearcastNativePlacesOwner.matches(place)) return false;
   try {
     const normalized = normalizePlace(place);
     const cached = readForecastCache(normalized, { maxAge: FORECAST_WARM_START_MAX_AGE_MS });
@@ -9129,8 +9151,70 @@ function warmStartForecast(place) {
   }
 }
 
+let nativeOwnerWeatherLoad = Promise.resolve();
+
+function dismissNativeOwnerStaleDetails() {
+  const day = document.getElementById("dayDetail");
+  if (day && !day.hidden && typeof closeDayDetail === "function") {
+    if (typeof plannerReturnAfterDayDetail !== "undefined") plannerReturnAfterDayDetail = null;
+    closeDayDetail();
+  }
+  if (typeof mapState !== "undefined" && mapState.immersive && typeof exitImmersiveMap === "function") exitImmersiveMap();
+  if (els.glanceDetailSheet && !els.glanceDetailSheet.hidden && typeof closeGlanceDetail === "function") closeGlanceDetail();
+  if (els.forecastReceiptSheet && !els.forecastReceiptSheet.hidden && typeof closeForecastReceipt === "function") closeForecastReceipt();
+  const alerts = document.getElementById("alertSheet");
+  if (alerts && !alerts.hidden && typeof closeAlertSheet === "function") closeAlertSheet({ restoreFocus: false });
+}
+
+function applyNativePlacesOwnerSource(source, revision, { refresh = true } = {}) {
+  const owner = window.NearcastNativePlacesOwner;
+  const firstOwnership = !state.nativeOwnerRevision;
+  const next = owner.legacyPlace(source.selectedPlace);
+  const changedPlace = String(state.activePlace?.id) !== String(next?.id) ||
+    state.activePlace?.latitude !== next?.latitude || state.activePlace?.longitude !== next?.longitude;
+  const changedUnit = state.unit !== source.preferences.unit;
+  const changedClock = state.timeFormat !== source.preferences.timeFormat;
+  state.savedPlaces = source.savedPlaces.map((place) => normalizePlace(owner.legacyPlace(place)));
+  state.activePlace = next ? normalizePlace(next) : null;
+  Object.assign(state, source.preferences);
+  state.nativeOwnerRevision = revision;
+  if (firstOwnership || changedPlace || changedUnit) {
+    loadPlaceRequestSeq += 1;
+    locationLookupSeq += 1;
+    state.forecast = null;
+    state.forecastUnit = null;
+    state.forecastPlaceId = null;
+    state.weatherTruth = null;
+    state.forecastPresentation = null;
+    state.skyData = null;
+    for (const id in glanceData) delete glanceData[id];
+    if (changedUnit && typeof planWatchState !== "undefined") { planWatchState.data = {}; planWatchState.lastFetchAt = {}; }
+  }
+  if (!refresh) return;
+  if (firstOwnership || changedPlace || changedUnit) dismissNativeOwnerStaleDetails();
+  applyTheme();
+  updateUnitButton();
+  updateTimeFormatButtons();
+  updateReactiveSkyControls();
+  renderSavedPlaces();
+  updateMode();
+  if (!state.reactiveSkyEnabled || !state.reactiveSkyMotionAllowed) void stopReactiveSkyMotion("idle");
+  rerenderReactiveSky();
+  if (changedClock && !changedPlace && !changedUnit) refreshTimeFormattedSurfaces();
+  if ((firstOwnership || changedPlace || changedUnit) && state.activePlace) nativeOwnerWeatherLoad = loadPlace(state.activePlace, true);
+}
+
 async function loadPlace(place, force = false) {
+  const owner = window.NearcastNativePlacesOwner;
+  if (owner?.managed() && !owner.matches(place)) {
+    // A background refresh of an old web projection must never select it over
+    // a newer native edit. Explicit place selection uses the non-force path.
+    if (force && owner.owned()) throw new Error("The selected place changed. Reopen Places and try again.");
+    await owner.mutate("select", { place: owner.exportPlace(place) });
+    return nativeOwnerWeatherLoad;
+  }
   const requestId = ++loadPlaceRequestSeq;
+  const requestedUnit = state.unit;
   state.welcomeOverride = false;
   const previousPlace = state.activePlace;
   const previousForecast = state.forecast;
@@ -9144,7 +9228,7 @@ async function loadPlace(place, force = false) {
   state.weatherTruth = null;
   state.forecastPresentation = null;
   if (typeof clearStormImpact === "function") clearStormImpact();
-  writeStorageJsonBestEffort("weather-last-place", state.activePlace);
+  if (!owner?.managed()) writeStorageJsonBestEffort("weather-last-place", state.activePlace);
   updateMode();
   if (shouldShowLaunchLoading) setForecastLaunchLoading(nextPlace);
   else clearForecastLaunchLoading();
@@ -9163,7 +9247,8 @@ async function loadPlace(place, force = false) {
 
   try {
     const data = await fetchForecast(nextPlace, force);
-    if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
+    if (requestId !== loadPlaceRequestSeq || requestedUnit !== state.unit ||
+        (owner?.managed() ? !owner.matches(nextPlace, requestedUnit) : !samePlanPlace(nextPlace, state.activePlace))) return;
     clearForecastLaunchLoading();
     renderForecast(data, nextPlace);
     startRadarPrecipProbe(nextPlace, data, force);
@@ -9178,7 +9263,7 @@ async function loadPlace(place, force = false) {
   } catch (error) {
     if (requestId !== loadPlaceRequestSeq || !samePlanPlace(nextPlace, state.activePlace)) return;
     lastLoadUsedForecastFallback = false;
-    const canKeepPreviousPlace = previousPlace && previousForecast && !samePlanPlace(previousPlace, nextPlace);
+    const canKeepPreviousPlace = !owner?.managed() && previousPlace && previousForecast && !samePlanPlace(previousPlace, nextPlace);
     if (canKeepPreviousPlace) {
       clearForecastLaunchLoading();
       state.activePlace = previousPlace;
@@ -9264,7 +9349,9 @@ function refreshForecastForLiveClock({ forceRender = false, skipNetwork = false 
 
   if (skipNetwork || Date.now() - lastLoadedAt < FORECAST_AUTO_REFRESH_MS || autoForecastRefreshInFlight) return;
   autoForecastRefreshInFlight = true;
-  Promise.resolve(loadPlace(state.activePlace, true)).finally(() => {
+  Promise.resolve(loadPlace(state.activePlace, true)).catch(() => {
+    setStatus("Could not verify the selected place. Reopen Places and try again.", true);
+  }).finally(() => {
     autoForecastRefreshInFlight = false;
   });
 }
@@ -9315,7 +9402,7 @@ function refreshOnForeground() {
   if (!state.activePlace) return;
   if (Date.now() - lastLoadedAt < FOREGROUND_STALE_MS) return;
   for (const id in glanceData) delete glanceData[id]; // let chips re-pull too
-  loadPlace(state.activePlace, true);
+  runVerifiedUserAction(() => loadPlace(state.activePlace, true));
 }
 
 function initPullToRefresh() {
@@ -9611,6 +9698,9 @@ const AIR_QUALITY_FIELDS = [
 ];
 
 function forecastCacheKey(place, unit = state.unit) {
+  if (window.NearcastNativePlacesOwner?.owned()) {
+    return `forecast:${FORECAST_CACHE_VERSION}:native:${unit}:${encodeURIComponent(String(place.id))}:${Number(place.latitude)}:${Number(place.longitude)}:${place.followsCurrentLocation === true ? "current" : "fixed"}`;
+  }
   return `forecast:${FORECAST_CACHE_VERSION}:${unit}:${Number(place.latitude).toFixed(3)}:${Number(place.longitude).toFixed(3)}`;
 }
 
@@ -11421,6 +11511,7 @@ function renderForecastMap() {
 }
 
 function renderForecast(data, place, options = {}) {
+  if (window.NearcastNativePlacesOwner?.managed() && !window.NearcastNativePlacesOwner.matches(place)) return;
   const perf = perfStart();
   const lanes = normalizeForecastRenderLanes(options);
   const ctx = buildForecastRenderContext(data, place);
@@ -14201,6 +14292,8 @@ function refreshPlanAwareLaunchSurfaces(data = state.forecast, place = state.act
 
 function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePlace, truth = state.weatherTruth || weatherTruth(data)) {
   if (!window.NearcastNative?.postMessage || !data || !place) return;
+  const ownerRevision = window.NearcastNativePlacesOwner?.widgetRevision(place, data);
+  if (ownerRevision === null) return;
   try {
     const normalizedWidgetPlace = normalizePlace(place);
     const widgetPlaceDisplayName = placeLabel(normalizedWidgetPlace);
@@ -14324,6 +14417,7 @@ function syncNativeWidgetSnapshot(data = state.forecast, place = state.activePla
     };
     window.NearcastNative.postMessage({
       type: "widget.snapshot",
+      ...(ownerRevision === undefined ? {} : { ownerRevision }),
       snapshot,
       place: {
         id: normalizedWidgetPlace.id,
@@ -17959,13 +18053,14 @@ async function useCurrentLocation() {
       persistDeviceLocation(position.coords, "gps");
       const fallback = placeFromCoordinates(position.coords);
       setStatus("Naming your location...");
+      let place = fallback;
+      try { place = await reverseGeocodePlace(position.coords, fallback); } catch { /* Fresh authorized coordinates remain usable. */ }
+      if (lookupSeq !== locationLookupSeq) return;
       try {
-        const place = await reverseGeocodePlace(position.coords, fallback);
-        if (lookupSeq !== locationLookupSeq) return;
-        loadPlace(place);
+        await loadPlace(place);
       } catch {
-        if (lookupSeq !== locationLookupSeq) return;
-        loadPlace(fallback);
+        // A write failure never starts a second selection attempt.
+        setStatus("Could not verify your location selection. Reopen Places and try again.", true);
       }
     },
     (error) => {
@@ -18060,6 +18155,7 @@ function placeFromReverseGeocode(json, fallback) {
 }
 
 function savePlace(place) {
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("save", { place: window.NearcastNativePlacesOwner.exportPlace(place) });
   // Saving Current Location creates a fixed place. It must never silently
   // follow future device movement just because its historical id starts gps-.
   const normalized = { ...normalizePlace(place), followsCurrentLocation: false };
@@ -18076,6 +18172,7 @@ function savePlace(place) {
 }
 
 function removeSavedPlace(id) {
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("remove", { id: String(id) });
   const next = state.savedPlaces.filter((place) => place.id !== id);
   localStorage.setItem("weather-places", JSON.stringify(next));
   state.savedPlaces = next;
@@ -18099,6 +18196,7 @@ function normalizedPlaceAlias(value) {
 
 function renameSavedPlace(id, value) {
   const alias = normalizedPlaceAlias(value);
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("rename", { id: String(id), alias });
   const next = state.savedPlaces.map((place) => (
     place.id === id ? { ...place, alias } : place
   ));
@@ -18116,6 +18214,7 @@ function renameSavedPlace(id, value) {
 }
 
 function moveSavedPlace(id, direction) {
+  if (window.NearcastNativePlacesOwner?.managed()) return window.NearcastNativePlacesOwner.mutate("move", { id: String(id), direction: Number(direction) });
   const from = state.savedPlaces.findIndex((place) => place.id === id);
   const to = from + Number(direction);
   if (from < 0 || to < 0 || to >= state.savedPlaces.length) return;

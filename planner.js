@@ -329,6 +329,61 @@ const PLAN_WATCH_REFRESH_THROTTLE_MS = 90 * 1000;
 const PLAN_WATCH_NOTIFICATION_PREF_KEY = "nearcast-plan-watch-notifications-v1";
 const PLAN_WATCH_NOTIFICATION_PLANS_KEY = "nearcast-plan-watch-notification-plans-v1";
 const PLACE_WATCH_NOTIFICATION_PLACES_KEY = "nearcast-place-watch-notification-places-v1";
+const PLAN_WATCH_SYNC_GENERATION_KEY = "nearcast-plan-watch-sync-generation-v1";
+let planWatchMemoryStorageValid = false;
+let planWatchDrainPromise = null;
+
+function planWatchSyncGeneration() {
+  const raw = localStorage.getItem(PLAN_WATCH_SYNC_GENERATION_KEY);
+  if (raw === null) return { generation: 0, acknowledged: 0 };
+  const value = JSON.parse(raw);
+  if (!value || !Number.isSafeInteger(value.generation) || !Number.isSafeInteger(value.acknowledged) ||
+      value.acknowledged < 0 || value.generation < value.acknowledged) throw new Error("Notification sync state unavailable.");
+  return value;
+}
+
+function persistPlanWatchSyncGeneration(value) {
+  const text = JSON.stringify(value);
+  localStorage.setItem(PLAN_WATCH_SYNC_GENERATION_KEY, text);
+  if (localStorage.getItem(PLAN_WATCH_SYNC_GENERATION_KEY) !== text) throw new Error("Notification sync state unavailable.");
+}
+
+function markPlanWatchSyncDirty() {
+  const value = planWatchSyncGeneration();
+  if (value.generation >= Number.MAX_SAFE_INTEGER) throw new Error("Notification sync state unavailable.");
+  value.generation += 1;
+  persistPlanWatchSyncGeneration(value);
+  return value.generation;
+}
+
+function planWatchInventoryIsKnown() {
+  if (window.NearcastNative?.notificationStatusKnown === false) return false;
+  if (!planWatchMemoryInventoryReady || !planWatchMemoryStorageValid || typeof state === "undefined" || !Array.isArray(state.savedPlaces)) return false;
+  try {
+    const memoryRaw = localStorage.getItem(PLAN_MEMORY_KEY);
+    const memories = memoryRaw === null ? [] : JSON.parse(memoryRaw);
+    if (!Array.isArray(memories) || memories.length > 60 || memories.some((memory) => !normalizePlanMemory(memory)) ||
+        memories.length !== state.planMemories.length || memories.some((memory, index) => String(memory.id) !== String(state.planMemories[index]?.id))) return false;
+    const plansRaw = localStorage.getItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY);
+    const plans = plansRaw === null ? { plans: {} } : JSON.parse(plansRaw);
+    if (!plans || typeof plans !== "object" || Array.isArray(plans) || !plans.plans || typeof plans.plans !== "object" || Array.isArray(plans.plans) ||
+        Object.entries(plans.plans).some(([id, enabled]) => !id.trim() || typeof enabled !== "boolean")) return false;
+    const placesRaw = localStorage.getItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY);
+    const places = placesRaw === null ? { enabled: false } : JSON.parse(placesRaw);
+    if (!places || typeof places !== "object" || Array.isArray(places) || typeof places.enabled !== "boolean" ||
+        (Object.hasOwn(places, "selectedIds") && (!Array.isArray(places.selectedIds) || places.selectedIds.some((id) => typeof id !== "string" || !id.trim()))) ||
+        (Object.hasOwn(places, "nativeDeletionWatermark") && (!Number.isSafeInteger(places.nativeDeletionWatermark) || places.nativeDeletionWatermark < 0))) return false;
+    const preference = localStorage.getItem(PLAN_WATCH_NOTIFICATION_PREF_KEY);
+    if (preference !== null && !["enabled", "off", "disabled"].includes(preference)) return false;
+    return ["granted", "denied", "default", "unsupported"].includes(planWatchNotificationPermission());
+  } catch { return false; }
+}
+
+function planWatchSyncInventoryReady() {
+  const owner = window.NearcastNative?.placesOwner;
+  if (window.NearcastNativePlacesOwner?.managed() && (owner?.status !== "owned" || owner.compatibleReady !== true)) return false;
+  return planWatchInventoryIsKnown() && (!owner || owner.status === "unmigrated" || (owner.status === "owned" && owner.compatibleReady === true));
+}
 const PLACE_WATCH_MAX_SYNC_PLACES = 3;
 const PLAN_WATCH_NOTIFICATION_STATE_KEY = "nearcast-plan-watch-notification-events-v1";
 const PLAN_WATCH_RECENT_UPDATES_KEY = "nearcast-plan-watch-recent-updates-v1";
@@ -1132,6 +1187,8 @@ function planWatchNotificationPreference() {
 function writePlanWatchNotificationPreference(value) {
   try {
     localStorage.setItem(PLAN_WATCH_NOTIFICATION_PREF_KEY, value);
+    if (localStorage.getItem(PLAN_WATCH_NOTIFICATION_PREF_KEY) !== value) throw new Error("Notification intent unavailable.");
+    markPlanWatchSyncDirty();
   } catch {
     /* Keep the current session working even if storage is unavailable. */
   }
@@ -1163,18 +1220,19 @@ function cleanPlanWatchNotificationPlans(value = {}) {
 }
 
 function markPlanWatchMemoryInventoryReady() {
-  if (planWatchMemoryInventoryReady) return;
+  if (planWatchMemoryInventoryReady || !planWatchMemoryStorageValid) return;
   planWatchMemoryInventoryReady = true;
   const clean = readPlanWatchNotificationPlans();
-  writePlanWatchNotificationPlans(clean);
+  // A malformed preference file is unknown, not an authoritative empty list.
+  if (planWatchInventoryIsKnown()) writePlanWatchNotificationPlans(clean);
 }
 
 function readPlanWatchNotificationPlans() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY) || "null");
-    const raw = parsed && typeof parsed === "object" && parsed.plans && typeof parsed.plans === "object"
-      ? parsed
-      : { plans: {} };
+    if (parsed !== null && (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !parsed.plans ||
+        typeof parsed.plans !== "object" || Array.isArray(parsed.plans) || Object.entries(parsed.plans).some(([id, enabled]) => !id.trim() || typeof enabled !== "boolean"))) return { plans: {} };
+    const raw = parsed || { plans: {} };
     const clean = cleanPlanWatchNotificationPlans(raw);
     if (JSON.stringify(raw.plans || {}) !== JSON.stringify(clean.plans)) {
       localStorage.setItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY, JSON.stringify(clean));
@@ -1187,10 +1245,13 @@ function readPlanWatchNotificationPlans() {
 
 function writePlanWatchNotificationPlans(value) {
   try {
+    const text = JSON.stringify(cleanPlanWatchNotificationPlans(value));
     localStorage.setItem(
       PLAN_WATCH_NOTIFICATION_PLANS_KEY,
-      JSON.stringify(cleanPlanWatchNotificationPlans(value))
+      text
     );
+    if (localStorage.getItem(PLAN_WATCH_NOTIFICATION_PLANS_KEY) !== text) throw new Error("Notification intent unavailable.");
+    markPlanWatchSyncDirty();
   } catch {
     /* Plan-level notification intent is optional. */
   }
@@ -1241,6 +1302,7 @@ function readPlaceWatchNotificationPlaces() {
             ? cleanPlaceWatchSelectedIds(parsed.selectedIds)
             : [],
           hasExplicitSelection: Array.isArray(parsed.selectedIds),
+          nativeDeletionWatermark: Number.isSafeInteger(parsed.nativeDeletionWatermark) ? parsed.nativeDeletionWatermark : 0,
           updatedAt: parsed.updatedAt || ""
         }
       : { enabled: false, selectedIds: [], hasExplicitSelection: false, updatedAt: "" };
@@ -1255,11 +1317,15 @@ function writePlaceWatchNotificationPlaces(value) {
     const selectedIds = Array.isArray(value?.selectedIds)
       ? cleanPlaceWatchSelectedIds(value.selectedIds, { filterSaved: true })
       : cleanPlaceWatchSelectedIds(current.selectedIds, { filterSaved: true });
-    localStorage.setItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY, JSON.stringify({
+    const text = JSON.stringify({
       enabled: Boolean(value?.enabled),
       selectedIds,
+      nativeDeletionWatermark: current.nativeDeletionWatermark || 0,
       updatedAt: new Date().toISOString()
-    }));
+    });
+    localStorage.setItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY, text);
+    if (localStorage.getItem(PLACE_WATCH_NOTIFICATION_PLACES_KEY) !== text) throw new Error("Notification intent unavailable.");
+    markPlanWatchSyncDirty();
   } catch {
     /* Saved-place notification intent is optional. */
   }
@@ -1334,6 +1400,10 @@ function placeWatchNotificationPlaceCopy(placeId) {
 }
 
 function togglePlaceWatchNotificationPlace(placeId) {
+  if (window.NearcastNativePlacesOwner?.managed() && !planWatchSyncInventoryReady()) {
+    setStatus("Places are still being verified. Try the notification change again after Places finishes syncing.", true);
+    return;
+  }
   const id = String(placeId || "").trim();
   if (!id || !placeWatchNotificationsRequested()) return;
   const selectedIds = placeWatchNotificationSelectedIds();
@@ -1559,7 +1629,9 @@ async function ensurePlanWatchPushSubscription() {
   const config = await planWatchPushConfig();
   if (planWatchNativeNotificationsSupported()) {
     const native = planWatchNativeNotifications();
-    const result = await native.requestPermission({ reason: "plan-watch-sync" });
+    // Background synchronization consumes an existing authorized channel only.
+    // Permission prompts belong exclusively to the explicit opt-in action.
+    const result = { channel: native.channel?.(), reason: "native-channel-unavailable" };
     if (result?.channel) {
       writePlanWatchNativeChannel(result.channel);
       return {
@@ -1719,7 +1791,8 @@ function planWatchPushClient() {
   };
 }
 
-async function postPlanWatchPush(endpoint, body) {
+async function postPlanWatchPush(endpoint, body, generation = planWatchSyncGeneration().generation) {
+  if (!planWatchSyncInventoryReady() || generation !== planWatchSyncGeneration().generation) throw new Error("Notification inventory changed before sync.");
   const response = await fetch(planWatchEndpoint(endpoint), {
     method: "POST",
     headers: {
@@ -1733,6 +1806,8 @@ async function postPlanWatchPush(endpoint, body) {
 }
 
 async function unregisterPlanWatchPushSubscription(options = {}) {
+  if (!planWatchSyncInventoryReady()) return { ok: false, reason: "inventory-not-ready" };
+  const generation = planWatchSyncGeneration().generation;
   if (!planWatchPushSupported()) return { ok: false, reason: "push-unsupported" };
   if (planWatchNativeNotificationsSupported()) {
     const subscriptionId = readPlanWatchNativeSubscriptionId();
@@ -1751,7 +1826,7 @@ async function unregisterPlanWatchPushSubscription(options = {}) {
       nativeChannel,
       client: planWatchPushClient(),
       reason: options.reason || "disabled"
-    }).catch((error) => ({ ok: false, reason: cleanError(error) || "native-unregister-failed" }));
+    }, generation).catch((error) => ({ ok: false, reason: cleanError(error) || "native-unregister-failed" }));
     if (result.ok !== false && options.unsubscribe !== false) {
       writePlanWatchNativeSubscriptionId("");
     }
@@ -1774,8 +1849,8 @@ async function unregisterPlanWatchPushSubscription(options = {}) {
       subscription: subscription.toJSON(),
       client: planWatchPushClient(),
       reason: options.reason || "disabled"
-    }).catch((error) => ({ ok: false, reason: cleanError(error) || "unregister-failed" }));
-    if (options.unsubscribe !== false) await subscription.unsubscribe().catch(() => false);
+    }, generation).catch((error) => ({ ok: false, reason: cleanError(error) || "unregister-failed" }));
+    if (result.ok !== false && options.unsubscribe !== false && generation === planWatchSyncGeneration().generation) await subscription.unsubscribe().catch(() => false);
     planWatchState.pushLastSyncResult = result;
     return result;
   } catch (error) {
@@ -1785,7 +1860,32 @@ async function unregisterPlanWatchPushSubscription(options = {}) {
   }
 }
 
-async function syncPlanWatchNotificationSubscription(options = {}) {
+function syncPlanWatchNotificationSubscription(options = {}) {
+  try { if (!options.preserveGeneration) markPlanWatchSyncDirty(); }
+  catch { return Promise.resolve({ ok: false, reason: "sync-storage-unavailable" }); }
+  if (planWatchDrainPromise) return planWatchDrainPromise;
+  planWatchDrainPromise = (async () => {
+    let result = { ok: false, reason: "inventory-not-ready" };
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (!planWatchSyncInventoryReady()) return result;
+      const pending = planWatchSyncGeneration();
+      if (!options.force && pending.generation === pending.acknowledged) return { ok: true, reason: "sync-current" };
+      result = await performPlanWatchNotificationSync({ ...options, force: true });
+      const current = planWatchSyncGeneration();
+      if (result.ok !== false) persistPlanWatchSyncGeneration({ ...current, acknowledged: pending.generation });
+      // A change while network I/O was suspended must get a new payload, even
+      // if the old attempt was rejected by the host's ownership fence.
+      if (current.generation !== pending.generation) continue;
+      return result;
+    }
+    setTimeout(() => void syncPlanWatchNotificationSubscription({ force: true, preserveGeneration: true }), 1000);
+    return result;
+  })().catch(() => ({ ok: false, reason: "sync-storage-unavailable" })).finally(() => { planWatchDrainPromise = null; });
+  return planWatchDrainPromise;
+}
+
+async function performPlanWatchNotificationSync(options = {}) {
+  if (!planWatchSyncInventoryReady()) return { ok: false, reason: "inventory-not-ready" };
   if (!planWatchPushSupported()) return { ok: false, reason: "push-unsupported" };
   const now = Date.now();
   if (!options.force && now - planWatchState.pushLastSyncAt < PLAN_WATCH_PUSH_SYNC_THROTTLE_MS) {
@@ -1794,6 +1894,7 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
   if (planWatchState.pushSyncPromise) return planWatchState.pushSyncPromise;
   let attemptedRegistration = false;
   planWatchState.pushSyncPromise = (async () => {
+    const generation = planWatchSyncGeneration().generation;
     planWatchState.pushLastSyncAt = Date.now();
     if (!planWatchNotificationsEnabled()) {
       return unregisterPlanWatchPushSubscription({ reason: options.reason || "notifications-disabled" });
@@ -1820,7 +1921,7 @@ async function syncPlanWatchNotificationSubscription(options = {}) {
       platform: planWatchPushPlatform(),
       client: planWatchPushClient(),
       reason: options.reason || "sync"
-    });
+    }, generation);
     if (nativeChannel && result.subscriptionId) {
       writePlanWatchNativeChannel(nativeChannel);
       writePlanWatchNativeSubscriptionId(result.subscriptionId);
@@ -1948,6 +2049,11 @@ function planWatchNotificationPlanCopy(memoryId) {
 }
 
 async function requestPlanWatchNotifications(memoryId = "") {
+  const ownerRevision = window.NearcastNative?.placesOwner?.snapshot?.revision;
+  if (window.NearcastNativePlacesOwner?.managed() && !planWatchSyncInventoryReady()) {
+    setStatus("Places are still being verified. Try the notification change again after Places finishes syncing.", true);
+    return;
+  }
   const planId = String(memoryId || "").trim();
   const wasSelected = Boolean(planId && planWatchNotificationPlanEnabled(planId));
   const planCopy = planId ? planWatchNotificationPlanCopy(planId) : null;
@@ -1978,7 +2084,7 @@ async function requestPlanWatchNotifications(memoryId = "") {
     writePlanWatchNotificationPreference("off");
     renderGlobalMemorySheet();
     if (typeof refreshPlanAwareLaunchSurfaces === "function") refreshPlanAwareLaunchSurfaces();
-    unregisterPlanWatchPushSubscription({ reason: "paused-all" });
+    syncPlanWatchNotificationSubscription({ force: true, reason: "paused-all" });
     return;
   }
 
@@ -1986,6 +2092,11 @@ async function requestPlanWatchNotifications(memoryId = "") {
   if (permission !== "granted") {
     const permissionResult = await requestPlanWatchNotificationPermission("plan-watch");
     permission = permissionResult.permission;
+  }
+  if (window.NearcastNativePlacesOwner?.managed() && (!planWatchSyncInventoryReady() ||
+      window.NearcastNative?.placesOwner?.snapshot?.revision !== ownerRevision)) {
+    setStatus("Places changed while permission was open. Review your notification choices and try again.", true);
+    return;
   }
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
   if (permission === "granted" && planId) {
@@ -2006,12 +2117,16 @@ async function requestPlanWatchNotifications(memoryId = "") {
 }
 
 async function requestPlaceWatchNotifications() {
+  const ownerRevision = window.NearcastNative?.placesOwner?.snapshot?.revision;
+  if (window.NearcastNativePlacesOwner?.managed() && !planWatchSyncInventoryReady()) {
+    setStatus("Places are still being verified. Try the notification change again after Places finishes syncing.", true);
+    return;
+  }
   if (!planWatchNotificationsSupported()) {
     if (typeof renderSavedPlaces === "function") renderSavedPlaces();
     if (typeof refreshOpenGlobalMemorySheet === "function") refreshOpenGlobalMemorySheet();
     return;
   }
-  const prefs = readPlaceWatchNotificationPlaces();
   if (placeWatchNotificationsRequested() && planWatchNotificationsEnabled()) {
     writePlaceWatchNotificationPlaces({
       enabled: false,
@@ -2028,6 +2143,14 @@ async function requestPlaceWatchNotifications() {
     const permissionResult = await requestPlanWatchNotificationPermission("place-watch");
     permission = permissionResult.permission;
   }
+  if (window.NearcastNativePlacesOwner?.managed() && (!planWatchSyncInventoryReady() ||
+      window.NearcastNative?.placesOwner?.snapshot?.revision !== ownerRevision)) {
+    setStatus("Places changed while permission was open. Review your notification choices and try again.", true);
+    return;
+  }
+  // Never reuse selections captured before a suspended permission dialog.
+  // Deletion reconciliation may have removed an ID even if it was re-added.
+  const prefs = readPlaceWatchNotificationPlaces();
   writePlanWatchNotificationPreference(permission === "granted" ? "enabled" : "off");
   const selectedIds = prefs.hasExplicitSelection
     ? cleanPlaceWatchSelectedIds(prefs.selectedIds, { filterSaved: true })
@@ -2834,6 +2957,7 @@ async function showPlanWatchNotification(watch) {
 }
 
 async function maybeSyncPlanWatchNotifications(watchItems = null, options = {}) {
+  if (!planWatchSyncInventoryReady()) return;
   const candidates = planWatchNotificationCandidates(watchItems || currentPlanWatchItems());
   if (!candidates.length) return;
   if (!planWatchNotificationsEnabled()) return;
@@ -5305,9 +5429,11 @@ async function ensureNearcastSkillPlace(rawPlace, context) {
     : await resolveNearcastAgentPlace(requested);
   assertNearcastAgentRunActive(context);
   if (!place) return null;
-  if (!samePlanPlace(place, state.activePlace) || !state.forecast) await loadPlace(place);
+  const matches = () => window.NearcastNativePlacesOwner?.managed()
+    ? window.NearcastNativePlacesOwner.matches(place) : samePlanPlace(place, state.activePlace);
+  if (!matches() || !state.forecast) await loadPlace(place);
   assertNearcastAgentRunActive(context);
-  if (!samePlanPlace(place, state.activePlace) || !state.forecast) return null;
+  if (!matches() || !state.forecast) return null;
   context.lastPlace = state.activePlace;
   return state.activePlace;
 }
@@ -5758,7 +5884,7 @@ async function executeNearcastPlaceSaveSkill(args, context) {
     context.receipt.answer = `I could not save ${args?.place || "that place"}.`;
     return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: "" });
   }
-  if (typeof savePlace === "function") savePlace(place);
+  if (typeof savePlace === "function") await savePlace(place);
   const label = placeLabel(place);
   context.receipt.answer = `${label} is saved in Nearcast.`;
   return nearcastSkillResult({ status: "saved", message: context.receipt.answer, place: label }, [nearcastPlaceArtifact(place, context)]);
@@ -5772,7 +5898,7 @@ async function executeNearcastPlaceRemoveSkill(args, context) {
     context.receipt.answer = `I could not find ${requested || "that place"} in saved places.`;
     return nearcastSkillResult({ status: "unavailable", message: context.receipt.answer, place: requested });
   }
-  if (typeof removeSavedPlace === "function") removeSavedPlace(saved.id);
+  if (typeof removeSavedPlace === "function") await removeSavedPlace(saved.id);
   const label = placeLabel(saved);
   context.receipt.answer = `Removed ${label} from saved places.`;
   return nearcastSkillResult({ status: "removed", message: context.receipt.answer, place: label });
@@ -5932,19 +6058,10 @@ async function executeNearcastSettingsUpdateSkill(args, context) {
     return nearcastSkillResult({ status: "needs_input", message: context.receipt.answer });
   }
   if (unit && ["fahrenheit", "celsius"].includes(unit) && state.unit !== unit) {
-    const oldUnit = state.unit;
-    state.unit = unit;
-    localStorage.setItem("weather-unit", state.unit);
-    updateUnitButton?.();
-    if (state.forecast && state.activePlace) {
-      state.forecast = convertForecastUnits(state.forecast, state.forecastUnit || oldUnit, state.unit);
-      renderForecast(state.forecast, state.activePlace, { refreshMap: false, refreshSky: false, saveContinuity: false, refreshTheme: false, reason: "agent-settings" });
-    }
+    await setUnitPreference(unit);
   }
   if (theme && ["auto", "light", "dark"].includes(theme)) {
-    state.theme = theme;
-    localStorage.setItem("weather-theme", state.theme);
-    applyTheme();
+    await setThemePreference(theme);
   }
   const parts = [];
   if (unit) parts.push(unit === "fahrenheit" ? "Fahrenheit" : "Celsius");
@@ -7994,20 +8111,29 @@ function plannerShowEvent({ title, place, data, alerts, window, stats, label }) 
 }
 
 function loadPlanMemories() {
+  planWatchMemoryStorageValid = false;
   try {
     const raw = JSON.parse(localStorage.getItem(PLAN_MEMORY_KEY) || "[]");
-    if (!Array.isArray(raw)) return [];
-    return raw.map(normalizePlanMemory).filter(Boolean).slice(0, 60);
+    if (!Array.isArray(raw) || raw.length > 60) return [];
+    const normalized = raw.map(normalizePlanMemory);
+    if (normalized.some((value) => !value)) return [];
+    planWatchMemoryStorageValid = true;
+    return normalized;
   } catch {
     return [];
   }
 }
 
 function savePlanMemories() {
+  if (!planWatchMemoryStorageValid) return;
   try {
-    localStorage.setItem(PLAN_MEMORY_KEY, JSON.stringify(state.planMemories.slice(0, 60)));
+    const text = JSON.stringify(state.planMemories.slice(0, 60));
+    localStorage.setItem(PLAN_MEMORY_KEY, text);
+    if (localStorage.getItem(PLAN_MEMORY_KEY) !== text) throw new Error("Plan storage unavailable.");
+    markPlanWatchSyncDirty();
   } catch {
-    /* localStorage can be full or unavailable; keep the in-memory session copy. */
+    // Keep the in-memory UI, but it must not become a server unregister payload.
+    planWatchMemoryStorageValid = false;
   }
 }
 
@@ -11212,6 +11338,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
   }
 
   planWatchFetchPlaces(items).forEach(({ key, place }) => {
+    const requestUnit = state.unit;
     const now = Date.now();
     if (planWatchState.loading[key]) return;
     if (now - Number(planWatchState.lastFetchAt[key] || 0) < PLAN_WATCH_REFRESH_THROTTLE_MS) return;
@@ -11232,6 +11359,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
         .then((alerts) => ({ alerts: alerts || [], ready: true }))
         .catch(() => ({ alerts: [], ready: false }))
     ]).then(([data, alertResult]) => {
+      if (requestUnit !== state.unit) return;
       planWatchState.data[key] = data;
       planWatchState.alerts[key] = alertResult.alerts;
       planWatchState.alertsReady[key] = alertResult.ready;
@@ -11244,6 +11372,7 @@ function refreshPlanWatchForecasts(items = planMemoryListItems(state.forecast, s
         alerts: alertResult.alerts
       });
     }).catch((err) => {
+      if (requestUnit !== state.unit) return;
       planWatchState.errors[key] = cleanError(err) || "Forecast refresh failed.";
       planWatchState.alertsReady[key] = false;
     }).finally(() => {

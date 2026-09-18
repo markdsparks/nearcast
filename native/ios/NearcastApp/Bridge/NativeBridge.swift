@@ -91,10 +91,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         let frameURL = message.frameInfo.request.url
         let isMainFrame = message.frameInfo.isMainFrame
-        if let payload = message.body as? [String: Any], payload["type"] as? String == "preview.open" {
+        if let payload = message.body as? [String: Any], let type = payload["type"] as? String,
+           type == "preview.open" || type == "widget.snapshot" || type.hasPrefix("placesOwner.") {
             // The preview export contains saved-place coordinates. Diagnostics
             // need the event, not a second copy of the family's place list.
-            model?.recordBridgeMessage(["type": "preview.open"])
+            model?.recordBridgeMessage(["type": type])
         } else {
             model?.recordBridgeMessage(message.body)
         }
@@ -204,11 +205,14 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           let nativeNotificationRequestId = 0;
 
           window.NearcastNative.notificationPermission = "default";
+          window.NearcastNative.notificationStatusKnown = false;
           window.NearcastNative.notificationChannel = null;
           window.NearcastNative.__resolveNotificationRequest = function(result) {
             const requestId = result && result.requestId ? String(result.requestId) : "";
             if (result && typeof result.permission === "string") {
               window.NearcastNative.notificationPermission = result.permission;
+              window.NearcastNative.notificationStatusKnown = ['granted', 'denied', 'default', 'unsupported'].includes(result.permission);
+              window.dispatchEvent(new CustomEvent('nearcast:native-notification-status'));
             }
             if (result && result.channel) {
               window.NearcastNative.notificationChannel = result.channel;
@@ -571,6 +575,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             return
         }
 
+        if type.hasPrefix("placesOwner.") {
+            model?.receivePlacesOwnerMessage(payload, frameURL: frameURL, isMainFrame: isMainFrame)
+            return
+        }
+
         if type == "preview.open" {
             guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame),
                   UIApplication.shared.applicationState == .active,
@@ -646,6 +655,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         } else if type == "notifications.status" {
             sendNativeNotificationStatus(payload)
         } else if type == "widget.snapshot" {
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame) else { return }
             saveWidgetSnapshot(payload)
         } else if type == "stormActivity.start" || type == "stormActivity.update" {
             startOrUpdateStormActivity(payload)
@@ -665,7 +675,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         }
 
         if scheme == "https" && host == "getnearcast.app" {
-            return true
+            return Self.sameOrigin(url, NativeRuntimeConfiguration.productionURL)
         }
 
         #if DEBUG
@@ -1324,6 +1334,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     }
 
     private func saveWidgetSnapshot(_ payload: [String: Any]) {
+        guard model?.placesOwner.status != "blocked", model?.placesOwner.isActivating != true else { return }
         guard let snapshot = payload["snapshot"] as? [String: Any],
               JSONSerialization.isValidJSONObject(snapshot),
               let data = try? JSONSerialization.data(withJSONObject: snapshot, options: []) else {
@@ -1393,12 +1404,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
             resolvedData = encoded
         }
 
-        NearcastWidgetSnapshotStore.saveSnapshotData(resolvedData)
-        if let placeData {
-            NearcastWidgetSnapshotStore.savePlaceData(placeData)
-        }
-        WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
-        NativeWatchSnapshotSync.shared.sendSnapshotData(resolvedData, placeData: placeData)
+        guard let resolved = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: resolvedData) else { return }
+        NativeSnapshotPublicationCoordinator.shared.acceptLegacySnapshot(snapshot: resolved,
+            place: incomingPlace, ownerRevision: payload["ownerRevision"] as? Int)
     }
 
     private func resolvedWidgetLocation(

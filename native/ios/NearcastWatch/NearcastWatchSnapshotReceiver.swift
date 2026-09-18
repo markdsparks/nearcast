@@ -73,19 +73,25 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
             lastError = "Snapshot payload could not be decoded."
             return
         }
+        // WatchConnectivity's background and complication queues may deliver
+        // older phone publications after a newer application context.
+        let storedPublication = NearcastWidgetSnapshotStore.storedPublication()
+        guard incoming.canReplacePublication(storedPublication?.snapshot) else { return }
 
         let placeData = payload["place"] as? Data
         let incomingPlace = placeData.flatMap { try? JSONDecoder().decode(NearcastWidgetPlace.self, from: $0) }
-        let storedPlace = NearcastWidgetPlace.stored()
+        let storedPlace = storedPublication?.place
         let isSamePlace = incomingPlace.map { incomingPlace in
             guard let storedPlace else { return false }
-            return abs(incomingPlace.latitude - storedPlace.latitude) < 0.00001
+            return (incoming.ownerRevision == nil || (incomingPlace.id == storedPlace.id &&
+                    incomingPlace.tracksCurrentLocation == storedPlace.tracksCurrentLocation))
+                && abs(incomingPlace.latitude - storedPlace.latitude) < 0.00001
                 && abs(incomingPlace.longitude - storedPlace.longitude) < 0.00001
-        } ?? (incoming.placeName == NearcastWidgetSnapshot.stored()?.placeName)
+        } ?? (incoming.placeName == storedPublication?.snapshot.placeName)
 
         let now = Date().timeIntervalSince1970
         let resolved: NearcastWidgetSnapshot
-        if isSamePlace, let stored = NearcastWidgetSnapshot.stored() {
+        if isSamePlace, let stored = storedPublication?.snapshot {
             resolved = incoming
                 .preservingNewerWeather(from: stored)
                 .resolvingOfficialAlert(with: stored, at: now)
@@ -93,10 +99,7 @@ final class NearcastWatchSnapshotReceiver: NSObject, ObservableObject {
         } else {
             resolved = incoming.expiringCompanionContent(at: now)
         }
-        NearcastWidgetSnapshotStore.save(resolved)
-        if let placeData {
-            NearcastWidgetSnapshotStore.savePlaceData(placeData)
-        }
+        guard NearcastWidgetSnapshotStore.savePublication(resolved, place: incomingPlace) else { return }
         lastReceivedAt = Date()
         lastError = nil
         revision += 1

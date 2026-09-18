@@ -866,4 +866,34 @@ require(nearcastHourlyColumnCenter(index: 0, columnCount: 4, totalWidth: 120) ==
 require(nearcastHourlyColumnCenter(index: 3, columnCount: 4, totalWidth: 120) == 105, "the last wind point uses the last hourly column center")
 require(nearcastHourlyColumnCenter(index: 1, columnCount: 3, totalWidth: 120) == 60, "three-column Watch layouts share the same center geometry")
 
+var ownedPublication = legacy
+ownedPublication.ownerRevision = 3
+ownedPublication.publicationGeneration = 8
+var delayedPublication = ownedPublication
+delayedPublication.publicationGeneration = 7
+require(!delayedPublication.canReplacePublication(ownedPublication), "older Watch transfers cannot restore a stale phone publication")
+require(!legacy.canReplacePublication(ownedPublication), "untagged legacy transfers cannot replace native-owned state")
+delayedPublication = ownedPublication
+delayedPublication.ownerRevision = 2
+delayedPublication.publicationGeneration = 9
+require(!delayedPublication.canReplacePublication(ownedPublication), "a higher transfer generation cannot restore an older owner revision")
+require(ownedPublication.canReplacePublication(ownedPublication), "same-generation extension weather refresh remains valid")
+var metricInvalidation = ownedPublication
+metricInvalidation.windUnit = "km/h"
+metricInvalidation.isAvailable = false
+metricInvalidation.nativeWeatherInvalidation = true
+let preservedInvalidation = metricInvalidation.preservingNewerWeather(from: ownedPublication)
+require(!preservedInvalidation.hasWeatherData && preservedInvalidation.windUnit == "km/h", "native metric invalidation cannot be undone by newer imperial Watch weather")
+metricInvalidation.nativeWeatherInvalidation = nil
+require(!metricInvalidation.preservingNewerWeather(from: ownedPublication).hasWeatherData, "unit compatibility also protects legacy unavailability payloads")
+var sameUnitInvalidation = ownedPublication
+sameUnitInvalidation.isAvailable = false
+sameUnitInvalidation.nativeWeatherInvalidation = true
+require(!sameUnitInvalidation.preservingNewerWeather(from: ownedPublication).hasWeatherData, "an explicit same-unit native invalidation does not resurrect stored weather")
+var renamedPublication = ownedPublication
+renamedPublication.placeName = "New alias"
+require(renamedPublication.mergingWeather(from: ownedPublication).placeName == "New alias", "native place labels survive weather merges")
+let ownedRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(metricInvalidation))
+require(ownedRoundTrip.ownerRevision == 3 && ownedRoundTrip.publicationGeneration == 8, "publication authority survives snapshot serialization")
+
 print("PASS  Nearcast Watch snapshot trust contract")

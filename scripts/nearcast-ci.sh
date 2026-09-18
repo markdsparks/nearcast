@@ -12,6 +12,7 @@ run_portable_checks() {
     app.js \
     native-places-migration.js \
     native-places-controls.js \
+    native-places-owner.js \
     planner.js \
     weather-truth.js \
     current-reality.js \
@@ -97,6 +98,8 @@ run_portable_checks() {
     native-places-migration-smoke.mjs \
     native-places-migration-bridge-smoke.mjs \
     native-places-controls-smoke.mjs \
+    native-places-owner-smoke.mjs \
+    native-places-owner-bootstrap-smoke.mjs \
     nearcast-place-label-test.mjs
   do
     node "$ROOT/scripts/$smoke"
@@ -123,6 +126,9 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-radar-proof.sh"
   bash "$ROOT/scripts/test-native-places-migration.sh"
   bash "$ROOT/scripts/test-native-places-controls.sh"
+  bash "$ROOT/scripts/test-native-place-lookup.sh"
+  bash "$ROOT/scripts/test-native-places-owner.sh"
+  bash "$ROOT/scripts/test-native-snapshot-publication.sh"
   printf 'PASS  Native shared-model checks\n'
 }
 

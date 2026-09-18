@@ -59,6 +59,7 @@ struct NearcastWebView: UIViewRepresentable {
         }
 
         func load(_ url: URL, revision: Int, in webView: WKWebView) {
+            model?.installOwnerScripts(in: webView)
             requestedURL = url
             requestedRevision = revision
             DispatchQueue.main.async { [weak self] in

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import WebKit
 import UIKit
 
@@ -18,12 +19,14 @@ final class NearcastWebModel: ObservableObject {
     @Published private(set) var placesMigrationReport: NativePlacesMigrationReport?
     @Published private(set) var placesMigrationMessage = "Not checked. The existing app still owns places and settings."
     @Published private(set) var isCheckingPlacesMigration = false
+    let placesOwner: NativePlacesOwnerController
 
     private weak var webView: WKWebView?
     private var localURL: URL
     private var loadTimeoutTask: Task<Void, Never>?
     private var placesMigrationTask: Task<Void, Never>?
     private var placesMigrationRevision = 0
+    private var ownerDocumentID: String?
     private let productionMigrationStore = NativePlacesMigrationStore(directory: NativePlacesMigrationStore.defaultDirectory)
     // Development fixtures must never replace a production migration receipt.
     private let developmentMigrationStore = NativePlacesMigrationStore(
@@ -37,17 +40,23 @@ final class NearcastWebModel: ObservableObject {
         localURL = storedLocalURL
         localURLText = storedLocalURL.absoluteString
         currentURL = storedMode == .local ? storedLocalURL : NativeRuntimeConfiguration.productionURL
+        placesOwner = NativePlacesOwnerController(production: storedMode == .production)
+        placesOwner.onChange = { [weak self] in self?.placesOwnerDidChange() }
+        placesOwnerDidChange()
         NativeNotificationRouter.shared.attach(self)
     }
 
     func attach(_ webView: WKWebView) {
         self.webView = webView
+        installOwnerScripts(in: webView)
     }
 
     func load(_ nextMode: NearcastWebMode) {
+        ownerDocumentID = nil
         mode = nextMode
         NativeRuntimeConfiguration.storeMode(nextMode)
         requestNavigation(to: nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL, force: true)
+        placesOwner.configure(production: nextMode == .production)
     }
 
     func saveLocalURL() {
@@ -75,6 +84,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func startLoading() {
+        ownerDocumentID = nil
         isLoading = true
         lastError = nil
         loadTimeoutTask?.cancel()
@@ -109,6 +119,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func recoverIfNeededOnActivation() {
+        placesOwner.retryCompanionPublication()
         guard !hasLoadedPage, !isLoading, lastError == nil else { return }
         requestNavigation(to: currentURL, force: true)
     }
@@ -141,6 +152,15 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func openNativePreview(data: Data, migrationData: Data? = nil) {
+        if placesOwner.status == "owned" {
+            placesOwnerDidChange()
+            openCachedNativePreview()
+            return
+        }
+        guard placesOwner.status == "unmigrated" else {
+            nativePreviewError = placesOwner.message
+            return
+        }
         do {
             let context = try NativePreviewContext.decode(data)
             nativePreviewContext = context
@@ -230,6 +250,12 @@ final class NearcastWebModel: ObservableObject {
     /// writer and publisher. The native UI receives only a verified read-back,
     /// never an optimistic copy or an independently mutable second database.
     func performPlacesCommand(_ command: NativePlacesCommand) async throws -> NativePlacesReply {
+        if placesOwner.status != "unmigrated" {
+            guard showingNativePreview, UIApplication.shared.applicationState == .active else {
+                throw NativePlacesTransportError.unavailable
+            }
+            return try await placesOwner.perform(command)
+        }
         guard showingNativePreview, hasLoadedPage, !isLoading,
               UIApplication.shared.applicationState == .active,
               let webView, let documentURL = webView.url,
@@ -332,8 +358,141 @@ final class NearcastWebModel: ObservableObject {
         #endif
     }
 
+    func installOwnerScripts(in webView: WKWebView) {
+        let content = webView.configuration.userContentController
+        content.removeAllUserScripts()
+        content.addUserScript(NativeBridge.bootstrapScript())
+        content.addUserScript(NativePlacesOwnerBridge.script(status: placesOwner.isActivating ? "activating" : placesOwner.status,
+            snapshot: placesOwner.snapshot, origin: currentBaseURL))
+    }
+
+    private func placesOwnerDidChange() {
+        if placesOwner.status == "owned" {
+            nativePreviewContext = placesOwner.snapshot?.source.toPreviewContext()
+            if let context = nativePreviewContext { NativePreviewContextStore.save(context) }
+            placesMigrationMessage = "Native storage owns saved places and settings on this iPhone."
+        } else if placesOwner.status == "blocked" {
+            nativePreviewContext = nil
+        }
+        if let webView {
+            installOwnerScripts(in: webView)
+            guard let documentID = ownerDocumentID, let url = webView.url, isTrustedPlacesDocument(url) else { return }
+            var seed = NativePlacesOwnerBridge.seed(status: placesOwner.isActivating ? "activating" : placesOwner.status, snapshot: placesOwner.snapshot)
+            seed["documentID"] = documentID
+            guard let data = try? JSONSerialization.data(withJSONObject: seed) else { return }
+            webView.evaluateJavaScript("window.NearcastNative?.__updatePlacesOwner?.(\(String(decoding: data, as: UTF8.self)))", completionHandler: nil)
+        }
+    }
+
+    /// Called only from the explicit native Settings confirmation. No page or
+    /// cached export can silently acquire ownership during ordinary startup.
+    func enableNativePlacesStorage() async {
+        guard !placesOwner.isActivating, placesOwner.status == "unmigrated",
+              showingNativePreview, hasLoadedPage, !isLoading,
+              UIApplication.shared.applicationState == .active,
+              let webView, let documentURL = webView.url, isTrustedPlacesDocument(documentURL) else {
+            placesOwner.message = "Open the existing app online once before moving Places into native storage."
+            return
+        }
+        placesOwner.isActivating = true
+        placesOwner.message = "Verifying saved places and existing notification choices…"
+        let revision = navigationRevision
+        let startingMode = mode
+        defer {
+            placesOwner.isActivating = false
+            placesOwnerDidChange()
+            webView.evaluateJavaScript("window.NearcastNativePlacesOwner?.finishActivation?.()", completionHandler: nil)
+        }
+        do {
+            let result: Any = try await withCheckedThrowingContinuation { continuation in
+                webView.callAsyncJavaScript("""
+                    if (typeof window.NearcastNativePlacesOwner?.prepareActivation !== 'function') {
+                        throw new Error('Reload Nearcast to prepare native storage.');
+                    }
+                    const source = await window.NearcastNativePlacesOwner.prepareActivation();
+                    window.NearcastNative.__updatePlacesOwner({status:'activating', snapshot:{source},
+                        documentID: window.NearcastNative.placesOwner.documentID});
+                    return source;
+                    """, arguments: [:], in: nil, in: .page) { continuation.resume(with: $0) }
+            }
+            guard revision == navigationRevision, startingMode == mode, webView.url == documentURL,
+                  UIApplication.shared.applicationState == .active, !Task.isCancelled,
+                  JSONSerialization.isValidJSONObject(result) else { throw NativePlacesTransportError.unverified }
+            let data = try JSONSerialization.data(withJSONObject: result)
+            guard data.count <= 128 * 1_024 else { throw NativePlacesTransportError.unverified }
+            let source = try JSONDecoder().decode(NativePlacesSource.self, from: data)
+            _ = try await placesOwner.activate(source)
+        } catch {
+            if placesOwner.status == "unmigrated" {
+                placesOwner.message = "The handover could not be verified. Existing records are unchanged. Reload Nearcast and try again."
+            }
+        }
+    }
+
+    /// Correlates every asynchronous request to the exact trusted document.
+    func receivePlacesOwnerMessage(_ payload: [String: Any], frameURL: URL?, isMainFrame: Bool) {
+        guard isMainFrame, let frameURL, isTrustedPlacesDocument(frameURL),
+              let webView, webView.url == frameURL,
+              let documentID = payload["documentID"] as? String, UUID(uuidString: documentID) != nil else { return }
+        let type = payload["type"] as? String
+        if type == "placesOwner.ready" {
+            let revision = navigationRevision
+            webView.callAsyncJavaScript("return window.NearcastNative?.placesOwner?.documentID === documentID;",
+                arguments: ["documentID": documentID], in: nil, in: .page) { [weak self, weak webView] result in
+                    guard let self, let webView, self.navigationRevision == revision, webView.url == frameURL,
+                          case .success(let matches) = result, (matches as? Bool) == true else { return }
+                    self.ownerDocumentID = documentID
+                    self.placesOwnerDidChange()
+                }
+            return
+        }
+        guard ownerDocumentID == documentID, UIApplication.shared.applicationState == .active,
+              let requestID = payload["requestId"] as? String, UUID(uuidString: requestID) != nil else { return }
+        let revision = navigationRevision
+        let startingMode = mode
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            let current: @MainActor () -> Bool = { [weak self, weak webView] in
+                guard let self, let webView else { return false }
+                return self.ownerDocumentID == documentID && self.navigationRevision == revision &&
+                    self.mode == startingMode && webView.url == frameURL &&
+                    UIApplication.shared.applicationState == .active
+            }
+            var response: [String: Any] = ["requestId": requestID, "documentID": documentID, "ok": false]
+            do {
+                guard current() else { return }
+                let data: Data
+                if type == "placesOwner.perform", let raw = payload["command"] as? [String: Any] {
+                    let actionFields: [String: Set<String>] = [
+                        "snapshot": [], "search": ["query"], "select": ["place", "id"], "save": ["place"],
+                        "rename": ["id", "alias"], "move": ["id", "direction"], "remove": ["id"],
+                        "preferences": ["preferences"], "currentLocation": []
+                    ]
+                    guard let action = raw["action"] as? String, let fields = actionFields[action],
+                          Set(raw.keys).isSubset(of: fields.union(["version", "requestID", "action", "expectedSource"])) else {
+                        throw NativePlacesOwnerError.invalid
+                    }
+                    let commandData = try JSONSerialization.data(withJSONObject: raw)
+                    guard commandData.count <= 256 * 1_024 else { throw NativePlacesOwnerError.invalid }
+                    let command = try JSONDecoder().decode(NativePlacesCommand.self, from: commandData)
+                    data = try JSONEncoder().encode(try await self.placesOwner.perform(command, isCurrent: current))
+                } else if type == "placesOwner.acknowledge", let number = payload["through"] as? NSNumber,
+                          CFGetTypeID(number) != CFBooleanGetTypeID(),
+                          number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
+                          number.doubleValue.rounded(.towardZero) == number.doubleValue {
+                    let through = number.intValue
+                    data = try JSONEncoder().encode(try await self.placesOwner.acknowledgeDeletions(through: through))
+                } else { throw NativePlacesOwnerError.invalid }
+                response["ok"] = true
+                response["value"] = try JSONSerialization.jsonObject(with: data)
+            } catch { response["message"] = "Native places could not be verified. Reopen Places before retrying." }
+            guard current(), let data = try? JSONSerialization.data(withJSONObject: response) else { return }
+            webView.evaluateJavaScript("window.NearcastNative?.__resolvePlacesOwner?.(\(String(decoding: data, as: UTF8.self)))", completionHandler: nil)
+        }
+    }
+
     func openCachedNativePreview() {
-        guard nativePreviewContext != nil else {
+        guard nativePreviewContext != nil || placesOwner.status == "owned" else {
             nativePreviewError = "Open a place, then choose Native weather preview from the Nearcast menu first."
             return
         }
@@ -375,6 +534,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     private func requestNavigation(to targetURL: URL, force: Bool) {
+        ownerDocumentID = nil
         cancelPlacesMigrationCheck()
         let sameTarget = Self.normalizedURLString(targetURL) == Self.normalizedURLString(currentURL)
         currentURL = targetURL

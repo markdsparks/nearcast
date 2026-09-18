@@ -60,6 +60,10 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
             "snapshot": snapshotData,
             "sentAt": Date().timeIntervalSince1970
         ]
+        if let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) {
+            if let revision = snapshot.ownerRevision { payload["ownerRevision"] = revision }
+            if let generation = snapshot.publicationGeneration { payload["publicationGeneration"] = generation }
+        }
         if let placeData {
             payload["place"] = placeData
         }

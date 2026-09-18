@@ -172,7 +172,8 @@ assert.deepEqual(unsupportedPreview.reads, []);
 // These Swift checks are explicit source guardrails, not claims of executed
 // WebKit, filesystem, permission, or physical-device integration tests.
 const receive = section(bridge, "func userContentController(", "\n    static func bootstrapScript");
-assert.match(receive, /payload\["type"\].*== "preview\.open"[\s\S]*recordBridgeMessage\(\["type": "preview\.open"\]\)/);
+assert.match(receive, /let type = payload\["type"\][\s\S]*type == "preview\.open"[\s\S]*recordBridgeMessage\(\["type": type\]\)/);
+assert.match(receive, /type == "widget\.snapshot" \|\| type\.hasPrefix\("placesOwner\."\)/);
 const redactedBranch = receive.slice(receive.indexOf('== "preview.open"'), receive.indexOf("} else {"));
 assert.doesNotMatch(redactedBranch, /recordBridgeMessage\((?:message\.body|payload)\)/, "preview context and migration are redacted before handling");
 const handler = section(bridge, 'if type == "preview.open" {', '\n        if type.hasPrefix("ai.")');

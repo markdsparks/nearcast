@@ -50,6 +50,7 @@
   }
 
   function snapshot() {
+    if (global.NearcastNativePlacesOwner?.owned()) return JSON.parse(JSON.stringify(global.NearcastNative.placesOwner.snapshot.source));
     ready();
     try {
       return global.NearcastPlacesMigrationExport.build({ state, storage: localStorage, inventoryReady: true, now: new Date() });
@@ -264,25 +265,25 @@
         }
         if (state.savedPlaces.length >= 8) fail("limit");
         freezeLegacyWatchSelection();
-        savePlace(place);
+        await savePlace(place);
         break;
       }
       case "rename": {
         const place = savedRecord(command.id);
-        renameSavedPlace(place.id, command.alias);
+        await renameSavedPlace(place.id, command.alias);
         break;
       }
       case "move": {
         const place = savedRecord(command.id);
         freezeLegacyWatchSelection();
-        moveSavedPlace(place.id, command.direction);
+        await moveSavedPlace(place.id, command.direction);
         break;
       }
       case "remove": {
         const place = savedRecord(command.id);
         freezeLegacyWatchSelection();
         prepareRemovedWatch(command.id);
-        removeSavedPlace(place.id);
+        await removeSavedPlace(place.id);
         verifyRemovedWatch(command.id);
         break;
       }
@@ -296,8 +297,8 @@
             if (state.unit !== before.preferences.unit) dismissLegacyWeatherDetails();
           }
         }
-        if (own(preferences, "timeFormat")) setTimeFormatPreference(preferences.timeFormat);
-        if (own(preferences, "theme")) setThemePreference(preferences.theme);
+        if (own(preferences, "timeFormat")) await setTimeFormatPreference(preferences.timeFormat);
+        if (own(preferences, "theme")) await setThemePreference(preferences.theme);
         break;
       }
     }
@@ -333,6 +334,9 @@
   }
 
   function perform(input) {
+    if (global.NearcastNativePlacesOwner?.managed()) {
+      return global.NearcastNativePlacesOwner.perform(input).catch((error) => errorReply(input?.requestID || "", error));
+    }
     let command;
     let requestID = typeof input?.requestID === "string" ? input.requestID : "";
     try {

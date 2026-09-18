@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 let nearcastWidgetSuiteName = "group.app.nearcast.ios"
 let nearcastWidgetSnapshotKey = "nearcast.widget.snapshot.v1"
@@ -6,7 +11,7 @@ let nearcastWidgetPlaceKey = "nearcast.widget.place.v1"
 let nearcastWidgetKind = "NearcastWidget"
 let nearcastWidgetAlertWithoutExpiryTTL: TimeInterval = 45 * 60
 
-struct NearcastWidgetSnapshot: Codable {
+struct NearcastWidgetSnapshot: Codable, Sendable {
     var version: Int
     var savedAt: TimeInterval
     var placeName: String
@@ -110,6 +115,12 @@ struct NearcastWidgetSnapshot: Codable {
     var precipitationNowObserved: Bool? = nil
     var precipitationNowDetail: String? = nil
     var forecastRainChance: Int? = nil
+    // Phone publication authority is independent of weather freshness. Optional
+    // fields keep pre-handover snapshots readable without granting them the
+    // right to replace a later native-owned selection or preference.
+    var ownerRevision: Int? = nil
+    var publicationGeneration: Int? = nil
+    var nativeWeatherInvalidation: Bool? = nil
 }
 
 extension NearcastWidgetSnapshot {
@@ -121,7 +132,7 @@ extension NearcastWidgetSnapshot {
     }
 }
 
-struct NearcastWidgetHour: Codable, Identifiable {
+struct NearcastWidgetHour: Codable, Identifiable, Sendable {
     var id: String { "\(offsetHours)-\(timeLabel)" }
     var offsetHours: Int
     var timeLabel: String
@@ -464,7 +475,7 @@ private func nearcastCompactWords(_ value: String, maximumCharacters: Int) -> St
     return result.isEmpty ? String(words[0].prefix(maximumCharacters)) : result
 }
 
-struct NearcastWidgetDay: Codable, Identifiable {
+struct NearcastWidgetDay: Codable, Identifiable, Sendable {
     var id: String { date }
     var date: String
     var label: String
@@ -475,7 +486,7 @@ struct NearcastWidgetDay: Codable, Identifiable {
     var thunderPossible: Bool? = nil
 }
 
-struct NearcastWidgetPlace: Codable {
+struct NearcastWidgetPlace: Codable, Equatable, Sendable {
     var id: String?
     var name: String
     var displayName: String?
@@ -485,6 +496,8 @@ struct NearcastWidgetPlace: Codable {
     var followsCurrentLocation: Bool? = nil
     var latitude: Double
     var longitude: Double
+    var ownerRevision: Int? = nil
+    var publicationGeneration: Int? = nil
 }
 
 extension NearcastWidgetSnapshot {
@@ -535,13 +548,7 @@ extension NearcastWidgetSnapshot {
     }
 
     static func stored() -> NearcastWidgetSnapshot? {
-        guard
-            let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
-            let data = defaults.data(forKey: nearcastWidgetSnapshotKey),
-            var snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data)
-        else {
-            return nil
-        }
+        guard var snapshot = NearcastWidgetSnapshotStore.storedPublication()?.snapshot else { return nil }
         snapshot.refreshTimelineClockLabels()
         return snapshot
     }
@@ -854,7 +861,9 @@ extension NearcastWidgetSnapshot {
     /// Keeps the receiver's incoming plan and metadata, but refuses to let an
     /// older weather payload replace a fresher observation already on Watch.
     func preservingNewerWeather(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
-        guard stored.hasWeatherData,
+        guard nativeWeatherInvalidation != true,
+              hasCompatibleWeatherUnits(with: stored),
+              stored.hasWeatherData,
               !hasWeatherData || stored.weatherSavedTime > weatherSavedTime else {
             var resolved = self
             resolved.uses24HourClock = uses24HourClock ?? stored.uses24HourClock
@@ -862,6 +871,36 @@ extension NearcastWidgetSnapshot {
             return resolved
         }
         return mergingWeather(from: stored)
+    }
+
+    func hasCompatibleWeatherUnits(with other: NearcastWidgetSnapshot) -> Bool {
+        func metric(_ value: String) -> Bool? {
+            switch value.lowercased() {
+            case "mph": return false
+            case "km/h", "kmh", "kph": return true
+            default: return nil
+            }
+        }
+        guard let ours = metric(windUnit), let theirs = metric(other.windUnit) else { return false }
+        return ours == theirs
+    }
+
+    /// Shared by the host, extensions and Watch. Generation orders phone
+    /// publications, not weather fetch timestamps. Same-generation extension
+    /// weather refreshes are permitted; an old phone transfer is not.
+    func canReplacePublication(_ stored: NearcastWidgetSnapshot?) -> Bool {
+        guard ownerRevision.map({ $0 > 0 }) ?? true,
+              publicationGeneration.map({ $0 > 0 }) ?? true,
+              ownerRevision == nil || publicationGeneration != nil else { return false }
+        guard let stored else { return true }
+        if let revision = stored.ownerRevision {
+            guard let incoming = ownerRevision, incoming >= revision else { return false }
+        }
+        if let generation = stored.publicationGeneration {
+            guard let incoming = publicationGeneration, incoming >= generation else { return false }
+            if incoming == generation && ownerRevision != stored.ownerRevision { return false }
+        }
+        return true
     }
 
     /// Selects the forecast rows active at a future complication entry. The
@@ -972,7 +1011,9 @@ extension NearcastWidgetSnapshot {
     ) -> NearcastWidgetSnapshot {
         var merged = self
         merged.version = max(minimumVersion, max(version, weather.version))
-        merged.placeName = weather.placeName
+        // A weather response must not restore an alias from an older phone
+        // publication. Legacy snapshots keep their historical merge behavior.
+        merged.placeName = ownerRevision == nil ? weather.placeName : placeName
         merged.placeTimezone = weather.placeTimezone ?? placeTimezone
         // Settings belong to the receiving (latest phone-authored) snapshot,
         // not to a weather request that may have started before they changed.
@@ -1020,6 +1061,7 @@ extension NearcastWidgetSnapshot {
         merged.sunsetAt = weather.sunsetAt
         merged.isAvailable = weather.isAvailable
         merged.weatherSavedAt = weather.weatherSavedAt
+        merged.nativeWeatherInvalidation = weather.hasWeatherData ? false : weather.nativeWeatherInvalidation
         merged.refreshTimelineClockLabels()
         return merged
     }
@@ -1074,6 +1116,13 @@ private func companionDateLabel(_ date: Date, relativeTo now: Date, timeZone: Ti
 }
 
 extension NearcastWidgetPlace {
+    /// Weather belongs to a selected identity, not just a nearby coordinate.
+    /// Publication metadata and aliases may change without changing that identity.
+    func hasSameWeatherSelection(as other: NearcastWidgetPlace) -> Bool {
+        id == other.id && tracksCurrentLocation == other.tracksCurrentLocation &&
+            latitude == other.latitude && longitude == other.longitude
+    }
+
     var tracksCurrentLocation: Bool {
         followsCurrentLocation == true
     }
@@ -1084,14 +1133,7 @@ extension NearcastWidgetPlace {
     }
 
     static func stored() -> NearcastWidgetPlace? {
-        guard
-            let defaults = UserDefaults(suiteName: nearcastWidgetSuiteName),
-            let data = defaults.data(forKey: nearcastWidgetPlaceKey),
-            let place = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: data)
-        else {
-            return nil
-        }
-        return place
+        NearcastWidgetSnapshotStore.storedPublication()?.place
     }
 }
 
@@ -1100,26 +1142,242 @@ enum NearcastWidgetSnapshotStore {
     static let snapshotKey = nearcastWidgetSnapshotKey
     static let placeKey = nearcastWidgetPlaceKey
     static let widgetKind = nearcastWidgetKind
+    private static let publicationKey = "nearcast.widget.publication.v1"
 
-    static func save(_ snapshot: NearcastWidgetSnapshot) {
-        guard let defaults = UserDefaults(suiteName: suiteName),
-              let data = try? JSONEncoder().encode(snapshot) else {
-            return
+    struct Publication: Codable, Sendable {
+        var snapshot: NearcastWidgetSnapshot
+        var place: NearcastWidgetPlace?
+
+        var isCoherent: Bool {
+            guard snapshot.canReplacePublication(nil) else { return false }
+            guard let place else { return snapshot.ownerRevision == nil || !snapshot.hasWeatherData }
+            return place.ownerRevision == snapshot.ownerRevision &&
+                place.publicationGeneration == snapshot.publicationGeneration &&
+                place.latitude.isFinite && place.longitude.isFinite &&
+                abs(place.latitude) <= 90 && abs(place.longitude) <= 180
         }
-        defaults.set(data, forKey: snapshotKey)
+
+        func canReplace(_ previous: Publication?) -> Bool {
+            guard isCoherent, snapshot.canReplacePublication(previous?.snapshot) else { return false }
+            if let previous, let generation = snapshot.publicationGeneration,
+               generation == previous.snapshot.publicationGeneration {
+                // Extension weather may advance within a phone generation,
+                // but it cannot change its selection or preference authority.
+                return place == previous.place && snapshot.windUnit == previous.snapshot.windUnit &&
+                    snapshot.uses24HourClock == previous.snapshot.uses24HourClock
+            }
+            return true
+        }
     }
 
-    static func saveSnapshotData(_ data: Data) {
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            return
-        }
-        defaults.set(data, forKey: snapshotKey)
+    enum ReadResult: Sendable { case missing, valid(Publication), blocked }
+
+    private static var fileStore: NearcastWidgetPublicationFileStore? {
+        #if canImport(Darwin)
+        guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName) else { return nil }
+        return NearcastWidgetPublicationFileStore(directory: group.appendingPathComponent("NearcastWidgetPublication", isDirectory: true))
+        #else
+        return nil
+        #endif
     }
 
-    static func savePlaceData(_ data: Data) {
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            return
+    static func storedPublication() -> Publication? {
+        switch fileStore?.read() ?? .missing {
+        case .valid(let publication): return publication
+        case .blocked: return nil // Corrupt/future authority must never fall back to stale defaults.
+        case .missing:
+            if case .valid(let publication) = legacyPublication() { return publication }
+            return nil
         }
-        defaults.set(data, forKey: placeKey)
+    }
+
+    private static func legacyPublication() -> ReadResult {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return .blocked }
+        if let data = defaults.data(forKey: publicationKey) {
+            guard data.count <= NearcastWidgetPublicationFileStore.maximumBytes,
+                  let publication = try? JSONDecoder().decode(Publication.self, from: data), publication.isCoherent else { return .blocked }
+            return .valid(publication)
+        }
+        guard let snapshotData = defaults.data(forKey: snapshotKey) else { return .missing }
+        guard snapshotData.count <= NearcastWidgetPublicationFileStore.maximumBytes,
+              let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) else { return .blocked }
+        var place: NearcastWidgetPlace?
+        if let placeData = defaults.data(forKey: placeKey) {
+            guard placeData.count <= NearcastWidgetPublicationFileStore.maximumBytes,
+                  let decoded = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: placeData) else { return .blocked }
+            place = decoded
+        }
+        let publication = Publication(snapshot: snapshot, place: place)
+        return publication.isCoherent ? .valid(publication) : .blocked
+    }
+
+    @discardableResult
+    static func savePublication(_ snapshot: NearcastWidgetSnapshot, place: NearcastWidgetPlace?) -> Bool {
+        // No App Group container means there is no shared writer. Portable
+        // tests inject a sink or an explicit temporary file-store directory.
+        guard let fileStore else { return false }
+        return fileStore.commit(Publication(snapshot: snapshot, place: place), legacy: legacyPublication) { committed in
+            // Compatibility mirrors are written while the same cross-process
+            // lock is held. Current readers use the authoritative pair file.
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            if let data = try? JSONEncoder().encode(committed) { defaults.set(data, forKey: publicationKey) }
+            if let data = try? JSONEncoder().encode(committed.snapshot) { defaults.set(data, forKey: snapshotKey) }
+            if let place = committed.place, let data = try? JSONEncoder().encode(place) { defaults.set(data, forKey: placeKey) }
+            else { defaults.removeObject(forKey: placeKey) }
+        }
+    }
+
+    @discardableResult
+    static func save(_ snapshot: NearcastWidgetSnapshot) -> Bool {
+        savePublication(snapshot, place: storedPublication()?.place)
+    }
+
+    @discardableResult
+    static func saveSnapshotData(_ data: Data) -> Bool {
+        guard let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: data) else { return false }
+        return save(snapshot)
+    }
+
+    @discardableResult
+    static func savePlaceData(_ data: Data) -> Bool {
+        guard let place = try? JSONDecoder().decode(NearcastWidgetPlace.self, from: data),
+              let snapshot = storedPublication()?.snapshot else { return false }
+        return savePublication(snapshot, place: place)
+    }
+
+    /// A rejected extension write must not escape into its returned timeline.
+    /// Read again after either result so a concurrent phone commit wins there too.
+    static func saveRefreshResult(_ snapshot: NearcastWidgetSnapshot,
+                                  commit: (NearcastWidgetSnapshot) -> Bool = NearcastWidgetSnapshotStore.save,
+                                  current: () -> NearcastWidgetSnapshot = NearcastWidgetSnapshot.current) -> NearcastWidgetSnapshot {
+        _ = commit(snapshot)
+        return current()
+    }
+}
+
+/// The app and extensions are separate processes. UserDefaults caching and a
+/// read/check/set sequence cannot serialize their writes. A bounded flock plus
+/// an atomically replaced pair file makes the generation check and commit one
+/// cross-process operation; corrupt or future files fail closed.
+struct NearcastWidgetPublicationFileStore {
+    typealias Publication = NearcastWidgetSnapshotStore.Publication
+    typealias ReadResult = NearcastWidgetSnapshotStore.ReadResult
+    static let maximumBytes = 1_024 * 1_024
+    static let fileName = "publication.v1.json"
+
+    let directory: URL
+    private let beforeReplace: (() -> Void)?
+
+    init(directory: URL, beforeReplace: (() -> Void)? = nil) {
+        self.directory = directory
+        self.beforeReplace = beforeReplace
+    }
+
+    private struct Envelope: Codable {
+        let version: Int
+        let publication: Publication
+    }
+
+    func read() -> ReadResult {
+        let url = directory.appendingPathComponent(Self.fileName)
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW)
+        guard descriptor >= 0 else { return errno == ENOENT ? .missing : .blocked }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var attributes = stat()
+        guard fstat(descriptor, &attributes) == 0, (attributes.st_mode & S_IFMT) == S_IFREG,
+              attributes.st_size >= 0, attributes.st_size <= Self.maximumBytes,
+              let data = try? handle.readToEnd(), data.count <= Self.maximumBytes,
+              let envelope = try? JSONDecoder().decode(Envelope.self, from: data), envelope.version == 1,
+              envelope.publication.isCoherent else { return .blocked }
+        return .valid(envelope.publication)
+    }
+
+    @discardableResult
+    func commit(_ publication: Publication, legacy: () -> ReadResult = { .missing },
+                didCommit: (Publication) -> Void = { _ in }) -> Bool {
+        guard publication.isCoherent else { return false }
+        do {
+            try prepareDirectory()
+            let lock = open(directory.appendingPathComponent("publication.lock").path,
+                O_CREAT | O_RDWR | O_NOFOLLOW, mode_t(0o600))
+            guard lock >= 0 else { return false }
+            defer { close(lock) }
+            // A suspended extension must not block the phone's main actor.
+            guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { return false }
+            defer { _ = flock(lock, LOCK_UN) }
+            let state: ReadResult
+            switch read() {
+            case .missing: state = legacy()
+            case let value: state = value
+            }
+            let previous: Publication?
+            switch state {
+            case .blocked: return false
+            case .missing: previous = nil
+            case .valid(let value): previous = value
+            }
+            guard publication.canReplace(previous) else { return false }
+            var committed = publication
+            // A successful refresh may have copied an unavailable fallback's
+            // marker. Actual weather must participate in freshness arbitration.
+            if committed.snapshot.hasWeatherData { committed.snapshot.nativeWeatherInvalidation = false }
+            if let previous, let place = committed.place, let previousPlace = previous.place,
+               place.hasSameWeatherSelection(as: previousPlace),
+               committed.snapshot.hasCompatibleWeatherUnits(with: previous.snapshot) {
+                // This also covers a native metadata publication built just
+                // before an extension committed fresher same-place weather.
+                // The merge retains incoming owner/plan/settings authority.
+                committed.snapshot = committed.snapshot
+                    .preservingNewerWeather(from: previous.snapshot)
+                    .resolvingOfficialAlert(with: previous.snapshot)
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(Envelope(version: 1, publication: committed))
+            guard data.count <= Self.maximumBytes else { return false }
+            beforeReplace?() // Deterministic interleaving seam for the file-store tests.
+            try atomicWrite(data)
+            guard case .valid = read() else { return false }
+            didCommit(committed)
+            return true
+        } catch { return false }
+    }
+
+    private func prepareDirectory() throws {
+        guard directory.isFileURL else { throw CocoaError(.fileWriteInvalidFileName) }
+        var attributes: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
+        #if os(iOS) || os(watchOS)
+        attributes[.protectionKey] = FileProtectionType.completeUntilFirstUserAuthentication
+        #endif
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: attributes)
+        let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        close(descriptor)
+    }
+
+    private func atomicWrite(_ data: Data) throws {
+        let temporary = directory.appendingPathComponent(".pending-\(UUID().uuidString)")
+        let descriptor = open(temporary.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, mode_t(0o600))
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        #if os(iOS) || os(watchOS)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: temporary.path)
+        #endif
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+        try handle.close()
+        guard try Data(contentsOf: temporary, options: .uncached) == data,
+              rename(temporary.path, directory.appendingPathComponent(Self.fileName).path) == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let directoryDescriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard directoryDescriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { close(directoryDescriptor) }
+        guard fsync(directoryDescriptor) == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 }

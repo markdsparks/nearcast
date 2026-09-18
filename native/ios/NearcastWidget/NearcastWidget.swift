@@ -410,8 +410,8 @@ private func saveWidgetRefreshResult(
        !NearcastSharedForecastClock.unitsMatch(latestSnapshot.windUnit, requestedMetric: widgetUsesMetricUnits(snapshot)) {
         return latestSnapshot.expiringCompanionContent(at: Date().timeIntervalSince1970)
     }
-    NearcastWidgetSnapshotStore.save(snapshot)
-    return snapshot
+    return NearcastWidgetSnapshotStore.saveRefreshResult(snapshot)
+        .expiringCompanionContent(at: Date().timeIntervalSince1970)
 }
 
 private func applyWidgetAlert(

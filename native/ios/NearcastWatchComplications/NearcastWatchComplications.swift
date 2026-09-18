@@ -1660,12 +1660,12 @@ private enum NearcastWatchWeatherRefresh {
            !NearcastSharedForecastClock.unitsMatch(latestSnapshot.windUnit, requestedMetric: metricUnits) {
             return latestSnapshot
         }
-        NearcastWidgetSnapshotStore.save(updated)
-        return updated
+        return NearcastWidgetSnapshotStore.saveRefreshResult(updated)
     }
 
     private static func samePlace(_ lhs: NearcastWidgetPlace, _ rhs: NearcastWidgetPlace) -> Bool {
-        lhs.name == rhs.name
+        lhs.id == rhs.id
+            && lhs.tracksCurrentLocation == rhs.tracksCurrentLocation
             && abs(lhs.latitude - rhs.latitude) < 0.00001
             && abs(lhs.longitude - rhs.longitude) < 0.00001
     }

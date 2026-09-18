@@ -1,8 +1,9 @@
 import Foundation
 import Combine
 
-/// The hydrated existing app remains the sole writer. These types are its
-/// allowlisted, verified receipts, not a second independently editable store.
+/// Allowlisted receipts from the verified owner. Legacy is authoritative before
+/// handover; native storage is authoritative afterward. The controls never
+/// manufacture an optimistic inventory or a second independently mutable copy.
 struct NativeManagedPlace: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var legacyIDType: String? = nil
@@ -115,7 +116,7 @@ struct NativePlacesSource: Codable, Equatable, Sendable {
     var captureDate: Date? { NativePlacesValidation.captureDate(capturedAt) }
 
     var isValid: Bool {
-        version == 1 && owner == "legacy" && hydration == "ready" && captureDate != nil &&
+        version == 1 && ["legacy", "native"].contains(owner) && hydration == "ready" && captureDate != nil &&
         (selectedPlace?.isValid ?? true) && (lastPlace?.isValid ?? true) && savedPlaces.count <= 60 &&
         savedPlaces.allSatisfy(\.isValid) && Set(savedPlaces.map(\.id)).count == savedPlaces.count && preferences.isValid
     }
@@ -162,9 +163,15 @@ struct NativePlacesPreferencePatch: Codable, Equatable, Sendable {
     var unit: String? = nil
     var timeFormat: String? = nil
     var theme: String? = nil
+    var reactiveSkyEnabled: Bool? = nil
+    var reactiveSkyMotionAllowed: Bool? = nil
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case unit, timeFormat, theme, reactiveSkyEnabled, reactiveSkyMotionAllowed
+    }
 
     var isValid: Bool {
-        (unit != nil || timeFormat != nil || theme != nil) &&
+        (unit != nil || timeFormat != nil || theme != nil || reactiveSkyEnabled != nil || reactiveSkyMotionAllowed != nil) &&
         (unit.map { ["fahrenheit", "celsius"].contains($0) } ?? true) &&
         (timeFormat.map { ["auto", "12", "24"].contains($0) } ?? true) &&
         (theme.map { ["auto", "light", "dark"].contains($0) } ?? true)
@@ -222,6 +229,20 @@ final class NativePlacesControlsModel: ObservableObject {
     private let uncertainMessage = "The change may have been saved. Reopen Places to verify before trying again."
 
     init(transport: @escaping Transport) { self.transport = transport }
+
+    /// The container may receive a committed native record while this sheet is
+    /// open, including during another request. Showing that verified truth does
+    /// not cancel or replay the request; its later receipt must still pass the
+    /// same monotonic acceptance check and cannot roll this record back.
+    @discardableResult
+    func adoptVerifiedSource(_ incoming: NativePlacesSource) -> Bool {
+        guard incoming.owner == "native" else { return false }
+        let changed = incoming != source
+        guard accept(incoming) else { return false }
+        if changed { stateRevision &+= 1 }
+        if !isBusy { errorMessage = nil }
+        return true
+    }
 
     func reload() async {
         guard !isBusy else { return }
@@ -319,12 +340,16 @@ final class NativePlacesControlsModel: ObservableObject {
         return await mutate(NativePlacesCommand(action: "remove", id: id)) { !$0.savedPlaces.contains { $0.id == id } }
     }
 
-    func setPreference(unit: String? = nil, clock: String? = nil, theme: String? = nil) async -> Bool {
-        let patch = NativePlacesPreferencePatch(unit: unit, timeFormat: clock, theme: theme)
+    func setPreference(unit: String? = nil, clock: String? = nil, theme: String? = nil,
+                       reactiveSkyEnabled: Bool? = nil, reactiveSkyMotionAllowed: Bool? = nil) async -> Bool {
+        let patch = NativePlacesPreferencePatch(unit: unit, timeFormat: clock, theme: theme,
+            reactiveSkyEnabled: reactiveSkyEnabled, reactiveSkyMotionAllowed: reactiveSkyMotionAllowed)
         guard patch.isValid else { return invalidInput() }
         return await mutate(NativePlacesCommand(action: "preferences", preferences: patch)) { value in
             (unit == nil || value.preferences.unit == unit) && (clock == nil || value.preferences.timeFormat == clock) &&
-            (theme == nil || value.preferences.theme == theme)
+            (theme == nil || value.preferences.theme == theme) &&
+            (reactiveSkyEnabled == nil || value.preferences.reactiveSkyEnabled == reactiveSkyEnabled) &&
+            (reactiveSkyMotionAllowed == nil || value.preferences.reactiveSkyMotionAllowed == reactiveSkyMotionAllowed)
         }
     }
 
@@ -382,7 +407,16 @@ final class NativePlacesControlsModel: ObservableObject {
 
     private func accept(_ incoming: NativePlacesSource) -> Bool {
         guard incoming.isValid, let incomingDate = incoming.captureDate else { return false }
-        if let previousDate = source?.captureDate, incomingDate < previousDate { return false }
+        if let previous = source, let previousDate = previous.captureDate {
+            guard incomingDate >= previousDate else { return false }
+            // A newly loaded fallback is not a transfer back to legacy ownership.
+            guard previous.owner != "native" || incoming.owner == "native" else { return false }
+            if incoming.owner == "native", incomingDate == previousDate {
+                var sameOwner = incoming
+                sameOwner.owner = previous.owner
+                guard sameOwner == previous else { return false }
+            }
+        }
         source = incoming
         return true
     }
@@ -464,6 +498,24 @@ extension NativePlacesSource {
             selectedPlace: try values.decodeIfPresent(NativeManagedPlace.self, forKey: .selectedPlace),
             lastPlace: try values.decodeIfPresent(NativeManagedPlace.self, forKey: .lastPlace),
             savedPlaces: try values.decode([NativeManagedPlace].self, forKey: .savedPlaces), preferences: try values.decode(NativePlacesPreferences.self, forKey: .preferences))
+        guard isValid else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid places receipt."))
+        }
+    }
+}
+
+extension NativePlacesPreferencePatch {
+    init(from decoder: Decoder) throws {
+        try NativePlacesValidation.keys(decoder, required: [], optional: Set(CodingKeys.allCases.map(\.rawValue)))
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(unit: try values.strictOptional(String.self, forKey: .unit),
+            timeFormat: try values.strictOptional(String.self, forKey: .timeFormat),
+            theme: try values.strictOptional(String.self, forKey: .theme),
+            reactiveSkyEnabled: try values.strictOptional(Bool.self, forKey: .reactiveSkyEnabled),
+            reactiveSkyMotionAllowed: try values.strictOptional(Bool.self, forKey: .reactiveSkyMotionAllowed))
+        guard isValid else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid preference patch."))
+        }
     }
 }
 

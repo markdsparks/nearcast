@@ -54,6 +54,8 @@ private final class Writer {
             if let value = command.preferences?.unit { source.preferences.unit = value }
             if let value = command.preferences?.timeFormat { source.preferences.timeFormat = value }
             if let value = command.preferences?.theme { source.preferences.theme = value }
+            if let value = command.preferences?.reactiveSkyEnabled { source.preferences.reactiveSkyEnabled = value }
+            if let value = command.preferences?.reactiveSkyMotionAllowed { source.preferences.reactiveSkyMotionAllowed = value }
         case "currentLocation":
             var current = place("gps-current", numeric: false)
             current.followsCurrentLocation = true
@@ -86,6 +88,7 @@ private struct NativePlacesControlsTests {
         try await unsupportedPreviewLabels()
         try await failureAndFreshness()
         try await raceAndCancellation()
+        try await nativeOwnerAdoption()
         print("Native places controls tests passed")
     }
 
@@ -141,7 +144,11 @@ private struct NativePlacesControlsTests {
 
         var bad = value
         bad.owner = "native"
-        try expect(!bad.isValid, "No native ownership is activated")
+        try expect(bad.isValid && bad.toPreviewContext() != nil, "Verified native ownership is accepted without changing display validation")
+        try expect(try JSONDecoder().decode(NativePlacesSource.self, from: JSONEncoder().encode(bad)) == bad, "Native source round trips through strict decoding")
+        bad.owner = "cloud"
+        try expect(!bad.isValid, "Unknown ownership is rejected")
+        try expect((try? JSONDecoder().decode(NativePlacesSource.self, from: JSONEncoder().encode(bad))) == nil, "Strict source decoder rejects unknown ownership")
         bad = value; bad.hydration = "loading"
         try expect(!bad.isValid, "Incomplete hydration rejected")
         bad = value; bad.version = 2
@@ -174,6 +181,9 @@ private struct NativePlacesControlsTests {
         try expect(object["selectedPlace"] is NSNull && object["lastPlace"] is NSNull, "Complete inventory encodes explicit nulls")
         try expect(try JSONDecoder().decode(NativePlacesSource.self, from: bytes) == empty, "Empty source round trips")
         try expect(empty.toPreviewContext() == nil, "No selected place does not fabricate a context")
+        empty.owner = "native"
+        try expect(try JSONDecoder().decode(NativePlacesSource.self, from: JSONEncoder().encode(empty)) == empty && empty.toPreviewContext() == nil,
+            "Native ownership preserves an explicitly empty inventory without fabricating a display context")
         let sourceObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as! [String: Any]
         var malformedObjects: [[String: Any]] = []
         var missing = sourceObject; missing.removeValue(forKey: "selectedPlace"); malformedObjects.append(missing)
@@ -198,6 +208,15 @@ private struct NativePlacesControlsTests {
         try expect(!reply.isValid(for: command), "Unrelated response rejected")
         reply.requestID = command.requestID; reply.version = 2
         try expect(!reply.isValid(for: command), "Future response rejected")
+        let skyPatch = NativePlacesPreferencePatch(reactiveSkyEnabled: true, reactiveSkyMotionAllowed: false)
+        try expect(skyPatch.isValid && NativePlacesPreferencePatch(reactiveSkyEnabled: false).isValid, "Boolean-only preference patches retain explicit false intent")
+        try expect(try JSONDecoder().decode(NativePlacesPreferencePatch.self, from: JSONEncoder().encode(skyPatch)) == skyPatch,
+            "Sky preference patches round trip without platform permission state")
+        for raw in [#"{}"#, #"{"reactiveSkyEnabled":1}"#, #"{"reactiveSkyMotionAllowed":null}"#,
+                    #"{"reactiveSkyEnabled":true,"permission":"granted"}"#] {
+            try expect((try? JSONDecoder().decode(NativePlacesPreferencePatch.self, from: Data(raw.utf8))) == nil,
+                "Strict preference decoder rejects malformed or expanded patches")
+        }
     }
 
     @MainActor
@@ -216,6 +235,11 @@ private struct NativePlacesControlsTests {
         try expect(model.source?.preferences.reactiveSkyEnabled == false && model.source?.preferences.reactiveSkyMotionAllowed == true, "Unedited raw preferences survive")
         let auto = await model.setPreference(clock: "auto", theme: "auto")
         try expect(auto && model.source?.preferences.timeFormat == "auto", "Raw Auto remains raw")
+        try expect(await model.setPreference(reactiveSkyEnabled: true, reactiveSkyMotionAllowed: false), "Sky and motion intent use the same confirmed preference transaction")
+        try expect(model.source?.preferences.reactiveSkyEnabled == true && model.source?.preferences.reactiveSkyMotionAllowed == false,
+            "Confirmed sky settings include explicit motion opt-out")
+        try expect(writer.commands.last?.preferences?.reactiveSkyEnabled == true && writer.commands.last?.preferences?.reactiveSkyMotionAllowed == false,
+            "Sky and motion values reach the writer without a platform permission request")
         let added = place("family", name: "Family town", numeric: false)
         try expect(await model.save(place: added), "Save succeeds with verified presence")
         try expect(await model.select(place: added), "Selection succeeds with verified identity")
@@ -298,7 +322,7 @@ private struct NativePlacesControlsTests {
         await model.reload()
         try expect(model.source == original && model.errorMessage != nil, "Stale snapshot cannot roll state back")
         writer.replyOverride = { command in
-            var malformed = fixture(); malformed.owner = "native"
+            var malformed = fixture(); malformed.owner = "unknown"
             return NativePlacesReply(requestID: command.requestID, ok: true, source: malformed)
         }
         try expect(!(await model.setPreference(theme: "dark")) && model.source == original, "Malformed mutation receipt cannot replace source")
@@ -363,5 +387,55 @@ private struct NativePlacesControlsTests {
         writer.heldActions = []
         await model.reload()
         try expect(model.source?.preferences.theme == "dark" && model.errorMessage == nil, "Explicit reload reconciles an uncertain committed write")
+    }
+
+    @MainActor
+    static func nativeOwnerAdoption() async throws {
+        let writer = Writer()
+        let model = NativePlacesControlsModel { try await writer.call($0) }
+        await model.reload()
+        var native = model.source!
+        native.owner = "native"
+        try expect(model.adoptVerifiedSource(native), "Owner-only native handover can preserve the source capture timestamp")
+        try expect(model.source?.owner == "native", "External committed native source becomes visible")
+        native.capturedAt = "2026-09-18T20:00:00Z"
+        native.preferences.reactiveSkyEnabled = true
+        try expect(model.adoptVerifiedSource(native), "Newer committed native preferences are adopted")
+        try expect(model.adoptVerifiedSource(native), "Identical native receipts are idempotent")
+        var stale = native
+        stale.capturedAt = "2026-09-18T19:59:59Z"
+        try expect(!model.adoptVerifiedSource(stale), "Older native receipt cannot roll external state back")
+        var conflict = native
+        conflict.preferences.unit = "celsius"
+        try expect(!model.adoptVerifiedSource(conflict), "Equal timestamp with different native contents is rejected")
+        conflict.owner = "legacy"
+        conflict.capturedAt = "2026-09-18T21:00:00Z"
+        try expect(!model.adoptVerifiedSource(conflict), "External adoption never transfers native ownership back to legacy")
+        let futureLegacy = conflict
+        writer.replyOverride = { command in NativePlacesReply(requestID: command.requestID, ok: true, source: futureLegacy) }
+        await model.reload()
+        try expect(model.source == native, "A newly loaded legacy fallback cannot replace native ownership")
+
+        writer.replyOverride = nil
+        writer.heldActions = ["preferences"]
+        let change = Task { @MainActor in await model.setPreference(unit: "celsius") }
+        try await writer.waitForCommands(3)
+        var external = native
+        external.capturedAt = "2026-09-18T22:00:00Z"
+        external.preferences.theme = "dark"
+        try expect(model.isBusy && model.adoptVerifiedSource(external), "Verified external commits remain visible during an in-flight write")
+        let pending = writer.commands[2]
+        var olderReply = native
+        olderReply.capturedAt = "2026-09-18T21:00:00Z"
+        olderReply.preferences.unit = "celsius"
+        writer.resolve(pending, reply: NativePlacesReply(requestID: pending.requestID, ok: true, source: olderReply))
+        try expect(!(await change.value) && model.source == external && !model.isBusy, "Late older write receipt cannot replace the newer externally adopted commit")
+
+        external.capturedAt = "2026-09-18T23:00:00Z"
+        external.selectedPlace = nil
+        external.lastPlace = nil
+        external.savedPlaces = []
+        try expect(model.adoptVerifiedSource(external) && model.source?.savedPlaces.isEmpty == true && model.source?.toPreviewContext() == nil,
+            "Verified native empty source is retained without creating an old or invented forecast context")
     }
 }
