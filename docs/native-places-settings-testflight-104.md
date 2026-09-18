@@ -41,6 +41,10 @@ Compatibility is advertised as `preview.controlsVersion: 1`. Old hosts do not sh
 - Cold relaunch on Pro retained the selected European place, Celsius, 12-hour time, Light appearance, renamed/reordered saved entries and the test-place deletion. No deleted entry returned.
 - Isolated iPhone 17 Pro Max / iOS 27: final Debug build, dark native Settings, exact European place switch and the corrected Existing Settings handoff verified. The existing menu opened with the matching place and preferences. A stale legacy hourly-sheet issue found during testing was corrected; the regression clears its old dataset before a later preference refresh can relabel it.
 - Final Debug and Release iOS Simulator builds passed. Existing Watch asset-catalog warnings remain; they are unrelated to the new controls. No physical touch, full VoiceOver, performance or Watch delivery pass is claimed.
-- Signed archive/upload and final source commit are recorded below when complete.
+- Production-connected Release simulator on Pro Max: the normal menu opened native preview, then native Places successfully read the live companion's current place and empty saved inventory. This separately verified the deployed adapter rather than only the loopback fixture.
+- Source commit: `ff5db5f` (pushed to `main`). The release preflight reran portable and native-model checks successfully against this commit.
+- Web **3.0.411**: [deployment succeeded](https://github.com/markdsparks/nearcast/actions/runs/35399847755). Live app/service-worker versions and the exact SHA-256 of `native-places-controls.js` matched the tested source.
+- Signed archive / TestFlight: **uploaded successfully September 18, 2026 at 17:07 CDT**. Validation passed for iPhone, widget, Watch and complications, all build 104. Export reported `EXPORT SUCCEEDED`; Apple reported the package processing. Tester availability is not yet confirmed. The initial archive chose a mismatched same-name distribution certificate; retry with the exact existing certificate used by build 103 succeeded, without replacing profiles or credentials.
+- Archive: `native/ios/build/Nearcast-104.xcarchive`. Upload log: `/tmp/nearcast-native-places-testflight-104.log`. Simulator QA server stopped; no real family records were edited.
 
 Web companion: **3.0.411**. Native targets: **104**. This checkpoint is not in the already uploaded build 103.

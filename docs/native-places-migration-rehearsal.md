@@ -2,6 +2,8 @@
 
 September 18, 2026. **Engineering checkpoint complete; ownership has not moved.**
 
+Follow-on checkpoint: [build 104 adds editable native controls through the existing owner](native-places-settings-testflight-104.md). The no-edit/no-new-build statements below describe this earlier Phase 2A checkpoint, not build 104. Native ownership still has not moved.
+
 The family reports that the native preview is working overall and has authorized continuing the migration. This is useful functional feedback, not a substitute for the physical-device, accessibility, performance, or Watch acceptance gates in the [migration plan](native-migration-plan.md).
 
 ## What this checkpoint does
