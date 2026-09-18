@@ -1,4 +1,4 @@
-const VERSION = "3.0.409";
+const VERSION = "3.0.410";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -4630,6 +4630,10 @@ function nativePreviewPlaceRecord(place, timezone = null) {
   if (!id || id.length > 160 || !name || typeof latitude !== "number" || typeof longitude !== "number" ||
       !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
   const record = { id, name, latitude, longitude };
+  // Optional v1 addition: alerts need declared coverage, not a country guessed
+  // from coordinates or time zone. Older native readers ignore this field.
+  const countryCode = String(place.countryCode || place.country_code || "").toUpperCase();
+  if (/^[A-Z]{2}$/.test(countryCode)) record.countryCode = countryCode;
   const zone = timezone || place.timezone;
   if (typeof zone === "string" && zone.length <= 100) {
     try {

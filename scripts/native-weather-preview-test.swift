@@ -109,6 +109,13 @@ struct NativeWeatherPreviewTests {
         expect(decoded.places == [placeA, placeB], "Coordinate dedup preserves the selected place and its display name")
         expect(decoded.uses24HourClock, "Explicit 24-hour preference survives native import")
         expect(!context(clock24: false).uses24HourClock, "12-hour preference stays distinct from device locale")
+        expect(decoded.selectedPlace.countryCode == nil, "Old v1 contexts without country remain compatible")
+        let qualifiedPlace = NativePreviewPlace(id: "country", name: "Test", latitude: 38.72, longitude: -89.95,
+            timezone: "America/Chicago", countryCode: "US")
+        let countryContext = try NativePreviewContext.decode(JSONEncoder().encode(context(selected: qualifiedPlace)))
+        expect(countryContext.selectedPlace.countryCode == "US", "Declared country survives allowlisted import for alert coverage")
+        try rejects(context(selected: NativePreviewPlace(id: "bad-country", name: "Test", latitude: 38, longitude: -90,
+            timezone: nil, countryCode: "USA")), "Malformed country code must not establish alert coverage")
         try rejects(context(version: 2), "Unknown bridge context versions must fail closed")
         try rejects(context(theme: "other"), "Unsupported theme must fail validation")
         try rejects(context(saved: Array(repeating: placeB, count: 61)), "Context import is bounded")
@@ -183,7 +190,7 @@ struct NativeWeatherPreviewTests {
         let dataB = try payload(place: placeB, now: now, temperature: 84)
         PreviewForecastProtocol.configure("38.72000", response: .init(data: dataA, status: 200, delay: 0))
         PreviewForecastProtocol.configure("39.72000", response: .init(data: dataB, status: 200, delay: 0))
-        let model = NativeWeatherPreviewModel(context: decoded, repository: repository)
+        let model = NativeWeatherPreviewModel(context: decoded, repository: repository, essentialsRepository: nil)
         await model.refresh()
         expect(model.forecast?.current?.temperature == 71 && !model.isLoading && model.errorMessage == nil,
             "Initial refresh publishes exact selected-place weather")
@@ -203,7 +210,7 @@ struct NativeWeatherPreviewTests {
         await model.refresh()
         expect(model.forecast?.current?.temperature == 71 && model.errorMessage?.contains("saved forecast") == true,
             "Refresh failure retains weather and discloses saved-data state")
-        let cachedModel = NativeWeatherPreviewModel(context: decoded, repository: repository)
+        let cachedModel = NativeWeatherPreviewModel(context: decoded, repository: repository, essentialsRepository: nil)
         await cachedModel.refresh()
         expect(cachedModel.forecast?.generatedAt == model.forecast?.generatedAt,
             "Fresh preview loads cached weather without renewing its generation time")

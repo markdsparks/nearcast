@@ -8,12 +8,23 @@ struct NativePreviewPlace: Codable, Equatable, Identifiable, Sendable {
     let latitude: Double
     let longitude: Double
     let timezone: String?
+    let countryCode: String?
+
+    init(id: String, name: String, latitude: Double, longitude: Double, timezone: String?, countryCode: String? = nil) {
+        self.id = id
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
+        self.timezone = timezone
+        self.countryCode = countryCode
+    }
 
     var isValid: Bool {
         !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && id.count <= 160 &&
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && name.count <= 180 &&
         latitude.isFinite && longitude.isFinite && abs(latitude) <= 90 && abs(longitude) <= 180 &&
-        (timezone == nil || TimeZone(identifier: timezone!) != nil)
+        (timezone == nil || TimeZone(identifier: timezone!) != nil) &&
+        (countryCode == nil || (countryCode!.count == 2 && countryCode!.unicodeScalars.allSatisfy { (65...90).contains($0.value) }))
     }
 
     var coordinateIdentity: String {

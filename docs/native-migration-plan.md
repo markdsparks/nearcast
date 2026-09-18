@@ -212,6 +212,10 @@ This is the next engineering work, not work completed by writing this plan:
 
 Estimate the remaining phases after Phase 1 measures actual porting work and Phase 0 resolves map risks. Do not assign speculative delivery dates or preallocate TestFlight build numbers.
 
+## September 18 engineering update
+
+Native preview builds 101 and 102 implement and refine the first read-only journey; family acceptance and physical gates remain open. [Build 103](native-essentials-testflight-103.md) adds the read-only everyday details/alerts portion of Phase 2 while that testing continues. Places/settings ownership has **not** moved. The [isolated native radar proof](native-radar-substrate-proof.md) establishes a bounded raster feasibility artifact, not full radar parity or a renderer decision. None of these changes promotes the preview to native default.
+
 ## Out of scope
 
 No new weather subscription/provider, accounts, household synchronization, calendar access, location sharing, background permission, notification policy, PCC/cloud inference, or custom forecasting model. No broad feature redesign during the migration. New iOS capabilities can be adopted when they support a named phase and preserve older-system fallbacks; they are not a reason to expand the project automatically.

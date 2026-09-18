@@ -17,11 +17,17 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
     let rawWeatherCode: Int?
     let isDay: Bool?
     let thunderPossible: Bool
+    let relativeHumidity: Double?
+    let dewPoint: Double?
+    /// Visibility stays in meters regardless of the selected display units.
+    let visibilityMeters: Double?
+    let windDirection: Double?
 
     init(date: Date, temperature: Double? = nil, apparentTemperature: Double? = nil,
          rainProbability: Double? = nil, precipitationMM: Double? = nil,
          windSpeed: Double? = nil, windGusts: Double? = nil, uvIndex: Double? = nil,
-         weatherCode: Int? = nil, isDay: Bool? = nil, thunderPossible: Bool = false, rawWeatherCode: Int? = nil) {
+         weatherCode: Int? = nil, isDay: Bool? = nil, thunderPossible: Bool = false, rawWeatherCode: Int? = nil,
+         relativeHumidity: Double? = nil, dewPoint: Double? = nil, visibilityMeters: Double? = nil, windDirection: Double? = nil) {
         self.date = date
         self.temperature = temperature
         self.apparentTemperature = apparentTemperature
@@ -34,6 +40,10 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
         self.rawWeatherCode = rawWeatherCode
         self.isDay = isDay
         self.thunderPossible = thunderPossible
+        self.relativeHumidity = relativeHumidity
+        self.dewPoint = dewPoint
+        self.visibilityMeters = visibilityMeters
+        self.windDirection = windDirection
     }
 
     var conditionLabel: String {
@@ -47,6 +57,7 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
     var hasReadings: Bool {
         temperature != nil || apparentTemperature != nil || rainProbability != nil || precipitationMM != nil
             || windSpeed != nil || windGusts != nil || uvIndex != nil || weatherCode != nil
+            || relativeHumidity != nil || dewPoint != nil || visibilityMeters != nil || windDirection != nil
     }
 }
 
@@ -285,7 +296,9 @@ private enum NativeForecastDecoder {
                 uvIndex: nonnegative(values["uv_index"]), weatherCode: resolvedCode,
                 isDay: isDay, thunderPossible: possibleThunder(date, interval)
                     || (NativeWeatherCondition.isThunder(rawCode) && !NativeWeatherCondition.isThunder(resolvedCode) && (chance ?? 0) > 0),
-                rawWeatherCode: rawCode)
+                rawWeatherCode: rawCode, relativeHumidity: probability(values["relative_humidity_2m"]),
+                dewPoint: number(values["dew_point_2m"]), visibilityMeters: nonnegative(values["visibility"]),
+                windDirection: number(values["wind_direction_10m"]).flatMap { (0...360).contains($0) ? $0 : nil })
         }
 
         func points(_ section: String, interval: TimeInterval, limit: Int) -> [NativeForecastPoint] {
@@ -363,7 +376,7 @@ private enum NativeForecastDecoder {
 
     private static func validateUnits(values: Object, units: Object?, metric: Bool) throws {
         let expectedTemperature = metric ? "°C" : "°F"
-        for key in ["temperature_2m", "apparent_temperature", "temperature_2m_min", "temperature_2m_max"] where values[key] != nil {
+        for key in ["temperature_2m", "apparent_temperature", "temperature_2m_min", "temperature_2m_max", "dew_point_2m"] where values[key] != nil {
             guard units?[key] as? String == expectedTemperature else { throw NativeForecastError.mismatchedUnits }
         }
         for key in ["wind_speed_10m", "wind_gusts_10m"] where values[key] != nil {
@@ -375,9 +388,11 @@ private enum NativeForecastDecoder {
         for key in ["precipitation", "precipitation_sum"] where values[key] != nil {
             guard units?[key] as? String == "mm" else { throw NativeForecastError.mismatchedUnits }
         }
-        for key in ["precipitation_probability", "precipitation_probability_max"] where values[key] != nil {
+        for key in ["precipitation_probability", "precipitation_probability_max", "relative_humidity_2m"] where values[key] != nil {
             guard units?[key] as? String == "%" else { throw NativeForecastError.mismatchedUnits }
         }
+        if values["visibility"] != nil, units?["visibility"] as? String != "m" { throw NativeForecastError.mismatchedUnits }
+        if values["wind_direction_10m"] != nil, units?["wind_direction_10m"] as? String != "°" { throw NativeForecastError.mismatchedUnits }
     }
 
     private struct ForecastClock {

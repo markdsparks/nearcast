@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nearcast-native-preview.XXXXXX")"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nearcast-essentials-model.XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 xcrun swiftc \
@@ -14,7 +14,7 @@ xcrun swiftc \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeEssentialsRepository.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherPreviewContext.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherPreviewModel.swift" \
-  "$ROOT/scripts/native-weather-preview-test.swift" \
-  -o "$TEST_ROOT/native-weather-preview-test"
+  "$ROOT/scripts/native-essentials-model-test.swift" \
+  -o "$TEST_ROOT/native-essentials-model-test"
 
-"$TEST_ROOT/native-weather-preview-test"
+"$TEST_ROOT/native-essentials-model-test"

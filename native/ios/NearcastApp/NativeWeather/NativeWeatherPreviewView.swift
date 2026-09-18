@@ -20,6 +20,7 @@ struct NativeWeatherPreviewView: View {
     @State private var showEarlierHours = false
     @State private var now = Date()
     @State private var scrollToTopRevision = 0
+    @State private var weatherDetail: NativeWeatherDetailKind?
 
     private var isDark: Bool { (preferredScheme ?? colorScheme) == .dark }
     private var accent: Color { isDark ? Color(red: 0.57, green: 0.77, blue: 1) : Color(red: 0.16, green: 0.37, blue: 0.63) }
@@ -72,6 +73,7 @@ struct NativeWeatherPreviewView: View {
                             placePicker.id("native-preview-top")
                             if let forecast = model.forecast {
                                 freshness(forecast)
+                                NativeWeatherEssentialNotices(model: model, day: displayedDay, now: now) { weatherDetail = $0 }
                                 if isHourly {
                                     hourlyContent
                                 } else {
@@ -79,10 +81,7 @@ struct NativeWeatherPreviewView: View {
                                     outlookCard
                                     dailyList
                                 }
-                                Button { requestLegacy(.details) } label: {
-                                    Label("More weather details", systemImage: "arrow.up.forward.app")
-                                        .font(.subheadline.weight(.semibold))
-                                }
+                                NativeWeatherEssentialsSection(model: model, day: displayedDay, now: now) { weatherDetail = $0 }
                                 attribution
                             } else {
                                 loadingOrUnavailable
@@ -120,6 +119,12 @@ struct NativeWeatherPreviewView: View {
                         .accessibilityLabel("Close native preview")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { weatherDetail = .overview } label: { Image(systemName: "list.bullet") }
+                        .accessibilityLabel("Weather details")
+                        .accessibilityHint("Air quality, sun, wind, UV and official alerts")
+                        .disabled(model.forecast == nil)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await model.refresh() } } label: {
                         if model.isLoading { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                     }
@@ -129,6 +134,10 @@ struct NativeWeatherPreviewView: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
             .tint(accent)
+            .sheet(item: $weatherDetail) { kind in
+                NativeWeatherDetailsSheet(model: model, kind: kind, day: displayedDay)
+                    .presentationDragIndicator(.visible)
+            }
             .confirmationDialog("Open in existing Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
                 Button("Open in existing Nearcast") {
                     if let destination = legacyDestination { onLegacy(destination) }
@@ -162,7 +171,10 @@ struct NativeWeatherPreviewView: View {
                 // The screen must age even without touches. This clock never
                 // registers background work or increases notification delivery.
                 while !Task.isCancelled {
-                    if scenePhase == .active { now = Date() }
+                    if scenePhase == .active {
+                        now = Date()
+                        model.refreshEssentialsIfNeeded(now: now)
+                    }
                     do { try await Task.sleep(for: .seconds(60)) }
                     catch { return }
                 }
@@ -812,6 +824,12 @@ struct NativeWeatherPreviewView: View {
                 detailPair("Wind", speed(point.windSpeed))
                 detailPair("Gusts", speed(point.windGusts))
                 detailPair("UV index", point.uvIndex.map { String(format: "%.1f", $0) } ?? "Not available")
+                detailPair("Humidity", percentage(point.relativeHumidity))
+                detailPair("Dew point", temperature(point.dewPoint, withUnit: true))
+                if let forecast = model.forecast {
+                    detailPair("Visibility", NativeWeatherDetailPresentation(forecast: forecast, day: displayedDay, now: now,
+                        uses24HourClock: model.context.uses24HourClock).formatted(point.visibilityMeters, kind: .visibility))
+                }
                 if point.thunderPossible {
                     Label("Thunderstorms possible", systemImage: "cloud.bolt")
                         .font(.subheadline.weight(.semibold))

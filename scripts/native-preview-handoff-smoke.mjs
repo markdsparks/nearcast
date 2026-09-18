@@ -270,8 +270,11 @@ state.savedPlaces.unshift({ ...away, id: "I".repeat(161) });
 const bounded = plain(run("buildNativePreviewContext()"));
 assert.equal(bounded.savedPlaces.length, 60);
 assert.ok(bounded.savedPlaces.every((place) => place.name.length <= 180 && place.id.length <= 160));
-assert.ok(bounded.savedPlaces.every((place) => Object.keys(place).every((key) => ["id", "name", "latitude", "longitude", "timezone"].includes(key))));
+assert.ok(bounded.savedPlaces.every((place) => Object.keys(place).every((key) => ["id", "name", "latitude", "longitude", "timezone", "countryCode"].includes(key))));
 assert.equal(state.savedPlaces.length, 72, "export does not modify authoritative records");
+assert.equal(plain(run('nativePreviewPlaceRecord({ id: "country", name: "Test", latitude: 40, longitude: -90, country_code: "us" })')).countryCode, "US", "declared country is exported for official alert coverage");
+assert.equal(plain(run('nativePreviewPlaceRecord({ id: "country", name: "Test", latitude: 40, longitude: -90, countryCode: "unknown" })')).countryCode, undefined, "invalid country codes are omitted, not inferred");
+assert.equal(plain(run('nativePreviewPlaceRecord({ id: "country", name: "Test", latitude: 40, longitude: -90 })')).countryCode, undefined, "old records remain compatible without a country field");
 state.activePlace = null;
 assert.throws(() => run("buildNativePreviewContext()"), /Open a place/);
 

@@ -9,28 +9,41 @@ final class NativeWeatherPreviewModel: ObservableObject {
     @Published private(set) var forecast: NativeWeatherForecast?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var essentials: NativeWeatherEssentials?
+    @Published private(set) var isLoadingEssentials = false
     @Published var selectedDay: Date?
     @Published var destination: NativeWeatherDestination = .today
 
     private let repository: NativeForecastRepository
+    private let essentialsRepository: NativeEssentialsRepository?
     private var requestRevision = 0
+    private var essentialsRevision = 0
     private var placeTask: Task<Void, Never>?
+    private var essentialsTask: Task<Void, Never>?
+    private var lastEssentialsAttempt: Date?
 
-    init(context: NativePreviewContext, repository: NativeForecastRepository = NativeForecastRepository()) {
+    init(context: NativePreviewContext, repository: NativeForecastRepository = NativeForecastRepository(),
+         essentialsRepository: NativeEssentialsRepository? = NativeEssentialsRepository()) {
         self.context = context
         places = context.places
         selectedPlace = context.selectedPlace
         self.repository = repository
+        self.essentialsRepository = essentialsRepository
     }
 
-    deinit { placeTask?.cancel() }
+    deinit { placeTask?.cancel(); essentialsTask?.cancel() }
 
     func selectPlace(_ place: NativePreviewPlace) {
         guard places.contains(place), place != selectedPlace else { return }
         placeTask?.cancel()
+        essentialsTask?.cancel()
+        essentialsRevision += 1
+        isLoadingEssentials = false
+        lastEssentialsAttempt = nil
         requestRevision += 1
         selectedPlace = place
         forecast = nil
+        essentials = nil
         errorMessage = nil
         selectedDay = nil
         destination = .today
@@ -43,6 +56,7 @@ final class NativeWeatherPreviewModel: ObservableObject {
         let place = selectedPlace
         isLoading = true
         errorMessage = nil
+        refreshEssentials()
         defer { if revision == requestRevision { isLoading = false } }
 
         if forecast == nil {
@@ -65,6 +79,35 @@ final class NativeWeatherPreviewModel: ObservableObject {
         }
     }
 
+    /// Supplemental inputs never hold up the first useful forecast. They have
+    /// their own revision guard so a late AQI/alert response cannot cross places.
+    func refreshEssentials(force: Bool = false) {
+        guard let essentialsRepository else { return }
+        guard !isLoadingEssentials || force else { return }
+        essentialsTask?.cancel()
+        essentialsRevision += 1
+        let revision = essentialsRevision
+        let place = selectedPlace
+        isLoadingEssentials = true
+        lastEssentialsAttempt = Date()
+        essentialsTask = Task { [weak self] in
+            let result = await essentialsRepository.fetch(latitude: place.latitude, longitude: place.longitude,
+                countryCode: place.countryCode, now: Date(), force: force)
+            guard let self, !Task.isCancelled, revision == self.essentialsRevision,
+                  place == self.selectedPlace else { return }
+            self.essentials = result
+            self.isLoadingEssentials = false
+        }
+    }
+
+    func refreshEssentialsIfNeeded(now: Date) {
+        guard !isLoadingEssentials else { return }
+        let sinceAttempt = lastEssentialsAttempt.map { now.timeIntervalSince($0) } ?? .infinity
+        let expiredBulletin = essentials?.alerts.validUntil.map { now >= $0 } ?? false
+        guard sinceAttempt >= 5 * 60 || (expiredBulletin && sinceAttempt >= 60) else { return }
+        refreshEssentials()
+    }
+
     func showToday() {
         selectedDay = nil
         destination = .today
@@ -84,7 +127,10 @@ final class NativeWeatherPreviewModel: ObservableObject {
 
     func cancel() {
         requestRevision += 1
+        essentialsRevision += 1
         placeTask?.cancel()
+        essentialsTask?.cancel()
         isLoading = false
+        isLoadingEssentials = false
     }
 }
