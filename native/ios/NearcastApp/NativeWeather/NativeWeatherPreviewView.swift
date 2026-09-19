@@ -6,7 +6,7 @@ import Charts
 struct NativeWeatherPreviewView: View {
     @ObservedObject var model: NativeWeatherPreviewModel
     let onClose: () -> Void
-    let onLegacy: (NativeLegacyDestination) -> Void
+    let onLegacy: (NativeLegacyDestination, String?) -> Void
     var onPlaces: (() -> Void)? = nil
     var onSettings: (() -> Void)? = nil
     /// The full native home persists a place choice through the verified
@@ -29,6 +29,7 @@ struct NativeWeatherPreviewView: View {
     @State private var weatherDetail: NativeWeatherDetailKind?
     @State private var switchingPlaceID: String?
     @State private var placeSwitchMessage: String?
+    @State private var assistantEntry: NativeAssistantEntryDestination?
 
     private var isDark: Bool { (preferredScheme ?? colorScheme) == .dark }
     private var accent: Color { isDark ? Color(red: 0.57, green: 0.77, blue: 1) : Color(red: 0.16, green: 0.37, blue: 0.63) }
@@ -164,7 +165,7 @@ struct NativeWeatherPreviewView: View {
                     },
                     onAskAboutPlace: {
                         showingNativeMap = false
-                        requestLegacy(.ask)
+                        assistantEntry = .ask
                     },
                     onClose: { showingNativeMap = false },
                     onExistingMap: {
@@ -176,11 +177,27 @@ struct NativeWeatherPreviewView: View {
             }
             .confirmationDialog("Continue in Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
                 Button("Open Nearcast") {
-                    if let destination = legacyDestination { onLegacy(destination) }
+                    if let destination = legacyDestination { onLegacy(destination, nil) }
                 }
                 Button("Stay here", role: .cancel) { legacyDestination = nil }
             } message: {
                 Text("Continue with \(model.selectedPlace.name) in Nearcast. Ask and Plans remain there while weather, widgets and Watch stay in sync here.")
+            }
+            .sheet(item: $assistantEntry) { destination in
+                NativeAssistantEntryView(
+                    destination: destination,
+                    place: model.selectedPlace,
+                    day: displayedDay,
+                    timezone: model.forecast?.timezoneID ?? model.selectedPlace.timezone,
+                    uses24HourClock: model.context.uses24HourClock,
+                    onClose: { assistantEntry = nil },
+                    onOpenExisting: { requestedDestination, query in
+                        assistantEntry = nil
+                        onLegacy(requestedDestination, query)
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .onChange(of: model.selectedDay) { _, _ in
                 if !offersQuarterHours { interval = .hourly }
@@ -1069,9 +1086,9 @@ struct NativeWeatherPreviewView: View {
             model.showHourly(day: model.selectedDay)
             scrollToTopRevision += 1
         }
-        navigationButton("Ask", symbol: "sparkle", selected: false) { requestLegacy(.ask) }
+        navigationButton("Ask", symbol: "sparkle", selected: assistantEntry == .ask) { assistantEntry = .ask }
         navigationButton("Map", symbol: "map", selected: showingNativeMap) { showingNativeMap = true }
-        navigationButton("Plans", symbol: "calendar", selected: false) { requestLegacy(.plans) }
+        navigationButton("Plans", symbol: "calendar", selected: assistantEntry == .plans) { assistantEntry = .plans }
     }
 
     private func navigationButton(_ title: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -1214,6 +1231,153 @@ struct NativeWeatherPreviewView: View {
         if age < 60 * 60 { return "\(Int(age / 60)) min ago" }
         if age < 24 * 60 * 60 { return "\(Int(age / 3600)) hr ago" }
         return "\(Int(age / 86400)) day\(age < 2 * 86400 ? "" : "s") ago"
+    }
+}
+
+/// Native starting points for the workflows still backed by the proven
+/// Nearcast planner. They preserve the selected place and day rather than
+/// recreating another, potentially stale, plan or agent store.
+private enum NativeAssistantEntryDestination: String, Identifiable {
+    case ask, plans
+    var id: String { rawValue }
+}
+
+private struct NativeAssistantEntryView: View {
+    let destination: NativeAssistantEntryDestination
+    let place: NativePreviewPlace
+    let day: Date
+    let timezone: String?
+    let uses24HourClock: Bool
+    let onClose: () -> Void
+    let onOpenExisting: (NativeLegacyDestination, String?) -> Void
+
+    @State private var draft = ""
+    @FocusState private var composerFocused: Bool
+
+    private var isAsk: Bool { destination == .ask }
+    private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var timeZone: TimeZone { timezone.flatMap(TimeZone.init(identifier:)) ?? .current }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label(isAsk ? "Ask Nearcast" : "Plans", systemImage: isAsk ? "sparkle" : "calendar")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.tint)
+                        Text(isAsk ? "Ask a useful weather question" : "Make a weather-aware plan")
+                            .font(.largeTitle.weight(.bold))
+                        Text(isAsk
+                             ? "Your question will open in Nearcast with this exact forecast already selected."
+                             : "Start with what matters. Nearcast checks the right place and time before saving anything.")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    contextCard
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(isAsk ? "Your question" : "What are you planning?")
+                            .font(.headline)
+                        TextField(
+                            isAsk ? "Will it be comfortable outside?" : "Soccer practice Tuesday at 6 PM",
+                            text: $draft,
+                            axis: .vertical
+                        )
+                        .lineLimit(2...5)
+                        .textInputAutocapitalization(.sentences)
+                        .submitLabel(.go)
+                        .onSubmit(openDraft)
+                        .focused($composerFocused)
+                        .padding(14)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+
+                        if isAsk {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    suggestion("Will rain affect my plans?")
+                                    suggestion("When is the best time to be outside?")
+                                    suggestion("What changes later today?")
+                                }
+                            }
+                        } else {
+                            Text("Nothing is saved until you review it in Nearcast.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button(action: openDraft) {
+                        Label(isAsk ? "Ask Nearcast" : "Check this plan", systemImage: isAsk ? "arrow.up.circle.fill" : "sparkle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(trimmedDraft.isEmpty)
+
+                    if !isAsk {
+                        Button {
+                            onOpenExisting(.plans, nil)
+                        } label: {
+                            Label("Review saved plans", systemImage: "list.bullet")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        Text("Saved plans and notification choices remain in sync in Nearcast while this native flow is being brought over.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle(isAsk ? "Ask" : "Plans")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close", action: onClose)
+                }
+            }
+            .onAppear { composerFocused = true }
+        }
+    }
+
+    private var contextCard: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Using this forecast", systemImage: "location.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+            Text(place.name).font(.headline)
+            Text(dayLabel).font(.subheadline).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(.primary.opacity(0.08)) }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var dayLabel: String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "EEEE, MMMM d"
+        return formatter.string(from: day)
+    }
+
+    private func suggestion(_ value: String) -> some View {
+        Button(value) { draft = value }
+            .font(.subheadline.weight(.medium))
+            .buttonStyle(.bordered)
+            .tint(.secondary)
+    }
+
+    private func openDraft() {
+        guard !trimmedDraft.isEmpty else { return }
+        let query = isAsk ? trimmedDraft : "Help me plan: \(trimmedDraft)"
+        onOpenExisting(.ask, query)
     }
 }
 

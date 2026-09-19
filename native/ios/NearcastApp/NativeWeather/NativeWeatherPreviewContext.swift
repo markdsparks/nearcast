@@ -70,10 +70,15 @@ struct NativePreviewHandoff: Encodable, Sendable {
     let destination: NativeLegacyDestination
     let place: NativePreviewPlace
     let targetDate: String?
+    /// Optional draft created in a native entry surface. It is deliberately
+    /// bounded and only delivered to the already-verified Ask destination.
+    let initialQuery: String?
 
-    init(destination: NativeLegacyDestination, place: NativePreviewPlace, date: Date?, timezone: String?) {
+    init(destination: NativeLegacyDestination, place: NativePreviewPlace, date: Date?, timezone: String?, initialQuery: String? = nil) {
         self.destination = destination
         self.place = place
+        let trimmedQuery = initialQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.initialQuery = (trimmedQuery?.isEmpty == false) ? String(trimmedQuery!.prefix(500)) : nil
         if let date, let zone = timezone.flatMap(TimeZone.init(identifier:)) {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")

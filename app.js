@@ -4740,6 +4740,11 @@ function nativePreviewHandoffRequest(payload) {
       !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date)) {
     throw new Error("The requested forecast date is invalid.");
   }
+  const initialQuery = payload.initialQuery ?? null;
+  if (initialQuery !== null && (typeof initialQuery !== "string" ||
+      !initialQuery.trim() || initialQuery.length > 500)) {
+    throw new Error("The requested question is invalid. Open Ask and try again.");
+  }
   // The cached native preview may outlive this document. In that case only a
   // still-known active/saved place can be handed back, never an arbitrary URL.
   const current = [state.activePlace, ...(Array.isArray(state.savedPlaces) ? state.savedPlaces : [])]
@@ -4751,7 +4756,12 @@ function nativePreviewHandoffRequest(payload) {
     });
   const match = [...nativePreviewContextPlaces, ...current].find((entry) => nativePreviewPlacesEqual(entry.record, place));
   if (!match) throw new Error("The requested place is no longer available. Open the preview again.");
-  return { destination: payload.destination, place: { ...match.original }, targetDate: date };
+  return {
+    destination: payload.destination,
+    place: { ...match.original },
+    targetDate: date,
+    initialQuery: initialQuery?.trim() || null
+  };
 }
 
 function nativePreviewForecastMatches(place) {
@@ -4848,6 +4858,12 @@ async function handoffNativePreview(payload) {
         windowArtifact,
         nearcastViewArtifact("day", state.activePlace, null, windowArtifact)
       ].filter(Boolean));
+      // A native Ask/Plans entry is only allowed to supply a bounded draft.
+      // Weather evidence and all agent actions still come from this verified
+      // web host after the exact place and date have been loaded above.
+      if (request.initialQuery) {
+        requestAnimationFrame(() => { void runAsk(request.initialQuery); });
+      }
     } else if (dayIndex >= 0) {
       openDayFromIndex(dayIndex, { persistInitialMode: false });
     } else {

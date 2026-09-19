@@ -209,8 +209,8 @@ private struct NativeWeatherPreviewContainer: View {
         NativeWeatherPreviewView(
             model: preview,
             onClose: { webModel.showingNativePreview = false },
-            onLegacy: { destination in
-                openExisting(destination)
+            onLegacy: { destination, initialQuery in
+                openExisting(destination, initialQuery: initialQuery)
             },
             onPlaces: {
                 placesSettingsTab = .places
@@ -291,9 +291,10 @@ private struct NativeWeatherPreviewContainer: View {
         return true
     }
 
-    private func openExisting(_ destination: NativeLegacyDestination) {
+    private func openExisting(_ destination: NativeLegacyDestination, initialQuery: String? = nil) {
         webModel.handoffNativePreview(NativePreviewHandoff(destination: destination,
             place: preview.selectedPlace, date: preview.selectedDay,
-            timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone))
+            timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone,
+            initialQuery: initialQuery))
     }
 }

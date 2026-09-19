@@ -78,6 +78,7 @@ const sandbox = {
     calls.push(["ask", options]);
     if (options.surface) sandbox.rememberNearcastSurfaceContext(options.surface);
   },
+  runAsk: (question) => calls.push(["ask-run", question]),
   resetTransientViewToForecastTop: () => calls.push(["reset"])
 };
 vm.createContext(sandbox);
@@ -211,6 +212,10 @@ await handoff({ version: 1, destination: "ask", place: context.savedPlaces[0] })
 askArtifacts = plain(sandbox.nearcastAgentSessionArtifacts);
 askWindow = askArtifacts.find((artifact) => artifact.kind === "nearcast.forecast-window");
 assert.equal(askWindow.value.target_date, "2026-09-22", "Today Ask explicitly replaces previous selected-day focus");
+calls.length = 0;
+await handoff({ version: 1, destination: "ask", place: context.savedPlaces[0], initialQuery: " Will rain affect soccer? " });
+assert.deepEqual(calls.map(([kind]) => kind), ["ask", "ask-run"], "a bounded native draft reaches only the verified Ask host");
+assert.equal(calls[1][1], "Will rain affect soccer?", "native Ask trims its draft before agent execution");
 sandbox.askStreaming = true;
 calls.length = 0;
 await assert.rejects(handoff({ version: 1, destination: "ask", place: context.selectedPlace, targetDate: "2026-09-23" }), /current Nearcast reply/);
@@ -225,7 +230,9 @@ for (const payload of [
   { version: 1, destination: "map", place: { ...context.savedPlaces[0], latitude: null } },
   { version: 1, destination: "map", place: { ...context.savedPlaces[0], timezone: "invalid-zone" } },
   { version: 1, destination: "map", place: context.savedPlaces[0], targetDate: "2026-02-30" },
-  { version: 1, destination: "map", place: context.savedPlaces[0], targetDate: "2026-09-23<script>" }
+  { version: 1, destination: "map", place: context.savedPlaces[0], targetDate: "2026-09-23<script>" },
+  { version: 1, destination: "ask", place: context.savedPlaces[0], initialQuery: "   " },
+  { version: 1, destination: "ask", place: context.savedPlaces[0], initialQuery: "x".repeat(501) }
 ]) {
   calls.length = 0;
   await assert.rejects(handoff(payload));
