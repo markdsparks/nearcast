@@ -305,7 +305,7 @@ final class NativePlacesControlsModel: ObservableObject {
     func select(place: NativeManagedPlace) async -> Bool {
         guard place.isValid else { return invalidInput() }
         guard place.previewPlace.isValid else {
-            if !isBusy { errorMessage = "This place cannot be shown in the native preview yet. Open existing Nearcast to use it." }
+            if !isBusy { errorMessage = "This place cannot be shown in Nearcast weather yet. Open existing Nearcast to use it." }
             return false
         }
         return await mutate(NativePlacesCommand(action: "select", place: place)) { $0.selectedPlace?.hasSameIdentity(as: place) == true }
@@ -393,7 +393,7 @@ final class NativePlacesControlsModel: ObservableObject {
                 // The writer succeeded, but closing Places would strand the
                 // user on an older forecast. Keep the receipt and the sheet,
                 // explain the display limitation, and do not replay the write.
-                errorMessage = "Your change is saved, but this place cannot be shown in the native preview yet. Open existing Nearcast to continue."
+                errorMessage = "Your change is saved, but this place cannot be shown in Nearcast weather yet. Open existing Nearcast to continue."
                 return false
             }
             return true

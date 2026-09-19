@@ -91,7 +91,7 @@ enum NativePreviewError: LocalizedError {
     case invalidContext
 
     var errorDescription: String? {
-        "Open a place in Nearcast, then try the native preview again."
+        "Open a place in Nearcast, then return to Nearcast weather."
     }
 }
 

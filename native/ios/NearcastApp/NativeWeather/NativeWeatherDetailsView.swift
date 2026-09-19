@@ -272,7 +272,7 @@ struct NativeWeatherDetailsSheet: View {
                 context(p)
                 if state?.status == .unsupported {
                     Label("Official alerts unavailable here", systemImage: "globe").font(.title2.weight(.bold))
-                    Text(state?.message ?? "This native preview currently supports National Weather Service alerts in covered US locations. Use your local weather authority for official warnings.")
+                    Text(state?.message ?? "Nearcast weather currently supports National Weather Service alerts in covered US locations. Use your local weather authority for official warnings.")
                 } else if state?.isFresh(now: now) != true {
                     Label(model.isLoadingEssentials ? "Checking official alerts…" : "Couldn’t verify official alerts", systemImage: "exclamationmark.triangle").font(.title2.weight(.bold))
                     Text("Missing or outdated alert information does not mean there are no hazards.\(relevant.isEmpty ? "" : " Saved bulletins are shown below.")").foregroundStyle(.secondary)

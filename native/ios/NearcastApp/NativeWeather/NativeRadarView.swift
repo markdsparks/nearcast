@@ -349,7 +349,7 @@ struct NativeRadarView: View {
                         Text("Opens Ask with \(place.name). The displayed radar frame and map area are not sent as storm-analysis evidence.").font(.caption)
                     }
                     Button("Open full existing map", action: { showingInfo = false; onExistingMap() })
-                    Text("For Storm Check, StormScope and lightning, open the full existing map. Native preview does not replace those tools yet.")
+                    Text("For Storm Check, StormScope and lightning, open the full Nearcast map. The native map does not replace those tools yet.")
                 }
                 Section("Basemap") {
                     Button { model.selectBasemap(.streets) } label: {

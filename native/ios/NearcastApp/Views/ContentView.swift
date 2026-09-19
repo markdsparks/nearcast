@@ -36,6 +36,7 @@ struct ContentView: View {
             guard newPhase == .active else { return }
             model.recoverIfNeededOnActivation()
         }
+        .task { model.openNativeHomeIfAvailable() }
         .fullScreenCover(isPresented: $model.showingNativePreview) {
             if let context = model.nativePreviewContext {
                 NativeWeatherPreviewContainer(context: context, webModel: model)
@@ -45,13 +46,13 @@ struct ContentView: View {
                 VStack(spacing: 18) {
                     ContentUnavailableView("Saved places unavailable", systemImage: "externaldrive.badge.exclamationmark",
                         description: Text(model.placesOwner.message ?? "Your saved records could not be verified. Nothing was replaced."))
-                    Button("Back to Nearcast") { model.showingNativePreview = false }
+                    Button("Open existing Nearcast") { model.showingNativePreview = false }
                         .buttonStyle(.borderedProminent)
                 }
                 .padding()
             }
         }
-        .alert("Native preview", isPresented: Binding(
+        .alert("Nearcast weather", isPresented: Binding(
             get: { model.nativePreviewError != nil },
             set: { if !$0 { model.nativePreviewError = nil } }
         )) {
@@ -120,7 +121,7 @@ struct ContentView: View {
                         .padding(.top, 4)
                 }
                 if model.nativePreviewContext != nil || model.placesOwner.status == "owned" {
-                    Button("Open native weather preview") {
+                    Button("Open Nearcast weather") {
                         model.openCachedNativePreview()
                     }
                     .font(.subheadline.weight(.semibold))

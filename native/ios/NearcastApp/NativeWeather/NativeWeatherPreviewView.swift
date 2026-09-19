@@ -119,7 +119,7 @@ struct NativeWeatherPreviewView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onClose) { Image(systemName: "xmark") }
-                        .accessibilityLabel("Close native preview")
+                        .accessibilityLabel("Open existing Nearcast")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if let onSettings {
@@ -169,13 +169,13 @@ struct NativeWeatherPreviewView: View {
                 )
                 .id(model.selectedPlace.coordinateIdentity)
             }
-            .confirmationDialog("Open in existing Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
-                Button("Open in existing Nearcast") {
+            .confirmationDialog("Continue in Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
+                Button("Open Nearcast") {
                     if let destination = legacyDestination { onLegacy(destination) }
                 }
-                Button("Stay in native preview", role: .cancel) { legacyDestination = nil }
+                Button("Stay here", role: .cancel) { legacyDestination = nil }
             } message: {
-                Text("Continue with \(model.selectedPlace.name) in the existing app. Places and Settings changes are already saved. This view uses the existing app’s normal widget and Watch updates.")
+                Text("Continue with \(model.selectedPlace.name) in Nearcast. Ask and Plans remain there while weather, widgets and Watch stay in sync here.")
             }
             .onChange(of: model.selectedDay) { _, _ in
                 if !offersQuarterHours { interval = .hourly }
@@ -1033,8 +1033,8 @@ struct NativeWeatherPreviewView: View {
             }
             Link("Weather data: Open-Meteo · Nearcast", destination: URL(string: "https://open-meteo.com/")!)
             Text(onPlaces == nil
-                ? "Preview only · saved places, plans, notifications and Watch are unchanged"
-                : "Native preview · Places and Settings changes are saved in Nearcast")
+                ? "Weather shown here does not change saved places, plans or notifications"
+                : "Nearcast weather · Places and Settings stay in sync")
         }
         .font(.caption)
         .foregroundStyle(.secondary)

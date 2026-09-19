@@ -26,6 +26,9 @@ final class NearcastWebModel: ObservableObject {
     private var loadTimeoutTask: Task<Void, Never>?
     private var placesMigrationTask: Task<Void, Never>?
     private var placesMigrationRevision = 0
+    // One launch decision per process. Closing Nearcast weather is an
+    // intentional request to see the existing app, not a cue to reopen it.
+    private var didAttemptNativeHome = false
     private var ownerDocumentID: String?
     private let productionMigrationStore = NativePlacesMigrationStore(directory: NativePlacesMigrationStore.defaultDirectory)
     // Development fixtures must never replace a production migration receipt.
@@ -382,6 +385,7 @@ final class NearcastWebModel: ObservableObject {
             guard let data = try? JSONSerialization.data(withJSONObject: seed) else { return }
             webView.evaluateJavaScript("window.NearcastNative?.__updatePlacesOwner?.(\(String(decoding: data, as: UTF8.self)))", completionHandler: nil)
         }
+        openNativeHomeIfAvailable()
     }
 
     /// Called only from the explicit native Settings confirmation. No page or
@@ -496,6 +500,16 @@ final class NearcastWebModel: ObservableObject {
             nativePreviewError = "Open a place, then choose Native weather preview from the Nearcast menu first."
             return
         }
+        showingNativePreview = true
+    }
+
+    /// Native weather is the default home when this device already has a
+    /// verified, allowlisted place context. A first-run device without one
+    /// stays in the existing app until it can establish that context safely.
+    func openNativeHomeIfAvailable() {
+        guard !didAttemptNativeHome,
+              nativePreviewContext != nil || placesOwner.status == "owned" else { return }
+        didAttemptNativeHome = true
         showingNativePreview = true
     }
 
