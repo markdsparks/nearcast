@@ -247,12 +247,25 @@ private struct NativeWeatherPreviewContainer: View {
         }
         .onChange(of: placesOwner.snapshot) { _, value in
             if let source = value?.source { placesControls.adoptVerifiedSource(source) }
+            publishNativeCompanionWeather()
         }
         .task {
             if let source = placesOwner.snapshot?.source { placesControls.adoptVerifiedSource(source) }
             await preview.refresh()
+            publishNativeCompanionWeather()
         }
+        .onChange(of: preview.forecast?.generatedAt) { _, _ in publishNativeCompanionWeather() }
         .onDisappear { preview.cancel() }
+    }
+
+    private func publishNativeCompanionWeather() {
+        guard let forecast = preview.forecast, let owner = placesOwner.snapshot else { return }
+        _ = NativeSnapshotPublicationCoordinator.shared.publishNativeWeather(
+            forecast: forecast,
+            previewPlace: preview.selectedPlace,
+            source: owner.source,
+            revision: owner.revision
+        )
     }
 
     private func openExisting(_ destination: NativeLegacyDestination) {

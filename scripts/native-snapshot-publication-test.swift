@@ -81,6 +81,26 @@ struct NativeSnapshotPublicationTests {
         expect(coordinator.acceptLegacySnapshot(snapshot: weather, place: place, ownerRevision: 2), "matching metric weather replaces the explicit unavailable state")
         expect(memory.value?.snapshot.nativeWeatherInvalidation == false, "real accepted weather clears the invalidation marker")
 
+        let nativeForecast = NativeWeatherForecast(
+            generatedAt: Date(), timezoneID: "America/Chicago", metric: true,
+            current: NativeForecastPoint(date: Date(), temperature: 23, apparentTemperature: 22, rainProbability: 25,
+                windSpeed: 12, uvIndex: 3, weatherCode: 2, isDay: true),
+            hours: [
+                NativeForecastPoint(date: Date().addingTimeInterval(3_600), temperature: 24, rainProbability: 30, weatherCode: 3, isDay: true),
+                NativeForecastPoint(date: Date().addingTimeInterval(10_800), temperature: 21, rainProbability: 45, weatherCode: 61, isDay: false)
+            ], quarterHours: [],
+            days: [NativeForecastDay(date: Date(), high: 26, low: 18, rainProbability: 45, weatherCode: 2)]
+        )
+        expect(coordinator.publishNativeWeather(forecast: nativeForecast, previewPlace: selected.previewPlace,
+            source: source, revision: 2), "verified native weather publishes after native ownership")
+        expect(memory.value?.snapshot.temperature == 23 && memory.value?.snapshot.windUnit == "km/h" &&
+            memory.value?.snapshot.nativeWeatherInvalidation == false, "native forecast refreshes companion weather in the selected units")
+        var otherPreview = selected.previewPlace
+        otherPreview = NativePreviewPlace(id: "another-place", name: otherPreview.name, latitude: otherPreview.latitude,
+            longitude: otherPreview.longitude, timezone: otherPreview.timezone, countryCode: otherPreview.countryCode)
+        expect(!coordinator.publishNativeWeather(forecast: nativeForecast, previewPlace: otherPreview,
+            source: source, revision: 2), "native weather cannot publish for an unselected place")
+
         let beforeReopen = memory.writes
         let reopened = memory.coordinator()
         expect(!reopened.acceptLegacySnapshot(snapshot: weather, place: place, ownerRevision: 2), "cold startup blocks publication until the native owner is loaded")

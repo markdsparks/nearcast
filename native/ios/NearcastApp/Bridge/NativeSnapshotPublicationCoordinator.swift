@@ -89,6 +89,60 @@ final class NativeSnapshotPublicationCoordinator {
         return true
     }
 
+    /// A verified native forecast is the authoritative weather refresh once
+    /// native Places ownership is active. This keeps the phone widget and the
+    /// Watch in step with the native screen instead of waiting for a WebView
+    /// bridge that may not be running.
+    @discardableResult
+    func publishNativeWeather(
+        forecast: NativeWeatherForecast,
+        previewPlace: NativePreviewPlace,
+        source: NativePlacesSource,
+        revision: Int,
+        now: Date = Date()
+    ) -> Bool {
+        guard revision > 0, source.hydration == "ready", source.preferences.isValid,
+              let selected = source.selectedPlace,
+              Self.matches(selected, previewPlace),
+              forecast.metric == (source.preferences.unit == "celsius"),
+              self.revision.map({ revision >= $0 }) ?? true,
+              let current = forecast.current ?? forecast.hours.last(where: { $0.date <= now }),
+              current.hasReadings else { return false }
+
+        // Establish or verify the native owner before publishing weather. The
+        // owner gate is what prevents a late legacy response from overwriting
+        // this exact place and its clock/unit preferences.
+        guard publishNative(source: source, revision: revision) else { return false }
+
+        let existing = readPublication()
+        let owner = existing?.snapshot ?? .fallback
+        // SwiftUI can deliver both the forecast-change observation and the
+        // enclosing refresh task. One forecast receipt should produce one
+        // companion generation, not two Watch transfers.
+        if owner.ownerRevision == revision,
+           owner.weatherSavedAt == forecast.generatedAt.timeIntervalSince1970,
+           owner.nativeWeatherInvalidation == false,
+           Self.matches(existing?.place, selected) {
+            return true
+        }
+        var snapshot = owner.mergingWeather(from: Self.weatherSnapshot(
+            forecast: forecast,
+            selected: selected,
+            current: current,
+            uses24HourClock: Self.uses24Hours(source.preferences.timeFormat),
+            now: now
+        ))
+        snapshot.version = max(9, snapshot.version)
+        snapshot.ownerRevision = revision
+        snapshot.placeName = selected.displayName
+        snapshot.placeTimezone = selected.timezone ?? forecast.timezoneID
+        snapshot.windUnit = source.preferences.unit == "celsius" ? "km/h" : "mph"
+        snapshot.uses24HourClock = Self.uses24Hours(source.preferences.timeFormat)
+        snapshot.nativeWeatherInvalidation = false
+        snapshot.refreshTimelineClockLabels()
+        return publish(snapshot, place: Self.widgetPlace(selected))
+    }
+
     @discardableResult
     func acceptLegacySnapshot(snapshot: NearcastWidgetSnapshot, place: NearcastWidgetPlace?, ownerRevision: Int? = nil) -> Bool {
         var accepted = snapshot
@@ -127,6 +181,109 @@ final class NativeSnapshotPublicationCoordinator {
         guard let place else { return false }
         return place.id == selected.id && place.latitude == selected.latitude && place.longitude == selected.longitude
             && place.tracksCurrentLocation == (selected.followsCurrentLocation == true)
+    }
+
+    private static func matches(_ selected: NativeManagedPlace, _ preview: NativePreviewPlace) -> Bool {
+        selected.id == preview.id && selected.latitude == preview.latitude && selected.longitude == preview.longitude
+    }
+
+    private static func weatherSnapshot(
+        forecast: NativeWeatherForecast,
+        selected: NativeManagedPlace,
+        current: NativeForecastPoint,
+        uses24HourClock: Bool,
+        now: Date
+    ) -> NearcastWidgetSnapshot {
+        let day = forecast.day(containing: now)
+        let future = forecast.hours.filter { $0.date > now }
+        let next = future.first
+        let later = future.dropFirst(2).first ?? future.last
+        let unit = forecast.metric ? "km/h" : "mph"
+        let displayTimezone = selected.timezone ?? forecast.timezoneID
+
+        var snapshot = NearcastWidgetSnapshot.fallback
+        snapshot.version = 9
+        snapshot.savedAt = now.timeIntervalSince1970
+        snapshot.weatherSavedAt = forecast.generatedAt.timeIntervalSince1970
+        snapshot.placeName = selected.displayName
+        snapshot.placeTimezone = displayTimezone
+        snapshot.uses24HourClock = uses24HourClock
+        snapshot.temperature = rounded(current.temperature)
+        snapshot.feelsLike = rounded(current.apparentTemperature ?? current.temperature)
+        snapshot.high = day?.high.map(rounded)
+        snapshot.low = day?.low.map(rounded)
+        snapshot.condition = current.conditionLabel
+        snapshot.conditionCode = current.weatherCode ?? 0
+        snapshot.isDay = current.isDay ?? true
+        snapshot.rainChance = rounded(current.rainProbability)
+        snapshot.forecastRainChance = current.rainProbability.map(rounded)
+        snapshot.wind = rounded(current.windSpeed)
+        snapshot.windUnit = unit
+        snapshot.windDirection = current.windDirection.map(rounded)
+        snapshot.uv = rounded(current.uvIndex)
+        snapshot.nowLabel = "Now"
+        snapshot.nowValue = current.conditionLabel
+        snapshot.nextLabel = next.map { clock($0.date, forecast: forecast, uses24HourClock: uses24HourClock) } ?? "Next"
+        snapshot.nextValue = next?.conditionLabel ?? "No later reading"
+        snapshot.laterLabel = later.map { clock($0.date, forecast: forecast, uses24HourClock: uses24HourClock) } ?? "Later"
+        snapshot.laterValue = later?.conditionLabel ?? "Forecast updating"
+        snapshot.timeline = Array(future.prefix(12)).enumerated().map { index, point in
+            NearcastWidgetHour(
+                offsetHours: index + 1,
+                timeLabel: clock(point.date, forecast: forecast, uses24HourClock: uses24HourClock),
+                temperature: point.temperature.map(rounded),
+                feelsLike: point.apparentTemperature.map(rounded),
+                rainChance: point.rainProbability.map(rounded),
+                wind: point.windSpeed.map(rounded),
+                windGust: point.windGusts.map(rounded),
+                windDirection: point.windDirection.map(rounded),
+                uv: point.uvIndex.map(rounded),
+                conditionCode: point.weatherCode,
+                isDay: point.isDay,
+                startsAt: point.date.timeIntervalSince1970,
+                thunderPossible: point.thunderPossible
+            )
+        }
+        snapshot.daily = Array(forecast.days.filter { $0.date >= forecast.calendar.startOfDay(for: now) }.prefix(10)).enumerated().map { index, value in
+            NearcastWidgetDay(
+                date: dayKey(value.date, forecast: forecast),
+                label: index == 0 ? "Today" : (index == 1 ? "Tomorrow" : weekday(value.date, forecast: forecast)),
+                high: rounded(value.high), low: rounded(value.low), rainChance: rounded(value.rainProbability),
+                conditionCode: value.weatherCode ?? 0, thunderPossible: value.thunderPossible
+            )
+        }
+        snapshot.sunriseAt = day?.sunrise?.timeIntervalSince1970
+        snapshot.sunsetAt = day?.sunset?.timeIntervalSince1970
+        snapshot.isAvailable = true
+        snapshot.nativeWeatherInvalidation = false
+        return snapshot
+    }
+
+    private static func rounded(_ value: Double?) -> Int {
+        guard let value, value.isFinite else { return 0 }
+        return Int(value.rounded())
+    }
+
+    private static func clock(_ date: Date, forecast: NativeWeatherForecast, uses24HourClock: Bool) -> String {
+        nearcastClockLabel(date, timeZone: forecast.timeZone, uses24HourClock: uses24HourClock, compact: true)
+    }
+
+    private static func dayKey(_ date: Date, forecast: NativeWeatherForecast) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = forecast.calendar
+        formatter.timeZone = forecast.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private static func weekday(_ date: Date, forecast: NativeWeatherForecast) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.calendar = forecast.calendar
+        formatter.timeZone = forecast.timeZone
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
     }
 
     private static func widgetPlace(_ selected: NativeManagedPlace) -> NearcastWidgetPlace {

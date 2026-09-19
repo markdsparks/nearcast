@@ -19,6 +19,7 @@ struct NativeWeatherPreviewView: View {
     @State private var interval: NativePreviewInterval = .hourly
     @State private var legacyDestination: NativeLegacyDestination?
     @State private var confirmingLegacy = false
+    @State private var showingNativeMap = false
     @State private var showEarlierHours = false
     @State private var now = Date()
     @State private var scrollToTopRevision = 0
@@ -145,6 +146,28 @@ struct NativeWeatherPreviewView: View {
             .sheet(item: $weatherDetail) { kind in
                 NativeWeatherDetailsSheet(model: model, kind: kind, day: displayedDay)
                     .presentationDragIndicator(.visible)
+            }
+            .fullScreenCover(isPresented: $showingNativeMap) {
+                NativeRadarView(
+                    place: model.selectedPlace,
+                    timezone: model.forecast?.timezoneID ?? model.selectedPlace.timezone,
+                    uses24HourClock: model.context.uses24HourClock,
+                    savedPlaces: model.places,
+                    onSelectPlace: { place in
+                        model.selectPlace(place)
+                        return true
+                    },
+                    onAskAboutPlace: {
+                        showingNativeMap = false
+                        requestLegacy(.ask)
+                    },
+                    onClose: { showingNativeMap = false },
+                    onExistingMap: {
+                        showingNativeMap = false
+                        requestLegacy(.map)
+                    }
+                )
+                .id(model.selectedPlace.coordinateIdentity)
             }
             .confirmationDialog("Open in existing Nearcast?", isPresented: $confirmingLegacy, titleVisibility: .visible) {
                 Button("Open in existing Nearcast") {
@@ -956,7 +979,7 @@ struct NativeWeatherPreviewView: View {
             scrollToTopRevision += 1
         }
         navigationButton("Ask", symbol: "sparkle", selected: false) { requestLegacy(.ask) }
-        navigationButton("Map", symbol: "map", selected: false) { requestLegacy(.map) }
+        navigationButton("Map", symbol: "map", selected: showingNativeMap) { showingNativeMap = true }
         navigationButton("Plans", symbol: "calendar", selected: false) { requestLegacy(.plans) }
     }
 
