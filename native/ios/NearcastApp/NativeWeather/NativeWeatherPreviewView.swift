@@ -1257,7 +1257,10 @@ private struct NativeLivingWeatherAtmosphere: View {
     @State private var drift = false
 
     private var code: Int { point?.weatherCode ?? -1 }
-    private var isStorm: Bool { point?.thunderPossible == true || [95, 96, 99].contains(code) }
+    // “Thunderstorms possible” is important forecast language, but it is not
+    // an observed storm. The immersive scene must not dramatize a possibility
+    // into lightning and rain across every hourly row.
+    private var isStorm: Bool { [95, 96, 99].contains(code) }
     private var isRain: Bool { (51...67).contains(code) || (80...82).contains(code) || isStorm }
     private var isSnow: Bool { (71...77).contains(code) || (85...86).contains(code) }
     private var isFog: Bool { [45, 48].contains(code) }
@@ -1289,7 +1292,7 @@ private struct NativeLivingWeatherAtmosphere: View {
                     fogBands(size: size)
                 }
                 if isRain || isSnow {
-                    precipitation(size: size)
+                    precipitationVeil(size: size)
                 }
                 if isStorm {
                     stormPulse(size: size)
@@ -1388,18 +1391,27 @@ private struct NativeLivingWeatherAtmosphere: View {
             .frame(width: width, height: height)
     }
 
-    private func precipitation(size: CGSize) -> some View {
-        let count = placement == .backdrop ? 15 : 8
+    private func precipitationVeil(size: CGSize) -> some View {
+        let count = placement == .backdrop ? 7 : 4
         return ZStack {
+            LinearGradient(
+                colors: [
+                    .clear,
+                    (isSnow ? Color.white : Color(red: 0.47, green: 0.78, blue: 0.96)).opacity(0.11 * intensity),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
             ForEach(0..<count, id: \.self) { index in
                 let fraction = CGFloat(index) / CGFloat(max(1, count - 1))
                 Capsule()
-                    .fill((isSnow ? Color.white : Color(red: 0.56, green: 0.86, blue: 1)).opacity((isStorm ? 0.40 : 0.28) * intensity))
-                    .frame(width: isSnow ? 3 : 2, height: isSnow ? 3 : max(14, size.height * 0.16))
+                    .fill((isSnow ? Color.white : Color(red: 0.56, green: 0.86, blue: 1)).opacity((isStorm ? 0.17 : 0.10) * intensity))
+                    .frame(width: isSnow ? 3 : 1, height: isSnow ? 3 : max(10, size.height * 0.08))
                     .rotationEffect(.degrees(isSnow ? 0 : 13))
                     .offset(
-                        x: (fraction - 0.5) * size.width * 1.04,
-                        y: size.height * (drift ? 0.17 : 0.08) + CGFloat(index % 3) * 12
+                        x: (fraction - 0.5) * size.width * 1.18,
+                        y: size.height * (drift ? 0.19 : 0.12) + CGFloat(index % 3) * 18
                     )
             }
         }
@@ -1420,14 +1432,10 @@ private struct NativeLivingWeatherAtmosphere: View {
     private func stormPulse(size: CGSize) -> some View {
         ZStack {
             Circle()
-                .fill(Color(red: 0.86, green: 0.68, blue: 0.31).opacity(0.12 * intensity))
-                .frame(width: max(90, size.width * 0.28), height: max(90, size.width * 0.28))
-                .blur(radius: 22)
-                .offset(x: -size.width * 0.20, y: -size.height * 0.06)
-            Image(systemName: "bolt.fill")
-                .font(.system(size: max(24, min(48, size.width * 0.10)), weight: .medium))
-                .foregroundStyle(Color(red: 1, green: 0.79, blue: 0.31).opacity(0.58 * intensity))
-                .offset(x: size.width * 0.28, y: size.height * 0.18)
+                .fill(Color(red: 0.86, green: 0.68, blue: 0.31).opacity(0.09 * intensity))
+                .frame(width: max(110, size.width * 0.33), height: max(80, size.width * 0.22))
+                .blur(radius: 30)
+                .offset(x: -size.width * 0.18, y: -size.height * 0.10)
         }
     }
 }
