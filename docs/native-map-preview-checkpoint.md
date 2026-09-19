@@ -58,6 +58,14 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Native weather as the launch home (build 116)
+
+Release: `28f8f34`, TestFlight 0.1.0 (116), uploaded successfully September 19. Nearcast now opens directly into native Today when the device already has a verified, allowlisted native place context. A fresh or unverified device remains in the existing app until it has such a context; Nearcast never guesses a selected place to force the native screen. The choice is made once per launch, so deliberately closing native weather does not immediately reopen it.
+
+The remaining user-facing “preview” language has been replaced with Nearcast weather. Weather is now the default native surface; direct native Map remains in the bottom bar, and Ask/Plans retain their exact existing routes while those native destinations are still being completed. Widget and Watch synchronization remains active from the native forecast receipt.
+
+Validation: targeted native preview and companion-publication suites passed; complete production preflight, native-model checks, signed iPhone/widget/Watch archive, packaging validation, export and upload passed. Physical test: launch the app with a saved native place and verify Today appears without using the menu; use the close control to reach existing Nearcast and confirm it stays there for that session. Test an uninitialized/fresh device separately to confirm it stays in existing Nearcast rather than presenting an empty native screen.
+
 ### Native companion weather and direct map entry (build 115)
 
 Release: `4327bcc`, TestFlight 0.1.0 (115), uploaded successfully September 19. The phone widget and Watch now receive the same verified native forecast that is shown in the native weather experience, rather than depending on an active legacy WebView bridge. The publication accepts only the active native owner, exact selected-place identity, and matching unit preference; it preserves the selected clock setting and sends one companion update per forecast receipt. A native-owner change still invalidates old weather first, so a stale place or unit system cannot appear current.
