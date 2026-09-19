@@ -53,6 +53,7 @@ final class NativeRadarModel: ObservableObject {
     @Published private var subhourlyFrames: [HRRRSubhourly.Frame] = []
     private let subhourlyClient = try? HRRRSubhourlyClient()
     private var subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>()
+    private var preparedHandoff: NativeRadarTransition.Prepared?
     @Published private var forecastFailed = false
     @Published private var observedFrames: [MRMSContract.AdvertisedFrame] = []
     // Timeline memory stays small; motion estimation also needs advertised
@@ -410,7 +411,10 @@ final class NativeRadarModel: ObservableObject {
         do {
             let frames = try await subhourlyClient.discover(now: Date())
             guard active, !suspended, !Task.isCancelled else { return }
-            if subhourlyFrames.first?.cycle != frames.first?.cycle { subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>() }
+            if subhourlyFrames != frames {
+                subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>()
+                preparedHandoff = nil
+            }
             subhourlyFrames = frames
             if product == .forecast { reconcileCurrentSelection() }
         } catch { /* Keep advertised, still-fresh data; otherwise hourly fallback. */ }
@@ -591,6 +595,7 @@ final class NativeRadarModel: ObservableObject {
             subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>()
         }
         viewport = bounds
+        preparedHandoff = nil
         viewportAlerts = nil; viewportAlertsFailed = false
         updateAlertGeometry()
         scheduleViewportAlerts()
@@ -711,9 +716,11 @@ final class NativeRadarModel: ObservableObject {
                     return
                 }
                 let requestedAt = Date()
+                let prepared = self.preparedHandoff
                 let renderTask = Task.detached(priority: .userInitiated) {
                     var output = original
                     var enhanced = false
+                    var nextPrepared: NativeRadarTransition.Prepared?
                     var explanation = "Original HRRR model. Radar alignment was not supported by fresh, consistent motion evidence for this view and time."
                     if observations.count >= 3, let anchorStep {
                         do {
@@ -721,10 +728,14 @@ final class NativeRadarModel: ObservableObject {
                             let transition = try NativeRadarTransition.compose(observed: observations,
                                 forecastAnchor: anchor, forecastTarget: original,
                                 cycleTime: RadarNumericContract.isoTime(Int64(run.run.cycleTime.timeIntervalSince1970 * 1000)),
-                                requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000)))
+                                requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000)), prepared: prepared)
                             if case let .ready(result) = transition {
-                                output = result.frame; enhanced = true
-                                explanation = "This forecast uses recent observed radar motion and HRRR guidance at the exact model time. It is a prediction, not a radar observation. Uncovered edges remain unavailable."
+                                output = result.frame
+                                enhanced = result.evidence.modelAligned || result.evidence.forecastWeight < 1
+                                nextPrepared = result.prepared
+                                explanation = result.evidence.modelAligned
+                                    ? "This forecast uses recent observed radar motion and aligned HRRR guidance at the exact model time. It is a prediction, not a radar observation. Uncovered edges remain unavailable."
+                                    : "Recent radar motion bridges into the original HRRR forecast. Model alignment was unavailable. Predictions fade to unmodified guidance; uncovered edges remain unavailable."
                             }
                         } catch is CancellationError {
                             throw CancellationError()
@@ -738,7 +749,7 @@ final class NativeRadarModel: ObservableObject {
                     let rendered = try NativeRadarModel.makeImage(rgba: rgba, width: output.texture.width, height: output.texture.height)
                     let id = "hrrr:\(run.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(viewport):\(enhanced):\(generation)"
                     return (image: NativeRadarImage(id: id, image: rendered, west: viewport.west, south: viewport.south,
-                        east: viewport.east, north: viewport.north), numeric: output, enhanced: enhanced, explanation: explanation)
+                        east: viewport.east, north: viewport.north), numeric: output, enhanced: enhanced, explanation: explanation, prepared: nextPrepared)
                 }
                 let result = try await withTaskCancellationHandler(operation: {
                     try Task.checkCancellation()
@@ -747,6 +758,7 @@ final class NativeRadarModel: ObservableObject {
                 try Task.checkCancellation()
                 guard self.active, self.imageGeneration == generation else { return }
                 self.transitionApplied = result.enhanced
+                if let prepared = result.prepared { self.preparedHandoff = prepared }
                 self.transitionExplanation = result.explanation
                 self.publishForecast(result.image, numeric: result.numeric, bounds: viewport)
             } catch {
@@ -789,37 +801,50 @@ final class NativeRadarModel: ObservableObject {
                     observations = (try? await self.loadTransitionObservations(candidates, bounds: bounds, generation: generation)) ?? []
                     if observations.count >= 3 {
                         if anchor == frame { anchorField = original }
+                        else if let prepared = self.preparedHandoff,
+                                prepared.cycleTime == RadarNumericContract.isoTime(Int64(frame.cycle.timeIntervalSince1970 * 1000)),
+                                prepared.forecastAnchor.validTimeMilliseconds == Int64(anchor.validTime.timeIntervalSince1970 * 1000),
+                                prepared.forecastAnchor.bounds == original.bounds {
+                            anchorField = prepared.forecastAnchor
+                        }
                         else { anchorField = try? await client.load(anchor, bounds: .init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north)) }
                     }
                 }
                 try Task.checkCancellation()
                 let evidence = observations, modelAnchor = anchorField, requestedAt = Date()
+                let prepared = self.preparedHandoff
                 let render = Task.detached(priority: .userInitiated) {
                     var output = original, enhanced = false
+                    var nextPrepared: NativeRadarTransition.Prepared?
                     if let modelAnchor, evidence.count >= 3,
                        let transition = try? NativeRadarTransition.compose(observed: evidence, forecastAnchor: modelAnchor,
                         forecastTarget: original,
                         cycleTime: RadarNumericContract.isoTime(Int64(frame.cycle.timeIntervalSince1970 * 1000)),
-                        requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000))),
+                        requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000)), prepared: prepared),
                        case let .ready(result) = transition {
-                        output = result.frame; enhanced = true
+                        output = result.frame
+                        enhanced = result.evidence.modelAligned || result.evidence.forecastWeight < 1
+                        nextPrepared = result.prepared
                     }
                     try Task.checkCancellation()
                     let rgba = Data(try RadarNumericContract.highDetailRGBA(output.texture, encoding: output.encoding,
                         validDataMask: output.validDataMask, zoom: bounds.zoom))
                     let image = try Self.makeImage(rgba: rgba, width: output.texture.width, height: output.texture.height)
                     return (NativeRadarImage(id: "hrrr15:\(key):\(bounds):\(enhanced):\(generation)", image: image,
-                        west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north), output, enhanced)
+                        west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north), output, enhanced, nextPrepared)
                 }
-                let (rendered, output, enhanced) = try await withTaskCancellationHandler(operation: { try await render.value }, onCancel: { render.cancel() })
+                let (rendered, output, enhanced, nextPrepared) = try await withTaskCancellationHandler(operation: { try await render.value }, onCancel: { render.cancel() })
                 try Task.checkCancellation()
                 guard self.active, !self.suspended, self.imageGeneration == generation else { return }
                 // Cache only original model data; alignment must use current radar evidence.
                 self.subhourlyCache.insert(.init(image: rendered, message: nil, numeric: original), for: key,
                     cost: original.texture.bytes.count * 6)
                 self.transitionApplied = enhanced
+                if let nextPrepared { self.preparedHandoff = nextPrepared }
                 self.transitionExplanation = enhanced
-                    ? "15-minute HRRR forecast aligned with recent radar motion. This is a prediction, not an observation."
+                    ? nextPrepared?.correction == nil
+                        ? "Recent radar motion bridges into the original HRRR forecast. Model alignment was unavailable; this is a prediction, not an observation."
+                        : "15-minute HRRR forecast aligned with recent radar motion. This is a prediction, not an observation."
                     : "Original HRRR forecast at genuine 15-minute model intervals."
                 self.publishForecast(rendered, numeric: output, bounds: bounds)
             } catch {

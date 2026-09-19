@@ -113,7 +113,37 @@ enum NativeRadarTransitionTests {
         let clearTexture = try RadarNumericContract.Texture(width: width, height: height, bytes: [UInt8](repeating: 0, count: width * height))
         let clear = try observed.map { try frame(clearTexture, $0.validTime) }
         rejected("insufficient-trackable-frame-pairs", try compose(clear))
-        rejected("forecast-alignment-unreliable", try compose(anchor: frame(clearTexture, anchor.validTime)))
+        let mismatched = try frame(clearTexture, anchor.validTime)
+        let bridge = ready(try compose(anchor: mismatched, target: mismatched))
+        precondition(!bridge.evidence.modelAligned && bridge.evidence.forecastWeight == 0)
+        precondition(bridge.frame.texture == first.frame.texture, "Model mismatch must not erase reliable radar motion")
+        precondition(bridge.evidence.correctionX == 0 && bridge.evidence.correctionFactor == 0)
+        let laterBridge = ready(try compose(anchor: mismatched))
+        precondition(laterBridge.evidence.forecastWeight > 0 && laterBridge.evidence.forecastWeight < 1)
+        let end = try frame(target.texture, "2026-08-17T19:15:00Z")
+        let completed = ready(try compose(anchor: mismatched, target: end))
+        precondition(completed.evidence.forecastWeight == 1 && completed.frame.texture == end.texture)
+        let reused = ready(try Transition.compose(observed: observed, forecastAnchor: anchor, forecastTarget: target,
+            cycleTime: "2026-08-17T18:00:00Z", requestedAt: "2026-08-17T18:17:00Z", prepared: first.prepared))
+        precondition(reused.frame.texture == result.frame.texture && reused.evidence == result.evidence)
+        let reusedBridge = ready(try Transition.compose(observed: observed, forecastAnchor: mismatched, forecastTarget: target,
+            cycleTime: "2026-08-17T18:00:00Z", requestedAt: "2026-08-17T18:17:00Z", prepared: bridge.prepared))
+        precondition(reusedBridge.frame.texture == laterBridge.frame.texture)
+        precondition(!first.prepared.matches(observed, mismatched, "2026-08-17T18:00:00Z"))
+        precondition(!first.prepared.matches(observed, anchor, "2026-08-17T17:00:00Z"))
+        precondition(!first.prepared.matches(clear, anchor, "2026-08-17T18:00:00Z"))
+        precondition(bridge.evidence.method == "mrms-motion-hrrr-bridge")
+        var previousWeight = -1.0
+        for minute in [30, 45, 60] {
+            let instant = RadarNumericContract.isoTime(latest.validTimeMilliseconds + Int64(minute * 60_000))
+            let target = try frame(clearTexture, instant)
+            let blended = ready(try Transition.compose(observed: observed, forecastAnchor: mismatched, forecastTarget: target,
+                cycleTime: "2026-08-17T18:00:00Z", requestedAt: "2026-08-17T18:17:00Z", prepared: bridge.prepared))
+            precondition(blended.evidence.forecastWeight > previousWeight)
+            previousWeight = blended.evidence.forecastWeight
+        }
+        rejected("observed-frame-too-old", try Transition.compose(observed: observed, forecastAnchor: anchor, forecastTarget: target,
+            cycleTime: "2026-08-17T18:00:00Z", requestedAt: "2026-08-17T18:23:00.001Z", prepared: first.prepared))
         // A valid but nonuniform stationary echo is not manufactured motion.
         let stationary = try observed.map { try frame(latest.texture, $0.validTime) }
         let still = ready(try compose(stationary, anchor: frame(latest.texture, anchor.validTime), target: frame(latest.texture, target.validTime)))

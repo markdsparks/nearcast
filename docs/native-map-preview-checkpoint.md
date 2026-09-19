@@ -58,6 +58,14 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Radar-motion bridge follow-up (build 110)
+
+Native composition no longer discards a reliable observed-motion prediction solely because the model cannot be aligned. All observation/model freshness, input identity, motion, source coverage, exposed-edge coverage and maximum-horizon gates still apply. Failed/low-confidence model correction produces no fabricated displacement or intensity correction. At exact advertised forecast times, the fallback starts with radar motion and smoothly increases original-model weight from 15 to 60 minutes after the observation; at 60 minutes it is fully the original model and is no longer labeled radar-guided. Successful alignment retains the existing 15–75-minute corrected blend. This is prediction, not observation or extra measured temporal resolution.
+
+One immutable prepared motion/correction (including an unavailable correction) is reused across target times. Exact observation pixels/masks/times, anchor pixels/masks/time, viewport/encoding and cycle must match; freshness checks run on every composition. Viewport and changed subhourly metadata invalidate the model-held preparation. A cached anchor avoids repeat downloads while scrubbing. No between-frame interpolation is added.
+
+Targeted tests cover model mismatch retaining the first motion frame, progressive fallback weights, complete return to unmodified model, cached/uncached equality, input/cycle mismatch and stale prepared inputs. Existing reverse-motion, stationary, coverage, cancellation, time identity and original numeric-composition checks remain. Release simulator compilation passed. Physical active-storm acceptance remains required, especially for model disagreement during the blend; no claim of universal seamless continuity is made.
+
 ### Native high-detail rendering follow-up (after build 108)
 
 Release: `b75f097`, TestFlight 0.1.0 (109), uploaded September 19 at 00:00 CDT. Full CI, release preflight, signed iPhone/Watch archive, archive validation and export/upload passed. Apple accepted the package for processing; the immediate build-list query did not yet return 109, so tester availability is not confirmed. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-109.log`. Pro Max additionally verified the six-hour range ending at 05:45 with the compact layout intact.

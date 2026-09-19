@@ -108,16 +108,37 @@ enum NativeRadarTransition {
         let alignmentCoverage: Double
         let correctionX: Double, correctionY: Double
         let correctionFactor: Double
+        let modelAligned: Bool
         let motion: NativeRadarSeamEstimation.Motion
 
         /// These are all predictions, including radar extrapolation at weight 0.
         var guidanceType: String { forecastWeight < 0.08 ? "radar-nowcast" : "blended-forecast" }
-        var method: String { "mrms-motion-hrrr-phase-alignment" }
+        var method: String { modelAligned ? "mrms-motion-hrrr-phase-alignment" : "mrms-motion-hrrr-bridge" }
     }
 
     struct Result: Sendable {
         let frame: Frame
         let evidence: Evidence
+        let prepared: Prepared
+    }
+
+    /// One bounded, immutable alignment shared by every target in a timeline.
+    /// Exact input matching prevents reuse after a source revision or viewport change.
+    struct Prepared: Sendable {
+        let observed: [Frame]
+        let forecastAnchor: Frame
+        let cycleTime: String
+        let motion: NativeRadarSeamEstimation.Motion
+        let correction: NativeRadarSeamEstimation.Correction?
+        func matches(_ frames: [Frame], _ model: Frame, _ cycle: String) -> Bool {
+            func same(_ a: Frame, _ b: Frame) -> Bool {
+                a.validTime == b.validTime && a.bounds == b.bounds && a.encoding == b.encoding
+                    && a.texture == b.texture && a.validDataMask == b.validDataMask
+            }
+            let sorted = frames.sorted { $0.validTimeMilliseconds < $1.validTimeMilliseconds }
+            return cycle == cycleTime && same(model, forecastAnchor) && sorted.count == observed.count
+                && zip(sorted, observed).allSatisfy(same)
+        }
     }
 
     /// `forecastAnchor` must be the FIRST advertised future model frame, while
@@ -126,7 +147,7 @@ enum NativeRadarTransition {
     /// At most eight real observations are accepted; three with two independently
     /// trackable pairs are needed. Caller must not pass interpolated observations.
     static func compose(observed: [Frame], forecastAnchor: Frame, forecastTarget: Frame,
-                        cycleTime: String, requestedAt: String) throws -> Outcome<Result> {
+                        cycleTime: String, requestedAt: String, prepared: Prepared? = nil) throws -> Outcome<Result> {
         try Task.checkCancellation()
         guard (3...8).contains(observed.count) else { return .unavailable("bounded-observed-history-required") }
         let anchor = observed.max { $0.validTimeMilliseconds < $1.validTimeMilliseconds }!
@@ -158,11 +179,13 @@ enum NativeRadarTransition {
         let threshold = Int(try RadarNumericContract.encodeDbz(anchor.encoding.threshold, encoding: anchor.encoding))
         guard (1...254).contains(threshold) else { return .unavailable("unsupported-signal-threshold") }
         let motion: NativeRadarSeamEstimation.Motion
-        switch try NativeRadarSeamEstimation.estimateMotion(frames: observed,
+        let reusable = prepared.flatMap { $0.matches(observed, forecastAnchor, cycleTime) ? $0 : nil }
+        if let reusable { motion = reusable.motion }
+        else { switch try NativeRadarSeamEstimation.estimateMotion(frames: observed,
             options: .init(signalThreshold: threshold, minimumPairs: 2)) {
         case let .ready(value): motion = value
         case let .unavailable(reason): return .unavailable(reason)
-        }
+        } }
         let targets: [NativeRadarSeamGates.AdvectedTarget]
         switch try NativeRadarSeamGates.advectionTargets(motion: motion, targetValidTimes: targetTimes) {
         case let .ready(value): targets = value
@@ -183,18 +206,22 @@ enum NativeRadarTransition {
         }
         let croppedReference = try cropped(reference, to: rect)
         let croppedForecast = try cropped(forecastAnchor, to: rect)
-        let correction: NativeRadarSeamEstimation.Correction
-        switch try NativeRadarSeamEstimation.estimateForecastCorrection(reference: croppedReference,
+        var correction: NativeRadarSeamEstimation.Correction?
+        if let reusable { correction = reusable.correction }
+        else { switch try NativeRadarSeamEstimation.estimateForecastCorrection(reference: croppedReference,
             forecast: croppedForecast, motion: motion, signalThreshold: threshold) {
-        case let .ready(value): correction = value
-        case let .unavailable(reason): return .unavailable(reason)
-        }
-        // Stricter than the JS minimum: don't advertise a locally aligned field
-        // when the model and extrapolated radar only weakly resemble each other.
-        guard correction.confidence >= 0.56 else { return .unavailable("forecast-alignment-confidence-too-low") }
-        let corrected = try RadarNumericContract.applyForecastCorrection(
+        case let .ready(value): if value.confidence >= 0.56 { correction = value }
+        case .unavailable: break
+        } }
+        // Reliable radar motion does not depend on the model matching it. Keep
+        // that short-term bridge when alignment fails, without claiming a model
+        // correction. Ease into unmodified model guidance by 60 minutes.
+        let corrected: RadarNumericContract.CorrectedFrame
+        if let correction { corrected = try RadarNumericContract.applyForecastCorrection(
             .init(texture: forecastTarget.texture, validTime: forecastTarget.validTime),
-            correction: correction.numericCorrection())
+            correction: correction.numericCorrection()) }
+        else { corrected = .init(frame: try .init(texture: forecastTarget.texture, validTime: forecastTarget.validTime),
+            correctionFactor: 0, displacementX: 0, displacementY: 0, intensityScale: 1, confidence: 0) }
         let model = try translated(forecastTarget, dx: corrected.displacementX, dy: corrected.displacementY,
             validTime: forecastTarget.validTime, intensityScale: corrected.intensityScale)
         let predicted = try translated(anchor, dx: selectedTarget.displacementX, dy: selectedTarget.displacementY,
@@ -202,7 +229,9 @@ enum NativeRadarTransition {
         let composites = try RadarNumericContract.composeSeamFrames([
             .init(frame: .init(texture: predicted.texture, validTime: predicted.validTime),
                   anchorValidTime: anchor.validTime, confidence: selectedTarget.confidence)
-        ], forecasts: [corrected], correctionConfidence: correction.confidence)
+        ], forecasts: [corrected], correctionConfidence: correction?.confidence,
+           blendStartMinutes: 15,
+           blendCompleteMinutes: correction == nil ? 60 : 75)
         guard let composite = composites.first else { return .unavailable("composition-unavailable") }
         var bytes = composite.frame.texture.bytes
         var mask = [UInt8](repeating: 0, count: bytes.count)
@@ -226,7 +255,9 @@ enum NativeRadarTransition {
             forecastWeight: composite.forecastWeight, confidence: composite.confidence,
             validCoverage: coverage, alignmentCoverage: rect.coverage(width: anchor.texture.width, height: anchor.texture.height),
             correctionX: corrected.displacementX, correctionY: corrected.displacementY,
-            correctionFactor: corrected.correctionFactor, motion: motion)))
+            correctionFactor: corrected.correctionFactor, modelAligned: correction != nil, motion: motion),
+            prepared: Prepared(observed: observed.sorted { $0.validTimeMilliseconds < $1.validTimeMilliseconds },
+                forecastAnchor: forecastAnchor, cycleTime: cycleTime, motion: motion, correction: correction)))
     }
 
     private struct Rectangle {
