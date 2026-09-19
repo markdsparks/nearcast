@@ -60,6 +60,8 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ### Bounded frame readiness (build 111)
 
+Release: `88ced54`, TestFlight 0.1.0 (111), uploaded successfully September 19 at 00:48 CDT. Full release preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; its immediate build-list response did not yet include 111, so tester availability is not confirmed. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-111.log`. Physical-device cold-versus-warm scrubbing and active-storm acceptance remain required.
+
 After a displayed frame settles for 450 ms (100 ms during playback), native numeric radar/subhourly forecast warms at most two uncached neighboring source frames per pass. Manual scrubbing favors the next and previous frames; playback favors the next two. The planner uses only advertised times in the active timeline, looks at most two positions away, and does not cross a gap over one hour. Global provider tiles, six-hour accumulation and satellite imagery are excluded. Existing hourly HRRR batching is unchanged.
 
 Warmup is serial, optional and disabled in Low Power Mode. A foreground selection cancels it and waits for cancellation cleanup before acquiring a new field. Viewport/product changes and background/close invalidate work. Before insertion, generation, viewport, selected time and current source metadata must still match. Warmup never publishes a visible image, timestamp, label or failure message. The existing per-source six-entry/eight-MiB cache limits remain; prepared forecasts still go through current handoff checks when selected, not through a cached claim of radar alignment.
