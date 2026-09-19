@@ -107,8 +107,8 @@ TestFlight installation, or uploads a build.
 ## Map credential for Dev
 
 The native map must receive an explicitly approved Dev credential rather than
-reuse the production bundle identity. Add this existing-worker secret before
-testing the Dev map:
+reuse the production bundle identity. Add this worker secret before testing the
+Dev map:
 
 ```text
 CARTO_BASEMAP_IOS_DEV_KEY
@@ -117,8 +117,10 @@ CARTO_BASEMAP_IOS_DEV_KEY
 Its CARTO restrictions must permit `app.nearcast.ios.dev`. If the current
 native CARTO key can be allowlisted for the Dev bundle ID, it may hold the same
 value only after that vendor-side restriction is updated. Otherwise create a
-dedicated least-privilege Dev key. The map configuration endpoint accepts only
-the fixed `ios-dev` client; it does not accept arbitrary bundle IDs.
+dedicated least-privilege Dev key. Add the value as the GitHub Actions secret
+with the same name, then run **Deploy Cloudflare app** (or set it directly in
+the Worker dashboard). The map configuration endpoint accepts only the fixed
+`ios-dev` client; it does not accept arbitrary bundle IDs.
 
 ## First-test checklist
 

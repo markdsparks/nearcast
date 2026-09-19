@@ -88,15 +88,21 @@ jobs:
       - name: Deploy app and radar capability Worker
         run: npx --yes wrangler deploy
 
-      - name: Refresh CARTO basemap Worker secret
+      - name: Refresh CARTO basemap Worker secrets
         env:
           CARTO_BASEMAP_KEY: ${{ secrets.CARTO_BASEMAP_KEY }}
+          CARTO_BASEMAP_IOS_DEV_KEY: ${{ secrets.CARTO_BASEMAP_IOS_DEV_KEY }}
         run: |
           if [ -z "$CARTO_BASEMAP_KEY" ]; then
             echo "Missing CARTO_BASEMAP_KEY secret."
             exit 1
           fi
           printf '%s' "$CARTO_BASEMAP_KEY" | npx --yes wrangler secret put CARTO_BASEMAP_KEY
+          if [ -n "$CARTO_BASEMAP_IOS_DEV_KEY" ]; then
+            printf '%s' "$CARTO_BASEMAP_IOS_DEV_KEY" | npx --yes wrangler secret put CARTO_BASEMAP_IOS_DEV_KEY
+          else
+            echo "Skipping CARTO_BASEMAP_IOS_DEV_KEY because the GitHub secret is not set."
+          fi
 
       - name: Refresh plan watch Worker secrets
         continue-on-error: true
