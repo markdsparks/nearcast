@@ -778,6 +778,7 @@ struct NativeWeatherPreviewView: View {
         let points = trendPoints
         let columnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 152 : (dynamicTypeSize >= .xxxLarge ? 108 : 78)
         let plotWidth = max(columnWidth, CGFloat(points.count) * columnWidth)
+        let chartHeight: CGFloat = dynamicTypeSize.isAccessibilitySize ? 120 : 92
         let step = showingQuarterHours ? 15.0 * 60 : 60.0 * 60
         let samples = chartSamples(points, step: step)
         let domain = metric.domain(points)
@@ -786,9 +787,10 @@ struct NativeWeatherPreviewView: View {
             VStack(spacing: 4) {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(points, id: \.id) { point in
-                        compactHourButton(point, columnWidth: columnWidth)
+                        compactHourHeader(point, columnWidth: columnWidth)
                     }
                 }
+                .accessibilityHidden(true)
                 Chart(samples) { sample in
                     if let value = metric.value(sample.point) {
                         LineMark(x: .value("Interval", sample.index), y: .value(metric.accessibleLabel, value), series: .value("Continuous coverage", sample.segment))
@@ -813,7 +815,7 @@ struct NativeWeatherPreviewView: View {
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
                 .chartLegend(.hidden)
-                .frame(width: plotWidth, height: dynamicTypeSize.isAccessibilitySize ? 120 : 92)
+                .frame(width: plotWidth, height: chartHeight)
                 .accessibilityHidden(true)
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(points, id: \.id) { point in
@@ -844,6 +846,7 @@ struct NativeWeatherPreviewView: View {
                         .accessibilityLabel("\(dayName(point.date)), \(clock(point.date)), \(point.conditionLabel), \(metric.accessibleLabel) \(metric.formatted(point, metricUnits: model.context.metric)), \(secondaryRead(point))")
                     }
                 }
+                .accessibilityHidden(true)
             }
             .background {
                 HStack(spacing: 0) {
@@ -855,6 +858,24 @@ struct NativeWeatherPreviewView: View {
                 }
                 .accessibilityHidden(true)
             }
+            // Each time, icon, chart value, condition, and secondary reading
+            // visually form one hour tile. Keep that whole tile tappable—not
+            // only the small time/icon header—so a normal tap has the same
+            // obvious press response wherever it lands in the column.
+            .overlay {
+                GeometryReader { proxy in
+                    HStack(spacing: 0) {
+                        ForEach(points, id: \.id) { point in
+                            compactHourButton(
+                                point,
+                                columnWidth: columnWidth,
+                                height: proxy.size.height
+                            )
+                        }
+                    }
+                    .frame(width: plotWidth, height: proxy.size.height, alignment: .leading)
+                }
+            }
         }
         .scrollIndicators(.hidden)
         .accessibilityLabel("Scrollable \(showingQuarterHours ? "15-minute" : "hourly") forecast")
@@ -864,25 +885,33 @@ struct NativeWeatherPreviewView: View {
         model.showHourly(day: point.date, focusedHour: point.date)
     }
 
+    /// The visual header deliberately stays noninteractive: the transparent
+    /// control layered over the full column below owns both hit testing and
+    /// accessibility. That makes the entire weather tile feel like one native
+    /// button while preserving a single continuous chart behind it.
+    private func compactHourHeader(_ point: NativeForecastPoint, columnWidth: CGFloat) -> some View {
+        VStack(spacing: 8) {
+            Text(clock(point.date, compact: !showingQuarterHours))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+            weatherSymbol(point.symbolName, size: 27)
+                .frame(height: 32)
+                .accessibilityHidden(true)
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .frame(minHeight: 76)
+        .frame(width: columnWidth)
+    }
+
     /// Isolated from `trendChart` so Swift's type checker does not have to
-    /// infer the whole chart, its labels, and this interactive button at once.
-    private func compactHourButton(_ point: NativeForecastPoint, columnWidth: CGFloat) -> some View {
+    /// infer the whole chart, its labels, and this full-column control at once.
+    private func compactHourButton(_ point: NativeForecastPoint, columnWidth: CGFloat, height: CGFloat) -> some View {
         Button { openCompactHour(point) } label: {
-            VStack(spacing: 8) {
-                Text(clock(point.date, compact: !showingQuarterHours))
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                weatherSymbol(point.symbolName, size: 27)
-                    .frame(height: 32)
-                    .accessibilityHidden(true)
-            }
-            .padding(.top, 10)
-            // Give the chart's time markers a generous, stable target without
-            // making a horizontal drag look like an accidental navigation.
-            .padding(.bottom, 6)
-            .frame(minHeight: 76)
-            .frame(width: columnWidth)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Color.clear
+                .frame(width: columnWidth, height: height)
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accessibilityHidden(true)
         }
         .buttonStyle(NativeCompactHourButtonStyle(
             accent: accent,
