@@ -105,6 +105,22 @@ struct NativeSunDaylight: Sendable {
         }
     }
 
+    /// Automatic app appearance is a present-tense decision. Prefer the
+    /// selected place's solar events over a `current.isDay` bit captured when
+    /// the forecast was fetched; that bit can remain false after sunrise (or
+    /// true after sunset) while a cached forecast is still otherwise useful.
+    static func automaticAppearanceIsDaylight(forecast: NativeWeatherForecast, now: Date) -> Bool? {
+        let daylight = NativeSunDaylight(forecast: forecast, day: now)
+        if let value = daylight.isDaylight(at: now) { return value }
+
+        // A bounded fallback keeps places whose provider omits solar events
+        // usable without letting a long-lived cached current reading control
+        // appearance hours later.
+        guard let current = forecast.current,
+              abs(now.timeIntervalSince(current.date)) < 90 * 60 else { return nil }
+        return current.isDay
+    }
+
     /// Keep forecast UV honest: no interpolation through a missing hour, and a
     /// missing sample is not a zero. Repeated DST hours retain their own samples.
     func uv(at date: Date) -> Double? {

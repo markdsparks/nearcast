@@ -27,6 +27,16 @@ struct NativeSunDaylightTests {
         expect(model.height(at: midnight)! < 0 && abs(model.height(at: rise)!) < 0.001, "Night marker remains visible below horizon, rise meets horizon")
         expect(abs(model.height(at: set)!) < 0.001 && model.height(at: set.addingTimeInterval(3600))! < 0, "Sunset returns to horizon, night stays below")
         expect(model.isDaylight(at: rise) == true && model.isDaylight(at: set) == false, "Exact event boundary states")
+        let staleNightCurrent = NativeWeatherForecast(generatedAt: midnight, timezoneID: "America/Chicago", metric: false,
+            current: NativeForecastPoint(date: midnight, isDay: false), hours: hours, quarterHours: [],
+            days: [NativeForecastDay(date: midnight, sunrise: rise, sunset: set)])
+        expect(NativeSunDaylight.automaticAppearanceIsDaylight(forecast: staleNightCurrent, now: rise.addingTimeInterval(60)) == true,
+               "Solar events override a stale night current reading after sunrise")
+        let staleDayCurrent = NativeWeatherForecast(generatedAt: midnight, timezoneID: "America/Chicago", metric: false,
+            current: NativeForecastPoint(date: midnight, isDay: true), hours: hours, quarterHours: [],
+            days: [NativeForecastDay(date: midnight, sunrise: rise, sunset: set)])
+        expect(NativeSunDaylight.automaticAppearanceIsDaylight(forecast: staleDayCurrent, now: set.addingTimeInterval(60)) == false,
+               "Solar events override a stale day current reading after sunset")
         expect(model.uv(at: at("2026-09-18T17:59:00Z")) == 5, "UV readout uses the available containing hour")
         expect(model.uv(at: at("2026-09-18T18:30:00Z")) == nil, "Missing UV cannot become zero or inherit prior hour")
         expect(model.uv(at: at("2026-09-18T19:30:00Z")) == 0, "Real zero UV is retained")
@@ -42,6 +52,14 @@ struct NativeSunDaylightTests {
         let missing = NativeSunDaylight(forecast: forecast(day: midnight), day: midnight)
         expect(missing.mode == .unavailable && missing.height(at: midnight) == nil, "Missing events do not imply polar night or draw a decorative arc")
         expect(missing.daylightDuration == nil, "Unknown daylight is not zero")
+        let freshFallback = NativeWeatherForecast(generatedAt: midnight, timezoneID: "America/Chicago", metric: false,
+            current: NativeForecastPoint(date: midnight.addingTimeInterval(60), isDay: true), hours: [], quarterHours: [], days: [])
+        expect(NativeSunDaylight.automaticAppearanceIsDaylight(forecast: freshFallback, now: midnight) == true,
+               "Fresh current state is a fallback when solar data is absent")
+        let expiredFallback = NativeWeatherForecast(generatedAt: midnight, timezoneID: "America/Chicago", metric: false,
+            current: NativeForecastPoint(date: midnight, isDay: false), hours: [], quarterHours: [], days: [])
+        expect(NativeSunDaylight.automaticAppearanceIsDaylight(forecast: expiredFallback, now: midnight.addingTimeInterval(91 * 60)) == nil,
+               "Old current state cannot keep automatic appearance in night mode")
         let partial = NativeSunDaylight(forecast: forecast(day: midnight, rise: rise), day: midnight)
         expect(partial.mode == .unavailable && partial.sunrise == rise, "One known event remains available without inventing the other")
         let bad = NativeSunDaylight(forecast: forecast(day: midnight, rise: set, set: rise), day: midnight)

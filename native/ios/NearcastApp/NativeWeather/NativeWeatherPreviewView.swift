@@ -198,7 +198,13 @@ struct NativeWeatherPreviewView: View {
         default:
             // Nearcast's automatic appearance follows the selected place,
             // not the phone's local clock or its system appearance schedule.
-            if let isDay = model.forecast?.current?.isDay { return isDay ? .light : .dark }
+            // Solar events take precedence over the snapshot's stale-safe
+            // current reading, so the screen changes at local sunrise/sunset
+            // even before the next forecast refresh.
+            if let forecast = model.forecast,
+               let isDay = NativeSunDaylight.automaticAppearanceIsDaylight(forecast: forecast, now: now) {
+                return isDay ? .light : .dark
+            }
             return nil
         }
     }
