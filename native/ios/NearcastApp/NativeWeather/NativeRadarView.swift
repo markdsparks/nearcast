@@ -6,6 +6,9 @@ struct NativeRadarView: View {
     let place: NativePreviewPlace
     let onClose: () -> Void
     let onExistingMap: () -> Void
+    let onAskAboutPlace: (() -> Void)?
+    let savedPlaces: [NativePreviewPlace]
+    let onSelectPlace: ((NativePreviewPlace) async -> Bool)?
     @StateObject private var model: NativeRadarModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -14,14 +17,26 @@ struct NativeRadarView: View {
     @State private var showingInfo = false
     @State private var showingAlerts = false
     @State private var selectedAlertID: String?
+    @State private var selectedMarker: NativePreviewPlace?
+    @State private var focusPlace: NativePreviewPlace?
+    @State private var focusRevision = 0
+    @State private var locating = false
+    @State private var locationTask: Task<Void, Never>?
+    @State private var placeMessage: String?
+    @State private var changingPlace = false
     @State private var tileActivity = "No raster tile activity reported yet."
     private let legendBands = (try? NativeRadarPresentationContract.resolvedLegendBands(encoding: .init())) ?? []
 
     init(place: NativePreviewPlace, timezone: String?, uses24HourClock: Bool,
+         savedPlaces: [NativePreviewPlace] = [], onSelectPlace: ((NativePreviewPlace) async -> Bool)? = nil,
+         onAskAboutPlace: (() -> Void)? = nil,
          onClose: @escaping () -> Void, onExistingMap: @escaping () -> Void) {
         self.place = place
         self.onClose = onClose
         self.onExistingMap = onExistingMap
+        self.onAskAboutPlace = onAskAboutPlace
+        self.savedPlaces = savedPlaces
+        self.onSelectPlace = onSelectPlace
         _model = StateObject(wrappedValue: NativeRadarModel(place: place,
             timezone: timezone, uses24HourClock: uses24HourClock))
     }
@@ -29,7 +44,8 @@ struct NativeRadarView: View {
     var body: some View {
         ZStack {
             if model.rendererReady {
-                NativeRadarMap(place: place, base: model.base, labels: model.labels,
+                NativeRadarMap(place: place, savedPlaces: savedPlaces, focusPlace: focusPlace,
+                    focusRevision: focusRevision, base: model.base, labels: model.labels,
                     basemapRevision: model.basemapRevision,
                     weatherRevision: model.weatherRevision,
                     weather: model.basemapStyle == .satellite ? nil : model.wmsFrame,
@@ -39,6 +55,7 @@ struct NativeRadarView: View {
                     maximumZoom: model.basemapStyle == .satellite ? 9 : 16,
                     alerts: model.alertGeometry,
                     onAlert: { selectedAlertID = $0; showingAlerts = true },
+                    onPlace: { selectedMarker = $0; placeMessage = nil },
                     onViewport: model.updateViewport,
                     onFailure: { model.mapFailure = true },
                     onTileActivity: { tileActivity = $0 })
@@ -78,13 +95,17 @@ struct NativeRadarView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showingInfo) { information }
         .sheet(isPresented: $showingAlerts, onDismiss: { selectedAlertID = nil }) { alertInformation }
+        .sheet(item: $selectedMarker) { marker in placeInformation(marker) }
         .task { await model.start() }
-        .onDisappear { model.cancel() }
+        .onDisappear { locationTask?.cancel(); locationTask = nil; model.cancel() }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
             if scenePhase == .active { model.advanceClock() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { model.suspend() }
+            // The system permission prompt temporarily makes the app inactive.
+            // Cancel location only on background, not while awaiting that choice.
+            if phase == .background { locationTask?.cancel(); locationTask = nil; locating = false; model.suspend() }
+            else if phase == .inactive { model.suspend() }
             else { model.advanceClock() }
         }
     }
@@ -94,22 +115,29 @@ struct NativeRadarView: View {
             VStack(alignment: .leading, spacing: 8) {
                 legend
                 Button { selectedAlertID = nil; showingAlerts = true } label: {
-                    Label(model.activeAlerts.isEmpty ? "Place alerts" : "\(model.activeAlerts.count) place \(model.activeAlerts.count == 1 ? "alert" : "alerts")", systemImage: "exclamationmark.triangle")
+                    Label("Alerts", systemImage: "exclamationmark.triangle")
                         .font(.caption.weight(.semibold)).padding(12).frame(minHeight: 44)
                         .background(.regularMaterial, in: Capsule())
-                }.foregroundStyle(model.activeAlerts.isEmpty ? Color.primary : Color.orange)
+                }.foregroundStyle(model.activeAlerts.isEmpty && model.visibleAreaAlerts.isEmpty ? Color.primary : Color.orange)
             }
             Spacer()
             VStack(spacing: 8) {
                 mapButton("plus", label: "Zoom in") { zoomCommand += 1 }
                 mapButton("minus", label: "Zoom out") { zoomCommand -= 1 }
                 mapButton("scope", label: "Recenter on \(place.name)") { recenter += 1 }
+                Button { locateOnce() } label: {
+                    Group {
+                        if locating { ProgressView() }
+                        else { Image(systemName: "location").font(.headline) }
+                    }.frame(width: 46, height: 46)
+                }.foregroundStyle(.primary).background(.regularMaterial, in: Circle())
+                    .disabled(locating).accessibilityLabel("Show my location on this map")
             }
         }
     }
 
     @ViewBuilder private var statusMessage: some View {
-        if let message = model.mapMessage {
+        if let message = placeMessage ?? model.mapMessage {
             Text(message).font(.footnote.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -241,6 +269,8 @@ struct NativeRadarView: View {
                 }.disabled(model.frameDates.count < 2 || model.loadingImage || model.usesGlobalRadar)
                     .accessibilityLabel(model.playing ? "Pause animation" : "Play available frames")
                 VStack(alignment: .leading, spacing: 2) {
+                    Text(model.selectedSourceLabel.uppercased()).font(.caption2.weight(.bold))
+                        .foregroundStyle(model.product == .radar ? Color.cyan : Color.orange)
                     Text(model.selectedTimeLabel).font(.title2.weight(.bold)).monospacedDigit()
                     Text(model.selectedDetailLabel).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -289,8 +319,12 @@ struct NativeRadarView: View {
         NavigationStack {
             List {
                 Section {
+                    if let onAskAboutPlace {
+                        Button("Ask about this place") { showingInfo = false; onAskAboutPlace() }
+                        Text("Opens Ask with \(place.name). The displayed radar frame and map area are not sent as storm-analysis evidence.").font(.caption)
+                    }
                     Button("Open full existing map", action: { showingInfo = false; onExistingMap() })
-                    Text("The existing map still has the complete StormScope, Ask and enhanced motion experience. Native preview does not replace it yet.")
+                    Text("For Storm Check, StormScope and lightning, open the full existing map. Native preview does not replace those tools yet.")
                 }
                 Section("Basemap") {
                     Button { model.selectBasemap(.streets) } label: {
@@ -308,7 +342,9 @@ struct NativeRadarView: View {
                 Section("What the timeline means") {
                     Text("Radar shows observations at their original source time. Forecast is model guidance, not a live observation or a promise of the exact storm position.")
                     Text("Rain total is a six-hour accumulation, not storm motion. We keep it separate from radar and model reflectivity.")
-                    Text("Playback never blends observations into a different product. It stops at the end of the available frames.")
+                    Text("Forecast may use recent radar motion only when source age, storm motion and coverage checks pass. It remains a forecast, never a new observation. Otherwise the original model is shown.")
+                    Text(model.transitionExplanation).font(.footnote)
+                    Text("Only advertised model times appear. Playback stops at the last available frame; gaps are not filled with invented radar scans.")
                     Text("Missing or loading imagery is not evidence of clear weather.")
                     Text("Global RainViewer radar is step-only in this preview to stay within the provider’s shared request limit. The full existing map remains available.")
                 }
@@ -341,7 +377,7 @@ struct NativeRadarView: View {
                     List {
                         Section {
                             Text(model.alertStatus).font(.headline)
-                            Text("For \(place.name). These are current official bulletins, independent of the radar time. Panning does not check other places.")
+                            Text("For \(place.name). Official bulletins, independent of the radar time; check status above for freshness.")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                         ForEach(model.activeAlerts, id: \.id) { alert in
@@ -353,16 +389,73 @@ struct NativeRadarView: View {
                                 }.fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        Section("Across this map") {
+                            Text(model.viewportAlertStatus).font(.headline)
+                            ForEach(model.visibleAreaAlerts.filter { area in !model.activeAlerts.contains(where: { $0.id == area.id }) }, id: \.id) { alert in
+                                NavigationLink { alertDetail(alert) } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(alert.event).font(.headline)
+                                        Text(alert.areaDescription).font(.subheadline).foregroundStyle(.secondary)
+                                    }.fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
                         Section {
-                            Text("Not every bulletin includes a polygon. An unshaded map is not an all-clear, and this preview does not claim alert coverage across the full map.")
+                            Text("Area outlines are checked after you move the map. Some official bulletins have no polygon, so an unshaded area is not an all-clear. Place alerts above include those bulletin-only alerts.")
                                 .font(.footnote)
                             Link("National Weather Service", destination: URL(string: "https://www.weather.gov/")!)
                         }
                     }
                 }
             }
-            .navigationTitle("Place alerts").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Official alerts").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingAlerts = false } } }
+        }
+    }
+
+    private func locateOnce() {
+        guard !locating else { return }
+        locating = true; placeMessage = nil
+        locationTask = Task { @MainActor in
+            defer { locating = false }
+            do {
+                let result = try await NativePlaceLookupService().currentLocation()
+                try Task.checkCancellation()
+                focusPlace = result.previewPlace; focusRevision += 1
+            } catch {
+                guard !Task.isCancelled else { return }
+                placeMessage = (error as? NativePlaceLookupError)?.errorDescription ?? "Location unavailable. You can still explore the map."
+            }
+        }
+    }
+
+    private func placeInformation(_ marker: NativePreviewPlace) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(marker.name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                    Button("Center map here") {
+                        focusPlace = marker; focusRevision += 1; selectedMarker = nil
+                    }.frame(minHeight: 44)
+                    if let onSelectPlace, savedPlaces.contains(where: { $0.id == marker.id && $0.coordinateIdentity == marker.coordinateIdentity }) {
+                        Button(changingPlace ? "Opening…" : "Use this place for weather") {
+                            changingPlace = true
+                            Task { @MainActor in
+                                let success = await onSelectPlace(marker)
+                                changingPlace = false
+                                if success { selectedMarker = nil }
+                                else { placeMessage = "Could not change places. Your current place has not changed." }
+                            }
+                        }.disabled(changingPlace).frame(minHeight: 44)
+                    }
+                    Text("Centering only moves the map. It does not change your saved places or notification choices.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if let placeMessage { Text(placeMessage).foregroundStyle(.orange) }
+                }
+            }
+            .navigationTitle("Map place").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { selectedMarker = nil }.disabled(changingPlace) } }
+            .interactiveDismissDisabled(changingPlace)
         }
     }
 
@@ -371,8 +464,8 @@ struct NativeRadarView: View {
             Section {
                 Text(alert.event).font(.title2.bold())
                 Text(alert.headline).font(.headline)
-                Text(model.alertStatus).font(.caption).foregroundStyle(.secondary)
-                Text("Valid until \(model.detailTime(alert.endAt))").font(.subheadline)
+                Text(model.bulletinStatus(alert)).font(.caption).foregroundStyle(.secondary)
+                Text("Bulletin expires \(model.detailTime(min(alert.endAt, alert.expiresAt)))").font(.subheadline)
             }
             if !alert.instruction.isEmpty { Section("Official instructions") { Text(alert.instruction).textSelection(.enabled) } }
             if !alert.description.isEmpty { Section("Official bulletin") { Text(alert.description).textSelection(.enabled) } }

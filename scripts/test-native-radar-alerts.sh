@@ -1,6 +1,7 @@
 #!/bin/bash
 # Offline contracts and stubbed transport by default. --live adds one selected-
-# point request to the app's existing NWS endpoint; never a national alert sweep.
+# point request to the app's existing NWS endpoint. --live-viewport adds the
+# bounded national active polygon feed used for on-device viewport discovery.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 test_dir="$(mktemp -d /private/tmp/nearcast-radar-alerts.XXXXXX)"

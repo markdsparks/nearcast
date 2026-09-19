@@ -20,18 +20,25 @@ This is **Phase 3 implementation in progress**, not full map parity or a default
 - Independent native CARTO configuration lane: `/api/map/config?client=ios`, audience `app.nearcast.ios`, secret `CARTO_BASEMAP_IOS_KEY`. Never borrow the web key, forge a Referer, or proxy/cache tiles on a server. Streets and USGS aerial descriptors keep city labels above weather.
 - MapLibre's scoped iOS header, no persistent ambient cache, and redacted/disabled keyed-URL logging are prepared before creating the map. Failed configuration stays unavailable rather than requesting unkeyed/watermarked tiles.
 - Fixed native Settings first-presentation race by using the sheet destination as its presentation identity.
+- Saved-place markers and an explicit device-location action. Tapping a marker opens detail; centering changes only the camera. "Use this place for weather" goes through the verified Places owner before changing the selected place. The location permission dialog is allowed to finish; background/disappearance cancels the lookup.
+- Debounced viewport NWS polygon discovery, separate from selected-place bulletins: bounded pagination, exact viewport intersection, five-minute memory reuse, partial-feed disclosure, and no all-clear claim for missing outlines. A bulletin's freshness and expiry are independent of the selected radar time and the selected place's alert summary.
+- Conservative observed-to-forecast composition at **existing advertised model times**. The original HRRR frame renders before optional radar-history downloads. Three actual observations, consistent motion, fresh source/run, complete source coverage, and forecast-alignment gates must pass. Unknown translated edges stay masked. A successful result is labeled "Radar-guided forecast"; unavailable evidence leaves the original HRRR image intact. This is not subhourly model parity or independent validation of storm accuracy.
+- Request/cache identities cover source metadata revisions, observation/model freshness boundaries, exact selected/anchor times, run and viewport. Refreshed radar can reevaluate an already selected forecast; expired guidance cannot retain a radar-guided label indefinitely.
+- "Ask about this place" hands off the exact selected place to existing Ask. It explicitly does not send the displayed radar frame or viewport as storm evidence. Storm Check remains available through the full existing map.
 
 ## Automated evidence
 
 `bash scripts/nearcast-ci.sh all` includes the existing product/weather/notification/Places/Watch regressions plus the native radar numeric, timeline, NCRD, MRMS, HRRR, presentation, freshness, basemap and global-source tests. Provider networking is optional, not required by normal CI.
 
-Additional deterministic suites cover the bounded LRU, official alerts, satellite acquisition and 39 JavaScript-oracle seam estimation/gate cases. Seam code remains a pure foundation: no live pixel advection or blended transition has been activated.
+Additional deterministic suites cover the bounded LRU, paginated official alerts, satellite acquisition, 39 JavaScript-oracle seam estimation/gate cases, exact-time composition, and transition request/cache orchestration boundaries. Synthetic motion tests include conflicting motion, stale inputs, missing masks, cropped edges and cancellation; they are not real-device frame-rate or live storm-accuracy evidence.
 
 Live source checks performed during implementation:
 
 - MRMS source `2026-09-19T02:50:42Z`, 7000×3500 source: national 320×200 viewport, 43,808 valid pixels and 2,251 echo pixels; Swift texture SHA256 exactly matches the existing browser worker (`cd52920990c6383cb78f00c1159858b48f27400996c3fe6a58ab9013d1162140`). A St. Louis viewport had valid coverage with no echoes; transparent imagery there was not merely assumed to mean clear.
 - HRRR `20260919_00z`, spatial chunk 3.7, first three advertised forecast hours: all 67,500 Float32 values match the web decoder's FNV1a64 (`ffe1a1fb0f01fb65`), with exact valid times and independent LCC coordinate comparison.
 - Release simulator compilation succeeds with the pinned MapLibre SDK. This is not hardware performance evidence.
+- The native CARTO configuration is now live and authorized: the iOS lane returns a no-store, bundle-audienced response, and official street/label tile requests with the bundle header return valid PNGs. Both street and aerial maps with city labels were visually checked; no watermarked/unkeyed fallback is used.
+- The bounded live national NWS check loaded 364 products: 18 renderable active official polygons, 227 unexpired bulletin-only products, and 118 expired products rejected. These are nationwide counts, not local warnings. A Maryville viewport had no intersecting polygon; selected-place bulletin discovery remains independent. A cached world pan reused the feed without another download.
 
 ## Visual checks and limits
 
@@ -43,14 +50,27 @@ The live NASA MODIS Aqua September 18 image renders in landscape with its date a
 
 The computer-control bridge did not reliably forward drag gestures to the simulated map or slider. Double-tap zoom and explicit controls respond; **finger pan/pinch/scrub are not accepted on that basis**. Physical iPhone 17 Pro/Pro Max testing remains required. No personal device stores or notification choices were changed for testing.
 
+The next checkpoint was exercised on both isolated iOS 27 phone simulators. The Pro showed the loaded HRRR forecast at its exact advertised time, the selected-place marker action sheet, camera-only recentering, and the separate place/area alert sections. Its Heat Advisory detail displayed the current check time and earlier bulletin expiry correctly. The Pro Max verified first-use location permission denial returns to an operable map with a useful explanation, and "Ask about this place" opened existing Ask with Maryville preserved. Neither simulator had a second saved test place in this round, so a different-place marker selection still requires the family/device check below. No storm echoes near the test location were available to visually accept enhanced storm motion; that path has deterministic fixtures, not live-storm acceptance.
+
+Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker lane and an SDK adapter candidate are prepared separately; see [native-xweather-foundation.md](native-xweather-foundation.md). They are not linked into the shipping app or enabled by this checkpoint.
+
 ## Open gates — do not call Phase 3 complete
 
-1. **CARTO iOS authorization:** owner creates a separate bundle-restricted iOS key and installs `CARTO_BASEMAP_IOS_KEY`; deploy the isolated lane, then verify live authorized street/aerial tiles and labels. Current preview fails closed until this is available.
-2. Real-device finger pan/pinch/scrub, background/resume, accessibility text/VoiceOver, rotation, slow/offline recovery, memory and frame-time measurement on both required phones.
-3. MRMS/HRRR observed-to-forecast **motion/seam/quality gates** and subhourly model path. The numerical primitives and readers are not full enhanced-map parity. No smooth blended transition is claimed by this preview.
-4. Full viewport alert discovery, saved/device markers, Storm Check/Ask routing, complete fallback legends and the remaining layer interactions. The point-alert/satellite implementations above still need end-to-end visual acceptance with authorized basemaps.
-5. StormScope/lightning native SDK authorization, provider leases/budgets and rendering parity; no paid native session or account change has been activated here.
-6. Global provider tile-memory/playback budget strategy; full global animation remains in the existing map.
-7. Existing MapLibre device-archive metadata preparation and missing upstream dSYM caveat from build 106 still apply before another TestFlight upload.
+1. Real-device finger pan/pinch/scrub, background/resume, accessibility text/VoiceOver, rotation, slow/offline recovery, memory and frame-time measurement on both required phones.
+2. Live storm/transition acceptance and subhourly model path. The bounded exact-time compositor is implemented; it does not invent quarter-hour forecasts and is not full enhanced-map parity.
+3. Native Storm Check/frame-aware Ask, complete fallback legends and remaining layer interactions. Existing full-map handoff stays available.
+4. StormScope/lightning native SDK configuration, provider leases/budgets and rendering parity. The owner confirmed native iPhone use is included in the account; app-bundle credential configuration remains a separate check. No paid native session or account change has been activated here.
+5. Global provider tile-memory/playback budget strategy; full global animation remains in the existing map.
+6. Existing MapLibre device-archive metadata preparation and missing upstream dSYM caveat from build 106 still apply before another TestFlight upload.
 
-No calendar permission, location permission prompt, new notification policy, or plan ownership change is introduced by this checkpoint.
+No calendar permission, new notification policy, or plan ownership change is introduced. Location permission is requested only when the user explicitly taps the device-location control.
+
+## Next family test round
+
+- Enter via Native preview → Settings → Try native weather map; compare streets/aerial labels and radar/forecast times.
+- Tap a saved marker. Center the map, then explicitly use the place for weather; confirm the header, time zone and forecast agree after closing/reopening.
+- On first location use, test Allow Once and Don't Allow. Also background the app while locating. Neither path should trap the map or silently select a different weather place.
+- Open a nearby warning outline and verify the correct bulletin, expiry and area; no-polygon bulletins must remain accessible in the selected-place section.
+- Pan quickly during loading, switch sources, then background/resume after five minutes. Old viewport images/outlines must not reappear as current.
+- During active weather, compare the radar→forecast handoff. Record location, source time, model time and a short screen recording if motion looks wrong. A plain "Model forecast" label is expected when evidence is insufficient.
+- On physical iPhone 17 Pro and Pro Max, check finger pan/pinch/scrub, larger text, VoiceOver and landscape. Simulator button tests cannot substitute for these checks.

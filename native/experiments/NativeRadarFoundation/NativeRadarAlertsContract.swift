@@ -7,6 +7,9 @@ enum NativeRadarAlertsContract {
     static let maximumBytes = 4_000_000
     static let maximumFeatures = 500
     static let maximumVertices = 100_000
+    static let maximumViewportPages = 4
+    static let maximumViewportBytes = 8_000_000
+    static let maximumViewportFeatures = 2_000
     static let countries: Set<String> = ["US", "PR", "GU", "VI", "AS", "MP"]
     private static let areas = Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR GU VI AS MP".split(separator: " ").map(String.init))
 
@@ -32,14 +35,22 @@ enum NativeRadarAlertsContract {
     struct Viewport: Equatable, Sendable {
         let west: Double, south: Double, east: Double, north: Double
         init(west: Double, south: Double, east: Double, north: Double) throws {
-            guard [west, south, east, north].allSatisfy(\.isFinite), west >= -180, east <= 180,
-                  south >= -90, north <= 90, west < east, south < north else { throw Failure.invalidScope }
+            guard [west, south, east, north].allSatisfy(\.isFinite), abs(west) <= 180, abs(east) <= 180,
+                  south >= -90, north <= 90, west != east, !(west == 180 && east == -180), south < north else { throw Failure.invalidScope }
             self.west = west; self.south = south; self.east = east; self.north = north
+        }
+
+        /// Two ordinary boxes represent a dateline crossing; no polygon is
+        /// stretched across the globe or modified to fit the camera.
+        fileprivate var parts: [Viewport] {
+            if west < east { return [self] }
+            return [try? Viewport(west: west, south: south, east: 180, north: north),
+                    try? Viewport(west: -180, south: south, east: east, north: north)].compactMap { $0 }
         }
     }
 
     struct Scope: Equatable, Sendable {
-        enum Kind: String, Sendable { case point, area }
+        enum Kind: String, Sendable { case point, area, viewport }
         let kind: Kind
         let selectedPlace: Point?
         let countryCode: String?
@@ -55,19 +66,25 @@ enum NativeRadarAlertsContract {
 
         /// Caller must supply a KNOWN state/territory, never infer it from viewport
         /// corners. A view crossing a state border is not complete for other states.
-        /// Marine areas and dateline-wrapped viewports are not supported here.
+        /// Marine area codes are not supported here.
         static func area(code: String, selectedPlace: Point? = nil, viewport: Viewport? = nil) throws -> Scope {
             let code = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             guard areas.contains(code) else { throw Failure.invalidScope }
             return Scope(kind: .area, selectedPlace: selectedPlace, countryCode: "US", areaCode: code, viewport: viewport)
         }
 
+        static func viewport(_ viewport: Viewport, selectedPlace: Point? = nil, countryCode: String? = "US") throws -> Scope {
+            let country = countryCode?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            guard country == nil || country?.count == 2 else { throw Failure.invalidScope }
+            return Scope(kind: .viewport, selectedPlace: selectedPlace, countryCode: country, areaCode: nil, viewport: viewport)
+        }
+
         var isSupported: Bool { countryCode.map { countries.contains($0) } ?? true }
-        var hasKnownCoverage: Bool { kind == .area || countryCode.map { countries.contains($0) } == true }
+        var hasKnownCoverage: Bool { kind != .viewport && (kind == .area || countryCode.map { countries.contains($0) } == true) }
         var url: URL {
             var url = URLComponents(string: "https://api.weather.gov/alerts/active")!
             if let areaCode { url.queryItems = [.init(name: "area", value: areaCode)] }
-            else if let point = selectedPlace {
+            else if kind == .point, let point = selectedPlace {
                 let value = String(format: "%.4f,%.4f", locale: Locale(identifier: "en_US_POSIX"), point.latitude, point.longitude)
                 url.queryItems = [.init(name: "point", value: value)]
             }
@@ -134,6 +151,7 @@ enum NativeRadarAlertsContract {
         /// Used only to restrict rendering within a requested viewport. This is
         /// geometry intersection, not a claim that null county alerts are absent.
         func intersects(_ viewport: Viewport) -> Bool {
+            if viewport.west > viewport.east { return viewport.parts.contains { intersects($0) } }
             let corners = [(viewport.west, viewport.south), (viewport.east, viewport.south),
                            (viewport.east, viewport.north), (viewport.west, viewport.north)]
             if corners.contains(where: { contains(try! Point(latitude: $0.1, longitude: $0.0)) }) { return true }
@@ -255,17 +273,110 @@ enum NativeRadarAlertsContract {
         }
     }
 
+    /// "Complete" refers only to the bounded NWS polygon feed. Many valid NWS
+    /// county/zone bulletins have no geometry. They cannot be assigned to a
+    /// viewport from this feed, so this result must never mean "no alerts".
+    struct ViewportSnapshot: Sendable {
+        enum Completeness: String, Sendable { case polygonFeedComplete, partial, unsupported }
+        let snapshot: Snapshot
+        let completeness: Completeness
+        let unmappedBulletinCount: Int
+        let pageCount: Int
+        let wasCached: Bool
+    }
+
+    static func decodeViewport(_ pages: [Data], scope: Scope, checkedAt: Date, now: Date,
+                               transportComplete: Bool, wasCached: Bool = false) throws -> ViewportSnapshot {
+        guard scope.kind == .viewport, let viewport = scope.viewport, checkedAt.timeIntervalSince1970.isFinite,
+              now.timeIntervalSince1970.isFinite, checkedAt <= now.addingTimeInterval(60) else { throw Failure.invalidScope }
+        guard scope.isSupported else {
+            return ViewportSnapshot(snapshot: .init(scope: scope, checkedAt: nil, quality: .unsupported,
+                rejectedFeatureCount: 0, alerts: []), completeness: .unsupported, unmappedBulletinCount: 0,
+                pageCount: 0, wasCached: false)
+        }
+        guard !pages.isEmpty, pages.count <= maximumViewportPages,
+              pages.reduce(0, { $0 + $1.count }) <= maximumViewportBytes else { throw Failure.sizeLimit }
+        var features: [Any] = [], rejected = transportComplete ? 0 : 1
+        for page in pages {
+            let document = try pageDocument(page)
+            let entries = document["features"] as! [Any]
+            let remaining = maximumViewportFeatures - features.count
+            features.append(contentsOf: entries.prefix(remaining))
+            if entries.count > remaining { rejected += 1 }
+        }
+        // Decode together so cancellations, updates, and duplicate CAP IDs work
+        // across page boundaries, not just within one page.
+        let decoded = try decodeFeatures(features, scope: scope, now: now, rejected: rejected)
+        let unmapped = decoded.alerts.filter { $0.geometry == nil && $0.expiresAt > now }.count
+        // Expired products still present in the provider's active feed must not
+        // blank otherwise current, valid polygons through Snapshot.validUntil.
+        // Their rejection keeps completeness partial; no stale shape is drawn.
+        let visible = decoded.alerts.filter { $0.expiresAt > now && $0.geometry?.intersects(viewport) == true }
+        let snapshot = Snapshot(scope: scope, checkedAt: checkedAt, quality: .unknownCoverage,
+            rejectedFeatureCount: decoded.rejectedFeatureCount, alerts: visible)
+        return ViewportSnapshot(snapshot: snapshot,
+            completeness: decoded.rejectedFeatureCount == 0 ? .polygonFeedComplete : .partial,
+            unmappedBulletinCount: unmapped, pageCount: pages.count, wasCached: wasCached)
+    }
+
+    /// Pagination is data, not authority to contact another host or broaden the
+    /// query to historical alerts. Reconstruct only the public active endpoint.
+    /// NWS documents cursors/limit on /alerts; its active filter is preserved:
+    /// https://api.weather.gov/openapi.json
+    static func viewportNextPage(_ data: Data) throws -> URL? {
+        let document = try pageDocument(data)
+        guard let raw = document["pagination"], !(raw is NSNull) else { return nil }
+        guard let pagination = raw as? [String: Any] else { throw Failure.invalidPayload }
+        guard let next = pagination["next"], !(next is NSNull) else { return nil }
+        guard let value = next as? String, value.utf8.count <= 4_000,
+              let supplied = URLComponents(string: value), supplied.scheme == "https", supplied.host == "api.weather.gov",
+              supplied.user == nil, supplied.password == nil, supplied.port == nil || supplied.port == 443,
+              supplied.fragment == nil, ["/alerts", "/alerts/active"].contains(supplied.path),
+              let items = supplied.queryItems, !items.isEmpty else { throw Failure.invalidPayload }
+        var values: [String: String] = [:]
+        for item in items {
+            guard ["active", "limit", "cursor"].contains(item.name), values[item.name] == nil,
+                  let value = item.value, !value.isEmpty else { throw Failure.invalidPayload }
+            values[item.name] = value
+        }
+        guard supplied.path == "/alerts/active" || values["active"] == "true",
+              values["active"] == nil || values["active"] == "true",
+              let cursor = values["cursor"], cursor.utf8.count <= 3_000,
+              !cursor.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw Failure.invalidPayload }
+        if let limit = values["limit"] { guard let n = Int(limit), (1...500).contains(n) else { throw Failure.invalidPayload } }
+        var url = URLComponents(string: "https://api.weather.gov/alerts")!
+        url.queryItems = [.init(name: "active", value: "true"), .init(name: "limit", value: values["limit"] ?? "500"),
+                          .init(name: "cursor", value: cursor)]
+        return url.url!
+    }
+
+    static func viewportFeatureCount(_ data: Data) throws -> Int {
+        (try pageDocument(data)["features"] as! [Any]).count
+    }
+
+    private static func pageDocument(_ data: Data) throws -> [String: Any] {
+        guard data.count <= maximumBytes else { throw Failure.sizeLimit }
+        guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              document["type"] as? String == "FeatureCollection", document["features"] is [Any] else { throw Failure.invalidPayload }
+        return document
+    }
+
     static func decode(_ data: Data, scope: Scope, now: Date) throws -> Snapshot {
         guard now.timeIntervalSince1970.isFinite else { throw Failure.invalidTime }
         guard scope.isSupported else { return Snapshot(scope: scope, checkedAt: nil, quality: .unsupported, rejectedFeatureCount: 0, alerts: []) }
         guard data.count <= maximumBytes, let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               document["type"] as? String == "FeatureCollection", let features = document["features"] as? [Any],
               features.count <= maximumFeatures else { throw Failure.invalidPayload }
-        var rejected = 0, vertices = 0, decoded: [String: Alert] = [:]
-        var retiredAt: [String: Date] = [:]
+        var rejected = 0
         // Never follow pagination to an unbounded/global URL. A truncated result
         // can still contain useful bulletins, but cannot establish completeness.
         if let pagination = document["pagination"] as? [String: Any], pagination["next"] != nil && !(pagination["next"] is NSNull) { rejected += 1 }
+        return try decodeFeatures(features, scope: scope, now: now, rejected: rejected)
+    }
+
+    private static func decodeFeatures(_ features: [Any], scope: Scope, now: Date, rejected initialRejected: Int) throws -> Snapshot {
+        var rejected = initialRejected, vertices = 0, decoded: [String: Alert] = [:]
+        var retiredAt: [String: Date] = [:]
         for raw in features {
             guard let feature = raw as? [String: Any], feature["type"] as? String == "Feature",
                   let p = feature["properties"] as? [String: Any],

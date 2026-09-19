@@ -64,6 +64,9 @@ const PLAN_WATCH_REGISTRATION_RATE_SALT_ENV = "PLAN_WATCH_REGISTRATION_RATE_SALT
 const PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS_ENV = "PLAN_WATCH_REQUIRED_DELIVERY_CHANNELS";
 const XWEATHER_CLIENT_ID_ENV = "XWEATHER_CLIENT_ID";
 const XWEATHER_CLIENT_SECRET_ENV = "XWEATHER_CLIENT_SECRET";
+const XWEATHER_IOS_CLIENT_ID_ENV = "XWEATHER_IOS_CLIENT_ID";
+const XWEATHER_IOS_CLIENT_SECRET_ENV = "XWEATHER_IOS_CLIENT_SECRET";
+const XWEATHER_IOS_AUDIENCE = "app.nearcast.ios";
 const XWEATHER_LAYER_CODES_ENV = "XWEATHER_LAYER_CODES";
 const XWEATHER_STORM_MODE_ENV = "XWEATHER_STORM_MODE";
 const XWEATHER_MIN_VIEWPORT_ZOOM_ENV = "XWEATHER_MIN_VIEWPORT_ZOOM";
@@ -509,20 +512,35 @@ export async function handleXweatherConfigRequest(request, env = {}) {
   if (request.method !== "GET" && request.method !== "POST") {
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
+  const clients = new URL(request.url).searchParams.getAll("client");
+  const client = clients.length === 0 ? "web" : clients.length === 1 ? clients[0] : "";
+  if (client !== "web" && client !== "ios") {
+    return jsonResponse({ error: "unsupported-xweather-client" }, { status: 400 });
+  }
+  const nativeIOS = client === "ios";
+  // iOS keys must be authorized for the app bundle namespace, not a web
+  // domain. Never fall back to web credentials. Both lanes retain the same
+  // monthly budget store, but a web testing bypass cannot enable native work.
+  const configEnv = nativeIOS ? {
+    ...env,
+    [XWEATHER_CLIENT_ID_ENV]: String(env?.[XWEATHER_IOS_CLIENT_ID_ENV] || "").trim(),
+    [XWEATHER_CLIENT_SECRET_ENV]: String(env?.[XWEATHER_IOS_CLIENT_SECRET_ENV] || "").trim(),
+    [XWEATHER_BYPASS_BUDGET_CHECKS_ENV]: false
+  } : env;
   const payload = request.method === "POST" ? await readJsonRequest(request) : {};
-  const clientId = configuredXweatherClientId(env);
-  const clientSecret = configuredXweatherClientSecret(env);
+  const clientId = configuredXweatherClientId(configEnv);
+  const clientSecret = configuredXweatherClientSecret(configEnv);
   const requestedAt = Date.now();
   let gate;
   try {
-    gate = await xweatherStormGate(payload, request, env, requestedAt);
+    gate = await xweatherStormGate(payload, request, configEnv, requestedAt);
   } catch {
     gate = {
       allowed: false,
       state: "error",
       reason: "storm-view-config-failed",
       message: "StormScope is temporarily unavailable.",
-      limits: xweatherStormLimits(env),
+      limits: xweatherStormLimits(configEnv),
       usage: null,
       lease: null,
       context: normalizeXweatherStormContext(payload, normalizeViewport(payload.viewport || {}), requestedAt)
@@ -532,12 +550,13 @@ export async function handleXweatherConfigRequest(request, env = {}) {
   return jsonResponse({
     provider: "nearcast-xweather-config",
     version: 1,
+    ...(nativeIOS ? { audience: XWEATHER_IOS_AUDIENCE } : {}),
     checkedAt: new Date().toISOString(),
     state: ready ? "ready" : gate.state,
     reason: ready ? (gate.reason || "lease-granted") : gate.reason,
     message: ready ? "" : gate.message,
     credentials: ready ? { clientId, clientSecret } : null,
-    layerCodes: configuredXweatherLayerCodes(env),
+    layerCodes: configuredXweatherLayerCodes(configEnv),
     lease: ready ? gate.lease : null,
     limits: gate.limits,
     usage: gate.usage,
@@ -1811,10 +1830,13 @@ async function xweatherLocalUsageState(store, payload = {}, request, limits = xw
 async function xweatherClientBudgetKey(payload = {}, request) {
   const client = payload.client && typeof payload.client === "object" ? payload.client : {};
   const id = cleanToken(client.instanceId || client.id || "", 96);
-  if (id) return `client:${await sha256Hex(id)}`;
+  // Identical instance IDs in different SDK clients are different provider
+  // sessions. Scope only iOS so existing web lease IDs remain unchanged.
+  const scope = request?.url && new URL(request.url).searchParams.get("client") === "ios" ? "ios:" : "";
+  if (id) return `client:${await sha256Hex(`${scope}${id}`)}`;
   const ip = request?.headers?.get?.("CF-Connecting-IP") || "";
   const ua = request?.headers?.get?.("User-Agent") || "";
-  return `anon:${await sha256Hex(`${ip}:${ua}`)}`;
+  return `anon:${await sha256Hex(`${scope}${ip}:${ua}`)}`;
 }
 
 function xweatherUsageMonthKey(date = new Date()) {

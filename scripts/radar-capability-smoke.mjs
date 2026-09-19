@@ -957,6 +957,91 @@ const xweatherBypassNoWeather = await xweatherConfig({
 assert.equal(xweatherBypassNoWeather.body.state, "no-active-weather");
 assert.equal(xweatherBypassNoWeather.body.credentials, null);
 
+// Native credentials have an explicit bundle audience and must never borrow
+// the existing web pair. These fixtures do not make provider requests.
+const xweatherIOSURL = "https://getnearcast.app/api/xweather/config?client=ios";
+const xweatherIOSEnv = {
+  ...xweatherEnv,
+  XWEATHER_IOS_CLIENT_ID: "smoke-ios-client",
+  XWEATHER_IOS_CLIENT_SECRET: "smoke-ios-secret",
+  RADAR_GENERATION_REQUESTS: createRequestStore()
+};
+for (const credentials of [
+  { XWEATHER_IOS_CLIENT_ID: "", XWEATHER_IOS_CLIENT_SECRET: "" },
+  { XWEATHER_IOS_CLIENT_ID: "smoke-ios-client", XWEATHER_IOS_CLIENT_SECRET: "" },
+  { XWEATHER_IOS_CLIENT_ID: "", XWEATHER_IOS_CLIENT_SECRET: "smoke-ios-secret" }
+]) {
+  const unavailable = await xweatherConfig(xweatherPayload, { ...xweatherIOSEnv, ...credentials }, xweatherIOSURL);
+  assert.equal(unavailable.status, 200);
+  assert.equal(unavailable.body.audience, "app.nearcast.ios");
+  assert.equal(unavailable.body.state, "missing-credentials");
+  assert.equal(unavailable.body.credentials, null);
+  assert.equal(unavailable.body.lease, null);
+  assert.equal(unavailable.body.usage, null);
+  assert.equal(unavailable.headers.get("Cache-Control"), "no-store");
+}
+for (const [changes, state] of [
+  [{ activation: { requested: false } }, "activation-required"],
+  [{ viewport: { ...xweatherPayload.viewport, zoom: 7 } }, "below-min-zoom"],
+  [{ storm: { activeWeather: false } }, "no-active-weather"],
+  [{ viewport: null }, "needs-context"]
+]) {
+  const gated = await xweatherConfig({ ...xweatherPayload, ...changes }, xweatherIOSEnv, xweatherIOSURL);
+  assert.equal(gated.body.state, state);
+  assert.equal(gated.body.credentials, null);
+  assert.equal(gated.body.lease, null);
+}
+const nativeDisabled = await xweatherConfig(xweatherPayload, {
+  ...xweatherIOSEnv, XWEATHER_STORM_MODE: "off"
+}, xweatherIOSURL);
+assert.equal(nativeDisabled.body.reason, "storm-view-disabled");
+assert.equal(nativeDisabled.body.credentials, null);
+
+// Web response shape/credentials stay unchanged. Native shares the monthly
+// ledger but not the web SDK's five-minute session, even for an identical ID.
+const webBeforeNative = await xweatherConfig(xweatherPayload, xweatherIOSEnv);
+assert.equal(webBeforeNative.body.credentials.clientId, "smoke-client");
+assert.equal(webBeforeNative.body.credentials.clientSecret, "smoke-secret");
+assert.equal(Object.hasOwn(webBeforeNative.body, "audience"), false);
+assert.equal(webBeforeNative.body.usage.local.accesses, 150);
+const xweatherIOSReady = await xweatherConfig(xweatherPayload, xweatherIOSEnv, xweatherIOSURL);
+assert.equal(xweatherIOSReady.body.state, "ready");
+assert.equal(xweatherIOSReady.body.audience, "app.nearcast.ios");
+assert.equal(xweatherIOSReady.body.credentials.clientId, "smoke-ios-client");
+assert.equal(xweatherIOSReady.body.credentials.clientSecret, "smoke-ios-secret");
+assert.equal(xweatherIOSReady.body.lease.estimatedAccessCost, 150);
+assert.notEqual(xweatherIOSReady.body.lease.id, webBeforeNative.body.lease.id);
+assert.equal(xweatherIOSReady.body.usage.local.accesses, 300);
+assert.equal(xweatherIOSReady.body.usage.local.sessions, 2);
+assert.equal(xweatherIOSReady.headers.get("Cache-Control"), "no-store");
+const iosDeduped = await xweatherConfig(xweatherPayload, xweatherIOSEnv, xweatherIOSURL);
+assert.equal(iosDeduped.body.state, "ready");
+assert.equal(iosDeduped.body.usage.local.deduped, true);
+assert.equal(iosDeduped.body.usage.local.accesses, 300);
+assert.equal(iosDeduped.body.lease.id, xweatherIOSReady.body.lease.id);
+for (const url of ["https://getnearcast.app/api/xweather/config", xweatherIOSURL]) {
+  const exhausted = await xweatherConfig({
+    ...xweatherPayload, client: { instanceId: "smoke-new-after-shared-budget" }
+  }, xweatherIOSEnv, url);
+  assert.equal(exhausted.body.state, "budget-paused");
+  assert.equal(exhausted.body.credentials, null);
+  assert.equal(exhausted.body.lease, null);
+}
+const iosBypassEnv = { ...xweatherIOSEnv, XWEATHER_BYPASS_BUDGET_CHECKS: "true" };
+const iosCannotBypass = await xweatherConfig({
+  ...xweatherPayload, client: { instanceId: "smoke-ios-cannot-bypass" }
+}, iosBypassEnv, xweatherIOSURL);
+assert.equal(iosCannotBypass.body.state, "budget-paused");
+assert.equal(iosCannotBypass.body.limits.bypassBudgetChecks, false);
+assert.equal(iosCannotBypass.body.credentials, null);
+for (const query of ["?client=android", "?client=", "?client=ios&client=web", "?client=ios&client=ios"]) {
+  const invalidClient = await xweatherConfig(xweatherPayload, xweatherIOSEnv,
+    `https://getnearcast.app/api/xweather/config${query}`);
+  assert.equal(invalidClient.status, 400);
+  assert.equal(invalidClient.body.error, "unsupported-xweather-client");
+  assert.equal(Object.hasOwn(invalidClient.body, "credentials"), false);
+}
+
 console.log(JSON.stringify({
   ready: ready.body.enhanced.state,
   workerReady: workerReady.body.enhanced.state,
@@ -983,6 +1068,8 @@ console.log(JSON.stringify({
   xweather: xweatherReady.body.state,
   xweatherBudget: xweatherBudgetPaused.body.state,
   xweatherBypass: xweatherBypassSecond.body.reason,
+  xweatherIOS: xweatherIOSReady.body.state,
+  xweatherIOSSharedBudget: iosCannotBypass.body.state,
   requestId: queued.body.generation.requestId
 }, null, 2));
 
@@ -1010,14 +1097,15 @@ async function mapConfiguration(configEnv, url = "https://getnearcast.app/api/ma
   };
 }
 
-async function xweatherConfig(payload, configEnv) {
-  const response = await handleXweatherConfigRequest(new Request("https://getnearcast.app/api/xweather/config", {
+async function xweatherConfig(payload, configEnv, url = "https://getnearcast.app/api/xweather/config") {
+  const response = await handleXweatherConfigRequest(new Request(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   }), configEnv);
   return {
     status: response.status,
+    headers: response.headers,
     body: await response.json()
   };
 }

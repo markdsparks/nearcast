@@ -6,6 +6,12 @@ import Foundation
 actor NativeRadarAlertsClient {
     private let configuration: URLSessionConfiguration
     private var busy = false
+    private struct ViewportFeed: Sendable {
+        let pages: [Data]
+        let checkedAt: Date
+        let complete: Bool
+    }
+    private var viewportFeed: ViewportFeed?
 
     init(configuration: URLSessionConfiguration = .ephemeral) {
         let isolated = configuration.copy() as! URLSessionConfiguration
@@ -35,6 +41,66 @@ actor NativeRadarAlertsClient {
         try Task.checkCancellation()
         return try NativeRadarAlertsContract.decode(data, scope: scope, now: now)
     }
+
+    /// NWS has no bbox alert endpoint. Read its active feed under fixed byte,
+    /// page, feature, and elapsed-time caps, then intersect official polygons.
+    /// Cache the bounded raw feed only in memory so settled camera moves do not
+    /// trigger a nationwide request each time. A separate point client should
+    /// retain the selected place's bulletin-only county/zone alerts.
+    func loadViewport(viewport: NativeRadarAlertsContract.Viewport,
+                      selectedPlace: NativeRadarAlertsContract.Point? = nil,
+                      countryCode: String? = "US", now: Date = Date(), forceRefresh: Bool = false) async throws -> NativeRadarAlertsContract.ViewportSnapshot {
+        typealias C = NativeRadarAlertsContract
+        try Task.checkCancellation()
+        guard now.timeIntervalSince1970.isFinite else { throw C.Failure.invalidTime }
+        let scope = try C.Scope.viewport(viewport, selectedPlace: selectedPlace, countryCode: countryCode)
+        if !scope.isSupported {
+            return try C.decodeViewport([], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        }
+        if !forceRefresh, let feed = viewportFeed, feed.checkedAt <= now,
+           now.timeIntervalSince(feed.checkedAt) < (feed.complete ? 300 : 30) {
+            return try C.decodeViewport(feed.pages, scope: scope, checkedAt: feed.checkedAt, now: now,
+                                        transportComplete: feed.complete, wasCached: true)
+        }
+        guard !busy else { throw C.Failure.requestInFlight }
+        busy = true
+        defer { busy = false }
+        let started = Date()
+        var pages: [Data] = [], visited: Set<URL> = [], url: URL? = scope.url
+        var totalBytes = 0, featureCount = 0, complete = false
+        while let next = url {
+            try Task.checkCancellation()
+            let remainingTime = 20 - Date().timeIntervalSince(started)
+            guard remainingTime > 0, pages.count < C.maximumViewportPages,
+                  totalBytes < C.maximumViewportBytes, featureCount < C.maximumViewportFeatures,
+                  visited.insert(next).inserted else { break }
+            do {
+                let operation = NativeRadarAlertsDownload(url: next, configuration: configuration.copy() as! URLSessionConfiguration,
+                    maximumBytes: min(C.maximumBytes, C.maximumViewportBytes - totalBytes), timeout: min(12, remainingTime))
+                let data = try await operation.value()
+                try Task.checkCancellation()
+                let count = try C.viewportFeatureCount(data)
+                pages.append(data); totalBytes += data.count; featureCount += count
+                // A malformed continuation does not discard already-validated
+                // bulletins, but it explicitly prevents a completeness claim.
+                url = try C.viewportNextPage(data)
+                if url == nil { complete = featureCount <= C.maximumViewportFeatures; break }
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                if pages.isEmpty { throw error }
+                break
+            }
+        }
+        try Task.checkCancellation()
+        guard !pages.isEmpty else { throw C.Failure.transport }
+        let result = try C.decodeViewport(pages, scope: scope, checkedAt: now, now: now, transportComplete: complete)
+        // Do not cache a cancellation or empty failed load. A fully downloaded
+        // feed is reused for five minutes even if some source products are
+        // rejected; panning must not hammer NWS because of an expired bulletin.
+        // Interrupted/truncated downloads have a shorter retry window.
+        viewportFeed = ViewportFeed(pages: pages, checkedAt: now, complete: complete)
+        return result
+    }
 }
 
 /// Delegate state is locked; a cancellation or late callback resumes at most
@@ -42,6 +108,8 @@ actor NativeRadarAlertsClient {
 private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let url: URL
     private let configuration: URLSessionConfiguration
+    private let maximumBytes: Int
+    private let timeout: TimeInterval
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Data, Error>?
     private var session: URLSession?
@@ -49,7 +117,10 @@ private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate,
     private var bytes = Data()
     private var finished = false
 
-    init(url: URL, configuration: URLSessionConfiguration) { self.url = url; self.configuration = configuration }
+    init(url: URL, configuration: URLSessionConfiguration,
+         maximumBytes: Int = NativeRadarAlertsContract.maximumBytes, timeout: TimeInterval = 12) {
+        self.url = url; self.configuration = configuration; self.maximumBytes = maximumBytes; self.timeout = timeout
+    }
 
     func value() async throws -> Data {
         try await withTaskCancellationHandler {
@@ -62,7 +133,9 @@ private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate,
         guard !finished else { lock.unlock(); continuation.resume(throwing: CancellationError()); return }
         self.continuation = continuation
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "GET"
         request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
         request.setValue("Nearcast/1.0 (https://getnearcast.app)", forHTTPHeaderField: "User-Agent")
@@ -98,7 +171,7 @@ private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate,
         guard response.statusCode == 200 else {
             completionHandler(.cancel); finish(.failure(NativeRadarAlertsContract.Failure.httpStatus(response.statusCode))); return
         }
-        guard response.expectedContentLength <= NativeRadarAlertsContract.maximumBytes else {
+        guard response.expectedContentLength <= maximumBytes else {
             completionHandler(.cancel); finish(.failure(NativeRadarAlertsContract.Failure.sizeLimit)); return
         }
         completionHandler(.allow)
@@ -107,7 +180,7 @@ private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate,
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         lock.lock()
         guard !finished else { lock.unlock(); return }
-        guard data.count <= NativeRadarAlertsContract.maximumBytes - bytes.count else {
+        guard data.count <= maximumBytes - bytes.count else {
             lock.unlock(); finish(.failure(NativeRadarAlertsContract.Failure.sizeLimit)); return
         }
         bytes.append(data)

@@ -36,12 +36,20 @@ final class NativeRadarModel: ObservableObject {
     @Published private(set) var alertSnapshot: NativeRadarAlertsContract.Snapshot?
     @Published private(set) var alertGeometry: Data?
     @Published private(set) var alertRefreshFailed = false
+    @Published private(set) var viewportAlerts: NativeRadarAlertsContract.ViewportSnapshot?
+    @Published private(set) var viewportAlertsFailed = false
+    @Published private(set) var checkingViewportAlerts = false
+    @Published private(set) var transitionApplied = false
+    @Published private(set) var transitionExplanation = "Forecast uses the original HRRR model guidance."
     @Published private(set) var accumulationLegend: UIImage?
     @Published var mapFailure = false
     @Published private var timeline = RadarTimelineState(now: Date())
     @Published private var forecastRun: HRRRZarrClient.LoadedRun?
     @Published private var forecastFailed = false
     @Published private var observedFrames: [MRMSContract.AdvertisedFrame] = []
+    // Timeline memory stays small; motion estimation also needs advertised
+    // metadata around -20 minutes (no images are fetched just by retaining it).
+    private var observedHistory: [MRMSContract.AdvertisedFrame] = []
     @Published private var observedFailed = false
     @Published private var rawDiscoveryFinished = false
     @Published private var globalRadar: NativeGlobalRadarSnapshot?
@@ -51,6 +59,8 @@ final class NativeRadarModel: ObservableObject {
     let timezoneLabel: String
     private let place: NativePreviewPlace
     private var viewport: NativeRadarViewport?
+    private var viewportAlertTask: Task<Void, Never>?
+    private var viewportAlertGeneration = 0
     private var imageTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var manualRefreshTask: Task<Void, Never>?
@@ -70,6 +80,7 @@ final class NativeRadarModel: ObservableObject {
     private struct CachedRadarFrame {
         let image: NativeRadarImage
         let message: String?
+        let numeric: NativeRadarSeamEstimation.Frame
     }
     private var radarCache = NativeRadarFrameCache<String, CachedRadarFrame>()
     private let forecastClient = try? HRRRZarrClient()
@@ -78,6 +89,7 @@ final class NativeRadarModel: ObservableObject {
     private let globalClient = NativeGlobalRadarClient()
     private let satelliteClient = NativeSatelliteClient()
     private let alertsClient = NativeRadarAlertsClient()
+    private let viewportAlertsClient = NativeRadarAlertsClient()
     private let transport = try? RadarChunkClient(allowedOrigins: [
         URL(string: "https://opengeo.ncep.noaa.gov")!, URL(string: "https://nowcoast.noaa.gov")!])
 
@@ -134,6 +146,9 @@ final class NativeRadarModel: ObservableObject {
     var firstTimeLabel: String { frameDates.first.map(clock.shortLabel) ?? "—" }
     var lastTimeLabel: String { frameDates.last.map(clock.shortLabel) ?? "—" }
     var selectedTimeLabel: String { selectedDate.map(clock.shortLabel) ?? (refreshing ? "Loading…" : "Unavailable") }
+    var selectedSourceLabel: String {
+        product == .radar ? "Observed radar" : product == .rainAmount ? "Six-hour total" : transitionApplied ? "Radar-guided forecast" : "Model forecast"
+    }
     var selectedDetailLabel: String {
         guard let selectedDate else { return selectedInstant == nil ? "No usable source time" : "Selected source time unavailable" }
         return clock.detailLabel(for: selectedDate)
@@ -148,6 +163,7 @@ final class NativeRadarModel: ObservableObject {
             if let imageMessage { return imageMessage }
             if forecastFailed { return "Forecast refresh unavailable. Any retained times keep their original model run." }
             guard let forecastRun else { return "NOAA HRRR model guidance · US coverage" }
+            if transitionApplied { return "MRMS motion + HRRR · forecast, not live radar" }
             return "HRRR model · run \(clock.shortLabel(for: forecastRun.run.cycleTime)) · not live radar"
         }
         if usesNumericRadar, let imageMessage { return imageMessage }
@@ -281,6 +297,7 @@ final class NativeRadarModel: ObservableObject {
         async let radarTimes: Void = refreshObserved()
         async let alerts: Void = refreshAlerts()
         _ = await (sourceTimes, modelTimes, radarTimes, alerts)
+        scheduleViewportAlerts(force: true)
         if refreshGeneration == generation { refreshing = false }
     }
 
@@ -330,6 +347,7 @@ final class NativeRadarModel: ObservableObject {
         let (rawResult, globalResult) = await (raw, global)
         guard active, !suspended, !Task.isCancelled else { return }
         if let rawResult {
+            observedHistory = Array(rawResult.suffix(24))
             let dates = rawResult.map { Date(timeIntervalSince1970: Double($0.validTimeMilliseconds) / 1000) }
             let kept = (try? NativeRadarPresentationContract.boundedDates(dates,
                 retaining: product == .radar ? selectedInstant : nil, limit: 6)) ?? []
@@ -340,7 +358,7 @@ final class NativeRadarModel: ObservableObject {
         else { observedFailed = true }
         if case let .ready(snapshot) = globalResult { globalRadar = snapshot }
         rawDiscoveryFinished = true
-        if product == .radar { reconcileCurrentSelection() }
+        if product == .radar || product == .forecast { reconcileCurrentSelection() }
     }
 
     var activeAlerts: [NativeRadarAlertsContract.Alert] {
@@ -355,7 +373,76 @@ final class NativeRadarModel: ObservableObject {
         return "\(activeAlerts.count) official \(activeAlerts.count == 1 ? "alert" : "alerts") for this place"
     }
     func detailTime(_ date: Date) -> String { clock.detailLabel(for: date) }
-    func alert(_ id: String) -> NativeRadarAlertsContract.Alert? { alertSnapshot?.alert(idOrKey: id) }
+    func alert(_ id: String) -> NativeRadarAlertsContract.Alert? {
+        alertSnapshot?.alert(idOrKey: id) ?? viewportAlerts?.snapshot.alert(idOrKey: id)
+    }
+    func bulletinStatus(_ alert: NativeRadarAlertsContract.Alert) -> String {
+        let candidates = [(alertSnapshot, alertRefreshFailed), (viewportAlerts?.snapshot, viewportAlertsFailed)]
+        let snapshot = candidates.compactMap { snapshot, failed -> NativeRadarAlertsContract.Snapshot? in
+            guard let snapshot, !failed, snapshot.alert(idOrKey: alert.id) != nil,
+                  snapshot.isFresh(at: evaluationTime) else { return nil }
+            return snapshot
+        }.max { ($0.checkedAt ?? .distantPast) < ($1.checkedAt ?? .distantPast) }
+        guard let snapshot, alert.isActive(at: evaluationTime) else {
+            return "Last-known bulletin · refresh to check its current status"
+        }
+        return "Current NWS bulletin · checked \(snapshot.checkedAt.map(detailTime) ?? "recently")"
+    }
+    var visibleAreaAlerts: [NativeRadarAlertsContract.Alert] {
+        viewportAlerts?.snapshot.alerts.filter { $0.isActive(at: evaluationTime) } ?? []
+    }
+    var viewportAlertStatus: String {
+        if checkingViewportAlerts { return "Checking this map area…" }
+        guard let result = viewportAlerts else { return viewportAlertsFailed ? "Area alert check unavailable" : "Area alerts not checked yet" }
+        if result.completeness == .unsupported { return "NWS area alerts unavailable in this region" }
+        if viewportAlertsFailed || !result.snapshot.isFresh(at: evaluationTime) { return "Area alert check is out of date" }
+        if result.completeness == .partial { return "Some alert outlines may be missing" }
+        return visibleAreaAlerts.isEmpty ? "No active NWS alert polygons in this view" : "\(visibleAreaAlerts.count) active NWS alert outlines in this view"
+    }
+    private func updateAlertGeometry() {
+        // Keep place bulletins independent from viewport polygons. Never retain
+        // outlines from a previous viewport or an expired/incomplete refresh.
+        let placeData = alertRefreshFailed ? nil : try? alertSnapshot?.featureCollection(at: evaluationTime)
+        let areaData = viewportAlertsFailed ? nil : try? viewportAlerts?.snapshot.featureCollection(at: evaluationTime)
+        var features: [[String: Any]] = [], identifiers = Set<String>()
+        for data in [placeData, areaData].compactMap({ $0 }) {
+            guard let collection = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = collection["features"] as? [[String: Any]] else { continue }
+            for item in items {
+                guard let props = item["properties"] as? [String: Any], let id = props["alertID"] as? String,
+                      identifiers.insert(id).inserted else { continue }
+                features.append(item)
+            }
+        }
+        alertGeometry = features.isEmpty ? nil : try? JSONSerialization.data(withJSONObject: ["type": "FeatureCollection", "features": features])
+    }
+    private func scheduleViewportAlerts(force: Bool = false) {
+        viewportAlertTask?.cancel(); viewportAlertGeneration += 1
+        checkingViewportAlerts = false
+        guard active, !suspended, let viewport,
+              let scope = try? NativeRadarAlertsContract.Viewport(west: viewport.west, south: viewport.south,
+                  east: viewport.east, north: viewport.north) else { return }
+        let generation = viewportAlertGeneration
+        let previous = viewportAlertTask
+        checkingViewportAlerts = true
+        viewportAlertTask = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(600))
+                let result = try await self.viewportAlertsClient.loadViewport(viewport: scope,
+                    selectedPlace: try? .init(latitude: self.place.latitude, longitude: self.place.longitude),
+                    countryCode: nil, forceRefresh: force)
+                guard self.active, !self.suspended, !Task.isCancelled, self.viewportAlertGeneration == generation else { return }
+                self.viewportAlerts = result; self.viewportAlertsFailed = false
+            } catch {
+                guard self.active, !Task.isCancelled, self.viewportAlertGeneration == generation else { return }
+                self.viewportAlertsFailed = true
+            }
+            self.checkingViewportAlerts = false
+            self.updateAlertGeometry()
+        }
+    }
     private func refreshAlerts() async {
         guard let scope = try? NativeRadarAlertsContract.Scope.point(latitude: place.latitude,
             longitude: place.longitude, countryCode: place.countryCode) else { return }
@@ -363,11 +450,11 @@ final class NativeRadarModel: ObservableObject {
             let snapshot = try await alertsClient.load(scope: scope)
             guard active, !suspended, !Task.isCancelled else { return }
             alertSnapshot = snapshot; alertRefreshFailed = false
-            alertGeometry = try? snapshot.featureCollection(at: Date())
+            updateAlertGeometry()
         } catch {
             guard active, !suspended, !Task.isCancelled else { return }
             alertRefreshFailed = true
-            alertGeometry = nil
+            updateAlertGeometry()
         }
     }
 
@@ -425,6 +512,9 @@ final class NativeRadarModel: ObservableObject {
     func updateViewport(_ bounds: NativeRadarViewport) {
         guard bounds != viewport else { return }
         viewport = bounds
+        viewportAlerts = nil; viewportAlertsFailed = false
+        updateAlertGeometry()
+        scheduleViewportAlerts()
         radarCache.setViewport(.init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
         forecastField = nil
         loadSelectedImage(debounce: true)
@@ -435,10 +525,21 @@ final class NativeRadarModel: ObservableObject {
         if selectedDate == nil {
             imageTask?.cancel(); imageTask = nil; imageGeneration += 1
             image = nil; imageRequestID = nil; loadingImage = false
+            transitionApplied = false
+            transitionExplanation = "No forecast is displayed for this source time."
             imageMessage = refreshing ? "Loading available source times…" : "Selected source time is unavailable. Choose Radar or Forecast to return to the latest times."
             return
         }
-        let requestID = "\(product.rawValue)|\(usesNumericRadar)|\(usesGlobalRadar)|\(selectedInstant?.timeIntervalSince1970 ?? -1)|\(String(describing: viewport))|\(product == .forecast ? forecastRun?.run.cycleTime.timeIntervalSince1970 ?? -1 : -1)"
+        let iso: (Date) -> String = { RadarNumericContract.isoTime(Int64($0.timeIntervalSince1970 * 1000)) }
+        let identities = observedHistory.suffix(8).compactMap { frame in
+            try? NativeRadarTransitionPolicy.ObservationIdentity(sourceID: "\(frame.key)|\(frame.byteLength)",
+                validTime: RadarNumericContract.isoTime(frame.validTimeMilliseconds))
+        }
+        let transitionIdentity = try? NativeRadarTransitionPolicy.requestIdentity(observed: identities,
+            modelCycleTime: forecastRun.map { iso($0.run.cycleTime) },
+            modelAnchorValidTime: forecastSteps.first.map { iso($0.validTime) },
+            targetValidTime: selectedDate.map(iso), requestedAt: iso(Date()))
+        let requestID = "\(product.rawValue)|\(usesNumericRadar)|\(usesGlobalRadar)|\(selectedInstant?.timeIntervalSince1970 ?? -1)|\(String(describing: viewport))|\(product == .forecast ? transitionIdentity?.cacheKey ?? "unavailable" : "")"
         if imageRequestID == requestID, image != nil || loadingImage { return }
         imageRequestID = requestID
         imageGeneration += 1
@@ -447,6 +548,8 @@ final class NativeRadarModel: ObservableObject {
         previous?.cancel()
         image = nil
         imageMessage = nil
+        transitionApplied = false
+        transitionExplanation = "Forecast uses the original HRRR model guidance."
         loadingImage = false
         if usesNumericRadar {
             loadObservedImage(previous: previous, generation: generation, debounce: debounce)
@@ -464,7 +567,12 @@ final class NativeRadarModel: ObservableObject {
         }
         let step = forecastSteps[selectedIndex]
         let available = forecastSteps
-        let indexes = Array(available.dropFirst((selectedIndex / 8) * 8).prefix(8).map(\.sourceIndex))
+        let anchorStep = available.first
+        let observedCandidates = transitionCandidates(anchorStep: anchorStep, targetStep: step, run: run)
+        var indexes = Array(available.dropFirst((selectedIndex / 8) * 8).prefix(8).map(\.sourceIndex))
+        if !observedCandidates.isEmpty, let anchorStep, !indexes.contains(anchorStep.sourceIndex) {
+            indexes = [anchorStep.sourceIndex] + Array(indexes.prefix(7))
+        }
         loadingImage = true
         imageTask = Task { [weak self] in
             await previous?.value
@@ -472,17 +580,73 @@ final class NativeRadarModel: ObservableObject {
             do {
                 if debounce { try await Task.sleep(for: .milliseconds(350)) }
                 let field: HRRRZarrClient.Field
-                if self.forecastFieldBounds == viewport, let cached = self.forecastField,
-                   cached.loaded.run.cycleTime == run.run.cycleTime,
-                   cached.steps.contains(where: { $0.sourceIndex == step.sourceIndex }) { field = cached }
+                let requestedBounds = RadarChunkContract.Bounds(minLat: viewport.south, minLon: viewport.west,
+                    maxLat: viewport.north, maxLon: viewport.east)
+                if let cachedBounds = self.forecastFieldBounds, let cached = self.forecastField,
+                   NativeRadarTransitionPolicy.canReuseField(cachedCycleTime: iso(cached.loaded.run.cycleTime),
+                    requestedCycleTime: iso(run.run.cycleTime),
+                    cachedBounds: .init(minLat: cachedBounds.south, minLon: cachedBounds.west, maxLat: cachedBounds.north, maxLon: cachedBounds.east),
+                    requestedBounds: requestedBounds, cachedSourceIndexes: cached.steps.map(\.sourceIndex),
+                    requiredSourceIndexes: indexes) { field = cached }
                 else {
                     field = try await forecastClient.load(run: run,
                         bounds: .init(west: viewport.west, south: viewport.south, east: viewport.east, north: viewport.north),
                         sourceIndexes: indexes, maximumChunks: 8)
                 }
                 try Task.checkCancellation()
+                // Publish usable model guidance first. Optional radar history
+                // must never leave a loaded forecast blank while it downloads.
+                let baselineTask = Task.detached(priority: .userInitiated) {
+                    let original = try NativeRadarModel.renderFrame(field: field, step: step, bounds: viewport)
+                    let rgba = Data(try RadarNumericContract.resolvedRGBA(original.texture, encoding: original.encoding))
+                    let rendered = try NativeRadarModel.makeImage(rgba: rgba, width: original.texture.width, height: original.texture.height)
+                    try Task.checkCancellation()
+                    return (original, NativeRadarImage(id: "hrrr:\(run.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(viewport):original:\(generation)",
+                        image: rendered, west: viewport.west, south: viewport.south, east: viewport.east, north: viewport.north))
+                }
+                let (original, baseline) = try await withTaskCancellationHandler(operation: {
+                    try await baselineTask.value
+                }, onCancel: { baselineTask.cancel() })
+                try Task.checkCancellation()
+                guard self.active, !self.suspended, self.imageGeneration == generation else { return }
+                self.forecastField = field; self.forecastFieldBounds = viewport
+                self.publishForecast(baseline, numeric: original, bounds: viewport)
+                guard !observedCandidates.isEmpty else { return }
+                // Auxiliary motion evidence is bounded and optional. Failure to
+                // obtain it must never hide otherwise usable model guidance.
+                let observations = (try? await self.loadTransitionObservations(observedCandidates,
+                    bounds: viewport, generation: generation)) ?? []
+                try Task.checkCancellation()
+                guard observations.count >= 3 else { return }
+                let requestedAt = Date()
                 let renderTask = Task.detached(priority: .userInitiated) {
-                    try NativeRadarModel.render(field: field, step: step, bounds: viewport)
+                    var output = original
+                    var enhanced = false
+                    var explanation = "Original HRRR model. Radar alignment was not supported by fresh, consistent motion evidence for this view and time."
+                    if observations.count >= 3, let anchorStep {
+                        do {
+                            let anchor = anchorStep == step ? original : try NativeRadarModel.renderFrame(field: field, step: anchorStep, bounds: viewport)
+                            let transition = try NativeRadarTransition.compose(observed: observations,
+                                forecastAnchor: anchor, forecastTarget: original,
+                                cycleTime: RadarNumericContract.isoTime(Int64(run.run.cycleTime.timeIntervalSince1970 * 1000)),
+                                requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000)))
+                            if case let .ready(result) = transition {
+                                output = result.frame; enhanced = true
+                                explanation = "This forecast uses recent observed radar motion and HRRR guidance at the exact model time. It is a prediction, not a radar observation. Uncovered edges remain unavailable."
+                            }
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            // Optional alignment cannot erase a valid forecast.
+                            explanation = "Original HRRR model. Radar alignment was unavailable."
+                        }
+                    }
+                    try Task.checkCancellation()
+                    let rgba = Data(try RadarNumericContract.resolvedRGBA(output.texture, encoding: output.encoding))
+                    let rendered = try NativeRadarModel.makeImage(rgba: rgba, width: output.texture.width, height: output.texture.height)
+                    let id = "hrrr:\(run.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(viewport):\(enhanced):\(generation)"
+                    return (image: NativeRadarImage(id: id, image: rendered, west: viewport.west, south: viewport.south,
+                        east: viewport.east, north: viewport.north), numeric: output, enhanced: enhanced, explanation: explanation)
                 }
                 let result = try await withTaskCancellationHandler(operation: {
                     try Task.checkCancellation()
@@ -490,20 +654,32 @@ final class NativeRadarModel: ObservableObject {
                 }, onCancel: { renderTask.cancel() })
                 try Task.checkCancellation()
                 guard self.active, self.imageGeneration == generation else { return }
-                self.forecastField = field; self.forecastFieldBounds = viewport
-                self.image = result.image
-                let placeInView = (viewport.south...viewport.north).contains(self.place.latitude)
-                    && (viewport.west...viewport.east).contains(self.place.longitude)
-                let placeValue = field.sample(longitude: self.place.longitude, latitude: self.place.latitude, sourceIndex: step.sourceIndex)
-                self.imageMessage = placeInView && !(placeValue?.isFinite ?? false) ? "Forecast coverage is missing at this place."
-                    : result.coverage < 0.98 ? "Some of this view is outside model coverage. Blank areas are unavailable." : nil
-                self.loadingImage = false
+                self.transitionApplied = result.enhanced
+                self.transitionExplanation = result.explanation
+                if result.enhanced { self.publishForecast(result.image, numeric: result.numeric, bounds: viewport) }
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
                 self.loadingImage = false
-                self.imageMessage = "Forecast imagery could not load for this view. Try zooming in or refreshing."
+                if self.image == nil {
+                    self.imageMessage = "Forecast imagery could not load for this view. Try zooming in or refreshing."
+                } else {
+                    self.transitionExplanation = "Original HRRR model. Optional radar alignment was unavailable."
+                }
             }
         }
+    }
+
+    private func publishForecast(_ rendered: NativeRadarImage, numeric: NativeRadarSeamEstimation.Frame,
+                                 bounds: NativeRadarViewport) {
+        image = rendered
+        let placeInView = (bounds.south...bounds.north).contains(place.latitude)
+            && (bounds.west...bounds.east).contains(place.longitude)
+        let placeCovered = Self.placeHasCoverage(numeric.validDataMask, width: numeric.texture.width,
+            height: numeric.texture.height, bounds: bounds, latitude: place.latitude, longitude: place.longitude)
+        let coverage = Double(numeric.validDataMask.filter { $0 != 0 }.count) / Double(numeric.validDataMask.count)
+        imageMessage = placeInView && placeCovered == false ? "Forecast coverage is missing at this place."
+            : coverage < 0.98 ? "Some of this view is outside forecast coverage. Blank areas are unavailable." : nil
+        loadingImage = false
     }
 
     private func loadObservedImage(previous: Task<Void, Never>?, generation: Int, debounce: Bool) {
@@ -546,8 +722,9 @@ final class NativeRadarModel: ObservableObject {
                 self.imageMessage = placeCovered == false ? "Radar coverage is missing at this place."
                     : coverage < 0.98 ? "Some of this view has no radar coverage. Blank areas are unavailable." : nil
                 if let image = self.image {
-                    _ = self.radarCache.insert(.init(image: image, message: self.imageMessage), for: frame.key,
-                        cost: decoded.texture.width * decoded.texture.height * 4)
+                    let numeric = try Self.numericFrame(decoded, bounds: viewport, frame: frame)
+                    _ = self.radarCache.insert(.init(image: image, message: self.imageMessage, numeric: numeric), for: frame.key,
+                        cost: decoded.texture.width * decoded.texture.height * 6)
                 }
                 self.loadingImage = false
             } catch {
@@ -558,24 +735,102 @@ final class NativeRadarModel: ObservableObject {
         }
     }
 
+    /// Select actual advertised scans near -20/-10/0 minutes. Do not download
+    /// an unbounded radar history simply to make a model transition look smooth.
+    private func transitionCandidates(anchorStep: HRRRZarrContract.Step?, targetStep: HRRRZarrContract.Step,
+                                      run: HRRRZarrClient.LoadedRun) -> [MRMSContract.AdvertisedFrame] {
+        guard let anchorStep, let latest = observedHistory.last else { return [] }
+        let anchor = Date(timeIntervalSince1970: Double(latest.validTimeMilliseconds) / 1000)
+        let now = Date()
+        guard now.timeIntervalSince(anchor) >= 0, now.timeIntervalSince(anchor) <= 8 * 60,
+              now.timeIntervalSince(run.run.cycleTime) >= 0, now.timeIntervalSince(run.run.cycleTime) <= 150 * 60,
+              anchorStep.validTime > now, anchorStep.validTime.timeIntervalSince(anchor) <= 30 * 60,
+              targetStep.validTime.timeIntervalSince(anchor) <= 70 * 60 else { return [] }
+        // A clear observed view needs no storm-motion correction. Avoid extra
+        // national radar downloads on the most common, quiet-weather path.
+        if let cached = radarCache.value(for: latest.key),
+           cached.numeric.texture.bytes.filter({ $0 >= 17 }).count < 32 { return [] }
+        var selected: [MRMSContract.AdvertisedFrame] = []
+        for lag in [20.0, 10.0] {
+            let desired = latest.validTimeMilliseconds - Int64(lag * 60_000)
+            if let older = observedHistory.dropLast().filter({ candidate in
+                !selected.contains(where: { $0.key == candidate.key })
+            }).min(by: { abs($0.validTimeMilliseconds - desired) < abs($1.validTimeMilliseconds - desired) }),
+               abs(older.validTimeMilliseconds - desired) <= 6 * 60_000 { selected.append(older) }
+        }
+        guard selected.count == 2 else { return [] }
+        return (selected + [latest]).sorted { $0.validTimeMilliseconds < $1.validTimeMilliseconds }
+    }
+
+    private func loadTransitionObservations(_ frames: [MRMSContract.AdvertisedFrame], bounds: NativeRadarViewport,
+                                           generation: Int) async throws -> [NativeRadarSeamEstimation.Frame] {
+        guard frames.count == 3, let observedClient else { return [] }
+        var output: [NativeRadarSeamEstimation.Frame] = []
+        // Latest first: incomplete/clear coverage can stop without fetching history.
+        for frame in frames.reversed() {
+            try Task.checkCancellation()
+            guard active, !suspended, imageGeneration == generation, viewport == bounds else { throw CancellationError() }
+            if let cached = radarCache.value(for: frame.key) { output.append(cached.numeric) }
+            else {
+                let decoded = try await observedClient.decodeFrame(frame,
+                    bounds: .init(minLat: bounds.south, minLon: bounds.west, maxLat: bounds.north, maxLon: bounds.east),
+                    width: 384, height: 512)
+                let numeric = try Self.numericFrame(decoded, bounds: bounds, frame: frame)
+                try Task.checkCancellation()
+                guard active, !suspended, imageGeneration == generation, viewport == bounds else { throw CancellationError() }
+                guard numeric.completeCoverage else { return [] }
+                let task = Task.detached(priority: .userInitiated) {
+                    let rgba = Data(try RadarNumericContract.resolvedRGBA(numeric.texture, encoding: numeric.encoding))
+                    try Task.checkCancellation()
+                    return try Self.makeImage(rgba: rgba, width: numeric.texture.width, height: numeric.texture.height)
+                }
+                let rendered = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+                try Task.checkCancellation()
+                guard active, !suspended, imageGeneration == generation, viewport == bounds else { throw CancellationError() }
+                let image = NativeRadarImage(id: "mrms:\(frame.validTimeMilliseconds):\(bounds)", image: rendered,
+                    west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north)
+                _ = radarCache.insert(.init(image: image, message: nil, numeric: numeric), for: frame.key,
+                    cost: numeric.texture.width * numeric.texture.height * 6)
+                output.append(numeric)
+            }
+            if output.count == 1, let latest = output.first,
+               (!latest.completeCoverage || latest.texture.bytes.filter({ $0 >= 17 }).count < 32) { return [] }
+        }
+        return output.sorted { $0.validTimeMilliseconds < $1.validTimeMilliseconds }
+    }
+
+    nonisolated private static func numericFrame(_ decoded: MRMSContract.Viewport, bounds: NativeRadarViewport,
+                                                 frame: MRMSContract.AdvertisedFrame) throws -> NativeRadarSeamEstimation.Frame {
+        try .init(texture: decoded.texture,
+            bounds: .init(minLat: bounds.south, minLon: bounds.west, maxLat: bounds.north, maxLon: bounds.east),
+            encoding: decoded.encoding, validTime: RadarNumericContract.isoTime(frame.validTimeMilliseconds),
+            validDataMask: decoded.validDataMask)
+    }
+
     nonisolated private static func placeHasRadarCoverage(_ decoded: MRMSContract.Viewport, bounds: NativeRadarViewport,
                                                           latitude: Double, longitude: Double) -> Bool? {
+        placeHasCoverage(decoded.validDataMask, width: decoded.texture.width, height: decoded.texture.height,
+            bounds: bounds, latitude: latitude, longitude: longitude)
+    }
+
+    nonisolated private static func placeHasCoverage(_ mask: [UInt8], width: Int, height: Int, bounds: NativeRadarViewport,
+                                                    latitude: Double, longitude: Double) -> Bool? {
         guard latitude >= bounds.south, latitude <= bounds.north,
               longitude >= bounds.west, longitude <= bounds.east else { return nil }
         func mercator(_ value: Double) -> Double { log(tan(.pi / 4 + value * .pi / 360)) }
-        let x = min(decoded.texture.width - 1, max(0, Int(floor((longitude - bounds.west) / (bounds.east - bounds.west) * Double(decoded.texture.width)))))
-        let y = min(decoded.texture.height - 1, max(0, Int(floor((mercator(bounds.north) - mercator(latitude))
-            / (mercator(bounds.north) - mercator(bounds.south)) * Double(decoded.texture.height)))))
-        return decoded.validDataMask[y * decoded.texture.width + x] != 0
+        let x = min(width - 1, max(0, Int(floor((longitude - bounds.west) / (bounds.east - bounds.west) * Double(width)))))
+        let y = min(height - 1, max(0, Int(floor((mercator(bounds.north) - mercator(latitude))
+            / (mercator(bounds.north) - mercator(bounds.south)) * Double(height)))))
+        return mask[y * width + x] != 0
     }
 
     /// Resample the actual LCC grid into Web Mercator. A four-corner stretch of
     /// the original projected grid would misplace storms between the corners.
-    nonisolated private static func render(field: HRRRZarrClient.Field, step: HRRRZarrContract.Step,
-                                           bounds: NativeRadarViewport) throws -> (image: NativeRadarImage, coverage: Double) {
+    nonisolated private static func renderFrame(field: HRRRZarrClient.Field, step: HRRRZarrContract.Step,
+                                           bounds: NativeRadarViewport) throws -> NativeRadarSeamEstimation.Frame {
         let width = 384, height = 512
         let encoding = try RadarNumericContract.Encoding()
-        var bytes = [UInt8](repeating: 0, count: width * height), covered = 0
+        var bytes = [UInt8](repeating: 0, count: width * height), mask = bytes, covered = 0
         let viewport = try NativeRadarPresentationContract.Viewport(west: bounds.west, south: bounds.south,
                                                                     east: bounds.east, north: bounds.north)
         for y in 0..<height {
@@ -584,6 +839,7 @@ final class NativeRadarModel: ObservableObject {
                 let point = try viewport.pixelCenter(column: x, row: y, width: width, height: height)
                 if let value = field.sample(longitude: point.longitude, latitude: point.latitude, sourceIndex: step.sourceIndex), value.isFinite {
                     covered += 1
+                    mask[y * width + x] = 1
                     // Clear-air negative dBZ is valid coverage but remains transparent.
                     if value >= 5 { bytes[y * width + x] = try RadarNumericContract.encodeDbz(Double(value), encoding: encoding) }
                 }
@@ -591,11 +847,8 @@ final class NativeRadarModel: ObservableObject {
         }
         guard covered > 0 else { throw HRRRZarrCodec.Failure.invalidGeometry }
         let texture = try RadarNumericContract.Texture(width: width, height: height, bytes: bytes)
-        let rgba = Data(try RadarNumericContract.resolvedRGBA(texture, encoding: encoding))
-        let image = try makeImage(rgba: rgba, width: width, height: height)
-        let id = "hrrr:\(field.loaded.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(bounds)"
-        return (.init(id: id, image: image, west: bounds.west, south: bounds.south,
-                      east: bounds.east, north: bounds.north), Double(covered) / Double(width * height))
+        return try .init(texture: texture, bounds: .init(minLat: bounds.south, minLon: bounds.west, maxLat: bounds.north, maxLon: bounds.east),
+            encoding: encoding, validTime: RadarNumericContract.isoTime(Int64(step.validTime.timeIntervalSince1970 * 1000)), validDataMask: mask)
     }
 
     nonisolated private static func makeImage(rgba: Data, width: Int, height: Int) throws -> UIImage {
@@ -641,9 +894,9 @@ final class NativeRadarModel: ObservableObject {
         if wasSuspended && basemapStyle == .satellite && satellite == nil { selectBasemap(.satellite) }
         evaluationTime = Date()
         timeline.advanceClock(to: evaluationTime)
-        alertGeometry = alertRefreshFailed ? nil : try? alertSnapshot?.featureCollection(at: evaluationTime)
+        updateAlertGeometry()
         if selectedDate == nil { pause(); loadSelectedImage() }
-        else if image == nil && !loadingImage { loadSelectedImage() }
+        else if product == .forecast || (image == nil && !loadingImage) { loadSelectedImage() }
         if let lastMetadataAttempt, evaluationTime.timeIntervalSince(lastMetadataAttempt) >= 4 * 60 { requestRefresh() }
         else if lastMetadataAttempt == nil && rendererReady { requestRefresh() }
         if wasSuspended && !rendererReady { Task { await start() } }
@@ -658,6 +911,8 @@ final class NativeRadarModel: ObservableObject {
         imageTask?.cancel(); imageTask = nil; imageGeneration += 1
         loadingImage = false
         satelliteTask?.cancel(); satelliteTask = nil; satelliteGeneration += 1
+        viewportAlertTask?.cancel(); viewportAlertTask = nil; viewportAlertGeneration += 1
+        checkingViewportAlerts = false
         loadingSatellite = false
         imageRequestID = nil
     }

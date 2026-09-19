@@ -229,6 +229,11 @@ private struct NativeWeatherPreviewContainer: View {
                     placesSettingsTab = nil
                     openExisting(.map)
                 },
+                onAskAboutPlace: { place in
+                    placesSettingsTab = nil
+                    webModel.handoffNativePreview(NativePreviewHandoff(destination: .ask,
+                        place: place, date: nil, timezone: place.timezone))
+                },
                 nativeMapContext: preview.context,
                 nativeMapTimezone: preview.forecast?.timezoneID,
                 onEnableNativeStorage: { Task { await webModel.enableNativePlacesStorage() } },

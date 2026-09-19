@@ -12,11 +12,17 @@ private final class AlertsMockStore: @unchecked Sendable {
     private var reply = AlertsReply(data: Data())
     private var count = 0
     private var headers: [String: String] = [:]
-    func set(_ value: AlertsReply) { lock.lock(); reply = value; lock.unlock() }
+    private var replies: [AlertsReply] = []
+    private var urls: [URL] = []
+    func set(_ value: AlertsReply) { lock.lock(); reply = value; replies = []; urls = []; lock.unlock() }
+    func setSequence(_ values: [AlertsReply]) { lock.lock(); replies = values; urls = []; lock.unlock() }
     func start(_ request: URLRequest) -> AlertsReply {
-        lock.lock(); defer { lock.unlock() }; count += 1; headers = request.allHTTPHeaderFields ?? [:]; return reply
+        lock.lock(); defer { lock.unlock() }; count += 1; headers = request.allHTTPHeaderFields ?? [:]
+        if let url = request.url { urls.append(url) }
+        return replies.isEmpty ? reply : replies.removeFirst()
     }
     func state() -> (Int, [String: String]) { lock.lock(); defer { lock.unlock() }; return (count, headers) }
+    func requestedURLs() -> [URL] { lock.lock(); defer { lock.unlock() }; return urls }
 }
 private final class AlertsMockProtocol: URLProtocol, @unchecked Sendable {
     static let store = AlertsMockStore()
@@ -76,6 +82,8 @@ enum NativeRadarAlertsTests {
         try contractTests()
         try geometryTests()
         try await transportTests()
+        try viewportContractTests()
+        try await viewportTransportTests()
         if CommandLine.arguments.contains("--live") {
             let scope = try C.Scope.point(latitude: 38.7237, longitude: -89.9557, countryCode: "US")
             let snapshot = try await NativeRadarAlertsClient().load(scope: scope)
@@ -83,7 +91,16 @@ enum NativeRadarAlertsTests {
             let features = (try JSONSerialization.jsonObject(with: collection) as! [String: Any])["features"] as! [Any]
             print("LIVE NWS selected-point result: quality=\(snapshot.quality.rawValue), bulletins=\(snapshot.alerts.count), polygons=\(features.count), rejected=\(snapshot.rejectedFeatureCount). Not a viewport-wide check.")
         }
-        print("PASS Native official alerts: CAP intervals/status, bulletin-only null geometry, holes/dateline, routes, bounded transport/cancellation")
+        if CommandLine.arguments.contains("--live-viewport") {
+            let client = NativeRadarAlertsClient()
+            let result = try await client.loadViewport(viewport: C.Viewport(west: -93, south: 36, east: -87, north: 41),
+                selectedPlace: C.Point(latitude: 38.7237, longitude: -89.9557))
+            print("LIVE NWS polygon feed: \(result.completeness.rawValue), viewport bulletins=\(result.snapshot.alerts.count), unmapped nationwide=\(result.unmappedBulletinCount), rejected=\(result.snapshot.rejectedFeatureCount), pages=\(result.pageCount). Not an all-clear or county-boundary check.")
+            let wide = try await client.loadViewport(viewport: C.Viewport(west: -180, south: -90, east: 180, north: 90))
+            try check(wide.wasCached, "live wide pan uses same in-memory feed")
+            print("LIVE cached world pan: official polygon bulletins=\(wide.snapshot.alerts.count), current renderable polygons=\(try renderedCount(wide.snapshot, at: Date())).")
+        }
+        print("PASS Native official alerts: CAP intervals/status, null geometry, holes/dateline, point/viewport routes, pagination budgets/cache/cancellation")
     }
 
     static func contractTests() throws {
@@ -196,6 +213,123 @@ enum NativeRadarAlertsTests {
     static func renderedCount(_ snapshot: C.Snapshot, at date: Date = now) throws -> Int {
         let object = try JSONSerialization.jsonObject(with: snapshot.featureCollection(at: date)) as! [String: Any]
         return (object["features"] as! [Any]).count
+    }
+
+    static func viewportContractTests() throws {
+        let box = try C.Viewport(west: -90.5, south: 37.5, east: -89, north: 39)
+        let place = try C.Point(latitude: 38.5, longitude: -89.5)
+        let scope = try C.Scope.viewport(box, selectedPlace: place)
+        try check(scope.url.absoluteString == "https://api.weather.gov/alerts/active", "viewport never becomes a point query")
+        let outside: [String: Any] = ["type": "Polygon", "coordinates": [[[-80.0, 30], [-79, 30], [-79, 31], [-80, 31]]]]
+        let page = try data([feature(geometry: square), feature(id: "null"), feature(id: "outside", geometry: outside)])
+        let result = try C.decodeViewport([page], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(result.snapshot.alerts.count == 1 && result.snapshot.alerts[0].id == "urn:nws:alert:one", "only intersecting official polygon enters viewport list")
+        try check(result.snapshot.alerts[0].coverage == .inside && result.snapshot.alerts[0].coverageBasis == .featureGeometry, "selected-place relation remains exact geometry")
+        try check(result.completeness == .polygonFeedComplete && result.unmappedBulletinCount == 1, "null bulletins counted honestly without wrong-area assignment")
+        let empty = try C.decodeViewport([data([])], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(!empty.snapshot.isVerifiedEmpty(at: now) && empty.snapshot.quality == .unknownCoverage, "empty polygon viewport never becomes no-alerts claim")
+        let partial = try C.decodeViewport([page], scope: scope, checkedAt: now, now: now, transportComplete: false)
+        try check(partial.completeness == .partial && partial.snapshot.alerts.count == 1, "partial feed retains known polygons")
+        let old = try C.decodeViewport([page], scope: scope, checkedAt: now.addingTimeInterval(-301), now: now, transportComplete: true, wasCached: true)
+        try check(!old.snapshot.isFresh(at: now) && old.wasCached && renderedCount(old.snapshot) == 0, "cache reprojection cannot freshen checked time")
+        let cancel = feature(id: "cancel", changes: ["messageType": "Cancel", "sent": "2026-09-19T01:00:00Z", "references": [["identifier": "urn:nws:alert:one"]]])
+        let cancelled = try C.decodeViewport([data([feature(geometry: square)]), data([cancel])], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(cancelled.snapshot.alerts.isEmpty, "later-page CAP cancellation retires first-page polygon")
+        let update = feature(geometry: square, changes: ["sent": "2026-09-19T01:00:00Z", "headline": "Updated"])
+        let duplicate = try C.decodeViewport([data([feature(geometry: square)]), data([update])], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(duplicate.snapshot.alerts.count == 1 && duplicate.snapshot.alerts[0].headline == "Updated", "newest same ID deduplicated across pages")
+        let malformed = try C.decodeViewport([data([feature(geometry: ["type": "Point", "coordinates": [-89, 38]])])], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(malformed.completeness == .partial, "malformed geometry invalidates feed completeness")
+        let expiredProduct = feature(id: "expired", geometry: square, changes: ["expires": "2026-09-19T01:30:00Z"])
+        let mixedExpiry = try C.decodeViewport([data([expiredProduct, feature(geometry: square)])], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(mixedExpiry.completeness == .partial && mixedExpiry.snapshot.alerts.count == 1 && renderedCount(mixedExpiry.snapshot) == 1, "expired product cannot blank a current valid viewport warning")
+        let dateline: [String: Any] = ["type": "Polygon", "coordinates": [[[179.0, 10], [-179, 10], [-179, 12], [179, 12]]]]
+        let wrapped = try C.Viewport(west: 178, south: 9, east: -178, north: 13)
+        let geometry = try C.Geometry(raw: dateline)
+        try check(geometry.intersects(wrapped) && !C.Geometry(raw: square).intersects(wrapped), "wrapped viewport intersects only dateline-local geometry")
+        let wrappedResult = try C.decodeViewport([data([feature(geometry: dateline), feature(id: "inland", geometry: square)])], scope: C.Scope.viewport(wrapped), checkedAt: now, now: now, transportComplete: true)
+        try check(wrappedResult.snapshot.alerts.count == 1 && renderedCount(wrappedResult.snapshot) == 1, "wrapped viewport collection safe and visible")
+        try rejects("invalid viewport west") { _ = try C.Viewport(west: 181, south: 1, east: -179, north: 2) }
+        try rejects("zero-width wrapped viewport") { _ = try C.Viewport(west: 180, south: 1, east: -180, north: 2) }
+        let allowed = "https://api.weather.gov/alerts?active=true&limit=500&cursor=abc%2Bdef"
+        let next = try C.viewportNextPage(data([], extra: ["pagination": ["next": allowed]]))
+        try check(next?.host == "api.weather.gov" && URLComponents(url: next!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "cursor" })?.value == "abc+def", "only explicit active continuation is rebuilt")
+        for unsafe in ["https://evil.invalid/alerts?active=true&cursor=a", "http://api.weather.gov/alerts?active=true&cursor=a",
+            "https://api.weather.gov/alerts?cursor=a", "https://api.weather.gov/alerts?active=false&cursor=a",
+            "https://api.weather.gov/alerts?active=true&limit=501&cursor=a", "https://api.weather.gov/alerts?active=true&cursor=a&point=1,1",
+            "https://api.weather.gov/alerts?active=true&cursor=a&cursor=b", "https://user@api.weather.gov/alerts?active=true&cursor=a",
+            "https://api.weather.gov/alerts/active?cursor=a#fragment", "https://api.weather.gov/alerts/active?cursor=%0A"] {
+            try rejects("pagination \(unsafe)") { _ = try C.viewportNextPage(data([], extra: ["pagination": ["next": unsafe]])) }
+        }
+        let oversized = try data(Array(repeating: feature(geometry: square), count: C.maximumViewportFeatures + 1))
+        let limited = try C.decodeViewport([oversized], scope: scope, checkedAt: now, now: now, transportComplete: true)
+        try check(limited.completeness == .partial && limited.snapshot.alerts.count == 1, "aggregate feature cap is partial, not silently complete")
+    }
+
+    static func viewportTransportTests() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AlertsMockProtocol.self]
+        let box = try C.Viewport(west: -91, south: 37, east: -88, north: 40)
+        let first = try data([feature(geometry: square)], extra: ["pagination": ["next": "https://api.weather.gov/alerts?active=true&cursor=page2"]])
+        AlertsMockProtocol.store.setSequence([.init(data: first), .init(data: try data([feature(id: "second", geometry: square), feature(id: "null")]))])
+        let client = NativeRadarAlertsClient(configuration: config)
+        let loaded = try await client.loadViewport(viewport: box, now: now)
+        try check(loaded.completeness == .polygonFeedComplete && loaded.pageCount == 2 && loaded.snapshot.alerts.count == 2, "bounded pagination collects nearby official polygons")
+        let before = AlertsMockProtocol.store.state().0
+        let cached = try await client.loadViewport(viewport: C.Viewport(west: -80, south: 30, east: -79, north: 31), now: now.addingTimeInterval(299))
+        try check(cached.wasCached && cached.snapshot.alerts.isEmpty && AlertsMockProtocol.store.state().0 == before, "camera pans reproject five-minute feed without extra requests")
+        AlertsMockProtocol.store.set(.init(data: try data([])))
+        let refreshed = try await client.loadViewport(viewport: box, now: now.addingTimeInterval(300))
+        try check(!refreshed.wasCached && refreshed.snapshot.checkedAt == now.addingTimeInterval(300) && AlertsMockProtocol.store.state().0 == before + 1, "expired feed requires network and new checked time")
+        _ = try await client.loadViewport(viewport: box, now: now.addingTimeInterval(301), forceRefresh: true)
+        try check(AlertsMockProtocol.store.state().0 == before + 2, "explicit refresh bypasses memory cache")
+        AlertsMockProtocol.store.set(.init(data: try data([feature(geometry: square, changes: ["expires": "2026-09-19T01:30:00Z"])])))
+        let rejectedSourceClient = NativeRadarAlertsClient(configuration: config)
+        _ = try await rejectedSourceClient.loadViewport(viewport: box, now: now)
+        let sourceRetryCount = AlertsMockProtocol.store.state().0
+        let reusedPartial = try await rejectedSourceClient.loadViewport(viewport: box, now: now.addingTimeInterval(60))
+        try check(reusedPartial.wasCached && reusedPartial.completeness == .partial && AlertsMockProtocol.store.state().0 == sourceRetryCount, "expired source product does not provoke national refetch on every pan")
+
+        AlertsMockProtocol.store.setSequence([.init(data: first), .init(data: Data(), status: 503)])
+        let failedPage = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(failedPage.completeness == .partial && failedPage.snapshot.alerts.count == 1 && failedPage.pageCount == 1, "later-page provider failure leaves honest partial known alerts")
+        let unsafe = try data([feature(geometry: square)], extra: ["pagination": ["next": "https://example.invalid/steal"]])
+        AlertsMockProtocol.store.set(.init(data: unsafe))
+        let rejected = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(rejected.completeness == .partial && AlertsMockProtocol.store.requestedURLs().count == 1, "unsafe pagination is not followed")
+        let repeated = try data([feature(geometry: square)], extra: ["pagination": ["next": "https://api.weather.gov/alerts?active=true&cursor=same"]])
+        AlertsMockProtocol.store.set(.init(data: repeated))
+        let cycle = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(cycle.completeness == .partial && cycle.pageCount == 2, "repeated cursor cannot loop")
+        let pages = try (1...6).map { index in AlertsReply(data: try data([feature(id: "\(index)", geometry: square)], extra: ["pagination": ["next": "https://api.weather.gov/alerts?active=true&cursor=\(index)"]])) }
+        AlertsMockProtocol.store.setSequence(pages)
+        let capped = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(capped.completeness == .partial && capped.pageCount == C.maximumViewportPages && AlertsMockProtocol.store.requestedURLs().count == C.maximumViewportPages, "pagination request cap enforced")
+        let featurePages = try (1...4).map { index in AlertsReply(data: try data(Array(repeating: feature(id: "\(index)", geometry: square), count: 700), extra: ["pagination": ["next": "https://api.weather.gov/alerts?active=true&cursor=\(index)"]])) }
+        AlertsMockProtocol.store.setSequence(featurePages)
+        let featureCap = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(featureCap.completeness == .partial && featureCap.pageCount == 3 && AlertsMockProtocol.store.requestedURLs().count == 3, "feature count caps request work before fourth page")
+        let bytePages = try (1...4).map { index in AlertsReply(data: try data([feature(id: "\(index)", geometry: square)], extra: ["padding": String(repeating: "x", count: 2_900_000), "pagination": ["next": "https://api.weather.gov/alerts?active=true&cursor=\(index)"]])) }
+        AlertsMockProtocol.store.setSequence(bytePages)
+        let byteCap = try await NativeRadarAlertsClient(configuration: config).loadViewport(viewport: box, now: now)
+        try check(byteCap.completeness == .partial && byteCap.pageCount == 2 && AlertsMockProtocol.store.requestedURLs().count == 3, "third response cannot exceed remaining aggregate byte allowance")
+        let unsupportedCount = AlertsMockProtocol.store.state().0
+        let unsupported = try await client.loadViewport(viewport: box, countryCode: "CA", now: now)
+        try check(unsupported.completeness == .unsupported && AlertsMockProtocol.store.state().0 == unsupportedCount, "unsupported country never downloads national feed")
+        AlertsMockProtocol.store.setSequence([.init(data: first), .init(data: Data(), hold: true)])
+        let cancelClient = NativeRadarAlertsClient(configuration: config)
+        let held = Task { try await cancelClient.loadViewport(viewport: box, now: now) }
+        for _ in 0..<200 {
+            if AlertsMockProtocol.store.requestedURLs().count == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try check(AlertsMockProtocol.store.requestedURLs().count == 2, "second page request began")
+        held.cancel()
+        do { _ = try await held.value; throw NSError(domain: "NativeRadarAlertsTests", code: 5) }
+        catch { try check(error is CancellationError, "page cancellation propagates rather than publishing partial success") }
+        AlertsMockProtocol.store.set(.init(data: try data([])))
+        let recovery = try await cancelClient.loadViewport(viewport: box, now: now)
+        try check(!recovery.wasCached && recovery.snapshot.alerts.isEmpty, "cancelled feed not cached and single-flight slot released")
     }
 
     static func transportTests() async throws {

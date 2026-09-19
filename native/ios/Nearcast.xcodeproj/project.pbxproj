@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC1000000000000000000029 /* NativeRadarSeamEstimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000029 /* NativeRadarSeamEstimation.swift */; };
+		AC100000000000000000002A /* NativeRadarSeamGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000002A /* NativeRadarSeamGates.swift */; };
+		AC100000000000000000002B /* NativeRadarTransition.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000002B /* NativeRadarTransition.swift */; };
 		AC1000000000000000000028 /* NativeRadarFrameCachePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */; };
 		AC1000000000000000000026 /* NativeRadarAlertsContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000026 /* NativeRadarAlertsContract.swift */; };
 		AC1000000000000000000027 /* NativeRadarAlertsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000027 /* NativeRadarAlertsClient.swift */; };
@@ -166,6 +169,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AC2000000000000000000029 /* NativeRadarSeamEstimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarSeamEstimation.swift; path = ../experiments/NativeRadarFoundation/NativeRadarSeamEstimation.swift; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000002A /* NativeRadarSeamGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarSeamGates.swift; path = ../experiments/NativeRadarFoundation/NativeRadarSeamGates.swift; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000002B /* NativeRadarTransition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarTransition.swift; path = ../experiments/NativeRadarFoundation/NativeRadarTransition.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarFrameCachePolicy.swift; path = ../experiments/NativeRadarFoundation/NativeRadarFrameCachePolicy.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000026 /* NativeRadarAlertsContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarAlertsContract.swift; path = ../experiments/NativeRadarFoundation/NativeRadarAlertsContract.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000027 /* NativeRadarAlertsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarAlertsClient.swift; path = ../experiments/NativeRadarFoundation/NativeRadarAlertsClient.swift; sourceTree = SOURCE_ROOT; };
@@ -304,6 +310,9 @@
 				AC2000000000000000000022 /* NativeGlobalRadarClient.swift */,
 				AC2000000000000000000023 /* NativeRadarFreshnessPolicy.swift */,
 				AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */,
+				AC2000000000000000000029 /* NativeRadarSeamEstimation.swift */,
+				AC200000000000000000002A /* NativeRadarSeamGates.swift */,
+				AC200000000000000000002B /* NativeRadarTransition.swift */,
 				AC2000000000000000000026 /* NativeRadarAlertsContract.swift */,
 				AC2000000000000000000027 /* NativeRadarAlertsClient.swift */,
 				AC2000000000000000000024 /* NativeSatelliteContract.swift */,
@@ -693,6 +702,9 @@
 				AC1000000000000000000022 /* NativeGlobalRadarClient.swift in Sources */,
 				AC1000000000000000000023 /* NativeRadarFreshnessPolicy.swift in Sources */,
 				AC1000000000000000000028 /* NativeRadarFrameCachePolicy.swift in Sources */,
+				AC1000000000000000000029 /* NativeRadarSeamEstimation.swift in Sources */,
+				AC100000000000000000002A /* NativeRadarSeamGates.swift in Sources */,
+				AC100000000000000000002B /* NativeRadarTransition.swift in Sources */,
 				AC1000000000000000000026 /* NativeRadarAlertsContract.swift in Sources */,
 				AC1000000000000000000027 /* NativeRadarAlertsClient.swift in Sources */,
 				AC1000000000000000000024 /* NativeSatelliteContract.swift in Sources */,
@@ -937,7 +949,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -970,7 +982,7 @@
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -1002,7 +1014,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -1032,7 +1044,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -1062,7 +1074,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1095,7 +1107,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1128,7 +1140,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -1157,7 +1169,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 106;
+				CURRENT_PROJECT_VERSION = 107;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;

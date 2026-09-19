@@ -137,6 +137,8 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-satellite.sh"
   bash "$ROOT/scripts/test-native-radar-alerts.sh"
   bash "$ROOT/scripts/test-native-radar-seam.sh"
+  bash "$ROOT/scripts/test-native-radar-transition.sh"
+  bash "$ROOT/scripts/test-native-xweather.sh"
   bash "$ROOT/scripts/test-native-places-migration.sh"
   bash "$ROOT/scripts/test-native-places-controls.sh"
   bash "$ROOT/scripts/test-native-place-lookup.sh"

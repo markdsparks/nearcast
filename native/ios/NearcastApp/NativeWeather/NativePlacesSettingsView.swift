@@ -15,6 +15,7 @@ struct NativePlacesSettingsSheet: View {
     let onDone: () -> Void
     let onOpenExisting: () -> Void
     let onOpenExistingMap: (() -> Void)?
+    let onAskAboutPlace: ((NativePreviewPlace) -> Void)?
     let nativeMapContext: NativePreviewContext?
     let nativeMapTimezone: String?
     let onEnableNativeStorage: (() -> Void)?
@@ -40,6 +41,7 @@ struct NativePlacesSettingsSheet: View {
         onDone: @escaping () -> Void,
         onOpenExisting: @escaping () -> Void,
         onOpenExistingMap: (() -> Void)? = nil,
+        onAskAboutPlace: ((NativePreviewPlace) -> Void)? = nil,
         nativeMapContext: NativePreviewContext? = nil,
         nativeMapTimezone: String? = nil,
         onEnableNativeStorage: (() -> Void)? = nil,
@@ -50,6 +52,7 @@ struct NativePlacesSettingsSheet: View {
         self.onDone = onDone
         self.onOpenExisting = onOpenExisting
         self.onOpenExistingMap = onOpenExistingMap
+        self.onAskAboutPlace = onAskAboutPlace
         self.nativeMapContext = nativeMapContext
         self.nativeMapTimezone = nativeMapTimezone
         self.onEnableNativeStorage = onEnableNativeStorage
@@ -150,8 +153,20 @@ struct NativePlacesSettingsSheet: View {
                 NativeRadarView(place: context.selectedPlace,
                     timezone: context.selectedPlace.timezone ?? (context.selectedPlace.coordinateIdentity == nativeMapContext?.selectedPlace.coordinateIdentity ? nativeMapTimezone : nil),
                     uses24HourClock: context.uses24HourClock,
+                    savedPlaces: context.places,
+                    onSelectPlace: { place in
+                        guard let current = model.source,
+                              let stored = ([current.selectedPlace].compactMap { $0 } + current.savedPlaces).first(where: {
+                                  $0.id == place.id && $0.previewPlace.coordinateIdentity == place.coordinateIdentity
+                              }) else { return false }
+                        return await model.select(place: stored)
+                    },
+                    onAskAboutPlace: onAskAboutPlace.map { action in
+                        { showingNativeMap = false; action(context.selectedPlace) }
+                    },
                     onClose: { showingNativeMap = false },
                     onExistingMap: { showingNativeMap = false; onOpenExistingMap?() })
+                    .id(context.selectedPlace.coordinateIdentity)
             }
         }
     }

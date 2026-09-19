@@ -37,6 +37,11 @@ struct NativeRadarViewport: Equatable, Sendable {
 /// its size (and therefore its camera) when the timeline's content changes.
 struct NativeRadarMap: UIViewRepresentable {
     let place: NativePreviewPlace
+    let savedPlaces: [NativePreviewPlace]
+    /// Camera-only focus, including a freshly authorized device fix. This never
+    /// selects or saves a place in the app's authoritative places store.
+    let focusPlace: NativePreviewPlace?
+    let focusRevision: Int
     let base: NativeRadarTileLayer?
     let labels: NativeRadarTileLayer?
     let basemapRevision: Int
@@ -49,6 +54,7 @@ struct NativeRadarMap: UIViewRepresentable {
     let maximumZoom: Double
     let alerts: Data?
     let onAlert: (String) -> Void
+    let onPlace: (NativePreviewPlace) -> Void
     let onViewport: (NativeRadarViewport) -> Void
     let onFailure: () -> Void
     let onTileActivity: (String) -> Void
@@ -72,9 +78,10 @@ struct NativeRadarMap: UIViewRepresentable {
         map.showsAttributionButton = false
         map.accessibilityLabel = "Weather map for \(place.name). Drag to pan; pinch or use the zoom buttons."
         map.setCenter(.init(latitude: place.latitude, longitude: place.longitude), zoomLevel: 6.8, animated: false)
-        context.coordinator.installPlace(on: map)
+        context.coordinator.installPlaces(on: map)
         let alertTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.openAlert(_:)))
         alertTap.cancelsTouchesInView = false
+        alertTap.delegate = context.coordinator
         for recognizer in map.gestureRecognizers ?? [] {
             if let doubleTap = recognizer as? UITapGestureRecognizer, doubleTap.numberOfTapsRequired == 2 {
                 alertTap.require(toFail: doubleTap)
@@ -89,10 +96,13 @@ struct NativeRadarMap: UIViewRepresentable {
         context.coordinator.input = self
         map.maximumZoomLevel = maximumZoom
         if map.zoomLevel > maximumZoom { map.setZoomLevel(maximumZoom, animated: false) }
-        if previous.place.coordinateIdentity != place.coordinateIdentity {
-            context.coordinator.installPlace(on: map)
+        if previous.place != place || previous.savedPlaces != savedPlaces || previous.focusPlace != focusPlace {
+            context.coordinator.installPlaces(on: map)
         }
-        if previous.recenter != recenter || previous.place.coordinateIdentity != place.coordinateIdentity {
+        if previous.focusRevision != focusRevision, let focus = focusPlace, focus.isValid {
+            map.setCenter(.init(latitude: focus.latitude, longitude: focus.longitude),
+                          zoomLevel: max(6.8, map.zoomLevel), animated: true)
+        } else if previous.recenter != recenter || previous.place.coordinateIdentity != place.coordinateIdentity {
             map.setCenter(.init(latitude: place.latitude, longitude: place.longitude), zoomLevel: 6.8, animated: true)
         } else if previous.zoomCommand != zoomCommand {
             let delta = zoomCommand > previous.zoomCommand ? 0.8 : -0.8
@@ -106,7 +116,7 @@ struct NativeRadarMap: UIViewRepresentable {
         map.delegate = nil
     }
 
-    final class Coordinator: NSObject, MLNMapViewDelegate {
+    final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         var input: NativeRadarMap
         var active = true
         private var ready = false
@@ -114,18 +124,41 @@ struct NativeRadarMap: UIViewRepresentable {
         private var weatherID: String?
         private var renderedTemplates: [String]?
         private var renderedWeatherRevision = -1
-        private var marker: MLNPointAnnotation?
+        private var markers: [MLNPointAnnotation] = []
+        private var markerPlaces: [ObjectIdentifier: NativePreviewPlace] = [:]
+        private var markerRoles: [ObjectIdentifier: String] = [:]
         private var renderedAlerts: Data?
         private var tileRequests = 0, tileParses = 0, tileErrors = 0
         init(_ input: NativeRadarMap) { self.input = input }
 
-        func installPlace(on map: MLNMapView) {
-            if let marker { map.removeAnnotation(marker) }
-            let point = MLNPointAnnotation()
-            point.coordinate = .init(latitude: input.place.latitude, longitude: input.place.longitude)
-            point.title = input.place.name
-            marker = point
-            map.addAnnotation(point)
+        func installPlaces(on map: MLNMapView) {
+            let selectedCoordinate = (map.selectedAnnotations.first as? MLNPointAnnotation)
+                .flatMap { markerPlaces[ObjectIdentifier($0)]?.coordinateIdentity }
+            if !markers.isEmpty { map.removeAnnotations(markers) }
+            markers.removeAll(keepingCapacity: true)
+            markerPlaces.removeAll(keepingCapacity: true)
+            markerRoles.removeAll(keepingCapacity: true)
+            var seen = Set<String>()
+            // The selected place wins a same-coordinate duplicate. A GPS focus
+            // is only a transient additional marker, never a stored place.
+            let candidates = [input.place] + Array(input.savedPlaces.prefix(60)) +
+                (input.focusPlace.map { [$0] } ?? [])
+            for place in candidates where place.isValid && seen.insert(place.coordinateIdentity).inserted {
+                let point = MLNPointAnnotation()
+                point.coordinate = .init(latitude: place.latitude, longitude: place.longitude)
+                point.title = place.name
+                let role = place.coordinateIdentity == input.place.coordinateIdentity ? "Selected place" :
+                    (input.savedPlaces.contains(where: { $0.coordinateIdentity == place.coordinateIdentity }) ? "Saved place" : "Map location")
+                point.subtitle = role
+                markers.append(point)
+                markerPlaces[ObjectIdentifier(point)] = place
+                markerRoles[ObjectIdentifier(point)] = role
+            }
+            map.addAnnotations(markers)
+            if let selectedCoordinate,
+               let selected = markers.first(where: { markerPlaces[ObjectIdentifier($0)]?.coordinateIdentity == selectedCoordinate }) {
+                map.selectAnnotation(selected, animated: false, completionHandler: nil)
+            }
         }
 
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
@@ -242,6 +275,17 @@ struct NativeRadarMap: UIViewRepresentable {
             input.onAlert(id)
         }
 
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            // A saved-place marker or its callout owns its tap. Opening an
+            // underlying alert as well would race the place detail presentation.
+            var view = touch.view
+            while let current = view {
+                if current is MLNAnnotationView || current is UIControl || current is any MLNCalloutView { return false }
+                view = current.superview
+            }
+            return true
+        }
+
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) { reportViewport(mapView) }
         func mapView(_ mapView: MLNMapView, tileDidTriggerAction operation: MLNTileOperation,
                      x: Int, y: Int, z: Int, wrap: Int, overscaledZ: Int, sourceID: String) {
@@ -269,7 +313,51 @@ struct NativeRadarMap: UIViewRepresentable {
             }
         }
 
-        func mapView(_ mapView: MLNMapView, annotationCanShowCallout annotation: any MLNAnnotation) -> Bool { true }
+        func mapView(_ mapView: MLNMapView, viewFor annotation: any MLNAnnotation) -> MLNAnnotationView? {
+            guard let point = annotation as? MLNPointAnnotation,
+                  let place = markerPlaces[ObjectIdentifier(point)] else { return nil }
+            let role = markerRoles[ObjectIdentifier(point)] ?? "Place"
+            let reuseID = "native-place-" + role
+            let marker = mapView.dequeueReusableAnnotationView(withIdentifier: reuseID) ?? MLNAnnotationView(reuseIdentifier: reuseID)
+            marker.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            marker.isDraggable = false
+            marker.isAccessibilityElement = true
+            marker.accessibilityLabel = "\(place.name), \(role.lowercased())"
+            marker.accessibilityHint = "Shows place actions."
+            marker.accessibilityTraits = .button
+            if marker.viewWithTag(2101) == nil {
+                let symbol = UIImageView(image: UIImage(systemName: role == "Selected place" ? "mappin.circle.fill" :
+                    (role == "Saved place" ? "house.circle.fill" : "location.circle.fill")))
+                symbol.tag = 2101
+                symbol.frame = CGRect(x: 8, y: 8, width: 28, height: 28)
+                symbol.tintColor = role == "Selected place" ? .systemBlue : .label
+                symbol.backgroundColor = .systemBackground
+                symbol.layer.cornerRadius = 14
+                symbol.layer.shadowColor = UIColor.black.cgColor
+                symbol.layer.shadowOpacity = 0.25
+                symbol.layer.shadowRadius = 3
+                symbol.layer.shadowOffset = CGSize(width: 0, height: 1)
+                marker.addSubview(symbol)
+            }
+            return marker
+        }
+        func mapView(_ mapView: MLNMapView, annotationCanShowCallout annotation: any MLNAnnotation) -> Bool {
+            guard let point = annotation as? MLNPointAnnotation else { return false }
+            return markerPlaces[ObjectIdentifier(point)] != nil
+        }
+        func mapView(_ mapView: MLNMapView, rightCalloutAccessoryViewFor annotation: any MLNAnnotation) -> UIView? {
+            guard let point = annotation as? MLNPointAnnotation,
+                  let place = markerPlaces[ObjectIdentifier(point)] else { return nil }
+            let button = UIButton(type: .detailDisclosure)
+            button.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            button.accessibilityLabel = "Open \(place.name) actions"
+            return button
+        }
+        func mapView(_ mapView: MLNMapView, annotation: any MLNAnnotation, calloutAccessoryControlTapped control: UIControl) {
+            guard active, let point = annotation as? MLNPointAnnotation,
+                  let place = markerPlaces[ObjectIdentifier(point)] else { return }
+            input.onPlace(place)
+        }
         func mapView(_ mapView: MLNMapView, didFailToLoadImage imageName: String) -> UIImage? { nil }
         func mapViewDidFailLoadingMap(_ mapView: MLNMapView, withError error: any Error) { reportFailure() }
         func mapViewRendererDidError(_ mapView: MLNMapView) { reportFailure() }
