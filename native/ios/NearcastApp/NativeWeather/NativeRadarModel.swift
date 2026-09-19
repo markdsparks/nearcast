@@ -1159,15 +1159,25 @@ final class NativeRadarModel: ObservableObject {
         warmNearbyFrames()
         playbackTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
-                guard let self, self.active else { return }
+                // Poll readiness independently of the display cadence: a slow
+                // download must not add another full playback interval.
+                guard let self, self.active, self.playing else { return }
+                if self.loadingImage {
+                    do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                    continue
+                }
+                guard self.imageMessage == nil else { self.pause(); return }
+                let dwell = NativeRadarPresentationContract.playbackDwellMilliseconds(
+                    atEnd: self.selectedInstant == self.scrubberDates.last)
+                do { try await Task.sleep(for: .milliseconds(dwell)) } catch { return }
+                guard !Task.isCancelled, self.active, self.playing else { return }
                 if self.loadingImage { continue }
                 guard self.imageMessage == nil else { self.pause(); return }
                 let nextDate = self.scrubberDates.first { $0 > (self.selectedInstant ?? .distantFuture) }
                 let crossesBoundary = self.product == .radar && (nextDate ?? .distantPast) > self.evaluationTime
                 let limit: TimeInterval = self.product == .rainAmount ? 6 * 60 * 60 : self.product == .forecast || crossesBoundary ? 60 * 60 : 10 * 60
                 let decision = try? NativeRadarPresentationContract.nextPlayback(instant: self.selectedInstant,
-                    dates: self.scrubberDates, maximumGap: limit)
+                    dates: self.scrubberDates, maximumGap: limit, loops: true)
                 switch decision {
                 case let .advance(instant): self.selectScrubberTime(instant, pausePlayback: false)
                 case .end: self.playing = false; self.playbackMessage = "End of available frames."; return

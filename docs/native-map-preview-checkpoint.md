@@ -58,6 +58,12 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Faster looping playback (build 112)
+
+Native map playback holds ready frames for 400 ms instead of 1.2 seconds, with an 800 ms endpoint pause before returning to the first advertised time in the selected range. Loading readiness is checked separately every 50 ms, so a download does not impose another full polling interval. Playback never skips pending frames or relabels the retained image. Interior source gaps, missing selection, errors, explicit pause and lifecycle cancellation retain their existing guards. Global tile-budget and satellite playback restrictions are unchanged. This changes animation pacing, not source cadence, forecast resolution or motion interpolation.
+
+Deterministic presentation tests cover two complete cycles, endpoint behavior, single/empty timelines, missing selection and preservation of gap stops. Physical-phone acceptance should compare radar-only and integrated radar/forecast playback, loop reset, pause during loading, and background/resume. Cold network acquisition can still limit playback speed.
+
 ### Bounded frame readiness (build 111)
 
 Release: `88ced54`, TestFlight 0.1.0 (111), uploaded successfully September 19 at 00:48 CDT. Full release preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; its immediate build-list response did not yet include 111, so tester availability is not confirmed. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-111.log`. Physical-device cold-versus-warm scrubbing and active-storm acceptance remain required.

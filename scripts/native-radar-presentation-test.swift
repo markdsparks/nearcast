@@ -146,6 +146,20 @@ struct NativeRadarPresentationTests {
         try check(try Contract.nextPlayback(instant: date(0), dates: dates, maximumGap: 120) == .advance(date(2)), "exact gap boundary allowed")
         try check(try Contract.nextPlayback(instant: date(2), dates: dates, maximumGap: 300) == .gap, "gap does not manufacture intermediate frames")
         try check(try Contract.nextPlayback(instant: date(10), dates: dates, maximumGap: 300) == .end, "end does not wrap")
+        try check(Contract.playbackDwellMilliseconds(atEnd: false) == 400, "ready frames use brisk 400ms dwell")
+        try check(Contract.playbackDwellMilliseconds(atEnd: true) == 800, "loop endpoint gets a brief readable pause")
+        try check(try Contract.nextPlayback(instant: date(10), dates: dates, maximumGap: 300, loops: true) == .advance(date(0)), "loop restarts at first actual source time")
+        try check(try Contract.nextPlayback(instant: date(2), dates: dates, maximumGap: 300, loops: true) == .gap, "loop mode still stops at interior missing data")
+        try check(try Contract.nextPlayback(instant: date(4), dates: dates, maximumGap: 300, loops: true) == .missingSelection, "loop mode cannot recover a missing selection silently")
+        try check(try Contract.nextPlayback(instant: date(0), dates: [], maximumGap: 300, loops: true) == .unavailable, "empty loop unavailable")
+        try check(try Contract.nextPlayback(instant: date(0), dates: [date(0)], maximumGap: 300, loops: true) == .end, "single frame cannot spin")
+        var cursor = date(0)
+        let continuous = [date(0), date(2), date(4)]
+        for expected in [date(2), date(4), date(0), date(2), date(4), date(0)] {
+            let decision = try Contract.nextPlayback(instant: cursor, dates: continuous, maximumGap: 300, loops: true)
+            try check(decision == .advance(expected), "playback keeps cycling across two complete loops")
+            cursor = expected
+        }
         try check(try Contract.nextPlayback(instant: date(4), dates: dates, maximumGap: 300) == .missingSelection, "missing refresh selection never indexes minus one")
         try check(try Contract.nextPlayback(instant: nil, dates: dates, maximumGap: 300) == .missingSelection, "nil playback requires user/default selection")
         try check(try Contract.nextPlayback(instant: date(0), dates: [], maximumGap: 300) == .unavailable, "no data playback unavailable")

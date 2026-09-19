@@ -83,12 +83,17 @@ enum NativeRadarPresentationContract {
         return dates.isEmpty ? nil : (selected ?? 0)
     }
 
-    static func nextPlayback(instant: Date?, dates: [Date], maximumGap: TimeInterval) throws -> PlaybackDecision {
+    /// Short endpoint dwell makes a loop reset distinct from forward storm motion.
+    static func playbackDwellMilliseconds(atEnd: Bool) -> Int { atEnd ? 800 : 400 }
+
+    static func nextPlayback(instant: Date?, dates: [Date], maximumGap: TimeInterval, loops: Bool = false) throws -> PlaybackDecision {
         guard maximumGap.isFinite, maximumGap > 0 else { throw Failure.invalidGap }
         let selected = try selectedIndex(instant: instant, dates: dates)
         guard !dates.isEmpty else { return .unavailable }
         guard let selected else { return .missingSelection }
-        guard selected + 1 < dates.count else { return .end }
+        guard selected + 1 < dates.count else {
+            return loops && dates.count > 1 ? .advance(dates[0]) : .end
+        }
         guard dates[selected + 1].timeIntervalSince(dates[selected]) <= maximumGap else { return .gap }
         return .advance(dates[selected + 1])
     }
