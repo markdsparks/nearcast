@@ -1,0 +1,8 @@
+{
+  "version": 8,
+  "name": "Nearcast radar coordinate laboratory",
+  "sources": {},
+  "layers": [
+    {"id": "diagnostic-background", "type": "background", "paint": {"background-color": "#14232f"}}
+  ]
+}

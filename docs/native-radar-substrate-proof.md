@@ -58,6 +58,8 @@ Live results record point-in-time probes and a visual rendering check, not servi
 
 ## Next acceptance gate
 
+The [Phase 3A MapLibre foundation](native-radar-foundation.md) now supplies a separately pinned full-renderer candidate and matched synthetic numeric/timeline tests. It does not retroactively complete this MapKit proof's unverified gestures or establish full radar parity.
+
 1. Complete pan, recenter and slider-gesture checks in the isolated simulator; both selected-source states and the source-button switch have now been visually inspected. Do not count this as physical gesture/performance evidence.
 2. Review and pin the full-renderer dependency separately. Validate MapLibre's desired raster/vector/custom numeric path rather than treating this MapKit spike as an architecture commitment.
 3. Compare one synthetic numeric MRMS texture and one HRRR/seam output with matched web fixtures before any claim of enhanced radar parity.
