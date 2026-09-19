@@ -71,6 +71,19 @@ struct NativeWeatherPreviewView: View {
         if showingQuarterHours { return Array(usableQuarterHours.prefix(25)) }
         return model.forecast?.previewTrendHours(on: displayedDay, now: now) ?? []
     }
+    /// One weather scene drives the backdrop, hero, and outlook. This is not a
+    /// second forecast interpretation: it only translates the already shown
+    /// condition into a visual atmosphere.
+    private var visualPoint: NativeForecastPoint? {
+        if isToday { return model.forecast?.current }
+        guard let day = selectedForecastDay else { return model.forecast?.current }
+        return NativeForecastPoint(
+            date: day.date,
+            weatherCode: day.weatherCode,
+            isDay: true,
+            thunderPossible: day.thunderPossible
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -255,24 +268,8 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var skyBackground: some View {
-        let code = model.forecast?.current?.weatherCode
-        let clear = code.map { [0, 1].contains($0) } ?? false
-        return LinearGradient(
-            colors: isDark
-                ? [Color(red: 0.065, green: 0.14, blue: 0.23), Color(red: 0.075, green: 0.105, blue: 0.15)]
-                : (clear ? [Color(red: 0.62, green: 0.80, blue: 0.94), Color(red: 0.92, green: 0.95, blue: 0.94)]
-                    : [Color(red: 0.74, green: 0.82, blue: 0.86), Color(red: 0.93, green: 0.95, blue: 0.95)]),
-            startPoint: .top, endPoint: .bottom
-        )
-        .overlay(alignment: .top) {
-            Circle()
-                .fill(isDark ? Color.blue.opacity(0.14) : (clear ? Color(red: 1, green: 0.91, blue: 0.63).opacity(0.55) : Color.white.opacity(0.4)))
-                .frame(width: 280, height: 250)
-                .blur(radius: 70)
-                .offset(x: 45, y: 50)
-                .accessibilityHidden(true)
-        }
-        .ignoresSafeArea()
+        NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .backdrop)
+            .ignoresSafeArea()
     }
 
     private var placePicker: some View {
@@ -481,7 +478,12 @@ struct NativeWeatherPreviewView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.bottom, 12)
+        .padding(.vertical, 18)
+        .padding(.bottom, 14)
+        .background {
+            NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .hero)
+                .clipShape(RoundedRectangle(cornerRadius: 42, style: .continuous))
+        }
     }
 
     private func heroCondition(_ point: NativeForecastPoint) -> String {
@@ -583,7 +585,14 @@ struct NativeWeatherPreviewView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardFill, in: RoundedRectangle(cornerRadius: 28))
+        .background {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(cardFill)
+                .overlay {
+                    NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .card)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                }
+        }
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.primary.opacity(0.07)) }
         .shadow(color: .black.opacity(isDark ? 0.10 : 0.045), radius: 18, y: 8)
     }
@@ -1231,6 +1240,195 @@ struct NativeWeatherPreviewView: View {
         if age < 60 * 60 { return "\(Int(age / 60)) min ago" }
         if age < 24 * 60 * 60 { return "\(Int(age / 3600)) hr ago" }
         return "\(Int(age / 86400)) day\(age < 2 * 86400 ? "" : "s") ago"
+    }
+}
+
+/// A deliberately quiet visual translation of the weather we are already
+/// showing. Nearcast's recognizable visual language should make the current
+/// sky more legible, never imply precision the forecast does not have.
+private struct NativeLivingWeatherAtmosphere: View {
+    enum Placement { case backdrop, hero, card }
+
+    let point: NativeForecastPoint?
+    let isDark: Bool
+    let reduceMotion: Bool
+    let placement: Placement
+
+    @State private var drift = false
+
+    private var code: Int { point?.weatherCode ?? -1 }
+    private var isStorm: Bool { point?.thunderPossible == true || [95, 96, 99].contains(code) }
+    private var isRain: Bool { (51...67).contains(code) || (80...82).contains(code) || isStorm }
+    private var isSnow: Bool { (71...77).contains(code) || (85...86).contains(code) }
+    private var isFog: Bool { [45, 48].contains(code) }
+    private var isCloudy: Bool { (1...3).contains(code) || isRain || isSnow || isFog }
+    private var isClear: Bool { [0, 1].contains(code) && !isStorm }
+    private var isDay: Bool { point?.isDay ?? !isDark }
+
+    private var intensity: Double {
+        switch placement {
+        case .backdrop: return 1
+        case .hero: return 0.78
+        case .card: return 0.38
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                baseSky
+
+                if isClear || !isCloudy {
+                    solarGlow(size: size)
+                }
+                if isCloudy {
+                    cloudBank(size: size)
+                }
+                if isFog {
+                    fogBands(size: size)
+                }
+                if isRain || isSnow {
+                    precipitation(size: size)
+                }
+                if isStorm {
+                    stormPulse(size: size)
+                }
+                // A subtle horizon lift is the shared thread between the hero
+                // and the day story below it—not a decorative card gradient.
+                LinearGradient(
+                    colors: [.clear, horizonColor.opacity(0.22 * intensity), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(height: max(34, size.height * 0.17))
+                .offset(y: size.height * 0.24)
+            }
+            .compositingGroup()
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: placement == .backdrop ? 11 : 8).repeatForever(autoreverses: true)) {
+                    drift = true
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var baseSky: some View {
+        if placement == .hero {
+            // The hero belongs to the surrounding sky. Keeping this clear
+            // avoids turning the temperature into one more generic glass card.
+            Color.clear
+        } else {
+            LinearGradient(
+                colors: baseColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    private var baseColors: [Color] {
+        if isDark {
+            if isStorm { return [Color(red: 0.055, green: 0.095, blue: 0.16), Color(red: 0.10, green: 0.13, blue: 0.20)] }
+            if isFog { return [Color(red: 0.13, green: 0.18, blue: 0.23), Color(red: 0.08, green: 0.12, blue: 0.17)] }
+            return [Color(red: 0.04, green: 0.12, blue: 0.22), Color(red: 0.075, green: 0.105, blue: 0.16)]
+        }
+        if isStorm { return [Color(red: 0.33, green: 0.44, blue: 0.57), Color(red: 0.73, green: 0.79, blue: 0.82)] }
+        if isRain { return [Color(red: 0.46, green: 0.64, blue: 0.76), Color(red: 0.82, green: 0.89, blue: 0.91)] }
+        if isSnow { return [Color(red: 0.70, green: 0.82, blue: 0.91), Color(red: 0.94, green: 0.97, blue: 0.98)] }
+        if isFog { return [Color(red: 0.67, green: 0.75, blue: 0.78), Color(red: 0.90, green: 0.93, blue: 0.92)] }
+        if isClear { return [Color(red: 0.43, green: 0.70, blue: 0.91), Color(red: 0.87, green: 0.94, blue: 0.95)] }
+        return [Color(red: 0.55, green: 0.70, blue: 0.80), Color(red: 0.87, green: 0.92, blue: 0.93)]
+    }
+
+    private var horizonColor: Color {
+        if isStorm { return Color(red: 0.96, green: 0.67, blue: 0.28) }
+        if isRain { return Color(red: 0.25, green: 0.68, blue: 0.90) }
+        return isDay ? Color(red: 1, green: 0.79, blue: 0.28) : Color(red: 0.42, green: 0.67, blue: 1)
+    }
+
+    private func solarGlow(size: CGSize) -> some View {
+        ZStack {
+            Circle()
+                .fill((isDay ? Color(red: 1, green: 0.78, blue: 0.22) : Color(red: 0.60, green: 0.78, blue: 1)).opacity(0.14 * intensity))
+                .frame(width: max(120, size.width * 0.52), height: max(120, size.width * 0.52))
+                .blur(radius: max(28, size.width * 0.11))
+            if placement != .backdrop {
+                Circle()
+                    .strokeBorder((isDay ? Color.white : Color(red: 0.74, green: 0.86, blue: 1)).opacity(0.16 * intensity), lineWidth: 1)
+                    .frame(width: max(92, size.width * 0.33), height: max(92, size.width * 0.33))
+            }
+        }
+        .offset(x: size.width * (drift ? 0.19 : 0.13), y: -size.height * 0.22)
+    }
+
+    private func cloudBank(size: CGSize) -> some View {
+        ZStack {
+            cloud(width: size.width * 0.72, height: max(72, size.height * 0.42), opacity: isStorm ? 0.42 : 0.27)
+                .offset(x: -size.width * 0.18, y: -size.height * 0.15)
+            cloud(width: size.width * 0.82, height: max(62, size.height * 0.35), opacity: isStorm ? 0.35 : 0.21)
+                .offset(x: size.width * (drift ? 0.20 : 0.12), y: size.height * 0.16)
+        }
+    }
+
+    private func cloud(width: CGFloat, height: CGFloat, opacity: Double) -> some View {
+        Capsule()
+            .fill(
+                LinearGradient(
+                    colors: [Color.white.opacity(opacity), Color(red: 0.17, green: 0.27, blue: 0.34).opacity(opacity * 0.85)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .blur(radius: max(14, width * 0.06))
+            .frame(width: width, height: height)
+    }
+
+    private func precipitation(size: CGSize) -> some View {
+        let count = placement == .backdrop ? 15 : 8
+        return ZStack {
+            ForEach(0..<count, id: \.self) { index in
+                let fraction = CGFloat(index) / CGFloat(max(1, count - 1))
+                Capsule()
+                    .fill((isSnow ? Color.white : Color(red: 0.56, green: 0.86, blue: 1)).opacity((isStorm ? 0.40 : 0.28) * intensity))
+                    .frame(width: isSnow ? 3 : 2, height: isSnow ? 3 : max(14, size.height * 0.16))
+                    .rotationEffect(.degrees(isSnow ? 0 : 13))
+                    .offset(
+                        x: (fraction - 0.5) * size.width * 1.04,
+                        y: size.height * (drift ? 0.17 : 0.08) + CGFloat(index % 3) * 12
+                    )
+            }
+        }
+    }
+
+    private func fogBands(size: CGSize) -> some View {
+        VStack(spacing: max(10, size.height * 0.07)) {
+            ForEach(0..<4, id: \.self) { index in
+                Capsule()
+                    .fill(Color.white.opacity((0.17 - Double(index) * 0.02) * intensity))
+                    .frame(width: size.width * (index.isMultiple(of: 2) ? 0.84 : 0.62), height: max(9, size.height * 0.035))
+                    .offset(x: drift ? (index.isMultiple(of: 2) ? 16 : -12) : 0)
+            }
+        }
+        .offset(y: size.height * 0.10)
+    }
+
+    private func stormPulse(size: CGSize) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color(red: 0.86, green: 0.68, blue: 0.31).opacity(0.12 * intensity))
+                .frame(width: max(90, size.width * 0.28), height: max(90, size.width * 0.28))
+                .blur(radius: 22)
+                .offset(x: -size.width * 0.20, y: -size.height * 0.06)
+            Image(systemName: "bolt.fill")
+                .font(.system(size: max(24, min(48, size.width * 0.10)), weight: .medium))
+                .foregroundStyle(Color(red: 1, green: 0.79, blue: 0.31).opacity(0.58 * intensity))
+                .offset(x: size.width * 0.28, y: size.height * 0.18)
+        }
     }
 }
 
