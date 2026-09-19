@@ -9,6 +9,9 @@ struct NativeWeatherPreviewView: View {
     let onLegacy: (NativeLegacyDestination) -> Void
     var onPlaces: (() -> Void)? = nil
     var onSettings: (() -> Void)? = nil
+    /// The full native home persists a place choice through the verified
+    /// Places owner. Read-only preview hosts intentionally leave this nil.
+    var onSelectPlace: ((NativePreviewPlace) async -> Bool)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,6 +27,8 @@ struct NativeWeatherPreviewView: View {
     @State private var now = Date()
     @State private var scrollToTopRevision = 0
     @State private var weatherDetail: NativeWeatherDetailKind?
+    @State private var switchingPlaceID: String?
+    @State private var placeSwitchMessage: String?
 
     private var isDark: Bool { (preferredScheme ?? colorScheme) == .dark }
     private var accent: Color { isDark ? Color(red: 0.57, green: 0.77, blue: 1) : Color(red: 0.16, green: 0.37, blue: 0.63) }
@@ -74,6 +79,7 @@ struct NativeWeatherPreviewView: View {
                     ScrollView {
                         VStack(spacing: 20) {
                             placePicker.id("native-preview-top")
+                            familyPlacesRail
                             if let forecast = model.forecast {
                                 freshness(forecast)
                                 NativeWeatherEssentialNotices(model: model, day: displayedDay, now: now) { weatherDetail = $0 }
@@ -153,9 +159,8 @@ struct NativeWeatherPreviewView: View {
                     timezone: model.forecast?.timezoneID ?? model.selectedPlace.timezone,
                     uses24HourClock: model.context.uses24HourClock,
                     savedPlaces: model.places,
-                    onSelectPlace: { place in
-                        model.selectPlace(place)
-                        return true
+                    onSelectPlace: onSelectPlace == nil ? nil : { place in
+                        await selectPlace(place)
                     },
                     onAskAboutPlace: {
                         showingNativeMap = false
@@ -304,6 +309,92 @@ struct NativeWeatherPreviewView: View {
         .accessibilityHint("Choose a temporary place for this preview. Saved places are unchanged.")
           }
         }
+    }
+
+    @ViewBuilder
+    private var familyPlacesRail: some View {
+        if onSelectPlace != nil, model.places.count > 1 {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Text("Family places")
+                        .font(.subheadline.weight(.bold))
+                    Spacer()
+                    if let onPlaces {
+                        Button("Manage", action: onPlaces)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(accent)
+                    }
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 9) {
+                        ForEach(model.places, id: \.coordinateIdentity) { place in
+                            familyPlaceButton(place)
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                }
+                if let placeSwitchMessage {
+                    Text(placeSwitchMessage)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Family places")
+        }
+    }
+
+    private func familyPlaceButton(_ place: NativePreviewPlace) -> some View {
+        let selected = place.coordinateIdentity == model.selectedPlace.coordinateIdentity
+        let switching = switchingPlaceID == place.id
+        return Button {
+            Task { await selectPlace(place) }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    Text(place.name)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    if selected { Image(systemName: "checkmark.circle.fill").font(.caption) }
+                }
+                if switching {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text(selected ? "Current place" : localClock(for: place))
+                        .font(.caption.weight(.medium))
+                }
+            }
+            .foregroundStyle(selected ? accent : Color.primary)
+            .frame(minWidth: 112, alignment: .leading)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .background(selected ? accent.opacity(0.14) : Color.primary.opacity(isDark ? 0.10 : 0.06), in: RoundedRectangle(cornerRadius: 16))
+            .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(selected ? accent.opacity(0.42) : .primary.opacity(0.08)) }
+        }
+        .buttonStyle(.plain)
+        .disabled(switchingPlaceID != nil || selected)
+        .accessibilityLabel("\(place.name), \(selected ? "current place" : "local time \(localClock(for: place))")")
+        .accessibilityHint(selected ? "Selected weather place" : "Switch weather to this saved place")
+    }
+
+    private func localClock(for place: NativePreviewPlace) -> String {
+        guard let timeZone = place.timezone.flatMap(TimeZone.init(identifier:)) else { return "Local time unavailable" }
+        return nearcastClockLabel(now, timeZone: timeZone, uses24HourClock: model.context.uses24HourClock, compact: true)
+    }
+
+    private func selectPlace(_ place: NativePreviewPlace) async -> Bool {
+        guard place.coordinateIdentity != model.selectedPlace.coordinateIdentity else { return true }
+        placeSwitchMessage = nil
+        if let onSelectPlace {
+            switchingPlaceID = place.id
+            let changed = await onSelectPlace(place)
+            switchingPlaceID = nil
+            if !changed { placeSwitchMessage = "Couldn’t change places. Your current weather is unchanged." }
+            return changed
+        }
+        model.selectPlace(place)
+        return true
     }
 
     @ViewBuilder

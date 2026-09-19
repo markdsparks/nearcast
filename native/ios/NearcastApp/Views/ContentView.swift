@@ -217,6 +217,9 @@ private struct NativeWeatherPreviewContainer: View {
             },
             onSettings: {
                 placesSettingsTab = .settings
+            },
+            onSelectPlace: placesControls.source == nil ? nil : { place in
+                await selectVerifiedPlace(place)
             }
         )
         .sheet(item: $placesSettingsTab) { tab in
@@ -267,6 +270,25 @@ private struct NativeWeatherPreviewContainer: View {
             source: owner.source,
             revision: owner.revision
         )
+    }
+
+    private func selectVerifiedPlace(_ place: NativePreviewPlace) async -> Bool {
+        guard let source = placesControls.source else { return false }
+        let candidates = [source.selectedPlace].compactMap { $0 } + source.savedPlaces
+        guard let stored = candidates.first(where: {
+            $0.id == place.id && $0.previewPlace.coordinateIdentity == place.coordinateIdentity
+        }) else {
+            return false
+        }
+        guard await placesControls.select(place: stored),
+              let context = placesControls.source?.toPreviewContext() else {
+            return false
+        }
+        // Apply the verified receipt immediately. The source observation below
+        // will see the same value; applyManagedContext is idempotent.
+        preview.applyManagedContext(context)
+        NativePreviewContextStore.save(context)
+        return true
     }
 
     private func openExisting(_ destination: NativeLegacyDestination) {
