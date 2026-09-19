@@ -1,6 +1,6 @@
 # Native map preview checkpoint — 2026-09-18
 
-This is **Phase 3 implementation in progress**, not full map parity or a default-native cutover. TestFlight 106 remains the last uploaded family build. The existing Map tab and its exact-place/date handoff remain unchanged.
+This is **Phase 3 implementation in progress**, not full map parity or a default-native cutover. TestFlight **0.1.0 (107)** uploaded successfully on September 18 at 23:01 CDT; Apple reported the package was processing. The existing Map tab and its exact-place/date handoff remain unchanged.
 
 ## What is implemented
 
@@ -27,6 +27,8 @@ This is **Phase 3 implementation in progress**, not full map parity or a default
 - "Ask about this place" hands off the exact selected place to existing Ask. It explicitly does not send the displayed radar frame or viewport as storm evidence. Storm Check remains available through the full existing map.
 
 ## Automated evidence
+
+Build 107 passed the complete portable and native-model release preflight, signed archive, guarded SDK archive preparation, and iPhone/widget/Watch/complication packaging checks. App Store upload and export succeeded. The existing upstream MapLibre dSYM warning remains; it did not block upload, but MapLibre-internal crash frames may lack symbols. No Xweather SDK is included in this archive.
 
 `bash scripts/nearcast-ci.sh all` includes the existing product/weather/notification/Places/Watch regressions plus the native radar numeric, timeline, NCRD, MRMS, HRRR, presentation, freshness, basemap and global-source tests. Provider networking is optional, not required by normal CI.
 

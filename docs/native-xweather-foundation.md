@@ -6,6 +6,9 @@ The native configuration client, strict lease contract, and isolated MapsGL
 adapter are sidecars only. They are not members of the shipping app target;
 the app does not initialize this SDK or start native Xweather sessions.
 No provider data request or paid session was made during this proof.
+The isolated Worker route change is committed but has not been deployed by this
+checkpoint. It must be deployed along with the native credential setup before
+an integrated native client can receive a permit.
 
 Local verification:
 
