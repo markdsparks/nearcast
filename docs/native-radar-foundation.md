@@ -33,11 +33,25 @@ Primary references:
 
 Raster tiles, GeoJSON and georeferenced images are exercised by this code. A native Metal custom layer is still a separate decision: the SDK's `MLNCustomStyleLayer` is experimental, and this checkpoint makes no GPU parity claim.
 
+## Global observed fallback contract
+
+`NativeGlobalRadarContract` and `NativeGlobalRadarClient` now provide a renderer-neutral native contract for the shipping web map's existing RainViewer fallback. The contract reads only the provider-advertised `radar.past` frames, retains their exact timestamps, restricts metadata and tile resources to the documented HTTPS hosts and path shapes, supplies mandatory linked RainViewer attribution, bounds response size and transport time, and fails closed when the manifest or newest observation is stale. Metadata is cached in memory for four minutes, matching the web path; selected places and responses are not persisted.
+
+This is global **observed radar**, not global forecast guidance. RainViewer's January 2026 transition removed public nowcast frames, satellite IR, zoom levels above 7 and color schemes other than Universal Blue. The remaining public API is best effort, limited to past radar (documented as two hours at ten-minute intervals), and rate limited to 100 requests per IP per minute. Its free terms cover personal, educational and small-community use, require visible linked attribution, and direct commercial/high-volume use to RainViewer for separate terms. Native integration must therefore preserve graceful unavailable states and must not label this source as a forecast.
+
+Primary references:
+
+- [Weather Maps API and tile contract](https://www.rainviewer.com/api/weather-maps-api.html)
+- [Current public API terms and attribution](https://www.rainviewer.com/api.html)
+- [2025–2026 API transition and current limits](https://www.rainviewer.com/api/transition-faq.html)
+- [Radar source inventory, including Germany and Poland](https://www.rainviewer.com/sources.html)
+
 ## Reproduce
 
 ```sh
 bash scripts/test-native-radar-timeline.sh
 bash scripts/test-native-radar-numeric.sh
+bash scripts/test-native-global-radar.sh
 bash scripts/build-native-radar-foundation.sh
 ```
 
@@ -59,6 +73,7 @@ It refuses to run without `--live` or inside CI. Metadata and optional PNG check
 
 | Check | Result |
 | --- | --- |
+| Global observed fallback manifest/URL/freshness/transport contract | PASS: deterministic fixtures cover current opaque and documented legacy frame paths, past-only filtering, attribution, exact approved HTTPS endpoints, four-minute memory caching, stale/empty/malformed/oversized/failing responses; no live provider request |
 | Exact-time/source selection, retained/missing selection, stale refresh, gap stops, future observations, expired forecast, local clock/DST | PASS: 122 deterministic assertions; also passed with a different process timezone |
 | Synthetic numerical comparison with current web primitives | PASS: 3 dBZ ranges/all 256 decode bytes; 16 translations; 7 blends; 16 supplied-correction cases; 4 exact-time compositions; 9 all-byte color sweeps; 6 timestamps; 10 lead-rounding edges; 3 preview images; invalid/nonfinite/oversized inputs |
 | Existing radar seam, raw runtime, seam integration, canonical timeline and map experience checks | PASS during integration |
@@ -73,7 +88,7 @@ The model review also corrected cancellation leaving refresh busy, a late initia
 
 ## What this does not prove
 
-No live GRIB/Zarr/NCRD decoding; no storm-motion or correction estimation; no full raw runtime freshness/quality gates; no GPU shader parity; no complete radar/forecast seam; no RainViewer/global fallback; no production basemap, aerial or satellite integration; no official alert polygons, Storm Check, lightning or StormScope. A synthetic exact-time blend is not validation of real-world storm guidance.
+No live GRIB/Zarr/NCRD decoding; no storm-motion or correction estimation; no full raw runtime freshness/quality gates; no GPU shader parity; no complete radar/forecast seam; no renderer-integrated RainViewer/global fallback; no production basemap, aerial or satellite integration; no official alert polygons, Storm Check, lightning or StormScope. The global fallback work here proves only the metadata/source contract, not tile coverage or visual correctness. A synthetic exact-time blend is not validation of real-world storm guidance.
 
 ## Next gate before a family-facing native map
 

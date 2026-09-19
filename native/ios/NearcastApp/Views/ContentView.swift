@@ -191,8 +191,9 @@ private struct NativeWeatherPreviewContainer: View {
     @StateObject private var placesControls: NativePlacesControlsModel
     @ObservedObject var webModel: NearcastWebModel
     @ObservedObject private var placesOwner: NativePlacesOwnerController
-    @State private var placesSettingsTab: NativePlacesSettingsTab = .places
-    @State private var showingPlacesSettings = false
+    // The destination is the presentation identity. Two independent state writes
+    // can present a sheet with yesterday's tab before SwiftUI applies the new one.
+    @State private var placesSettingsTab: NativePlacesSettingsTab?
 
     init(context: NativePreviewContext, webModel: NearcastWebModel) {
         _preview = StateObject(wrappedValue: NativeWeatherPreviewModel(context: context))
@@ -208,29 +209,28 @@ private struct NativeWeatherPreviewContainer: View {
             model: preview,
             onClose: { webModel.showingNativePreview = false },
             onLegacy: { destination in
-                webModel.handoffNativePreview(NativePreviewHandoff(
-                    destination: destination,
-                    place: preview.selectedPlace,
-                    date: preview.selectedDay,
-                    timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone
-                ))
+                openExisting(destination)
             },
             onPlaces: {
                 placesSettingsTab = .places
-                showingPlacesSettings = true
             },
             onSettings: {
                 placesSettingsTab = .settings
-                showingPlacesSettings = true
             }
         )
-        .sheet(isPresented: $showingPlacesSettings) {
-            NativePlacesSettingsSheet(model: placesControls, initialTab: placesSettingsTab,
-                onDone: { showingPlacesSettings = false },
+        .sheet(item: $placesSettingsTab) { tab in
+            NativePlacesSettingsSheet(model: placesControls, initialTab: tab,
+                onDone: { placesSettingsTab = nil },
                 onOpenExisting: {
-                    showingPlacesSettings = false
+                    placesSettingsTab = nil
                     webModel.openExistingPlacesSettings()
                 },
+                onOpenExistingMap: {
+                    placesSettingsTab = nil
+                    openExisting(.map)
+                },
+                nativeMapContext: preview.context,
+                nativeMapTimezone: preview.forecast?.timezoneID,
                 onEnableNativeStorage: { Task { await webModel.enableNativePlacesStorage() } },
                 nativeStorageMessage: placesOwner.message,
                 isEnablingNativeStorage: placesOwner.isActivating)
@@ -248,5 +248,11 @@ private struct NativeWeatherPreviewContainer: View {
             await preview.refresh()
         }
         .onDisappear { preview.cancel() }
+    }
+
+    private func openExisting(_ destination: NativeLegacyDestination) {
+        webModel.handoffNativePreview(NativePreviewHandoff(destination: destination,
+            place: preview.selectedPlace, date: preview.selectedDay,
+            timezone: preview.forecast?.timezoneID ?? preview.selectedPlace.timezone))
     }
 }

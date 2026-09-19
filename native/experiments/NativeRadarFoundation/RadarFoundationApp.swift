@@ -13,14 +13,25 @@ struct RadarFoundationView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var recenter = 0
     @State private var showDetails = false
+    @State private var rendererReady = false
+    @State private var storageFailed = false
     private var fixture: SyntheticRadarFrame? { model.syntheticFrame }
     private var frame: RadarTimelineFrame? { model.selectedFrame }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            RadarFoundationMap(frame: frame?.proofFrame, syntheticImage: fixture?.image,
-                syntheticID: fixture?.id, recenter: recenter) { model.renderDiagnostic = $0 }
+            Group {
+                if rendererReady {
+                    RadarFoundationMap(frame: frame?.proofFrame, syntheticImage: fixture?.image,
+                        syntheticID: fixture?.id, recenter: recenter) { model.renderDiagnostic = $0 }
+                } else {
+                    VStack {
+                        if storageFailed { Text("Map storage could not be prepared. Close Radar Lab and try again.") }
+                        else { ProgressView("Preparing map…") }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
                 .overlay(alignment: .topLeading) {
                     VStack(alignment: .leading, spacing: 4) {
                         Label(model.fixtureMode ? "SYNTHETIC · NOT WEATHER" : "NOAA SOURCE IMAGERY", systemImage: model.fixtureMode ? "testtube.2" : "dot.radiowaves.left.and.right")
@@ -38,7 +49,17 @@ struct RadarFoundationView: View {
         .background(Color(uiColor: .systemBackground))
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showDetails) { details }
-        .task { if !model.fixtureMode { await model.refresh() } }
+        .task {
+            #if NEARCAST_RADAR_STANDALONE
+            rendererReady = true
+            #else
+            // Even opening the diagnostic first must configure the SDK before
+            // its first session/map, so later keyed maps cannot inherit a disk cache.
+            rendererReady = await NativeBasemapNetwork.prepareCache() && NativeBasemapNetwork.install()
+            storageFailed = !rendererReady
+            #endif
+            if rendererReady, !model.fixtureMode { await model.refresh() }
+        }
         .onDisappear { model.pause() }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { now in
             if scenePhase == .active { model.timeline.advanceClock(to: now) }

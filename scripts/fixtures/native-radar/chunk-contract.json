@@ -1,0 +1,360 @@
+{
+  "version": 1,
+  "note": "Transport/decoder fixtures only. Legacy MRMS files are historical; synthetic data is never live weather.",
+  "vectors": [
+    {
+      "name": "noaa-mrms-direct",
+      "manifest": {
+        "provider": "nearcast-raw-map",
+        "version": 1,
+        "generatedAt": "2026-09-19T01:20:00.000Z",
+        "product": "MergedReflectivityQCComposite_00.50",
+        "region": "CONUS",
+        "bounds": {
+          "minLat": 38.3,
+          "minLon": -90.4,
+          "maxLat": 39,
+          "maxLon": -89.7
+        },
+        "frame": {
+          "kind": "observed",
+          "provider": "noaa-mrms-direct",
+          "validTime": "2026-09-19T01:20:00.000Z",
+          "timestamp": "2026-09-19T01:20:00.000Z",
+          "observedAt": "2026-09-19T01:20:00.000Z",
+          "forecastHour": null,
+          "forecastMinutes": null,
+          "cycleTime": null,
+          "cycleAgeMinutes": null,
+          "guidanceType": null,
+          "originalProvider": null,
+          "baseObservedAt": null,
+          "leadMinutes": null,
+          "modelLeadMinutes": null,
+          "method": null,
+          "confidence": null,
+          "confidenceLevel": null,
+          "correctionFactor": null,
+          "blend": null,
+          "motion": null,
+          "stats": {
+            "precipPixels": 255,
+            "outputPixels": 256,
+            "minDbz": 0,
+            "maxDbz": 80
+          }
+        },
+        "renderIntent": {
+          "clientRendering": "custom-webgl-radar-layer",
+          "colorizeOnDevice": true,
+          "animateOnDevice": true
+        },
+        "valueEncoding": {
+          "type": "uint8-dbz",
+          "dbzMin": 0,
+          "dbzMax": 80,
+          "threshold": 5,
+          "noData": 0,
+          "valueMin": 1,
+          "valueMax": 255
+        },
+        "canonical": {
+          "baseZoom": 0,
+          "chunkSize": 16,
+          "bounds": {
+            "minLat": 38.3,
+            "minLon": -90.4,
+            "maxLat": 39,
+            "maxLon": -89.7
+          },
+          "pixels": 256,
+          "validPixels": 255
+        },
+        "levels": [
+          {
+            "id": "viewport",
+            "zoom": 0,
+            "chunkSize": 16,
+            "pool": "viewport",
+            "bounds": {
+              "minLat": 38.3,
+              "minLon": -90.4,
+              "maxLat": 39,
+              "maxLon": -89.7
+            },
+            "chunkCount": 1,
+            "chunks": [
+              {
+                "x": 0,
+                "y": 0,
+                "path": "frames/noaa-mrms-direct.ncrd",
+                "byteLength": 712,
+                "precipPixels": 255,
+                "minDbz": 0,
+                "maxDbz": 80,
+                "bounds": {
+                  "minLat": 38.3,
+                  "minLon": -90.4,
+                  "maxLat": 39,
+                  "maxLon": -89.7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "bytesBase64": "TkNSRAABAbwAAAEAeyJwcm92aWRlciI6Im5lYXJjYXN0LXJhdy1tYXAiLCJ2ZXJzaW9uIjoxLCJzb3VyY2VQcm92aWRlciI6Im5vYWEtbXJtcy1kaXJlY3QiLCJraW5kIjoib2JzZXJ2ZWQiLCJ2YWxpZFRpbWUiOiIyMDI2LTA5LTE5VDAxOjIwOjAwLjAwMFoiLCJ0aW1lc3RhbXAiOiIyMDI2LTA5LTE5VDAxOjIwOjAwLjAwMFoiLCJ2aXN1YWxNZXRyaWMiOiJyZWZsZWN0aXZpdHkiLCJ3aWR0aCI6MTYsImhlaWdodCI6MTYsInByb2plY3Rpb24iOiJ3ZWItbWVyY2F0b3ItYm91bmRzIiwiYm91bmRzIjp7Im1pbkxhdCI6MzguMywibWluTG9uIjotOTAuNCwibWF4TGF0IjozOSwibWF4TG9uIjotODkuN30sInZhbHVlRW5jb2RpbmciOnsidHlwZSI6InVpbnQ4LWRieiIsImRiek1pbiI6MCwiZGJ6TWF4Ijo4MCwidGhyZXNob2xkIjo1LCJub0RhdGEiOjAsInZhbHVlTWluIjoxLCJ2YWx1ZU1heCI6MjU1fX0KAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==",
+      "payloadSHA256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "width": 16,
+      "height": 16,
+      "kind": "observed",
+      "validTime": "2026-09-19T01:20:00.000Z"
+    },
+    {
+      "name": "noaa-hrrr-subhourly",
+      "manifest": {
+        "provider": "nearcast-raw-map",
+        "version": 1,
+        "generatedAt": "2026-09-19T01:20:00.000Z",
+        "product": "wrfsubhf/REFC",
+        "region": "CONUS",
+        "bounds": {
+          "minLat": 38.3,
+          "minLon": -90.4,
+          "maxLat": 39,
+          "maxLon": -89.7
+        },
+        "frame": {
+          "kind": "forecast",
+          "provider": "noaa-hrrr-subhourly",
+          "validTime": "2026-09-19T01:30:00.000Z",
+          "timestamp": "2026-09-19T01:30:00.000Z",
+          "observedAt": null,
+          "forecastHour": null,
+          "forecastMinutes": 30,
+          "cycleTime": "2026-09-19T01:00:00.000Z",
+          "cycleAgeMinutes": null,
+          "guidanceType": null,
+          "originalProvider": null,
+          "baseObservedAt": null,
+          "leadMinutes": null,
+          "modelLeadMinutes": null,
+          "method": null,
+          "confidence": null,
+          "confidenceLevel": null,
+          "correctionFactor": null,
+          "blend": null,
+          "motion": null,
+          "stats": {
+            "precipPixels": 255,
+            "outputPixels": 256,
+            "minDbz": 0,
+            "maxDbz": 80
+          }
+        },
+        "renderIntent": {
+          "clientRendering": "custom-webgl-radar-layer",
+          "colorizeOnDevice": true,
+          "animateOnDevice": true
+        },
+        "valueEncoding": {
+          "type": "uint8-dbz",
+          "dbzMin": 0,
+          "dbzMax": 80,
+          "threshold": 5,
+          "noData": 0,
+          "valueMin": 1,
+          "valueMax": 255
+        },
+        "canonical": {
+          "baseZoom": 0,
+          "chunkSize": 16,
+          "bounds": {
+            "minLat": 38.3,
+            "minLon": -90.4,
+            "maxLat": 39,
+            "maxLon": -89.7
+          },
+          "pixels": 256,
+          "validPixels": 255
+        },
+        "levels": [
+          {
+            "id": "viewport",
+            "zoom": 0,
+            "chunkSize": 16,
+            "pool": "viewport",
+            "bounds": {
+              "minLat": 38.3,
+              "minLon": -90.4,
+              "maxLat": 39,
+              "maxLon": -89.7
+            },
+            "chunkCount": 1,
+            "chunks": [
+              {
+                "x": 0,
+                "y": 0,
+                "path": "frames/noaa-hrrr-subhourly.ncrd",
+                "byteLength": 725,
+                "precipPixels": 255,
+                "minDbz": 0,
+                "maxDbz": 80,
+                "bounds": {
+                  "minLat": 38.3,
+                  "minLon": -90.4,
+                  "maxLat": 39,
+                  "maxLon": -89.7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "bytesBase64": "TkNSRAABAckAAAEAeyJwcm92aWRlciI6Im5lYXJjYXN0LXJhdy1tYXAiLCJ2ZXJzaW9uIjoxLCJzb3VyY2VQcm92aWRlciI6Im5vYWEtaHJyci1zdWJob3VybHkiLCJraW5kIjoiZm9yZWNhc3QiLCJ2YWxpZFRpbWUiOiIyMDI2LTA5LTE5VDAxOjMwOjAwLjAwMFoiLCJ0aW1lc3RhbXAiOiIyMDI2LTA5LTE5VDAxOjMwOjAwLjAwMFoiLCJ2aXN1YWxNZXRyaWMiOiJzaW11bGF0ZWQtcmVmbGVjdGl2aXR5Iiwid2lkdGgiOjE2LCJoZWlnaHQiOjE2LCJwcm9qZWN0aW9uIjoid2ViLW1lcmNhdG9yLWJvdW5kcyIsImJvdW5kcyI6eyJtaW5MYXQiOjM4LjMsIm1pbkxvbiI6LTkwLjQsIm1heExhdCI6MzksIm1heExvbiI6LTg5Ljd9LCJ2YWx1ZUVuY29kaW5nIjp7InR5cGUiOiJ1aW50OC1kYnoiLCJkYnpNaW4iOjAsImRiek1heCI6ODAsInRocmVzaG9sZCI6NSwibm9EYXRhIjowLCJ2YWx1ZU1pbiI6MSwidmFsdWVNYXgiOjI1NX19CgABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=",
+      "payloadSHA256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "width": 16,
+      "height": 16,
+      "kind": "forecast",
+      "validTime": "2026-09-19T01:30:00.000Z"
+    },
+    {
+      "name": "noaa-hrrr-zarr",
+      "manifest": {
+        "provider": "nearcast-raw-map",
+        "version": 1,
+        "generatedAt": "2026-09-19T01:20:00.000Z",
+        "product": "wrfsubhf/REFC",
+        "region": "CONUS",
+        "bounds": {
+          "minLat": 38.3,
+          "minLon": -90.4,
+          "maxLat": 39,
+          "maxLon": -89.7
+        },
+        "frame": {
+          "kind": "forecast",
+          "provider": "noaa-hrrr-zarr",
+          "validTime": "2026-09-19T01:30:00.000Z",
+          "timestamp": "2026-09-19T01:30:00.000Z",
+          "observedAt": null,
+          "forecastHour": null,
+          "forecastMinutes": 30,
+          "cycleTime": "2026-09-19T01:00:00.000Z",
+          "cycleAgeMinutes": null,
+          "guidanceType": null,
+          "originalProvider": null,
+          "baseObservedAt": null,
+          "leadMinutes": null,
+          "modelLeadMinutes": null,
+          "method": null,
+          "confidence": null,
+          "confidenceLevel": null,
+          "correctionFactor": null,
+          "blend": null,
+          "motion": null,
+          "stats": {
+            "precipPixels": 255,
+            "outputPixels": 256,
+            "minDbz": 0,
+            "maxDbz": 80
+          }
+        },
+        "renderIntent": {
+          "clientRendering": "custom-webgl-radar-layer",
+          "colorizeOnDevice": true,
+          "animateOnDevice": true
+        },
+        "valueEncoding": {
+          "type": "uint8-dbz",
+          "dbzMin": 0,
+          "dbzMax": 80,
+          "threshold": 5,
+          "noData": 0,
+          "valueMin": 1,
+          "valueMax": 255
+        },
+        "canonical": {
+          "baseZoom": 0,
+          "chunkSize": 16,
+          "bounds": {
+            "minLat": 38.3,
+            "minLon": -90.4,
+            "maxLat": 39,
+            "maxLon": -89.7
+          },
+          "pixels": 256,
+          "validPixels": 255
+        },
+        "levels": [
+          {
+            "id": "viewport",
+            "zoom": 0,
+            "chunkSize": 16,
+            "pool": "viewport",
+            "bounds": {
+              "minLat": 38.3,
+              "minLon": -90.4,
+              "maxLat": 39,
+              "maxLon": -89.7
+            },
+            "chunkCount": 1,
+            "chunks": [
+              {
+                "x": 0,
+                "y": 0,
+                "path": "frames/noaa-hrrr-zarr.ncrd.gz",
+                "byteLength": 639,
+                "precipPixels": 255,
+                "minDbz": 0,
+                "maxDbz": 80,
+                "bounds": {
+                  "minLat": 38.3,
+                  "minLon": -90.4,
+                  "maxLat": 39,
+                  "maxLon": -89.7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "bytesBase64": "H4sIAAAAAAAAE32PZXATURzEE5zi7vbH4S5ckqYkh9MWbUspxYq+5F6b1+buwrtL0qYEd3d3d3eX4u7u7u46SWCGT3zbnf3tzmxMeFyERqvN0Gi0mnRwUtlNBEyBBwkjakOKylLkYUXkBAbcmCpEloDXM6DILmrDsf/wMkKsnVLKehGlwEAKkQTgIVGm2L/j7yMHEeKJiIEHA2cIYzkLq7fEc3reyPEcp+M4LgEYUImIFRWJzv9jbqK4kCMaq5TYgAeFiC4HUrHAUpzowDaVuImaBgx4iKDagdeHMWDHJMmuBrWTysl+yv8HPNjKipjakCpT1iq7JEEBBv4IPh1EIkUhFXijWWdkAs5fYy2cLpQBEaUGQ0tQByKzRVfbF7jswpGSTRaIlORfUtOc/vsuIqlmVrB6gQHB6o0mEvBcUKJU4M0cA6qdYsUuOwTgTQxIcgRSUQAKbAYa+r/G3zGYTD5fiEabKXOWrNmy58gZkit3nrz58hcoWKhwkaLFipcoWap0mbLlyleAipUqV6larXqNmgyrq8XpDcZQU1hts4WvU7de/QYNGzUOj4hs0rRZ8xYto6JjWsW2jmsT37Zd+w4dEzp17tK1W3dktQk4MclOklMcoiQ7e1BFdbk9qWne9J6+Xr379O3Xf8DAQYOHDB02fMTIUaPHjB03fsLESZOnTJ02fcbMWbPnzJ03f8HCRYuXLF22fMXKVavXrF23fsPGTZu3bN22fcfOXbv37N23P+PAwUOHjxw9dvzEyVOnz5w9d/7CxUuXr1y9dv3GzVu379y9d//Bw0ePnzx99vzFy1ev37x99/7Dx0+fv3z99v3Hz1+/AU+W1j7QAgAA",
+      "payloadSHA256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "width": 16,
+      "height": 16,
+      "kind": "forecast",
+      "validTime": "2026-09-19T01:30:00.000Z"
+    }
+  ],
+  "legacy": [
+    {
+      "indexPath": "radar/chunks/synthetic-smoke/index.json",
+      "chunkPath": "radar/chunks/synthetic-smoke/chunks/z8/65/104.ncrd.gz",
+      "width": 256,
+      "height": 256,
+      "payloadSHA256": "c6af655df7d5c502048097dba5b9ea0ee1f92b646dd08df7a75c625abef3e7c8",
+      "kind": "synthetic",
+      "validTime": "2026-07-01T04:21:06.345Z"
+    },
+    {
+      "indexPath": "radar/chunks/nebraska-20260701-055640/index.json",
+      "chunkPath": "radar/chunks/nebraska-20260701-055640/chunks/z8/55/93.ncrd.gz",
+      "width": 256,
+      "height": 256,
+      "payloadSHA256": "ad381fae78b28fc84aadcf1c16d944f0b8acd6ba4c98fe655d680a037dc08a78",
+      "kind": "observed",
+      "validTime": "2026-07-01T05:56:40.000Z"
+    },
+    {
+      "indexPath": "radar/chunks/nebraska-20260701-055640-z12/index.json",
+      "chunkPath": "radar/chunks/nebraska-20260701-055640-z12/chunks/z8/55/93.ncrd.gz",
+      "width": 256,
+      "height": 256,
+      "payloadSHA256": "46327c079adca39b65b8ba140bab4083faa1db6f899d50a1a15878099a6ac870",
+      "kind": "observed",
+      "validTime": "2026-07-01T05:56:40.000Z"
+    }
+  ],
+  "gzipBombBase64": "H4sIAAAAAAAAE+3BAQ0AAADCoL1/aSsYACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4DUK3wzggE8SAA=="
+}

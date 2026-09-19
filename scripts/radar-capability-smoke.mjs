@@ -182,12 +182,61 @@ assert.equal(mapConfig.headers.get("Cache-Control"), "no-store");
 
 const workerMapConfigResponse = await worker.fetch(
   new Request("https://getnearcast.app/api/map/config"),
-  { CARTO_BASEMAP_KEY: "worker-carto-key" },
+  { CARTO_BASEMAP_KEY: "worker-carto-key", CARTO_BASEMAP_IOS_KEY: "must-not-cross-lanes" },
   {}
 );
 assert.equal(workerMapConfigResponse.status, 200);
 assert.equal(workerMapConfigResponse.headers.get("Cache-Control"), "no-store");
-assert.deepEqual((await workerMapConfigResponse.json()).carto, { apiKey: "worker-carto-key" });
+const workerWebMapConfig = await workerMapConfigResponse.json();
+assert.deepEqual(workerWebMapConfig.carto, { apiKey: "worker-carto-key" });
+assert.equal(Object.hasOwn(workerWebMapConfig, "audience"), false);
+
+const nativeMapConfig = await mapConfiguration(
+  { CARTO_BASEMAP_KEY: "must-not-cross-lanes", CARTO_BASEMAP_IOS_KEY: "  native-carto-key  " },
+  "https://getnearcast.app/api/map/config?client=ios"
+);
+assert.equal(nativeMapConfig.status, 200);
+assert.equal(nativeMapConfig.headers.get("Cache-Control"), "no-store");
+assert.equal(nativeMapConfig.body.provider, "nearcast-map-config");
+assert.equal(nativeMapConfig.body.version, 1);
+assert.equal(nativeMapConfig.body.state, "ready");
+assert.equal(nativeMapConfig.body.audience, "app.nearcast.ios");
+assert.deepEqual(nativeMapConfig.body.carto, { apiKey: "native-carto-key" });
+
+const workerNativeMapConfigResponse = await worker.fetch(
+  new Request("https://getnearcast.app/api/map/config?client=ios"),
+  { CARTO_BASEMAP_KEY: "must-not-cross-lanes", CARTO_BASEMAP_IOS_KEY: "worker-native-key" },
+  {}
+);
+assert.equal(workerNativeMapConfigResponse.status, 200);
+assert.equal(workerNativeMapConfigResponse.headers.get("Cache-Control"), "no-store");
+assert.deepEqual(await workerNativeMapConfigResponse.json(), {
+  provider: "nearcast-map-config",
+  version: 1,
+  state: "ready",
+  audience: "app.nearcast.ios",
+  carto: { apiKey: "worker-native-key" }
+});
+
+const missingNativeMapConfig = await mapConfiguration(
+  { CARTO_BASEMAP_KEY: "must-not-fall-back" },
+  "https://getnearcast.app/api/map/config?client=ios"
+);
+assert.equal(missingNativeMapConfig.status, 200);
+assert.equal(missingNativeMapConfig.body.state, "unavailable");
+assert.equal(missingNativeMapConfig.body.audience, "app.nearcast.ios");
+assert.deepEqual(missingNativeMapConfig.body.carto, { apiKey: "" });
+
+for (const url of [
+  "https://getnearcast.app/api/map/config?client=native",
+  "https://getnearcast.app/api/map/config?client=ios&client=web"
+]) {
+  const rejectedClient = await mapConfiguration(
+    { CARTO_BASEMAP_KEY: "must-not-leak", CARTO_BASEMAP_IOS_KEY: "must-not-leak" }, url
+  );
+  assert.equal(rejectedClient.status, 400);
+  assert.deepEqual(rejectedClient.body, { error: "unsupported-map-client" });
+}
 
 const missingMapConfig = await mapConfiguration({});
 assert.equal(missingMapConfig.status, 200);
@@ -949,9 +998,9 @@ async function capability(payload, capabilityEnv = env) {
   };
 }
 
-async function mapConfiguration(configEnv) {
+async function mapConfiguration(configEnv, url = "https://getnearcast.app/api/map/config") {
   const response = await handleMapConfigRequest(
-    new Request("https://getnearcast.app/api/map/config"),
+    new Request(url),
     configEnv
   );
   return {

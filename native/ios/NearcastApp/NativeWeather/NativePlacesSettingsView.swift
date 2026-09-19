@@ -14,6 +14,9 @@ struct NativePlacesSettingsSheet: View {
     @ObservedObject var model: NativePlacesControlsModel
     let onDone: () -> Void
     let onOpenExisting: () -> Void
+    let onOpenExistingMap: (() -> Void)?
+    let nativeMapContext: NativePreviewContext?
+    let nativeMapTimezone: String?
     let onEnableNativeStorage: (() -> Void)?
     let nativeStorageMessage: String?
     let isEnablingNativeStorage: Bool
@@ -29,12 +32,16 @@ struct NativePlacesSettingsSheet: View {
     @State private var showingRemove = false
     @State private var showingNativeStorageConfirmation = false
     @State private var showingRadarLab = false
+    @State private var showingNativeMap = false
 
     init(
         model: NativePlacesControlsModel,
         initialTab: NativePlacesSettingsTab = .places,
         onDone: @escaping () -> Void,
         onOpenExisting: @escaping () -> Void,
+        onOpenExistingMap: (() -> Void)? = nil,
+        nativeMapContext: NativePreviewContext? = nil,
+        nativeMapTimezone: String? = nil,
         onEnableNativeStorage: (() -> Void)? = nil,
         nativeStorageMessage: String? = nil,
         isEnablingNativeStorage: Bool = false
@@ -42,6 +49,9 @@ struct NativePlacesSettingsSheet: View {
         self.model = model
         self.onDone = onDone
         self.onOpenExisting = onOpenExisting
+        self.onOpenExistingMap = onOpenExistingMap
+        self.nativeMapContext = nativeMapContext
+        self.nativeMapTimezone = nativeMapTimezone
         self.onEnableNativeStorage = onEnableNativeStorage
         self.nativeStorageMessage = nativeStorageMessage
         self.isEnablingNativeStorage = isEnablingNativeStorage
@@ -135,6 +145,15 @@ struct NativePlacesSettingsSheet: View {
         .fullScreenCover(isPresented: $showingRadarLab) {
             RadarFoundationView(onClose: { showingRadarLab = false })
         }
+        .fullScreenCover(isPresented: $showingNativeMap) {
+            if let context = model.source?.toPreviewContext() ?? nativeMapContext {
+                NativeRadarView(place: context.selectedPlace,
+                    timezone: context.selectedPlace.timezone ?? (context.selectedPlace.coordinateIdentity == nativeMapContext?.selectedPlace.coordinateIdentity ? nativeMapTimezone : nil),
+                    uses24HourClock: context.uses24HourClock,
+                    onClose: { showingNativeMap = false },
+                    onExistingMap: { showingNativeMap = false; onOpenExistingMap?() })
+            }
+        }
     }
 
     private var tabPicker: some View {
@@ -184,6 +203,10 @@ struct NativePlacesSettingsSheet: View {
                         .buttonStyle(.borderedProminent)
                     Button("Open existing Nearcast", action: onOpenExisting)
                         .buttonStyle(.bordered)
+                    if nativeMapContext != nil, onOpenExistingMap != nil {
+                        Button("Try native weather map") { showingNativeMap = true }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -450,6 +473,12 @@ struct NativePlacesSettingsSheet: View {
             }
             .disabled(model.isBusy || model.source?.owner != "native")
             Section {
+                if onOpenExistingMap != nil {
+                    Button { showingNativeMap = true } label: {
+                        Label("Try native weather map", systemImage: "map")
+                            .font(.body.weight(.semibold)).frame(minHeight: 44)
+                    }
+                }
                 Button { showingRadarLab = true } label: {
                     Label("Open Radar Lab", systemImage: "dot.radiowaves.left.and.right")
                         .font(.body.weight(.semibold))
@@ -458,7 +487,7 @@ struct NativePlacesSettingsSheet: View {
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Test native map controls at a fixed public location in Maryville, Illinois. This uses a coordinate grid, not a street map. The regular Map stays unchanged.")
+                Text("Try native radar and model forecasts at your selected place. The regular Map stays unchanged while required layers are migrated. Radar Lab is a separate fixed-location diagnostic.")
             }
             Section {
                 Button(action: onOpenExisting) {

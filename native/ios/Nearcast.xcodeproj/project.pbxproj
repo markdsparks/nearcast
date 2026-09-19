@@ -7,6 +7,27 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC1000000000000000000028 /* NativeRadarFrameCachePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */; };
+		AC1000000000000000000026 /* NativeRadarAlertsContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000026 /* NativeRadarAlertsContract.swift */; };
+		AC1000000000000000000027 /* NativeRadarAlertsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000027 /* NativeRadarAlertsClient.swift */; };
+		AC1000000000000000000024 /* NativeSatelliteContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000024 /* NativeSatelliteContract.swift */; };
+		AC1000000000000000000025 /* NativeSatelliteClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000025 /* NativeSatelliteClient.swift */; };
+		AC1000000000000000000020 /* NativeRadarPresentationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000020 /* NativeRadarPresentationContract.swift */; };
+		AC1000000000000000000021 /* NativeGlobalRadarContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000021 /* NativeGlobalRadarContract.swift */; };
+		AC1000000000000000000022 /* NativeGlobalRadarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000022 /* NativeGlobalRadarClient.swift */; };
+		AC1000000000000000000023 /* NativeRadarFreshnessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000023 /* NativeRadarFreshnessPolicy.swift */; };
+		AC1000000000000000000010 /* RadarChunkContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000010 /* RadarChunkContract.swift */; };
+		AC1000000000000000000011 /* RadarChunkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000011 /* RadarChunkClient.swift */; };
+		AC1000000000000000000012 /* HRRRZarrCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000012 /* HRRRZarrCodec.swift */; };
+		AC1000000000000000000013 /* HRRRZarrContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000013 /* HRRRZarrContract.swift */; };
+		AC1000000000000000000014 /* HRRRZarrClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000014 /* HRRRZarrClient.swift */; };
+		AC1000000000000000000015 /* NativeBasemapClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000015 /* NativeBasemapClient.swift */; };
+		AC1000000000000000000016 /* NativeBasemapNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000016 /* NativeBasemapNetwork.swift */; };
+		AC1000000000000000000017 /* NativeRadarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000017 /* NativeRadarMap.swift */; };
+		AC1000000000000000000018 /* NativeRadarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000018 /* NativeRadarModel.swift */; };
+		AC1000000000000000000019 /* NativeRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000019 /* NativeRadarView.swift */; };
+		AC100000000000000000001A /* MRMSContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000001A /* MRMSContract.swift */; };
+		AC100000000000000000001B /* MRMSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000001B /* MRMSClient.swift */; };
 		AC1000000000000000000001 /* RadarTimelineContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000001 /* RadarTimelineContract.swift */; };
 		AC1000000000000000000002 /* RadarNumericContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000002 /* RadarNumericContract.swift */; };
 		AC1000000000000000000003 /* RadarFoundationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000003 /* RadarFoundationModel.swift */; };
@@ -145,6 +166,27 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarFrameCachePolicy.swift; path = ../experiments/NativeRadarFoundation/NativeRadarFrameCachePolicy.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000026 /* NativeRadarAlertsContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarAlertsContract.swift; path = ../experiments/NativeRadarFoundation/NativeRadarAlertsContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000027 /* NativeRadarAlertsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarAlertsClient.swift; path = ../experiments/NativeRadarFoundation/NativeRadarAlertsClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000024 /* NativeSatelliteContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSatelliteContract.swift; path = ../experiments/NativeRadarFoundation/NativeSatelliteContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000025 /* NativeSatelliteClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSatelliteClient.swift; path = ../experiments/NativeRadarFoundation/NativeSatelliteClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000020 /* NativeRadarPresentationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarPresentationContract.swift; path = ../experiments/NativeRadarFoundation/NativeRadarPresentationContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000021 /* NativeGlobalRadarContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeGlobalRadarContract.swift; path = ../experiments/NativeRadarFoundation/NativeGlobalRadarContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000022 /* NativeGlobalRadarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeGlobalRadarClient.swift; path = ../experiments/NativeRadarFoundation/NativeGlobalRadarClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000023 /* NativeRadarFreshnessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarFreshnessPolicy.swift; path = ../experiments/NativeRadarFoundation/NativeRadarFreshnessPolicy.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000010 /* RadarChunkContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarChunkContract.swift; path = ../experiments/NativeRadarFoundation/RadarChunkContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000011 /* RadarChunkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarChunkClient.swift; path = ../experiments/NativeRadarFoundation/RadarChunkClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000012 /* HRRRZarrCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HRRRZarrCodec.swift; path = ../experiments/NativeRadarFoundation/HRRRZarrCodec.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000013 /* HRRRZarrContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HRRRZarrContract.swift; path = ../experiments/NativeRadarFoundation/HRRRZarrContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000014 /* HRRRZarrClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HRRRZarrClient.swift; path = ../experiments/NativeRadarFoundation/HRRRZarrClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000015 /* NativeBasemapClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeBasemapClient.swift; path = ../experiments/NativeRadarFoundation/NativeBasemapClient.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000016 /* NativeBasemapNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeBasemapNetwork.swift; path = ../experiments/NativeRadarFoundation/NativeBasemapNetwork.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000017 /* NativeRadarMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarMap.swift; path = NearcastApp/NativeWeather/NativeRadarMap.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000018 /* NativeRadarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarModel.swift; path = NearcastApp/NativeWeather/NativeRadarModel.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000019 /* NativeRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarView.swift; path = NearcastApp/NativeWeather/NativeRadarView.swift; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000001A /* MRMSContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MRMSContract.swift; path = ../experiments/NativeRadarFoundation/MRMSContract.swift; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000001B /* MRMSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MRMSClient.swift; path = ../experiments/NativeRadarFoundation/MRMSClient.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000001 /* RadarTimelineContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarTimelineContract.swift; path = ../experiments/NativeRadarFoundation/RadarTimelineContract.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000002 /* RadarNumericContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarNumericContract.swift; path = ../experiments/NativeRadarFoundation/RadarNumericContract.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000003 /* RadarFoundationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarFoundationModel.swift; path = ../experiments/NativeRadarFoundation/RadarFoundationModel.swift; sourceTree = SOURCE_ROOT; };
@@ -257,6 +299,27 @@
 			isa = PBXGroup;
 			children = (
 				AC2000000000000000000001 /* RadarTimelineContract.swift */,
+				AC2000000000000000000020 /* NativeRadarPresentationContract.swift */,
+				AC2000000000000000000021 /* NativeGlobalRadarContract.swift */,
+				AC2000000000000000000022 /* NativeGlobalRadarClient.swift */,
+				AC2000000000000000000023 /* NativeRadarFreshnessPolicy.swift */,
+				AC2000000000000000000028 /* NativeRadarFrameCachePolicy.swift */,
+				AC2000000000000000000026 /* NativeRadarAlertsContract.swift */,
+				AC2000000000000000000027 /* NativeRadarAlertsClient.swift */,
+				AC2000000000000000000024 /* NativeSatelliteContract.swift */,
+				AC2000000000000000000025 /* NativeSatelliteClient.swift */,
+				AC2000000000000000000010 /* RadarChunkContract.swift */,
+				AC2000000000000000000011 /* RadarChunkClient.swift */,
+				AC2000000000000000000012 /* HRRRZarrCodec.swift */,
+				AC2000000000000000000013 /* HRRRZarrContract.swift */,
+				AC2000000000000000000014 /* HRRRZarrClient.swift */,
+				AC2000000000000000000015 /* NativeBasemapClient.swift */,
+				AC2000000000000000000016 /* NativeBasemapNetwork.swift */,
+				AC2000000000000000000017 /* NativeRadarMap.swift */,
+				AC2000000000000000000018 /* NativeRadarModel.swift */,
+				AC2000000000000000000019 /* NativeRadarView.swift */,
+				AC200000000000000000001A /* MRMSContract.swift */,
+				AC200000000000000000001B /* MRMSClient.swift */,
 				AC2000000000000000000002 /* RadarNumericContract.swift */,
 				AC2000000000000000000003 /* RadarFoundationModel.swift */,
 				AC2000000000000000000004 /* RadarFoundationMap.swift */,
@@ -625,6 +688,27 @@
 			files = (
 				A10000000000000000000001 /* NearcastApp.swift in Sources */,
 				AC1000000000000000000001 /* RadarTimelineContract.swift in Sources */,
+				AC1000000000000000000020 /* NativeRadarPresentationContract.swift in Sources */,
+				AC1000000000000000000021 /* NativeGlobalRadarContract.swift in Sources */,
+				AC1000000000000000000022 /* NativeGlobalRadarClient.swift in Sources */,
+				AC1000000000000000000023 /* NativeRadarFreshnessPolicy.swift in Sources */,
+				AC1000000000000000000028 /* NativeRadarFrameCachePolicy.swift in Sources */,
+				AC1000000000000000000026 /* NativeRadarAlertsContract.swift in Sources */,
+				AC1000000000000000000027 /* NativeRadarAlertsClient.swift in Sources */,
+				AC1000000000000000000024 /* NativeSatelliteContract.swift in Sources */,
+				AC1000000000000000000025 /* NativeSatelliteClient.swift in Sources */,
+				AC1000000000000000000010 /* RadarChunkContract.swift in Sources */,
+				AC1000000000000000000011 /* RadarChunkClient.swift in Sources */,
+				AC1000000000000000000012 /* HRRRZarrCodec.swift in Sources */,
+				AC1000000000000000000013 /* HRRRZarrContract.swift in Sources */,
+				AC1000000000000000000014 /* HRRRZarrClient.swift in Sources */,
+				AC1000000000000000000015 /* NativeBasemapClient.swift in Sources */,
+				AC1000000000000000000016 /* NativeBasemapNetwork.swift in Sources */,
+				AC1000000000000000000017 /* NativeRadarMap.swift in Sources */,
+				AC1000000000000000000018 /* NativeRadarModel.swift in Sources */,
+				AC1000000000000000000019 /* NativeRadarView.swift in Sources */,
+				AC100000000000000000001A /* MRMSContract.swift in Sources */,
+				AC100000000000000000001B /* MRMSClient.swift in Sources */,
 				AC1000000000000000000002 /* RadarNumericContract.swift in Sources */,
 				AC1000000000000000000003 /* RadarFoundationModel.swift in Sources */,
 				AC1000000000000000000004 /* RadarFoundationMap.swift in Sources */,

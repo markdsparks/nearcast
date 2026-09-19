@@ -76,6 +76,8 @@ const XWEATHER_BYPASS_BUDGET_CHECKS_ENV = "XWEATHER_BYPASS_BUDGET_CHECKS";
 const XWEATHER_USAGE_PROBE_URL_ENV = "XWEATHER_USAGE_PROBE_URL";
 const XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV = "XWEATHER_USAGE_PROBE_CACHE_SECONDS";
 const CARTO_BASEMAP_KEY_ENV = "CARTO_BASEMAP_KEY";
+const CARTO_BASEMAP_IOS_KEY_ENV = "CARTO_BASEMAP_IOS_KEY";
+const CARTO_BASEMAP_IOS_AUDIENCE = "app.nearcast.ios";
 const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
 const DEFAULT_XWEATHER_STORM_MODE = "beta";
 const DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM = 7.5;
@@ -548,11 +550,19 @@ export async function handleMapConfigRequest(request, env = {}) {
   if (request.method !== "GET") {
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
-  const apiKey = String(env?.[CARTO_BASEMAP_KEY_ENV] || "").trim();
+  const url = new URL(request.url);
+  const clientValues = url.searchParams.getAll("client");
+  const client = clientValues.length === 0 ? "web" : clientValues.length === 1 ? clientValues[0] : "";
+  if (client !== "web" && client !== "ios") {
+    return jsonResponse({ error: "unsupported-map-client" }, { status: 400 });
+  }
+  const nativeIOS = client === "ios";
+  const apiKey = String(env?.[nativeIOS ? CARTO_BASEMAP_IOS_KEY_ENV : CARTO_BASEMAP_KEY_ENV] || "").trim();
   return jsonResponse({
     provider: "nearcast-map-config",
     version: 1,
     state: apiKey ? "ready" : "unavailable",
+    ...(nativeIOS ? { audience: CARTO_BASEMAP_IOS_AUDIENCE } : {}),
     carto: { apiKey }
   });
 }
