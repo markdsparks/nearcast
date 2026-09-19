@@ -1,6 +1,15 @@
 {
-  "originHash" : "77656470694873f8c3aea39681b0e0c3e332fc7ef102b2f1204392e42a75cdd9",
+  "originHash" : "3add7529c0c5fec28aed00b0687ce49d3e41b0839b55bd4b76142fabdb3ff637",
   "pins" : [
+    {
+      "identity" : "maplibre-gl-native-distribution",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/maplibre/maplibre-gl-native-distribution.git",
+      "state" : {
+        "revision" : "13e41ab3d77ff5113e7e5d4ee87803b1f81f5683",
+        "version" : "6.31.0"
+      }
+    },
     {
       "identity" : "operon",
       "kind" : "remoteSourceControl",

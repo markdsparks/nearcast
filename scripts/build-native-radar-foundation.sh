@@ -34,7 +34,7 @@ cp "$SOURCE/DiagnosticStyle.json" "$SOURCE/MapLibre-LICENSE.md" \
 cp "$ROOT/scripts/fixtures/native-radar/numeric-contract.json" "$APP_PATH/"
 ditto "$FRAMEWORK_ROOT/MapLibre.framework" "$APP_PATH/Frameworks/MapLibre.framework"
 
-xcrun --sdk iphonesimulator swiftc -parse-as-library -swift-version 5 \
+xcrun --sdk iphonesimulator swiftc -parse-as-library -swift-version 5 -D NEARCAST_RADAR_STANDALONE \
   -sdk "$SDK" -target "$ARCH-apple-ios17.0-simulator" \
   -module-cache-path "$BUILD_ROOT/ModuleCache" -F "$FRAMEWORK_ROOT" -framework MapLibre \
   -Xlinker -rpath -Xlinker @executable_path/Frameworks \
@@ -48,4 +48,4 @@ xcrun --sdk iphonesimulator swiftc -parse-as-library -swift-version 5 \
 codesign --force --sign - "$APP_PATH/Frameworks/MapLibre.framework"
 codesign --force --sign - "$APP_PATH"
 printf 'PASS Native radar foundation simulator build: %s\n' "$APP_PATH"
-printf 'Isolated app; not included in Nearcast or TestFlight. MapLibre %s, verified SHA-256.\n' "$VERSION"
+printf 'Standalone diagnostic app. MapLibre %s, verified SHA-256.\n' "$VERSION"

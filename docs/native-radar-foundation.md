@@ -1,6 +1,6 @@
 # Phase 3A — native radar foundation
 
-September 18, 2026. This is an **isolated engineering checkpoint**, not a replacement for the shipping map, completed radar parity, or a new TestFlight. Nearcast's Map tab, providers, credentials, notification policy and family records are unchanged.
+September 18, 2026. This started as an **isolated engineering checkpoint**. At the user's request, [build 106](native-radar-lab-testflight-106.md) packages it as an explicit opt-in Radar Lab while Mac visual QA remains unavailable. It is not a replacement for the shipping map or completed radar parity. Nearcast's Map tab, providers, credentials, notification policy and family records are unchanged.
 
 ## What is built
 
@@ -19,7 +19,9 @@ The experiment pins **MapLibre Native 6.31.0** rather than a floating version. I
 
 `de3aaa435dd86768b06d90245e630d068dd7eef1491afae7217d1654c52c462a`
 
-The SDK has an iOS 12 floor; this experiment keeps Nearcast's iOS 17 floor. MapLibre is a tested compilation candidate, not yet a physically accepted full-map renderer. No dependency was added to the shipping Xcode project. The BSD license and unpruned tagged iOS/core notices are bundled.
+The SDK has an iOS 12 floor; this experiment keeps Nearcast's iOS 17 floor. MapLibre is a tested compilation candidate, not yet a physically accepted full-map renderer. Build 106 adds it to the iPhone target only for the opt-in lab; widget and Watch targets do not link it. The BSD license and unpruned tagged iOS/core notices are bundled.
+
+Device packaging caveat: the verified official 6.31.0 device slice contains simulator-valued bundle platform metadata, despite an iOS Mach-O binary. Xcode copies those fields into the archive unchanged. Build 106's release preparation explicitly validates and corrects the known platform fields in the archived copy and re-signs the framework and app; it does not modify the source package/cache or executable code. Archive validation rejects uncorrected or mismatched platforms. This guarded workaround must be revisited, not silently generalized, when upgrading the SDK.
 
 Primary references:
 
@@ -41,7 +43,7 @@ bash scripts/build-native-radar-foundation.sh
 
 The build script downloads only the exact official SDK, validates its SHA-256, and prints a temporary simulator app path. `NEARCAST_RADAR_SDK_ARCHIVE` can point to a previously downloaded ZIP; its checksum is still mandatory. Binaries and downloaded SDK files are not committed.
 
-Install the printed app path on an isolated simulator. Launch with `-radar-fixtures YES` for the fully local synthetic mode; default launch requests public NOAA source metadata. The app has no location, notification, calendar, microphone, App Group or family-storage capability. It never launches a paid weather session.
+Install the printed standalone app path on an isolated simulator. Launch with `-radar-fixtures YES` for the fully local synthetic mode; default launch requests public NOAA source metadata. The standalone app has no location, notification, calendar, microphone, App Group or family-storage capability. The embedded lab never accesses those capabilities or family records, and never launches a paid weather session. Its close action stops playback and returns to native Settings.
 
 The fixture generator's `--check` mode compares checked-in data with the current web implementation; it does not silently refresh expected results. `node scripts/native-radar-numeric-fixtures.mjs --emit` prints candidate JSON for an intentional, reviewed fixture update. Synthetic tests are included in `nearcast-ci.sh native-model`; ordinary CI performs no radar network calls.
 
@@ -78,6 +80,6 @@ No live GRIB/Zarr/NCRD decoding; no storm-motion or correction estimation; no fu
 1. Unlock the Mac and verify the isolated renderer visually: asymmetric fixture orientation/colors, native pan/zoom/recenter, exact selected times, no source crossover, no timeline layout jumps, and restored selection after backgrounding. Record outcomes on both simulator sizes.
 2. Finish the live numeric-data path and weather semantics needed by the existing enhanced map; compare matched inputs across web/native before replacing it. Decide CPU image versus a reviewed native rendering path using measured workload, not this tiny fixture.
 3. Verify production provider authorization/attribution, selected-place routing, global fallback and buffering/error behavior. Existing providers remain unchanged until this gate is satisfied.
-4. Produce an opt-in native radar TestFlight checkpoint and measure physical interactions/latency/memory on both family phones. Keep the current map available until accepted; resolve every existing layer or obtain explicit agreement for any retirement.
+4. Use the early opt-in Radar Lab TestFlight to measure physical interactions/latency/memory on both family phones. This testing can run in parallel with Mac visual QA; it does not skip full-map parity or promote a default. Keep the current map available until accepted; resolve every existing layer or obtain explicit agreement for any retirement.
 
 See [migration scope and acceptance](native-migration-plan.md), [current map inventory](native-migration-baseline.md), and the [earlier MapKit raster proof](native-radar-substrate-proof.md).

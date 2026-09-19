@@ -28,6 +28,7 @@ struct NativePlacesSettingsSheet: View {
     @State private var removeTarget: NativeManagedPlace?
     @State private var showingRemove = false
     @State private var showingNativeStorageConfirmation = false
+    @State private var showingRadarLab = false
 
     init(
         model: NativePlacesControlsModel,
@@ -131,6 +132,9 @@ struct NativePlacesSettingsSheet: View {
             }
         }
         .interactiveDismissDisabled(model.isBusy || isEnablingNativeStorage)
+        .fullScreenCover(isPresented: $showingRadarLab) {
+            RadarFoundationView(onClose: { showingRadarLab = false })
+        }
     }
 
     private var tabPicker: some View {
@@ -445,6 +449,17 @@ struct NativePlacesSettingsSheet: View {
                     : "Move Places and Settings to native storage to edit sky preferences here. Until then, use existing settings.")
             }
             .disabled(model.isBusy || model.source?.owner != "native")
+            Section {
+                Button { showingRadarLab = true } label: {
+                    Label("Open Radar Lab", systemImage: "dot.radiowaves.left.and.right")
+                        .font(.body.weight(.semibold))
+                        .frame(minHeight: 44)
+                }
+            } header: {
+                Text("Experimental")
+            } footer: {
+                Text("Test native map controls at a fixed public location in Maryville, Illinois. This uses a coordinate grid, not a street map. The regular Map stays unchanged.")
+            }
             Section {
                 Button(action: onOpenExisting) {
                     HStack(alignment: .center, spacing: 12) {

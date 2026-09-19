@@ -1,11 +1,14 @@
 import SwiftUI
 
+#if NEARCAST_RADAR_STANDALONE
 @main
 struct RadarFoundationApp: App {
     var body: some Scene { WindowGroup { RadarFoundationView() } }
 }
+#endif
 
-private struct RadarFoundationView: View {
+struct RadarFoundationView: View {
+    var onClose: (() -> Void)? = nil
     @StateObject private var model = RadarFoundationModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var recenter = 0
@@ -36,6 +39,7 @@ private struct RadarFoundationView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showDetails) { details }
         .task { if !model.fixtureMode { await model.refresh() } }
+        .onDisappear { model.pause() }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { now in
             if scenePhase == .active { model.timeline.advanceClock(to: now) }
         }
@@ -46,16 +50,22 @@ private struct RadarFoundationView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Nearcast Radar Lab").font(.headline)
-                Text("Maryville, Illinois · public test location").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text("Radar Lab").font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button { recenter += 1 } label: { Image(systemName: "scope").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Recenter on public test location")
+                Button { showDetails = true } label: { Image(systemName: "info.circle").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Source, limits and diagnostics")
+                if let onClose {
+                    Button(action: onClose) { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                        .accessibilityLabel("Close Radar Lab")
+                }
             }
-            Spacer(minLength: 0)
-            Button { recenter += 1 } label: { Image(systemName: "scope").frame(width: 44, height: 44) }
-                .accessibilityLabel("Recenter on public test location")
-            Button { showDetails = true } label: { Image(systemName: "info.circle").frame(width: 44, height: 44) }
-                .accessibilityLabel("Source, limits and diagnostics")
+            Text("Experimental · Maryville, Illinois · public test location")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }.padding(.horizontal, 16).padding(.vertical, 5)
     }
 

@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC1000000000000000000001 /* RadarTimelineContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000001 /* RadarTimelineContract.swift */; };
+		AC1000000000000000000002 /* RadarNumericContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000002 /* RadarNumericContract.swift */; };
+		AC1000000000000000000003 /* RadarFoundationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000003 /* RadarFoundationModel.swift */; };
+		AC1000000000000000000004 /* RadarFoundationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000004 /* RadarFoundationMap.swift */; };
+		AC1000000000000000000005 /* RadarFoundationApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000005 /* RadarFoundationApp.swift */; };
+		AC1000000000000000000006 /* RadarProofContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000006 /* RadarProofContract.swift */; };
+		AC1000000000000000000007 /* DiagnosticStyle.json in Resources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000007 /* DiagnosticStyle.json */; };
+		AC1000000000000000000008 /* numeric-contract.json in Resources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000008 /* numeric-contract.json */; };
+		AC1000000000000000000009 /* MapLibre-LICENSE.md in Resources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000009 /* MapLibre-LICENSE.md */; };
+		AC100000000000000000000A /* MapLibre-core-NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000000A /* MapLibre-core-NOTICES.md */; };
+		AC100000000000000000000B /* MapLibre-iOS-NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000000B /* MapLibre-iOS-NOTICES.md */; };
+		AC100000000000000000000C /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000004 /* MapLibre */; };
 		AA1000000000000000000010 /* NativePlaceLookupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000010 /* NativePlaceLookupService.swift */; };
 		AA1000000000000000000011 /* NativePlacesOwnerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000011 /* NativePlacesOwnerStore.swift */; };
 		AA1000000000000000000012 /* NativePlacesOwnerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000012 /* NativePlacesOwnerController.swift */; };
@@ -133,6 +145,17 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AC2000000000000000000001 /* RadarTimelineContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarTimelineContract.swift; path = ../experiments/NativeRadarFoundation/RadarTimelineContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000002 /* RadarNumericContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarNumericContract.swift; path = ../experiments/NativeRadarFoundation/RadarNumericContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000003 /* RadarFoundationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarFoundationModel.swift; path = ../experiments/NativeRadarFoundation/RadarFoundationModel.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000004 /* RadarFoundationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarFoundationMap.swift; path = ../experiments/NativeRadarFoundation/RadarFoundationMap.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000005 /* RadarFoundationApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarFoundationApp.swift; path = ../experiments/NativeRadarFoundation/RadarFoundationApp.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000006 /* RadarProofContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarProofContract.swift; path = ../experiments/RadarSubstrateProof/RadarProofContract.swift; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000007 /* DiagnosticStyle.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = DiagnosticStyle.json; path = ../experiments/NativeRadarFoundation/DiagnosticStyle.json; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000008 /* numeric-contract.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "numeric-contract.json"; path = "../../scripts/fixtures/native-radar/numeric-contract.json"; sourceTree = SOURCE_ROOT; };
+		AC2000000000000000000009 /* MapLibre-LICENSE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "MapLibre-LICENSE.md"; path = "../experiments/NativeRadarFoundation/MapLibre-LICENSE.md"; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000000A /* MapLibre-core-NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "MapLibre-core-NOTICES.md"; path = "../experiments/NativeRadarFoundation/MapLibre-core-NOTICES.md"; sourceTree = SOURCE_ROOT; };
+		AC200000000000000000000B /* MapLibre-iOS-NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = "MapLibre-iOS-NOTICES.md"; path = "../experiments/NativeRadarFoundation/MapLibre-iOS-NOTICES.md"; sourceTree = SOURCE_ROOT; };
 		AA2000000000000000000010 /* NativePlaceLookupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlaceLookupService.swift; sourceTree = "<group>"; };
 		AA2000000000000000000011 /* NativePlacesOwnerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlacesOwnerStore.swift; sourceTree = "<group>"; };
 		AA2000000000000000000012 /* NativePlacesOwnerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlacesOwnerController.swift; sourceTree = "<group>"; };
@@ -202,6 +225,7 @@
 				A10000000000000000000010 /* OperonCoreDriver in Frameworks */,
 				A10000000000000000000011 /* OperonFoundationModels in Frameworks */,
 				A10000000000000000000012 /* OperonSQLite in Frameworks */,
+				AC100000000000000000000C /* MapLibre in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -229,6 +253,24 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		AC4000000000000000000001 /* Radar Lab */ = {
+			isa = PBXGroup;
+			children = (
+				AC2000000000000000000001 /* RadarTimelineContract.swift */,
+				AC2000000000000000000002 /* RadarNumericContract.swift */,
+				AC2000000000000000000003 /* RadarFoundationModel.swift */,
+				AC2000000000000000000004 /* RadarFoundationMap.swift */,
+				AC2000000000000000000005 /* RadarFoundationApp.swift */,
+				AC2000000000000000000006 /* RadarProofContract.swift */,
+				AC2000000000000000000007 /* DiagnosticStyle.json */,
+				AC2000000000000000000008 /* numeric-contract.json */,
+				AC2000000000000000000009 /* MapLibre-LICENSE.md */,
+				AC200000000000000000000A /* MapLibre-core-NOTICES.md */,
+				AC200000000000000000000B /* MapLibre-iOS-NOTICES.md */,
+			);
+			name = "Radar Lab";
+			sourceTree = "<group>";
+		};
 		AA4000000000000000000001 /* NativeWeather */ = {
 			isa = PBXGroup;
 			children = (
@@ -259,6 +301,7 @@
 			children = (
 				C40000000000000000000001 /* Shared */,
 				A40000000000000000000002 /* NearcastApp */,
+				AC4000000000000000000001 /* Radar Lab */,
 				B40000000000000000000001 /* NearcastWidget */,
 				D40000000000000000000001 /* NearcastWatch */,
 				E40000000000000000000001 /* NearcastWatchComplications */,
@@ -406,6 +449,7 @@
 				F20000000000000000000001 /* OperonCoreDriver */,
 				F20000000000000000000002 /* OperonFoundationModels */,
 				F20000000000000000000003 /* OperonSQLite */,
+				F20000000000000000000004 /* MapLibre */,
 			);
 			productName = Nearcast;
 			productReference = A20000000000000000000009 /* Nearcast.app */;
@@ -522,6 +566,7 @@
 			mainGroup = A40000000000000000000001;
 			packageReferences = (
 				F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */,
+				F10000000000000000000002 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			productRefGroup = A40000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -541,6 +586,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000008 /* Assets.xcassets in Resources */,
+				AC1000000000000000000007 /* DiagnosticStyle.json in Resources */,
+				AC1000000000000000000008 /* numeric-contract.json in Resources */,
+				AC1000000000000000000009 /* MapLibre-LICENSE.md in Resources */,
+				AC100000000000000000000A /* MapLibre-core-NOTICES.md in Resources */,
+				AC100000000000000000000B /* MapLibre-iOS-NOTICES.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -574,6 +624,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000001 /* NearcastApp.swift in Sources */,
+				AC1000000000000000000001 /* RadarTimelineContract.swift in Sources */,
+				AC1000000000000000000002 /* RadarNumericContract.swift in Sources */,
+				AC1000000000000000000003 /* RadarFoundationModel.swift in Sources */,
+				AC1000000000000000000004 /* RadarFoundationMap.swift in Sources */,
+				AC1000000000000000000005 /* RadarFoundationApp.swift in Sources */,
+				AC1000000000000000000006 /* RadarProofContract.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				AA1000000000000000000001 /* NativeWeatherPreviewContext.swift in Sources */,
 				AA1000000000000000000002 /* NativeWeatherPreviewModel.swift in Sources */,
@@ -797,7 +853,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -806,6 +862,10 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -826,7 +886,7 @@
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -835,6 +895,10 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -854,7 +918,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -884,7 +948,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -914,7 +978,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -947,7 +1011,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -980,7 +1044,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -1009,7 +1073,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -1083,6 +1147,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		F10000000000000000000002 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/maplibre/maplibre-gl-native-distribution.git";
+			requirement = {
+				kind = exactVersion;
+				version = 6.31.0;
+			};
+		};
 		F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/markdsparks/operon.git";
@@ -1094,6 +1166,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F20000000000000000000004 /* MapLibre */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F10000000000000000000002 /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */;
+			productName = MapLibre;
+		};
 		F20000000000000000000001 /* OperonCoreDriver */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F10000000000000000000001 /* XCRemoteSwiftPackageReference "operon" */;

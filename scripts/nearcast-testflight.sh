@@ -12,6 +12,11 @@ KEY_PATH="${NEARCAST_ASC_KEY_PATH:-$ROOT/AppStoreConnect/AuthKey_8LM389Z6NR.p8}"
 KEY_ID="${NEARCAST_ASC_KEY_ID:-8LM389Z6NR}"
 ISSUER_ID="${NEARCAST_ASC_ISSUER_ID:-00459337-a0be-4634-9c5c-96ea253447e9}"
 SIGNING_IDENTITY="${NEARCAST_CODE_SIGN_IDENTITY:-}"
+PACKAGE_CACHE="${NEARCAST_PACKAGE_CACHE_PATH:-}"
+package_arguments=(-onlyUsePackageVersionsFromResolvedFile)
+if [[ -n "$PACKAGE_CACHE" ]]; then
+  package_arguments+=(-packageCachePath "$PACKAGE_CACHE")
+fi
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   runtime_export_options="$(mktemp -t nearcast-export-options)"
@@ -33,6 +38,11 @@ build="${1:-$versions}"
 if [[ "$build" != "$versions" ]]; then
   printf 'FAIL  Requested build %s but the Xcode project is on build %s\n' "$build" "$versions" >&2
   printf 'Update every CURRENT_PROJECT_VERSION before publishing.\n' >&2
+  exit 1
+fi
+
+if (( 10#$build >= 106 )) && [[ -z "$SIGNING_IDENTITY" ]]; then
+  printf 'FAIL  Set NEARCAST_CODE_SIGN_IDENTITY to the release certificate fingerprint for guarded radar SDK archive preparation.\n' >&2
   exit 1
 fi
 
@@ -64,6 +74,7 @@ archive_nearcast() {
     -archivePath "$archive" \
     archive \
     -allowProvisioningUpdates \
+    "${package_arguments[@]}" \
     "$@"
 }
 
@@ -73,6 +84,9 @@ else
   archive_nearcast
 fi
 
+if (( 10#$build >= 106 )); then
+  bash "$ROOT/scripts/prepare-native-radar-archive.sh" "$archive" "$SIGNING_IDENTITY"
+fi
 "$VALIDATOR" "$archive"
 
 printf 'Uploading validated build %s to TestFlight...\n' "$build"
