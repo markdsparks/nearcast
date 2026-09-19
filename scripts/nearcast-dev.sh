@@ -20,6 +20,7 @@ DEFAULT_WATCH_ID="00008310-000378683A7BA01E"
 
 PHONE_APP="$DERIVED_DATA/Build/Products/Debug-iphoneos/Nearcast.app"
 WATCH_APP="$DERIVED_DATA/Build/Products/Debug-watchos/NearcastWatch.app"
+SCHEME_LIST=""
 
 green='\033[0;32m'
 yellow='\033[0;33m'
@@ -41,7 +42,11 @@ require_command() {
 
 device_is_visible() {
   local device_id="$1"
-  xcrun devicectl list devices 2>/dev/null | grep -Fq -- "$device_id"
+  # Capture the complete list first. With `pipefail`, an early grep exit can
+  # otherwise turn a successful device discovery into a false negative.
+  local devices
+  devices="$(xcrun devicectl list devices 2>/dev/null || true)"
+  grep -F -- "$device_id" <<<"$devices" >/dev/null
 }
 
 require_visible_device() {
@@ -58,7 +63,13 @@ require_visible_device() {
 
 require_scheme() {
   local scheme="$1"
-  if xcodebuild -project "$PROJECT" -list 2>/dev/null | grep -Fq -- "$scheme"; then
+  # Recent Xcode releases may write the scheme list to stderr even when the
+  # command succeeds. Cache the complete result once so `grep -q` cannot make
+  # xcodebuild exit through a broken pipe under `set -o pipefail`.
+  if [[ -z "$SCHEME_LIST" ]]; then
+    SCHEME_LIST="$(xcodebuild -project "$PROJECT" -list 2>&1 || true)"
+  fi
+  if grep -F -- "$scheme" <<<"$SCHEME_LIST" >/dev/null; then
     pass "$scheme scheme is available"
   else
     fail "$scheme scheme is unavailable"
