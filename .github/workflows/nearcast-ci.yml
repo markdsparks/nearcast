@@ -35,6 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The native NCRD fixture includes gzip decoder coverage.  Pin this lane to
+      # the same Node/zlib release family as the portable checks so compression
+      # bytes are stable across GitHub runner image updates.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Run shared widget and Watch model checks
         run: bash scripts/nearcast-ci.sh native-model
 
