@@ -60,6 +60,8 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ### Radar-motion bridge follow-up (build 110)
 
+Release: `4466561`, TestFlight 0.1.0 (110), uploaded successfully September 19. Full regression suite, release preflight, signed archive, packaging validation and export/upload passed. Apple accepted the upload for processing; its immediate build-list response did not yet include 110, so tester availability is not confirmed. Existing MapLibre upstream dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-110.log`.
+
 Native composition no longer discards a reliable observed-motion prediction solely because the model cannot be aligned. All observation/model freshness, input identity, motion, source coverage, exposed-edge coverage and maximum-horizon gates still apply. Failed/low-confidence model correction produces no fabricated displacement or intensity correction. At exact advertised forecast times, the fallback starts with radar motion and smoothly increases original-model weight from 15 to 60 minutes after the observation; at 60 minutes it is fully the original model and is no longer labeled radar-guided. Successful alignment retains the existing 15–75-minute corrected blend. This is prediction, not observation or extra measured temporal resolution.
 
 One immutable prepared motion/correction (including an unavailable correction) is reused across target times. Exact observation pixels/masks/times, anchor pixels/masks/time, viewport/encoding and cycle must match; freshness checks run on every composition. Viewport and changed subhourly metadata invalidate the model-held preparation. A cached anchor avoids repeat downloads while scrubbing. No between-frame interpolation is added.
