@@ -58,6 +58,12 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Playback/map synchronization and moving-camera coverage (build 114)
+
+Release: `f4ddbf5`, TestFlight 0.1.0 (114), uploaded successfully September 19 at 07:51 CDT. Targeted radar cache/presentation tests, release simulator compilation, full portable/native-model preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; tester availability is subject to Apple processing. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-114.log`.
+
+During playback, the scrubber thumb now follows the image frame actually on the map instead of advancing to a selected source time while that frame is still loading. Manual scrubbing remains immediate. MapLibre camera-change callbacks are throttled to one in 180 ms during a gesture. Native radar starts one bounded request on the first moving viewport, coalesces later positions, and immediately follows with the latest extent when that request completes. A result for a prior extent is rejected rather than rendered as though it covered the newer camera. Remote area-alert discovery still waits for the final camera position. This is progressive viewport readiness, not a claim of tile-by-tile streaming, source-time interpolation, or a guaranteed response time on a cold network.
+
 ### Native automatic daylight appearance (build 113)
 
 Release: `9c12d31`, TestFlight 0.1.0 (113), uploaded successfully September 19 at 07:35 CDT. Native daylight tests, full portable/native-model preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; tester availability is subject to Apple processing. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-113.log`.
