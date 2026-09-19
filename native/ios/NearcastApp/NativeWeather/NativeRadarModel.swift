@@ -72,6 +72,9 @@ final class NativeRadarModel: ObservableObject {
     private var viewportAlertGeneration = 0
     private var imageTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
+    /// A camera gesture can outrun a bounded field request. Keep only the
+    /// latest viewport and immediately follow the active request with it.
+    private var viewportReloadPending = false
     private var playbackTask: Task<Void, Never>?
     private var manualRefreshTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
@@ -164,7 +167,9 @@ final class NativeRadarModel: ObservableObject {
         return (try? NativeRadarPresentationContract.integratedDates(observed: observed,
             forecast: isCONUSPlace ? forecastDates : [], now: evaluationTime, hours: timelineHours)) ?? []
     }
-    var scrubberInstant: Date? { selectedInstant }
+    /// While playing, the thumb represents the frame visible on the map, not
+    /// the next selected frame while it is still decoding offscreen.
+    var scrubberInstant: Date? { playing ? (displayedInstant ?? selectedInstant) : selectedInstant }
     var scrubberNow: Date { evaluationTime }
     var scrubberStartLabel: String { scrubberDates.first.map(clock.shortLabel) ?? "—" }
     var scrubberEndLabel: String { scrubberDates.last.map(clock.shortLabel) ?? "—" }
@@ -593,7 +598,7 @@ final class NativeRadarModel: ObservableObject {
     }
     func step(_ delta: Int) { selectFrame(selectedIndex + delta) }
 
-    func updateViewport(_ bounds: NativeRadarViewport) {
+    func updateViewport(_ bounds: NativeRadarViewport, moving: Bool = false) {
         guard bounds != viewport else { return }
         if bounds.zoom != viewport?.zoom {
             radarCache = NativeRadarFrameCache<String, CachedRadarFrame>()
@@ -603,11 +608,19 @@ final class NativeRadarModel: ObservableObject {
         preparedHandoff = nil
         viewportAlerts = nil; viewportAlertsFailed = false
         updateAlertGeometry()
-        scheduleViewportAlerts()
+        // Local alert geometry can update immediately. Remote alert discovery
+        // waits for the final camera position rather than following every pan.
+        if !moving { scheduleViewportAlerts() }
         radarCache.setViewport(.init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
         subhourlyCache.setViewport(.init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
         forecastField = nil
-        loadSelectedImage(debounce: true)
+        if loadingImage {
+            viewportReloadPending = true
+        } else {
+            // Begin a first bounded request during movement. Further camera
+            // ticks coalesce into one latest-viewport follow-up.
+            loadSelectedImage(debounce: false)
+        }
     }
     var renderingZoom: Double { viewport?.zoom ?? 6.8 }
 
@@ -765,13 +778,21 @@ final class NativeRadarModel: ObservableObject {
                 }, onCancel: { renderTask.cancel() })
                 try Task.checkCancellation()
                 guard self.active, self.imageGeneration == generation else { return }
+                guard self.viewport == viewport else {
+                    self.completeImageRequest()
+                    return
+                }
                 self.transitionApplied = result.enhanced
                 if let prepared = result.prepared { self.preparedHandoff = prepared }
                 self.transitionExplanation = result.explanation
                 self.publishForecast(result.image, numeric: result.numeric, bounds: viewport)
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
-                self.loadingImage = false
+                if self.viewport != viewport {
+                    self.completeImageRequest()
+                    return
+                }
+                self.completeImageRequest()
                 if self.image == nil {
                     self.imageMessage = "Forecast imagery could not load for this view. Try zooming in or refreshing."
                 } else {
@@ -844,6 +865,10 @@ final class NativeRadarModel: ObservableObject {
                 let (rendered, output, enhanced, nextPrepared) = try await withTaskCancellationHandler(operation: { try await render.value }, onCancel: { render.cancel() })
                 try Task.checkCancellation()
                 guard self.active, !self.suspended, self.imageGeneration == generation else { return }
+                guard self.viewport == bounds else {
+                    self.completeImageRequest()
+                    return
+                }
                 // Cache only original model data; alignment must use current radar evidence.
                 self.subhourlyCache.insert(.init(image: rendered, message: nil, numeric: original), for: key,
                     cost: original.texture.bytes.count * 6)
@@ -857,7 +882,11 @@ final class NativeRadarModel: ObservableObject {
                 self.publishForecast(rendered, numeric: output, bounds: bounds)
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
-                self.loadingImage = false
+                if self.viewport != bounds {
+                    self.completeImageRequest()
+                    return
+                }
+                self.completeImageRequest()
                 self.imageMessage = "This forecast frame could not load. Showing the last available image; try another time or refresh."
             }
         }
@@ -865,6 +894,10 @@ final class NativeRadarModel: ObservableObject {
 
     private func publishForecast(_ rendered: NativeRadarImage, numeric: NativeRadarSeamEstimation.Frame,
                                  bounds: NativeRadarViewport) {
+        guard viewport == bounds else {
+            completeImageRequest()
+            return
+        }
         image = rendered
         displayedInstant = selectedInstant; displayedProduct = .forecast
         displayedEnhanced = transitionApplied
@@ -875,8 +908,23 @@ final class NativeRadarModel: ObservableObject {
         let coverage = Double(numeric.validDataMask.filter { $0 != 0 }.count) / Double(numeric.validDataMask.count)
         imageMessage = placeInView && placeCovered == false ? "Forecast coverage is missing at this place."
             : coverage < 0.98 ? "Some of this view is outside forecast coverage. Blank areas are unavailable." : nil
-        loadingImage = false
+        completeImageRequest()
         warmNearbyFrames()
+    }
+
+    /// A result for an earlier camera extent is never published as if it
+    /// covered the current map. Instead, yield out of the completed task and
+    /// request the final coalesced viewport right away.
+    private func completeImageRequest() {
+        loadingImage = false
+        guard viewportReloadPending else { return }
+        viewportReloadPending = false
+        imageTask = nil
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, self.active, !self.suspended else { return }
+            self.loadSelectedImage(debounce: false)
+        }
     }
 
     private func loadObservedImage(previous: Task<Void, Never>?, generation: Int, debounce: Bool) {
@@ -912,7 +960,10 @@ final class NativeRadarModel: ObservableObject {
                     try Task.checkCancellation()
                     return try await renderTask.value
                 }, onCancel: { renderTask.cancel() })
-                guard self.active, self.imageGeneration == generation, !Task.isCancelled else { return }
+                guard self.active, self.imageGeneration == generation, self.viewport == viewport, !Task.isCancelled else {
+                    self.completeImageRequest()
+                    return
+                }
                 self.image = .init(id: "mrms:\(frame.validTimeMilliseconds):\(viewport)", image: nativeImage,
                     west: viewport.west, south: viewport.south, east: viewport.east, north: viewport.north)
                 self.displayedInstant = self.selectedInstant; self.displayedProduct = .radar
@@ -926,11 +977,15 @@ final class NativeRadarModel: ObservableObject {
                     _ = self.radarCache.insert(.init(image: image, message: self.imageMessage, numeric: numeric), for: frame.key,
                         cost: decoded.texture.width * decoded.texture.height * 6)
                 }
-                self.loadingImage = false
+                self.completeImageRequest()
                 self.warmNearbyFrames()
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
-                self.loadingImage = false
+                if self.viewport != viewport {
+                    self.completeImageRequest()
+                    return
+                }
+                self.completeImageRequest()
                 self.imageMessage = "Radar imagery could not load. Refresh or open the existing map."
             }
         }

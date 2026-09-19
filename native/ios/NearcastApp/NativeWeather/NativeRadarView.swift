@@ -60,7 +60,7 @@ struct NativeRadarView: View {
                     alerts: model.alertGeometry,
                     onAlert: { selectedAlertID = $0; showingAlerts = true },
                     onPlace: { selectedMarker = $0; placeMessage = nil },
-                    onViewport: model.updateViewport,
+                    onViewport: { viewport, moving in model.updateViewport(viewport, moving: moving) },
                     onFailure: { model.mapFailure = true },
                     onTileActivity: { tileActivity = $0 })
                     .ignoresSafeArea()

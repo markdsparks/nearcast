@@ -56,7 +56,9 @@ struct NativeRadarMap: UIViewRepresentable {
     let alerts: Data?
     let onAlert: (String) -> Void
     let onPlace: (NativePreviewPlace) -> Void
-    let onViewport: (NativeRadarViewport) -> Void
+    /// Moving camera reports are throttled by the coordinator so the model can
+    /// begin bounded coverage work before a gesture has fully settled.
+    let onViewport: (NativeRadarViewport, Bool) -> Void
     let onFailure: () -> Void
     let onTileActivity: (String) -> Void
 
@@ -130,6 +132,7 @@ struct NativeRadarMap: UIViewRepresentable {
         private var markerRoles: [ObjectIdentifier: String] = [:]
         private var renderedAlerts: Data?
         private var tileRequests = 0, tileParses = 0, tileErrors = 0
+        private var lastMovingViewportReport = Date.distantPast
         init(_ input: NativeRadarMap) { self.input = input }
 
         func installPlaces(on map: MLNMapView) {
@@ -300,7 +303,12 @@ struct NativeRadarMap: UIViewRepresentable {
             return true
         }
 
-        func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) { reportViewport(mapView) }
+        func mapView(_ mapView: MLNMapView, regionIsChangingWith reason: MLNCameraChangeReason) {
+            reportViewport(mapView, moving: true)
+        }
+        func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            reportViewport(mapView, moving: false)
+        }
         func mapView(_ mapView: MLNMapView, tileDidTriggerAction operation: MLNTileOperation,
                      x: Int, y: Int, z: Int, wrap: Int, overscaledZ: Int, sourceID: String) {
             // Only aggregate counts leave the SDK. Never expose provider URLs,
@@ -317,13 +325,20 @@ struct NativeRadarMap: UIViewRepresentable {
                 self.input.onTileActivity(summary)
             }
         }
-        private func reportViewport(_ map: MLNMapView) {
+        private func reportViewport(_ map: MLNMapView, moving: Bool = false) {
+            let now = Date()
+            if moving {
+                // MapLibre calls this for every camera tick. 180 ms is enough
+                // to lead a pan without causing provider cancellation churn.
+                guard now.timeIntervalSince(lastMovingViewportReport) >= 0.18 else { return }
+                lastMovingViewportReport = now
+            }
             let bounds = map.visibleCoordinateBounds
             let viewport = NativeRadarViewport(west: bounds.sw.longitude, south: bounds.sw.latitude,
                                                east: bounds.ne.longitude, north: bounds.ne.latitude, zoom: map.zoomLevel)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.active else { return }
-                self.input.onViewport(viewport)
+                self.input.onViewport(viewport, moving)
             }
         }
 
