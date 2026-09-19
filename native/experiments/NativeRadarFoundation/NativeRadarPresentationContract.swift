@@ -198,4 +198,17 @@ enum NativeRadarPresentationContract {
             return LegendBand(upperDBZ: upper, rgba: rgba)
         }
     }
+
+    static func highDetailLegendBands(encoding: RadarNumericContract.Encoding, zoom: Double) throws -> [LegendBand] {
+        let stops: [Double] = [10, 18, 28, 36, 45, 56, 68, 80]
+        var lower = encoding.threshold
+        return try stops.map { upper in
+            let value = (lower + upper) / 2
+            lower = upper
+            let texture = try RadarNumericContract.Texture(width: 1, height: 1,
+                bytes: [RadarNumericContract.encodeDbz(value, encoding: encoding)])
+            return LegendBand(upperDBZ: upper, rgba: try RadarNumericContract.highDetailRGBA(texture,
+                encoding: encoding, validDataMask: [1], zoom: zoom))
+        }
+    }
 }

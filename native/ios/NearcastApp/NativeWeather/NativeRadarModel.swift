@@ -50,6 +50,9 @@ final class NativeRadarModel: ObservableObject {
     @Published var mapFailure = false
     @Published private var timeline = RadarTimelineState(now: Date())
     @Published private var forecastRun: HRRRZarrClient.LoadedRun?
+    @Published private var subhourlyFrames: [HRRRSubhourly.Frame] = []
+    private let subhourlyClient = try? HRRRSubhourlyClient()
+    private var subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>()
     @Published private var forecastFailed = false
     @Published private var observedFrames: [MRMSContract.AdvertisedFrame] = []
     // Timeline memory stays small; motion estimation also needs advertised
@@ -115,6 +118,10 @@ final class NativeRadarModel: ObservableObject {
     private var forecastSteps: [HRRRZarrContract.Step] {
         forecastRun?.grid.steps.filter { $0.validTime > evaluationTime } ?? []
     }
+    private var usableSubhourly: [HRRRSubhourly.Frame] {
+        subhourlyFrames.filter { $0.validTime > evaluationTime && evaluationTime.timeIntervalSince($0.cycle) <= 3 * 3600 }
+    }
+    private var forecastDates: [Date] { usableSubhourly.isEmpty ? forecastSteps.map(\.validTime) : usableSubhourly.map(\.validTime) }
     private var isCONUSPlace: Bool { (20...55).contains(place.latitude) && (-130 ... -60).contains(place.longitude) }
     private var rawIsUsable: Bool {
         let latest = observedFrames.last.map { Date(timeIntervalSince1970: Double($0.validTimeMilliseconds) / 1000) }
@@ -134,7 +141,7 @@ final class NativeRadarModel: ObservableObject {
                      maximumZoom: frame.maximumZoom, credits: frame.attributions.map { ($0.title, $0.url) })
     }
     var frameDates: [Date] {
-        if product == .forecast { return forecastSteps.map(\.validTime) }
+        if product == .forecast { return forecastDates }
         if product == .radar, !rawDiscoveryFinished && observedFrames.isEmpty { return [] }
         if usesGlobalRadar { return globalFrames.map(\.validTime) }
         if usesNumericRadar { return observedFrames.map { Date(timeIntervalSince1970: Double($0.validTimeMilliseconds) / 1000) } }
@@ -153,7 +160,7 @@ final class NativeRadarModel: ObservableObject {
             observed = globalFrames.map(\.validTime)
         } else { observed = isCONUSPlace ? sourceFrames.map(\.validTime) : [] }
         return (try? NativeRadarPresentationContract.integratedDates(observed: observed,
-            forecast: isCONUSPlace ? forecastSteps.map(\.validTime) : [], now: evaluationTime, hours: timelineHours)) ?? []
+            forecast: isCONUSPlace ? forecastDates : [], now: evaluationTime, hours: timelineHours)) ?? []
     }
     var scrubberInstant: Date? { selectedInstant }
     var scrubberNow: Date { evaluationTime }
@@ -217,6 +224,7 @@ final class NativeRadarModel: ObservableObject {
         if !isCONUSPlace && product != .radar { return "This forecast layer covers the continental US. Use the existing map for more layers." }
         if product == .forecast {
             if let imageMessage { return imageMessage }
+            if !usableSubhourly.isEmpty { return transitionApplied ? "MRMS motion + 15-minute HRRR guidance · forecast, not live radar" : "NOAA HRRR · actual 15-minute forecast frames" }
             if forecastFailed { return "Forecast refresh unavailable. Any retained times keep their original model run." }
             guard let forecastRun else { return "NOAA HRRR model guidance · US coverage" }
             if transitionApplied { return "MRMS motion + HRRR · forecast, not live radar" }
@@ -350,9 +358,10 @@ final class NativeRadarModel: ObservableObject {
         pause()
         async let sourceTimes: Void = refreshWMS()
         async let modelTimes: Void = refreshForecast()
+        async let subhourlyTimes: Void = refreshSubhourly()
         async let radarTimes: Void = refreshObserved()
         async let alerts: Void = refreshAlerts()
-        _ = await (sourceTimes, modelTimes, radarTimes, alerts)
+        _ = await (sourceTimes, modelTimes, subhourlyTimes, radarTimes, alerts)
         scheduleViewportAlerts(force: true)
         if refreshGeneration == generation { refreshing = false }
     }
@@ -395,6 +404,16 @@ final class NativeRadarModel: ObservableObject {
             forecastFailed = false
         } else { forecastFailed = true }
         if product == .forecast { reconcileCurrentSelection() }
+    }
+    private func refreshSubhourly() async {
+        guard isCONUSPlace, let subhourlyClient else { return }
+        do {
+            let frames = try await subhourlyClient.discover(now: Date())
+            guard active, !suspended, !Task.isCancelled else { return }
+            if subhourlyFrames.first?.cycle != frames.first?.cycle { subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>() }
+            subhourlyFrames = frames
+            if product == .forecast { reconcileCurrentSelection() }
+        } catch { /* Keep advertised, still-fresh data; otherwise hourly fallback. */ }
     }
 
     private func refreshObserved() async {
@@ -567,14 +586,20 @@ final class NativeRadarModel: ObservableObject {
 
     func updateViewport(_ bounds: NativeRadarViewport) {
         guard bounds != viewport else { return }
+        if bounds.zoom != viewport?.zoom {
+            radarCache = NativeRadarFrameCache<String, CachedRadarFrame>()
+            subhourlyCache = NativeRadarFrameCache<String, CachedRadarFrame>()
+        }
         viewport = bounds
         viewportAlerts = nil; viewportAlertsFailed = false
         updateAlertGeometry()
         scheduleViewportAlerts()
         radarCache.setViewport(.init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
+        subhourlyCache.setViewport(.init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
         forecastField = nil
         loadSelectedImage(debounce: true)
     }
+    var renderingZoom: Double { viewport?.zoom ?? 6.8 }
 
     private func loadSelectedImage(debounce: Bool = false) {
         guard active, !suspended, basemapStyle != .satellite else { return }
@@ -595,7 +620,7 @@ final class NativeRadarModel: ObservableObject {
             modelCycleTime: forecastRun.map { iso($0.run.cycleTime) },
             modelAnchorValidTime: forecastSteps.first.map { iso($0.validTime) },
             targetValidTime: selectedDate.map(iso), requestedAt: iso(Date()))
-        let requestID = "\(product.rawValue)|\(usesNumericRadar)|\(usesGlobalRadar)|\(selectedInstant?.timeIntervalSince1970 ?? -1)|\(String(describing: viewport))|\(product == .forecast ? transitionIdentity?.cacheKey ?? "unavailable" : "")"
+        let requestID = "\(product.rawValue)|\(usesNumericRadar)|\(usesGlobalRadar)|\(selectedInstant?.timeIntervalSince1970 ?? -1)|\(String(describing: viewport))|\(product == .forecast ? transitionIdentity?.cacheKey ?? "unavailable" : "")|\(usableSubhourly.first?.cycle.timeIntervalSince1970 ?? -1)|\(enhancementEnabled)"
         if imageRequestID == requestID, image != nil || loadingImage { return }
         imageRequestID = requestID
         imageGeneration += 1
@@ -614,6 +639,10 @@ final class NativeRadarModel: ObservableObject {
             return
         }
         guard product == .forecast else { return }
+        if let selected = usableSubhourly.first(where: { $0.validTime == selectedInstant }) {
+            loadSubhourlyImage(selected, previous: previous, generation: generation, debounce: debounce)
+            return
+        }
         guard let run = forecastRun, let viewport, viewport.isUsable,
               forecastSteps.indices.contains(selectedIndex), let forecastClient else {
             imageMessage = refreshing ? "Loading model guidance…" : "Forecast imagery unavailable for this view."
@@ -656,7 +685,7 @@ final class NativeRadarModel: ObservableObject {
                 // does not visibly shift an already-displayed forecast twice.
                 let baselineTask = Task.detached(priority: .userInitiated) {
                     let original = try NativeRadarModel.renderFrame(field: field, step: step, bounds: viewport)
-                    let rgba = Data(try RadarNumericContract.resolvedRGBA(original.texture, encoding: original.encoding))
+                    let rgba = Data(try RadarNumericContract.highDetailRGBA(original.texture, encoding: original.encoding, validDataMask: original.validDataMask, zoom: viewport.zoom))
                     let rendered = try NativeRadarModel.makeImage(rgba: rgba, width: original.texture.width, height: original.texture.height)
                     try Task.checkCancellation()
                     return (original, NativeRadarImage(id: "hrrr:\(run.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(viewport):original:\(generation)",
@@ -705,7 +734,7 @@ final class NativeRadarModel: ObservableObject {
                         }
                     }
                     try Task.checkCancellation()
-                    let rgba = Data(try RadarNumericContract.resolvedRGBA(output.texture, encoding: output.encoding))
+                    let rgba = Data(try RadarNumericContract.highDetailRGBA(output.texture, encoding: output.encoding, validDataMask: output.validDataMask, zoom: viewport.zoom))
                     let rendered = try NativeRadarModel.makeImage(rgba: rgba, width: output.texture.width, height: output.texture.height)
                     let id = "hrrr:\(run.run.cycleTime.timeIntervalSince1970):\(step.sourceIndex):\(viewport):\(enhanced):\(generation)"
                     return (image: NativeRadarImage(id: id, image: rendered, west: viewport.west, south: viewport.south,
@@ -728,6 +757,75 @@ final class NativeRadarModel: ObservableObject {
                 } else {
                     self.transitionExplanation = "Original HRRR model. Optional radar alignment was unavailable."
                 }
+            }
+        }
+    }
+
+    private func loadSubhourlyImage(_ frame: HRRRSubhourly.Frame, previous: Task<Void, Never>?,
+                                   generation: Int, debounce: Bool) {
+        guard let client = subhourlyClient, let bounds = viewport, bounds.isUsable,
+              bounds.east - bounds.west <= 14, bounds.north - bounds.south <= 14 else {
+            imageMessage = "Zoom in to load local forecast detail."
+            return
+        }
+        let anchor = usableSubhourly.first
+        let candidates = enhancementEnabled && anchor != nil
+            ? transitionCandidates(anchorTime: anchor!.validTime, targetTime: frame.validTime, cycle: frame.cycle) : []
+        loadingImage = true
+        imageTask = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled else { return }
+            do {
+                if debounce { try await Task.sleep(for: .milliseconds(350)) }
+                let key = "\(frame.cycle.timeIntervalSince1970):\(frame.leadMinutes)"
+                let cached = self.subhourlyCache.value(for: key)
+                let original: NativeRadarSeamEstimation.Frame
+                if let cached { original = cached.numeric }
+                else { original = try await client.load(frame, bounds: .init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north)) }
+                try Task.checkCancellation()
+                var observations: [NativeRadarSeamEstimation.Frame] = []
+                var anchorField: NativeRadarSeamEstimation.Frame?
+                if !candidates.isEmpty, let anchor {
+                    observations = (try? await self.loadTransitionObservations(candidates, bounds: bounds, generation: generation)) ?? []
+                    if observations.count >= 3 {
+                        if anchor == frame { anchorField = original }
+                        else { anchorField = try? await client.load(anchor, bounds: .init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north)) }
+                    }
+                }
+                try Task.checkCancellation()
+                let evidence = observations, modelAnchor = anchorField, requestedAt = Date()
+                let render = Task.detached(priority: .userInitiated) {
+                    var output = original, enhanced = false
+                    if let modelAnchor, evidence.count >= 3,
+                       let transition = try? NativeRadarTransition.compose(observed: evidence, forecastAnchor: modelAnchor,
+                        forecastTarget: original,
+                        cycleTime: RadarNumericContract.isoTime(Int64(frame.cycle.timeIntervalSince1970 * 1000)),
+                        requestedAt: RadarNumericContract.isoTime(Int64(requestedAt.timeIntervalSince1970 * 1000))),
+                       case let .ready(result) = transition {
+                        output = result.frame; enhanced = true
+                    }
+                    try Task.checkCancellation()
+                    let rgba = Data(try RadarNumericContract.highDetailRGBA(output.texture, encoding: output.encoding,
+                        validDataMask: output.validDataMask, zoom: bounds.zoom))
+                    let image = try Self.makeImage(rgba: rgba, width: output.texture.width, height: output.texture.height)
+                    return (NativeRadarImage(id: "hrrr15:\(key):\(bounds):\(enhanced):\(generation)", image: image,
+                        west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north), output, enhanced)
+                }
+                let (rendered, output, enhanced) = try await withTaskCancellationHandler(operation: { try await render.value }, onCancel: { render.cancel() })
+                try Task.checkCancellation()
+                guard self.active, !self.suspended, self.imageGeneration == generation else { return }
+                // Cache only original model data; alignment must use current radar evidence.
+                self.subhourlyCache.insert(.init(image: rendered, message: nil, numeric: original), for: key,
+                    cost: original.texture.bytes.count * 6)
+                self.transitionApplied = enhanced
+                self.transitionExplanation = enhanced
+                    ? "15-minute HRRR forecast aligned with recent radar motion. This is a prediction, not an observation."
+                    : "Original HRRR forecast at genuine 15-minute model intervals."
+                self.publishForecast(rendered, numeric: output, bounds: bounds)
+            } catch {
+                guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
+                self.loadingImage = false
+                self.imageMessage = "This forecast frame could not load. Showing the last available image; try another time or refresh."
             }
         }
     }
@@ -771,7 +869,7 @@ final class NativeRadarModel: ObservableObject {
                 guard decoded.hasCoverage else { throw MRMSContract.Failure.invalidOptions }
                 let renderTask = Task.detached(priority: .userInitiated) {
                     try Task.checkCancellation()
-                    let rgba = Data(try RadarNumericContract.resolvedRGBA(decoded.texture, encoding: decoded.encoding))
+                    let rgba = Data(try RadarNumericContract.highDetailRGBA(decoded.texture, encoding: decoded.encoding, validDataMask: decoded.validDataMask, zoom: viewport.zoom))
                     try Task.checkCancellation()
                     return try Self.makeImage(rgba: rgba, width: decoded.texture.width, height: decoded.texture.height)
                 }
@@ -806,13 +904,17 @@ final class NativeRadarModel: ObservableObject {
     /// an unbounded radar history simply to make a model transition look smooth.
     private func transitionCandidates(anchorStep: HRRRZarrContract.Step?, targetStep: HRRRZarrContract.Step,
                                       run: HRRRZarrClient.LoadedRun) -> [MRMSContract.AdvertisedFrame] {
-        guard let anchorStep, let latest = observedHistory.last else { return [] }
+        guard let anchorStep else { return [] }
+        return transitionCandidates(anchorTime: anchorStep.validTime, targetTime: targetStep.validTime, cycle: run.run.cycleTime)
+    }
+    private func transitionCandidates(anchorTime: Date, targetTime: Date, cycle: Date) -> [MRMSContract.AdvertisedFrame] {
+        guard let latest = observedHistory.last else { return [] }
         let anchor = Date(timeIntervalSince1970: Double(latest.validTimeMilliseconds) / 1000)
         let now = Date()
         guard now.timeIntervalSince(anchor) >= 0, now.timeIntervalSince(anchor) <= 8 * 60,
-              now.timeIntervalSince(run.run.cycleTime) >= 0, now.timeIntervalSince(run.run.cycleTime) <= 150 * 60,
-              anchorStep.validTime > now, anchorStep.validTime.timeIntervalSince(anchor) <= 30 * 60,
-              targetStep.validTime.timeIntervalSince(anchor) <= 70 * 60 else { return [] }
+              now.timeIntervalSince(cycle) >= 0, now.timeIntervalSince(cycle) <= 150 * 60,
+              anchorTime > now, anchorTime.timeIntervalSince(anchor) <= 30 * 60,
+              targetTime.timeIntervalSince(anchor) <= 70 * 60 else { return [] }
         // A clear observed view needs no storm-motion correction. Avoid extra
         // national radar downloads on the most common, quiet-weather path.
         if let cached = radarCache.value(for: latest.key),
@@ -847,7 +949,7 @@ final class NativeRadarModel: ObservableObject {
                 guard active, !suspended, imageGeneration == generation, viewport == bounds else { throw CancellationError() }
                 guard numeric.completeCoverage else { return [] }
                 let task = Task.detached(priority: .userInitiated) {
-                    let rgba = Data(try RadarNumericContract.resolvedRGBA(numeric.texture, encoding: numeric.encoding))
+                    let rgba = Data(try RadarNumericContract.highDetailRGBA(numeric.texture, encoding: numeric.encoding, validDataMask: numeric.validDataMask, zoom: bounds.zoom))
                     try Task.checkCancellation()
                     return try Self.makeImage(rgba: rgba, width: numeric.texture.width, height: numeric.texture.height)
                 }

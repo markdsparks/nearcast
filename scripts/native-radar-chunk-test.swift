@@ -7,6 +7,7 @@ private struct MockReply: Sendable {
     var status = 200
     var declaredLength: Int?
     var hold = false
+    var contentRange: String?
 }
 private final class MockStore: @unchecked Sendable {
     private let lock = NSLock()
@@ -29,6 +30,10 @@ private final class MockRadarProtocol: URLProtocol, @unchecked Sendable {
         if reply.hold { return }
         var headers: [String: String] = [:]
         if let length = reply.declaredLength { headers["Content-Length"] = String(length) }
+        if let range = reply.contentRange {
+            precondition(request.value(forHTTPHeaderField: "Range") == "bytes=100-103")
+            headers["Content-Range"] = range
+        }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: headers)!, cacheStoragePolicy: .notAllowed)
         let middle = reply.data.count / 2
         client?.urlProtocol(self, didLoad: reply.data.prefix(middle))
@@ -139,6 +144,16 @@ enum RadarChunkTests {
         await asyncRejects(.sizeLimit) { _ = try await client.fetchBytes(at: URL(string: "https://radar.example.test/declared")!, maximumBytes: 8) }
         MockRadarProtocol.store.set("/overflow", .init(data: Data(repeating: 0, count: 9)))
         await asyncRejects(.sizeLimit) { _ = try await client.fetchBytes(at: URL(string: "https://radar.example.test/overflow")!, maximumBytes: 8) }
+        let rangeURL = URL(string: "https://radar.example.test/range")!
+        MockRadarProtocol.store.set("/range", .init(data: Data([1,2,3,4]), status: 206, contentRange: "bytes 100-103/1000"))
+        let ranged = try await client.fetchRange(at: rangeURL, range: 100...103)
+        precondition(ranged == Data([1,2,3,4]))
+        MockRadarProtocol.store.set("/range", .init(data: Data([1,2,3,4]), status: 200))
+        await asyncRejects(.httpStatus(200)) { _ = try await client.fetchRange(at: rangeURL, range: 100...103) }
+        MockRadarProtocol.store.set("/range", .init(data: Data([1,2,3,4]), status: 206, contentRange: "bytes 101-104/1000"))
+        await asyncRejects(.unexpectedResponse) { _ = try await client.fetchRange(at: rangeURL, range: 100...103) }
+        MockRadarProtocol.store.set("/range", .init(data: Data([1,2]), status: 206, contentRange: "bytes 100-103/1000"))
+        await asyncRejects(.unexpectedResponse) { _ = try await client.fetchRange(at: rangeURL, range: 100...103) }
         MockRadarProtocol.store.set("/hold1", .init(data: Data(), hold: true))
         MockRadarProtocol.store.set("/hold2", .init(data: Data(), hold: true))
         let first = Task { try await client.fetchBytes(at: URL(string: "https://radar.example.test/hold1")!, maximumBytes: 8) }

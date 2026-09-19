@@ -58,6 +58,20 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Native high-detail rendering follow-up (after build 108)
+
+The native integrated timeline now prefers the existing NOAA HRRR subhourly source: 24 genuine quarter-hour REFC records covering the next six hours. Strict index/GRIB time binding, allowlisted bounded HTTP ranges, cancellation and a six-entry/eight-MiB viewport cache keep acquisition bounded. Hourly Zarr remains the fallback if subhourly discovery is unavailable. The existing radar-motion alignment applies only when its freshness/coverage/motion gates pass; no temporal frames are invented. During drag, the thumb follows the unsnapped finger time independently of the selected source image. On release it settles on the actual selected frame. Loading retains the previous image and its timestamp.
+
+Verification for this follow-up: Release simulator build passed; four consecutive live NOAA quarter-hour records decoded with full coverage in the test viewport. A separate 19,200-pixel live sample matched the established web GRIB decoder byte-for-byte. Mock transport tests reject ignored ranges, wrong Content-Range and truncation. iPhone 17 Pro simulator playback displayed 00:00 and 00:15 forecast frames separately and returned to Latest radar. Finger-drag smoothness and active-storm visual acceptance still require physical-device testing. New deterministic index/decoder tests are included in native-model CI; live parity is opt-in via scripts/hrrr-subhourly-native-parity.mjs and NEARCAST_HRRR15_FIXTURE.
+
+The default numeric MRMS/HRRR image path now uses a display-only port of the existing web raw-radar shader's eight reflectivity bands, zoom-dependent five-sample neighborhood treatment, smooth color transitions, street-level color tuning and opacity. This replaces the simpler CPU `resolved` palette used in build 108. Forecast baseline and radar-aligned forecast use the same renderer; provider tile fallbacks are unchanged. Xweather/StormScope is not involved.
+
+The source texture and coverage mask remain immutable. Masked or missing center pixels remain transparent, missing neighbors do not enter the neighborhood average, and no rendered values feed motion estimation or forecast correction. Source timestamps, loading/generation guards, bounded caches and retained-frame presentation remain intact. Settled camera zoom is part of viewport identity and invalidates rendered caches; numeric image opacity is applied once, with provider-tile opacity unchanged. The legend uses the same renderer and zoom.
+
+Validation: Release iPhone simulator build passed; presentation tests cover regional palette/opacity, heavy cores, masked holes, input immutability, street-level treatment, malformed masks/zoom and legend coverage. An optional synthetic visual fixture compares build-108 resolved rendering, new regional rendering and new street rendering (`NEARCAST_RENDER_FIXTURE=/tmp/nearcast-high-detail.ppm bash scripts/test-native-radar-presentation.sh`). This is not a live weather image or proof of extra source resolution.
+
+Remaining visual gates: active-storm comparison on physical phones, street-scale source-resolution/overzoom acceptance, and continuous GPU styling during pinch. This implementation renders off-main into the existing bounded viewport images after camera changes; it does not yet port the full web raw-chunk GPU pipeline. It is a separate follow-up from TestFlight 108 and requires a new TestFlight build to test on phones.
+
 ### Build 108 timeline polish
 
 Release: commit `7ad157a`, TestFlight 0.1.0 (108), uploaded successfully September 18 at 23:37 CDT. Final portable/native-model preflight, signed archive, all-target archive validation and export/upload passed. Apple had accepted the package for processing; its build-list API had not indexed 108 at the immediate follow-up check. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Release log: `/tmp/nearcast-testflight-108.log`.

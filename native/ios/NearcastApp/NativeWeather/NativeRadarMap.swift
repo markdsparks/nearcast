@@ -28,6 +28,7 @@ struct NativeRadarImage {
 
 struct NativeRadarViewport: Equatable, Sendable {
     let west: Double, south: Double, east: Double, north: Double
+    var zoom: Double = 6.8
     var isUsable: Bool {
         (try? NativeRadarPresentationContract.Viewport(west: west, south: south, east: east, north: north)) != nil
     }
@@ -235,7 +236,8 @@ struct NativeRadarMap: UIViewRepresentable {
                 style.addSource(source)
                 let layer = MLNRasterStyleLayer(identifier: "native-weather", source: source)
                 layer.rasterFadeDuration = NSExpression(forConstantValue: 0)
-                layer.rasterOpacity = NSExpression(forConstantValue: 0.76)
+                // Numeric images already include the zoom-aware renderer alpha.
+                layer.rasterOpacity = NSExpression(forConstantValue: input.image == nil ? 0.76 : 1.0)
                 layer.rasterOpacityTransition = MLNTransition(duration: 0, delay: 0)
                 if let labels = style.layer(withIdentifier: "native-labels") { style.insertLayer(layer, below: labels) }
                 else { style.addLayer(layer) }
@@ -318,7 +320,7 @@ struct NativeRadarMap: UIViewRepresentable {
         private func reportViewport(_ map: MLNMapView) {
             let bounds = map.visibleCoordinateBounds
             let viewport = NativeRadarViewport(west: bounds.sw.longitude, south: bounds.sw.latitude,
-                                               east: bounds.ne.longitude, north: bounds.ne.latitude)
+                                               east: bounds.ne.longitude, north: bounds.ne.latitude, zoom: map.zoomLevel)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.active else { return }
                 self.input.onViewport(viewport)

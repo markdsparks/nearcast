@@ -10,6 +10,7 @@ struct NativeRadarPresentationTests {
         try playbackTests()
         try viewportTests()
         try legendTests()
+        try highDetailTests()
         print("PASS Native radar presentation: exact identity/source races, missing-safe playback, Mercator centers and renderer-matched legend")
     }
     static func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -20,6 +21,55 @@ struct NativeRadarPresentationTests {
         throw NSError(domain: "NativeRadarPresentationTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Accepted invalid \(message)"])
     }
     static func date(_ minutes: Double) -> Date { Date(timeIntervalSince1970: 1_789_776_000 + minutes * 60) }
+
+    static func highDetailTests() throws {
+        let encoding = try RadarNumericContract.Encoding()
+        let low = try RadarNumericContract.encodeDbz(8, encoding: encoding)
+        let high = try RadarNumericContract.encodeDbz(60, encoding: encoding)
+        let texture = try RadarNumericContract.Texture(width: 3, height: 3,
+            bytes: [low, low, 0, low, high, low, 0, low, low])
+        let before = texture.bytes
+        let mask: [UInt8] = [1,1,1,1,1,0,1,1,1]
+        let regional = try RadarNumericContract.highDetailRGBA(texture, encoding: encoding, validDataMask: mask, zoom: 6.8)
+        let street = try RadarNumericContract.highDetailRGBA(texture, encoding: encoding, validDataMask: mask, zoom: 17)
+        try check(Array(regional[0..<4]) == [66,174,214,190], "regional shader palette and opacity")
+        try check(Array(regional[16..<20]) == [154,64,188,255], "regional heavy core remains distinct")
+        for pixel in [2,5,6] {
+            try check(Array(street[(pixel * 4)..<(pixel * 4 + 4)]) == [0,0,0,0], "missing centers never painted by neighbors")
+        }
+        try check(texture.bytes == before, "visual smoothing never mutates numeric observations")
+        try check(street != regional && street[3] < regional[3], "street rendering softens colors and reveals roads")
+        try rejects("nonfinite render zoom") { _ = try RadarNumericContract.highDetailRGBA(texture, encoding: encoding, validDataMask: mask, zoom: .nan) }
+        try rejects("missing mask") { _ = try RadarNumericContract.highDetailRGBA(texture, encoding: encoding, validDataMask: [], zoom: 14) }
+        for zoom in [6.8, 13, 14.5, 16.25, 17] {
+            let bands = try Contract.highDetailLegendBands(encoding: encoding, zoom: zoom)
+            try check(bands.count == 8 && bands.last?.upperDBZ == 80, "legend covers rendered reflectivity bands")
+        }
+        // Optional visual fixture, never shown as real weather in the app.
+        if let path = ProcessInfo.processInfo.environment["NEARCAST_RENDER_FIXTURE"] {
+            let width = 64, height = 80
+            var bytes = [UInt8](repeating: 0, count: width * height)
+            var coverage = [UInt8](repeating: 1, count: bytes.count)
+            for y in 0..<height { for x in 0..<width {
+                let dx = Double(x - 32) / 22, dy = Double(y - 40) / 29
+                let strength = 72 * exp(-(dx * dx + dy * dy) * 1.6)
+                if strength >= 5 { bytes[y * width + x] = try RadarNumericContract.encodeDbz(strength, encoding: encoding) }
+                if (27...30).contains(x) && (30...34).contains(y) { coverage[y * width + x] = 0; bytes[y * width + x] = 0 }
+            } }
+            let storm = try RadarNumericContract.Texture(width: width, height: height, bytes: bytes)
+            let panels = [try RadarNumericContract.resolvedRGBA(storm, encoding: encoding),
+                try RadarNumericContract.highDetailRGBA(storm, encoding: encoding, validDataMask: coverage, zoom: 6.8),
+                try RadarNumericContract.highDetailRGBA(storm, encoding: encoding, validDataMask: coverage, zoom: 16.25)]
+            var ppm = Data("P6\n\(width * 3 * 4) \(height * 4)\n255\n".utf8)
+            for y in 0..<(height * 4) { for panel in 0..<3 { for x in 0..<(width * 4) {
+                let index = ((y / 4) * width + x / 4) * 4
+                let alpha = Double(panels[panel][index + 3]) / 255 * (panel == 0 ? 0.76 : 1)
+                for c in 0..<3 { ppm.append(UInt8((Double(panels[panel][index + c]) * alpha + 235 * (1 - alpha)).rounded())) }
+            } } }
+            try ppm.write(to: URL(fileURLWithPath: path))
+        }
+        print("PASS high-detail radar: shader colors/opacity, zoom treatment, missing-data boundaries, unchanged numeric fields and matching legend")
+    }
 
     static func integratedTimelineTests() throws {
         let dates = try Contract.integratedDates(observed: [date(-20), date(-10), date(-2)],

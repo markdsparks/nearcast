@@ -24,8 +24,12 @@ struct NativeRadarView: View {
     @State private var locationTask: Task<Void, Never>?
     @State private var placeMessage: String?
     @State private var changingPlace = false
+    @State private var dragTime: Double?
+    @State private var draggingTimeline = false
     @State private var tileActivity = "No raster tile activity reported yet."
-    private let legendBands = (try? NativeRadarPresentationContract.resolvedLegendBands(encoding: .init())) ?? []
+    private var legendBands: [NativeRadarPresentationContract.LegendBand] {
+        (try? NativeRadarPresentationContract.highDetailLegendBands(encoding: .init(), zoom: model.renderingZoom)) ?? []
+    }
 
     init(place: NativePreviewPlace, timezone: String?, uses24HourClock: Bool,
          savedPlaces: [NativePreviewPlace] = [], onSelectPlace: ((NativePreviewPlace) async -> Bool)? = nil,
@@ -270,9 +274,18 @@ struct NativeRadarView: View {
             if let first = model.scrubberDates.first, let last = model.scrubberDates.last, first < last {
                 Slider(value: Binding(get: {
                     min(last.timeIntervalSince1970, max(first.timeIntervalSince1970,
-                        (model.scrubberInstant ?? first).timeIntervalSince1970))
-                }, set: { model.selectScrubberTime(Date(timeIntervalSince1970: $0)) }),
-                    in: first.timeIntervalSince1970...last.timeIntervalSince1970)
+                        dragTime ?? (model.scrubberInstant ?? first).timeIntervalSince1970))
+                }, set: {
+                    dragTime = $0
+                    model.selectScrubberTime(Date(timeIntervalSince1970: $0))
+                }), in: first.timeIntervalSince1970...last.timeIntervalSince1970,
+                    onEditingChanged: { editing in
+                        draggingTimeline = editing
+                        if !editing { dragTime = nil }
+                    })
+                    .onChange(of: model.scrubberInstant) { _, _ in
+                        if !draggingTimeline { dragTime = nil }
+                    }
                     .tint(.cyan).frame(minHeight: 44)
                     .overlay(alignment: .bottomLeading) {
                         if model.product != .rainAmount, first < model.scrubberNow, model.scrubberNow < last {

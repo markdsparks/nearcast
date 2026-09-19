@@ -48,6 +48,15 @@ final class RadarChunkClient: @unchecked Sendable {
         return try await download(url, maximumBytes: maximumBytes)
     }
 
+    func fetchRange(at url: URL, range: ClosedRange<Int>) async throws -> Data {
+        guard range.lowerBound >= 0, range.upperBound < 2_000_000_000,
+              range.count <= 4 * 1024 * 1024 else { throw RadarChunkContract.Failure.sizeLimit }
+        try authorize(url); try Task.checkCancellation(); try admission.enter()
+        defer { admission.leave() }
+        return try await BoundedRadarChunkDownload(url: url, maximumBytes: range.count,
+            configuration: configuration.copy() as! URLSessionConfiguration, range: range).value()
+    }
+
     func loadChunk(_ descriptor: RadarChunkContract.Descriptor, from loaded: LoadedManifest) async throws -> RadarChunkContract.DecodedChunk {
         try authorize(loaded.url)
         guard loaded.manifest.descriptors.contains(descriptor) else { throw RadarChunkContract.Failure.inconsistentMetadata }
@@ -92,6 +101,7 @@ private final class BoundedRadarChunkDownload: NSObject, URLSessionDataDelegate,
     private let url: URL
     private let maximumBytes: Int
     private let configuration: URLSessionConfiguration
+    private let range: ClosedRange<Int>?
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Data, Error>?
     private var session: URLSession?
@@ -99,10 +109,11 @@ private final class BoundedRadarChunkDownload: NSObject, URLSessionDataDelegate,
     private var received = Data()
     private var finished = false
 
-    init(url: URL, maximumBytes: Int, configuration: URLSessionConfiguration) {
+    init(url: URL, maximumBytes: Int, configuration: URLSessionConfiguration, range: ClosedRange<Int>? = nil) {
         self.url = url
         self.maximumBytes = maximumBytes
         self.configuration = configuration
+        self.range = range
     }
 
     func value() async throws -> Data {
@@ -124,6 +135,7 @@ private final class BoundedRadarChunkDownload: NSObject, URLSessionDataDelegate,
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "GET"
+        if let range { request.setValue("bytes=\(range.lowerBound)-\(range.upperBound)", forHTTPHeaderField: "Range") }
         request.setValue("application/json, application/vnd.nearcast.radar-chunk, application/octet-stream, application/gzip", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request)
         self.session = session
@@ -162,10 +174,17 @@ private final class BoundedRadarChunkDownload: NSObject, URLSessionDataDelegate,
             finish(.failure(RadarChunkContract.Failure.unexpectedResponse))
             return
         }
-        guard http.statusCode == 200 else {
+        guard http.statusCode == (range == nil ? 200 : 206) else {
             completionHandler(.cancel)
             finish(.failure(RadarChunkContract.Failure.httpStatus(http.statusCode)))
             return
+        }
+        if let range {
+            let prefix = "bytes \(range.lowerBound)-\(range.upperBound)/"
+            guard let header = http.value(forHTTPHeaderField: "Content-Range"), header.hasPrefix(prefix),
+                  let total = Int(header.dropFirst(prefix.count)), total > range.upperBound else {
+                completionHandler(.cancel); finish(.failure(RadarChunkContract.Failure.unexpectedResponse)); return
+            }
         }
         guard response.expectedContentLength <= maximumBytes else {
             completionHandler(.cancel)
@@ -198,6 +217,9 @@ private final class BoundedRadarChunkDownload: NSObject, URLSessionDataDelegate,
         lock.lock()
         let result = received
         lock.unlock()
+        if let range, result.count != range.count {
+            finish(.failure(RadarChunkContract.Failure.unexpectedResponse)); return
+        }
         finish(.success(result))
     }
 

@@ -130,6 +130,7 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-mrms.sh"
   bash "$ROOT/scripts/hrrr-native-contract-smoke.sh"
   bash "$ROOT/scripts/test-native-radar-presentation.sh"
+  bash "$ROOT/scripts/test-native-hrrr-subhourly.sh"
   bash "$ROOT/scripts/test-native-radar-freshness.sh"
   bash "$ROOT/scripts/test-native-radar-cache.sh"
   bash "$ROOT/scripts/test-native-basemap-client.sh"

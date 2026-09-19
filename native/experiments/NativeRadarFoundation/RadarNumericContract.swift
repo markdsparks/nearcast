@@ -4,7 +4,8 @@ import Foundation
 /// Matches the named web primitives, not the complete radar pipeline. In particular,
 /// this does NOT decode GRIB/Zarr/NCRD, estimate motion or corrections, enforce the
 /// raw-map runtime's freshness/quality gates, fetch weather, or reproduce the GPU
-/// shader's zoom-dependent neighborhood/color treatment. `resolvedRGBA` matches
+/// shader pipeline. `highDetailRGBA` ports its color/neighborhood treatment;
+/// `resolvedRGBA` matches
 /// only map.js's CPU `resolved` style. Zero is the shared no-data byte, not 0 dBZ.
 enum RadarNumericContract {
     static let maximumTexturePixels = 1_048_576
@@ -249,6 +250,57 @@ enum RadarNumericContract {
             result[index * 4 + 3] = byte(min(1, Double(color[3]) / 255 * fade * max(alpha, 1.22)) * 255)
         }
         return result
+    }
+
+    /// Display-only port of map.js's raw-radar fragment shader. Numeric fields
+    /// are never modified or fed back into storm analysis. Missing centers stay
+    /// transparent; missing neighbors never dilute valid echoes.
+    static func highDetailRGBA(_ texture: Texture, encoding: Encoding, validDataMask: [UInt8], zoom: Double) throws -> [UInt8] {
+        guard zoom.isFinite else { throw ContractError.nonFiniteValue }
+        guard validDataMask.count == texture.bytes.count else { throw ContractError.lengthMismatch }
+        let levels: [Double] = [10, 18, 28, 36, 45, 56, 68, 80]
+        let colors: [[Double]] = [[66,174,214,202], [62,204,105,226], [20,154,74,246],
+            [238,188,42,255], [230,111,36,255], [214,55,43,255], [154,64,188,255], [238,220,244,255]]
+        let deep = smoothstep((zoom - 13) / 3.25)
+        let opacity = 0.94 - 0.24 * smoothstep((zoom - 12) / 5)
+        var rgba = [UInt8](repeating: 0, count: texture.bytes.count * 4)
+        func sample(_ x: Int, _ y: Int) -> Double? {
+            // Match texture CLAMP_TO_EDGE while preserving the coverage mask.
+            let index = min(texture.height - 1, max(0, y)) * texture.width + min(texture.width - 1, max(0, x))
+            guard validDataMask[index] != 0 else { return nil }
+            return decodeDbz(texture.bytes[index], encoding: encoding)
+        }
+        for y in 0..<texture.height {
+            try Task.checkCancellation()
+            for x in 0..<texture.width {
+                let index = y * texture.width + x
+                guard let center = sample(x, y) else { continue }
+                var sum = center, count = 1.0
+                for (dx, dy) in [(1,0),(-1,0),(0,1),(0,-1)] {
+                    if let value = sample(x + dx, y + dy) { sum += value; count += 1 }
+                }
+                let dbz = center + (sum / count - center) * deep * 0.32
+                guard dbz >= encoding.threshold else { continue }
+                let band = levels.firstIndex(where: { dbz <= $0 }) ?? 7
+                var color = colors[band]
+                if band > 0 {
+                    let t = smoothstep((dbz - levels[band - 1]) / (levels[band] - levels[band - 1]))
+                    for c in 0..<4 {
+                        let smooth = colors[band - 1][c] + (color[c] - colors[band - 1][c]) * t
+                        color[c] += (smooth - color[c]) * deep * 0.88
+                    }
+                }
+                let warm = [color[0] * 0.88 + 255 * 0.018, color[1] * 0.90 + 255 * 0.012, color[2] * 0.78]
+                let luminance = warm[0] * 0.2126 + warm[1] * 0.7152 + warm[2] * 0.0722
+                for c in 0..<3 {
+                    let toned = luminance + (warm[c] - luminance) * 0.94
+                    rgba[index * 4 + c] = byte(color[c] + (toned - color[c]) * deep * 0.82)
+                }
+                let intensityAlpha = smoothstep((dbz - 24) / 34) * 0.08
+                rgba[index * 4 + 3] = byte(color[3] * min(opacity + intensityAlpha, 1))
+            }
+        }
+        return rgba
     }
 
     /// Deliberately narrower than Date.parse: timezone-qualified ISO seconds,
