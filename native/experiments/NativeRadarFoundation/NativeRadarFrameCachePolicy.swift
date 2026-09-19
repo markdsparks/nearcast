@@ -1,5 +1,21 @@
 import Foundation
 
+/// A small, exact-time warmup around the selected frame, never a full-loop download.
+enum NativeRadarPrefetchPolicy {
+    static func targets(dates: [Date], selected: Date, cached: Set<Date>, playing: Bool) -> [Date] {
+        guard selected.timeIntervalSince1970.isFinite, dates.count <= 128 else { return [] }
+        let sorted = Array(Set(dates.filter { $0.timeIntervalSince1970.isFinite })).sorted()
+        guard let index = sorted.firstIndex(of: selected) else { return [] }
+        let offsets = playing ? [1, 2] : [1, -1, 2, -2]
+        return Array(offsets.compactMap { offset -> Date? in
+            let next = index + offset
+            guard sorted.indices.contains(next), !cached.contains(sorted[next]),
+                  abs(sorted[next].timeIntervalSince(selected)) <= 3600 else { return nil }
+            return sorted[next]
+        }.prefix(2))
+    }
+}
+
 /// Hard memory bounds for rendered native radar frames. The cache itself is
 /// intentionally not `Sendable`: its value may be a UIKit image and should stay
 /// owned by the main-actor model rather than crossing concurrency domains.

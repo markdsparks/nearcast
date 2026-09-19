@@ -71,6 +71,7 @@ final class NativeRadarModel: ObservableObject {
     private var viewportAlertTask: Task<Void, Never>?
     private var viewportAlertGeneration = 0
     private var imageTask: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var manualRefreshTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
@@ -305,6 +306,7 @@ final class NativeRadarModel: ObservableObject {
         satelliteTask?.cancel(); satelliteTask = nil; satelliteGeneration += 1
         basemapStyle = style
         if style == .satellite {
+            prefetchTask?.cancel()
             imageTask?.cancel(); imageTask = nil; imageGeneration += 1
             image = nil; imageRequestID = nil; loadingImage = false
             base = nil; satellite = nil
@@ -364,7 +366,10 @@ final class NativeRadarModel: ObservableObject {
         async let alerts: Void = refreshAlerts()
         _ = await (sourceTimes, modelTimes, subhourlyTimes, radarTimes, alerts)
         scheduleViewportAlerts(force: true)
-        if refreshGeneration == generation { refreshing = false }
+        if refreshGeneration == generation {
+            refreshing = false
+            if image != nil && !loadingImage { warmNearbyFrames() }
+        }
     }
 
     func requestRefresh() {
@@ -609,6 +614,7 @@ final class NativeRadarModel: ObservableObject {
     private func loadSelectedImage(debounce: Bool = false) {
         guard active, !suspended, basemapStyle != .satellite else { return }
         if selectedDate == nil {
+            prefetchTask?.cancel()
             imageTask?.cancel(); imageTask = nil; imageGeneration += 1
             image = nil; imageRequestID = nil; loadingImage = false
             transitionApplied = false
@@ -630,8 +636,10 @@ final class NativeRadarModel: ObservableObject {
         imageRequestID = requestID
         imageGeneration += 1
         let generation = imageGeneration
-        let previous = imageTask
-        previous?.cancel()
+        let previousImage = imageTask, previousWarmup = prefetchTask
+        previousImage?.cancel(); previousWarmup?.cancel()
+        // Foreground work gets the transport/decoder back before starting.
+        let previous: Task<Void, Never>? = Task { await previousImage?.value; await previousWarmup?.value }
         // Hold the last complete image while loading, with its own timestamp.
         // Tile products cannot use a retained numeric image as an overlay.
         if !usesNumericRadar && product != .forecast { image = nil }
@@ -868,6 +876,7 @@ final class NativeRadarModel: ObservableObject {
         imageMessage = placeInView && placeCovered == false ? "Forecast coverage is missing at this place."
             : coverage < 0.98 ? "Some of this view is outside forecast coverage. Blank areas are unavailable." : nil
         loadingImage = false
+        warmNearbyFrames()
     }
 
     private func loadObservedImage(previous: Task<Void, Never>?, generation: Int, debounce: Bool) {
@@ -879,6 +888,7 @@ final class NativeRadarModel: ObservableObject {
         if let cached = radarCache.value(for: frame.key) {
             image = cached.image; displayedInstant = selectedInstant; displayedProduct = .radar
             imageMessage = cached.message; loadingImage = false
+            warmNearbyFrames(after: previous)
             return
         }
         loadingImage = true
@@ -917,11 +927,93 @@ final class NativeRadarModel: ObservableObject {
                         cost: decoded.texture.width * decoded.texture.height * 6)
                 }
                 self.loadingImage = false
+                self.warmNearbyFrames()
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
                 self.loadingImage = false
                 self.imageMessage = "Radar imagery could not load. Refresh or open the existing map."
             }
+        }
+    }
+
+    /// Warm only two adjacent source frames after a brief idle period. Never
+    /// publish a prefetched image, time, source label or error to the visible map.
+    private func warmNearbyFrames(after foregroundBarrier: Task<Void, Never>? = nil) {
+        let previous = prefetchTask
+        previous?.cancel()
+        guard active, !suspended, !loadingImage, image != nil, product != .rainAmount,
+              basemapStyle != .satellite, !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              let bounds = viewport, bounds.isUsable, let selected = selectedInstant else { return }
+        let generation = imageGeneration
+        let radar = rawIsUsable ? observedFrames : []
+        let forecasts = usableSubhourly
+        let dates = scrubberDates
+        var cached = Set<Date>()
+        for frame in radar where radarCache.contains(frame.key) {
+            cached.insert(Date(timeIntervalSince1970: Double(frame.validTimeMilliseconds) / 1000))
+        }
+        for frame in forecasts where subhourlyCache.contains("\(frame.cycle.timeIntervalSince1970):\(frame.leadMinutes)") {
+            cached.insert(frame.validTime)
+        }
+        let targets = NativeRadarPrefetchPolicy.targets(dates: dates, selected: selected, cached: cached, playing: playing)
+        let delay = playing ? 100 : 450
+        guard !targets.isEmpty else { return }
+        prefetchTask = Task(priority: .utility) { [weak self] in
+            await previous?.value
+            await foregroundBarrier?.value
+            do {
+                try await Task.sleep(for: .milliseconds(delay))
+                for date in targets {
+                    try Task.checkCancellation()
+                    guard let self, self.active, !self.suspended, !self.loadingImage,
+                          self.imageGeneration == generation, self.viewport == bounds,
+                          self.selectedInstant == selected, !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                    let numeric: NativeRadarSeamEstimation.Frame
+                    let radarFrame = radar.first { Date(timeIntervalSince1970: Double($0.validTimeMilliseconds) / 1000) == date }
+                    let forecastFrame = forecasts.first { $0.validTime == date }
+                    let key: String
+                    do {
+                        if let frame = radarFrame, let client = self.observedClient {
+                            key = frame.key
+                            if self.radarCache.contains(key) { continue }
+                            let decoded = try await client.decodeFrame(frame,
+                                bounds: .init(minLat: bounds.south, minLon: bounds.west, maxLat: bounds.north, maxLon: bounds.east),
+                                width: 384, height: 512)
+                            guard decoded.hasCoverage else { continue }
+                            numeric = try Self.numericFrame(decoded, bounds: bounds, frame: frame)
+                        } else if let frame = forecastFrame, let client = self.subhourlyClient,
+                                  bounds.east - bounds.west <= 14, bounds.north - bounds.south <= 14 {
+                            key = "\(frame.cycle.timeIntervalSince1970):\(frame.leadMinutes)"
+                            if self.subhourlyCache.contains(key) { continue }
+                            numeric = try await client.load(frame, bounds: .init(west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north))
+                        } else { continue }
+                        try Task.checkCancellation()
+                        let render = Task.detached(priority: .utility) {
+                            let rgba = Data(try RadarNumericContract.highDetailRGBA(numeric.texture, encoding: numeric.encoding,
+                                validDataMask: numeric.validDataMask, zoom: bounds.zoom))
+                            return try Self.makeImage(rgba: rgba, width: numeric.texture.width, height: numeric.texture.height)
+                        }
+                        let rendered = try await withTaskCancellationHandler(operation: { try await render.value }, onCancel: { render.cancel() })
+                        try Task.checkCancellation()
+                        guard self.active, !self.suspended, self.imageGeneration == generation, self.viewport == bounds,
+                              self.selectedInstant == selected else { return }
+                        let image = NativeRadarImage(id: "warm:\(key):\(bounds)", image: rendered,
+                            west: bounds.west, south: bounds.south, east: bounds.east, north: bounds.north)
+                        let coverage = Double(numeric.validDataMask.filter { $0 == 1 }.count) / Double(numeric.validDataMask.count)
+                        let covered = Self.placeHasCoverage(numeric.validDataMask, width: numeric.texture.width,
+                            height: numeric.texture.height, bounds: bounds, latitude: self.place.latitude, longitude: self.place.longitude)
+                        let message = covered == false ? "Radar coverage is missing at this place."
+                            : coverage < 0.98 ? "Some of this view has no radar coverage. Blank areas are unavailable." : nil
+                        let value = CachedRadarFrame(image: image, message: message, numeric: numeric)
+                        if let frame = radarFrame, self.observedFrames.contains(where: { $0.key == frame.key && $0.byteLength == frame.byteLength }) {
+                            self.radarCache.insert(value, for: key, cost: numeric.texture.bytes.count * 6)
+                        } else if let frame = forecastFrame, self.usableSubhourly.contains(frame) {
+                            self.subhourlyCache.insert(value, for: key, cost: numeric.texture.bytes.count * 6)
+                        }
+                    } catch is CancellationError { return }
+                    catch { continue } // Optional warmup failures never replace valid weather.
+                }
+            } catch { } // Cancelled idle delay.
         }
     }
 
@@ -1064,6 +1156,7 @@ final class NativeRadarModel: ObservableObject {
             selectScrubberTime(first)
         }
         playing = true; playbackMessage = nil
+        warmNearbyFrames()
         playbackTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
@@ -1101,6 +1194,7 @@ final class NativeRadarModel: ObservableObject {
     }
     func suspend() {
         suspended = true
+        prefetchTask?.cancel()
         pause()
         startupTask?.cancel(); startupTask = nil
         refreshGeneration += 1; manualRefreshGeneration += 1

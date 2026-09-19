@@ -14,6 +14,26 @@ enum NativeRadarFrameCacheTests {
         precondition(standard.maximumCost == 8 * mebibyte)
         precondition(NativeRadarFrameCachePolicy(maximumEntries: 0, maximumCost: 1) == nil)
         precondition(NativeRadarFrameCachePolicy(maximumEntries: 1, maximumCost: 0) == nil)
+        let dates = (0..<8).map { Date(timeIntervalSince1970: Double($0) * 900) }
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[3], cached: [], playing: false) == [dates[4], dates[2]])
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[3], cached: [], playing: true) == [dates[4], dates[5]])
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[3], cached: [dates[4], dates[2]], playing: false) == [dates[5], dates[1]])
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[7], cached: [], playing: true).isEmpty)
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[0], cached: [], playing: false) == [dates[1], dates[2]])
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: Date(timeIntervalSince1970: 1), cached: [], playing: false).isEmpty)
+        precondition(NativeRadarPrefetchPolicy.targets(dates: dates, selected: dates[3], cached: Set(dates), playing: false).isEmpty)
+        let gap = [dates[0], Date(timeIntervalSince1970: 7200)]
+        precondition(NativeRadarPrefetchPolicy.targets(dates: gap, selected: dates[0], cached: [], playing: false).isEmpty)
+        precondition(NativeRadarPrefetchPolicy.targets(dates: Array(dates.reversed()) + dates, selected: dates[3], cached: [], playing: false) == [dates[4], dates[2]])
+        precondition(NativeRadarPrefetchPolicy.targets(dates: Array(repeating: dates[0], count: 129), selected: dates[0], cached: [], playing: false).isEmpty)
+        // Inserting warmed neighbors stays inside the same memory budget and
+        // keeps the just-used selected frame resident.
+        var warmCache = NativeRadarFrameCache<Date, String>()
+        for date in dates.prefix(6) { warmCache.insert("frame", for: date, cost: mebibyte) }
+        _ = warmCache.value(for: dates[3])
+        for date in dates.suffix(2) { warmCache.insert("warm", for: date, cost: mebibyte) }
+        precondition(warmCache.count == 6 && warmCache.contains(dates[3]))
+        print("PASS Native radar prefetch: two-neighbor cap, forward playback, cached exclusion, exact times, gaps, endpoints and shared memory budget")
 
         // This reference type deliberately has no Sendable conformance. UIKit
         // images can be cached the same way while the owner stays on MainActor.
