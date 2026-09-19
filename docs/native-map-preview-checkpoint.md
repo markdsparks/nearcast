@@ -58,6 +58,14 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Native companion weather and direct map entry (build 115)
+
+Release: `4327bcc`, TestFlight 0.1.0 (115), uploaded successfully September 19. The phone widget and Watch now receive the same verified native forecast that is shown in the native weather experience, rather than depending on an active legacy WebView bridge. The publication accepts only the active native owner, exact selected-place identity, and matching unit preference; it preserves the selected clock setting and sends one companion update per forecast receipt. A native-owner change still invalidates old weather first, so a stale place or unit system cannot appear current.
+
+The native bottom Map tab now opens the native MapLibre radar surface directly. Saved-place selection, Ask handoff, close behavior, and the explicit existing-map fallback continue to use their established routes. This is a direct native map entry, not a claim that every legacy-map layer has reached parity.
+
+Automated coverage includes native-to-companion weather publication in Celsius, rejection of an unselected place, legacy/native ownership arbitration, widget/Watch packaging validation, and a release simulator compile. Physical testing should confirm: open Native preview, wait for weather, then check the Home Screen widget and Watch; change places and verify both update to the same place. From the native bottom tab bar, Map should open the native map without the existing-app handoff.
+
 ### Playback/map synchronization and moving-camera coverage (build 114)
 
 Release: `f4ddbf5`, TestFlight 0.1.0 (114), uploaded successfully September 19 at 07:51 CDT. Targeted radar cache/presentation tests, release simulator compilation, full portable/native-model preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; tester availability is subject to Apple processing. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-114.log`.
