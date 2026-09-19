@@ -70,12 +70,15 @@ const functionNames = [
   "placeLabel",
   "joinUniquePlaceParts",
   "placeCountryCode",
-  "slug"
+  "slug",
+  "placeFromReverseGeocode",
+  "nativePreviewPlaceRecord"
 ];
 const sandbox = {
   routeValues: {},
   state: { savedPlaces: [] },
-  lastPlace: null
+  lastPlace: null,
+  Intl
 };
 vm.createContext(sandbox);
 vm.runInContext(`
@@ -128,6 +131,39 @@ assert.equal(
   reactiveSkyIsCurrentLocation({ ...legacyCurrentLocation, followsCurrentLocation: false }),
   false,
   "an explicit fixed-place flag wins"
+);
+
+// A browser-resolved Current Location must carry Nominatim's declared
+// country into the narrow native preview handoff. Native alert coverage is
+// intentionally never inferred from a coordinate alone, so dropping this
+// code would turn a successful US point response into an unavailable warning.
+const reverseFallback = {
+  id: "gps-38.724--89.956",
+  name: "Current Location",
+  admin1: "",
+  country: "",
+  latitude: 38.7237,
+  longitude: -89.9559,
+  followsCurrentLocation: true
+};
+const reverseUS = sandbox.placeFromReverseGeocode({
+  address: {
+    city: "Maryville",
+    state: "Illinois",
+    country: "United States",
+    country_code: "us"
+  }
+}, reverseFallback);
+assert.equal(reverseUS.countryCode, "US", "Reverse-geocoded Current Location retains its declared US coverage");
+const nativeCurrentLocation = sandbox.nativePreviewPlaceRecord({ ...reverseFallback, ...reverseUS });
+assert.equal(nativeCurrentLocation?.countryCode, "US", "Declared Current Location coverage reaches native official-alert checks");
+const malformedReverse = sandbox.placeFromReverseGeocode({
+  address: { city: "Maryville", country_code: "USA" }
+}, reverseFallback);
+assert.equal(
+  sandbox.nativePreviewPlaceRecord({ ...reverseFallback, ...malformedReverse })?.countryCode,
+  undefined,
+  "Malformed reverse-geocoder coverage cannot establish native alert coverage"
 );
 
 const polluted = {

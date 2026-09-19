@@ -7,14 +7,19 @@ private final class EssentialsProtocol: URLProtocol, @unchecked Sendable {
     static let lock = NSLock()
     nonisolated(unsafe) static var air = Data()
     nonisolated(unsafe) static var alerts = Data()
+    nonisolated(unsafe) static var point = Data(#"{"type":"Feature","properties":{"gridId":"LSX"}}"#.utf8)
     nonisolated(unsafe) static var airStatus = 200
     nonisolated(unsafe) static var alertStatus = 200
+    nonisolated(unsafe) static var pointStatus = 200
     nonisolated(unsafe) static var delay: TimeInterval = 0
     nonisolated(unsafe) static var requests: [URLRequest] = []
 
-    static func configure(air: Data, alerts: Data, airStatus: Int = 200, alertStatus: Int = 200, delay: TimeInterval = 0) {
+    static func configure(air: Data, alerts: Data, point: Data? = nil, airStatus: Int = 200, alertStatus: Int = 200,
+                          pointStatus: Int = 200, delay: TimeInterval = 0) {
         lock.lock(); defer { lock.unlock() }
-        self.air = air; self.alerts = alerts; self.airStatus = airStatus; self.alertStatus = alertStatus; self.delay = delay
+        self.air = air; self.alerts = alerts
+        self.point = point ?? Data(#"{"type":"Feature","properties":{"gridId":"LSX"}}"#.utf8)
+        self.airStatus = airStatus; self.alertStatus = alertStatus; self.pointStatus = pointStatus; self.delay = delay
     }
     static func requestCount() -> Int { lock.lock(); defer { lock.unlock() }; return requests.count }
     static func requestSnapshot() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
@@ -24,8 +29,9 @@ private final class EssentialsProtocol: URLProtocol, @unchecked Sendable {
         Self.lock.lock()
         Self.requests.append(request)
         let isAir = request.url!.host == "air-quality-api.open-meteo.com"
-        let payload = isAir ? Self.air : Self.alerts
-        let status = isAir ? Self.airStatus : Self.alertStatus
+        let isPoint = request.url!.path.hasPrefix("/points/")
+        let payload = isAir ? Self.air : (isPoint ? Self.point : Self.alerts)
+        let status = isAir ? Self.airStatus : (isPoint ? Self.pointStatus : Self.alertStatus)
         let delay = Self.delay
         Self.lock.unlock()
         let work: @Sendable () -> Void = { [self] in
@@ -106,6 +112,9 @@ struct NativeWeatherEssentialsTests {
         expect(!live.isFresh(now: now.addingTimeInterval(301)), "Alert freshness expires after five minutes")
         let empty = try alerts([])
         expect(empty.status == .ready && empty.alerts.isEmpty, "Verified empty response distinguished from failure")
+        let currentLocationUS = try alerts([], country: " us ")
+        expect(currentLocationUS.status == .ready && currentLocationUS.isFresh(now: now) && currentLocationUS.checkedAt == now,
+            "A declared-US Current Location with a successful point response is verified, not shown as unavailable")
         expect(try alerts([], country: nil).status == .unavailable, "Unknown country cannot claim no alerts")
         expect(try alerts([feature()], country: "DE").status == .unsupported, "Foreign coverage never becomes all-clear")
         expect(try alerts([feature(end: "2026-09-18T18:16:00Z")]).alerts.isEmpty, "Expired alert removed")
@@ -205,6 +214,33 @@ struct NativeWeatherEssentialsTests {
             "Official alert request is point-scoped, never regional defaults")
         _ = await repository.fetch(latitude: 38.72, longitude: -89.95, countryCode: "US", now: now.addingTimeInterval(60))
         expect(EssentialsProtocol.requestCount() == count, "Fresh per-place cache avoids repeated requests")
+
+        // Older native-preview contexts lacked country metadata for Current
+        // Location. A verified NWS point response may repair that coverage
+        // decision, but an empty alerts response by itself still may not.
+        EssentialsProtocol.configure(air: try data(airFixture()), alerts: try data(collection([])))
+        let beforeLegacyLocation = EssentialsProtocol.requestCount()
+        let legacyLocation = await repository.fetch(latitude: 38.73, longitude: -89.96, countryCode: nil, now: now)
+        expect(legacyLocation.alerts.status == .ready && legacyLocation.alerts.isFresh(now: now),
+            "Legacy Current Location verifies official-alert coverage through the exact NWS point endpoint")
+        let legacyRequests = Array(EssentialsProtocol.requestSnapshot().dropFirst(beforeLegacyLocation))
+        expect(legacyRequests.contains { $0.url?.path.hasPrefix("/points/") == true }
+            && legacyRequests.contains { $0.url?.path == "/alerts/active" },
+            "Legacy Current Location proves source coverage before reading its point-scoped alerts")
+        let afterLegacyLocation = EssentialsProtocol.requestCount()
+        _ = await repository.fetch(latitude: 38.73, longitude: -89.96, countryCode: nil, now: now.addingTimeInterval(60))
+        expect(EssentialsProtocol.requestCount() == afterLegacyLocation,
+            "Verified legacy Current Location reuses the same bounded official-alert cache")
+
+        EssentialsProtocol.configure(air: try data(airFixture()), alerts: try data(collection([])), pointStatus: 404)
+        let beforeUnverifiedLocation = EssentialsProtocol.requestCount()
+        let unverifiedLocation = await repository.fetch(latitude: 38.74, longitude: -89.97, countryCode: nil, now: now)
+        expect(unverifiedLocation.alerts.status == .unavailable && !unverifiedLocation.alerts.isFresh(now: now),
+            "Unknown coverage never becomes an all-clear after a failed NWS point verification")
+        let unverifiedRequests = Array(EssentialsProtocol.requestSnapshot().dropFirst(beforeUnverifiedLocation))
+        expect(!unverifiedRequests.contains { $0.url?.path == "/alerts/active" },
+            "A failed legacy coverage check never treats the alerts endpoint as source proof")
+
         EssentialsProtocol.configure(air: Data(), alerts: Data(), airStatus: 503, alertStatus: 503)
         let failed = await repository.fetch(latitude: 38.72, longitude: -89.95, countryCode: "US", now: now.addingTimeInterval(61), force: true)
         expect(failed.airQuality.status == .stale && failed.airQuality.current(at: now) == nil, "Failed AQI refresh retains labeled last estimate but cannot promote it")

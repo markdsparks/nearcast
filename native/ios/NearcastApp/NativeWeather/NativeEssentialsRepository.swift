@@ -64,27 +64,71 @@ actor NativeEssentialsRepository {
         if let country, !NativeEssentialsDecoder.nwsCountries.contains(country) {
             return NativeAlertState(status: .unsupported, checkedAt: nil, alerts: [], message: "Official alerts are not available here from our current source.")
         }
-        let key = coordinateKey(latitude, longitude) + ":" + (country ?? "unknown")
+        let pointKey = coordinateKey(latitude, longitude)
+        // Earlier native-preview contexts did not retain the reverse-geocoder's
+        // country code for Current Location. Never infer coverage from a raw
+        // coordinate: when that legacy context is encountered, first let the
+        // NWS point endpoint confirm that it actually serves this exact place.
+        // A successful verification joins the same cache as an explicit US
+        // code; a failed verification remains unavailable rather than all-clear.
+        let key = pointKey + ":" + (country ?? "US")
         if !force, let cached = alertCache[key], cached.isFresh(now: now) { return cached }
+        let verifiedCountry: String
+        if let country {
+            verifiedCountry = country
+        } else {
+            do {
+                try await verifyNWSPointCoverage(latitude: latitude, longitude: longitude)
+                // The point endpoint verifies NWS service coverage, including
+                // US territories. This value is only an internal coverage key;
+                // it never rewrites the place's actual country metadata.
+                verifiedCountry = "US"
+            } catch {
+                return unavailableAlerts(cached: alertCache[key], now: now,
+                    message: "Official alert coverage couldn't be confirmed for this place.")
+            }
+        }
         do {
             var url = URLComponents(string: "https://api.weather.gov/alerts/active")!
             url.queryItems = [URLQueryItem(name: "point", value: coordinate(latitude, digits: 4) + "," + coordinate(longitude, digits: 4))]
             let data = try await request(url.url!, accept: "application/geo+json", maximumBytes: 4_000_000)
-            let state = try NativeEssentialsDecoder.alerts(data: data, latitude: latitude, longitude: longitude, countryCode: country, now: now)
+            let state = try NativeEssentialsDecoder.alerts(data: data, latitude: latitude, longitude: longitude, countryCode: verifiedCountry, now: now)
             try Task.checkCancellation()
             if (alertCache[key]?.checkedAt ?? .distantPast) <= now { alertCache[key] = state; trimCaches() }
             return state
         } catch {
-            let cached = alertCache[key]
-            let usable = cached?.checkedAt.map { now.timeIntervalSince($0) >= -60 && now.timeIntervalSince($0) <= 24 * 3600 } ?? false
-            let alerts = usable ? (cached?.alerts ?? []).filter { $0.endAt > now } : []
-            let state = NativeAlertState(status: usable ? .stale : .unavailable,
-                checkedAt: usable ? cached?.checkedAt : nil, alerts: alerts,
+            let state = unavailableAlerts(cached: alertCache[key], now: now,
                 message: "Couldn't check official alerts. Check local guidance and try again.")
             // Even a cached empty result is explicitly stale, never all-clear.
-            if !Task.isCancelled, (cached?.checkedAt ?? .distantPast) <= now { alertCache[key] = state; trimCaches() }
+            if !Task.isCancelled, (alertCache[key]?.checkedAt ?? .distantPast) <= now { alertCache[key] = state; trimCaches() }
             return state
         }
+    }
+
+    /// Confirms that NWS serves the exact coordinate before a legacy context
+    /// without country metadata can be treated as supported. This is stricter
+    /// than a successful empty alerts response, which alone cannot prove that
+    /// the source covers a place outside its service area.
+    private func verifyNWSPointCoverage(latitude: Double, longitude: Double) async throws {
+        let latitudeText = coordinate(latitude, digits: 4)
+        let longitudeText = coordinate(longitude, digits: 4)
+        let url = URL(string: "https://api.weather.gov/points/\(latitudeText),\(longitudeText)")!
+        let data = try await request(url, accept: "application/geo+json", maximumBytes: 512_000)
+        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              payload["type"] as? String == "Feature",
+              let properties = payload["properties"] as? [String: Any],
+              let gridID = properties["gridId"] as? String,
+              !gridID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              gridID.count <= 40 else {
+            throw NativeEssentialsError.invalidPayload
+        }
+    }
+
+    private func unavailableAlerts(cached: NativeAlertState?, now: Date, message: String) -> NativeAlertState {
+        let usable = cached?.checkedAt.map { now.timeIntervalSince($0) >= -60 && now.timeIntervalSince($0) <= 24 * 3600 } ?? false
+        let alerts = usable ? (cached?.alerts ?? []).filter { $0.endAt > now } : []
+        return NativeAlertState(status: usable ? .stale : .unavailable,
+            checkedAt: usable ? cached?.checkedAt : nil, alerts: alerts, message: message)
     }
 
     private func request(_ url: URL, accept: String, maximumBytes: Int) async throws -> Data {

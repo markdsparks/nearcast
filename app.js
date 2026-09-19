@@ -1,4 +1,4 @@
-const VERSION = "3.0.412";
+const VERSION = "3.0.413";
 // Kept only long enough to remove the old persisted Home lens. Home is the
 // family's stable first look, so every fresh app/location visit begins with
 // Hourly + Temperature. The full Hourly surface owns its separate controls.
@@ -18166,12 +18166,18 @@ function placeFromReverseGeocode(json, fallback) {
     fallback.name;
   const admin1 = address.state || address.region || address.state_district || "";
   const country = address.country || "";
+  // Nominatim is the authority for this reverse-geocoded place. Keep only a
+  // well-formed ISO country code so native official-alert coverage can be
+  // established without guessing from coordinates.
+  const rawCountryCode = String(address.country_code || "").trim().toUpperCase();
+  const countryCode = /^[A-Z]{2}$/.test(rawCountryCode) ? rawCountryCode : "";
 
   return {
     id: `gps-${slug(name)}-${fallback.latitude.toFixed(3)}-${fallback.longitude.toFixed(3)}`,
     name,
     admin1,
-    country
+    country,
+    ...(countryCode ? { countryCode } : {})
   };
 }
 
