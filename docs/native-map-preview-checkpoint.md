@@ -60,6 +60,8 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ### Build 108 timeline polish
 
+Release: commit `7ad157a`, TestFlight 0.1.0 (108), uploaded successfully September 18 at 23:37 CDT. Final portable/native-model preflight, signed archive, all-target archive validation and export/upload passed. Apple had accepted the package for processing; its build-list API had not indexed 108 at the immediate follow-up check. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Release log: `/tmp/nearcast-testflight-108.log`.
+
 Family feedback on 107 accepts the basic pan/zoom feel, but reports timeline flicker and excessive controls. This checkpoint combines real observed timestamps and advertised future model times into one time-proportional scrubber, with a default next-hour range, optional six-hour range, Now boundary marker, playback and Latest action. Six-hour accumulations remain a separate layer. No intermediate model frames are invented.
 
 Numeric image requests retain the last complete georeferenced image and its displayed timestamp while the next frame loads; the pending target is separately labeled. MapLibre updates its resident image source rather than removing/recreating the weather layer on every frame. Forecast alignment is resolved before publishing a forecast, avoiding a second visible shift from baseline to corrected pixels. Provider-tile fallback behavior is unchanged.
@@ -69,6 +71,8 @@ The scrubber has one compact surface with inline source-info access and visible 
 Verification: full regression suite passed before final copy/accessibility refinements; release simulator build passed. iPhone 17 Pro simulator verified 1h/6h selection, crossing into an actual next-day model frame, held-frame loading labels, and Latest returning to the exact observed timestamp. Additional integrated-timeline tests cover real-time snapping, six-hour bounds, one-hour bounds, empty sources and missing guidance gaps. No nearby storm echoes were available to claim live-storm visual acceptance. Final release preflight runs again before upload.
 
 StormScope/lightning remains an open native integration gate below, as does genuine subhourly forecast parity. This checkpoint must not be described as finishing either.
+
+Additional UI check: Pro Max portrait and both landscape orientations kept the compact controls inside safe areas, with the map still usable. Simulator restored to portrait. These layout checks do not establish physical-device frame-time performance.
 
 1. Real-device finger pan/pinch/scrub, background/resume, accessibility text/VoiceOver, rotation, slow/offline recovery, memory and frame-time measurement on both required phones.
 2. Live storm/transition acceptance and subhourly model path. The bounded exact-time compositor is implemented; it does not invent quarter-hour forecasts and is not full enhanced-map parity.
