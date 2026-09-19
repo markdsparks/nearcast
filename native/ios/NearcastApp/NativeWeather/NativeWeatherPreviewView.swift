@@ -15,9 +15,9 @@ struct NativeWeatherPreviewView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
-    @ScaledMetric(relativeTo: .subheadline) private var minimumConditionWidth: CGFloat = 112
     @State private var metric: NativePreviewMetric = .temperature
     @State private var interval: NativePreviewInterval = .hourly
     @State private var legacyDestination: NativeLegacyDestination?
@@ -71,17 +71,45 @@ struct NativeWeatherPreviewView: View {
         if showingQuarterHours { return Array(usableQuarterHours.prefix(25)) }
         return model.forecast?.previewTrendHours(on: displayedDay, now: now) ?? []
     }
-    /// One weather scene drives the backdrop, hero, and outlook. This is not a
-    /// second forecast interpretation: it only translates the already shown
-    /// condition into a visual atmosphere.
+    private var atmosphericTraceSamples: [NativeAtmosphericTraceSample] {
+        let points = Array((isHourly ? listPoints : trendPoints).prefix(showingQuarterHours ? 25 : 8))
+        let currentDate = isToday ? points.last(where: { $0.date <= now })?.date : nil
+        let samples = points.map { point in
+            NativeAtmosphericTraceSample(
+                value: metric.value(point),
+                isCurrent: currentDate.map { point.date == $0 } ?? false
+            )
+        }
+        let finiteValueCount = samples.compactMap(\.value).filter(\.isFinite).count
+        return finiteValueCount >= 2 ? samples : []
+    }
+    private var atmosphericTraceAccessibilityLabel: String {
+        let intervalLabel = showingQuarterHours ? "15-minute" : "hourly"
+        return "\(intervalLabel) \(metric.accessibleLabel.lowercased()) trend for \(dayName(displayedDay))."
+    }
+    /// One forecast-derived field drives the screen. It only translates data
+    /// already on screen into light and depth; it never creates a stronger
+    /// weather claim than the forecast itself.
     private var visualPoint: NativeForecastPoint? {
-        if isToday { return model.forecast?.current }
-        guard let day = selectedForecastDay else { return model.forecast?.current }
+        guard let forecast = model.forecast else { return nil }
+        // Hourly is an analytical surface. Its atmosphere represents the
+        // first time being read, not a potentially unrelated current scene.
+        if isHourly, let firstVisible = listPoints.first { return firstVisible }
+        if isToday { return forecast.current ?? trendPoints.first }
+        guard let day = selectedForecastDay else { return forecast.current }
+        let points = forecast.hours(on: displayedDay)
+        let cloudValues = points.compactMap(\.cloudCover)
+        let averageCloud = cloudValues.isEmpty ? nil : cloudValues.reduce(0, +) / Double(cloudValues.count)
         return NativeForecastPoint(
             date: day.date,
+            temperature: day.high,
+            rainProbability: day.rainProbability,
+            precipitationMM: day.precipitationMM,
+            uvIndex: day.uvIndex,
             weatherCode: day.weatherCode,
             isDay: true,
-            thunderPossible: day.thunderPossible
+            thunderPossible: day.thunderPossible,
+            cloudCover: averageCloud
         )
     }
 
@@ -268,7 +296,14 @@ struct NativeWeatherPreviewView: View {
     }
 
     private var skyBackground: some View {
-        NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .backdrop)
+        NativeAtmosphericField(
+            point: visualPoint,
+            usesMetric: model.context.metric,
+            isDark: isDark,
+            reduceMotion: reduceMotion,
+            increasedContrast: colorSchemeContrast == .increased,
+            placement: isHourly ? .hourly : .backdrop
+        )
             .ignoresSafeArea()
     }
 
@@ -476,12 +511,29 @@ struct NativeWeatherPreviewView: View {
                     .monospacedDigit()
                     .padding(.top, 2)
             }
+            if !atmosphericTraceSamples.isEmpty {
+                NativeAtmosphericTrace(
+                    samples: atmosphericTraceSamples,
+                    tint: accent,
+                    label: atmosphericTraceAccessibilityLabel
+                )
+                .frame(height: 30)
+                .padding(.top, 5)
+                .padding(.horizontal, 20)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
         .padding(.bottom, 14)
         .background {
-            NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .hero)
+            NativeAtmosphericField(
+                point: visualPoint,
+                usesMetric: model.context.metric,
+                isDark: isDark,
+                reduceMotion: reduceMotion,
+                increasedContrast: colorSchemeContrast == .increased,
+                placement: .hero
+            )
                 .clipShape(RoundedRectangle(cornerRadius: 42, style: .continuous))
         }
     }
@@ -589,7 +641,14 @@ struct NativeWeatherPreviewView: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(cardFill)
                 .overlay {
-                    NativeLivingWeatherAtmosphere(point: visualPoint, isDark: isDark, reduceMotion: reduceMotion, placement: .card)
+                    NativeAtmosphericField(
+                        point: visualPoint,
+                        usesMetric: model.context.metric,
+                        isDark: isDark,
+                        reduceMotion: reduceMotion,
+                        increasedContrast: colorSchemeContrast == .increased,
+                        placement: .card
+                    )
                         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 }
         }
@@ -930,16 +989,21 @@ struct NativeWeatherPreviewView: View {
 
     private var hourlyContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(showingQuarterHours ? "Every 15 minutes" : "Hour by hour")
-                    .font(.title.weight(.bold))
-                Text(dayName(displayedDay, full: true))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            hourlyHeader
             dayPicker
-            intervalPicker
+            if offersQuarterHours {
+                intervalPicker
+            }
             metricPicker
+            if !atmosphericTraceSamples.isEmpty {
+                NativeAtmosphericTrace(
+                    samples: atmosphericTraceSamples,
+                    tint: accent,
+                    label: atmosphericTraceAccessibilityLabel
+                )
+                .frame(height: 42)
+                .padding(.horizontal, 4)
+            }
             if isToday && !showingQuarterHours && dayHours.contains(where: { $0.date < currentHourStart }) {
                 Button(showEarlierHours ? "Hide earlier hours" : "Show earlier hours") {
                     showEarlierHours.toggle()
@@ -965,6 +1029,19 @@ struct NativeWeatherPreviewView: View {
                 }
             }
         }
+    }
+
+    private var hourlyHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(showingQuarterHours ? "Every 15 minutes" : "Hour by hour")
+                .font(.title.weight(.bold))
+            Text("\(dayName(displayedDay, full: true)) · local time")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 4)
     }
 
     private var dayPicker: some View {
@@ -1043,8 +1120,9 @@ struct NativeWeatherPreviewView: View {
                 .accessibilityHidden(true)
             Text(point.conditionLabel)
                 .font(.subheadline)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(minWidth: minimumConditionWidth, alignment: .leading)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 210 : 180, alignment: .leading)
                 .layoutPriority(1)
         }
     }
@@ -1240,203 +1318,6 @@ struct NativeWeatherPreviewView: View {
         if age < 60 * 60 { return "\(Int(age / 60)) min ago" }
         if age < 24 * 60 * 60 { return "\(Int(age / 3600)) hr ago" }
         return "\(Int(age / 86400)) day\(age < 2 * 86400 ? "" : "s") ago"
-    }
-}
-
-/// A deliberately quiet visual translation of the weather we are already
-/// showing. Nearcast's recognizable visual language should make the current
-/// sky more legible, never imply precision the forecast does not have.
-private struct NativeLivingWeatherAtmosphere: View {
-    enum Placement { case backdrop, hero, card }
-
-    let point: NativeForecastPoint?
-    let isDark: Bool
-    let reduceMotion: Bool
-    let placement: Placement
-
-    @State private var drift = false
-
-    private var code: Int { point?.weatherCode ?? -1 }
-    // “Thunderstorms possible” is important forecast language, but it is not
-    // an observed storm. The immersive scene must not dramatize a possibility
-    // into lightning and rain across every hourly row.
-    private var isStorm: Bool { [95, 96, 99].contains(code) }
-    private var isRain: Bool { (51...67).contains(code) || (80...82).contains(code) || isStorm }
-    private var isSnow: Bool { (71...77).contains(code) || (85...86).contains(code) }
-    private var isFog: Bool { [45, 48].contains(code) }
-    private var isCloudy: Bool { (1...3).contains(code) || isRain || isSnow || isFog }
-    private var isClear: Bool { [0, 1].contains(code) && !isStorm }
-    private var isDay: Bool { point?.isDay ?? !isDark }
-
-    private var intensity: Double {
-        switch placement {
-        case .backdrop: return 1
-        case .hero: return 0.78
-        case .card: return 0.38
-        }
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            ZStack {
-                baseSky
-
-                if isClear || !isCloudy {
-                    solarGlow(size: size)
-                }
-                if isCloudy {
-                    cloudBank(size: size)
-                }
-                if isFog {
-                    fogBands(size: size)
-                }
-                if isRain || isSnow {
-                    precipitationVeil(size: size)
-                }
-                if isStorm {
-                    stormPulse(size: size)
-                }
-                // A subtle horizon lift is the shared thread between the hero
-                // and the day story below it—not a decorative card gradient.
-                LinearGradient(
-                    colors: [.clear, horizonColor.opacity(0.22 * intensity), .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(height: max(34, size.height * 0.17))
-                .offset(y: size.height * 0.24)
-            }
-            .compositingGroup()
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: placement == .backdrop ? 11 : 8).repeatForever(autoreverses: true)) {
-                    drift = true
-                }
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private var baseSky: some View {
-        if placement == .hero {
-            // The hero belongs to the surrounding sky. Keeping this clear
-            // avoids turning the temperature into one more generic glass card.
-            Color.clear
-        } else {
-            LinearGradient(
-                colors: baseColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
-
-    private var baseColors: [Color] {
-        if isDark {
-            if isStorm { return [Color(red: 0.055, green: 0.095, blue: 0.16), Color(red: 0.10, green: 0.13, blue: 0.20)] }
-            if isFog { return [Color(red: 0.13, green: 0.18, blue: 0.23), Color(red: 0.08, green: 0.12, blue: 0.17)] }
-            return [Color(red: 0.04, green: 0.12, blue: 0.22), Color(red: 0.075, green: 0.105, blue: 0.16)]
-        }
-        if isStorm { return [Color(red: 0.33, green: 0.44, blue: 0.57), Color(red: 0.73, green: 0.79, blue: 0.82)] }
-        if isRain { return [Color(red: 0.46, green: 0.64, blue: 0.76), Color(red: 0.82, green: 0.89, blue: 0.91)] }
-        if isSnow { return [Color(red: 0.70, green: 0.82, blue: 0.91), Color(red: 0.94, green: 0.97, blue: 0.98)] }
-        if isFog { return [Color(red: 0.67, green: 0.75, blue: 0.78), Color(red: 0.90, green: 0.93, blue: 0.92)] }
-        if isClear { return [Color(red: 0.43, green: 0.70, blue: 0.91), Color(red: 0.87, green: 0.94, blue: 0.95)] }
-        return [Color(red: 0.55, green: 0.70, blue: 0.80), Color(red: 0.87, green: 0.92, blue: 0.93)]
-    }
-
-    private var horizonColor: Color {
-        if isStorm { return Color(red: 0.96, green: 0.67, blue: 0.28) }
-        if isRain { return Color(red: 0.25, green: 0.68, blue: 0.90) }
-        return isDay ? Color(red: 1, green: 0.79, blue: 0.28) : Color(red: 0.42, green: 0.67, blue: 1)
-    }
-
-    private func solarGlow(size: CGSize) -> some View {
-        ZStack {
-            Circle()
-                .fill((isDay ? Color(red: 1, green: 0.78, blue: 0.22) : Color(red: 0.60, green: 0.78, blue: 1)).opacity(0.14 * intensity))
-                .frame(width: max(120, size.width * 0.52), height: max(120, size.width * 0.52))
-                .blur(radius: max(28, size.width * 0.11))
-            if placement != .backdrop {
-                Circle()
-                    .strokeBorder((isDay ? Color.white : Color(red: 0.74, green: 0.86, blue: 1)).opacity(0.16 * intensity), lineWidth: 1)
-                    .frame(width: max(92, size.width * 0.33), height: max(92, size.width * 0.33))
-            }
-        }
-        .offset(x: size.width * (drift ? 0.19 : 0.13), y: -size.height * 0.22)
-    }
-
-    private func cloudBank(size: CGSize) -> some View {
-        ZStack {
-            cloud(width: size.width * 0.72, height: max(72, size.height * 0.42), opacity: isStorm ? 0.42 : 0.27)
-                .offset(x: -size.width * 0.18, y: -size.height * 0.15)
-            cloud(width: size.width * 0.82, height: max(62, size.height * 0.35), opacity: isStorm ? 0.35 : 0.21)
-                .offset(x: size.width * (drift ? 0.20 : 0.12), y: size.height * 0.16)
-        }
-    }
-
-    private func cloud(width: CGFloat, height: CGFloat, opacity: Double) -> some View {
-        Capsule()
-            .fill(
-                LinearGradient(
-                    colors: [Color.white.opacity(opacity), Color(red: 0.17, green: 0.27, blue: 0.34).opacity(opacity * 0.85)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .blur(radius: max(14, width * 0.06))
-            .frame(width: width, height: height)
-    }
-
-    private func precipitationVeil(size: CGSize) -> some View {
-        let count = placement == .backdrop ? 7 : 4
-        return ZStack {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    (isSnow ? Color.white : Color(red: 0.47, green: 0.78, blue: 0.96)).opacity(0.11 * intensity),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            ForEach(0..<count, id: \.self) { index in
-                let fraction = CGFloat(index) / CGFloat(max(1, count - 1))
-                Capsule()
-                    .fill((isSnow ? Color.white : Color(red: 0.56, green: 0.86, blue: 1)).opacity((isStorm ? 0.17 : 0.10) * intensity))
-                    .frame(width: isSnow ? 3 : 1, height: isSnow ? 3 : max(10, size.height * 0.08))
-                    .rotationEffect(.degrees(isSnow ? 0 : 13))
-                    .offset(
-                        x: (fraction - 0.5) * size.width * 1.18,
-                        y: size.height * (drift ? 0.19 : 0.12) + CGFloat(index % 3) * 18
-                    )
-            }
-        }
-    }
-
-    private func fogBands(size: CGSize) -> some View {
-        VStack(spacing: max(10, size.height * 0.07)) {
-            ForEach(0..<4, id: \.self) { index in
-                Capsule()
-                    .fill(Color.white.opacity((0.17 - Double(index) * 0.02) * intensity))
-                    .frame(width: size.width * (index.isMultiple(of: 2) ? 0.84 : 0.62), height: max(9, size.height * 0.035))
-                    .offset(x: drift ? (index.isMultiple(of: 2) ? 16 : -12) : 0)
-            }
-        }
-        .offset(y: size.height * 0.10)
-    }
-
-    private func stormPulse(size: CGSize) -> some View {
-        ZStack {
-            Circle()
-                .fill(Color(red: 0.86, green: 0.68, blue: 0.31).opacity(0.09 * intensity))
-                .frame(width: max(110, size.width * 0.33), height: max(80, size.width * 0.22))
-                .blur(radius: 30)
-                .offset(x: -size.width * 0.18, y: -size.height * 0.10)
-        }
     }
 }
 

@@ -22,12 +22,16 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
     /// Visibility stays in meters regardless of the selected display units.
     let visibilityMeters: Double?
     let windDirection: Double?
+    /// Cloud density is useful visual context, but it never changes the
+    /// deterministic condition label by itself.
+    let cloudCover: Double?
 
     init(date: Date, temperature: Double? = nil, apparentTemperature: Double? = nil,
          rainProbability: Double? = nil, precipitationMM: Double? = nil,
          windSpeed: Double? = nil, windGusts: Double? = nil, uvIndex: Double? = nil,
          weatherCode: Int? = nil, isDay: Bool? = nil, thunderPossible: Bool = false, rawWeatherCode: Int? = nil,
-         relativeHumidity: Double? = nil, dewPoint: Double? = nil, visibilityMeters: Double? = nil, windDirection: Double? = nil) {
+         relativeHumidity: Double? = nil, dewPoint: Double? = nil, visibilityMeters: Double? = nil, windDirection: Double? = nil,
+         cloudCover: Double? = nil) {
         self.date = date
         self.temperature = temperature
         self.apparentTemperature = apparentTemperature
@@ -44,6 +48,7 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
         self.dewPoint = dewPoint
         self.visibilityMeters = visibilityMeters
         self.windDirection = windDirection
+        self.cloudCover = cloudCover.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil }
     }
 
     var conditionLabel: String {
@@ -274,7 +279,7 @@ private enum NativeForecastDecoder {
             let rawCode = code(values["weather_code"])
             let amount = nonnegative(values["precipitation"])
             let chance = probability(values["precipitation_probability"])
-            let cloud = number(values["cloud_cover"])
+            let cloud = probability(values["cloud_cover"])
             let isDay = number(values["is_day"]).flatMap { $0 == 1 ? true : $0 == 0 ? false : nil }
             var resolvedCode = rawCode
             // Reuse the same interpretation as widgets/Watch. Missing values
@@ -298,7 +303,8 @@ private enum NativeForecastDecoder {
                     || (NativeWeatherCondition.isThunder(rawCode) && !NativeWeatherCondition.isThunder(resolvedCode) && (chance ?? 0) > 0),
                 rawWeatherCode: rawCode, relativeHumidity: probability(values["relative_humidity_2m"]),
                 dewPoint: number(values["dew_point_2m"]), visibilityMeters: nonnegative(values["visibility"]),
-                windDirection: number(values["wind_direction_10m"]).flatMap { (0...360).contains($0) ? $0 : nil })
+                windDirection: number(values["wind_direction_10m"]).flatMap { (0...360).contains($0) ? $0 : nil },
+                cloudCover: cloud)
         }
 
         func points(_ section: String, interval: TimeInterval, limit: Int) -> [NativeForecastPoint] {

@@ -93,7 +93,9 @@ struct NativeWeatherForecastTests {
         let base = fixture(now: now)
         let forecast = try decode(base, now: now)
         expect(forecast.current?.temperature == 74.25, "Service-calibrated current value is not adjusted again")
+        expect(forecast.current?.cloudCover == 0, "Current cloud cover remains available for the native atmosphere")
         expect(forecast.hours[0].temperature == 73.5, "Service-calibrated hourly values remain exact")
+        expect(forecast.hours[0].cloudCover == 0, "Hourly cloud cover remains available for the native atmosphere")
         expect(forecast.current?.date == now, "Current is not the midnight row")
         expect(forecast.generatedAt == now, "Original generation time is retained")
         expect(forecast.hours(on: now).count == 24, "Slice in forecast place's calendar")
@@ -104,6 +106,17 @@ struct NativeWeatherForecastTests {
         let metricForecast = try decode(fixture(now: now, metric: true), now: now, metric: true)
         expect(metricForecast.metric && metricForecast.current?.temperature == 74.25,
             "Metric payload is already in requested units and is not converted twice")
+
+        var invalidClouds = base
+        var invalidCurrent = invalidClouds["current"] as! Object
+        invalidCurrent["cloud_cover"] = 101
+        invalidClouds["current"] = invalidCurrent
+        var invalidCloudHours = invalidClouds["hourly"] as! Object
+        invalidCloudHours["cloud_cover"] = Array(repeating: -1, count: 48)
+        invalidClouds["hourly"] = invalidCloudHours
+        let invalidCloudForecast = try decode(invalidClouds, now: now)
+        expect(invalidCloudForecast.current?.cloudCover == nil && invalidCloudForecast.hours[0].cloudCover == nil,
+            "Invalid cloud percentages cannot influence the native atmosphere")
 
         let kolkata = try decode(fixture(now: instant("2026-09-18T20:00:00Z"), timezone: "Asia/Kolkata"), now: instant("2026-09-18T20:00:00Z"))
         expect(kolkata.calendar.component(.day, from: kolkata.days[0].date) == 19, "Half-hour timezone stays on selected place's date")
@@ -162,6 +175,9 @@ struct NativeWeatherForecastTests {
         nullSeries["hourly"] = ["time": (base["hourly"] as! Object)["time"]!, "weather_code": Array(repeating: 88, count: 48)]
         let noHourlyReadings = try decode(nullSeries, now: now)
         expect(noHourlyReadings.hours.isEmpty, "Unknown-code/time-only rows cannot masquerade as hourly weather")
+        nullSeries["hourly"] = ["time": (base["hourly"] as! Object)["time"]!, "cloud_cover": Array(repeating: 80, count: 48)]
+        let cloudOnlyHours = try decode(nullSeries, now: now)
+        expect(cloudOnlyHours.hours.isEmpty, "Cloud cover enriches valid weather but cannot create a forecast row alone")
         nullSeries["current"] = ["time": "2026-09-18T13:17", "is_day": 1]
         nullSeries["daily"] = ["time": ["2026-09-18"]]
         rejects(nullSeries, now: now, "An entirely empty forecast cannot become a successful load")

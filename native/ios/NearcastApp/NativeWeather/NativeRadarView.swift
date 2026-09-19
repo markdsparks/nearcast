@@ -272,6 +272,18 @@ struct NativeRadarView: View {
                 }.foregroundStyle(.secondary).accessibilityLabel("Map sources, attribution and layers")
             }
             if let first = model.scrubberDates.first, let last = model.scrubberDates.last, first < last {
+                if model.product != .rainAmount {
+                    NativeRadarContinuityTrace(
+                        start: first,
+                        end: last,
+                        now: model.scrubberNow,
+                        selected: model.scrubberInstant,
+                        tint: .cyan
+                    )
+                    .frame(height: 9)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 3)
+                }
                 Slider(value: Binding(get: {
                     min(last.timeIntervalSince1970, max(first.timeIntervalSince1970,
                         dragTime ?? (model.scrubberInstant ?? first).timeIntervalSince1970))
