@@ -23,6 +23,11 @@ final class NativeRadarModel: ObservableObject {
     @Published private(set) var loadingImage = false
     @Published private(set) var playing = false
     @Published private(set) var image: NativeRadarImage?
+    @Published private var displayedInstant: Date?
+    @Published private var displayedProduct: NativeRadarProduct?
+    @Published private var displayedEnhanced = false
+    @Published private(set) var enhancementEnabled = true
+    @Published private(set) var timelineHours = 1
     @Published private(set) var base: NativeRadarTileLayer?
     @Published private(set) var labels: NativeRadarTileLayer?
     @Published private(set) var basemapRevision = 0
@@ -137,6 +142,57 @@ final class NativeRadarModel: ObservableObject {
         return sourceFrames.map(\.validTime)
     }
     var selectedIndex: Int { (try? NativeRadarPresentationContract.selectedIndex(instant: selectedInstant, dates: frameDates)) ?? -1 }
+    // One timeline, retaining each provider's actual timestamps. Rain totals
+    // remain a separate product rather than masquerading as storm motion.
+    var scrubberDates: [Date] {
+        if product == .rainAmount { return frameDates }
+        let observed: [Date]
+        if rawIsUsable {
+            observed = observedFrames.map { Date(timeIntervalSince1970: Double($0.validTimeMilliseconds) / 1000) }
+        } else if let latest = globalFrames.last, evaluationTime.timeIntervalSince(latest.validTime) <= 1800 {
+            observed = globalFrames.map(\.validTime)
+        } else { observed = isCONUSPlace ? sourceFrames.map(\.validTime) : [] }
+        return (try? NativeRadarPresentationContract.integratedDates(observed: observed,
+            forecast: isCONUSPlace ? forecastSteps.map(\.validTime) : [], now: evaluationTime, hours: timelineHours)) ?? []
+    }
+    var scrubberInstant: Date? { selectedInstant }
+    var scrubberNow: Date { evaluationTime }
+    var scrubberStartLabel: String { scrubberDates.first.map(clock.shortLabel) ?? "—" }
+    var scrubberEndLabel: String { scrubberDates.last.map(clock.shortLabel) ?? "—" }
+    var displayedTimeLabel: String {
+        (image == nil ? selectedDate : displayedInstant).map(clock.shortLabel) ?? "Loading…"
+    }
+    var displayedSourceLabel: String {
+        guard image != nil, let displayedProduct else { return selectedSourceLabel }
+        return displayedProduct == .radar ? "Observed radar" : displayedEnhanced ? "Radar-guided forecast" : "Model forecast"
+    }
+    var pendingTimeLabel: String? {
+        guard image != nil, displayedInstant != selectedInstant else { return playbackMessage }
+        return "\(loadingImage ? "Loading" : "Unavailable") \(selectedTimeLabel) · showing previous frame"
+    }
+    func selectScrubberTime(_ date: Date, pausePlayback: Bool = true) {
+        if pausePlayback { pause() }
+        guard let nearest = try? NativeRadarPresentationContract.nearestScrubberDate(date, dates: scrubberDates) else { return }
+        guard nearest != selectedInstant else { return }
+        if product != .rainAmount { product = nearest > evaluationTime ? .forecast : .radar }
+        selectedInstant = nearest
+        loadSelectedImage()
+    }
+    func setEnhancement(_ enabled: Bool) {
+        pause(); enhancementEnabled = enabled; imageRequestID = nil; loadSelectedImage()
+    }
+    func setTimelineHours(_ hours: Int) {
+        guard hours == 1 || hours == 6 else { return }
+        pause(); timelineHours = hours
+        if let selectedInstant, !scrubberDates.contains(selectedInstant), let last = scrubberDates.last {
+            selectScrubberTime(last)
+        }
+    }
+    func stepScrubber(_ delta: Int) {
+        let dates = scrubberDates
+        guard let selectedInstant, let index = dates.firstIndex(of: selectedInstant), dates.indices.contains(index + delta) else { return }
+        selectScrubberTime(dates[index + delta])
+    }
     var selectedDate: Date? { selectedIndex >= 0 ? selectedInstant : nil }
     var wmsFrame: RadarProofFrame? {
         guard isCONUSPlace, product != .forecast, !usesNumericRadar, !usesGlobalRadar,
@@ -186,7 +242,7 @@ final class NativeRadarModel: ObservableObject {
         if base == nil { return basemapStatus + " Weather imagery alone is not a complete map." }
         if product == .forecast || usesNumericRadar {
             if let imageMessage { return imageMessage }
-            if loadingImage { return "Loading weather for this view…" }
+            if loadingImage && image == nil { return "Loading weather for this view…" }
         } else {
             if wmsFrame == nil && globalTiles == nil { return "Weather imagery is unavailable. This does not mean clear skies." }
             return "Loading or missing weather tiles do not mean clear skies."
@@ -527,7 +583,7 @@ final class NativeRadarModel: ObservableObject {
             image = nil; imageRequestID = nil; loadingImage = false
             transitionApplied = false
             transitionExplanation = "No forecast is displayed for this source time."
-            imageMessage = refreshing ? "Loading available source times…" : "Selected source time is unavailable. Choose Radar or Forecast to return to the latest times."
+            imageMessage = refreshing ? "Loading available source times…" : "Selected time is no longer available. Tap Latest or choose another time."
             return
         }
         let iso: (Date) -> String = { RadarNumericContract.isoTime(Int64($0.timeIntervalSince1970 * 1000)) }
@@ -546,7 +602,9 @@ final class NativeRadarModel: ObservableObject {
         let generation = imageGeneration
         let previous = imageTask
         previous?.cancel()
-        image = nil
+        // Hold the last complete image while loading, with its own timestamp.
+        // Tile products cannot use a retained numeric image as an overlay.
+        if !usesNumericRadar && product != .forecast { image = nil }
         imageMessage = nil
         transitionApplied = false
         transitionExplanation = "Forecast uses the original HRRR model guidance."
@@ -568,7 +626,7 @@ final class NativeRadarModel: ObservableObject {
         let step = forecastSteps[selectedIndex]
         let available = forecastSteps
         let anchorStep = available.first
-        let observedCandidates = transitionCandidates(anchorStep: anchorStep, targetStep: step, run: run)
+        let observedCandidates = enhancementEnabled ? transitionCandidates(anchorStep: anchorStep, targetStep: step, run: run) : []
         var indexes = Array(available.dropFirst((selectedIndex / 8) * 8).prefix(8).map(\.sourceIndex))
         if !observedCandidates.isEmpty, let anchorStep, !indexes.contains(anchorStep.sourceIndex) {
             indexes = [anchorStep.sourceIndex] + Array(indexes.prefix(7))
@@ -594,8 +652,8 @@ final class NativeRadarModel: ObservableObject {
                         sourceIndexes: indexes, maximumChunks: 8)
                 }
                 try Task.checkCancellation()
-                // Publish usable model guidance first. Optional radar history
-                // must never leave a loaded forecast blank while it downloads.
+                // Choose the final frame before publishing so optional alignment
+                // does not visibly shift an already-displayed forecast twice.
                 let baselineTask = Task.detached(priority: .userInitiated) {
                     let original = try NativeRadarModel.renderFrame(field: field, step: step, bounds: viewport)
                     let rgba = Data(try RadarNumericContract.resolvedRGBA(original.texture, encoding: original.encoding))
@@ -610,14 +668,19 @@ final class NativeRadarModel: ObservableObject {
                 try Task.checkCancellation()
                 guard self.active, !self.suspended, self.imageGeneration == generation else { return }
                 self.forecastField = field; self.forecastFieldBounds = viewport
-                self.publishForecast(baseline, numeric: original, bounds: viewport)
-                guard !observedCandidates.isEmpty else { return }
+                guard !observedCandidates.isEmpty else {
+                    self.publishForecast(baseline, numeric: original, bounds: viewport)
+                    return
+                }
                 // Auxiliary motion evidence is bounded and optional. Failure to
                 // obtain it must never hide otherwise usable model guidance.
                 let observations = (try? await self.loadTransitionObservations(observedCandidates,
                     bounds: viewport, generation: generation)) ?? []
                 try Task.checkCancellation()
-                guard observations.count >= 3 else { return }
+                guard observations.count >= 3 else {
+                    self.publishForecast(baseline, numeric: original, bounds: viewport)
+                    return
+                }
                 let requestedAt = Date()
                 let renderTask = Task.detached(priority: .userInitiated) {
                     var output = original
@@ -656,7 +719,7 @@ final class NativeRadarModel: ObservableObject {
                 guard self.active, self.imageGeneration == generation else { return }
                 self.transitionApplied = result.enhanced
                 self.transitionExplanation = result.explanation
-                if result.enhanced { self.publishForecast(result.image, numeric: result.numeric, bounds: viewport) }
+                self.publishForecast(result.image, numeric: result.numeric, bounds: viewport)
             } catch {
                 guard !Task.isCancelled, self.active, self.imageGeneration == generation else { return }
                 self.loadingImage = false
@@ -672,6 +735,8 @@ final class NativeRadarModel: ObservableObject {
     private func publishForecast(_ rendered: NativeRadarImage, numeric: NativeRadarSeamEstimation.Frame,
                                  bounds: NativeRadarViewport) {
         image = rendered
+        displayedInstant = selectedInstant; displayedProduct = .forecast
+        displayedEnhanced = transitionApplied
         let placeInView = (bounds.south...bounds.north).contains(place.latitude)
             && (bounds.west...bounds.east).contains(place.longitude)
         let placeCovered = Self.placeHasCoverage(numeric.validDataMask, width: numeric.texture.width,
@@ -689,7 +754,8 @@ final class NativeRadarModel: ObservableObject {
         }
         let frame = observedFrames[selectedIndex]
         if let cached = radarCache.value(for: frame.key) {
-            image = cached.image; imageMessage = cached.message; loadingImage = false
+            image = cached.image; displayedInstant = selectedInstant; displayedProduct = .radar
+            imageMessage = cached.message; loadingImage = false
             return
         }
         loadingImage = true
@@ -716,6 +782,7 @@ final class NativeRadarModel: ObservableObject {
                 guard self.active, self.imageGeneration == generation, !Task.isCancelled else { return }
                 self.image = .init(id: "mrms:\(frame.validTimeMilliseconds):\(viewport)", image: nativeImage,
                     west: viewport.west, south: viewport.south, east: viewport.east, north: viewport.north)
+                self.displayedInstant = self.selectedInstant; self.displayedProduct = .radar
                 let coverage = Double(decoded.validPixelCount) / Double(decoded.validDataMask.count)
                 let placeCovered = Self.placeHasRadarCoverage(decoded, bounds: viewport,
                     latitude: self.place.latitude, longitude: self.place.longitude)
@@ -865,8 +932,10 @@ final class NativeRadarModel: ObservableObject {
         // The public global fallback has a tight shared-IP tile budget. Keep
         // native preview step-only until a bounded memory tile cache is accepted.
         guard !usesGlobalRadar, basemapStyle != .satellite else { return }
-        guard frameDates.count > 1 else { return }
-        if selectedIndex < 0 || selectedIndex == frameDates.count - 1 { selectedInstant = frameDates.first; loadSelectedImage() }
+        guard scrubberDates.count > 1 else { return }
+        if selectedIndex < 0 || selectedInstant == scrubberDates.last, let first = scrubberDates.first {
+            selectScrubberTime(first)
+        }
         playing = true; playbackMessage = nil
         playbackTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -874,11 +943,13 @@ final class NativeRadarModel: ObservableObject {
                 guard let self, self.active else { return }
                 if self.loadingImage { continue }
                 guard self.imageMessage == nil else { self.pause(); return }
-                let limit: TimeInterval = self.product == .radar ? 10 * 60 : self.product == .forecast ? 60 * 60 : 6 * 60 * 60
+                let nextDate = self.scrubberDates.first { $0 > (self.selectedInstant ?? .distantFuture) }
+                let crossesBoundary = self.product == .radar && (nextDate ?? .distantPast) > self.evaluationTime
+                let limit: TimeInterval = self.product == .rainAmount ? 6 * 60 * 60 : self.product == .forecast || crossesBoundary ? 60 * 60 : 10 * 60
                 let decision = try? NativeRadarPresentationContract.nextPlayback(instant: self.selectedInstant,
-                    dates: self.frameDates, maximumGap: limit)
+                    dates: self.scrubberDates, maximumGap: limit)
                 switch decision {
-                case let .advance(instant): self.selectedInstant = instant; self.loadSelectedImage()
+                case let .advance(instant): self.selectScrubberTime(instant, pausePlayback: false)
                 case .end: self.playing = false; self.playbackMessage = "End of available frames."; return
                 case .gap: self.playing = false; self.playbackMessage = "Paused at a gap. Choose the next frame to continue."; return
                 default: self.playing = false; self.playbackMessage = "Selected time is no longer available."; return

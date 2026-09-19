@@ -68,7 +68,6 @@ struct NativeRadarView: View {
                             header
                             mapTools
                             Spacer(minLength: 0)
-                            credits
                         }
                         ScrollView {
                             VStack(spacing: 10) { statusMessage; bottomPanel }
@@ -81,12 +80,11 @@ struct NativeRadarView: View {
                         mapTools
                         Spacer(minLength: 8)
                         if dynamicTypeSize.isAccessibilitySize {
-                            ScrollView { VStack(spacing: 10) { statusMessage; bottomPanel; credits } }
+                            ScrollView { VStack(spacing: 10) { statusMessage; bottomPanel } }
                                 .frame(maxHeight: geometry.size.height * 0.62)
                         } else {
                             statusMessage
                             bottomPanel
-                            credits
                         }
                     }.padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 8)
                 }
@@ -122,8 +120,6 @@ struct NativeRadarView: View {
             }
             Spacer()
             VStack(spacing: 8) {
-                mapButton("plus", label: "Zoom in") { zoomCommand += 1 }
-                mapButton("minus", label: "Zoom out") { zoomCommand -= 1 }
                 mapButton("scope", label: "Recenter on \(place.name)") { recenter += 1 }
                 Button { locateOnce() } label: {
                     Group {
@@ -166,7 +162,6 @@ struct NativeRadarView: View {
                   }
                 }.font(.caption2).foregroundStyle(.primary)
                     .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
     }
 
     private var header: some View {
@@ -176,10 +171,9 @@ struct NativeRadarView: View {
             }.accessibilityLabel("Close map")
             VStack(alignment: .leading, spacing: 2) {
                 Text(place.name).font(.headline).fixedSize(horizontal: false, vertical: true)
-                Text("Native map preview").font(.caption).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button { showingInfo = true } label: {
-                Image(systemName: "info.circle").font(.title3).frame(width: 48, height: 48)
+                Image(systemName: "square.3.layers.3d").font(.title3).frame(width: 48, height: 48)
             }.accessibilityLabel("Map sources and more layers")
         }
         .padding(.vertical, 5).padding(.trailing, 4)
@@ -244,80 +238,98 @@ struct NativeRadarView: View {
     }
 
     private var timeline: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
-                ForEach(NativeRadarProduct.allCases) { product in
-                    Button { model.selectProduct(product) } label: {
-                        VStack(spacing: 5) {
-                            Text(product.shortTitle).font(.subheadline.weight(.semibold))
-                            Capsule().fill(model.product == product ? Color.cyan : Color.clear).frame(height: 3)
-                        }.frame(minHeight: 44)
-                    }
-                    .foregroundStyle(model.product == product ? Color.cyan : Color.secondary)
-                    .accessibilityAddTraits(model.product == product ? .isSelected : [])
-                }
-                Spacer(minLength: 0)
-                Button { model.requestRefresh() } label: {
-                    Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
-                }.disabled(model.refreshing).accessibilityLabel("Refresh map weather")
-            }
+        VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Button { model.togglePlayback() } label: {
                     Image(systemName: model.playing ? "pause.fill" : "play.fill")
-                        .font(.title3).frame(width: 48, height: 48)
+                        .font(.title3).frame(width: 44, height: 44)
                         .background(.white.opacity(0.1), in: Circle())
-                }.disabled(model.frameDates.count < 2 || model.loadingImage || model.usesGlobalRadar)
-                    .accessibilityLabel(model.playing ? "Pause animation" : "Play available frames")
+                }.disabled(model.scrubberDates.count < 2 || model.usesGlobalRadar)
+                    .accessibilityLabel(model.playing ? "Pause animation" : "Play radar and forecast")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.selectedSourceLabel.uppercased()).font(.caption2.weight(.bold))
-                        .foregroundStyle(model.product == .radar ? Color.cyan : Color.orange)
-                    Text(model.selectedTimeLabel).font(.title2.weight(.bold)).monospacedDigit()
-                    Text(model.selectedDetailLabel).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(model.displayedTimeLabel).font(.title3.bold()).monospacedDigit()
+                    Text(model.displayedSourceLabel).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                if model.loadingImage || model.refreshing { ProgressView().tint(.cyan).accessibilityLabel("Loading weather") }
-            }
-            HStack(spacing: 3) {
-                Button { model.step(-1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
-                    .disabled(model.selectedIndex <= 0).accessibilityLabel("Previous weather frame")
-                if model.frameDates.count > 1 {
-                    Slider(value: Binding(get: { Double(max(0, model.selectedIndex)) },
-                        set: { model.selectFrame(Int($0.rounded())) }),
-                        in: 0...Double(model.frameDates.count - 1), step: 1)
-                        .tint(.cyan).frame(minHeight: 44)
-                        .accessibilityLabel("Weather time")
-                        .accessibilityValue(model.selectedDetailLabel)
-                        .accessibilityAdjustableAction { direction in
-                            if direction == .increment { model.step(1) }
-                            else if direction == .decrement { model.step(-1) }
-                        }
-                } else {
-                    Capsule().fill(.white.opacity(0.15)).frame(height: 4)
+                if model.loadingImage || model.refreshing { ProgressView().controlSize(.small) }
+                if model.product != .rainAmount {
+                    Menu {
+                        Button("Next hour") { model.setTimelineHours(1) }
+                        Button("Next 6 hours") { model.setTimelineHours(6) }
+                    } label: {
+                        Text("\(model.timelineHours)h").font(.subheadline.weight(.semibold)).frame(minWidth: 36, minHeight: 44)
+                    }.accessibilityLabel("Timeline range, \(model.timelineHours) hours")
                 }
-                Button { model.step(1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }
-                    .disabled(model.selectedIndex >= model.frameDates.count - 1).accessibilityLabel("Next weather frame")
+                Button { model.selectProduct(.radar) } label: {
+                    Text("Latest").font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                }.accessibilityLabel("Latest available radar")
+                Button { showingInfo = true } label: {
+                    Image(systemName: "info.circle").frame(width: 44, height: 44)
+                }.foregroundStyle(.secondary).accessibilityLabel("Map sources, attribution and layers")
+            }
+            if let first = model.scrubberDates.first, let last = model.scrubberDates.last, first < last {
+                Slider(value: Binding(get: {
+                    min(last.timeIntervalSince1970, max(first.timeIntervalSince1970,
+                        (model.scrubberInstant ?? first).timeIntervalSince1970))
+                }, set: { model.selectScrubberTime(Date(timeIntervalSince1970: $0)) }),
+                    in: first.timeIntervalSince1970...last.timeIntervalSince1970)
+                    .tint(.cyan).frame(minHeight: 44)
+                    .overlay(alignment: .bottomLeading) {
+                        if model.product != .rainAmount, first < model.scrubberNow, model.scrubberNow < last {
+                            GeometryReader { geometry in
+                                let fraction = model.scrubberNow.timeIntervalSince(first) / last.timeIntervalSince(first)
+                                VStack(spacing: 1) {
+                                    Rectangle().fill(.secondary).frame(width: 1, height: 5)
+                                    Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                                }.position(x: 14 + (geometry.size.width - 28) * fraction, y: 7)
+                            }.allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
+                    .accessibilityLabel("Radar and forecast time")
+                    .accessibilityValue(model.selectedDetailLabel)
+                    .accessibilityAdjustableAction { direction in
+                        if direction == .increment { model.stepScrubber(1) }
+                        else if direction == .decrement { model.stepScrubber(-1) }
+                    }
+            } else {
+                Capsule().fill(.white.opacity(0.15)).frame(height: 4).padding(.vertical, 20)
             }
             HStack {
-                Text(model.firstTimeLabel)
+                Text(model.scrubberStartLabel)
                 Spacer()
-                Text(model.product == .radar ? "Observed" : "Forecast")
+                Text(model.product == .rainAmount ? "Rain total" : model.scrubberDates.contains { $0 > model.scrubberNow } ? "Radar → Forecast" : "Observed radar")
                 Spacer()
-                Text(model.lastTimeLabel)
-            }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            Text(model.timelineMessage).font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                Text(model.scrubberEndLabel)
+            }.font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+            Text(model.pendingTimeLabel ?? " ").font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).frame(minHeight: 26).padding(.top, 4)
+                .accessibilityHidden(model.pendingTimeLabel == nil)
+            // Provider credits stay visible, but share the timeline surface
+            // rather than adding another floating card beneath it.
+            credits.padding(.top, 6)
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28))
-        .overlay(RoundedRectangle(cornerRadius: 28).strokeBorder(.white.opacity(0.16)))
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26))
+        .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(.white.opacity(0.16)))
         .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
     }
 
     private var information: some View {
         NavigationStack {
             List {
+                Section("Weather layers") {
+                    Button("Radar & forecast") { model.selectProduct(.radar); showingInfo = false }
+                    Button("Six-hour rain totals") { model.selectProduct(.rainAmount); showingInfo = false }
+                    Toggle("Radar-guided forecast", isOn: Binding(get: { model.enhancementEnabled }, set: model.setEnhancement))
+                    Text("Aligns near-term model guidance with recent radar motion only when the evidence supports it. This is separate from StormScope.").font(.caption)
+                    Button("Refresh weather") { model.requestRefresh() }
+                    HStack {
+                        Button("Zoom out") { zoomCommand -= 1 }
+                        Spacer()
+                        Button("Zoom in") { zoomCommand += 1 }
+                    }
+                }
+                Section("Attribution") { credits }
                 Section {
                     if let onAskAboutPlace {
                         Button("Ask about this place") { showingInfo = false; onAskAboutPlace() }
@@ -340,6 +352,8 @@ struct NativeRadarView: View {
                     Text("Satellite replaces precipitation with the latest verified local true-color image and its acquisition date.").font(.caption)
                 }
                 Section("What the timeline means") {
+                    Text(model.timelineMessage).font(.headline)
+                    Text(model.selectedDetailLabel).font(.subheadline)
                     Text("Radar shows observations at their original source time. Forecast is model guidance, not a live observation or a promise of the exact storm position.")
                     Text("Rain total is a six-hour accumulation, not storm motion. We keep it separate from radar and model reflectivity.")
                     Text("Forecast may use recent radar motion only when source age, storm motion and coverage checks pass. It remains a forecast, never a new observation. Otherwise the original model is shown.")

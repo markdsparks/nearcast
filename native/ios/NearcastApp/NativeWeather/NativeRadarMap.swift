@@ -195,6 +195,18 @@ struct NativeRadarMap: UIViewRepresentable {
             let templates = input.weatherTiles?.templates
             guard basemapChanged || weatherID != nextID || renderedTemplates != templates
                 || renderedWeatherRevision != input.weatherRevision else { applyAlerts(to: style); return }
+            // Updating the resident image source avoids tearing down the
+            // weather layer (and briefly exposing an empty map) on every tick.
+            if !basemapChanged, let image = input.image,
+               let source = style.source(withIdentifier: "native-weather-source") as? MLNImageSource {
+                source.coordinates = image.quad
+                source.image = image.image
+                weatherID = nextID
+                renderedTemplates = templates
+                renderedWeatherRevision = input.weatherRevision
+                applyAlerts(to: style)
+                return
+            }
             removeAlerts(from: style)
             // Never leave an old time under a new timestamp while loading.
             remove("native-weather", from: style)

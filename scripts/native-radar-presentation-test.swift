@@ -5,6 +5,7 @@ struct NativeRadarPresentationTests {
     typealias Contract = NativeRadarPresentationContract
     static func main() throws {
         try selectionTests()
+        try integratedTimelineTests()
         try boundedHistoryTests()
         try playbackTests()
         try viewportTests()
@@ -19,6 +20,21 @@ struct NativeRadarPresentationTests {
         throw NSError(domain: "NativeRadarPresentationTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Accepted invalid \(message)"])
     }
     static func date(_ minutes: Double) -> Date { Date(timeIntervalSince1970: 1_789_776_000 + minutes * 60) }
+
+    static func integratedTimelineTests() throws {
+        let dates = try Contract.integratedDates(observed: [date(-20), date(-10), date(-2)],
+            forecast: [date(-60), date(0), date(30), date(90), date(360), date(420)], now: date(0))
+        try check(dates == [-20, -10, -2, 30, 90, 360].map { date(Double($0)) }, "six-hour combined timeline preserves advertised instants")
+        try check(!dates.contains(date(0)), "Now is not an invented radar scan")
+        try check(try Contract.integratedDates(observed: [date(-2)], forecast: [date(30), date(90)], now: date(0), hours: 1) == [date(-2), date(30)], "near-term range excludes later guidance without synthesizing intervals")
+        try rejects("unsupported range") { _ = try Contract.integratedDates(observed: [], forecast: [], now: date(0), hours: 0) }
+        try check(try Contract.nearestScrubberDate(date(28), dates: dates) == date(30), "drag snaps to real forecast time")
+        try check(try Contract.nearestScrubberDate(date(-3), dates: dates) == date(-2), "drag back crosses to real observation")
+        try check(try Contract.nextPlayback(instant: date(-2), dates: dates, maximumGap: 3600) == .advance(date(30)), "playback crosses normal radar forecast boundary")
+        try check(try Contract.nextPlayback(instant: date(90), dates: dates, maximumGap: 3600) == .gap, "missing guidance remains a gap")
+        try check(try Contract.integratedDates(observed: [], forecast: [], now: date(0)).isEmpty, "empty sources remain empty")
+        try rejects("duplicate observation") { _ = try Contract.integratedDates(observed: [date(-2), date(-2)], forecast: [], now: date(0)) }
+    }
 
     static func boundedHistoryTests() throws {
         let advertised = (0..<20).map { date(Double($0) * 2) }

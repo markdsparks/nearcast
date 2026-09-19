@@ -10,6 +10,19 @@ enum NativeRadarPresentationContract {
 
     enum Position { case first, last }
 
+    /// Combine real observations with future guidance. No synthetic Now frame,
+    /// repeated last scan, or interpolation fills the source boundary.
+    static func integratedDates(observed: [Date], forecast: [Date], now: Date, hours: Int = 6) throws -> [Date] {
+        try validateDates(observed); try validateDates(forecast); try validateTime(now)
+        guard hours == 1 || hours == 6 else { throw Failure.invalidGap }
+        return observed.filter { $0 <= now } + forecast.filter { $0 > now && $0 <= now.addingTimeInterval(Double(hours) * 3600) }
+    }
+
+    static func nearestScrubberDate(_ requested: Date, dates: [Date]) throws -> Date? {
+        try validateTime(requested); try validateDates(dates)
+        return dates.min { abs($0.timeIntervalSince(requested)) < abs($1.timeIntervalSince(requested)) }
+    }
+
     struct Selection: Equatable {
         let sourceID: String
         let instant: Date?
