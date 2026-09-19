@@ -132,9 +132,11 @@ private final class NativeRadarAlertsDownload: NSObject, URLSessionDataDelegate,
         lock.lock()
         guard !finished else { lock.unlock(); continuation.resume(throwing: CancellationError()); return }
         self.continuation = continuation
-        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
+        // URLSession copies configuration at construction. Apply the remaining
+        // operation budget first so later pages cannot each consume 20 seconds.
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "GET"
         request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
