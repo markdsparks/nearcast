@@ -786,22 +786,7 @@ struct NativeWeatherPreviewView: View {
             VStack(spacing: 4) {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(points, id: \.id) { point in
-                        Button { openCompactHour(point) } label: {
-                            VStack(spacing: 8) {
-                                Text(clock(point.date, compact: !showingQuarterHours))
-                                    .font(.caption.weight(.semibold))
-                                    .monospacedDigit()
-                                weatherSymbol(point.symbolName, size: 27)
-                                    .frame(height: 32)
-                                    .accessibilityHidden(true)
-                            }
-                            .padding(.top, 10)
-                            .frame(width: columnWidth)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Open \(clock(point.date)) hourly details")
-                        .accessibilityHint("Show the detailed forecast at this time")
+                        compactHourButton(point, columnWidth: columnWidth)
                     }
                 }
                 Chart(samples) { sample in
@@ -877,6 +862,36 @@ struct NativeWeatherPreviewView: View {
 
     private func openCompactHour(_ point: NativeForecastPoint) {
         model.showHourly(day: point.date, focusedHour: point.date)
+    }
+
+    /// Isolated from `trendChart` so Swift's type checker does not have to
+    /// infer the whole chart, its labels, and this interactive button at once.
+    private func compactHourButton(_ point: NativeForecastPoint, columnWidth: CGFloat) -> some View {
+        Button { openCompactHour(point) } label: {
+            VStack(spacing: 8) {
+                Text(clock(point.date, compact: !showingQuarterHours))
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                weatherSymbol(point.symbolName, size: 27)
+                    .frame(height: 32)
+                    .accessibilityHidden(true)
+            }
+            .padding(.top, 10)
+            // Give the chart's time markers a generous, stable target without
+            // making a horizontal drag look like an accidental navigation.
+            .padding(.bottom, 6)
+            .frame(minHeight: 76)
+            .frame(width: columnWidth)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(NativeCompactHourButtonStyle(
+            accent: accent,
+            isDark: isDark,
+            reduceMotion: reduceMotion,
+            increasedContrast: colorSchemeContrast == .increased
+        ))
+        .accessibilityLabel("Open \(clock(point.date)) hourly details")
+        .accessibilityHint("Show the detailed forecast at this time")
     }
 
     private func chartSamples(_ points: [NativeForecastPoint], step: TimeInterval) -> [NativePreviewChartSample] {
@@ -1191,18 +1206,15 @@ struct NativeWeatherPreviewView: View {
             VStack(alignment: .leading, spacing: signals.isEmpty ? 0 : 4) {
                 Text(point.conditionLabel)
                     .font(.subheadline)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                    // The forecast condition owns the first line. Keep it
+                    // scannable at normal sizes; the utility rail below it
+                    // carries the two numeric decision cues.
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.88)
+                    .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                 if !signals.isEmpty {
-                    HStack(spacing: 10) {
-                        ForEach(signals) { signal in
-                            Label(signal.label, systemImage: signal.symbol)
-                                .labelStyle(.titleAndIcon)
-                                .foregroundStyle(hourlySignalColor(signal))
-                                .lineLimit(1)
-                        }
-                    }
-                    .font(.caption.weight(.semibold))
+                    hourlySignalRail(signals)
                     .accessibilityHidden(true)
                 }
             }
@@ -1211,80 +1223,250 @@ struct NativeWeatherPreviewView: View {
         }
     }
 
-    /// The list already shows the selected metric at a glance. These cues add
-    /// only the weather facts that materially change an errand or outdoor
-    /// decision, rather than repeating every available data point on every row.
+    /// The list already shows the selected metric at a glance. Its utility rail
+    /// keeps the other two planning facts stable: precipitation plus wind. The
+    /// Rain and Wind lenses swap in the adjacent fact rather than repeating the
+    /// number in the large value at the right edge.
     private func hourlyRowSignals(_ point: NativeForecastPoint) -> [NativeHourlyRowSignal] {
-        var signals: [NativeHourlyRowSignal] = []
-        let probability = point.rainProbability.map { Int($0.rounded()) }
-        // A compact chance belongs on every non-Rain row. It is the quickest
-        // way to distinguish a quiet-looking hour from a dry one, and the
-        // drop icon keeps low values from visually overpowering the condition.
-        let hasPrecipitationRead = probability != nil
-            || (point.precipitationMM ?? 0) >= 0.2
-            || point.thunderPossible
-
-        if hasPrecipitationRead, metric != .rain {
-            let isStorm = point.thunderPossible
-            let label: String
-            let accessibility: String
-            if let probability {
-                label = isStorm ? "Storm \(probability)%" : "\(probability)%"
-                accessibility = isStorm
-                    ? "thunderstorm chance \(probability) percent"
-                    : "precipitation chance \(probability) percent"
-            } else {
-                label = isStorm ? "Storm risk" : "Rain possible"
-                accessibility = isStorm ? "thunderstorms possible" : "precipitation possible"
-            }
-            signals.append(NativeHourlyRowSignal(
-                id: "precipitation",
-                label: label,
-                accessibilityLabel: accessibility,
-                symbol: isStorm ? "cloud.bolt.fill" : "drop.fill",
-                kind: .precipitation
-            ))
+        let rain = rainChanceSignal(point)
+        switch metric {
+        case .rain:
+            // The selected value already is probability. Amount or actual
+            // forecast state answers the complementary question: how much is
+            // expected in that interval, or whether it is dry.
+            return [rainAmountOrStateSignal(point), windSignal(point)]
+        case .wind:
+            // The selected value already is sustained speed. A gust *delta*
+            // is useful without repeating that same speed.
+            return [rain, gustDeltaSignal(point)]
+        case .temperature, .feelsLike, .uv:
+            return [rain, windSignal(point)]
         }
+    }
 
-        let windThreshold = model.context.metric ? 29.0 : 18.0
-        let gustThreshold = model.context.metric ? 40.0 : 25.0
-        if metric != .wind, let gust = point.windGusts, gust >= gustThreshold {
-            signals.append(NativeHourlyRowSignal(
-                id: "gusts",
-                label: "Gusts \(Int(gust.rounded()))",
+    /// The chance remains present even when an upstream provider omits it.
+    /// A visible em dash is more honest than silently implying a dry hour and
+    /// preserves a predictable rail shape across hourly rows.
+    private func rainChanceSignal(_ point: NativeForecastPoint) -> NativeHourlyRowSignal {
+        if let chance = point.rainProbability {
+            let value = "\(Int(chance.rounded()))%"
+            return NativeHourlyRowSignal(
+                id: "rain-chance",
+                label: value,
+                compactLabel: value,
+                accessibilityLabel: "precipitation chance \(Int(chance.rounded())) percent",
+                symbol: "drop.fill",
+                kind: .precipitation
+            )
+        }
+        return NativeHourlyRowSignal(
+            id: "rain-chance-unavailable",
+            label: "—",
+            compactLabel: "—",
+            accessibilityLabel: "precipitation chance unavailable",
+            symbol: "drop",
+            kind: .precipitation
+        )
+    }
+
+    /// Prefer the gust reading when it is meaningfully higher than sustained
+    /// wind. The unit is intentionally omitted in the compact rail because
+    /// the selected metric and disclosure detail retain the full unit.
+    private func windSignal(_ point: NativeForecastPoint) -> NativeHourlyRowSignal {
+        let materialGustDelta = model.context.metric ? 8.0 : 5.0
+        if let gust = point.windGusts,
+           point.windSpeed.map({ gust - $0 >= materialGustDelta }) ?? true {
+            let value = Int(gust.rounded())
+            return NativeHourlyRowSignal(
+                id: "gust",
+                label: "gust \(value)",
+                compactLabel: "g \(value)",
                 accessibilityLabel: "gusts \(speed(gust))",
                 symbol: "wind",
                 kind: .wind
-            ))
-        } else if let wind = point.windSpeed, wind >= windThreshold {
-            signals.append(NativeHourlyRowSignal(
+            )
+        }
+        if let wind = point.windSpeed {
+            let value = Int(wind.rounded())
+            return NativeHourlyRowSignal(
                 id: "wind",
-                label: "Wind \(Int(wind.rounded()))",
+                label: "wind \(value)",
+                compactLabel: "w \(value)",
                 accessibilityLabel: "wind \(speed(wind))",
                 symbol: "wind",
                 kind: .wind
-            ))
+            )
         }
-
-        // A surprising feels-like difference matters even on otherwise quiet
-        // hours, but it should not crowd out rain or wind and it would merely
-        // duplicate the selected Feels metric.
-        let comfortThreshold = model.context.metric ? 3.0 : 5.0
-        if signals.count < 2,
-           metric != .feelsLike,
-           let air = point.temperature,
-           let apparent = point.apparentTemperature,
-           abs(apparent - air) >= comfortThreshold {
-            signals.append(NativeHourlyRowSignal(
-                id: "feels-like",
-                label: "Feels \(temperature(apparent))",
-                accessibilityLabel: "feels like \(temperature(apparent, withUnit: true))",
-                symbol: "thermometer.medium",
-                kind: .comfort
-            ))
+        if let gust = point.windGusts {
+            let value = Int(gust.rounded())
+            return NativeHourlyRowSignal(
+                id: "gust-only",
+                label: "gust \(value)",
+                compactLabel: "g \(value)",
+                accessibilityLabel: "gusts \(speed(gust))",
+                symbol: "wind",
+                kind: .wind
+            )
         }
+        return NativeHourlyRowSignal(
+            id: "wind-unavailable",
+            label: "wind —",
+            compactLabel: "w —",
+            accessibilityLabel: "wind unavailable",
+            symbol: "wind",
+            kind: .wind
+        )
+    }
 
-        return Array(signals.prefix(2))
+    /// The Wind lens makes the size of the gust jump obvious. It never draws
+    /// a directional arrow: 15-minute source rows do not reliably include a
+    /// direction, and a decorative arrow would look more precise than the
+    /// data actually is.
+    private func gustDeltaSignal(_ point: NativeForecastPoint) -> NativeHourlyRowSignal {
+        let materialGustDelta = model.context.metric ? 8.0 : 5.0
+        if let gust = point.windGusts, let wind = point.windSpeed {
+            let delta = max(0, gust - wind)
+            let rounded = Int(delta.rounded())
+            let label = rounded >= Int(materialGustDelta) ? "gust +\(rounded)" : "gust steady"
+            let compact = rounded >= Int(materialGustDelta) ? "g +\(rounded)" : "g steady"
+            let accessibility: String
+            if rounded >= Int(materialGustDelta) {
+                accessibility = "gusts \(speed(gust)), \(speed(delta)) above sustained wind"
+            } else {
+                accessibility = "gusts \(speed(gust)), near sustained wind"
+            }
+            return NativeHourlyRowSignal(
+                id: "gust-delta",
+                label: label,
+                compactLabel: compact,
+                accessibilityLabel: accessibility,
+                symbol: "wind",
+                kind: .wind
+            )
+        }
+        if let gust = point.windGusts {
+            let value = Int(gust.rounded())
+            return NativeHourlyRowSignal(
+                id: "gust-only",
+                label: "gust \(value)",
+                compactLabel: "g \(value)",
+                accessibilityLabel: "gusts \(speed(gust))",
+                symbol: "wind",
+                kind: .wind
+            )
+        }
+        return NativeHourlyRowSignal(
+            id: "gust-unavailable",
+            label: "gust —",
+            compactLabel: "g —",
+            accessibilityLabel: "gusts unavailable",
+            symbol: "wind",
+            kind: .wind
+        )
+    }
+
+    private func rainAmountOrStateSignal(_ point: NativeForecastPoint) -> NativeHourlyRowSignal {
+        if let amount = point.precipitationMM, amount >= 0.05 {
+            let amountText = compactPrecipitationAmount(amount)
+            return NativeHourlyRowSignal(
+                id: "rain-amount",
+                label: amountText.full,
+                compactLabel: amountText.compact,
+                accessibilityLabel: "forecast precipitation amount \(precipitation(amount))",
+                symbol: "drop.fill",
+                kind: .precipitation
+            )
+        }
+        if let state = activePrecipitationState(point) {
+            return NativeHourlyRowSignal(
+                id: "rain-state",
+                label: state,
+                compactLabel: state,
+                accessibilityLabel: "forecast precipitation state, \(state.lowercased())",
+                symbol: "drop.fill",
+                kind: .precipitation
+            )
+        }
+        if point.precipitationMM != nil {
+            return NativeHourlyRowSignal(
+                id: "dry",
+                label: "dry",
+                compactLabel: "dry",
+                accessibilityLabel: "no forecast precipitation amount",
+                symbol: "drop",
+                kind: .precipitation
+            )
+        }
+        return NativeHourlyRowSignal(
+            id: "rain-amount-unavailable",
+            label: "—",
+            compactLabel: "—",
+            accessibilityLabel: "forecast precipitation amount unavailable",
+            symbol: "drop",
+            kind: .precipitation
+        )
+    }
+
+    private func compactPrecipitationAmount(_ millimeters: Double) -> (full: String, compact: String) {
+        if model.context.metric {
+            let value = millimeters < 1 ? String(format: "%.1f", millimeters) : String(format: "%.0f", millimeters)
+            return ("\(value) mm", "\(value)mm")
+        }
+        let inches = millimeters / 25.4
+        if inches < 0.01 { return ("<.01 in", "<.01\"") }
+        let value = String(format: "%.2f", inches)
+        return ("\(value) in", "\(value)\"")
+    }
+
+    /// This is the forecast condition already visible in the row, not a
+    /// radar/alert claim. Future rows therefore say Rain or Snow—not "now".
+    private func activePrecipitationState(_ point: NativeForecastPoint) -> String? {
+        switch point.weatherCode {
+        case 71, 73, 75, 77, 85, 86:
+            return "snow"
+        case 95, 96, 99:
+            return "storms"
+        case 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82:
+            return "rain"
+        default:
+            return point.thunderPossible ? "storms" : nil
+        }
+    }
+
+    @ViewBuilder
+    private func hourlySignalRail(_ signals: [NativeHourlyRowSignal]) -> some View {
+        if let primary = signals.first {
+            let secondary = signals.dropFirst().first
+            // Let the complete second cue fit when it can, then use its compact
+            // spelling, then retain the rain/amount cue alone. That prevents the
+            // first cue from being truncated away in a narrow condition column.
+            ViewThatFits(in: .horizontal) {
+                hourlySignalRail(primary: primary, secondary: secondary, compactSecondary: false)
+                hourlySignalRail(primary: primary, secondary: secondary, compactSecondary: true)
+                hourlySignalRail(primary: primary, secondary: nil, compactSecondary: false)
+            }
+        }
+    }
+
+    private func hourlySignalRail(primary: NativeHourlyRowSignal, secondary: NativeHourlyRowSignal?, compactSecondary: Bool) -> some View {
+        HStack(spacing: compactSecondary ? 5 : 8) {
+            hourlySignalToken(primary, compact: false)
+            if let secondary {
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                hourlySignalToken(secondary, compact: compactSecondary)
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func hourlySignalToken(_ signal: NativeHourlyRowSignal, compact: Bool) -> some View {
+        Label(compact ? signal.compactLabel : signal.label, systemImage: signal.symbol)
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(hourlySignalColor(signal))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private func hourlySignalColor(_ signal: NativeHourlyRowSignal) -> Color {
@@ -1293,8 +1475,6 @@ struct NativeWeatherPreviewView: View {
             return isDark ? Color(red: 0.46, green: 0.77, blue: 1) : Color(red: 0.13, green: 0.42, blue: 0.71)
         case .wind:
             return .secondary
-        case .comfort:
-            return isDark ? Color(red: 1, green: 0.72, blue: 0.32) : Color(red: 0.64, green: 0.33, blue: 0.05)
         }
     }
 
@@ -1305,10 +1485,11 @@ struct NativeWeatherPreviewView: View {
     }
 
     private struct NativeHourlyRowSignal: Identifiable {
-        enum Kind { case precipitation, wind, comfort }
+        enum Kind { case precipitation, wind }
 
         let id: String
         let label: String
+        let compactLabel: String
         let accessibilityLabel: String
         let symbol: String
         let kind: Kind
@@ -1658,6 +1839,43 @@ private struct NativeAssistantEntryView: View {
 private enum NativePreviewInterval: String, Hashable {
     case hourly
     case quarterHour
+}
+
+/// SwiftUI's plain button style intentionally has no pressed treatment. On the
+/// compact Home timeline that made a valid hour selection feel inert, especially
+/// while it sits inside a horizontal ScrollView. This adds a momentary, high
+/// contrast-aware glass tint only after the gesture resolves as a tap; drags
+/// remain owned by the scroll view and never navigate to an hour by accident.
+private struct NativeCompactHourButtonStyle: ButtonStyle {
+    let accent: Color
+    let isDark: Bool
+    let reduceMotion: Bool
+    let increasedContrast: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let fillOpacity: Double = increasedContrast
+            ? (isDark ? 0.34 : 0.22)
+            : (isDark ? 0.24 : 0.14)
+        let strokeOpacity: Double = increasedContrast
+            ? (isDark ? 0.78 : 0.64)
+            : (isDark ? 0.58 : 0.42)
+
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(configuration.isPressed ? accent.opacity(fillOpacity) : .clear)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        configuration.isPressed ? accent.opacity(strokeOpacity) : .clear,
+                        lineWidth: increasedContrast ? 1.5 : 1
+                    )
+            }
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .opacity(configuration.isPressed ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
 }
 
 private struct NativePreviewChartSample: Identifiable {
