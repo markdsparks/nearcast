@@ -33,4 +33,10 @@ The info button provides source meaning, timestamps, an independent lab-only 12/
 - Archive validation caught incorrect simulator platform metadata in the official, checksum-verified MapLibre 6.31.0 device framework. Its Mach-O binary targets iOS correctly. The release preparation step corrects only the known platform fields in the **archived copy**, then re-signs the framework and containing app. SDK downloads/caches and executable code are not patched; signatures, entitlements, executable text, privacy and bundled notices are checked separately. Unknown SDK versions/platforms fail closed.
 - The archive gate requires valid device platform metadata and Mach-O slices, embedded signature, runtime linkage, privacy manifest and all lab resources, and confirms that widgets/Watch do not embed or link the SDK.
 
-Upload and processing results are recorded here after they complete. An upload is not a claim that Apple processing or family acceptance has completed.
+### Upload — September 18, 2026
+
+- Implementation `f8921d0` pushed to `main`. Web companion remains 3.0.412; no web deployment was required.
+- The full release pipeline reran portable/native checks, produced the signed archive, applied the guarded packaging correction and passed the expanded archive validator. Original SDK/app copies and signing comparison evidence are retained outside the archive for recovery/audit.
+- Apple accepted **0.1.0 (106)** at **21:02 CDT**; Xcode reported `EXPORT SUCCEEDED` and “Uploaded package is processing.” Apple processing and family acceptance were not yet verified.
+- Non-blocking upload warning: the upstream MapLibre archive lacks the matching framework dSYM (`668B439A-23D0-3BE7-B1DB-42CC0634389E`). Upload succeeded, but SDK-internal crash symbolication will be limited until matching upstream symbols are obtained. No replacement symbols were fabricated; address this before native radar becomes the default.
+- Standalone diagnostic build also passed after sharing its view with the main app. Visual/gesture acceptance remains pending, as described above.
