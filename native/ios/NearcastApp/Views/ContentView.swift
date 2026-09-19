@@ -248,6 +248,11 @@ private struct NativeWeatherPreviewContainer: View {
             guard let context = source?.toPreviewContext() else { return }
             preview.applyManagedContext(context)
             NativePreviewContextStore.save(context)
+            // The owner receipt can land after a cached/native forecast. Retry
+            // the companion publication here as well as on forecast changes,
+            // otherwise widgets and Watch can remain on the intentional
+            // place-only "update needed" record indefinitely.
+            publishNativeCompanionWeather()
         }
         .onChange(of: placesOwner.snapshot) { _, value in
             if let source = value?.source { placesControls.adoptVerifiedSource(source) }
@@ -259,6 +264,18 @@ private struct NativeWeatherPreviewContainer: View {
             publishNativeCompanionWeather()
         }
         .onChange(of: preview.forecast?.generatedAt) { _, _ in publishNativeCompanionWeather() }
+        .onChange(of: preview.selectedPlace.coordinateIdentity) { _, _ in publishNativeCompanionWeather() }
+        .task(id: companionPublicationIdentity) {
+            // A companion write is idempotent. A short bounded retry bridges
+            // the legitimate ordering race between Places ownership, cached
+            // forecast hydration and WatchConnectivity activation.
+            for attempt in 0..<4 {
+                publishNativeCompanionWeather()
+                guard attempt < 3 else { break }
+                try? await Task.sleep(for: .seconds(Double(attempt + 1)))
+                guard !Task.isCancelled else { return }
+            }
+        }
         .onDisappear { preview.cancel() }
     }
 
@@ -270,6 +287,16 @@ private struct NativeWeatherPreviewContainer: View {
             source: owner.source,
             revision: owner.revision
         )
+    }
+
+    private var companionPublicationIdentity: String {
+        let owner = placesOwner.snapshot
+        let generatedAt = preview.forecast?.generatedAt.timeIntervalSince1970 ?? 0
+        return [
+            owner.map { String($0.revision) } ?? "none",
+            preview.selectedPlace.coordinateIdentity,
+            String(generatedAt)
+        ].joined(separator: "|")
     }
 
     private func selectVerifiedPlace(_ place: NativePreviewPlace) async -> Bool {

@@ -20,6 +20,7 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
     private var lastPlaceData: Data?
     private var lastUrgentAlertIdentity: String?
     private var lastPriorityTransferAt: Date?
+    private var pendingFlushTask: Task<Void, Never>?
 
     private override init() {
         super.init()
@@ -74,6 +75,7 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
             pendingPayload = payload
             pendingPriorityTransfer = pendingPriorityTransfer || placeChanged || urgentAlertChanged
             lastError = nil
+            schedulePendingFlush()
             return
         }
 
@@ -147,11 +149,14 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
             try session.updateApplicationContext(payload)
             lastSnapshotSentAt = Date()
             lastError = nil
+            pendingFlushTask?.cancel()
+            pendingFlushTask = nil
         } catch {
             pendingPayload = payload
             lastSnapshotData = nil
             lastPlaceData = nil
             lastError = "Application context failed: \(error.localizedDescription)"
+            schedulePendingFlush()
         }
 
         guard session.isPaired, session.isWatchAppInstalled, session.isComplicationEnabled else { return }
@@ -160,6 +165,26 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         guard session.remainingComplicationUserInfoTransfers > 0 else { return }
         session.transferCurrentComplicationUserInfo(payload)
         lastPriorityTransferAt = Date()
+    }
+
+    /// WatchConnectivity commonly comes online just after the app has written
+    /// the first native forecast receipt. Application context is durable, but
+    /// a failed write does not create a delegate callback of its own. Retry a
+    /// few times while this foreground host exists so the Watch cannot remain
+    /// stranded on a place-only publication until a later weather change.
+    private func schedulePendingFlush() {
+        guard pendingFlushTask == nil else { return }
+        pendingFlushTask = Task { [weak self] in
+            for delay in [1.0, 3.0, 8.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                self.activate()
+                self.refreshSessionState()
+                self.flushPendingPayload()
+                if self.pendingPayload == nil { return }
+            }
+            self?.pendingFlushTask = nil
+        }
     }
 }
 

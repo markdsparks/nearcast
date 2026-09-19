@@ -322,6 +322,11 @@ final class NativeSnapshotPublicationCoordinator {
               let data = try? JSONEncoder().encode(committed.snapshot) else { return false }
         #if canImport(UIKit) && canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
+        // A prior timeline can remain alive while WidgetKit coalesces a
+        // kind-specific reload during a fresh app install/update. Reloading
+        // the app's companion timelines makes the newly committed shared
+        // receipt visible without relying on the next discretionary refresh.
+        WidgetCenter.shared.reloadAllTimelines()
         NativeWatchSnapshotSync.shared.sendSnapshotData(data, placeData: committed.place.flatMap { try? JSONEncoder().encode($0) })
         #endif
         return true
