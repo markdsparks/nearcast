@@ -14722,7 +14722,7 @@ function nativeStormActivityCandidate(data, place, truth = state.weatherTruth ||
     rainChance: best.pop,
     motionDegrees: nativeStormActivityMotionDegrees(data, best.source === "hourly" ? best.index : currentHourlyIndex(data)),
     geometryQuality: "forecast",
-    url: route || "nearcast://watching?source=live-activity"
+    url: route || `${nativeStormActivityScheme()}://watching?source=live-activity`
   };
 }
 
@@ -14743,7 +14743,12 @@ function nativeStormActivityUrl(place) {
   if (place?.id) params.set("placeId", String(place.id));
   if (Number.isFinite(Number(place?.latitude))) params.set("lat", String(Number(place.latitude)));
   if (Number.isFinite(Number(place?.longitude))) params.set("lon", String(Number(place.longitude)));
-  return `nearcast://weather?${params.toString()}`;
+  return `${nativeStormActivityScheme()}://weather?${params.toString()}`;
+}
+
+function nativeStormActivityScheme() {
+  const candidate = String(window.NearcastNative?.build?.urlScheme || "").trim().toLowerCase();
+  return /^[a-z][a-z0-9+.-]*$/.test(candidate) ? candidate : "nearcast";
 }
 
 function nativeStormActivityBridge() {
@@ -14773,7 +14778,7 @@ function nativeStormActivityDebugPayload(options = {}) {
     rainChance: chance,
     motionDegrees: options.updated ? 78 : 112,
     geometryQuality: "sample",
-    url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
+    url: nativeStormActivityUrl(state.activePlace) || `${nativeStormActivityScheme()}://weather?nearcast=live-activity&source=debug`
   };
 }
 
@@ -14933,7 +14938,7 @@ async function runLiveActivityLabDirectAction(action) {
         rainChance: chance,
         motionDegrees: action === "update" ? 78 : 112,
         geometryQuality: "sample",
-        url: nativeStormActivityUrl(state.activePlace) || "nearcast://weather?nearcast=live-activity&source=debug"
+        url: nativeStormActivityUrl(state.activePlace) || `${nativeStormActivityScheme()}://weather?nearcast=live-activity&source=debug`
       };
       state.nativeStormActivityKey = payload.key;
       updateLiveActivityLabStatus("Calling native", `Payload ready. Requesting ${action}.`, {

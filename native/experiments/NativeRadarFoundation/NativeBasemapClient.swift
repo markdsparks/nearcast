@@ -75,7 +75,36 @@ enum NativeBasemapAvailability: Equatable, Sendable, CustomStringConvertible, Cu
 enum NativeBasemapContract {
     static let provider = "nearcast-map-config"
     static let version = 1
-    static let iosAudience = "app.nearcast.ios"
+    static let productionAudience = "app.nearcast.ios"
+    static let developmentAudience = "app.nearcast.ios.dev"
+    static let productionClient = "ios"
+    static let developmentClient = "ios-dev"
+
+    /// The map endpoint is deliberately a closed mapping rather than a
+    /// reflection of a caller-supplied bundle id. This lets the side-by-side
+    /// development app use its own provider credential without ever allowing
+    /// an arbitrary app identity to select a credential lane.
+    static func audience(for bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> String? {
+        switch bundleIdentifier {
+        case productionAudience: return productionAudience
+        case developmentAudience: return developmentAudience
+        default: return nil
+        }
+    }
+
+    static func client(for bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> String? {
+        switch audience(for: bundleIdentifier) {
+        case productionAudience: return productionClient
+        case developmentAudience: return developmentClient
+        default: return nil
+        }
+    }
+
+    /// Keeps standalone contract tests deterministic while production and
+    /// development app builds resolve their exact allowlisted identity above.
+    static var iosAudience: String {
+        audience(for: Bundle.main.bundleIdentifier) ?? productionAudience
+    }
     static let maximumConfigurationBytes = 4 * 1_024
     /// CARTO's current terms cap end-user/browser retention at thirty days.
     /// The renderer must enforce this separately for MapLibre's ambient cache
@@ -100,11 +129,15 @@ enum NativeBasemapContract {
         let carto: Carto
     }
 
-    static func decodeConfiguration(_ data: Data) -> NativeBasemapAvailability {
+    static func decodeConfiguration(_ data: Data,
+                                    bundleIdentifier: String = iosAudience) -> NativeBasemapAvailability {
+        guard let expectedAudience = audience(for: bundleIdentifier) else {
+            return .unavailable(.invalidConfiguration)
+        }
         guard !data.isEmpty, data.count <= maximumConfigurationBytes,
               let wire = try? JSONDecoder().decode(WireConfiguration.self, from: data),
               wire.provider == provider, wire.version == version,
-              wire.audience == iosAudience,
+              wire.audience == expectedAudience,
               ["ready", "unavailable"].contains(wire.state) else {
             return .unavailable(.invalidConfiguration)
         }
@@ -119,12 +152,14 @@ enum NativeBasemapContract {
         return .ready(catalog)
     }
 
-    static func isAuthorizedConfigurationEndpoint(_ url: URL) -> Bool {
+    static func isAuthorizedConfigurationEndpoint(_ url: URL,
+                                                  bundleIdentifier: String = iosAudience) -> Bool {
+        guard let expectedClient = client(for: bundleIdentifier) else { return false }
         guard url.scheme?.lowercased() == "https", url.host?.lowercased() == "getnearcast.app",
               url.port == nil, url.user == nil, url.password == nil, url.fragment == nil,
               url.path == "/api/map/config",
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              components.queryItems == [URLQueryItem(name: "client", value: "ios")] else { return false }
+              components.queryItems == [URLQueryItem(name: "client", value: expectedClient)] else { return false }
         return true
     }
 
@@ -140,8 +175,10 @@ enum NativeBasemapContract {
     /// provider's request.
     static func authorizeCartoRequest(_ request: NSMutableURLRequest,
                                       bundleIdentifier: String = iosAudience) -> NSMutableURLRequest {
-        guard bundleIdentifier == iosAudience, isCartoResourceURL(request.url) else { return request }
-        request.setValue(bundleIdentifier, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+        guard let audience = audience(for: bundleIdentifier),
+              bundleIdentifier == audience,
+              isCartoResourceURL(request.url) else { return request }
+        request.setValue(audience, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
         return request
     }
 
@@ -183,12 +220,21 @@ enum NativeBasemapContract {
 /// Fetches only the small same-origin configuration envelope. The CARTO key is
 /// never persisted; it lives solely inside the returned in-memory descriptors.
 final class NativeBasemapClient: @unchecked Sendable {
-    static let productionEndpoint = URL(string: "https://getnearcast.app/api/map/config?client=ios")!
+    static func endpoint(for bundleIdentifier: String = NativeBasemapContract.iosAudience) -> URL {
+        let client = NativeBasemapContract.client(for: bundleIdentifier) ?? NativeBasemapContract.productionClient
+        return URL(string: "https://getnearcast.app/api/map/config?client=\(client)")!
+    }
+
+    static var configurationEndpoint: URL { endpoint() }
+    /// Retained for callers compiled against the initial native-map rollout.
+    /// Its value follows the active app identity, so Debug always stays in the
+    /// isolated development credential lane.
+    static var productionEndpoint: URL { configurationEndpoint }
 
     private let endpoint: URL
     private let configuration: URLSessionConfiguration
 
-    init(endpoint: URL = productionEndpoint, configuration: URLSessionConfiguration = .ephemeral) {
+    init(endpoint: URL = configurationEndpoint, configuration: URLSessionConfiguration = .ephemeral) {
         self.endpoint = endpoint
         let isolated = configuration.copy() as! URLSessionConfiguration
         isolated.urlCache = nil

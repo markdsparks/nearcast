@@ -80,7 +80,19 @@ const XWEATHER_USAGE_PROBE_URL_ENV = "XWEATHER_USAGE_PROBE_URL";
 const XWEATHER_USAGE_PROBE_CACHE_SECONDS_ENV = "XWEATHER_USAGE_PROBE_CACHE_SECONDS";
 const CARTO_BASEMAP_KEY_ENV = "CARTO_BASEMAP_KEY";
 const CARTO_BASEMAP_IOS_KEY_ENV = "CARTO_BASEMAP_IOS_KEY";
+const CARTO_BASEMAP_IOS_DEV_KEY_ENV = "CARTO_BASEMAP_IOS_DEV_KEY";
 const CARTO_BASEMAP_IOS_AUDIENCE = "app.nearcast.ios";
+const CARTO_BASEMAP_IOS_DEV_AUDIENCE = "app.nearcast.ios.dev";
+const FIXED_MOBILE_MAP_CLIENTS = Object.freeze({
+  ios: Object.freeze({
+    audience: CARTO_BASEMAP_IOS_AUDIENCE,
+    keyEnvironment: CARTO_BASEMAP_IOS_KEY_ENV
+  }),
+  "ios-dev": Object.freeze({
+    audience: CARTO_BASEMAP_IOS_DEV_AUDIENCE,
+    keyEnvironment: CARTO_BASEMAP_IOS_DEV_KEY_ENV
+  })
+});
 const DEFAULT_XWEATHER_LAYER_CODES = "radar,lightning-strikes-icons";
 const DEFAULT_XWEATHER_STORM_MODE = "beta";
 const DEFAULT_XWEATHER_MIN_VIEWPORT_ZOOM = 7.5;
@@ -572,16 +584,29 @@ export async function handleMapConfigRequest(request, env = {}) {
   const url = new URL(request.url);
   const clientValues = url.searchParams.getAll("client");
   const client = clientValues.length === 0 ? "web" : clientValues.length === 1 ? clientValues[0] : "";
-  if (client !== "web" && client !== "ios") {
+  if (client === "web") {
+    const apiKey = String(env?.[CARTO_BASEMAP_KEY_ENV] || "").trim();
+    return jsonResponse({
+      provider: "nearcast-map-config",
+      version: 1,
+      state: apiKey ? "ready" : "unavailable",
+      carto: { apiKey }
+    });
+  }
+  const mobileClient = Object.hasOwn(FIXED_MOBILE_MAP_CLIENTS, client)
+    ? FIXED_MOBILE_MAP_CLIENTS[client]
+    : null;
+  if (!mobileClient) {
     return jsonResponse({ error: "unsupported-map-client" }, { status: 400 });
   }
-  const nativeIOS = client === "ios";
-  const apiKey = String(env?.[nativeIOS ? CARTO_BASEMAP_IOS_KEY_ENV : CARTO_BASEMAP_KEY_ENV] || "").trim();
+  // Never derive the audience or secret name from query input: both come from
+  // this fixed two-lane mobile mapping.
+  const apiKey = String(env?.[mobileClient.keyEnvironment] || "").trim();
   return jsonResponse({
     provider: "nearcast-map-config",
     version: 1,
     state: apiKey ? "ready" : "unavailable",
-    ...(nativeIOS ? { audience: CARTO_BASEMAP_IOS_AUDIENCE } : {}),
+    audience: mobileClient.audience,
     carto: { apiKey }
   });
 }

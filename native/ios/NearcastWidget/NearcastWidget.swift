@@ -1264,7 +1264,7 @@ private func nearcastWidgetAttentionURL(
 
 private func nearcastWidgetURL(snapshot: NearcastWidgetSnapshot, routeItems: [URLQueryItem]) -> URL? {
     var components = URLComponents()
-    components.scheme = "nearcast"
+    components.scheme = NearcastBuildIdentity.urlScheme
     components.host = "weather"
     var items = [URLQueryItem(name: "source", value: "widget")]
     items.append(contentsOf: routeItems)

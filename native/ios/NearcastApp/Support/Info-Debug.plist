@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Nearcast</string>
+	<string>$(NEARCAST_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -24,10 +24,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.nearcast.ios</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>nearcast</string>
+				<string>$(NEARCAST_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
@@ -44,6 +44,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NearcastAppGroupIdentifier</key>
+	<string>$(NEARCAST_APP_GROUP_IDENTIFIER)</string>
+	<key>NearcastDefaultWebMode</key>
+	<string>$(NEARCAST_DEFAULT_WEB_MODE)</string>
+	<key>NearcastRemoteDeliveryEnabled</key>
+	<string>$(NEARCAST_REMOTE_DELIVERY_ENABLED)</string>
+	<key>NearcastURLScheme</key>
+	<string>$(NEARCAST_URL_SCHEME)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Nearcast can load your local development server while testing native builds.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

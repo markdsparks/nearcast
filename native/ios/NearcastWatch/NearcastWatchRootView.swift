@@ -13,7 +13,7 @@ private enum WatchSurface: String, Hashable {
     case plan
 
     init?(url: URL) {
-        guard url.scheme?.lowercased() == "nearcast" else { return nil }
+        guard url.scheme?.lowercased() == NearcastBuildIdentity.urlScheme else { return nil }
         let surface = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?
             .first(where: { $0.name == "surface" })?

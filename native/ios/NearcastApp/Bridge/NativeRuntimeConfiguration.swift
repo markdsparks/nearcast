@@ -24,6 +24,9 @@ struct NativeRuntimeConfiguration {
     private static let localURLKey = "nearcast.native.localURL"
 
     static var defaultMode: NearcastWebMode {
+        if let configured = NearcastWebMode(rawValue: NearcastBuildIdentity.defaultWebMode) {
+            return configured
+        }
         #if DEBUG
         return .local
         #else

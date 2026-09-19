@@ -10,7 +10,9 @@ The first preview is read-only Today/Hourly/selected-day weather. Durable-data o
 
 This is the native iOS platform layer for Nearcast. It intentionally starts thin:
 
-- `Debug` loads a local Nearcast web server by default.
+- `Debug` is the side-by-side **Nearcast Dev** build and loads production
+  Nearcast by default; switch it to a local server only intentionally from
+  native diagnostics.
 - `Release` always loads `https://getnearcast.app`.
 - A native debug sheet lets you switch local/production, change the local URL, and reload the web app.
 - Local HTTP allowances are Debug-only; Release uses the production HTTPS app surface.
@@ -63,15 +65,23 @@ Use three loops, from fastest to slowest.
 
 2. Native debug loop
 
-   Use this when changing Swift, the bridge, native permissions, or iOS-only UI. Run the `Nearcast` scheme from Xcode on Simulator or a plugged-in iPhone. Debug builds can switch between local and production from the native debug sheet.
+   Use this when changing Swift, the bridge, native permissions, or iOS-only UI. Run the `Nearcast Dev` scheme from Xcode on Simulator or a plugged-in iPhone. Dev builds can switch between local and production from native diagnostics.
 
 3. TestFlight loop
 
    Use this for native shell milestones: app identity/signing changes, notification/APNs work, widgets, Live Activities, App Intents, or anything that needs real installed-app behavior. TestFlight should validate the shell, not gate every web UI tweak.
 
+### Direct-device Nearcast Dev loop
+
+For fast native testing without replacing TestFlight, use the isolated
+**Nearcast Dev** build. It installs beside production with separate iPhone,
+Widget, Watch, App Group, and deep-link identities. The one-time Apple setup,
+map credential, and repeatable phone/Watch commands are in
+[DEV_LANE_SETUP.md](DEV_LANE_SETUP.md).
+
 ## Apple Watch development
 
-The repository includes a standalone `NearcastWatch` target plus an automated
+The repository includes a standalone `Nearcast Dev Watch` development scheme plus an automated
 doctor/build/install/launch workflow. Start with:
 
 ```sh

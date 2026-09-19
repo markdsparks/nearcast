@@ -1,6 +1,6 @@
 # Nearcast Apple Watch setup
 
-Nearcast already has a standalone `NearcastWatch` target. The repository script
+Nearcast already has a standalone `Nearcast Dev Watch` development scheme. The repository script
 turns the repeatable work into one command; Apple still requires a few one-time,
 interactive trust and account steps on each development Mac and device.
 
@@ -55,7 +55,7 @@ The Watch is reached through its paired iPhone.
    Developer Mode**, restart it, and confirm the prompt. If the option is not
    visible yet, first select the Watch as a run destination in Xcode/Device Hub
    and let Xcode begin pairing/preparation.
-7. In Xcode, select the `NearcastWatch` scheme and the physical Watch. On the
+7. In Xcode, select the `Nearcast Dev Watch` scheme and the physical Watch. On the
    first run, accept any device-registration or signing prompts. Automatic
    signing registers the devices and creates the development provisioning
    profile for the Nearcast team.

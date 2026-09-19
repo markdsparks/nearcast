@@ -15,6 +15,9 @@ final class NativeNotificationRegistry: NSObject {
     }
 
     func currentStatus() async -> [String: Any] {
+        guard NearcastBuildIdentity.remoteDeliveryEnabled else {
+            return developmentDeliveryDisabledStatus()
+        }
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         return [
             "ok": notificationPermission(settings) == "granted",
@@ -25,6 +28,9 @@ final class NativeNotificationRegistry: NSObject {
     }
 
     func requestChannel(reason: String) async -> [String: Any] {
+        guard NearcastBuildIdentity.remoteDeliveryEnabled else {
+            return developmentDeliveryDisabledStatus()
+        }
         let center = UNUserNotificationCenter.current()
         var settings = await center.notificationSettings()
         var permission = notificationPermission(settings)
@@ -93,6 +99,10 @@ final class NativeNotificationRegistry: NSObject {
     }
 
     private func remoteNotificationToken() async -> String? {
+        guard NearcastBuildIdentity.remoteDeliveryEnabled else {
+            lastRegistrationError = "development-remote-delivery-disabled"
+            return nil
+        }
         if let token = storedToken(), !token.isEmpty {
             return token
         }
@@ -132,6 +142,15 @@ final class NativeNotificationRegistry: NSObject {
         @unknown default:
             return "default"
         }
+    }
+
+    private func developmentDeliveryDisabledStatus() -> [String: Any] {
+        [
+            "ok": false,
+            "permission": "unsupported",
+            "state": "disabled",
+            "reason": "development-remote-delivery-disabled"
+        ]
     }
 
     private func nativeChannelPayload(token: String?) -> [String: Any]? {

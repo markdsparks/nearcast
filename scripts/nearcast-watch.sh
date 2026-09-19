@@ -5,8 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$ROOT/native/ios/Nearcast.xcodeproj"
 DERIVED_DATA="$ROOT/native/ios/DerivedData/watch"
-SCHEME="NearcastWatch"
-BUNDLE_ID="app.nearcast.ios.watch"
+# Debug is intentionally the isolated side-by-side build. Keep this legacy
+# standalone Watch loop in that same lane so it never builds one bundle but
+# tries to launch the production/TestFlight bundle.
+SCHEME="Nearcast Dev Watch"
+BUNDLE_ID="app.nearcast.ios.dev.watch"
 APP_SIMULATOR="$DERIVED_DATA/Build/Products/Debug-watchsimulator/NearcastWatch.app"
 APP_DEVICE="$DERIVED_DATA/Build/Products/Debug-watchos/NearcastWatch.app"
 
@@ -74,7 +77,7 @@ physical_watch_id() {
 
 doctor() {
   local failed=0
-  printf 'Nearcast Watch development check\n\n'
+  printf 'Nearcast Dev Watch development check\n\n'
 
   require_command xcodebuild "Xcode command-line tools are installed" || failed=1
   require_command xcrun "Apple platform tools are installed" || failed=1
@@ -175,7 +178,7 @@ run_simulator() {
   build_simulator "$id"
   xcrun simctl install "$id" "$APP_SIMULATOR"
   xcrun simctl launch --terminate-running-process "$id" "$BUNDLE_ID"
-  pass "Nearcast launched on watchOS Simulator $id"
+  pass "Nearcast Dev launched on watchOS Simulator $id"
 }
 
 build_device() {
@@ -201,7 +204,7 @@ run_device() {
   build_device "$id"
   xcrun devicectl device install app --device "$id" "$APP_DEVICE"
   xcrun devicectl device process launch --device "$id" --terminate-existing "$BUNDLE_ID"
-  pass "Nearcast installed and launched on Apple Watch $id"
+  pass "Nearcast Dev installed and launched on Apple Watch $id"
 }
 
 usage() {
@@ -215,7 +218,8 @@ Commands:
   build-device           Build and sign for a physical Apple Watch
   device                  Build, install, and launch on a physical Apple Watch
 
-DEVICE_ID is optional. The script otherwise chooses a booted/available Simulator
+DEVICE_ID is optional. The script builds the isolated Nearcast Dev Watch app,
+then otherwise chooses a booted/available Simulator
 or the first physical watchOS destination reported by Xcode.
 EOF
 }

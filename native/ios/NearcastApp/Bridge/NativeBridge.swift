@@ -103,11 +103,18 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
     }
 
     static func bootstrapScript() -> WKUserScript {
+        let buildIdentity: [String: Any] = [
+            "urlScheme": NearcastBuildIdentity.urlScheme,
+            "remoteDeliveryEnabled": NearcastBuildIdentity.remoteDeliveryEnabled
+        ]
+        let buildIdentityJSON = (try? JSONSerialization.data(withJSONObject: buildIdentity))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let source = """
         (() => {
           if (window.NearcastNative) return;
           window.NearcastNative = {
             platform: "ios",
+            build: \(buildIdentityJSON),
             postMessage(payload) {
               try {
                 window.webkit.messageHandlers.nearcastNative.postMessage(payload || {});
@@ -561,7 +568,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
           };
 
           window.dispatchEvent(new CustomEvent("nearcast-native-ready", {
-            detail: { platform: "ios", version: "0.4.0" }
+            detail: { platform: "ios", version: "0.4.0", build: window.NearcastNative.build }
           }));
         })();
         """

@@ -46,7 +46,8 @@ enum NativeBasemapClientTests {
         func json(_ value: Any) -> Data {
             try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         }
-        func payload(state: String = "ready", key: String = "native-key", audience: String = "app.nearcast.ios",
+        func payload(state: String = "ready", key: String = "native-key",
+                     audience: String = NativeBasemapContract.productionAudience,
                      provider: String = "nearcast-map-config", version: Int = 1) -> Data {
             json(["provider": provider, "version": version, "state": state,
                   "audience": audience, "carto": ["apiKey": key]])
@@ -87,6 +88,23 @@ enum NativeBasemapClientTests {
         precondition(!NativeBasemapCatalog.supportsAerial(latitude: 51.5, longitude: -0.1))
         precondition(!NativeBasemapCatalog.supportsAerial(latitude: .nan, longitude: -89.96))
 
+        precondition(NativeBasemapContract.audience(for: NativeBasemapContract.productionAudience) == NativeBasemapContract.productionAudience)
+        precondition(NativeBasemapContract.audience(for: NativeBasemapContract.developmentAudience) == NativeBasemapContract.developmentAudience)
+        precondition(NativeBasemapContract.audience(for: "app.nearcast.ios.other") == nil)
+        precondition(NativeBasemapContract.client(for: NativeBasemapContract.productionAudience) == NativeBasemapContract.productionClient)
+        precondition(NativeBasemapContract.client(for: NativeBasemapContract.developmentAudience) == NativeBasemapContract.developmentClient)
+        precondition(NativeBasemapContract.client(for: "app.nearcast.ios.other") == nil)
+        guard case .ready = NativeBasemapContract.decodeConfiguration(
+            payload(audience: NativeBasemapContract.developmentAudience),
+            bundleIdentifier: NativeBasemapContract.developmentAudience
+        ) else {
+            preconditionFailure("Valid development mobile config was rejected")
+        }
+        precondition(reason(NativeBasemapContract.decodeConfiguration(
+            payload(audience: NativeBasemapContract.productionAudience),
+            bundleIdentifier: NativeBasemapContract.developmentAudience
+        )) == .invalidConfiguration)
+
         precondition(reason(NativeBasemapContract.decodeConfiguration(payload(state: "unavailable", key: ""))) == .notConfigured)
         precondition(reason(NativeBasemapContract.decodeConfiguration(payload(state: "unavailable", key: "unexpected"))) == .invalidConfiguration)
         precondition(reason(NativeBasemapContract.decodeConfiguration(payload(audience: "web"))) == .invalidConfiguration)
@@ -97,8 +115,15 @@ enum NativeBasemapClientTests {
         precondition(reason(NativeBasemapContract.decodeConfiguration(Data())) == .invalidConfiguration)
         precondition(reason(NativeBasemapContract.decodeConfiguration(Data(repeating: 0, count: 4_097))) == .invalidConfiguration)
 
-        let endpoint = NativeBasemapClient.productionEndpoint
+        let endpoint = NativeBasemapClient.configurationEndpoint
         precondition(NativeBasemapContract.isAuthorizedConfigurationEndpoint(endpoint))
+        let developmentEndpoint = NativeBasemapClient.endpoint(for: NativeBasemapContract.developmentAudience)
+        precondition(NativeBasemapContract.isAuthorizedConfigurationEndpoint(
+            developmentEndpoint, bundleIdentifier: NativeBasemapContract.developmentAudience
+        ))
+        precondition(!NativeBasemapContract.isAuthorizedConfigurationEndpoint(
+            developmentEndpoint, bundleIdentifier: NativeBasemapContract.productionAudience
+        ))
         for unsafe in [
             "http://getnearcast.app/api/map/config?client=ios",
             "https://www.getnearcast.app/api/map/config?client=ios",
@@ -114,6 +139,14 @@ enum NativeBasemapClientTests {
         _ = NativeBasemapContract.authorizeCartoRequest(carto)
         precondition(carto.value(forHTTPHeaderField: "X-Ios-Bundle-Identifier") == "app.nearcast.ios")
         precondition(carto.value(forHTTPHeaderField: "Referer") == nil)
+        let developmentCarto = NSMutableURLRequest(url: URL(string: "https://a.basemaps.cartocdn.com/rastertiles/voyager/1/2/3.png")!)
+        _ = NativeBasemapContract.authorizeCartoRequest(
+            developmentCarto, bundleIdentifier: NativeBasemapContract.developmentAudience
+        )
+        precondition(developmentCarto.value(forHTTPHeaderField: "X-Ios-Bundle-Identifier") == "app.nearcast.ios.dev")
+        let unauthorizedCarto = NSMutableURLRequest(url: URL(string: "https://a.basemaps.cartocdn.com/rastertiles/voyager/1/2/3.png")!)
+        _ = NativeBasemapContract.authorizeCartoRequest(unauthorizedCarto, bundleIdentifier: "app.nearcast.ios.other")
+        precondition(unauthorizedCarto.value(forHTTPHeaderField: "X-Ios-Bundle-Identifier") == nil)
         for value in [
             "http://a.basemaps.cartocdn.com/tile.png",
             "https://basemaps.cartocdn.com.evil.example/tile.png",

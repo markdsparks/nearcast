@@ -5,7 +5,51 @@ import Darwin
 import Glibc
 #endif
 
-let nearcastWidgetSuiteName = "group.app.nearcast.ios"
+/// Configuration that must agree across the phone app, WidgetKit extension,
+/// Watch app, and Watch complication extension. The values live in each
+/// target's Info.plist so a development install can be fully isolated from
+/// the App Store/TestFlight install while the shared source stays one file.
+enum NearcastBuildIdentity {
+    private static func configuredValue(_ key: String, fallback: String) -> String {
+        let value = (Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // An unexpanded build setting is never a safe runtime identifier.
+        return value.isEmpty || value.contains("$(") ? fallback : value
+    }
+
+    static let appGroupIdentifier: String = {
+        let value = configuredValue("NearcastAppGroupIdentifier", fallback: "group.app.nearcast.ios")
+        guard value.hasPrefix("group."), !value.contains(where: \.isWhitespace) else {
+            return "group.app.nearcast.ios"
+        }
+        return value
+    }()
+
+    static let urlScheme: String = {
+        let value = configuredValue("NearcastURLScheme", fallback: "nearcast").lowercased()
+        guard value.range(of: "^[a-z][a-z0-9+.-]*$", options: .regularExpression) != nil else {
+            return "nearcast"
+        }
+        return value
+    }()
+
+    static let defaultWebMode: String = {
+        let value = configuredValue("NearcastDefaultWebMode", fallback: "production").lowercased()
+        return ["local", "production"].contains(value) ? value : "production"
+    }()
+
+    static let remoteDeliveryEnabled: Bool = {
+        let value = configuredValue("NearcastRemoteDeliveryEnabled", fallback: "true").lowercased()
+        return ["1", "true", "yes", "on"].contains(value)
+    }()
+
+    static let watchRefreshIdentifier = configuredValue(
+        "NearcastWatchRefreshIdentifier",
+        fallback: "app.nearcast.watch.weather-refresh"
+    )
+}
+
+let nearcastWidgetSuiteName = NearcastBuildIdentity.appGroupIdentifier
 let nearcastWidgetSnapshotKey = "nearcast.widget.snapshot.v1"
 let nearcastWidgetPlaceKey = "nearcast.widget.place.v1"
 let nearcastWidgetKind = "NearcastWidget"

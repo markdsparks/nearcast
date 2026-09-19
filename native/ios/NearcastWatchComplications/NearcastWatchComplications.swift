@@ -1464,7 +1464,7 @@ private func cardinalDirection(_ degrees: Int) -> String {
 
 private func nearcastComplicationURL(_ surface: String, snapshot: NearcastWidgetSnapshot? = nil) -> URL? {
     var components = URLComponents()
-    components.scheme = "nearcast"
+    components.scheme = NearcastBuildIdentity.urlScheme
     components.host = "weather"
     var items = [
         URLQueryItem(name: "source", value: "watch-complication"),

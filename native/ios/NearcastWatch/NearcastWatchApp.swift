@@ -24,7 +24,7 @@ struct NearcastWatchApp: App {
 }
 
 enum NearcastWatchBackgroundRefresh {
-    static let identifier = "app.nearcast.watch.weather-refresh"
+    static let identifier = NearcastBuildIdentity.watchRefreshIdentifier
     private static let preferredInterval: TimeInterval = 60 * 60
 
     @MainActor

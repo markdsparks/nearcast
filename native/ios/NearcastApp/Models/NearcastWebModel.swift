@@ -146,7 +146,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     func openDeepLink(_ url: URL) {
-        if url.scheme == "nearcast", url.host == "native-preview" {
+        if url.scheme?.lowercased() == NearcastBuildIdentity.urlScheme, url.host == "native-preview" {
             openCachedNativePreview()
             return
         }
@@ -566,7 +566,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     private func shouldForceDeepLinkNavigation(_ url: URL) -> Bool {
-        guard url.scheme == "nearcast" else { return true }
+        guard url.scheme?.lowercased() == NearcastBuildIdentity.urlScheme else { return true }
         let route = (url.host ?? "").lowercased()
         if route == "weather" || route.isEmpty {
             let sourceItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -576,7 +576,7 @@ final class NearcastWebModel: ObservableObject {
     }
 
     private func deepLinkTargetURL(_ url: URL, baseURL: URL) -> URL {
-        guard url.scheme == "nearcast" else {
+        guard url.scheme?.lowercased() == NearcastBuildIdentity.urlScheme else {
             return Self.notificationURL(url.absoluteString, baseURL: baseURL)
         }
 

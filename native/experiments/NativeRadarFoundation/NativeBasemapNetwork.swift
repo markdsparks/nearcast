@@ -39,7 +39,8 @@ enum NativeBasemapNetwork {
     }
 
     private static func configureTransport(bundleIdentifier: String?) -> Bool {
-        guard bundleIdentifier == NativeBasemapContract.iosAudience else { return false }
+        guard let audience = NativeBasemapContract.audience(for: bundleIdentifier),
+              bundleIdentifier == audience else { return false }
         if retainedDelegate != nil { return true }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
@@ -47,7 +48,7 @@ enum NativeBasemapNetwork {
         configuration.urlCredentialStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let delegate = NativeBasemapNetworkDelegate(bundleIdentifier: NativeBasemapContract.iosAudience)
+        let delegate = NativeBasemapNetworkDelegate(bundleIdentifier: audience)
         // Provider keys are necessarily embedded in MapLibre tile URLs. Keep
         // SDK URL/error logging disabled; Nearcast exposes only redacted states.
         MLNLoggingConfiguration.shared.loggingLevel = .none

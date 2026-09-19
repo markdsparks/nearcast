@@ -31,7 +31,10 @@ final class NativeStormActivityController {
         let now = Date()
         let arrivalAtEpoch = epochValue(payload["arrivalAtEpoch"]) ?? now.addingTimeInterval(Double(etaMinutes) * 60).timeIntervalSince1970
         let expiresAtEpoch = epochValue(payload["expiresAtEpoch"]) ?? max(arrivalAtEpoch + 45 * 60, now.addingTimeInterval(30 * 60).timeIntervalSince1970)
-        let deepLink = URL(string: cleanText(payload["url"], fallback: "nearcast://watching?source=live-activity", limit: 400))
+        let deepLink = nativeDeepLinkURL(
+            from: payload["url"],
+            fallbackRoute: "watching?source=live-activity"
+        )
 
         let attributes = NearcastStormActivityAttributes(
             placeName: placeName,
@@ -62,13 +65,21 @@ final class NativeStormActivityController {
         if let existing = activity ?? Activity<NearcastStormActivityAttributes>.activities.first {
             activity = existing
             await existing.update(content)
-            observePushToken(for: existing, payload: payload)
+            if NearcastBuildIdentity.remoteDeliveryEnabled {
+                observePushToken(for: existing, payload: payload)
+            }
             return response(state: "updated", activityId: existing.id)
         }
 
         do {
-            activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
-            if let activity { observePushToken(for: activity, payload: payload) }
+            if NearcastBuildIdentity.remoteDeliveryEnabled {
+                activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
+            } else {
+                activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
+            }
+            if NearcastBuildIdentity.remoteDeliveryEnabled, let activity {
+                observePushToken(for: activity, payload: payload)
+            }
             return response(state: "started", activityId: activity?.id)
         } catch {
             return ["ok": false, "state": "failed", "reason": error.localizedDescription]
@@ -107,7 +118,9 @@ final class NativeStormActivityController {
         )
         pushTokenTask?.cancel()
         pushTokenTask = nil
-        Task { await notifyServerEnded(activityId: activityToEnd.id) }
+        if NearcastBuildIdentity.remoteDeliveryEnabled {
+            Task { await notifyServerEnded(activityId: activityToEnd.id) }
+        }
         activity = nil
         return ["ok": true, "state": "ended", "activityId": activityToEnd.id]
     }
@@ -122,7 +135,11 @@ final class NativeStormActivityController {
     }
 
     private func response(state: String, activityId: String?) -> [String: Any] {
-        var payload: [String: Any] = ["ok": true, "state": state]
+        var payload: [String: Any] = [
+            "ok": true,
+            "state": state,
+            "remoteUpdates": NearcastBuildIdentity.remoteDeliveryEnabled
+        ]
         if let activityId { payload["activityId"] = activityId }
         return payload
     }
@@ -171,6 +188,20 @@ final class NativeStormActivityController {
         return value > 10_000_000_000 ? value / 1000 : value
     }
 
+    private func nativeDeepLinkURL(from value: Any?, fallbackRoute: String) -> URL? {
+        let fallback = "\(NearcastBuildIdentity.urlScheme)://\(fallbackRoute)"
+        let raw = cleanText(value, fallback: fallback, limit: 400)
+        guard var components = URLComponents(string: raw) else {
+            return URL(string: fallback)
+        }
+        let incomingScheme = components.scheme?.lowercased()
+        guard incomingScheme == "nearcast" || incomingScheme == NearcastBuildIdentity.urlScheme else {
+            return URL(string: fallback)
+        }
+        components.scheme = NearcastBuildIdentity.urlScheme
+        return components.url ?? URL(string: fallback)
+    }
+
     private func observePushToken(for activity: Activity<NearcastStormActivityAttributes>, payload: [String: Any]) {
         pushTokenTask?.cancel()
         pushTokenTask = Task { [weak self] in
@@ -194,7 +225,10 @@ final class NativeStormActivityController {
             "detail": cleanText(payload["detail"], fallback: "Nearcast is tracking this storm.", limit: 86),
             "confidence": cleanText(payload["confidence"], fallback: "Watching", limit: 24),
             "etaMinutes": max(0, min(240, intValue(payload["etaMinutes"], fallback: 0))),
-            "url": cleanText(payload["url"], fallback: "nearcast://weather?source=live-activity", limit: 400)
+            "url": nativeDeepLinkURL(
+                from: payload["url"],
+                fallbackRoute: "weather?source=live-activity"
+            )?.absoluteString ?? "\(NearcastBuildIdentity.urlScheme)://weather?source=live-activity"
         ]
         ["latitude", "longitude", "arrivalAtEpoch", "expiresAtEpoch", "confidenceValue", "severity", "rainChance", "motionDegrees", "geometryQuality"].forEach {
             if let value = payload[$0] { body[$0] = value }
