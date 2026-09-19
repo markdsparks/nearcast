@@ -13,6 +13,10 @@ final class NativeWeatherPreviewModel: ObservableObject {
     @Published private(set) var isLoadingEssentials = false
     @Published var selectedDay: Date?
     @Published var destination: NativeWeatherDestination = .today
+    /// A compact outlook column can hand the user directly to the matching
+    /// detailed hour. The view consumes this only as a scroll target; it never
+    /// changes the forecast selection or fabricates a time reading.
+    @Published private(set) var hourlyFocus: Date?
 
     private let repository: NativeForecastRepository
     private let essentialsRepository: NativeEssentialsRepository?
@@ -69,6 +73,7 @@ final class NativeWeatherPreviewModel: ObservableObject {
         errorMessage = nil
         if placeChanged {
             selectedDay = nil
+            hourlyFocus = nil
             destination = .today
         }
         placeTask = Task { [weak self] in await self?.refresh() }
@@ -87,6 +92,7 @@ final class NativeWeatherPreviewModel: ObservableObject {
         essentials = nil
         errorMessage = nil
         selectedDay = nil
+        hourlyFocus = nil
         destination = .today
         placeTask = Task { [weak self] in await self?.refresh() }
     }
@@ -151,18 +157,21 @@ final class NativeWeatherPreviewModel: ObservableObject {
 
     func showToday() {
         selectedDay = nil
+        hourlyFocus = nil
         destination = .today
     }
 
-    func showHourly(day: Date? = nil) {
+    func showHourly(day: Date? = nil, focusedHour: Date? = nil) {
         if let day, forecast?.day(containing: day) == nil { return }
         selectedDay = day
+        hourlyFocus = focusedHour
         destination = .hourly
     }
 
     func showDay(_ date: Date) {
         guard forecast?.day(containing: date) != nil else { return }
         selectedDay = date
+        hourlyFocus = nil
         destination = .today
     }
 

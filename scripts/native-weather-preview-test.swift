@@ -197,10 +197,12 @@ struct NativeWeatherPreviewTests {
         let tomorrow = model.forecast!.days[1].date
         model.showDay(tomorrow)
         expect(model.selectedDay == tomorrow && model.destination == .today, "Selected-day route preserves exact date")
-        model.showHourly(day: tomorrow)
-        expect(model.selectedDay == tomorrow && model.destination == .hourly, "Hourly route preserves exact selected day")
+        model.showHourly(day: tomorrow, focusedHour: tomorrow)
+        expect(model.selectedDay == tomorrow && model.destination == .hourly && model.hourlyFocus == tomorrow,
+            "Compact-hour handoff preserves the exact selected-day scroll target")
         model.showToday()
-        expect(model.selectedDay == nil && model.destination == .today, "Today resets only the date/destination")
+        expect(model.selectedDay == nil && model.destination == .today && model.hourlyFocus == nil,
+            "Today clears both the date route and an old compact-hour target")
         model.showDay(Date.distantFuture)
         expect(model.selectedDay == nil, "Unavailable day cannot become a misleading selected-day forecast")
         model.selectPlace(remotePlace)
