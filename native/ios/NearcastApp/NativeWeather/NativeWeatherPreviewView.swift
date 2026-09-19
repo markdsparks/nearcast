@@ -529,16 +529,6 @@ struct NativeWeatherPreviewView: View {
                     .monospacedDigit()
                     .padding(.top, 2)
             }
-            if !atmosphericTraceSamples.isEmpty {
-                NativeAtmosphericTrace(
-                    samples: atmosphericTraceSamples,
-                    tint: accent,
-                    label: atmosphericTraceAccessibilityLabel
-                )
-                .frame(height: 30)
-                .padding(.top, 5)
-                .padding(.horizontal, 20)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
