@@ -58,6 +58,12 @@ Native Xweather contracts, mocked transport/lifecycle tests, an isolated worker 
 
 ## Open gates — do not call Phase 3 complete
 
+### Native automatic daylight appearance (build 113)
+
+Release: `9c12d31`, TestFlight 0.1.0 (113), uploaded successfully September 19 at 07:35 CDT. Native daylight tests, full portable/native-model preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; tester availability is subject to Apple processing. The existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-113.log`.
+
+When Appearance is Auto, the native weather surface now follows the selected place's forecast sunrise and sunset at the current time. This supersedes a cached `current.isDay` bit that may have been recorded before sunrise or sunset. The auto fallback uses `current.isDay` only when the provider omitted solar events and that reading is within 90 minutes; otherwise it leaves the system appearance unchanged rather than claiming stale night or day. Explicit Light and Dark settings retain priority. The check runs as the existing screen clock advances and when the app becomes active.
+
 ### Faster looping playback (build 112)
 
 Release: `11f859b`, TestFlight 0.1.0 (112), uploaded successfully September 19 at 07:08 CDT. Full portable/native-model preflight, signed archive, packaging validation and export/upload passed. Apple accepted the package for processing; its immediate build-list query did not yet include 112, so tester availability is not confirmed. Existing upstream MapLibre missing-dSYM warning remains nonblocking. Log: `/tmp/nearcast-testflight-112.log`.
