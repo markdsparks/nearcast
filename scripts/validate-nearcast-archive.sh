@@ -189,4 +189,13 @@ fi
 if (( 10#$app_version >= 106 )); then
   validate_native_radar_lab
 fi
+if (( 10#$app_version >= 134 )); then
+  native_root="$(/usr/libexec/PlistBuddy -c 'Print :NearcastNativeOnlyExperience' "$app/Info.plist" 2>/dev/null || true)"
+  remote_delivery="$(/usr/libexec/PlistBuddy -c 'Print :NearcastRemoteDeliveryEnabled' "$app/Info.plist" 2>/dev/null || true)"
+  [[ "$native_root" == true && "$remote_delivery" == YES ]] || {
+    printf 'FAIL  Native Release archive must enable native root and production delivery\n' >&2
+    exit 1
+  }
+  printf 'PASS  Native root and production delivery are enabled in the archive\n'
+fi
 printf 'PASS  Archive is ready for export validation\n'
