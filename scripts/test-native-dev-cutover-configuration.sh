@@ -3,8 +3,7 @@ set -euo pipefail
 
 # Protect the boundary between the side-by-side native-only Dev lane and the
 # shipping/TestFlight configuration.  This is intentionally a source-level
-# guard: a successful Debug build must never become evidence that Release was
-# switched to native-only by accident.
+# guard: both lanes are native-only, but delivery and storage stay isolated.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEBUG_INFO="$ROOT/native/ios/NearcastApp/Support/Info-Debug.plist"
@@ -29,9 +28,8 @@ require '<key>NearcastNativeOnlyExperience</key>' "$DEBUG_INFO" \
 require '<true/>' "$DEBUG_INFO" \
   'Debug must enable the native-only experience flag'
 
-if rg -q --fixed-strings '<key>NearcastNativeOnlyExperience</key>' "$RELEASE_INFO"; then
-  fail 'Release/TestFlight must not opt into native-only without an explicit promotion'
-fi
+[[ "$(/usr/bin/plutil -extract NearcastNativeOnlyExperience raw -o - "$RELEASE_INFO")" == true ]] \
+  || fail 'Release/TestFlight must retain the explicitly promoted native root'
 
 require 'PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev;' "$PROJECT" \
   'Dev must retain its side-by-side app identity'
@@ -44,4 +42,4 @@ require 'NEARCAST_REMOTE_DELIVERY_ENABLED = NO;' "$PROJECT" \
 require 'if arguments.contains("-nearcast-web") { return false }' "$RUNTIME" \
   'The compatibility shell must remain an engineer-only process escape hatch'
 
-printf 'PASS  Native Dev is isolated and native-only; Release remains unchanged\n'
+printf 'PASS  Native Dev stays isolated alongside the promoted native Release\n'
