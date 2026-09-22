@@ -68,5 +68,13 @@ gate requires that promotion while retaining separate Dev identifiers and APNs
 settings. Build number advanced to 134. Backend checkpoint `f409cd3` contains
 only the reviewed notification Worker changes and their regression tests;
 production deployment was dispatched from that checkpoint, not the dirty
-workspace. Archive, upload and live capability verification are not implied by
-these source changes.
+workspace.
+
+Backend deployment succeeded:
+https://github.com/markdsparks/nearcast/actions/runs/35672734796
+The live config at 2026-09-22T00:39:14Z now advertises `native-v1`, production
+APNs and R2 ready. Post-deployment protected health also passed:
+https://github.com/markdsparks/nearcast/actions/runs/35672840232
+Unsigned promoted Release simulator build passed. TestFlight pipeline is running;
+archive validation and upload are not yet claimed. No device was enrolled and
+no notification was sent by this deployment.
