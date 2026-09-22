@@ -298,6 +298,7 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
   return jsonResponse({
     provider: PLAN_WATCH_PROVIDER,
     version: 1,
+    nativeOwnerScopes: ["native-v1"],
     checkedAt: new Date().toISOString(),
     push: {
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
@@ -617,12 +618,23 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
   const payload = await readJsonRequest(request);
+  const owner = payload?.client?.owner;
+  if (owner !== undefined && owner !== "native-v1") {
+    return jsonResponse({ ok: false, error: "invalid-client-owner" }, { status: 400 });
+  }
   const subscription = normalizeWebPushSubscription(payload.subscription);
   const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel, env);
+  if (owner === "native-v1" && (!nativeChannel || subscription)) {
+    return jsonResponse({ ok: false, error: "native-owner-requires-native-channel" }, { status: 400 });
+  }
   if (!subscription && !nativeChannel) {
     return jsonResponse({ ok: false, error: "invalid-delivery-channel" }, { status: 400 });
   }
-  const normalizedPlans = normalizePlanWatchPlans(payload.plans, env);
+  const normalizedPlans = normalizePlanWatchPlans(payload.plans, env, owner);
+  if (owner === "native-v1" && (!Array.isArray(payload.plans) || normalizedPlans.length !== payload.plans.length ||
+      new Set(normalizedPlans.map((plan) => plan.id)).size !== normalizedPlans.length)) {
+    return jsonResponse({ ok: false, error: "invalid-native-plans" }, { status: 400 });
+  }
   const normalizedPlaces = normalizePlanWatchPlaces(payload.places, env);
   if (!normalizedPlans.length && !normalizedPlaces.length) {
     return jsonResponse({ ok: false, error: "missing-watch-target" }, { status: 400 });
@@ -643,7 +655,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
 
   const subscriptionId = subscription
     ? await planWatchSubscriptionId(subscription)
-    : await planWatchNativeSubscriptionId(nativeChannel);
+    : await planWatchNativeSubscriptionId(nativeChannel, owner);
   const existingRecord = store.getJson
     ? await store.getJson(planWatchSubscriptionStorageName(subscriptionId))
     : null;
@@ -736,6 +748,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
       : nativeDeliveryReady ? "stored-web-delivery-not-configured" : "stored-native-delivery-not-configured",
     reason: deliveryReady ? "" : nativeDeliveryReady ? "web-push-not-configured" : "native-push-not-configured",
     subscriptionId,
+    ...(owner ? { owner } : {}),
     planCount: record.plans.length,
     placeCount: record.places.length,
     expiresAt
@@ -748,12 +761,20 @@ export async function handlePlanWatchNotificationUnregisterRequest(request, env 
     return jsonResponse({ error: "method-not-allowed" }, { status: 405 });
   }
   const payload = await readJsonRequest(request);
+  const owner = payload?.client?.owner;
+  if (owner !== undefined && owner !== "native-v1") {
+    return jsonResponse({ ok: false, error: "invalid-client-owner" }, { status: 400 });
+  }
   const subscription = normalizeWebPushSubscription(payload.subscription);
   const nativeChannel = normalizeNativeApnsChannel(payload.nativeChannel || payload.channel);
+  const nativeID = nativeChannel ? await planWatchNativeSubscriptionId(nativeChannel, owner) : "";
+  if (owner === "native-v1" && (!nativeID || subscription || (payload.subscriptionId && payload.subscriptionId !== nativeID))) {
+    return jsonResponse({ ok: false, error: "native-owner-subscription-mismatch" }, { status: 400 });
+  }
   const subscriptionId = String(
     payload.subscriptionId ||
     (subscription ? await planWatchSubscriptionId(subscription) : "") ||
-    (nativeChannel ? await planWatchNativeSubscriptionId(nativeChannel) : "")
+    nativeID
   ).trim();
   if (!subscriptionId) {
     return jsonResponse({ ok: false, error: "missing-subscription" }, { status: 400 });
@@ -773,6 +794,7 @@ export async function handlePlanWatchNotificationUnregisterRequest(request, env 
     ok: true,
     provider: PLAN_WATCH_PROVIDER,
     state: "deleted",
+    ...(owner ? { owner } : {}),
     subscriptionId
   });
 }
@@ -2457,7 +2479,7 @@ async function resolvePlanWatchSubscriptionRecord(store, payload = {}) {
   }
   const nativeChannel = normalizeNativeApnsChannel(payload?.nativeChannel || payload?.channel);
   if (nativeChannel && store.getJson) {
-    const id = await planWatchNativeSubscriptionId(nativeChannel);
+    const id = await planWatchNativeSubscriptionId(nativeChannel, payload?.client?.owner);
     const record = await store.getJson(planWatchSubscriptionStorageName(id));
     if (planWatchRecordHasDeliveryChannel(record)) return record;
   }
@@ -2987,10 +3009,16 @@ export function planWatchPersistedEvaluationTargets({
 }
 
 async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
+  const originalPlan = plan;
+  plan = rollNativePlanWatchRoutine(plan, record.client);
+  const rolled = plan !== originalPlan;
   if (!plan || planWatchPlanIsPast(plan)) {
     return { plan, updated: false, candidate: null };
   }
-  if (context.urgentOnly) return evaluateUrgentPlanWatchAlert(plan, record, context);
+  if (context.urgentOnly) {
+    const evaluation = await evaluateUrgentPlanWatchAlert(plan, record, context);
+    return { ...evaluation, updated: evaluation.updated || rolled };
+  }
   const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
   const forecast = await cachedPlanWatchForecast(plan.place, unit, context);
   const stats = planWatchWindowStats(plan, forecast, unit);
@@ -2999,7 +3027,8 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   if (alertState.readiness === "error") {
     return { plan, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
   }
-  const windowMs = planWatchWindowMs(plan, forecast);
+  const windowMs = plan.timezone ? planWatchWindowMsForTimeZone(plan, plan.timezone) : planWatchWindowMs(plan, forecast);
+  if (!windowMs) return { plan, updated: false, candidate: null, error: "official-alert-timezone-error", alertReadiness: "error" };
   const alert = alertState.readiness === "supported"
     ? topPlanWatchAlert(alertState.alerts, windowMs.startMs, windowMs.endMs)
     : null;
@@ -3019,7 +3048,7 @@ async function evaluatePlanWatchPlan(plan, record = {}, context = {}) {
   const candidate = change?.notify ? sharedPlanWeatherNotificationCandidate(plan, current, change) : null;
   return {
     plan: nextPlan,
-    updated: Boolean(change?.updateBaseline),
+    updated: Boolean(change?.updateBaseline) || rolled,
     candidate,
     alertReadiness: alertState.readiness
   };
@@ -3033,7 +3062,7 @@ async function evaluateUrgentPlanWatchAlert(plan, record = {}, context = {}) {
   if (alertState.readiness !== "supported") {
     return { plan, updated: false, candidate: null, alertReadiness: alertState.readiness };
   }
-  const windowMs = planWatchWindowMsForTimeZone(plan, record?.client?.timezone);
+  const windowMs = planWatchWindowMsForTimeZone(plan, plan.timezone || record?.client?.timezone);
   if (!windowMs) {
     return { plan, updated: false, candidate: null, error: "official-alert-timezone-error", alertReadiness: "error" };
   }
@@ -3510,6 +3539,30 @@ function planWatchPlanIsPast(plan) {
   if (!last?.targetDate) return false;
   const endOfDate = new Date(`${last.targetDate}T23:59:59Z`);
   return Number.isFinite(endOfDate.getTime()) && endOfDate.getTime() < Date.now() - 12 * 60 * 60 * 1000;
+}
+
+/// A native weekly watch is a durable schedule, not a fixed week export.
+/// Resolve only the current/next real occurrence in its own IANA zone and
+/// reset that occurrence's baseline. This never adopts a legacy routine.
+export function rollNativePlanWatchRoutine(plan, client = {}, now = new Date()) {
+  if (client?.owner !== "native-v1" || !plan?.routine || !validTimeZone(plan.timezone)) return plan;
+  const weekdays = plan.routine.weekdays;
+  if (!Array.isArray(weekdays) || !weekdays.length || !weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)) return plan;
+  // Include two weeks so a nonexistent spring-forward occurrence is skipped
+  // rather than silently moved to a different local clock time.
+  const dates = planWatchDatesForTimeZone(plan.timezone, 15, now);
+  const anchor = plan.routine.startDate || plan.targetDate;
+  for (const date of dates) {
+    if (date < anchor || !weekdays.includes(new Date(`${date}T12:00:00Z`).getUTCDay())) continue;
+    const occurrence = { ...plan, targetDate: date,
+      windows: [{ id: `routine-${date}`, targetDate: date, startHour: plan.startHour, endHour: plan.endHour }] };
+    const window = planWatchWindowMsForTimeZone(occurrence, plan.timezone);
+    if (!window || window.endMs <= now.getTime()) continue;
+    if (plan.targetDate === date && plan.windows?.length === 1 &&
+        plan.windows[0].targetDate === date && plan.windows[0].startHour === plan.startHour && plan.windows[0].endHour === plan.endHour) return plan;
+    return { ...occurrence, lastKnown: normalizePlanWatchLastKnown() };
+  }
+  return plan;
 }
 
 async function cachedPlanWatchForecast(place = {}, unit = "fahrenheit", context = {}) {
@@ -4034,7 +4087,7 @@ function planWatchWindowMs(plan, forecast = {}) {
   return { startMs: start, endMs: Math.max(end, start + 60 * 60 * 1000) };
 }
 
-function planWatchWindowMsForTimeZone(plan = {}, timezone = "") {
+export function planWatchWindowMsForTimeZone(plan = {}, timezone = "") {
   const windows = Array.isArray(plan.windows) && plan.windows.length ? plan.windows : [plan];
   const first = windows[0] || plan;
   const last = windows[windows.length - 1] || plan;
@@ -4063,11 +4116,14 @@ function planWatchDatesForTimeZone(timezone, count = 2, now = new Date()) {
 }
 
 function planWatchZonedDateHourMs(date, hour, timezone) {
-  if (!validTimeZone(timezone) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NaN;
+  if (!validTimeZone(timezone) || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isFinite(hour) || hour < 0 || hour > 24) return NaN;
   const [year, month, day] = date.split("-").map(Number);
-  const desiredUtc = Date.UTC(year, month - 1, day, hour);
+  if (new Date(Date.UTC(year, month - 1, day, 12)).toISOString().slice(0, 10) !== date) return NaN;
+  const minutes = Math.round(hour * 60);
+  const desiredUtc = Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60);
   let guess = desiredUtc;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const representedTime = (timestamp) => {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       year: "numeric",
@@ -4077,12 +4133,14 @@ function planWatchZonedDateHourMs(date, hour, timezone) {
       minute: "2-digit",
       second: "2-digit",
       hourCycle: "h23"
-    }).formatToParts(new Date(guess));
+    }).formatToParts(new Date(timestamp));
     const part = (type) => Number(parts.find((item) => item.type === type)?.value);
-    const representedUtc = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
-    guess = desiredUtc - (representedUtc - guess);
+    return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    guess = desiredUtc - (representedTime(guess) - guess);
   }
-  return guess;
+  return representedTime(guess) === desiredUtc ? guess : NaN;
 }
 
 function planWatchLocalDateHourMs(date, hour, utcOffsetMs) {
@@ -4490,6 +4548,7 @@ function normalizePlanWatchClient(value = {}) {
   const source = value && typeof value === "object" ? value : {};
   const timezone = cleanText(source.timezone, 80);
   return {
+    ...(source.owner === "native-v1" ? { owner: "native-v1" } : {}),
     appVersion: cleanText(source.appVersion, 24),
     locale: cleanText(source.locale, 48),
     timezone: validTimeZone(timezone) ? timezone : "",
@@ -4507,11 +4566,11 @@ function validTimeZone(value) {
   }
 }
 
-function normalizePlanWatchPlans(value, env = {}) {
+function normalizePlanWatchPlans(value, env = {}, owner) {
   if (!Array.isArray(value)) return [];
   return value
     .slice(0, configuredPlanWatchMaxPlansPerSubscription(env))
-    .map(normalizePlanWatchPlan)
+    .map((plan) => normalizePlanWatchPlan(plan, owner))
     .filter(Boolean);
 }
 
@@ -4532,6 +4591,8 @@ function sameRegisteredPlanWindow(a = {}, b = {}) {
     a.startHour === b.startHour &&
     a.endHour === b.endHour &&
     JSON.stringify(a.windows || []) === JSON.stringify(b.windows || []) &&
+    (a.timezone || "") === (b.timezone || "") &&
+    JSON.stringify(a.routine || null) === JSON.stringify(b.routine || null) &&
     samePlace
   );
 }
@@ -4585,11 +4646,20 @@ function mergePlanWatchPlacesWithExisting(places = [], existingPlaces = []) {
   });
 }
 
-function normalizePlanWatchPlan(value) {
+function normalizePlanWatchPlan(value, owner) {
   if (!value || typeof value !== "object") return null;
+  const native = owner === "native-v1";
+  const timezone = cleanText(value.timezone, 80);
+  if (native && !validTimeZone(timezone)) return null;
+  const weekdays = value.routine?.weekdays;
+  const routine = native && value.routine != null;
+  if (routine && (!Array.isArray(weekdays) || !weekdays.length || weekdays.length > 7 ||
+      !weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6) ||
+      (value.scheduleType && value.scheduleType !== "single"))) return null;
   const id = cleanText(value.id, 96);
   const targetDate = cleanText(value.targetDate, 16);
-  if (!id || !validPlanWatchTargetDate(targetDate)) return null;
+  const validDate = routine ? validNativeRoutineAnchor : validPlanWatchTargetDate;
+  if (!id || !validDate(targetDate)) return null;
   const place = normalizePlanWatchPlace(value.place);
   if (!place) return null;
   const startHour = finiteNumber(value.startHour, null);
@@ -4601,10 +4671,11 @@ function normalizePlanWatchPlan(value) {
     const targetDate = cleanText(window?.targetDate, 16);
     const windowStart = finiteNumber(window?.startHour, null);
     const windowEnd = finiteNumber(window?.endHour, null);
-    if (!validPlanWatchTargetDate(targetDate) || !Number.isFinite(windowStart) || !Number.isFinite(windowEnd) || windowStart < 0 || windowEnd > 24 || windowStart >= windowEnd) return null;
+    if (!validDate(targetDate) || !Number.isFinite(windowStart) || !Number.isFinite(windowEnd) || windowStart < 0 || windowEnd > 24 || windowStart >= windowEnd) return null;
     return { id: cleanText(window.id || `window-${index}`, 96), targetDate, startHour: windowStart, endHour: windowEnd };
   }).filter(Boolean);
-  return {
+  if (native && Array.isArray(value.windows) && (windows.length !== value.windows.length || (routine && windows.length !== 1))) return null;
+  const normalized = {
     id,
     title: cleanText(value.title, 120),
     targetDate,
@@ -4613,9 +4684,19 @@ function normalizePlanWatchPlan(value) {
     scheduleType: ["single", "discrete", "continuous_span"].includes(value.scheduleType) ? value.scheduleType : (windows.length > 1 ? "discrete" : "single"),
     windows: windows.length ? windows : [{ id: "window-0", targetDate, startHour, endHour }],
     place,
+    ...(native ? { timezone } : {}),
+    ...(routine ? { routine: { weekdays: [...new Set(weekdays)].sort(), startDate: targetDate } } : {}),
     canonicalEvent: normalizePlanWatchMaterialEvent(value.canonicalEvent),
     lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
   };
+  return routine ? rollNativePlanWatchRoutine(normalized, { owner }) : normalized;
+}
+
+function validNativeRoutineAnchor(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(`${value}T12:00:00Z`);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value &&
+    parsed >= 0 && parsed <= Date.now() + 370 * 24 * 60 * 60 * 1000;
 }
 
 function normalizePlanWatchPlace(value = {}) {
@@ -4789,8 +4870,13 @@ async function planWatchSubscriptionId(subscription) {
   return `web-${await sha256Hex(subscription.endpoint)}`;
 }
 
-async function planWatchNativeSubscriptionId(channel) {
-  return `ios-${await sha256Hex(`${channel?.environment || "production"}:${channel?.bundleId || ""}:${channel?.token || ""}`)}`;
+async function planWatchNativeSubscriptionId(channel, owner) {
+  const identity = `${channel?.environment || "production"}:${channel?.bundleId || ""}:${channel?.token || ""}`;
+  // A prefix alone is not the boundary: domain-separate the hashed identity
+  // too so an existing APNs token cannot replace the earlier web-owned record.
+  return owner === "native-v1"
+    ? `native-v1-${await sha256Hex(`native-v1:${identity}`)}`
+    : `ios-${await sha256Hex(identity)}`;
 }
 
 async function sha256Hex(value) {
