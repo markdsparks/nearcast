@@ -75,6 +75,14 @@ https://github.com/markdsparks/nearcast/actions/runs/35672734796
 The live config at 2026-09-22T00:39:14Z now advertises `native-v1`, production
 APNs and R2 ready. Post-deployment protected health also passed:
 https://github.com/markdsparks/nearcast/actions/runs/35672840232
-Unsigned promoted Release simulator build passed. TestFlight pipeline is running;
-archive validation and upload are not yet claimed. No device was enrolled and
-no notification was sent by this deployment.
+Unsigned promoted Release simulator build, full portable/native-model preflight,
+signed archive and packaged-product validation all passed. Build 134 includes
+native root, Living Sky and production delivery; Dev stays isolated.
+
+Xcode's combined export/upload stalled at the App Store Connect version check.
+Stopped that exact process, exported the same validated archive locally, then
+uploaded `native/ios/build/export-testflight-134/Nearcast.ipa` with Apple's
+altool and the existing API key. Apple returned `UPLOAD SUCCEEDED with no
+errors`, delivery UUID `a0ac7f80-b07e-4588-ac5b-afb34c0761e4`. Processing and
+tester availability must still be checked separately. No device was enrolled
+and no notification was sent by this deployment.
